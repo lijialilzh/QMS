@@ -1,0 +1,133 @@
+@import "../../index.less";
+@import "../../index.app.less";
+
+.sds-doc-detail {
+    // 查看模式：禁用输入框文字加深，便于阅读
+    &.read-only {
+        .ant-input[disabled],
+        .ant-input-textarea textarea.ant-input[disabled] {
+            color: rgba(0, 0, 0, 0.85);
+            background-color: #f5f5f5;
+        }
+        .ant-select-disabled .ant-select-selection-item {
+            color: rgba(0, 0, 0, 0.85);
+        }
+    }
+
+    .detail-content {
+        flex: 1;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        overflow-x: hidden;
+
+        .page-actions {
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #e8e8e8;
+            flex-shrink: 0;
+        }
+    }
+
+    .detail-form {
+        background-color: #ffffff;
+        border: 1px solid #d9d9d9;
+        border-radius: 6px;
+        padding: 24px;
+        max-width: 100%;
+        flex-shrink: 0;
+
+        .form-display-row {
+            .form-display-label,
+            .form-display-value {
+                color: rgba(0, 0, 0, 0.85);
+            }
+            .form-display-label {
+                margin-right: 8px;
+            }
+        }
+    }
+
+    .doc-section {
+        background-color: #ffffff;
+        border: 1px solid #d9d9d9;
+        border-radius: 6px;
+        padding: 24px;
+        margin-top: 24px;
+        flex-shrink: 0;
+
+        &:first-child {
+            margin-top: 0;
+        }
+
+        // 目录结构区域自然展开
+        &.doc-section-flex {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .doc-section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            flex-shrink: 0;
+
+            .doc-section-title {
+                font-size: 16px;
+                font-weight: 600;
+                color: #333333;
+            }
+
+            .change-desc-title {
+                font-size: 16px;
+                font-weight: 600;
+                color: #333333;
+            }
+
+            .doc-section-buttons {
+                display: flex;
+                gap: 8px;
+            }
+        }
+
+        .doc-desc-content {
+            background-color: #ffffff;
+            border: 1px solid #d9d9d9;
+            border-radius: 6px;
+            padding: 16px;
+            min-height: 100px;
+            color: #999999;
+            margin-bottom: 16px;
+
+            &.has-content {
+                color: #333333;
+            }
+        }
+
+        // 覆盖公共 .ant-table-wrapper { height: 0 }，使设计列表和需求追溯表能正常显示
+        .ant-table-wrapper {
+            height: auto;
+        }
+    }
+
+    .change-desc-modal {
+        .change-desc-label {
+            margin-bottom: 8px;
+            color: #333333;
+        }
+
+        .change-desc-textarea {
+            margin-bottom: 0;
+        }
+    }
+}
+
+// 弹框内表格覆盖全局 .ant-table-wrapper { height: 0 }
+.reqd-list-modal,
+.trace-list-modal {
+    .ant-table-wrapper {
+        height: auto !important;
+    }
+}

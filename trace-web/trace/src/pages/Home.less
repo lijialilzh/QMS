@@ -1,0 +1,166 @@
+@import "../index.less";
+@import "../index.app.less";
+
+.home-menu {
+    min-width: @menu-w;
+    height: 100%;
+    background-color: #124fab;
+    user-select: none;
+
+    .logo-div {
+        width: @menu-w;
+        height: 60px;
+
+        .logo {
+            height: 32px;
+        }
+    }
+
+    .ant-menu-item {
+        color: #cccccc !important;
+        border-radius: 0 !important;
+        transition: none !important;
+    }
+
+    .ant-menu-inline {
+        background-color: #00000000 !important;
+    }
+
+    .ant-menu-submenu-title {
+        color: white !important;
+        border: none !important;
+        border-radius: 0 !important;
+    }
+
+    .ant-menu-submenu-arrow {
+        color: white;
+    }
+
+    .ant-menu-item-selected {
+        border: none !important;
+        background: linear-gradient(to right, #124fab, #cccccc);
+        color: #eeeeee !important;
+        border-radius: 0 !important;
+    }
+
+    .ant-menu-item-selected :hover {
+        color: white !important;
+    }
+
+    .ant-menu-item-active :active {
+        background-color: #00000000 !important;
+    }
+
+    .ant-menu-item-active {
+        background-color: #00000011 !important;
+    }
+}
+
+.menu-drawer {
+    .ant-drawer-content-wrapper {
+        width: @menu-w !important;
+    }
+    .ant-drawer-body {
+        padding: 0 !important;
+        background-color: #124fab;
+        overflow-x: hidden;
+    }
+}
+
+.menu-switch {
+    width: 16px;
+    height: 16px;
+}
+
+.home-left {
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.page-title {
+    font-weight: 600;
+    font-size: 24px;
+    color: #333333;
+    line-height: 33px;
+    text-align: left;
+    font-style: normal;
+    padding: 5px 0px 5px 10px;
+}
+
+.home-header{
+    height: 60px;
+    border-bottom: 1px solid #cccccc; 
+}
+
+.home-body {
+    height: calc(100% - 60px);
+    width: calc(100vw - @menu-w);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    // 让 Outlet 根节点成为滚动容器，searchbar 才能 sticky
+    > * {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        overflow-x: hidden;
+    }
+}
+
+@media screen and (min-width: @sm) {
+    .menu-switch {
+        display: none;
+    }
+}
+
+@media screen and (max-width: @sm) {
+    .home-left {
+        display: none;
+    }
+    .page-title {
+        display: none;
+    }
+    .home-body {
+        height: calc(100% - 60px);
+        width: 100vw;
+    }
+}
+
+.home-bar {
+    padding-right: 10px;
+    * {
+        font-size: 14px !important;
+        line-height: 24px;
+    }
+
+    .ant-dropdown {
+        max-height: 480px !important;
+        overflow-y: auto;
+    }
+    .ant-dropdown-menu {
+        max-height: 480px !important;
+        overflow-y: auto;
+    }
+
+    @media screen and (min-height: @sm) {
+        .ant-dropdown {
+            max-height: 640px !important;
+            overflow-y: auto;
+        }
+        .ant-dropdown-menu {
+            max-height: 640px !important;
+            overflow-y: auto;
+        }
+    }
+
+    @media screen and (max-height: @xs) {
+        .ant-dropdown {
+            max-height: 200px !important;
+            overflow-y: auto;
+        }
+        .ant-dropdown-menu {
+            max-height: 200px !important;
+            overflow-y: auto;
+        }
+    }
+}

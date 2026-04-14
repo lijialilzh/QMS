@@ -1,0 +1,26 @@
+#----------------------------------------------------------------------------
+FROM hub.infervision.com/dev/alay/nodejs-build:v18.20.2 AS html-trace
+
+COPY trace/package.json /work/
+COPY trace/yarn.lock    /work/
+RUN cd /work && yarn
+
+COPY trace/public                  /work/public
+COPY trace/src                     /work/src
+COPY trace/index.html              /work/
+COPY trace/tsconfig.json           /work/
+COPY trace/tsconfig.node.json      /work/
+COPY trace/vite.config.ts          /work
+RUN cd /work && yarn build && chmod -R +r /work/dist
+
+#----------------------------------------------------------------------------
+FROM hub.infervision.com/dev/doc-trace/trace-web.base:main.2603121032.4a9bf2b
+
+WORKDIR /usr/local/openresty/nginx
+
+COPY --from=html-trace /work/dist html/trace
+COPY bin/nginx.conf         conf/
+COPY bin/nginx.server.temp  conf/
+COPY bin/run.sh  ./
+
+CMD ["bash", "run.sh"]

@@ -1,0 +1,80 @@
+@import "../../index.less";
+@import "../../index.app.less";
+
+.srs-manage {
+    .detail-content {
+        flex: 1;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        overflow-x: hidden;
+
+        .detail-form {
+            background-color: #ffffff;
+            border: 1px solid #d9d9d9;
+            border-radius: 6px;
+            padding: 24px;
+            max-width: 100%;
+            flex-shrink: 0;
+        }
+
+        .doc-section {
+            background-color: #ffffff;
+            border: 1px solid #d9d9d9;
+            border-radius: 6px;
+            padding: 24px;
+            margin-top: 24px;
+            flex-shrink: 0;
+
+            &:first-child {
+                margin-top: 0;
+            }
+
+            .doc-section-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 16px;
+                flex-shrink: 0;
+
+                .srs-table-title {
+                    font-size: 16px;
+                    font-weight: 500;
+                    color: #333;
+                }
+
+                .editable-table-title {
+                    font-size: 16px;
+                    font-weight: 500;
+                    color: #333;
+                    padding: 0;
+                    border-bottom: 1px solid transparent;
+                    transition: border-color 0.3s;
+
+                    &:hover {
+                        border-bottom-color: #d9d9d9;
+                    }
+
+                    &:focus {
+                        border-bottom-color: #1890ff;
+                    }
+                }
+            }
+
+            // 覆盖全局样式，确保表格正常显示
+            .ant-table-wrapper {
+                height: auto !important;
+            }
+        }
+    }
+}
+
+// 查看弹框：禁用输入框文字加深，便于阅读
+.view-modal-readonly {
+    .ant-input[disabled],
+    .ant-input-textarea textarea.ant-input[disabled] {
+        color: rgba(0, 0, 0, 0.85) !important;
+        background-color: #f5f5f5;
+    }
+}

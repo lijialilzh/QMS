@@ -1,0 +1,87 @@
+services:
+  trace-db:
+    image: m.daocloud.io/docker.io/postgres:16
+    container_name: trace-db-local
+    environment:
+      POSTGRES_USER: trace
+      POSTGRES_PASSWORD: test
+      TZ: Asia/Shanghai
+    ports:
+      - "55432:5432"
+    volumes:
+      - trace_db_data:/var/lib/postgresql/data
+
+  trace-api:
+    image: hub.infervision.com/dev/doc-trace/trace-api:main.2601260853.3eb300d
+    container_name: trace-api-local
+    command:
+      - bash
+      - -lc
+      - |
+        python -m pip install --disable-pip-version-check --no-index --find-links=/work/wheels lxml==5.3.0 python-docx==1.2.0 typing-extensions==4.15.0
+        python main_init.py
+        exec python main_app.py
+    environment:
+      DB_URL: postgresql://trace:test@trace-db:5432/trace
+    restart: always
+    privileged: true
+    networks:
+      default:
+        aliases:
+          - trace.api
+    volumes:
+      - ./trace-api:/work
+      - trace_api_data:/work/data.trace
+      - trace_api_logs:/work/logs
+    depends_on:
+      - trace-db
+
+  trace-web:
+    image: hub.infervision.com/dev/doc-trace/trace-web:main.2601260858.1bb2b06
+    container_name: trace-web-local
+    restart: always
+    command:
+      - bash
+      - -lc
+      - |
+        cat > /usr/local/openresty/nginx/conf/nginx.server.conf <<'EOF'
+        server {
+            listen 80;
+            server_name 0.0.0.0;
+            absolute_redirect off;
+
+            location = / {
+                return 301 /html/trace/;
+            }
+
+            location ^~ /html {
+                alias html;
+            }
+
+            location ^~ /data.trace {
+                alias data.trace;
+            }
+
+            location ^~ /trace-api/ {
+                proxy_pass http://trace-api:80/trace-api/;
+                client_max_body_size 2048m;
+                proxy_connect_timeout 600;
+                proxy_send_timeout 600;
+                proxy_read_timeout 600;
+                send_timeout 600;
+            }
+        }
+        EOF
+        exec bash run.sh
+    volumes:
+      - trace_api_data:/usr/local/openresty/nginx/data.trace
+      - ./trace-web/trace/dist:/usr/local/openresty/nginx/html/trace
+    depends_on:
+      - trace-api
+    ports:
+      - "5178:80"
+
+volumes:
+  trace_db_data:
+  trace_api_data:
+  trace_api_logs:

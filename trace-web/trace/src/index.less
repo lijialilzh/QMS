@@ -1,0 +1,144 @@
+@xl: 1920px;
+@lg: 1200px;
+@md: 992px;
+@sm: 768px;
+@xs: 576px;
+@us: 400px;
+
+* {
+    box-sizing: border-box;
+    padding: 0;
+    margin: 0;
+}
+
+body,
+#root {
+    width: 100vw;
+    height: 100vh;
+    overflow-x: hidden;
+    overflow-y: hidden;
+}
+
+.page {
+    width: 100%;
+    height: 100%;
+    overflow-x: hidden;
+    overflow-y: hidden;
+    background-color: #eeeff1;
+}
+
+.div-h {
+    display: flex;
+    flex-direction: row;
+}
+
+.div-hr {
+    display: flex;
+    flex-direction: row-reverse;
+}
+
+.div-v {
+    display: flex;
+    flex-direction: column;
+}
+
+.div-vr {
+    display: flex;
+    flex-direction: column-reverse;
+}
+
+.expand {
+    flex: 1;
+    overflow: hidden;
+}
+
+.center {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.center-v {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+}
+
+.center-h {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.pointer-on {
+    pointer-events: auto;
+}
+
+.pointer-off {
+    pointer-events: none;
+}
+
+.cursor-on {
+    cursor: pointer;
+}
+
+.cursor-off {
+    cursor: none;
+}
+
+.hide {
+    display: none;
+}
+
+.scroll-x {
+    overflow-x: auto;
+}
+
+.scroll-y {
+    overflow-y: auto;
+}
+
+.scroll-nox {
+    overflow-x: hidden;
+}
+
+.scroll-noy {
+    overflow-y: hidden;
+}
+
+.nowrap {
+    white-space: nowrap;
+}
+
+.div-zbox {
+    position: relative;
+}
+
+.div-z {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+}
+
+.nobg {
+    background-color: #00000000;
+}
+
+.row-full {
+    width: 100%;
+}
+
+.col-full {
+    height: 100%;
+}
+
+.stxt {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.btxt {
+    font-weight: bolder;
+}

@@ -1,0 +1,24 @@
+logging:
+  version: 1
+  disable_existing_loggers: False
+  formatters:
+    default:
+      format: "%(asctime)s %(levelname)s [%(filename)s.%(lineno)s]: %(message)s"
+  handlers:
+    console:
+      class: logging.StreamHandler
+      level: INFO
+      formatter: default
+      stream: ext://sys.stdout
+    task:
+      class: logging.handlers.TimedRotatingFileHandler
+      level: INFO
+      formatter: default
+      encoding: "utf8"
+      filename: logs/task.log
+      when: "midnight"
+      interval: 1
+      backupCount: 30
+  root:
+    level: INFO
+    handlers: [console, task]

@@ -1,0 +1,11 @@
+FROM hub.infervision.com/dev/ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y software-properties-common && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y python3.12 python3-pip tzdata language-pack-zh-hans curl \
+        \
+    && ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && echo Asia/Shanghai > /etc/timezone \
+    && ln -s /usr/bin/python3 /usr/bin/python \
+    && apt-get clean \
+    && rm -rf /tmp/*

@@ -1,0 +1,7 @@
+build:
+  image: hub.infervision.com/vendor/od-build:latest
+  stage: build
+  tags:
+    - od
+  script:
+    - od-build

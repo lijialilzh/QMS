@@ -1,0 +1,16 @@
+FROM hub.infervision.com/dev/doc-trace/trace-api.base:main.2601020911.73db473
+
+COPY requirements.txt /work/requirements.txt
+RUN pip install -i https://mirrors.aliyun.com/pypi/simple -r /work/requirements.txt
+
+COPY src-res /work/src-res
+COPY src /work/src
+COPY main_init.py /work/
+COPY main_app.py /work/
+COPY main.sh /work/
+COPY alembic.env.py /work/
+COPY .version /work/
+
+WORKDIR /work
+
+CMD ["bash", "main.sh"]

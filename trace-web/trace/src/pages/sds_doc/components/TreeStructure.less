@@ -1,0 +1,160 @@
+@import "../../../index.less";
+@import "../../../index.app.less";
+
+.tree-structure-container {
+    background-color: #ffffff;
+    // border: 1px solid #d9d9d9;
+    border-radius: 6px;
+    padding: 16px;
+    min-height: 100px;
+
+    .tree-structure-empty {
+        padding: 32px 0;
+    }
+
+    .tree-node-item-wrapper {
+      border: 1px solid #d9d9d9;
+      padding: 12px;
+      margin-bottom: 12px;
+      border-radius: 4px;
+    }
+
+    .tree-node-item {
+        padding: 12px;
+        margin-bottom: 8px;
+        border: 1px solid #e8e8e8;
+        border-radius: 4px;
+        background-color: #ffffff;
+
+        &.level-0 {
+            background-color: #fafafa;
+        }
+
+        .node-row {
+            display: flex;
+            align-items: center;
+
+            .node-add-sibling-btn {
+                margin-right: 4px;
+                padding: 0 4px;
+                color: #1890ff;
+                flex-shrink: 0;
+            }
+
+            .node-title-prefix {
+              white-space: nowrap;
+              margin-right: 24px;
+            }
+
+            .node-title {
+                flex: 0 0 160px;
+                max-width: 160px;
+                margin-right: 10px;
+            }
+
+            .node-sds-code {
+                margin-right: 10px;
+                flex: 0 0 120px;
+                max-width: 120px;
+            }
+
+            .node-text-area {
+                margin-right: 12px;
+                flex: 1 1 auto;
+                min-width: 0;
+            }
+
+            .node-pic {
+                margin-right: 12px;
+            }
+
+            .node-pic-readonly {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                min-width: 100px;
+                min-height: 100px;
+                max-width: 200px;
+                max-height: 200px;
+                border: 1px dashed #d9d9d9;
+                border-radius: 8px;
+                background: #fafafa;
+                overflow: hidden;
+                flex-shrink: 0;
+
+                img {
+                    width: 100%;
+                    height: 100%;
+                    object-fit: contain;
+                }
+            }
+
+            .node-content {
+                margin-right: 12px;
+            }
+
+            .node-file-ref {
+                min-width: 200px;
+                min-height: 32px;
+                padding: 4px 10px;
+                display: inline-flex;
+                align-items: center;
+                font-size: 14px;
+                border: 1px solid #d9d9d9;
+                border-radius: 4px;
+                background-color: #fafafa;
+                .node-file-link {
+                    color: #1890ff;
+                    font-size: 14px;
+                    &:hover {
+                        text-decoration: underline;
+                    }
+                }
+                .node-file-empty {
+                    color: rgba(0, 0, 0, 0.25);
+                    font-size: 14px;
+                    cursor: default;
+                }
+            }
+
+            .node-select {
+                width: 600px;
+                margin-right: 12px;
+            }
+
+            .node-srsreq-btn {
+                margin-right: 8px;
+                flex-shrink: 0;
+            }
+        }
+
+        .node-table {
+            margin-top: 12px;
+            padding-top: 12px;
+            border-top: 1px solid #e8e8e8;
+            max-width: 100%;
+
+            .node-table-header {
+                display: flex;
+                align-items: flex-start;
+                gap: 12px;
+
+                .node-table-scroll {
+                    flex: 1;
+                    min-width: 0;
+                    overflow-x: auto;
+                }
+
+                .node-table-actions {
+                    flex-shrink: 0;
+                    margin-top: 8px;
+                }
+            }
+
+            // 覆盖全局样式，确保表格正常显示
+            .ant-table-wrapper {
+                height: auto !important;
+            }
+        }
+    }
+}

@@ -1,0 +1,161 @@
+@import "../../index.less";
+@import "../../index.app.less";
+
+.srs-doc-detail {
+    // 查看模式：禁用输入框文字加深，便于阅读
+    &.read-only {
+        .ant-input[disabled],
+        .ant-input-textarea textarea.ant-input[disabled] {
+            color: rgba(0, 0, 0, 0.85);
+            background-color: #f5f5f5;
+        }
+        .ant-select-disabled .ant-select-selection-item {
+            color: rgba(0, 0, 0, 0.85);
+        }
+    }
+
+    .detail-content {
+        flex: 1;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        overflow-x: hidden;
+
+        .page-actions {
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #e8e8e8;
+            flex-shrink: 0;
+        }
+    }
+
+    .detail-form {
+        background-color: #ffffff;
+        border: 1px solid #d9d9d9;
+        border-radius: 6px;
+        padding: 24px;
+        max-width: 100%;
+        flex-shrink: 0;
+
+        .form-display-row {
+            .form-display-label,
+            .form-display-value {
+                color: rgba(0, 0, 0, 0.85);
+            }
+            .form-display-label {
+                margin-right: 8px;
+            }
+        }
+    }
+
+    .doc-section {
+        background-color: #ffffff;
+        border: 1px solid #d9d9d9;
+        border-radius: 6px;
+        padding: 24px;
+        margin-top: 24px;
+        flex-shrink: 0;
+
+        // 目录结构区域自然展开
+        &.doc-section-flex {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .doc-section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+
+            .doc-section-title {
+                font-size: 16px;
+                font-weight: 600;
+                color: #333333;
+            }
+
+            .change-desc-title {
+                font-size: 16px;
+                font-weight: 600;
+                color: #333333;
+            }
+
+            .doc-section-buttons {
+                display: flex;
+                gap: 8px;
+            }
+        }
+
+        .doc-desc-content {
+            background-color: #ffffff;
+            border: 1px solid #d9d9d9;
+            border-radius: 6px;
+            padding: 16px;
+            min-height: 100px;
+            color: #999999;
+            margin-top: 16px;
+
+            &.has-content {
+                color: #333333;
+            }
+        }
+
+    }
+
+    .extracted-doc-section {
+        .extracted-item-title {
+            font-weight: 600;
+            margin: 14px 0 8px;
+        }
+
+        .extracted-file-name {
+            border: 1px solid #d9d9d9;
+            border-radius: 6px;
+            padding: 8px 12px;
+            background: #fafafa;
+        }
+
+        .extracted-empty {
+            color: #999;
+            padding: 6px 0;
+        }
+    }
+
+    .change-desc-modal {
+        .change-desc-label {
+            margin-bottom: 8px;
+            color: #333333;
+        }
+
+        .change-desc-textarea {
+            margin-bottom: 0;
+        }
+    }
+
+    // 特殊处理表格高度，覆盖全局的 height: 0 设置
+    .doc-section {
+        .ant-table-wrapper {
+            height: auto !important;
+            margin-top: 16px;
+        }
+        .ant-spin-nested-loading {
+            height: auto !important;
+        }
+        .ant-spin-container {
+            height: auto !important;
+        }
+        .ant-table {
+            flex: none;
+            overflow-y: visible;
+        }
+    }
+}
+
+// 弹框内表格覆盖全局 .ant-table-wrapper { height: 0 }
+.srs-table-modal,
+.req-list-modal {
+    .ant-table-wrapper {
+        height: auto !important;
+    }
+}

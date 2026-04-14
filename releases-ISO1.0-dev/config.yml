@@ -1,0 +1,40 @@
+x-modular: true
+defaults:
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: '10'
+  restart: always
+flavors:
+  standard:
+    title:
+      质量体系管理
+    description:
+      质量体系管理
+variables:
+  - name: LANGUAGE
+    title: 语言
+    description:
+      符合 RFC5646 规范的语言标识符，用于前端业务。
+    type: string
+    default:
+      zh-CN
+  - name: LOG_LEVEL
+    default:
+      INFO
+  - name: SERVER_IP
+    title: 服务器 IP 地址
+    description:
+      医院内网接口上用于服务访问的 IP 地址，用于前端业务。
+    type: string
+    format: ipaddr
+    default:
+      $(ip route get 1 | awk '{ print $7 }' | head -n1)
+  - name: TIME_ZONE
+    title: 时区
+    description:
+      当前服务器所在的时区名称，用于数据统计业务。
+    type: string
+    default:
+      Asia/Shanghai

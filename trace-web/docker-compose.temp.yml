@@ -1,0 +1,33 @@
+services:
+
+  trace.web:
+    image: hub.infervision.com/dev/doc-trace/trace-web:main.2601260858.1bb2b06
+    restart: always
+    depends_on:
+      - trace.api
+    ports:
+      - 18022:80
+    volumes:
+      - ./data.trace:/usr/local/openresty/nginx/data.trace
+
+  trace.api:
+    image: hub.infervision.com/dev/doc-trace/trace-api:main.2601260853.3eb300d
+    restart: always
+    privileged: true
+    depends_on:
+      - trace.db
+    environment:
+      - DB_URL=postgresql://trace:test@trace.db:5432/trace
+    volumes:
+      - ./data.trace:/work/data.trace
+      - ./logs.api:/work/logs
+
+  trace.db:
+    image: hub.infervision.com/dev/doc-trace/postgres:15-alpine
+    environment:
+      - POSTGRES_USER=trace
+      - POSTGRES_PASSWORD=test
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./data.db:/var/lib/postgresql/data
+    restart: always

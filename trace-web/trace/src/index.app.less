@@ -1,0 +1,36 @@
+@menu-w: 200px;
+
+.searchbar {
+    padding: 24px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    flex-shrink: 0;
+    background: #eeeff1;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.03);
+
+    .ant-form-item {
+        margin-bottom: 0px !important;
+    }
+    .ant-form-item-control-input {
+        min-width: 180px;
+        width: auto !important;
+    }
+
+    .product-version-select {
+        width: max-content;
+    }
+}
+
+.hspace > *:not(:last-child) {
+  margin-right: 10px;
+}
+
+.tip {
+    max-height: 500px;
+    max-width: 800px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}

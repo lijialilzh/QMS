@@ -1,0 +1,594 @@
+[
+    {
+        "doc_id": 0,
+        "n_id": 0,
+        "p_id": 0,
+        "title": "1. 介绍",
+        "img_url": "",
+        "text": "",
+        "table": {},
+        "children": [
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "1.1. 编写目的",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "1.2. 范围",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "1.3. 参考资料",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": [
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "title": "1.3.1. 内部参考资料",
+                        "img_url": "",
+                        "text": "",
+                        "table": {},
+                        "children": []
+                    },
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "title": "1.3.2. 外部引用文件和标准",
+                        "img_url": "",
+                        "text": "",
+                        "table": {},
+                        "children": []
+                    }
+                ]
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "1.4. 术语",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            }
+        ]
+    },
+    {
+        "doc_id": 0,
+        "n_id": 0,
+        "p_id": 0,
+        "title": "2. 系统结构与功能模块",
+        "img_url": "",
+        "text": "",
+        "table": {},
+        "children": [
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "2.1. 物理拓扑图",
+                "sds_code": "",
+                "ref_type": "img_topo",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "2.2. 模块定义",
+                "sds_code": "",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "2.3. 系统结构图",
+                "sds_code": "",
+                "ref_type": "img_struct",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "2.4. 设计与需求追溯表",
+                "ref_type": "sds_traces",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            }
+        ]
+    },
+    {
+        "doc_id": 0,
+        "n_id": 0,
+        "p_id": 0,
+        "title": "3. DataProcessing",
+        "sds_code": "",
+        "img_url": "",
+        "text": "",
+        "table": {},
+        "children": [
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "3.1. 总体描述",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "3.2. 功能",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "3.3. 性能",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "3.4. 模块结构",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "3.5. 程序逻辑",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "3.6. 输入项",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "3.7. 输出项",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "3.8. 接口",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "3.9. 限制条件",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "3.10. 尚未解决的问题",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            }
+        ]
+    },
+    {
+        "doc_id": 0,
+        "n_id": 0,
+        "p_id": 0,
+        "title": "4. DLServer",
+        "sds_code": "",
+        "img_url": "",
+        "text": "",
+        "table": {},
+        "children": [
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "4.1. 总体描述",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "4.2. 功能",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "4.3. 性能",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "4.4. 模块结构",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "4.5. 程序逻辑",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "4.6. 输入项",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "4.7. 输出项",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "4.8. 接口",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "4.9. 限制条件",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "4.10. 尚未解决的问题",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            }
+        ]
+    },
+    {
+        "doc_id": 0,
+        "n_id": 0,
+        "p_id": 0,
+        "title": "5. RePACS",
+        "sds_code": "",
+        "img_url": "",
+        "text": "",
+        "table": {},
+        "children": [
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "5.1. 总体描述",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "5.2. 功能",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "5.3. 性能",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "5.4. 模块结构",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "5.5. 程序逻辑",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "5.6. 数据结构",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "5.7. 接口",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "5.8. 限制条件",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "5.9. 尚未解决的问题",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            }
+        ]
+    },
+    {
+        "doc_id": 0,
+        "n_id": 0,
+        "p_id": 0,
+        "title": "6. NeoViewer",
+        "sds_code": "",
+        "img_url": "",
+        "text": "",
+        "table": {},
+        "children": [
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "6.1. 总体描述",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "6.2. 功能",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "6.3. 性能",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "6.4. 数据结构",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "6.5. 接口",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "6.6. 功能设计",
+                "ref_type": "sds_reqds",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "6.7. 限制条件",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "6.8. 尚未解决的问题",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            }
+        ]
+    },
+    {
+        "doc_id": 0,
+        "n_id": 0,
+        "p_id": 0,
+        "title": "7. 法规符合性要求(网络安全)",
+        "img_url": "",
+        "text": "",
+        "table": {},
+        "children": [
+          {
+            "doc_id": 0,
+            "n_id": 0,
+            "p_id": 0,
+            "title": "7.1. 网络安全流程图",
+            "sds_code": "",
+            "ref_type": "img_flow",
+            "img_url": "",
+            "text": "",
+            "table": {},
+            "children": []
+          }
+        ]
+    },
+    {
+        "doc_id": 0,
+        "n_id": 0,
+        "p_id": 0,
+        "title": "8. 外部连接",
+        "img_url": "",
+        "text": "",
+        "table": {},
+        "children": [
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "8.1. 接口",
+                "img_url": "",
+                "text": "",
+                "table": {},
+                "children": []
+            }
+        ]
+    }
+]

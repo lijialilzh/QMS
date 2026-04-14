@@ -1,0 +1,19 @@
+.prod_haz {
+    .ltxt {
+        max-width: 200px;
+    }
+    .deal {
+        max-width: 200px;
+    }
+
+    // 覆盖全局固定高度，允许多选标签换行后撑高
+    .rcms-select.ant-select-multiple {
+        .ant-select-selector {
+            height: auto !important;
+            min-height: 35.14px !important;
+            align-items: flex-start !important;
+            overflow-y: auto;
+            max-height: 140px;
+        }
+    }
+}
