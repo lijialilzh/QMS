@@ -150,6 +150,34 @@
             overflow-y: visible;
         }
     }
+
+    // 仅编辑态：RCM + 内容 + 操作列固定同一行，不换行
+    &:not(.read-only) {
+        .tree-structure-container {
+            .tree-node-item {
+                .node-row.has-rcm,
+                .node-row.has-rcm-text {
+                    display: flex !important;
+                    flex-wrap: nowrap !important;
+                    align-items: flex-start !important;
+                    overflow-x: auto;
+                }
+
+                .node-row.has-rcm .node-text-area,
+                .node-row.has-rcm-text .node-text-area {
+                    flex: 1 1 520px !important;
+                    min-width: 420px !important;
+                    align-self: flex-start !important;
+                }
+
+                .node-row .node-actions {
+                    flex: 0 0 auto !important;
+                    white-space: nowrap !important;
+                    align-self: flex-start !important;
+                }
+            }
+        }
+    }
 }
 
 // 弹框内表格覆盖全局 .ant-table-wrapper { height: 0 }

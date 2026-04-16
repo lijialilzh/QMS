@@ -37,6 +37,12 @@ NAME_DICT = {
 }
 
 class Server(object):
+    @staticmethod
+    def __normalize_name(value: str):
+        txt = (value or "").strip()
+        txt = re.sub(r"^[\d一二三四五六七八九十零]+([.\-、）)\s]+[\d一二三四五六七八九十零]*)*", "", txt)
+        txt = re.sub(r"[\s:：\-_，。；;、,.()（）]+", "", txt)
+        return txt.lower()
     
     async def update_sds_trace(self, form: SdsTraceForm):
         try:
@@ -94,10 +100,31 @@ class Server(object):
     def __find_chapter(self, paths: List[str] = None):
         paths.reverse()
         for path in paths:
-            chapter =re.search(r'(\d(\.\d)*)', path or "")
+            chapter = re.search(r'(?<!\d)(\d+(?:\.\d+)*)(?!\d)', path or "")
             chapter = chapter.group() if chapter else None
             if chapter:
                 return chapter
+
+    @staticmethod
+    def __extract_chapter_code(value: str):
+        txt = (value or "").strip()
+        if not txt:
+            return None
+        matched = re.search(r'(?<!\d)(\d+(?:\.\d+)*)(?!\d)', txt)
+        return matched.group(1) if matched else None
+
+    def __find_path_by_names(self, level: int, names: List[str], nodes: List[SdsNodeForm], paths: List[str] = None):
+        for node in nodes or []:
+            title = getattr(node, "title", "") or ""
+            label = getattr(node, "label", "") or ""
+            merged = self.__normalize_name(f"{title}{label}")
+            npaths = [node.title] if level == 0 else paths + [node.title]
+            if merged and any(name and (merged == name or name in merged) for name in names or []):
+                return npaths, node
+            cpaths, cnode = self.__find_path_by_names(level + 1, names, node.children, npaths)
+            if cnode:
+                return cpaths, cnode
+        return paths, None
 
     def __fix_location(self, objs:List[SdsTraceObj]):
         doc_dict = dict()
@@ -219,13 +246,36 @@ class Server(object):
             obj.type_code = row_req.type_code
             obj.type_name = type_names.get(row_req.id) or default_types.get(row_req.type_code) or row_req.type_code
             obj.chapter = NAME_DICT.get(obj.chapter) or obj.chapter
+            # 章节号自动回填：优先从SDS树里按 sds_code 反推（如 2.1 / 5.6.3）
+            doc_tree = doc_trees.get(row_sdsdoc.id)
+            paths, _ = self.__find_path(0, row_reqd.sds_code, doc_tree, [])
+            if not paths:
+                names = []
+                for txt in [obj.name, obj.sub_function, obj.function, obj.module]:
+                    n = self.__normalize_name(txt)
+                    if n and n not in names:
+                        names.append(n)
+                if names:
+                    paths, _ = self.__find_path_by_names(0, names, doc_tree, [])
+            chapter_from_tree = self.__find_chapter((paths or []).copy()) if paths else None
+            if chapter_from_tree:
+                obj.chapter = chapter_from_tree
             if not obj.location:
-                doc_tree = doc_trees.get(row_sdsdoc.id)
-                paths, found = self.__find_path(0, row_reqd.sds_code, doc_tree, [])
                 obj.location = self.__find_chapter(paths)
                 logger.info("location: %s %s", row_reqd.sds_code, obj.location)
+            obj.chapter = self.__extract_chapter_code(obj.chapter) or None
+            obj.location = self.__extract_chapter_code(obj.location) or None
             objs.append(obj)
         self.__fix_location(objs)
+        for obj in objs:
+            obj.location = self.__extract_chapter_code(obj.location) or None
+            chapter_code = self.__extract_chapter_code(obj.chapter)
+            if chapter_code:
+                obj.chapter = chapter_code
+            elif obj.location:
+                obj.chapter = obj.location
+            else:
+                obj.chapter = None
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
         
     async def get_sds_trace(self, id: int):

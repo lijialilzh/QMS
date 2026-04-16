@@ -1,18 +1,20 @@
 import logging
 import sys
+import re
 from typing import Any, List, Tuple
 from sqlalchemy import select, func, delete, or_
 from sqlalchemy.sql import desc
 from ..obj.vobj_user import UserObj
 from ..model.srs_type import SrsType
 from ..model.srs_reqd import SrsReqd
-from ..model.sds_doc import SdsDoc
+from ..model.sds_doc import SdsDoc, SdsNode
 from ..model.srs_doc import SrsDoc
 from ..model.product import Product, UserProd
 from ..model.srs_req import SrsReq
 from ..model.sds_reqd import SdsReqd, Logic
 from ..obj.tobj_sds_reqd import SdsReqdForm, LogicForm
 from ..obj.vobj_sds_reqd import SdsReqdObj
+from ..obj.tobj_sds_doc import SdsNodeForm
 from ..utils.sql_ctx import db
 from ..utils import get_uuid
 from ..utils.i18n import ts
@@ -23,6 +25,198 @@ logger = logging.getLogger(__name__)
 
 
 class Server(object):
+    @staticmethod
+    def __normalize_code(code: str):
+        txt = (code or "").strip().upper()
+        txt = re.sub(r"\s+", "", txt)
+        txt = re.sub(r"[，。；;、,.]+$", "", txt)
+        return txt
+
+    @staticmethod
+    def __to_sds_code(srs_code: str):
+        txt = Server.__normalize_code(srs_code)
+        if txt.startswith("SRS-"):
+            return "SDS-" + txt[4:]
+        return txt
+
+    @staticmethod
+    def __normalize_name(value: str):
+        txt = (value or "").strip()
+        txt = re.sub(r"^[\d一二三四五六七八九十零]+([.\-、）)\s]+[\d一二三四五六七八九十零]*)*", "", txt)
+        txt = re.sub(r"[\s:：\-_，。；;、,.()（）]+", "", txt)
+        return txt.lower()
+
+    @staticmethod
+    def __normalize_section_name(value: str):
+        txt = (value or "").strip()
+        txt = re.sub(r"^[（(]?[一二三四五六七八九十0-9]+[)）.\s、]*", "", txt)
+        txt = re.sub(r"[\s:：\-_，。；;、]+", "", txt)
+        return txt
+
+    def __detect_field(self, node: SdsNodeForm):
+        merged = self.__normalize_section_name(f"{getattr(node, 'label', '')}{getattr(node, 'title', '')}")
+        if not merged:
+            return None
+        if any(k in merged for k in ["总体描述", "需求概述", "概述"]):
+            return "overview"
+        if "程序逻辑" in merged or "逻辑" in merged:
+            return "logic_txt"
+        if "输入项" in merged or merged == "输入":
+            return "intput"
+        if "输出项" in merged or merged == "输出":
+            return "output"
+        if "接口" in merged:
+            return "interface"
+        if "功能" in merged:
+            return "func_detail"
+        return None
+
+    def __query_doc_tree(self, doc_ids: List[int]):
+        doc_trees = dict()
+        if not doc_ids:
+            return doc_trees
+        sql = select(SdsNode).where(SdsNode.doc_id.in_(doc_ids)).order_by(SdsNode.priority)
+        nodes: List[SdsNode] = db.session.execute(sql).scalars().all()
+        doc_nodes = dict()
+        for node in nodes:
+            doc_nodes.setdefault(node.doc_id, []).append(node)
+
+        for doc_id, rows in doc_nodes.items():
+            tree = []
+            obj_dict = dict()
+            objs = []
+            for node in rows:
+                obj = SdsNodeForm(
+                    children=[],
+                    doc_id=node.doc_id,
+                    n_id=node.n_id,
+                    p_id=node.p_id,
+                    title=node.title,
+                    label=node.label,
+                    img_url=node.img_url,
+                    text=node.text,
+                    ref_type=node.ref_type,
+                    sds_code=node.sds_code,
+                )
+                obj_dict[obj.n_id] = obj
+                objs.append(obj)
+            for obj in objs:
+                if obj.p_id == 0:
+                    tree.append(obj)
+                else:
+                    parent = obj_dict.get(obj.p_id)
+                    if parent:
+                        parent.children.append(obj)
+            doc_trees[doc_id] = tree
+        return doc_trees
+
+    def __extract_payload_under_node(self, node: SdsNodeForm):
+        payload = dict()
+
+        def walk(nodes):
+            for n in nodes or []:
+                field = self.__detect_field(n)
+                text = (getattr(n, "text", "") or "").strip()
+                if field and text:
+                    old = payload.get(field, "")
+                    if not old or len(text) > len(old):
+                        payload[field] = text
+                walk(getattr(n, "children", None) or [])
+
+        walk([node])
+        return payload
+
+    def __find_best_req_node(self, tree: List[SdsNodeForm], req: SrsReq, row_srsreqd: SrsReqd):
+        req_names = []
+        for txt in [getattr(row_srsreqd, "name", None), req.sub_function, req.function, req.module]:
+            n = self.__normalize_name(txt)
+            if n:
+                req_names.append(n)
+        req_names = list(dict.fromkeys(req_names))
+        if not req_names:
+            return None
+
+        exact_hit = None
+        fuzzy_hit = None
+
+        def walk(nodes):
+            nonlocal exact_hit, fuzzy_hit
+            for node in nodes or []:
+                merged = self.__normalize_name(f"{getattr(node, 'title', '')}{getattr(node, 'label', '')}")
+                if merged:
+                    if any(merged == name for name in req_names):
+                        exact_hit = exact_hit or node
+                    elif any(len(name) >= 2 and name in merged for name in req_names):
+                        fuzzy_hit = fuzzy_hit or node
+                walk(getattr(node, "children", None) or [])
+
+        walk(tree or [])
+        return exact_hit or fuzzy_hit
+
+    def __extract_imported_fields(self, tree: List[SdsNodeForm], req: SrsReq, row_srsreqd: SrsReqd):
+        if not tree:
+            return {}
+
+        target_code = self.__to_sds_code(req.code)
+        by_code = {}
+
+        def walk_by_code(nodes, current_code=""):
+            for node in nodes or []:
+                node_code = self.__normalize_code(getattr(node, "sds_code", "") or "")
+                active_code = node_code or current_code
+                field = self.__detect_field(node)
+                text = (getattr(node, "text", "") or "").strip()
+                if active_code == target_code and field and text:
+                    old = by_code.get(field, "")
+                    if not old or len(text) > len(old):
+                        by_code[field] = text
+                walk_by_code(getattr(node, "children", None) or [], active_code)
+
+        walk_by_code(tree)
+        if by_code:
+            return by_code
+
+        req_node = self.__find_best_req_node(tree, req, row_srsreqd)
+        if not req_node:
+            return {}
+        return self.__extract_payload_under_node(req_node)
+
+    def __split_mixed_io_interface(self, values: dict):
+        result = dict(values or {})
+        fields = ["intput", "output", "interface"]
+        marker_map = {"输入项": "intput", "输出项": "output", "接口": "interface"}
+        expected_marker = {"intput": "输入项", "output": "输出项", "interface": "接口"}
+        marker_re = re.compile(r"(输入项|输出项|接口)(?:描述)?\s*[：:]?")
+
+        for src_field in fields:
+            raw = (result.get(src_field) or "").strip()
+            if not raw:
+                continue
+            hits = list(marker_re.finditer(raw))
+            if not hits:
+                continue
+
+            # 单标签且标签和当前字段一致：视为正常文案，不做迁移
+            if len(hits) == 1 and hits[0].group(1) == expected_marker.get(src_field):
+                continue
+
+            # 触发拆分：先清空来源字段，再按标签回填
+            result[src_field] = ""
+            for idx, hit in enumerate(hits):
+                marker = hit.group(1)
+                target = marker_map.get(marker)
+                if not target:
+                    continue
+                start = hit.end()
+                end = hits[idx + 1].start() if idx + 1 < len(hits) else len(raw)
+                seg = raw[start:end].strip(" \t\r\n:：;；，,。")
+                if not seg:
+                    continue
+                old = (result.get(target) or "").strip()
+                if (not old) or len(seg) > len(old):
+                    result[target] = seg
+        return result
+
     
     async def update_sds_reqd(self, form: SdsReqdForm, new_imgs: List[Any] = None, new_logics: List[LogicForm] = None, alt_logics: List[LogicForm] = None):
         try:
@@ -110,8 +304,30 @@ class Server(object):
         sql = sql.offset(page_size * page_index).limit(page_size).order_by(desc(SdsDoc.id), SrsReq.code)
         rows: List[Tuple[SdsReqd, SrsReq, SrsReqd, SrsType, SdsDoc, SrsDoc, Product]] = db.session.execute(sql).all()
         rows = self.__resort_rows(rows)
+        doc_ids = list(set([row_sdsdoc.id for _, _, _, _, row_sdsdoc, _, _ in rows]))
+        doc_trees = self.__query_doc_tree(doc_ids)
+        changed = False
         objs = []
         for row_reqd, row_req, row_srsreqd, row_type, row_sdsdoc, row_srsdoc, row_product in rows:
+            values = self.__extract_imported_fields(doc_trees.get(row_sdsdoc.id), row_req, row_srsreqd)
+            for field in ["intput", "output", "interface"]:
+                cur_val = (getattr(row_reqd, field, None) or "").strip()
+                if cur_val and not values.get(field):
+                    values[field] = cur_val
+            values = self.__split_mixed_io_interface(values)
+            for field in ["overview", "func_detail", "logic_txt", "intput", "output", "interface"]:
+                old_val = (getattr(row_reqd, field, None) or "").strip()
+                new_val = (values.get(field) or "").strip()
+                should_update = (not old_val) and bool(new_val)
+                # 已有脏数据（如接口列里混入“输入项/输出项”）时允许覆盖清洗
+                if field == "interface" and old_val and re.search(r"(输入项|输出项)", old_val):
+                    should_update = old_val != new_val
+                if field in ["intput", "output"] and old_val in ["-", "/"] and new_val:
+                    should_update = True
+                if should_update:
+                    setattr(row_reqd, field, new_val)
+                    changed = True
+
             obj = SdsReqdObj(**row_reqd.dict())
             obj.srs_code = row_req.code
             if row_srsreqd:
@@ -131,6 +347,8 @@ class Server(object):
                 obj.product_name = row_product.name
                 obj.product_version = row_product.full_version
             objs.append(obj)
+        if changed:
+            db.session.commit()
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
         
     async def get_sds_reqd(self, id: int):

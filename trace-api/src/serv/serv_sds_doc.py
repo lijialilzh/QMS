@@ -101,6 +101,106 @@ class Server(object):
 
         walk(nodes or [])
 
+    @staticmethod
+    def __normalize_code(code: str):
+        txt = (code or "").strip().upper()
+        txt = re.sub(r"\s+", "", txt)
+        txt = re.sub(r"[，。；;、,.]+$", "", txt)
+        return txt
+
+    @staticmethod
+    def __to_srs_code(code: str):
+        txt = Server.__normalize_code(code)
+        if txt.startswith("SDS-"):
+            return "SRS-" + txt[4:]
+        return txt
+
+    @staticmethod
+    def __normalize_section_name(value: str):
+        txt = (value or "").strip()
+        txt = re.sub(r"^[（(]?[一二三四五六七八九十0-9]+[)）.\s、]*", "", txt)
+        txt = re.sub(r"[\s:：\-_，。；;、]+", "", txt)
+        return txt
+
+    def __detect_sds_reqd_field(self, node: SdsNodeForm):
+        merged = self.__normalize_section_name(f"{getattr(node, 'label', '')}{getattr(node, 'title', '')}")
+        if not merged:
+            return None
+        if any(k in merged for k in ["总体描述", "需求概述", "概述"]):
+            return "overview"
+        if "程序逻辑" in merged or "逻辑" in merged:
+            return "logic_txt"
+        if "输入项" in merged or merged == "输入":
+            return "intput"
+        if "输出项" in merged or merged == "输出":
+            return "output"
+        if "接口" in merged:
+            return "interface"
+        # “功能”放在逻辑之后，避免“子功能”误判
+        if "功能" in merged:
+            return "func_detail"
+        return None
+
+    def __extract_sds_reqd_payload(self, nodes: List[SdsNodeForm]):
+        payload: Dict[str, Dict[str, str]] = {}
+
+        def save_value(code: str, field: str, text: str):
+            if not code or not field or not text:
+                return
+            data = payload.setdefault(code, {})
+            old = data.get(field, "")
+            # 保留信息量更大的文本，避免被短标题覆盖
+            if not old or len(text) > len(old):
+                data[field] = text
+
+        def walk(node_list: List[SdsNodeForm], current_code: str = ""):
+            for node in node_list or []:
+                node_code = self.__normalize_code(getattr(node, "sds_code", "") or "")
+                active_code = node_code or current_code
+                field = self.__detect_sds_reqd_field(node)
+                text = (getattr(node, "text", "") or "").strip()
+                if active_code and field and text:
+                    save_value(active_code, field, text)
+                if getattr(node, "children", None):
+                    walk(node.children or [], active_code)
+
+        walk(nodes or [])
+        return payload
+
+    def __sync_imported_sds_reqd_fields(self, sds_doc_id: int, srs_doc_id: int, nodes: List[SdsNodeForm]):
+        reqd_payload = self.__extract_sds_reqd_payload(nodes)
+        if not reqd_payload:
+            return
+        srs_codes = [self.__to_srs_code(code) for code in reqd_payload.keys() if code]
+        srs_codes = [code for code in srs_codes if code]
+        if not srs_codes:
+            return
+
+        req_rows = db.session.execute(
+            select(SrsReq).where(SrsReq.doc_id == srs_doc_id, SrsReq.code.in_(srs_codes))
+        ).scalars().all()
+        if not req_rows:
+            return
+
+        req_id_map = {row.id: row.code for row in req_rows}
+        sds_reqd_rows = db.session.execute(
+            select(SdsReqd).where(SdsReqd.doc_id == sds_doc_id, SdsReqd.req_id.in_(list(req_id_map.keys())))
+        ).scalars().all()
+        if not sds_reqd_rows:
+            return
+
+        for row in sds_reqd_rows:
+            srs_code = req_id_map.get(row.req_id, "")
+            sds_code = self.__normalize_code(srs_code.replace("SRS-", "SDS-")) if srs_code else ""
+            values = reqd_payload.get(sds_code) or reqd_payload.get(self.__normalize_code(srs_code))
+            if not values:
+                continue
+            for field in ["overview", "func_detail", "logic_txt", "intput", "output", "interface"]:
+                val = (values.get(field) or "").strip()
+                if val:
+                    setattr(row, field, val)
+        db.session.commit()
+
     async def import_sds_doc_word(self, product_id: int, version: str, change_log: str, file):
         if Document is None or DocxTable is None or Paragraph is None:
             return Resp.resp_err(msg="当前环境缺少 python-docx 依赖，暂不可用 Word 导入。")
@@ -139,7 +239,10 @@ class Server(object):
                 change_log=change_log,
                 content=sds_content,
             )
-            return await self.add_sds_doc(form)
+            resp = await self.add_sds_doc(form)
+            if resp.code == 200 and resp.data and resp.data.id:
+                self.__sync_imported_sds_reqd_fields(resp.data.id, srs_row.id, sds_content)
+            return resp
         except Exception:
             logger.exception("")
             db.session.rollback()

@@ -106,6 +106,9 @@ export default () => {
 
     const normalizePlain = (value?: string) => String(value || "").replace(/\s+/g, "").toLowerCase();
     const stripTitlePrefixMarks = (value?: string) => String(value || "").replace(/^[\s\u3000•·▪■◆●○□◇\-–—]+/, "").trim();
+    const IMPORTED_PLACEHOLDER_RE = /^导入(表格|图片)\d*$/;
+    const HEADING_NUM_RE = /^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/;
+    const TABLE_CAPTION_RE = /^\s*(?:表|table)\s*\d+(?:[.\-_]\d+)*\s*[:：、.．-]?\s*.*$/i;
     const hasChapterTitle = (title?: string) => /^\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))\S+/.test(stripTitlePrefixMarks(title));
     const hasRenderableTable = (table: any): boolean => {
         if (!table || !Array.isArray(table.headers) || table.headers.length === 0) return false;
@@ -185,6 +188,129 @@ export default () => {
             out.push(node);
         }
         return out;
+    };
+    const parseHeadingNumber = (title?: string): string | undefined => {
+        const matched = String(title || "").trim().match(HEADING_NUM_RE);
+        return matched?.[1];
+    };
+    const isTableImportNode = (node: TreeNode): boolean => {
+        const title = String(node.title || "").trim();
+        return /^导入表格\d*$/.test(title) && !!node.table && Array.isArray(node.table.headers) && node.table.headers.length > 0;
+    };
+    const isPlaceholderTitle = (title?: string): boolean => IMPORTED_PLACEHOLDER_RE.test(String(title || "").trim());
+    const isNumberableNode = (node: TreeNode): boolean => {
+        const title = String(node.title || "").trim();
+        if (!title) return false;
+        if (IMPORTED_PLACEHOLDER_RE.test(title)) return false;
+        const pureTitle = title
+            .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+            .replace(/\s+/g, "");
+        if (/^(目录|需求规格说明|文件修订记录|软件详细设计说明书|软件详细设计)$/.test(pureTitle)) return false;
+        return true;
+    };
+    const decorateImportedWordTree = (roots: TreeNode[]): TreeNode[] => {
+        const counters = [0, 0, 0, 0, 0];
+        const normalizeBusinessTitle = (title?: string) =>
+            String(title || "")
+                .trim()
+                .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+                .replace(/\s+/g, "");
+        const isFrontMatterTitle = (title?: string) => {
+            const t = normalizeBusinessTitle(title);
+            return /^(目录|需求规格说明|文件修订记录|软件详细设计说明书|软件详细设计)$/.test(t);
+        };
+        const rootExistingNumbers = (roots || [])
+            .filter((node) => isNumberableNode(node) && !isFrontMatterTitle(node.title))
+            .map((node) => parseHeadingNumber(node.title))
+            .filter((n): n is string => !!n);
+        const firstRootMajor = rootExistingNumbers
+            .map((num) => Number(String(num).split(".")[0]))
+            .find((n) => Number.isFinite(n) && n > 0);
+        // 目录/封面等前置章节常占用“1”，业务章节应从 1 开始显示
+        const rootMajorOffset = firstRootMajor && firstRootMajor > 1 ? (firstRootMajor - 1) : 0;
+        const normalizeExistingNumber = (number: string): string => {
+            if (!rootMajorOffset) return number;
+            const parts = String(number || "").split(".").map((p) => Number(p));
+            if (!parts.length || !Number.isFinite(parts[0])) return number;
+            const shiftedMajor = parts[0] - rootMajorOffset;
+            if (shiftedMajor <= 0) return number;
+            parts[0] = shiftedMajor;
+            return parts.map((n) => String(n)).join(".");
+        };
+        const syncByNumber = (number: string) => {
+            const parts = number.split(".").map((p) => Number(p)).filter((n) => Number.isFinite(n) && n > 0);
+            if (!parts.length) return;
+            const depth = Math.min(parts.length, 5);
+            for (let i = 0; i < depth; i++) counters[i] = parts[i];
+            for (let i = depth; i < 5; i++) counters[i] = 0;
+        };
+        const nextNumber = (depth: number): string => {
+            const d = Math.max(1, Math.min(depth, 5));
+            for (let i = 0; i < d - 1; i++) {
+                if (counters[i] <= 0) counters[i] = 1;
+            }
+            counters[d - 1] = counters[d - 1] > 0 ? counters[d - 1] + 1 : 1;
+            for (let i = d; i < 5; i++) counters[i] = 0;
+            return counters.slice(0, d).join(".");
+        };
+        const walk = (nodes: TreeNode[], depth: number): TreeNode[] => {
+            return (nodes || []).map((raw) => {
+                const node: TreeNode = { ...raw, children: [] };
+                const existing = parseHeadingNumber(node.title);
+                if (existing) {
+                    const normalizedExisting = normalizeExistingNumber(existing);
+                    syncByNumber(normalizedExisting);
+                    if (normalizedExisting !== existing) {
+                        node.title = String(node.title || "").replace(existing, normalizedExisting);
+                    }
+                } else if (isNumberableNode(node)) {
+                    const generated = nextNumber(depth);
+                    node.title = `${generated} ${String(node.title || "").trim()}`.trim();
+                }
+                const children = walk(raw.children || [], depth + 1);
+                const tableChildren = children.filter((child) => hasRenderableTable(child.table));
+                if (tableChildren.length > 0) {
+                    const lines = String(node.text || "").split(/\r?\n/);
+                    const captionIdx = lines
+                        .map((line, idx) => ({ line: String(line || "").trim(), idx }))
+                        .filter((item) => !!item.line && TABLE_CAPTION_RE.test(item.line))
+                        .map((item) => item.idx);
+                    if (captionIdx.length > 0) {
+                        let cursor = 0;
+                        const used = new Set<number>();
+                        node.children = children.map((child) => {
+                            if (!hasRenderableTable(child.table) || cursor >= captionIdx.length) return child;
+                            const idx = captionIdx[cursor++];
+                            const caption = String(lines[idx] || "").trim();
+                            if (!caption) return child;
+                            const childTitle = String(child.title || "").trim();
+                            const childText = String(child.text || "").trim();
+                            const canWriteToTitle = !childTitle || isPlaceholderTitle(childTitle);
+                            const canWriteToText = !childText;
+                            if (!canWriteToTitle && !canWriteToText) return child;
+                            used.add(idx);
+                            if (canWriteToTitle) {
+                                return { ...child, title: caption };
+                            }
+                            return { ...child, text: caption };
+                        });
+                        if (used.size > 0) {
+                            node.text = lines
+                                .filter((_line, idx) => !used.has(idx))
+                                .map((line) => String(line || "").trim())
+                                .filter(Boolean)
+                                .join("\n");
+                        }
+                    } else {
+                        node.children = children;
+                    }
+                } else {
+                    node.children = children;
+                }
+                return node;
+            });
+        };
+        return walk(roots || [], 1);
     };
     const relocateDataStructureTables = (roots: TreeNode[]): TreeNode[] => {
         if (!Array.isArray(roots) || roots.length === 0) return roots;
@@ -291,7 +417,8 @@ export default () => {
                     // 解析树状结构数据
                     const parsedTree = (targetRow.content || []).map((node: any) => parseTreeNode(node));
                     const normalizedTree = normalizeFalseSingleDigitHeadings(parsedTree);
-                    const parsedContent = relocateDataStructureTables(normalizedTree);
+                    const relocatedTree = relocateDataStructureTables(normalizedTree);
+                    const parsedContent = decorateImportedWordTree(relocatedTree);
 
                     dispatch({
                         loading: false,
@@ -655,7 +782,10 @@ export default () => {
                                 loadSrsDocList(targetRow.product_id);
                             }
 
-                            const parsedContent = relocateDataStructureTables((targetRow.content || []).map((node: any) => parseTreeNode(node)));
+                            const parsedTree = (targetRow.content || []).map((node: any) => parseTreeNode(node));
+                            const normalizedTree = normalizeFalseSingleDigitHeadings(parsedTree);
+                            const relocatedTree = relocateDataStructureTables(normalizedTree);
+                            const parsedContent = decorateImportedWordTree(relocatedTree);
                             dispatch({
                                 changeDescription: targetRow.change_log || "",
                                 docNId: targetRow.n_id || 0,

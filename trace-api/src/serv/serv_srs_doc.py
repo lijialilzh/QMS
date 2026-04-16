@@ -223,6 +223,9 @@ class Server(object):
         txt = (para.text or "").strip()
         if not txt:
             return None
+        # 业务规则：仅“章节号 + 粗体”识别为标题
+        if not Server.__is_bold_paragraph(para):
+            return None
         # 放宽：只要标题文本带明确章节号（如 5.7.1），即使未加粗也按章节识别。
         # 但排除“1.参数文件;”这类枚举项（单数字+点号+句末标点）。
         numbering = re.match(r"^(\d+(?:\.\d+){0,4})([\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))(.*)$", txt)
@@ -246,9 +249,7 @@ class Server(object):
             if re.search(r"[;；:：,，。！？!?]$", tail):
                 return None
             return max(1, min(chapter_no.count(".") + 1, 5))
-        # 对于“文本无显式编号”的场景，仍要求加粗，避免把正文误识别为标题。
-        if not Server.__is_bold_paragraph(para):
-            return None
+        # 文本无显式编号但为粗体标题时，尝试读取 Word 编号层级（numPr/outlineLvl）
         numpr_level = Server.__guess_numpr_level(para)
         return numpr_level
 
@@ -815,6 +816,7 @@ class Server(object):
         mime_map = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif", "bmp": "image/bmp", "webp": "image/webp"}
         img_idx = 0
         table_idx = 0
+        heading_counters = [0, 0, 0, 0, 0]
 
         def ensure_text_holder():
             nonlocal current
@@ -865,11 +867,36 @@ class Server(object):
                 urls.append(f"data:{mime};base64,{b64}")
             return urls
 
+        def sync_counters_with_number(number_text: str):
+            try:
+                parts = [int(p) for p in str(number_text or "").split(".") if str(p).strip()]
+            except Exception:
+                return None
+            if not parts:
+                return None
+            depth = min(len(parts), 5)
+            for idx in range(depth):
+                heading_counters[idx] = max(0, parts[idx])
+            for idx in range(depth, 5):
+                heading_counters[idx] = 0
+            return ".".join(str(v) for v in heading_counters[:depth] if v > 0)
+
+        def build_number_from_level(level: int):
+            depth = max(1, min(int(level or 1), 5))
+            for idx in range(depth - 1):
+                if heading_counters[idx] <= 0:
+                    heading_counters[idx] = 1
+            heading_counters[depth - 1] = heading_counters[depth - 1] + 1 if heading_counters[depth - 1] > 0 else 1
+            for idx in range(depth, 5):
+                heading_counters[idx] = 0
+            return ".".join(str(v) for v in heading_counters[:depth] if v > 0)
+
         for child in docx.element.body.iterchildren():
             tag = str(child.tag).lower()
             if tag.endswith("}p"):
                 para = Paragraph(child, docx._body)
                 txt = self.__normalize_text(para.text)
+                numpr_level = self.__guess_numpr_level(para) if txt else None
                 level = self.__guess_heading_level(para) if txt else None
                 # 在已进入任一章节（1/2/3...级）后，"1. xxx / 2. xxx" 这类枚举项按正文处理，不识别为标题。
                 if txt and level is not None and stack:
@@ -897,8 +924,18 @@ class Server(object):
                     if is_interface_parent and is_interface_subtitle:
                         level = min(parent_level + 1, 5)
                 if txt and level is not None:
-                    node = SrsNodeForm(title=txt, text="", children=[])
-                    heading_rows.append(dict(level=level, title=txt, number=self.__extract_heading_number(txt)))
+                    heading_number = self.__extract_heading_number(txt)
+                    title_with_number = txt
+                    if heading_number:
+                        synced = sync_counters_with_number(heading_number)
+                        heading_number = synced or heading_number
+                    elif numpr_level is not None:
+                        generated_number = build_number_from_level(level)
+                        if generated_number:
+                            heading_number = generated_number
+                            title_with_number = f"{generated_number} {txt}".strip()
+                    node = SrsNodeForm(title=title_with_number, text="", children=[])
+                    heading_rows.append(dict(level=level, title=title_with_number, number=heading_number))
                     srs_hit = srs_pattern.search(txt)
                     if srs_hit:
                         node.srs_code = srs_hit.group(0).upper()

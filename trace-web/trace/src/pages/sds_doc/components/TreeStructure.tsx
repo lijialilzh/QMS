@@ -95,6 +95,16 @@ function isSystemPlaceholderTitle(text: string): boolean {
     return /^导入(?:图片|表格)\d*$/.test(value) || isUuidLike(value);
 }
 
+function shouldAssignChapterNo(node: TreeNode): boolean {
+    const title = String(node.title || "").trim();
+    const label = String(node.label || "").trim();
+    if (label) return true;
+    if (!title) return false;
+    if (isSystemPlaceholderTitle(title)) return false;
+    if (isStrictTableCaptionTitle(title)) return false;
+    return true;
+}
+
 function isImageNodeOnly(node: TreeNode): boolean {
     const hasTable = !!(node.table && Array.isArray(node.table.headers) && node.table.headers.length > 0);
     return !!node.img_url && !node.text && !hasTable && (!node.children || node.children.length === 0);
@@ -411,6 +421,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     );
 
     const hasTable = hasRenderableTable(node.table);
+    const hideImportedTablePlaceholderTitle = !readOnly && hasTable && isSystemPlaceholderTitle(title);
+    const editDisplayTitle = hideImportedTablePlaceholderTitle ? "" : node.title;
     const isDataStructureSection = (() => {
         const merged = normalizeKeywordText(`${node.title || ""} ${node.text || ""}`);
         return merged.includes("5.6") && merged.includes("数据结构");
@@ -425,13 +437,21 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
             if (child.n_id) childCaptionById.set(String(child.n_id), cap);
         }
     });
+    const mergedImageOnlyChildren = imageOnlyChildren.filter((child) => {
+        const childTitle = String(child.title || "").trim();
+        const cap = childCaptionById.get(String(child.id)) || childCaptionById.get(String(child.n_id || ""));
+        return isSystemPlaceholderTitle(childTitle) || !!cap;
+    });
     const embeddedImageChild = readOnly ? imageOnlyChildren.find((child) => {
         const cap = childCaptionById.get(String(child.id)) || childCaptionById.get(String(child.n_id || ""));
         return !!(cap || child.label || child.img_url);
     }) : undefined;
-    const firstImageChild = imageOnlyChildren.find((child) => !!child.img_url);
+    const firstImageChild = mergedImageOnlyChildren.find((child) => !!child.img_url) || imageOnlyChildren.find((child) => !!child.img_url);
     const embeddedImageChildIdSet = new Set<string>(
         embeddedImageChild ? [String(embeddedImageChild.id), String(embeddedImageChild.n_id || "")] : []
+    );
+    const mergedImageChildIdSet = new Set(
+        mergedImageOnlyChildren.flatMap((child) => [String(child.id), String(child.n_id || "")])
     );
     const tableChildren = (node.children || []).filter((child) => hasRenderableTable(child.table) && !child.img_url);
     const inlineTableChildren = (readOnly)
@@ -469,7 +489,12 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     });
     const displayImageUrl = node.img_url || embeddedImageChild?.img_url || firstImageChild?.img_url || "";
     const visibleChildren = (node.children || []).filter((child) => {
-        if (!readOnly) return true;
+        if (!readOnly) {
+            if (mergedImageChildIdSet.has(String(child.id)) || mergedImageChildIdSet.has(String(child.n_id || ""))) {
+                return false;
+            }
+            return true;
+        }
         if (inlineTableChildIdSet.has(String(child.id)) || inlineTableChildIdSet.has(String(child.n_id || ""))) {
             return false;
         }
@@ -695,7 +720,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   ) : (
                       <Input
                           className="node-title"
-                          value={node.title}
+                          value={editDisplayTitle}
                           onChange={(e) => onTitleChange(node.id, e.target.value)}
                           placeholder={ts('please_input_title')}
                           disabled={readOnly}
@@ -986,7 +1011,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                     isStrictTableCaptionTitle(childTitle) &&
                     !String(child.text || "").trim()
                 );
-                const childHasMeaningfulTitle = !childIsPureTableCarrier && !childIsTableCaptionCarrier && (!!childLabel || (!!childTitle && !isSystemPlaceholderTitle(childTitle)));
+                const childHasMeaningfulTitle = !childIsPureTableCarrier && !childIsTableCaptionCarrier && shouldAssignChapterNo(child);
                 const nextChapterNo = childHasMeaningfulTitle ? `${chapterNo || ""}.${++childChapterCounter}`.replace(/^\./, "") : chapterNo;
                 return (
                     <TreeNodeItem
@@ -1506,7 +1531,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                             isStrictTableCaptionTitle(nodeTitle) &&
                             !String(node.text || "").trim()
                         );
-                        const hasMeaningfulTitle = !nodeIsPureTableCarrier && !nodeIsTableCaptionCarrier && (!!nodeLabel || (!!nodeTitle && !isSystemPlaceholderTitle(nodeTitle)));
+                        const hasMeaningfulTitle = !nodeIsPureTableCarrier && !nodeIsTableCaptionCarrier && shouldAssignChapterNo(node);
                         const rootChapterNo = hasMeaningfulTitle ? `${++rootChapterCounter}` : "";
                         const rootItemProps = {
                             node,
