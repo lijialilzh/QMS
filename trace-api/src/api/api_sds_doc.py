@@ -26,6 +26,16 @@ server = Server()
 async def add_sds_doc(form: SdsDocForm):
     return await server.add_sds_doc(form)
 
+@router.post("/import_sds_doc_word", summary="导入Word并创建SDS_DOC", response_model=Resp[SdsDocForm])
+@try_log(perm=Perms.sds_doc_edit)
+async def import_sds_doc_word(
+    product_id: int = Form(...),
+    version: str = Form(...),
+    change_log: str = Form(""),
+    file: UploadFile = File(...)
+):
+    return await server.import_sds_doc_word(product_id=product_id, version=version, change_log=change_log, file=file)
+
 
 @router.get("/duplicate_sds_doc", summary="复制SDS_DOC", response_model=Resp[SdsDocForm])
 @try_log(perm=Perms.sds_doc_edit)

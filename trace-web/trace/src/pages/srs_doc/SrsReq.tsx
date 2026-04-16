@@ -496,7 +496,7 @@ const handleProductChange = (productId: number) => {
                       <Row gutter={24}>
                           <Col span={24}>
                               <Form.Item label={ts("srs_reqd.name") || "需求名称"} name="name">
-                                  <Input allowClear disabled={isViewMode} />
+                                  <Input allowClear disabled />
                               </Form.Item>
                           </Col>
                       </Row>

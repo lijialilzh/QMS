@@ -167,6 +167,7 @@ class Server(object):
             form.req_id = row_req.id
             form.doc_id = None
             form.code = None
+            form.name = None
             form.rcm_ids = None
             if rcm_ids is not None:
                 db.session.execute(delete(ReqRcm).where(ReqRcm.req_id == form.req_id))
@@ -195,11 +196,12 @@ class Server(object):
             rcm_ids = form.rcm_ids
             form.rcm_ids = None
             form.code = None
+            form.name = None
             if not row:
                 row = SrsReqd(**form.dict(exclude_none=True))
                 db.session.add(row)
             else:
-                excludes =  set(("req_id", "doc_id", "code"))
+                excludes =  set(("req_id", "doc_id", "code", "name"))
                 for key, value in form.dict().items():
                     if key in excludes or value is None:
                         continue

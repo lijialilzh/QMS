@@ -1,7 +1,7 @@
 import "./SdsDocDetail.less";
 import { Form, Input, Button, message, Select, Row, Col, Modal, Space, Table } from "antd";
 import { ArrowLeftOutlined, EditOutlined, DownloadOutlined, FileAddOutlined, PlusOutlined } from "@ant-design/icons";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { renderOneLineWithTooltip, useData } from "@/common";
@@ -20,7 +20,14 @@ export default () => {
     const params = useParams();
     const location = useLocation();
     const isReadOnly = location.pathname.includes("/sds_docs/view/");
+    const debug56Enabled = (() => {
+        const searchParams = new URLSearchParams(location.search || "");
+        const byUrl = searchParams.get("debug56") === "1";
+        const byStorage = typeof window !== "undefined" && window.localStorage.getItem("sds_debug_56") === "1";
+        return byUrl || byStorage;
+    })();
     const [editForm] = Form.useForm();
+    const treeStructureRef = useRef<TreeNode[]>([]);
     const [data, dispatch] = useData({
         loading: false,
         isEdit: false,
@@ -66,27 +73,197 @@ export default () => {
     const srsdocLabel = currentSrsdoc ? (currentSrsdoc.version || currentSrsdoc.full_version || "") : "";
     // 将后端数据转换为前端格式
     const parseTreeNode = (node: any): TreeNode => {
+        const hasValidHeaders = !!(
+            node.table &&
+            node.table.headers !== null &&
+            Array.isArray(node.table.headers) &&
+            node.table.headers.length > 0
+        );
+        const hasRowOrCellContent = !!(
+            node.table &&
+            (
+                (node.table.rows !== null && Array.isArray(node.table.rows) && node.table.rows.length > 0) ||
+                (Array.isArray(node.table.cells) && node.table.cells.length > 1)
+            )
+        );
         return {
             id: node.n_id || node.id || 0, // 使用后端的n_id作为前端的id
             doc_id: node.doc_id || 0,
             n_id: node.n_id || 0,
             p_id: node.p_id || 0,
             title: node.title || "",
+            ...(node.label !== undefined && { label: node.label ?? "" }),
             // 保留 sds_code：后端有该字段（含空字符串）则带上
             ...(node.sds_code !== undefined && { sds_code: node.sds_code ?? "" }),
             ...(node.ref_type !== undefined && { ref_type: node.ref_type }),
             img_url: node.img_url || "",
             text: node.text || "",
-            // 处理 table：如果是 { headers: null, rows: null } 或无效数据，设置为空对象
-            table: (node.table &&
-                   node.table.headers !== null &&
-                   node.table.rows !== null &&
-                   Array.isArray(node.table.headers) &&
-                   Array.isArray(node.table.rows) &&
-                   node.table.headers.length > 0 &&
-                   node.table.rows.length > 0) ? node.table : {},
+            // 处理 table：有表头且存在行或单元格结构时保留（避免 rows 为空时误丢合并单元格表格）
+            table: (hasValidHeaders && hasRowOrCellContent) ? node.table : {},
             children: (node.children || []).map((child: any) => parseTreeNode(child))
         };
+    };
+
+    const normalizePlain = (value?: string) => String(value || "").replace(/\s+/g, "").toLowerCase();
+    const stripTitlePrefixMarks = (value?: string) => String(value || "").replace(/^[\s\u3000•·▪■◆●○□◇\-–—]+/, "").trim();
+    const hasChapterTitle = (title?: string) => /^\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))\S+/.test(stripTitlePrefixMarks(title));
+    const hasRenderableTable = (table: any): boolean => {
+        if (!table || !Array.isArray(table.headers) || table.headers.length === 0) return false;
+        const hasRows = Array.isArray(table.rows) && table.rows.length > 0;
+        const hasCells = Array.isArray(table.cells) && table.cells.length > 1;
+        return hasRows || hasCells;
+    };
+    const hasTableInSubtree = (node: TreeNode): boolean => {
+        if (hasRenderableTable(node.table)) return true;
+        return (node.children || []).some((child) => hasTableInSubtree(child));
+    };
+    const isPureTableSubtree = (node: TreeNode): boolean => {
+        const children = node.children || [];
+        const ownText = String(node.text || "").trim();
+        if (hasRenderableTable(node.table)) {
+            // 表格节点允许带简短标题/说明，但不应该再挂复杂正文段落
+            return ownText.length === 0 || ownText.length <= 120;
+        }
+        if (children.length === 0) return false;
+        if (ownText) return false;
+        return children.every((child) => isPureTableSubtree(child));
+    };
+    const isLikelyRealSectionNode = (node: TreeNode): boolean => {
+        const title = stripTitlePrefixMarks(node.title);
+        if (!title) return false;
+        if (hasChapterTitle(title)) return true;
+        // 系统生成占位标题不当作真实章节
+        if (/^导入(正文|表格\d+|图片\d+)$/i.test(title)) return false;
+        // 表题/图题不当作章节
+        if (/^(表|table|图|figure)\s*\d+/i.test(title)) return false;
+        if (/[：:]/.test(title)) return false;
+        // 有子节点且自身不是表格，视为可能章节（如“接口”）
+        return !hasRenderableTable(node.table) && (node.children || []).length > 0;
+    };
+    const isDataStructureChapter = (node: TreeNode) => {
+        const titleTxt = normalizePlain(node.title);
+        const bodyTxt = normalizePlain(node.text);
+        const merged = `${titleTxt} ${bodyTxt}`;
+        const hasChapter = merged.includes("5.6") || /^5\.6(?:[^0-9]|$)/.test(titleTxt) || /^5\.6(?:[^0-9]|$)/.test(bodyTxt);
+        return hasChapter && merged.includes("数据结构");
+    };
+    const isLikelyFalseSingleDigitHeading = (title?: string): boolean => {
+        const txt = stripTitlePrefixMarks(title);
+        const matched = txt.match(/^(\d+)\s+(.+)$/);
+        if (!matched) return false;
+        const major = matched[1] || "";
+        const tail = (matched[2] || "").trim();
+        if (major.length !== 1 || !tail) return false;
+        if (tail.length > 24) return true;
+        return /[，,。；;：:！？!?“”"'‘’]/.test(tail);
+    };
+    const normalizeFalseSingleDigitHeadings = (nodes: TreeNode[]): TreeNode[] => {
+        if (!Array.isArray(nodes) || nodes.length === 0) return nodes;
+        const out: TreeNode[] = [];
+        for (const raw of nodes) {
+            const normalizedChildren = normalizeFalseSingleDigitHeadings(raw.children || []);
+            const node: TreeNode = { ...raw, children: normalizedChildren };
+            if (isLikelyFalseSingleDigitHeading(node.title) && out.length > 0) {
+                const prev = out[out.length - 1];
+                const matched = stripTitlePrefixMarks(node.title).match(/^\d+\s+(.+)$/);
+                const pseudoTitleLine = (matched?.[1] || "").trim();
+                const extraTextParts = [
+                    pseudoTitleLine,
+                    String(node.text || "").trim(),
+                ].filter((item) => !!item);
+                const mergedText = [
+                    String(prev.text || "").trim(),
+                    ...extraTextParts,
+                ].filter((item) => !!item).join("\n");
+                out[out.length - 1] = {
+                    ...prev,
+                    text: mergedText,
+                    children: [...(prev.children || []), ...(node.children || [])],
+                };
+                continue;
+            }
+            out.push(node);
+        }
+        return out;
+    };
+    const relocateDataStructureTables = (roots: TreeNode[]): TreeNode[] => {
+        if (!Array.isArray(roots) || roots.length === 0) return roots;
+        const targetRootIndex = roots.findIndex((node) => isDataStructureChapter(node));
+        if (targetRootIndex < 0) return roots;
+        const dataNode = roots[targetRootIndex];
+        const trailingNodes: TreeNode[] = [];
+        let scanIndex = targetRootIndex + 1;
+        while (scanIndex < roots.length) {
+            const candidate = roots[scanIndex];
+            const candidateTitle = String(candidate?.title || "").trim();
+            if (hasChapterTitle(candidateTitle)) {
+                break;
+            }
+            if (isLikelyRealSectionNode(candidate)) {
+                break;
+            }
+            // 只并入“纯表格子树”，遇到非表内容立即停止，避免把 5.7 等后续章节吞并进 5.6
+            if (isPureTableSubtree(candidate)) {
+                trailingNodes.push(candidate);
+                scanIndex += 1;
+                continue;
+            }
+            break;
+        }
+        if (trailingNodes.length > 0) {
+            roots.splice(targetRootIndex + 1, trailingNodes.length);
+        }
+
+        const allCandidates = [...(dataNode.children || []), ...trailingNodes];
+        const flattenedTableNodes: TreeNode[] = [];
+        const passthroughNodes: TreeNode[] = [];
+        const seen = new Set<string>();
+        const pushTableNode = (node: TreeNode) => {
+            const key = String(node.n_id || node.id || `${node.title}-${flattenedTableNodes.length}`);
+            if (seen.has(key)) return;
+            seen.add(key);
+            // 扁平化后作为 5.6 的直接子节点，避免多层套娃
+            flattenedTableNodes.push({ ...node, children: [] });
+        };
+        const visit = (node: TreeNode) => {
+            if (hasRenderableTable(node.table)) {
+                pushTableNode(node);
+                return;
+            }
+            const children = node.children || [];
+            if (children.length === 0) {
+                passthroughNodes.push(node);
+                return;
+            }
+            if (!hasTableInSubtree(node)) {
+                passthroughNodes.push(node);
+                return;
+            }
+            children.forEach(visit);
+        };
+        allCandidates.forEach(visit);
+        dataNode.children = [...passthroughNodes, ...flattenedTableNodes];
+        if (debug56Enabled) {
+            const levelRows: Array<{ level: number; title: string; hasTable: boolean; childCount: number }> = [];
+            const walk = (nodes: TreeNode[], level: number) => {
+                (nodes || []).forEach((node) => {
+                    levelRows.push({
+                        level,
+                        title: String(node.title || node.label || "(空标题)"),
+                        hasTable: hasRenderableTable(node.table),
+                        childCount: (node.children || []).length,
+                    });
+                    if (node.children?.length) walk(node.children, level + 1);
+                });
+            };
+            walk(dataNode.children || [], 1);
+            const tableCount = levelRows.filter((item) => item.hasTable).length;
+            // 通过 `?debug56=1` 或 localStorage.sds_debug_56=1 打开
+            console.groupCollapsed(`[SDS 5.6调试] doc=${params.id || "-"} children=${(dataNode.children || []).length} tables=${tableCount}`);
+            console.table(levelRows);
+            console.groupEnd();
+        }
+        return roots;
     };
 
     useEffect(() => {
@@ -112,7 +289,9 @@ export default () => {
                     }
 
                     // 解析树状结构数据
-                    const parsedContent = (targetRow.content || []).map((node: any) => parseTreeNode(node));
+                    const parsedTree = (targetRow.content || []).map((node: any) => parseTreeNode(node));
+                    const normalizedTree = normalizeFalseSingleDigitHeadings(parsedTree);
+                    const parsedContent = relocateDataStructureTables(normalizedTree);
 
                     dispatch({
                         loading: false,
@@ -123,6 +302,7 @@ export default () => {
                         docSrsdocId: targetRow.srsdoc_id,
                         docVersion: targetRow.version ?? "",
                     });
+                    treeStructureRef.current = parsedContent;
                 } else {
                     message.error(res.msg);
                     dispatch({ loading: false });
@@ -133,6 +313,7 @@ export default () => {
             // 新增模式
             editForm.resetFields();
             dispatch({ isEdit: false });
+            treeStructureRef.current = [];
         }
     }, [params.id]);
 
@@ -309,7 +490,9 @@ export default () => {
             children: []
         };
 
-        dispatch({ treeStructure: [...data.treeStructure, newNode] });
+        const nextTree = [...data.treeStructure, newNode];
+        treeStructureRef.current = nextTree as TreeNode[];
+        dispatch({ treeStructure: nextTree });
     };
 
     // 加载标准结构
@@ -330,6 +513,7 @@ export default () => {
 
         const nodesWithIds = addIdsToNodes(standardNodes as any[]);
         // dispatch({ treeStructure: [...data.treeStructure, ...nodesWithIds] });
+        treeStructureRef.current = nodesWithIds;
         dispatch({ treeStructure: nodesWithIds });
         message.success(ts("sds_doc.load_standard_structure_success"));
     };
@@ -355,13 +539,14 @@ export default () => {
     // 清理树节点数据，确保符合后端接口要求
     const cleanTreeNode = (node: any, docId: number = 0, parentId: number = 0): any => {
         // 处理 table 数据：
-        // - 如果是 null、空对象、或 headers/rows 为 null，设置为空对象 {}
-        // - 只有当 headers 和 rows 都有效时才保留
+        // - 如果是 null、空对象、或 headers 无效，设置为空对象 {}
+        // - 只要有有效 headers，且存在 rows 或 cells 结构，就保留
         let tableValue: any = {};
         if (node.table) {
             const hasValidHeaders = node.table.headers && Array.isArray(node.table.headers) && node.table.headers.length > 0;
             const hasValidRows = node.table.rows && Array.isArray(node.table.rows) && node.table.rows.length > 0;
-            if (hasValidHeaders && hasValidRows) {
+            const hasValidCells = node.table.cells && Array.isArray(node.table.cells) && node.table.cells.length > 1;
+            if (hasValidHeaders && (hasValidRows || hasValidCells)) {
                 tableValue = node.table;
             }
         }
@@ -371,6 +556,7 @@ export default () => {
             n_id: (typeof node.id === 'string' || !node.n_id) ? 0 : node.n_id, // 新节点的n_id为0，让后端生成
             p_id: node.p_id || parentId || 0,
             title: node.title || "",
+            ...(node.label !== undefined && { label: node.label ?? "" }),
             // 有 sds_code 字段则一并提交
             ...(node.sds_code !== undefined && { sds_code: node.sds_code ?? "" }),
             ...(node.ref_type !== undefined && { ref_type: node.ref_type }),
@@ -420,7 +606,8 @@ export default () => {
         const docId = params.id ? parseInt(params.id) : 0;
 
         // 清理树状结构数据，传入文档ID和根节点的父ID（0表示无父节点）
-        const cleanedContent = data.treeStructure.map((node: any) =>
+        const currentTree = (((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) || []) as any[];
+        const cleanedContent = currentTree.map((node: any) =>
             cleanTreeNode(node, docId, 0)
         );
 
@@ -468,12 +655,13 @@ export default () => {
                                 loadSrsDocList(targetRow.product_id);
                             }
 
-                            const parsedContent = (targetRow.content || []).map((node: any) => parseTreeNode(node));
+                            const parsedContent = relocateDataStructureTables((targetRow.content || []).map((node: any) => parseTreeNode(node)));
                             dispatch({
                                 changeDescription: targetRow.change_log || "",
                                 docNId: targetRow.n_id || 0,
                                 treeStructure: parsedContent,
                             });
+                            treeStructureRef.current = parsedContent;
 
                         }
                     });
@@ -486,6 +674,128 @@ export default () => {
             message.error(ts("save_failed"));
             console.error(ts("save_failed"), error);
         });
+    };
+
+    const normalizeText = (value?: string) => (value || "").replace(/\s+/g, "");
+    const stripChapterPrefix = (value?: string) =>
+        String(value || "")
+            .trim()
+            .replace(/^[\s\u3000•·▪■◆●○□◇\-–—]*/, "")
+            // 先清理标准章节号（1 / 1.2 / 1.2.3）
+            .replace(/^([0-9０-９]+(?:[.．][0-9０-９]+)*)(?:[\s、.．\u00a0\u2002\u2003\u2009]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+            // 兜底：清理任意残留前导数字（含全角）
+            .replace(/^[0-9０-９]+(?:[\s\u00a0\u2002\u2003\u2009.．、-]*)/, "")
+            .trim();
+    const hasTableContent = (node: TreeNode) => !!(node.table && Array.isArray(node.table.rows) && node.table.rows.length > 0);
+    const getTableText = (node: TreeNode) => {
+        if (!hasTableContent(node) || !node.table) return "";
+        const headerTxt = (node.table.headers || []).map((h: any) => h?.name || "").join(" ");
+        const rowTxt = (node.table.rows || []).map((row: any) => Object.values(row || {}).join(" ")).join(" ");
+        return `${headerTxt} ${rowTxt}`;
+    };
+    const hitCount = (txt: string, keys: string[]) => keys.filter((k) => txt.includes(k)).length;
+    const isCoverTable = (node: TreeNode) => {
+        const txt = getTableText(node);
+        return hitCount(txt, ["编制科室", "文件版本", "编制人", "审核人", "批准人", "生效日期"]) >= 3;
+    };
+    const isChangeLogTable = (node: TreeNode) => {
+        const txt = getTableText(node);
+        return hitCount(txt, ["修改日期", "版本号", "修订说明", "修订人", "批准人"]) >= 3;
+    };
+    const isCatalogNode = (node: TreeNode) => normalizeText(node.title).includes("目录");
+    const isCoverNode = (node: TreeNode) => normalizeText(node.title).includes("软件详细设计") || isCoverTable(node);
+    const isChangeLogNode = (node: TreeNode) => normalizeText(node.title).includes("文件修订记录") || isChangeLogTable(node);
+    const subtreeMatches = (node: TreeNode, matchFn: (n: TreeNode) => boolean): boolean => {
+        if (matchFn(node)) return true;
+        return (node.children || []).some((child) => subtreeMatches(child, matchFn));
+    };
+    const collectSubtreeIds = (node: TreeNode): number[] => {
+        const ids = [node.id];
+        (node.children || []).forEach((child) => ids.push(...collectSubtreeIds(child)));
+        return ids;
+    };
+    const collectTableNodes = (node: TreeNode): TreeNode[] => {
+        const list: TreeNode[] = [];
+        const walk = (item: TreeNode) => {
+            if (hasTableContent(item)) list.push(item);
+            (item.children || []).forEach(walk);
+        };
+        walk(node);
+        return list;
+    };
+
+    const treeRoots = data.treeStructure as TreeNode[];
+    const coverRoot = treeRoots.find((node) => normalizeText(node.title).includes("软件详细设计"));
+    const changeLogRoot = treeRoots.find((node) => normalizeText(node.title).includes("文件修订记录"));
+    const coverRoots = coverRoot ? [coverRoot] : treeRoots.filter((node) => subtreeMatches(node, isCoverNode));
+    const changeLogRoots = changeLogRoot ? [changeLogRoot] : treeRoots.filter((node) => subtreeMatches(node, isChangeLogNode));
+    const hiddenNodeIds = treeRoots
+        .filter((node) => isCatalogNode(node) || subtreeMatches(node, isCoverNode) || subtreeMatches(node, isChangeLogNode))
+        .flatMap((node) => collectSubtreeIds(node));
+    const coverTitle = stripChapterPrefix(coverRoot?.title) || "软件详细设计";
+    const chapterOffsetMatch = String(coverRoot?.title || "").trim().match(/^(\d+)/);
+    const readOnlyChapterOffset = chapterOffsetMatch ? Number(chapterOffsetMatch[1] || 0) : 0;
+
+    const updateExtractedTableCell = (targetNodeId: number, rowIndex: number, colCode: string, value: string) => {
+        const updateNode = (nodes: TreeNode[]): TreeNode[] => {
+            return (nodes || []).map((node) => {
+                const isTarget = String(node.id) === String(targetNodeId) || String(node.n_id || "") === String(targetNodeId);
+                if (isTarget && node.table?.rows) {
+                    const nextRows = [...node.table.rows];
+                    while (nextRows.length <= rowIndex) {
+                        nextRows.push({});
+                    }
+                    const currentRow = { ...(nextRows[rowIndex] || {}) };
+                    currentRow[colCode] = value;
+                    nextRows[rowIndex] = currentRow;
+                    return {
+                        ...node,
+                        table: {
+                            ...node.table,
+                            rows: nextRows,
+                        },
+                    };
+                }
+                return {
+                    ...node,
+                    children: updateNode(node.children || []),
+                };
+            });
+        };
+        const nextTree = updateNode(data.treeStructure as TreeNode[]);
+        treeStructureRef.current = nextTree;
+        dispatch({ treeStructure: nextTree });
+    };
+
+    const renderExtractedTable = (node: TreeNode, keyPrefix: string) => {
+        if (!node.table?.headers || !node.table?.rows) return null;
+        const columns = node.table.headers.map((header: any, index: number) => ({
+            title: header.name || `列${index + 1}`,
+            dataIndex: header.code,
+            key: `${keyPrefix}-col-${header.code}`,
+            render: (text: string, _record: any, rowIndex: number) => {
+                if (isReadOnly) return text || "-";
+                return (
+                    <Input.TextArea
+                        value={text || ""}
+                        onChange={(e) => updateExtractedTableCell(node.id, rowIndex, header.code, e.target.value)}
+                        autoSize={{ minRows: 1, maxRows: 4 }}
+                    />
+                );
+            },
+        }));
+        const dataSource = (node.table.rows || []).map((row: any, index: number) => ({ key: `${keyPrefix}-row-${index}`, ...row }));
+        return (
+            <Table
+                key={`${keyPrefix}-${node.id}`}
+                dataSource={dataSource}
+                columns={columns}
+                pagination={false}
+                size="small"
+                bordered
+                scroll={{ x: Math.max(800, columns.length * 180) }}
+            />
+        );
     };
 
     return (
@@ -617,6 +927,28 @@ export default () => {
                     )}
                 </Form>
 
+                <div className="doc-section extracted-doc-section">
+                    <div className="doc-section-header">
+                        <div className="doc-section-title">封面</div>
+                    </div>
+                    <div className="extracted-item-title">标题</div>
+                    <div className="extracted-file-name">{coverTitle || "-"}</div>
+                    <div className="extracted-item-title">封面信息</div>
+                    {coverRoots.length > 0
+                        ? coverRoots
+                            .flatMap((root) => collectTableNodes(root))
+                            .filter((node) => isCoverTable(node))
+                            .map((node, idx) => renderExtractedTable(node, `cover-${idx}`))
+                        : <div className="extracted-empty">暂无</div>}
+                    <div className="extracted-item-title">文件修订记录</div>
+                    {changeLogRoots.length > 0
+                        ? changeLogRoots
+                            .flatMap((root) => collectTableNodes(root))
+                            .filter((node) => isChangeLogTable(node))
+                            .map((node, idx) => renderExtractedTable(node, `change-${idx}`))
+                        : <div className="extracted-empty">暂无</div>}
+                </div>
+
                 {/* 版本变更说明区域 */}
                 <div className="doc-section">
                     <div className="doc-section-header">
@@ -662,10 +994,16 @@ export default () => {
                     </div>
                     <TreeStructure
                         value={data.treeStructure}
-                        onChange={isReadOnly ? undefined : (value) => dispatch({ treeStructure: value })}
+                        onChange={isReadOnly ? undefined : (value) => { treeStructureRef.current = value; }}
+                        onNodesSnapshot={(nodes) => {
+                            treeStructureRef.current = nodes || [];
+                        }}
                         docId={params.id ? parseInt(params.id) : undefined}
+                        hiddenNodeIds={hiddenNodeIds}
                         onNodeDelete={isReadOnly ? undefined : handleNodeDelete}
                         readOnly={isReadOnly}
+                        readOnlyChapterOffset={isReadOnly ? readOnlyChapterOffset : 0}
+                        readOnlyRootWrapper={false}
                         onOpenReqdList={() => {
                             loadReqdListData();
                             dispatch({ showReqdListModal: true });

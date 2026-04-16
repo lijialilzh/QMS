@@ -140,6 +140,69 @@ function isSrsCodeColumn(header?: { code: string; name: string }): boolean {
     return hName.includes("需求编号") || hCode.includes("srscode") || hCode.includes("srs");
 }
 
+function splitTextByTables(rawText: string | undefined, tableCount: number): { intro: string; tableHeaders: Array<{ section: string; tableTitle: string }> } {
+    const text = String(rawText || "").replace(/\r/g, "");
+    if (!text || tableCount <= 0) return { intro: text, tableHeaders: [] };
+    const lines = text
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+    const introLines: string[] = [];
+    const tableHeaders: Array<{ section: string; tableTitle: string }> = [];
+    let currentSection = "";
+    let seenFirstTableHeader = false;
+    for (const line of lines) {
+        const isSectionLine = /^\d+(?:\.\d+)+/.test(line);
+        const isTableLine = /^表\s*\d+/.test(line);
+        if (isSectionLine) {
+            currentSection = line;
+            continue;
+        }
+        if (isTableLine) {
+            tableHeaders.push({
+                section: currentSection || "",
+                tableTitle: line,
+            });
+            seenFirstTableHeader = true;
+            continue;
+        }
+        if (!seenFirstTableHeader) {
+            const normalized = line.replace(/[：:]/g, "").trim();
+            if (normalized !== "其他需求列表") {
+                introLines.push(line);
+            }
+        }
+    }
+    return {
+        intro: introLines.join("\n"),
+        tableHeaders: tableHeaders.slice(0, tableCount),
+    };
+}
+
+function removeOtherReqMarker(rawText: string | undefined): string {
+    const lines = String(rawText || "").replace(/\r/g, "").split("\n");
+    const filtered = lines.filter((line) => {
+        const normalized = line.trim().replace(/[：:]/g, "");
+        return normalized !== "其他需求列表";
+    });
+    return filtered.join("\n");
+}
+
+function extractImageCaptionAndBody(rawText: string | undefined): { caption: string; body: string } {
+    const lines = String(rawText || "").replace(/\r/g, "").split("\n");
+    let caption = "";
+    const bodyLines: string[] = [];
+    lines.forEach((line) => {
+        const trimmed = line.trim();
+        if (!caption && /^图\s*\d+/.test(trimmed)) {
+            caption = trimmed;
+            return;
+        }
+        bodyLines.push(line);
+    });
+    return { caption, body: bodyLines.join("\n") };
+}
+
 interface TreeNodeItemProps {
     node: TreeNode;
     level: number;
@@ -273,15 +336,54 @@ const TreeNodeItem = ({
         (child) => child.id !== embeddedMainReqTableNode?.id
     );
     const displayImageUrl = node.img_url || embeddedImageNode?.img_url || "";
-    const displayTable = node.table && node.table.headers?.length ? node.table : embeddedMainReqTableNode?.table;
-    // 表格可能展示在父节点，但真实数据在“导入表格X”子节点；编辑时应命中真实节点ID
-    const tableOwnerNodeId =
-        (node.table && node.table.headers?.length ? node.id : (embeddedMainReqTableNode?.id ?? node.id)) as number;
+    const displayTable = node.table && node.table.headers?.length ? node.table : undefined;
     const visibleChildren = (node.children || []).filter((child) => !isImportedImageNode(child) && !isImportedTableNode(child));
     const hasVisibleChildren = visibleChildren.length > 0;
+    const hasRcm = Array.isArray(node.rcm_codes);
+    const hasRcmText = readOnly && /RCM\d+/i.test(String(node.text || ""));
+    const isSrsReqRefNode = node.ref_type === "srs_reqs" || node.ref_type === "srs_reqs_2";
     const showReqExtraTables =
         embeddedTableNodes.some((child) => isReqMainTable(child.table)) &&
         embeddedTableNodes.some((child) => isReqOtherTable(child.table));
+    const isRenderableTable = (table?: TableData | null) => !!(
+        table &&
+        Array.isArray(table.headers) &&
+        table.headers.length > 0 &&
+        Array.isArray(table.rows) &&
+        table.rows.length > 0
+    );
+    const orderedNormalTables = (!isSrsReqRefNode
+        ? [
+            ...(isRenderableTable(node.table) ? [{
+                key: `node_table_${node.id}`,
+                table: node.table as TableData,
+                ownerNodeId: node.id,
+                title: "",
+            }] : []),
+            ...embeddedTableNodes
+                .filter((child) => isRenderableTable(child.table))
+                .map((child, idx) => ({
+                    key: `embedded_table_${child.id}_${idx}`,
+                    table: child.table as TableData,
+                    ownerNodeId: Number(child.id || child.n_id || node.id),
+                    title: "",
+                })),
+        ]
+        : []);
+    const shouldSplitTextForTables = readOnly && !isSrsReqRefNode && orderedNormalTables.length > 1 && embeddedTableNodes.length > 0;
+    const splitText = splitTextByTables(node.text, orderedNormalTables.length);
+    const hasOtherReqMarker = /其他需求列表[:：]?/.test(String(node.text || ""));
+    const otherReqTableIndex = orderedNormalTables.findIndex((tbl) => isReqOtherTable(tbl.table));
+    const shouldMoveOtherReqMarker = readOnly && hasOtherReqMarker && otherReqTableIndex >= 0;
+    const imageCaptionData = extractImageCaptionAndBody(node.text);
+    const hasDisplayedImage = !!displayImageUrl;
+    const displayNodeText = (() => {
+        let text = shouldMoveOtherReqMarker ? removeOtherReqMarker(node.text) : (node.text || "");
+        if (readOnly && hasDisplayedImage && imageCaptionData.caption) {
+            text = imageCaptionData.body;
+        }
+        return text;
+    })();
 
     // 构建表格列配置：不横向滚动，内容自动换行
     const buildTableColumns = (targetTable?: TableData | null): ColumnsType<any> => {
@@ -386,20 +488,10 @@ const TreeNodeItem = ({
         return rows;
     };
 
-    const hasTable = !!(
-        displayTable &&
-        displayTable.headers &&
-        Array.isArray(displayTable.headers) &&
-        displayTable.headers.length > 0 &&
-        displayTable.rows &&
-        Array.isArray(displayTable.rows) &&
-        displayTable.rows.length > 0
-    );
-
     return (
         <div style={{ marginLeft: level * 32 }}>
           <div className={`tree-node-item level-${level}`}>
-              <div className="node-row">
+              <div className={`node-row${hasRcm ? " has-rcm" : ""}${hasRcmText ? " has-rcm-text" : ""}`}>
                   {hasVisibleChildren ? (
                       <Button
                           type="text"
@@ -426,10 +518,10 @@ const TreeNodeItem = ({
                       <span className="node-title-prefix">{numberToChinese(level + 1)}{ts('level_menu')}</span>
                   )}
                   {readOnly ? (
-                      <div className="node-title">{node.title || "-"}</div>
+                      <div className={`node-title${hasRcm ? " with-rcm" : ""}${hasRcmText ? " with-rcm-text" : ""}`}>{node.title || "-"}</div>
                   ) : (
                       <Input
-                          className="node-title"
+                          className={`node-title${hasRcm ? " with-rcm" : ""}${hasRcmText ? " with-rcm-text" : ""}`}
                           value={node.title}
                           onChange={(e) => onTitleChange(node.id, e.target.value)}
                           placeholder={ts('please_input_title')}
@@ -498,19 +590,23 @@ const TreeNodeItem = ({
                           )}
                       </div>
                   )}
-                  {readOnly ? (
-                      <div className="node-content node-text-area">{node.text || ""}</div>
-                  ) : (
-                      <Input.TextArea
-                          className="node-content node-text-area"
-                          value={node.text}
-                          onChange={(e) => onContentChange(node.id, e.target.value)}
-                          placeholder={ts('srs_doc.please_input_content')}
-                          size="small"
-                          rows={1}
-                          autoSize={{ minRows: 1, maxRows: 6 }}
-                          disabled={readOnly}
-                      />
+                  {!isSrsReqRefNode && (
+                      readOnly ? (
+                          <div className="node-content node-text-area">
+                              {shouldSplitTextForTables ? removeOtherReqMarker(splitText.intro || "") : displayNodeText}
+                          </div>
+                      ) : (
+                          <Input.TextArea
+                              className="node-content node-text-area"
+                              value={node.text}
+                              onChange={(e) => onContentChange(node.id, e.target.value)}
+                              placeholder={ts('srs_doc.please_input_content')}
+                              size="small"
+                              rows={1}
+                              autoSize={{ minRows: 1, maxRows: 6 }}
+                              disabled={readOnly}
+                          />
+                      )
                   )}
                   {isImgRefType(node.ref_type) && (
                       <div className="node-file-ref node-content">
@@ -533,12 +629,19 @@ const TreeNodeItem = ({
                       </div>
                   )}
                   {level <= 2 && displayImageUrl && (
-                      <div className="node-pic node-pic-readonly">
-                          <Image
-                              src={resolveFileUrl(displayImageUrl)}
-                              alt={node.title || "image"}
-                              preview={true}
-                          />
+                      <div>
+                          {readOnly && hasDisplayedImage && !!imageCaptionData.caption && (
+                              <div className="node-content" style={{ marginBottom: 6, textAlign: "center", fontSize: 13, fontWeight: 400 }}>
+                                  {imageCaptionData.caption}
+                              </div>
+                          )}
+                          <div className="node-pic node-pic-readonly">
+                              <Image
+                                  src={resolveFileUrl(displayImageUrl)}
+                                  alt={node.title || "image"}
+                                  preview={true}
+                              />
+                          </div>
                       </div>
                   )}
                   {isImgRefType(node.ref_type) && !readOnly && (
@@ -611,44 +714,65 @@ const TreeNodeItem = ({
                   )}
               </div>
 
-              {/* 显示表格数据（ref_type 节点不展示表格） */}
-              {hasTable && !(node.ref_type && (isImgRefType(node.ref_type) || node.ref_type === 'srs_reqs' || node.ref_type === 'srs_reqs_2')) && (
-                  <div className="node-table">
-                      <div className="node-table-header">
-                          <Table
-                              columns={buildTableColumns()}
-                              dataSource={buildTableDataSource()}
-                              pagination={false}
-                              size="small"
-                              bordered
-                              tableLayout="fixed"
-                              showHeader={!(displayTable?.show_header === 0 || isFunctionalKvTable(displayTable))}
-                          />
-                          {!readOnly && (
-                          <Space className="node-table-actions" size={8}>
-                              <Button
-                                  size="small"
-                                  icon={<EditOutlined />}
-                                  onClick={() => onEditTable(tableOwnerNodeId)}>
-                                  {ts('edit')}
-                              </Button>
-                              <Popconfirm
-                                  title={ts('srs_doc.confirm_delete_table')}
-                                  onConfirm={() => onDeleteTable(node.id)}
-                                  okText={ts('confirm')}
-                                  cancelText={ts('cancel')}>
-                                  <Button
-                                      size="small"
-                                      danger
-                                      icon={<DeleteOutlined />}>
-                                      {ts('delete')}
-                                  </Button>
-                              </Popconfirm>
-                          </Space>
-                          )}
-                      </div>
-                  </div>
-              )}
+              {/* 显示普通章节表格：按节点内 + 导入子表顺序展示 */}
+              {!(node.ref_type && (isImgRefType(node.ref_type) || node.ref_type === 'srs_reqs' || node.ref_type === 'srs_reqs_2')) &&
+                orderedNormalTables.map((tbl, idx) => (
+                    <div className="node-table" key={tbl.key}>
+                        {shouldMoveOtherReqMarker && idx === otherReqTableIndex && (
+                            <div className="node-content" style={{ marginBottom: 8, whiteSpace: "pre-line", fontSize: 13, fontWeight: 400 }}>
+                                其他需求列表
+                            </div>
+                        )}
+                        {shouldSplitTextForTables && !!splitText.tableHeaders[idx] && (
+                            <div className="node-content" style={{ marginBottom: 8, whiteSpace: "pre-line", fontSize: 13, fontWeight: 400 }}>
+                                {!!splitText.tableHeaders[idx].section && (
+                                    <div style={{ textAlign: "left" }}>{splitText.tableHeaders[idx].section}</div>
+                                )}
+                                {!!splitText.tableHeaders[idx].tableTitle && (
+                                    <div style={{ textAlign: "center" }}>{splitText.tableHeaders[idx].tableTitle}</div>
+                                )}
+                            </div>
+                        )}
+                        {!shouldSplitTextForTables && idx > 0 && !!tbl.title && (
+                            <div style={{ marginBottom: 8, fontWeight: 600 }}>
+                                {tbl.title}
+                            </div>
+                        )}
+                        <div className="node-table-header">
+                            <Table
+                                columns={buildTableColumns(tbl.table)}
+                                dataSource={buildTableDataSource(tbl.table)}
+                                pagination={false}
+                                size="small"
+                                bordered
+                                tableLayout="fixed"
+                                showHeader={!(tbl.table?.show_header === 0 || isFunctionalKvTable(tbl.table))}
+                            />
+                            {!readOnly && (
+                            <Space className="node-table-actions" size={8}>
+                                <Button
+                                    size="small"
+                                    icon={<EditOutlined />}
+                                    onClick={() => onEditTable(tbl.ownerNodeId)}>
+                                    {ts('edit')}
+                                </Button>
+                                <Popconfirm
+                                    title={ts('srs_doc.confirm_delete_table')}
+                                    onConfirm={() => onDeleteTable(tbl.ownerNodeId)}
+                                    okText={ts('confirm')}
+                                    cancelText={ts('cancel')}>
+                                    <Button
+                                        size="small"
+                                        danger
+                                        icon={<DeleteOutlined />}>
+                                        {ts('delete')}
+                                    </Button>
+                                </Popconfirm>
+                            </Space>
+                            )}
+                        </div>
+                    </div>
+                ))}
               {showReqExtraTables && embeddedOtherReqTableNodes.map((subNode, idx) => (
                   <div className="node-table" key={`embedded_sub_table_${subNode.id || idx}`}>
                       <div style={{ marginBottom: 8, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between" }}>

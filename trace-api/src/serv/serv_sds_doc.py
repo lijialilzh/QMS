@@ -2,18 +2,25 @@ from enum import Enum
 import logging
 import json
 import re
+import io
+import base64
+import os
 from typing import Dict, List, Tuple, Union
 from sqlalchemy import select, delete, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import desc
 try:
     from docx import Document
+    from docx.table import Table as DocxTable
+    from docx.text.paragraph import Paragraph
     from docx.shared import Pt
     from docx import enum as dox_enum
     from docx.oxml.ns import qn
     from docx.shared import RGBColor
 except Exception:
     Document = None
+    DocxTable = None
+    Paragraph = None
     Pt = None
     dox_enum = None
     qn = None
@@ -35,6 +42,7 @@ from ..model.sds_doc import SdsDoc, SdsNode
 from ..obj.tobj_sds_doc import SdsDocForm, SdsNodeForm
 from ..utils.sql_ctx import db
 from ..utils.i18n import ts
+from ..utils import get_uuid
 from .serv_utils.tree_util import find_parent
 from .serv_utils import new_version
 from .serv_sds_trace import Server as ServSdsTrace
@@ -58,6 +66,84 @@ class RefTypes(Enum):
     sds_reqds = "sds_reqds"
 
 class Server(object):
+    def __persist_data_url_images(self, nodes: List[SdsNodeForm]):
+        ext_map = {
+            "image/png": "png",
+            "image/jpeg": "jpg",
+            "image/jpg": "jpg",
+            "image/gif": "gif",
+            "image/bmp": "bmp",
+            "image/webp": "webp",
+        }
+
+        def walk(node_list: List[SdsNodeForm]):
+            for node in node_list or []:
+                img_url = (getattr(node, "img_url", None) or "").strip()
+                if img_url.startswith("data:"):
+                    matched = re.match(r"^data:([^;]+);base64,(.+)$", img_url, re.S)
+                    if matched:
+                        mime = (matched.group(1) or "").lower()
+                        b64 = matched.group(2) or ""
+                        ext = ext_map.get(mime, "png")
+                        try:
+                            bys = base64.b64decode(b64)
+                            path = os.path.join("data.trace", "sds_node_img", "import_sds", f"{get_uuid()}.{ext}")
+                            os.makedirs(os.path.dirname(path), exist_ok=True)
+                            with open(path, "wb") as fs:
+                                fs.write(bys)
+                            node.img_url = path
+                        except Exception:
+                            node.img_url = None
+                    else:
+                        node.img_url = None
+                if getattr(node, "children", None):
+                    walk(node.children or [])
+
+        walk(nodes or [])
+
+    async def import_sds_doc_word(self, product_id: int, version: str, change_log: str, file):
+        if Document is None or DocxTable is None or Paragraph is None:
+            return Resp.resp_err(msg="当前环境缺少 python-docx 依赖，暂不可用 Word 导入。")
+        try:
+            srs_row = db.session.execute(
+                select(SrsDoc).where(SrsDoc.product_id == product_id).order_by(desc(SrsDoc.create_time), desc(SrsDoc.id))
+            ).scalars().first()
+            if not srs_row:
+                return Resp.resp_err(msg="导入失败：当前产品下未找到需求规格说明，请先导入需求规格说明。")
+
+            bys = await file.read()
+            docx = Document(io.BytesIO(bys))
+            content, _ = srsdoc_serv._Server__parse_docx_content(docx)  # 复用 SRS 导入解析
+            file_name = file.filename or ""
+            _, file_no = srsdoc_serv._Server__extract_file_info(file_name)
+
+            def to_sds_node(node):
+                data = {}
+                for key in ["title", "label", "img_url", "text", "ref_type", "table", "sds_code"]:
+                    val = getattr(node, key, None)
+                    if val is not None:
+                        data[key] = val
+                if not data.get("sds_code"):
+                    srs_code = getattr(node, "srs_code", None)
+                    if srs_code:
+                        data["sds_code"] = srs_code.replace("SRS-", "SDS-")
+                data["children"] = [to_sds_node(child) for child in (getattr(node, "children", None) or [])]
+                return SdsNodeForm(**data)
+
+            sds_content = [to_sds_node(node) for node in (content or [])]
+            self.__persist_data_url_images(sds_content)
+            form = SdsDocForm(
+                srsdoc_id=srs_row.id,
+                version=version,
+                file_no=file_no or None,
+                change_log=change_log,
+                content=sds_content,
+            )
+            return await self.add_sds_doc(form)
+        except Exception:
+            logger.exception("")
+            db.session.rollback()
+        return Resp.resp_err(msg=ts(msg_err_db))
 
     def __update_nodes(self, doc: SdsDoc, p_id, nodes: List[SdsNodeForm]):
         for idx, node in enumerate(nodes):

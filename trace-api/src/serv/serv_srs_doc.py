@@ -160,23 +160,97 @@ class Server(object):
             self.__upsert_product_doc_image(product_id, category, data_url)
 
     @staticmethod
+    def __guess_numpr_level(para):
+        """读取 Word 自动编号层级（numPr/ilvl 或 outlineLvl）。"""
+        def _level_from_ppr(p_pr):
+            if p_pr is None:
+                return None
+            try:
+                num_pr = getattr(p_pr, "numPr", None)
+                ilvl = getattr(num_pr, "ilvl", None) if num_pr is not None else None
+                val = getattr(ilvl, "val", None) if ilvl is not None else None
+                if val is not None:
+                    return max(1, min(int(str(val)) + 1, 5))
+            except Exception:
+                pass
+            try:
+                outline = getattr(p_pr, "outlineLvl", None)
+                oval = getattr(outline, "val", None) if outline is not None else None
+                if oval is not None:
+                    return max(1, min(int(str(oval)) + 1, 5))
+            except Exception:
+                pass
+            return None
+
+        try:
+            p_pr = getattr(getattr(para, "_element", None), "pPr", None)
+            level = _level_from_ppr(p_pr)
+            if level is not None:
+                return level
+            style = getattr(para, "style", None)
+            hops = 0
+            while style is not None and hops < 8:
+                style_ppr = getattr(getattr(style, "_element", None), "pPr", None)
+                level = _level_from_ppr(style_ppr)
+                if level is not None:
+                    return level
+                style = getattr(style, "base_style", None)
+                hops += 1
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def __is_bold_paragraph(para):
+        # 优先按 run 判断；若 run 未显式设置，再回退到样式链 bold。
+        if any(run.bold for run in para.runs if (run.text or "").strip()):
+            return True
+        try:
+            style = getattr(para, "style", None)
+            hops = 0
+            while style is not None and hops < 8:
+                font = getattr(style, "font", None)
+                if getattr(font, "bold", None) is True:
+                    return True
+                style = getattr(style, "base_style", None)
+                hops += 1
+        except Exception:
+            pass
+        return False
+
+    @staticmethod
     def __guess_heading_level(para):
-        style_name = (getattr(getattr(para, "style", None), "name", "") or "").lower()
-        if style_name.startswith("heading"):
-            matched = re.search(r"(\d+)", style_name)
-            if matched:
-                return max(1, min(int(matched.group(1)), 5))
-            return 1
         txt = (para.text or "").strip()
         if not txt:
             return None
-        has_bold = any(run.bold for run in para.runs if (run.text or "").strip())
-        if not has_bold:
-            return None
-        numbering = re.match(r"^(\d+(?:\.\d+){0,4})[\s、.．]", txt)
+        # 放宽：只要标题文本带明确章节号（如 5.7.1），即使未加粗也按章节识别。
+        # 但排除“1.参数文件;”这类枚举项（单数字+点号+句末标点）。
+        numbering = re.match(r"^(\d+(?:\.\d+){0,4})([\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))(.*)$", txt)
         if numbering:
-            return max(1, min(numbering.group(1).count(".") + 1, 5))
-        return 1 if len(txt) <= 120 else None
+            chapter_no = numbering.group(1) or ""
+            sep = numbering.group(2) or ""
+            tail = (numbering.group(3) or "").strip()
+            if not tail:
+                return None
+            # 只有单一数字编号时（如 "1 xxx"），要求使用空白分隔；"1.xxx" 视为枚举项。
+            if chapter_no.count(".") == 0 and not re.search(r"\s", sep):
+                return None
+            # 单级编号（如 "7 xxx"）时，进一步过滤“句子型正文项”，避免误识别为一级标题。
+            # 例如：7 默认的科室不允许删除，删除时，系统提示：...
+            if chapter_no.count(".") == 0:
+                if len(tail) > 40:
+                    return None
+                if re.search(r"[，,。；;：:！？!?]", tail):
+                    return None
+            # 句末为分号/冒号/句号等更像正文项，不识别为标题。
+            if re.search(r"[;；:：,，。！？!?]$", tail):
+                return None
+            return max(1, min(chapter_no.count(".") + 1, 5))
+        # 对于“文本无显式编号”的场景，仍要求加粗，避免把正文误识别为标题。
+        if not Server.__is_bold_paragraph(para):
+            return None
+        numpr_level = Server.__guess_numpr_level(para)
+        return numpr_level
 
     @staticmethod
     def __normalize_text(value):
@@ -210,7 +284,7 @@ class Server(object):
 
     @staticmethod
     def __extract_heading_number(title: str):
-        matched = re.match(r"^(\d+(?:\.\d+)*)[\s、.．]", (title or "").strip())
+        matched = re.match(r"^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))", (title or "").strip())
         return matched.group(1) if matched else None
 
     def __validate_heading_numbers(self, heading_rows: List[dict]):
@@ -797,6 +871,31 @@ class Server(object):
                 para = Paragraph(child, docx._body)
                 txt = self.__normalize_text(para.text)
                 level = self.__guess_heading_level(para) if txt else None
+                # 在已进入任一章节（1/2/3...级）后，"1. xxx / 2. xxx" 这类枚举项按正文处理，不识别为标题。
+                if txt and level is not None and stack:
+                    is_enum_item = bool(
+                        re.match(r"^\d+[.．、]\s+\S+", txt)
+                        and not re.match(r"^\d+\.\d+", txt)
+                    )
+                    if is_enum_item:
+                        level = None
+                # 兼容“接口章节下的无编号三级标题”：
+                # 在父级为“x.x 接口”时，将“以‘接口’结尾”的短行识别为下一层级标题（如：数据上传接口、创建处理任务接口）。
+                if txt and level is None and stack:
+                    parent_level, parent_node = stack[-1]
+                    parent_title = self.__normalize_text(getattr(parent_node, "title", ""))
+                    is_interface_parent = bool(
+                        re.match(r"^\d+(?:\.\d+)+\s*接口$", parent_title)
+                        or parent_title == "接口"
+                    )
+                    is_interface_subtitle = bool(
+                        re.search(r"接口$", txt)
+                        and len(txt) <= 80
+                        and not re.search(r"[。！？；;]$", txt)
+                        and not re.search(r"https?://|/[\w\-]+", txt, re.I)
+                    )
+                    if is_interface_parent and is_interface_subtitle:
+                        level = min(parent_level + 1, 5)
                 if txt and level is not None:
                     node = SrsNodeForm(title=txt, text="", children=[])
                     heading_rows.append(dict(level=level, title=txt, number=self.__extract_heading_number(txt)))

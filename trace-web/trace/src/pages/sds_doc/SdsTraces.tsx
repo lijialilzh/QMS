@@ -175,12 +175,6 @@ export default () => {
             dataIndex: "location",
         },
         {
-            title: ts("product.product"),
-            render: (_value: any, row: any) => {
-                return `${row.product_name}-${row.product_version}`;
-            },
-        },
-        {
             title: ts("sds_doc.version"),
             dataIndex: "sdsdoc_version",
         },

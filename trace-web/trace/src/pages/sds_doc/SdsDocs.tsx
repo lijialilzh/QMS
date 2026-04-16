@@ -1,5 +1,5 @@
-import { Form, Input, Button, Table, message, Row, Col, Modal, Select, Space } from "antd";
-import { SearchOutlined } from "@ant-design/icons";
+import { Form, Input, Button, Table, message, Row, Col, Modal, Select, Space, Upload } from "antd";
+import { SearchOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
@@ -15,6 +15,7 @@ enum DlgTypes {
     delete = "delete",
     add = "add",
     edit = "edit",
+    import = "import",
 }
 
 const doSearchProducts = (data: any, dispatch: any) => {
@@ -127,6 +128,7 @@ export default () => {
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
     const [queryForm] = Form.useForm();
+    const [importForm] = Form.useForm();
     const [data, dispatch] = useData({
         total: 0,
         pageIndex: 1,
@@ -137,6 +139,7 @@ export default () => {
         loadingProducts: false,
         products: [],
         versionOptions: [] as { value: string; label: string }[],
+        importFiles: [],
     });
 
     const productId = Form.useWatch("product_id", queryForm);
@@ -179,6 +182,42 @@ export default () => {
                 dispatch({ loading: false });
                 message.error(res.msg);
             }
+        });
+    };
+
+    const doImportWord = () => {
+        importForm.validateFields().then((values) => {
+            const file = (data.importFiles || [])[0];
+            if (!file) {
+                message.warning(ts("select_file"));
+                return;
+            }
+            dispatch({ loading: true });
+            Api.import_sds_doc_word({
+                product_id: values.product_id,
+                version: values.version,
+                change_log: values.change_log || "",
+                file,
+            }).then((res: any) => {
+                dispatch({ loading: false });
+                if (res.code === Api.C_OK) {
+                    dispatch({ dlgType: null, importFiles: [] });
+                    importForm.resetFields();
+                    message.success(res.msg || "导入成功");
+                    doSearch(queryForm.getFieldsValue(), 1, data.pageSize);
+                } else {
+                    Modal.error({
+                        title: "导入失败",
+                        content: res.msg || "Word导入失败，请检查文档格式后重试。",
+                    });
+                }
+            }).catch(() => {
+                dispatch({ loading: false });
+                Modal.error({
+                    title: "导入失败",
+                    content: "Word导入请求异常，请稍后重试。",
+                });
+            });
         });
     };
 
@@ -305,6 +344,9 @@ export default () => {
                     </Row>
                 </Form>
                 <Space>
+                    <Button type="primary" onClick={() => dispatch({ dlgType: DlgTypes.import })}>
+                        导入
+                    </Button>
                     <Button type="primary" onClick={() => navigate("/sds_docs/add")}>
                         {ts("add")}
                     </Button>
@@ -344,6 +386,55 @@ export default () => {
                 onOk={doDelete}
                 onCancel={() => dispatch({ dlgType: null })}>
                 <div>{ts("confirm_delete")}</div>
+            </Modal>
+            <Modal
+                centered
+                width={680}
+                title="导入Word详细设计"
+                open={data.dlgType === DlgTypes.import}
+                maskClosable={false}
+                confirmLoading={data.loading}
+                onOk={doImportWord}
+                onCancel={() => {
+                    dispatch({ dlgType: null, importFiles: [] });
+                    importForm.resetFields();
+                }}>
+                <Form form={importForm} layout="vertical">
+                    <Form.Item
+                        label={ts("product.product")}
+                        name="product_id"
+                        rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
+                        <ProductVersionSelect
+                            products={data.products}
+                            allowClear
+                            namePlaceholder={ts("product.name")}
+                            versionPlaceholder={ts("product.full_version")}
+                            onChange={(value) => importForm.setFieldValue("product_id", value)}
+                        />
+                    </Form.Item>
+                    <Form.Item
+                        label={ts("sds_doc.version")}
+                        name="version"
+                        rules={[{ required: true, message: sprintf(ts("msg_input"), { label: ts("sds_doc.version") }) }]}>
+                        <Input allowClear />
+                    </Form.Item>
+                    <Form.Item label={ts("sds_doc.change_log")} name="change_log">
+                        <Input.TextArea rows={3} allowClear />
+                    </Form.Item>
+                    <Form.Item label="Word文件" required>
+                        <Upload
+                            maxCount={1}
+                            accept=".docx"
+                            fileList={data.importFiles}
+                            onRemove={() => dispatch({ importFiles: [] })}
+                            beforeUpload={(file) => {
+                                dispatch({ importFiles: [file] });
+                                return false;
+                            }}>
+                            <Button icon={<UploadOutlined />}>{ts("select_file")}</Button>
+                        </Upload>
+                    </Form.Item>
+                </Form>
             </Modal>
             <DetailDlg
                 data={data}
