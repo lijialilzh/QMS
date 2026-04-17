@@ -258,6 +258,15 @@ export default () => {
         });
     };
 
+    const normalizeImgUrl = (url?: string) => {
+        const txt = String(url || "").trim();
+        if (!txt || txt === "/") return "";
+        if (txt.startsWith("http://") || txt.startsWith("https://") || txt.startsWith("data:")) return txt;
+        if (txt.startsWith("/data.trace/")) return txt;
+        if (txt.startsWith("data.trace/")) return `/${txt}`;
+        return txt;
+    };
+
     const columns = [
         {
             title: ts("srs_req.code"),
@@ -289,8 +298,8 @@ export default () => {
             title: ts("sds_reqd.logic_txt"),
             dataIndex: "logic_txt",
             render: (_t: any, row: any) => {
-                const img = (row?.logic_img || "").trim();
-                if (img && img !== "/") {
+                const img = normalizeImgUrl(row?.logic_img);
+                if (img) {
                     return <img src={img} alt="logic" style={{ maxWidth: 160, maxHeight: 80, objectFit: "contain" }} />;
                 }
                 return "/";

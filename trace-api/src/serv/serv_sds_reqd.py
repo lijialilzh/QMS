@@ -278,6 +278,19 @@ class Server(object):
                 return (matched.group(1) or "").strip()
         return ""
 
+    @staticmethod
+    def __normalize_img_url(url: str):
+        txt = (url or "").strip()
+        if not txt:
+            return ""
+        if txt.startswith("http://") or txt.startswith("https://") or txt.startswith("data:"):
+            return txt
+        if txt.startswith("/data.trace/"):
+            return txt
+        if txt.startswith("data.trace/"):
+            return "/" + txt
+        return txt
+
     def __extract_first_image_under_node(self, node: SdsNodeForm):
         image_url = ""
 
@@ -332,6 +345,44 @@ class Server(object):
             if logic_img:
                 return logic_img
         return self.__extract_first_image_under_node(node)
+
+    def __pick_named_logic_image(self, nodes: List[SdsNodeForm], req: SrsReq, row_srsreqd: SrsReqd, target_code: str):
+        # 通过“需求/代码名称 + SDS编号”在命中节点范围内找图，优先命中“程序逻辑”相关图片
+        names = []
+        for txt in [getattr(row_srsreqd, "name", None), req.sub_function, req.function, req.module]:
+            n = self.__normalize_name(txt)
+            if n and n not in names:
+                names.append(n)
+        code_norm = self.__normalize_name(target_code)
+
+        best_logic = ""
+        best_name = ""
+        fallback = ""
+
+        def walk(node_list: List[SdsNodeForm]):
+            nonlocal best_logic, best_name, fallback
+            for node in node_list or []:
+                img = self.__extract_first_image_under_node(node)
+                if not img:
+                    walk(getattr(node, "children", None) or [])
+                    continue
+                if not fallback:
+                    fallback = img
+                merged = self.__normalize_name(
+                    f"{getattr(node, 'title', '')}{getattr(node, 'label', '')}{getattr(node, 'text', '')}"
+                )
+                if merged:
+                    has_logic = ("程序逻辑" in merged) or ("逻辑" in merged)
+                    has_name = any(name and name in merged for name in names)
+                    has_code = bool(code_norm and code_norm in merged)
+                    if (has_logic and (has_name or has_code)) and not best_logic:
+                        best_logic = img
+                    elif (has_name or has_code) and not best_name:
+                        best_name = img
+                walk(getattr(node, "children", None) or [])
+
+        walk(nodes or [])
+        return best_logic or best_name or fallback
 
     def __find_best_req_node(self, tree: List[SdsNodeForm], req: SrsReq, row_srsreqd: SrsReqd):
         req_names = []
@@ -394,7 +445,10 @@ class Server(object):
 
         # 优先在 SDS 编码命中的节点范围内按需求/代码名称定位，避免串到其他模块
         req_node = self.__find_best_req_node(code_nodes or tree, req, row_srsreqd)
+        named_img = self.__pick_named_logic_image(code_nodes or tree, req, row_srsreqd, target_code)
         if not req_node:
+            if named_img:
+                by_code["logic_img"] = named_img
             if by_code_img:
                 by_code["logic_img"] = by_code_img
             return by_code
@@ -406,6 +460,8 @@ class Server(object):
             by_name["logic_img"] = by_name_img
         # 以 SDS 编码命中的内容为主，名称命中作为补充
         merged = self.__merge_values(by_code, by_name)
+        if named_img:
+            merged["logic_img"] = named_img
         if by_code_img:
             merged["logic_img"] = by_code_img
         return merged
@@ -580,7 +636,7 @@ class Server(object):
             if row_product:
                 obj.product_name = row_product.name
                 obj.product_version = row_product.full_version
-            obj.logic_img = (values.get("logic_img") or "").strip() or "/"
+            obj.logic_img = self.__normalize_img_url(values.get("logic_img") or "") or "/"
             # 若仅识别到图题文字（如“图23 退出登录”），不作为逻辑文本展示
             if re.match(r"^\s*(?:图|figure)\s*\d+[\s、.．:：-]*", (obj.logic_txt or "").strip(), re.I):
                 obj.logic_txt = ""

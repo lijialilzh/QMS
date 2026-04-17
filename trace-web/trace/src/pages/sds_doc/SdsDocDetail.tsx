@@ -15,6 +15,15 @@ import * as ApiSdsTrace from "@/api/ApiSdsTrace";
 import TreeStructure, { TreeNode } from "./components/TreeStructure";
 
 export default () => {
+    const normalizeImgUrl = (url?: string) => {
+        const txt = String(url || "").trim();
+        if (!txt || txt === "/") return "";
+        if (txt.startsWith("http://") || txt.startsWith("https://") || txt.startsWith("data:")) return txt;
+        if (txt.startsWith("/data.trace/")) return txt;
+        if (txt.startsWith("data.trace/")) return `/${txt}`;
+        return txt;
+    };
+
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
     const params = useParams();
@@ -1205,8 +1214,8 @@ export default () => {
                             dataIndex: "logic_img",
                             width: 160,
                             render: (t: string) => {
-                                const img = String(t || "").trim();
-                                if (!img || img === "/") return "/";
+                                const img = normalizeImgUrl(t);
+                                if (!img) return "/";
                                 return <img src={img} alt="logic" style={{ maxWidth: 140, maxHeight: 80, objectFit: "contain" }} />;
                             },
                         },
