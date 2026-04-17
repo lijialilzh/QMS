@@ -288,6 +288,13 @@ export default () => {
         {
             title: ts("sds_reqd.logic_txt"),
             dataIndex: "logic_txt",
+            render: (_t: any, row: any) => {
+                const img = (row?.logic_img || "").trim();
+                if (img && img !== "/") {
+                    return <img src={img} alt="logic" style={{ maxWidth: 160, maxHeight: 80, objectFit: "contain" }} />;
+                }
+                return "/";
+            },
         },
         {
             title: ts("sds_reqd.intput"),

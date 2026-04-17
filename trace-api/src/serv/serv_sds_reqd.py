@@ -25,6 +25,51 @@ logger = logging.getLogger(__name__)
 
 
 class Server(object):
+    SECTION_PREFIX_RE = r"(?:[（(]\d+[）)]|\d+[).、．]?)?\s*"
+
+    @staticmethod
+    def __is_placeholder(value: str):
+        txt = (value or "").strip()
+        return txt in ["", "-", "--", "—", "/", "\\", "暂无", "无", "N/A", "n/a"]
+
+    @staticmethod
+    def __pick_srs_flow_text(row_srsreqd: SrsReqd):
+        if not row_srsreqd:
+            return ""
+        work_flow = (getattr(row_srsreqd, "work_flow", None) or "").strip()
+        trigger = (getattr(row_srsreqd, "trigger", None) or "").strip()
+        if work_flow:
+            return work_flow
+        # 兼容SRS里把“事件流”写在触发器/触发条件字段中的情况
+        return trigger
+
+    @staticmethod
+    def __extract_io_sections_from_text(text: str):
+        raw = (text or "").strip()
+        if not raw:
+            return {}
+        # 兼容 "(4) 输入项" / "4. 输入项" / "输入项：" 等写法
+        marker_re = re.compile(r"(?:\(\d+\)|\d+[).、．]?)?\s*(输入项|输出项|接口)(?:描述)?\s*[：:]?")
+        hits = list(marker_re.finditer(raw))
+        if not hits:
+            return {}
+        result = {}
+        field_map = {"输入项": "intput", "输出项": "output", "接口": "interface"}
+        for idx, hit in enumerate(hits):
+            marker = hit.group(1)
+            field = field_map.get(marker)
+            if not field:
+                continue
+            start = hit.end()
+            end = hits[idx + 1].start() if idx + 1 < len(hits) else len(raw)
+            seg = raw[start:end].strip(" \t\r\n:：;；，,。")
+            if not seg:
+                continue
+            old = (result.get(field) or "").strip()
+            if (not old) or len(seg) > len(old):
+                result[field] = seg
+        return result
+
     @staticmethod
     def __normalize_code(code: str):
         txt = (code or "").strip().upper()
@@ -117,14 +162,176 @@ class Server(object):
             for n in nodes or []:
                 field = self.__detect_field(n)
                 text = (getattr(n, "text", "") or "").strip()
+                tagged = self.__extract_tagged_sections_from_text(text) if text else {}
+                payload.update(self.__merge_values(payload, tagged))
                 if field and text:
+                    value = text
+                    if field == "logic_txt":
+                        value = self.__extract_logic_text(text)
                     old = payload.get(field, "")
-                    if not old or len(text) > len(old):
-                        payload[field] = text
+                    if value and (not old or len(value) > len(old)):
+                        payload[field] = value
                 walk(getattr(n, "children", None) or [])
 
         walk([node])
         return payload
+
+    @staticmethod
+    def __merge_values(base: dict, extra: dict):
+        result = dict(base or {})
+        for key, value in (extra or {}).items():
+            old = (result.get(key) or "").strip()
+            new = (value or "").strip()
+            if new and (not old or len(new) > len(old)):
+                result[key] = new
+        return result
+
+    def __extract_tagged_sections_from_text(self, text: str):
+        raw = (text or "").strip()
+        if not raw:
+            return {}
+        marker_map = {
+            "功能": "func_detail",
+            "程序逻辑": "logic_txt",
+            "逻辑描述": "logic_txt",
+            "逻辑": "logic_txt",
+            "输入项": "intput",
+            "输出项": "output",
+            "接口": "interface",
+        }
+        marker_re = re.compile(rf"{self.SECTION_PREFIX_RE}(功能|程序逻辑|逻辑描述|逻辑|输入项|输出项|接口)(?:描述)?\s*[：:]?")
+        hits = list(marker_re.finditer(raw))
+        if not hits:
+            return {}
+        result = {}
+        for idx, hit in enumerate(hits):
+            marker = hit.group(1)
+            field = marker_map.get(marker)
+            if not field:
+                continue
+            start = hit.end()
+            end = hits[idx + 1].start() if idx + 1 < len(hits) else len(raw)
+            seg = raw[start:end].strip(" \t\r\n:：;；，,。")
+            if not seg:
+                continue
+            old = (result.get(field) or "").strip()
+            if (not old) or len(seg) > len(old):
+                result[field] = seg
+        return result
+
+    def __extract_logic_text(self, text: str):
+        raw = (text or "").strip()
+        if not raw:
+            return ""
+        # 优先提取显式“逻辑/逻辑描述/程序逻辑”段
+        logic_re = re.compile(rf"{self.SECTION_PREFIX_RE}(程序逻辑|逻辑描述|逻辑)(?:描述)?\s*[：:]?")
+        logic_hit = logic_re.search(raw)
+        # 输入/输出/接口段起点（用于截断逻辑段）
+        io_re = re.compile(rf"{self.SECTION_PREFIX_RE}(输入项|输出项|接口)(?:描述)?\s*[：:]?")
+        io_hit = io_re.search(raw)
+
+        if logic_hit:
+            start = logic_hit.end()
+            end = io_hit.start() if io_hit and io_hit.start() > start else len(raw)
+            logic_txt = raw[start:end].strip(" \t\r\n:：;；，,。")
+        else:
+            # 没有显式逻辑标签时，取输入/输出/接口标签之前的前置文本
+            end = io_hit.start() if io_hit else len(raw)
+            logic_txt = raw[:end].strip(" \t\r\n:：;；，,。")
+
+        # 清理常见编号前缀残留，如 "(4)"、"4."，并过滤占位值
+        logic_txt = re.sub(rf"^{self.SECTION_PREFIX_RE}", "", logic_txt).strip()
+        logic_txt = re.sub(rf"\s*{self.SECTION_PREFIX_RE}$", "", logic_txt).strip()
+        # 图题/占位值不作为逻辑描述
+        if re.match(r"^\s*(?:图|figure)\s*\d+[\s、.．:：-]*", logic_txt, re.I):
+            return ""
+        if self.__is_placeholder(logic_txt):
+            return ""
+        return logic_txt
+
+    def __extract_tagged_sections_under_node(self, node: SdsNodeForm):
+        payload = {}
+
+        def walk(nodes):
+            nonlocal payload
+            for n in nodes or []:
+                text = (getattr(n, "text", "") or "").strip()
+                if text:
+                    payload = self.__merge_values(payload, self.__extract_tagged_sections_from_text(text))
+                walk(getattr(n, "children", None) or [])
+
+        walk([node])
+        return payload
+
+    @staticmethod
+    def __extract_image_url_from_text(text: str):
+        raw = (text or "").strip()
+        if not raw:
+            return ""
+        md_img_re = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
+        html_img_re = re.compile(r"<img[^>]+src=['\"]([^'\"]+)['\"]", re.I)
+        data_url_re = re.compile(r"(data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\s]+)")
+        path_re = re.compile(r"((?:https?://\S+|(?:/)?data\.trace/\S+))", re.I)
+        for regex in [md_img_re, html_img_re, data_url_re, path_re]:
+            matched = regex.search(raw)
+            if matched:
+                return (matched.group(1) or "").strip()
+        return ""
+
+    def __extract_first_image_under_node(self, node: SdsNodeForm):
+        image_url = ""
+
+        def walk(nodes):
+            nonlocal image_url
+            if image_url:
+                return
+            for n in nodes or []:
+                img_url = (getattr(n, "img_url", None) or "").strip()
+                if img_url and img_url not in ["-", "/"]:
+                    image_url = img_url
+                    return
+                text = (getattr(n, "text", None) or "").strip()
+                if text:
+                    text_img = self.__extract_image_url_from_text(text)
+                    if text_img:
+                        image_url = text_img
+                        return
+                table = getattr(n, "table", None)
+                if table:
+                    for row in getattr(table, "rows", None) or []:
+                        for val in (row or {}).values():
+                            text_img = self.__extract_image_url_from_text(str(val or ""))
+                            if text_img:
+                                image_url = text_img
+                                return
+                    for row_cells in getattr(table, "cells", None) or []:
+                        for cell in row_cells or []:
+                            text_img = self.__extract_image_url_from_text(getattr(cell, "value", "") or "")
+                            if text_img:
+                                image_url = text_img
+                                return
+                walk(getattr(n, "children", None) or [])
+                if image_url:
+                    return
+
+        walk([node])
+        return image_url
+
+    def __extract_logic_image_under_node(self, node: SdsNodeForm):
+        logic_nodes = []
+
+        def collect(nodes):
+            for n in nodes or []:
+                if self.__detect_field(n) == "logic_txt":
+                    logic_nodes.append(n)
+                collect(getattr(n, "children", None) or [])
+
+        collect([node])
+        for logic_node in logic_nodes:
+            logic_img = self.__extract_first_image_under_node(logic_node)
+            if logic_img:
+                return logic_img
+        return self.__extract_first_image_under_node(node)
 
     def __find_best_req_node(self, tree: List[SdsNodeForm], req: SrsReq, row_srsreqd: SrsReqd):
         req_names = []
@@ -159,27 +366,49 @@ class Server(object):
 
         target_code = self.__to_sds_code(req.code)
         by_code = {}
+        code_nodes = []
 
         def walk_by_code(nodes, current_code=""):
             for node in nodes or []:
                 node_code = self.__normalize_code(getattr(node, "sds_code", "") or "")
                 active_code = node_code or current_code
+                if active_code == target_code:
+                    code_nodes.append(node)
                 field = self.__detect_field(node)
                 text = (getattr(node, "text", "") or "").strip()
                 if active_code == target_code and field and text:
+                    value = self.__extract_logic_text(text) if field == "logic_txt" else text
                     old = by_code.get(field, "")
-                    if not old or len(text) > len(old):
-                        by_code[field] = text
+                    if value and (not old or len(value) > len(old)):
+                        by_code[field] = value
                 walk_by_code(getattr(node, "children", None) or [], active_code)
 
         walk_by_code(tree)
-        if by_code:
+        for node in code_nodes:
+            by_code = self.__merge_values(by_code, self.__extract_tagged_sections_under_node(node))
+        by_code_img = ""
+        for node in code_nodes:
+            by_code_img = self.__extract_logic_image_under_node(node)
+            if by_code_img:
+                break
+
+        # 优先在 SDS 编码命中的节点范围内按需求/代码名称定位，避免串到其他模块
+        req_node = self.__find_best_req_node(code_nodes or tree, req, row_srsreqd)
+        if not req_node:
+            if by_code_img:
+                by_code["logic_img"] = by_code_img
             return by_code
 
-        req_node = self.__find_best_req_node(tree, req, row_srsreqd)
-        if not req_node:
-            return {}
-        return self.__extract_payload_under_node(req_node)
+        by_name = self.__extract_payload_under_node(req_node)
+        by_name = self.__merge_values(by_name, self.__extract_tagged_sections_under_node(req_node))
+        by_name_img = self.__extract_logic_image_under_node(req_node)
+        if by_name_img:
+            by_name["logic_img"] = by_name_img
+        # 以 SDS 编码命中的内容为主，名称命中作为补充
+        merged = self.__merge_values(by_code, by_name)
+        if by_code_img:
+            merged["logic_img"] = by_code_img
+        return merged
 
     def __split_mixed_io_interface(self, values: dict):
         result = dict(values or {})
@@ -310,32 +539,37 @@ class Server(object):
         objs = []
         for row_reqd, row_req, row_srsreqd, row_type, row_sdsdoc, row_srsdoc, row_product in rows:
             values = self.__extract_imported_fields(doc_trees.get(row_sdsdoc.id), row_req, row_srsreqd)
-            for field in ["intput", "output", "interface"]:
+            for field in ["logic_txt", "intput", "output", "interface"]:
                 cur_val = (getattr(row_reqd, field, None) or "").strip()
                 if cur_val and not values.get(field):
                     values[field] = cur_val
             values = self.__split_mixed_io_interface(values)
-            for field in ["overview", "func_detail", "logic_txt", "intput", "output", "interface"]:
+            # 仅回填“详细设计来源”字段：逻辑描述/输入项/输出项/接口
+            for field in ["logic_txt", "intput", "output", "interface"]:
                 old_val = (getattr(row_reqd, field, None) or "").strip()
                 new_val = (values.get(field) or "").strip()
-                should_update = (not old_val) and bool(new_val)
+                # 详细设计为权威来源：只要解析出新值且与旧值不同，就覆盖旧值
+                should_update = bool(new_val) and (old_val != new_val)
                 # 已有脏数据（如接口列里混入“输入项/输出项”）时允许覆盖清洗
                 if field == "interface" and old_val and re.search(r"(输入项|输出项)", old_val):
                     should_update = old_val != new_val
-                if field in ["intput", "output"] and old_val in ["-", "/"] and new_val:
-                    should_update = True
                 if should_update:
                     setattr(row_reqd, field, new_val)
                     changed = True
 
             obj = SdsReqdObj(**row_reqd.dict())
             obj.srs_code = row_req.code
+            srs_flow_text = self.__pick_srs_flow_text(row_srsreqd)
             if row_srsreqd:
+                # 需求编号/名称/概述/功能 固定来源于 SRS
                 obj.name = row_srsreqd.name or row_req.sub_function or row_req.function or row_req.module
-                obj.overview = row_reqd.overview or row_srsreqd.overview
-                obj.func_detail = row_reqd.func_detail or row_srsreqd.work_flow
+                obj.overview = row_srsreqd.overview
+                obj.func_detail = srs_flow_text
             else:
                 obj.name = row_req.sub_function or row_req.function or row_req.module
+                # SRS详情缺失时保留历史数据兜底
+                obj.overview = row_reqd.overview
+                obj.func_detail = row_reqd.func_detail
             obj.module = row_req.module
             obj.function = row_req.function
             obj.sub_function = row_req.sub_function
@@ -346,6 +580,10 @@ class Server(object):
             if row_product:
                 obj.product_name = row_product.name
                 obj.product_version = row_product.full_version
+            obj.logic_img = (values.get("logic_img") or "").strip() or "/"
+            # 若仅识别到图题文字（如“图23 退出登录”），不作为逻辑文本展示
+            if re.match(r"^\s*(?:图|figure)\s*\d+[\s、.．:：-]*", (obj.logic_txt or "").strip(), re.I):
+                obj.logic_txt = ""
             objs.append(obj)
         if changed:
             db.session.commit()
@@ -368,6 +606,7 @@ class Server(object):
         obj.logics = logics
         obj.name = row_req.sub_function or row_req.function or row_req.module
         obj.overview = row_reqd.overview or row_srsreqd.overview
-        obj.func_detail = row_reqd.func_detail or row_srsreqd.work_flow
+        srs_flow_text = self.__pick_srs_flow_text(row_srsreqd)
+        obj.func_detail = srs_flow_text if self.__is_placeholder(row_reqd.func_detail) else row_reqd.func_detail
         return Resp.resp_ok(data=obj)
     

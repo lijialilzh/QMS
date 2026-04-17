@@ -20,6 +20,7 @@ class SdsReqdForm(BaseModel):
     overview: Optional[str] = Field(title="需求概述")
     func_detail: Optional[str] = Field(title="功能")
     logic_txt: Optional[str] = Field(title="逻辑文本")
+    logic_img: Optional[str] = Field(title="逻辑图")
     intput: Optional[str] = Field(title="输入")
     output: Optional[str] = Field(title="输出")
     interface: Optional[str] = Field(title="接口")

@@ -30,8 +30,8 @@ default_types ={
 
 NAME_DICT = {
     "图像接收": "DataProcessing",
-    "图像存储": "RePACS",
-    "图像处理": "DLServer",
+    "图像存储": "DLServer",
+    "图像处理": "RePACS",
     "图像显示": "NeoViewer",
     "图像预测": "DLServer",
 }
@@ -88,9 +88,13 @@ class Server(object):
     
 
     def __find_path(self, level: int, sdscode: str, nodes: List[SdsNodeForm], paths: List[str] = None):
+        target_codes = set(self.__extract_code_tokens(sdscode))
         for node in nodes or []:
             npaths = [node.title] if level == 0 else paths + [node.title]
-            if node.sds_code == sdscode:
+            node_codes = set(self.__extract_code_tokens(getattr(node, "sds_code", None)))
+            is_exact_match = (node.sds_code or "").strip() == (sdscode or "").strip()
+            has_code_overlap = bool(target_codes and node_codes and (target_codes & node_codes))
+            if is_exact_match or has_code_overlap:
                 return npaths, node
             cpaths, cnode = self.__find_path(level + 1, sdscode, node.children, npaths)
             if cnode:
@@ -98,10 +102,8 @@ class Server(object):
         return paths, None
     
     def __find_chapter(self, paths: List[str] = None):
-        paths.reverse()
-        for path in paths:
-            chapter = re.search(r'(?<!\d)(\d+(?:\.\d+)*)(?!\d)', path or "")
-            chapter = chapter.group() if chapter else None
+        for path in reversed(paths or []):
+            chapter = self.__extract_chapter_code(path)
             if chapter:
                 return chapter
 
@@ -110,21 +112,166 @@ class Server(object):
         txt = (value or "").strip()
         if not txt:
             return None
-        matched = re.search(r'(?<!\d)(\d+(?:\.\d+)*)(?!\d)', txt)
-        return matched.group(1) if matched else None
+        # 仅提取“标题前缀章节号”，避免把正文中的普通数字误识别为章节号（如“数据上传1111”）
+        # 兼容前置符号/换行（如 "-7. 法规符合性需求"）
+        candidates = [line.strip() for line in re.split(r'[\r\n]+', txt) if line and line.strip()]
+        if not candidates:
+            candidates = [txt]
+        for line in candidates:
+            normalized = re.sub(r'^[\s\u3000•·▪■◆●○□◇\-–—_~()（）\[\]【】]+', "", line)
+            matched = re.match(r'^(\d+(?:\.\d+)*)(?:[\s、.．:：\-–—]+|(?=[\u4e00-\u9fffA-Za-z])|$)', normalized)
+            if not matched:
+                continue
+            chapter = matched.group(1)
+            # 单级章节号限制为 1~2 位，降低把年份/流水号误判为章节号的概率
+            if "." not in chapter and len(chapter) > 2:
+                continue
+            return chapter
+        return None
 
-    def __find_path_by_names(self, level: int, names: List[str], nodes: List[SdsNodeForm], paths: List[str] = None):
+    @staticmethod
+    def __extract_code_tokens(value: str):
+        txt = (value or "").strip().upper()
+        if not txt:
+            return []
+        parts = re.split(r'[\s,，;；、|/\\\n\r\t]+', txt)
+        return [part for part in parts if part]
+
+    @staticmethod
+    def __build_match_names(*raw_values: str):
+        names = []
+        for raw in raw_values:
+            txt = (raw or "").strip()
+            if not txt:
+                continue
+            variants = [txt]
+            mapped = NAME_DICT.get(txt)
+            if mapped:
+                variants.append(mapped)
+            for item in variants:
+                for norm in Server.__name_match_variants(item):
+                    if norm and norm not in names:
+                        names.append(norm)
+        return names
+
+    @staticmethod
+    def __shift_chapter_major(chapter: str, offset: int):
+        txt = (chapter or "").strip()
+        if not txt or not offset:
+            return txt
+        parts = txt.split(".")
+        if not parts:
+            return txt
+        try:
+            major = int(parts[0])
+        except Exception:
+            return txt
+        shifted_major = major - offset
+        if shifted_major <= 0:
+            return txt
+        parts[0] = str(shifted_major)
+        return ".".join(parts)
+
+    def __get_doc_chapter_offset(self, tree: List[SdsNodeForm] = None):
+        for node in tree or []:
+            title = (getattr(node, "title", "") or "").strip()
+            if "软件详细设计" in title:
+                chapter = self.__extract_chapter_code(title)
+                if not chapter:
+                    return 0
+                try:
+                    return int(str(chapter).split(".")[0])
+                except Exception:
+                    return 0
+        return 0
+
+    @staticmethod
+    def __name_match_variants(value: str):
+        txt = (value or "").strip()
+        if not txt:
+            return []
+        variants = [txt]
+        # 去掉标题中的括号补充说明，如 “法规符合性需求(网络安全)” -> “法规符合性需求”
+        no_bracket = re.sub(r"[（(][^）)]*[）)]", "", txt).strip()
+        if no_bracket and no_bracket not in variants:
+            variants.append(no_bracket)
+        # 业务常见同义写法归一（SRS 与 SDS 文案不完全一致）
+        if "法规符合需求" in txt:
+            variants.append(txt.replace("法规符合需求", "法规符合性需求"))
+        if "法规符合性需求" in txt:
+            variants.append(txt.replace("法规符合性需求", "法规符合需求"))
+        normalized = []
+        for item in variants:
+            n = Server.__normalize_name(item)
+            if n and n not in normalized:
+                normalized.append(n)
+        return normalized
+
+    def __find_path_by_names(self, level: int, names: List[str], nodes: List[SdsNodeForm], paths: List[str] = None, exact_only: bool = True):
         for node in nodes or []:
             title = getattr(node, "title", "") or ""
             label = getattr(node, "label", "") or ""
-            merged = self.__normalize_name(f"{title}{label}")
+            clean_title = self.__clean_path_title(title)
+            title_norms = self.__name_match_variants(clean_title)
+            label_norms = self.__name_match_variants(label)
+            merged_norm = self.__normalize_name(f"{clean_title}{label}")
             npaths = [node.title] if level == 0 else paths + [node.title]
-            if merged and any(name and (merged == name or name in merged) for name in names or []):
+            if exact_only:
+                hit = any(name and ((name in title_norms) or (name in label_norms)) for name in names or [])
+            else:
+                hit = any(
+                    name and (
+                        (name in title_norms)
+                        or (name in label_norms)
+                        or (merged_norm == name)
+                        or (name in merged_norm)
+                    )
+                    for name in names or []
+                )
+            if hit:
                 return npaths, node
-            cpaths, cnode = self.__find_path_by_names(level + 1, names, node.children, npaths)
+            cpaths, cnode = self.__find_path_by_names(level + 1, names, node.children, npaths, exact_only)
             if cnode:
                 return cpaths, cnode
         return paths, None
+
+    def __extract_chapter_levels(self, paths: List[str] = None):
+        levels = []
+        for path in paths or []:
+            chapter = self.__extract_chapter_code(path)
+            if chapter and chapter not in levels:
+                levels.append(chapter)
+        return levels
+
+    @staticmethod
+    def __is_placeholder_name(value: str):
+        txt = (value or "").strip()
+        return txt in ["", "/", "\\", "-", "--", "—", "N/A", "n/a", "无", "暂无"]
+
+    @staticmethod
+    def __clean_path_title(value: str):
+        txt = (value or "").strip()
+        if not txt:
+            return ""
+        # 去掉前置章节号，如 "6.7.12 新增科室"
+        txt = re.sub(r"^\s*\d+(?:\.\d+)*\s*", "", txt).strip()
+        return txt
+
+    def __pick_req_display_name(self, row_req: SrsReq, paths: List[str] = None):
+        for txt in [row_req.sub_function, row_req.function, row_req.module]:
+            if not self.__is_placeholder_name(txt):
+                return (txt or "").strip()
+
+        # SRS字段全是占位值时，回退到SDS树路径中的标题文本
+        candidates = []
+        for path in reversed(paths or []):
+            name = self.__clean_path_title(path)
+            if self.__is_placeholder_name(name):
+                continue
+            if self.__extract_chapter_code(name) == name:
+                continue
+            candidates.append(name)
+        return candidates[0] if candidates else "/"
 
     def __fix_location(self, objs:List[SdsTraceObj]):
         doc_dict = dict()
@@ -228,11 +375,11 @@ class Server(object):
         type_names = self.__query_srs_types(req_ids)
         doc_ids = list(set([row_sdsdoc.id for row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product in rows]))
         doc_trees = self.__query_doc_tree(doc_ids)
+        doc_chapter_offsets = {d_id: self.__get_doc_chapter_offset(tree) for d_id, tree in doc_trees.items()}
         objs = []
         for row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product in rows:
             obj = SdsTraceObj(**row_reqd.dict())
             obj.srs_code = row_req.code
-            obj.name = row_req.sub_function or row_req.function or row_req.module
             obj.module = row_req.module
             obj.function = row_req.function
             obj.sub_function = row_req.sub_function
@@ -245,37 +392,45 @@ class Server(object):
                 obj.product_version = row_product.full_version
             obj.type_code = row_req.type_code
             obj.type_name = type_names.get(row_req.id) or default_types.get(row_req.type_code) or row_req.type_code
-            obj.chapter = NAME_DICT.get(obj.chapter) or obj.chapter
-            # 章节号自动回填：优先从SDS树里按 sds_code 反推（如 2.1 / 5.6.3）
+            # 严格按详细设计树节点读取章节号：优先 sds_code 命中；无编码时仅做标题精确匹配
             doc_tree = doc_trees.get(row_sdsdoc.id)
             paths, _ = self.__find_path(0, row_reqd.sds_code, doc_tree, [])
             if not paths:
-                names = []
-                for txt in [obj.name, obj.sub_function, obj.function, obj.module]:
-                    n = self.__normalize_name(txt)
-                    if n and n not in names:
-                        names.append(n)
-                if names:
-                    paths, _ = self.__find_path_by_names(0, names, doc_tree, [])
-            chapter_from_tree = self.__find_chapter((paths or []).copy()) if paths else None
-            if chapter_from_tree:
-                obj.chapter = chapter_from_tree
-            if not obj.location:
+                exact_names = self.__build_match_names(row_req.sub_function, row_req.function, row_req.module)
+                for name in exact_names:
+                    paths, _ = self.__find_path_by_names(0, [name], doc_tree, [], exact_only=True)
+                    if paths:
+                        break
+            # 详细设计树中未命中路径则不展示
+            if not paths:
+                continue
+            # 需求/代码固定取 SRS需求名称（子功能 > 功能 > 模块），占位值时用树标题兜底
+            obj.name = self.__pick_req_display_name(row_req, paths)
+            # 业务强约束：图像相关条目优先按给定映射命中对应模块章节，避免误配到相邻章节
+            module_alias = NAME_DICT.get(obj.name or "")
+            if module_alias:
+                alias_names = self.__build_match_names(module_alias)
+                for name in alias_names:
+                    mapped_paths, _ = self.__find_path_by_names(0, [name], doc_tree, [], exact_only=True)
+                    if mapped_paths:
+                        paths = mapped_paths
+                        break
+            obj.chapter = obj.name
+            levels = self.__extract_chapter_levels(paths)
+            # 章节号优先取命中路径中的最细级编码（如 6.7.12）
+            if levels:
+                obj.location = levels[-1]
+            elif not obj.location:
                 obj.location = self.__find_chapter(paths)
                 logger.info("location: %s %s", row_reqd.sds_code, obj.location)
-            obj.chapter = self.__extract_chapter_code(obj.chapter) or None
             obj.location = self.__extract_chapter_code(obj.location) or None
+            # 命中路径但仍无法解析章节号时，不展示
+            if not obj.location:
+                continue
+            if obj.location:
+                chapter_offset = doc_chapter_offsets.get(row_sdsdoc.id, 0)
+                obj.location = self.__shift_chapter_major(obj.location, chapter_offset) or obj.location
             objs.append(obj)
-        self.__fix_location(objs)
-        for obj in objs:
-            obj.location = self.__extract_chapter_code(obj.location) or None
-            chapter_code = self.__extract_chapter_code(obj.chapter)
-            if chapter_code:
-                obj.chapter = chapter_code
-            elif obj.location:
-                obj.chapter = obj.location
-            else:
-                obj.chapter = None
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
         
     async def get_sds_trace(self, id: int):
@@ -286,6 +441,6 @@ class Server(object):
         row_reqd, row_req = row
         name = row_req.sub_function or row_req.function or row_req.module
         obj = SdsTraceObj(**row_reqd.dict(), srs_code=row_req.code, name=name)
-        obj.chapter = NAME_DICT.get(obj.chapter) or obj.chapter
+        obj.chapter = name
         return Resp.resp_ok(data=obj)
     

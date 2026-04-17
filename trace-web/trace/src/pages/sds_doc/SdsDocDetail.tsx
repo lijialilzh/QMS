@@ -1200,7 +1200,16 @@ export default () => {
                         { title: ts("sds_reqd.overview") || "总体描述", dataIndex: "overview", width: 200, render: (t: string) => (t ? renderOneLineWithTooltip(t, { emptyText: "" }) : "-") },
                         { title: ts("sds_reqd.func_detail") || "功能", dataIndex: "func_detail", width: 200, render: (t: string) => (t ? renderOneLineWithTooltip(t, { emptyText: "" }) : "-") },
                         { title: ts("sds_reqd.logic_txt") || "逻辑文本", dataIndex: "logic_txt", width: 200, render: (t: string) => t ? <span style={{ whiteSpace: 'pre-line', wordBreak: 'break-word' }}>{t}</span> : "-" },
-                        { title: ts("sds_reqd.logic_img") || "逻辑图", dataIndex: "logic_img", width: 120, ellipsis: true, render: (t: string) => t || "-" },
+                        {
+                            title: ts("sds_reqd.logic_img") || "逻辑图",
+                            dataIndex: "logic_img",
+                            width: 160,
+                            render: (t: string) => {
+                                const img = String(t || "").trim();
+                                if (!img || img === "/") return "/";
+                                return <img src={img} alt="logic" style={{ maxWidth: 140, maxHeight: 80, objectFit: "contain" }} />;
+                            },
+                        },
                         { title: ts("sds_reqd.intput") || "输入项", dataIndex: "intput", width: 200, render: (t: string) => (t ? renderOneLineWithTooltip(t, { emptyText: "" }) : "-") },
                         { title: ts("sds_reqd.output") || "输出项", dataIndex: "output", width: 200, render: (t: string) => (t ? renderOneLineWithTooltip(t, { emptyText: "" }) : "-") },
                         { title: ts("sds_reqd.interface") || "接口", dataIndex: "interface", width: 200, render: (t: string) => (t ? renderOneLineWithTooltip(t, { emptyText: "" }) : "-") },
