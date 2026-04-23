@@ -1,5 +1,5 @@
 import "./SdsDocDetail.less";
-import { Form, Input, Button, message, Select, Row, Col, Modal, Space, Table } from "antd";
+import { ConfigProvider, Form, Input, Button, message, Select, Row, Col, Modal, Space, Table } from "antd";
 import { ArrowLeftOutlined, EditOutlined, DownloadOutlined, FileAddOutlined, PlusOutlined } from "@ant-design/icons";
 import { useEffect, useRef } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
@@ -14,6 +14,16 @@ import * as ApiSdsReqd from "@/api/ApiSdsReqd";
 import * as ApiSdsTrace from "@/api/ApiSdsTrace";
 import TreeStructure, { TreeNode } from "./components/TreeStructure";
 
+/** 详细设计页：antd Input/TextArea 字号来自 theme token.inputFontSize（= token.fontSize），需在此统一为 13 */
+const SDS_DOC_DETAIL_THEME = {
+    token: {
+        fontSize: 13,
+        fontSizeSM: 13,
+        fontSizeLG: 13,
+        fontFamily: '"Times New Roman", "SimSun", "Songti SC", "STSong", serif',
+    },
+};
+
 export default () => {
     const normalizeImgUrl = (url?: string) => {
         const txt = String(url || "").trim();
@@ -22,6 +32,55 @@ export default () => {
         if (txt.startsWith("/data.trace/")) return txt;
         if (txt.startsWith("data.trace/")) return `/${txt}`;
         return txt;
+    };
+    const normalizeCodeToken = (value?: string) => String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+    const toSdsCode = (value?: string) => {
+        const code = normalizeCodeToken(value);
+        if (code.startsWith("SRS-")) return `SDS-${code.slice(4)}`;
+        return code;
+    };
+    const normalizeLooseText = (value?: string) => String(value || "")
+        .toLowerCase()
+        .replace(/[\s\u3000\-_.:：，,。；;、()（）【】\[\]/\\]+/g, "");
+    const pickFirstImageFromNode = (node?: TreeNode): string => {
+        if (!node) return "";
+        const selfImg = normalizeImgUrl((node as any).img_url);
+        if (selfImg) return selfImg;
+        const children = (node.children || []) as TreeNode[];
+        for (const child of children) {
+            const childImg = pickFirstImageFromNode(child);
+            if (childImg) return childImg;
+        }
+        return "";
+    };
+    const resolveLogicImgFromTree = (item: any, treeNodes: TreeNode[]): string => {
+        if (!Array.isArray(treeNodes) || treeNodes.length === 0) return "";
+        const targetSdsCode = toSdsCode(item?.srs_code || "");
+        const targetName = normalizeLooseText(item?.name || item?.sub_function || item?.function || item?.module || "");
+        const targetCodeLoose = normalizeLooseText(targetSdsCode);
+        let best: { score: number; img: string } = { score: 0, img: "" };
+
+        const walk = (nodes: TreeNode[], inheritedCode = "") => {
+            for (const node of nodes || []) {
+                const nodeCodeRaw = String((node as any).sds_code || inheritedCode || "");
+                const nodeCode = normalizeCodeToken(nodeCodeRaw);
+                const mergedTxt = `${(node as any).title || ""}${(node as any).label || ""}${(node as any).text || ""}`;
+                const mergedLoose = normalizeLooseText(mergedTxt);
+                const img = pickFirstImageFromNode(node);
+                if (img) {
+                    let score = 0;
+                    if (targetSdsCode && nodeCode && nodeCode === targetSdsCode) score += 100;
+                    else if (targetCodeLoose && mergedLoose.includes(targetCodeLoose)) score += 70;
+                    if (targetName && mergedLoose.includes(targetName)) score += 60;
+                    if (/逻辑|流程/.test(mergedTxt)) score += 10;
+                    if (score > best.score) best = { score, img };
+                }
+                walk((node.children || []) as TreeNode[], nodeCodeRaw || inheritedCode);
+            }
+        };
+
+        walk(treeNodes, "");
+        return best.img;
     };
 
     const { t: ts } = useTranslation();
@@ -80,8 +139,50 @@ export default () => {
     const productLabel = currentProduct ? `${currentProduct.name}-${currentProduct.full_version}` : "";
     const currentSrsdoc = (data.srsDocList as any[]).find((s: any) => s.id === displaySrsdocId);
     const srsdocLabel = currentSrsdoc ? (currentSrsdoc.version || currentSrsdoc.full_version || "") : "";
+    const extractSdsCodeToken = (txt?: string): string => {
+        const raw = String(txt || "");
+        const matched = raw.match(/SDS\s*-\s*[A-Za-z0-9._-]+(?:\s*[-_]\s*[A-Za-z0-9._-]+)*/i);
+        if (!matched) return "";
+        return String(matched[0] || "").replace(/\s+/g, "").toUpperCase();
+    };
+    const extractSdsCodeFromText = (txt?: string): { code: string; nextText: string } => {
+        const raw = String(txt || "");
+        const lines = raw.replace(/\r/g, "").split("\n");
+        if (lines.length === 0) return { code: "", nextText: raw };
+        let hitIndex = -1;
+        let consumedCount = 1;
+        let extractedCode = "";
+        for (let i = 0; i < lines.length; i++) {
+            const line = String(lines[i] || "").trim();
+            const matched = line.match(/设计编号\s*[：:]\s*(.*)$/);
+            if (!matched) continue;
+            hitIndex = i;
+            let codePart = String(matched[1] || "").trim();
+            extractedCode = extractSdsCodeToken(codePart);
+            if (!extractedCode && i + 1 < lines.length) {
+                const nextLine = String(lines[i + 1] || "").trim();
+                if (nextLine) {
+                    codePart = `${codePart}\n${nextLine}`;
+                    consumedCount = 2;
+                }
+            }
+            if (!extractedCode) {
+                extractedCode = extractSdsCodeToken(codePart);
+            }
+            break;
+        }
+        if (hitIndex < 0 || !extractedCode) return { code: "", nextText: raw };
+        const remained = lines.filter((_line, idx) => idx < hitIndex || idx >= (hitIndex + consumedCount));
+        const nextText = remained.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+|\n+$/g, "");
+        return { code: extractedCode, nextText };
+    };
     // 将后端数据转换为前端格式
     const parseTreeNode = (node: any): TreeNode => {
+        const fallbackFromText = extractSdsCodeFromText(node.text);
+        const hasExplicitSdsCodeField = node.sds_code !== undefined;
+        const explicitSdsCode = String(node.sds_code ?? "").trim();
+        const resolvedSdsCode = explicitSdsCode || fallbackFromText.code || "";
+        const shouldStripCodeLineFromText = !!fallbackFromText.code && !explicitSdsCode;
         const hasValidHeaders = !!(
             node.table &&
             node.table.headers !== null &&
@@ -102,11 +203,11 @@ export default () => {
             p_id: node.p_id || 0,
             title: node.title || "",
             ...(node.label !== undefined && { label: node.label ?? "" }),
-            // 保留 sds_code：后端有该字段（含空字符串）则带上
-            ...(node.sds_code !== undefined && { sds_code: node.sds_code ?? "" }),
+            // 兼容历史数据：未返回 sds_code 时，从正文“设计编号：xxx”兜底提取
+            ...((hasExplicitSdsCodeField || !!fallbackFromText.code) && { sds_code: resolvedSdsCode }),
             ...(node.ref_type !== undefined && { ref_type: node.ref_type }),
             img_url: node.img_url || "",
-            text: node.text || "",
+            text: (shouldStripCodeLineFromText ? fallbackFromText.nextText : (node.text || "")),
             // 处理 table：有表头且存在行或单元格结构时保留（避免 rows 为空时误丢合并单元格表格）
             table: (hasValidHeaders && hasRowOrCellContent) ? node.table : {},
             children: (node.children || []).map((child: any) => parseTreeNode(child))
@@ -201,10 +302,6 @@ export default () => {
     const parseHeadingNumber = (title?: string): string | undefined => {
         const matched = String(title || "").trim().match(HEADING_NUM_RE);
         return matched?.[1];
-    };
-    const isTableImportNode = (node: TreeNode): boolean => {
-        const title = String(node.title || "").trim();
-        return /^导入表格\d*$/.test(title) && !!node.table && Array.isArray(node.table.headers) && node.table.headers.length > 0;
     };
     const isPlaceholderTitle = (title?: string): boolean => IMPORTED_PLACEHOLDER_RE.test(String(title || "").trim());
     const isNumberableNode = (node: TreeNode): boolean => {
@@ -506,23 +603,28 @@ export default () => {
         }).then((res: any) => {
             if (res.code === ApiSdsReqd.C_OK) {
                 const rows = res.data?.rows || [];
-                const tableData = rows.map((item: any, index: number) => ({
-                    key: item.req_id || `reqd_${index}_${Date.now()}`,
-                    req_id: item.srs_code,
-                    doc_id: item.doc_id,
-                    doc_version: item.doc_version || "",
-                    name: item.name || "",
-                    overview: item.overview || "",
-                    function: item.function || "",
-                    func_detail: item.func_detail || "",
-                    logic_txt: item.logic_txt || "",
-                    logic_img: item.logic_img || "",
-                    intput: item.intput || "",
-                    output: item.output || "",
-                    interface: item.interface || "",
-                    product_name: item.product_name || "",
-                    product_version: item.product_version || "",
-                }));
+                const currentTree = (((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) || []) as TreeNode[];
+                const tableData = rows.map((item: any, index: number) => {
+                    const backendLogicImg = normalizeImgUrl(item.logic_img);
+                    const logicImg = backendLogicImg || resolveLogicImgFromTree(item, currentTree) || "";
+                    return {
+                        key: item.req_id || `reqd_${index}_${Date.now()}`,
+                        req_id: item.srs_code,
+                        doc_id: item.doc_id,
+                        doc_version: item.doc_version || "",
+                        name: item.name || "",
+                        overview: item.overview || "",
+                        function: item.function || "",
+                        func_detail: item.func_detail || "",
+                        logic_txt: item.logic_txt || "",
+                        logic_img: logicImg,
+                        intput: item.intput || "",
+                        output: item.output || "",
+                        interface: item.interface || "",
+                        product_name: item.product_name || "",
+                        product_version: item.product_version || "",
+                    };
+                });
                 dispatch({ reqdListData: tableData, reqdListLoading: false });
             } else {
                 message.error(res.msg || "加载设计列表数据失败");
@@ -938,7 +1040,11 @@ export default () => {
     };
 
     return (
-        <div className={`page div-v sds-doc-detail ${isReadOnly ? 'read-only' : ''}`}>
+        <ConfigProvider theme={SDS_DOC_DETAIL_THEME}>
+        <div
+            className={`page div-v sds-doc-detail ${isReadOnly ? 'read-only' : ''}`}
+            data-sds-build="sds-font-fix-20260421-1"
+        >
             <div className="div-h center-v page-actions searchbar">
                 <Button
                     icon={<ArrowLeftOutlined />}
@@ -1252,5 +1358,6 @@ export default () => {
                 />
             </Modal>
         </div>
+        </ConfigProvider>
     );
 };

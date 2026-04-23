@@ -1,12 +1,33 @@
 @import "../../../index.less";
 @import "../../../index.app.less";
 
-.tree-structure-container {
+.sds-doc-detail .tree-structure-container {
     background-color: #ffffff;
     // border: 1px solid #d9d9d9;
     border-radius: 6px;
     padding: 16px;
     min-height: 100px;
+    font-size: 13px;
+    font-family: "Times New Roman", "SimSun", "Songti SC", serif;
+
+    .node-title-prefix,
+    .node-title,
+    .node-sds-code,
+    .node-content,
+    .node-inline-heading,
+    .node-inline-line,
+    .node-file-ref,
+    .node-file-link,
+    .node-file-empty,
+    .node-srsreq-btn,
+    .ant-btn,
+    .ant-input,
+    .ant-input-textarea textarea,
+    .ant-table,
+    .ant-table-cell {
+        font-size: 13px !important;
+        font-family: "Times New Roman", "SimSun", "Songti SC", serif !important;
+    }
 
     .tree-structure-empty {
         padding: 32px 0;
@@ -57,18 +78,30 @@
             .node-title-prefix {
               white-space: nowrap;
               margin-right: 24px;
+              font-size: 13px !important;
+              line-height: 1.5;
+              font-weight: 400;
+              font-family: "Times New Roman", "SimSun", "Songti SC", serif !important;
             }
 
             .node-title {
                 flex: 0 0 160px;
                 max-width: 160px;
                 margin-right: 10px;
+                font-size: 13px !important;
+                line-height: 1.5;
+                font-weight: 400;
+                font-family: "Times New Roman", "SimSun", "Songti SC", serif !important;
             }
 
             .node-sds-code {
                 margin-right: 10px;
                 flex: 0 0 120px;
                 max-width: 120px;
+                font-size: 13px !important;
+                line-height: 1.5;
+                font-weight: 400;
+                font-family: "Times New Roman", "SimSun", "Songti SC", serif !important;
             }
 
             .node-text-area {
@@ -99,6 +132,45 @@
                     width: 100%;
                     height: 100%;
                     object-fit: contain;
+                }
+            }
+
+            .node-pic-editable {
+                position: relative;
+                overflow: visible;
+
+                .ant-image {
+                    width: 100%;
+                    height: 100%;
+                    border-radius: 8px;
+                    overflow: hidden;
+                }
+            }
+
+            .node-pic-remove-btn {
+                position: absolute;
+                top: 0;
+                right: 0;
+                z-index: 999;
+                width: 22px;
+                height: 22px;
+                min-width: 22px;
+                padding: 0;
+                border-radius: 2px;
+                color: rgba(0, 0, 0, 0.65);
+                background: transparent;
+                border: none;
+                box-shadow: none;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                opacity: 1 !important;
+                visibility: visible !important;
+                pointer-events: auto !important;
+
+                &:hover {
+                    color: rgba(0, 0, 0, 0.85) !important;
+                    background: rgba(0, 0, 0, 0.08) !important;
                 }
             }
 
@@ -173,6 +245,59 @@
                 margin-right: 8px;
                 flex-shrink: 0;
             }
+
+            &.node-row-has-image {
+                .node-title-prefix {
+                    margin-right: 12px;
+                }
+
+                .node-title {
+                    flex: 0 0 140px;
+                    max-width: 140px;
+                    margin-right: 8px;
+                }
+
+                .node-sds-code {
+                    flex: 0 0 110px;
+                    max-width: 110px;
+                    margin-right: 8px;
+                }
+
+                .node-text-area {
+                    margin-right: 8px;
+                }
+
+                .node-pic {
+                    margin-right: 8px;
+                }
+
+                .node-pic-readonly {
+                    min-width: 78px;
+                    min-height: 78px;
+                    max-width: 150px;
+                    max-height: 150px;
+                }
+
+                .node-pic-remove-btn {
+                    width: 20px;
+                    height: 20px;
+                    min-width: 20px;
+                }
+
+                .node-pic .ant-btn-sm,
+                .node-actions .ant-btn-sm {
+                    height: 28px;
+                    padding: 0 8px;
+                    font-size: 13px;
+                }
+
+                .node-srsreq-btn {
+                    margin-right: 6px;
+                    padding: 0 8px;
+                    height: 28px;
+                    font-size: 13px;
+                }
+            }
         }
 
         .node-row-follow {
@@ -232,28 +357,13 @@
 
     &.read-only-mode {
         .tree-node-item {
-            &.level-0 .node-row .node-title {
-                font-size: 15px;
-                line-height: 1.35;
-                font-weight: 400;
-            }
-
-            &.level-1 .node-row .node-title {
-                font-size: 14px;
-                line-height: 1.4;
-                font-weight: 400;
-            }
-
-            &.level-2 .node-row .node-title {
-                font-size: 13px;
-                line-height: 1.45;
-                font-weight: 400;
-            }
-
+            &.level-0 .node-row .node-title,
+            &.level-1 .node-row .node-title,
+            &.level-2 .node-row .node-title,
             &.level-3 .node-row .node-title,
             &.level-4 .node-row .node-title,
             &.level-5 .node-row .node-title {
-                font-size: 12px;
+                font-size: 13px;
                 line-height: 1.5;
                 font-weight: 400;
             }
@@ -364,5 +474,114 @@
         .tree-node-item.level-0 {
             margin-bottom: 12px;
         }
+    }
+}
+
+// 详细设计编辑页：章节号等落在原生 input/textarea 上，antd 主题会覆盖外层字体，需直接命中
+.sds-doc-detail:not(.read-only) .tree-structure-container:not(.read-only-mode) {
+    .tree-node-item.level-0 .node-row,
+    .tree-node-item.level-1 .node-row,
+    .tree-node-item .node-row {
+        // 编辑态：直接锁定整行文本与控件的字号/行高，避免 antd size/token 造成一级二级观感不一致
+        &,
+        .node-title-prefix,
+        .node-title,
+        .node-sds-code,
+        .node-content,
+        .ant-btn,
+        input.ant-input,
+        input.ant-input.ant-input-sm,
+        textarea.ant-input,
+        textarea.ant-input.ant-input-sm {
+            font: 400 13px/1.5 "Times New Roman", "SimSun", "Songti SC", "STSong", serif !important;
+            letter-spacing: 0 !important;
+        }
+
+        input.ant-input,
+        input.ant-input.ant-input-sm {
+            height: 28px !important;
+            padding-top: 3px !important;
+            padding-bottom: 3px !important;
+        }
+
+        textarea.ant-input,
+        textarea.ant-input.ant-input-sm {
+            min-height: 28px !important;
+            padding-top: 3px !important;
+            padding-bottom: 3px !important;
+        }
+
+        input.ant-input::placeholder,
+        input.ant-input.ant-input-sm::placeholder,
+        textarea.ant-input::placeholder,
+        textarea.ant-input.ant-input-sm::placeholder {
+            font-size: 13px !important;
+            font-family: "Times New Roman", "SimSun", "Songti SC", "STSong", serif !important;
+        }
+
+        .node-text-area textarea {
+            font-size: 13px !important;
+            font-weight: 400 !important;
+            line-height: 1.5 !important;
+            font-family: "Times New Roman", "SimSun", "Songti SC", "STSong", serif !important;
+        }
+    }
+
+    // 按截图点杀：一级/二级菜单前缀与标题输入框必须完全一致
+    .tree-node-item.level-0 .node-row,
+    .tree-node-item.level-1 .node-row {
+        .node-title-prefix {
+            font: 400 13px/1.5 "Times New Roman", "SimSun", "Songti SC", "STSong", serif !important;
+            letter-spacing: 0 !important;
+        }
+
+        input.ant-input.node-title,
+        input.ant-input.node-title.ant-input-sm {
+            font: 400 13px/1.5 "Times New Roman", "SimSun", "Songti SC", "STSong", serif !important;
+            height: 28px !important;
+            line-height: 1.5 !important;
+            padding-top: 3px !important;
+            padding-bottom: 3px !important;
+            letter-spacing: 0 !important;
+        }
+    }
+
+    .tree-node-item .node-row {
+        .node-input-native {
+            border: 1px solid #d9d9d9;
+            border-radius: 6px;
+            background: #fff;
+            outline: none;
+            box-shadow: none;
+            box-sizing: border-box;
+            -webkit-appearance: none;
+            appearance: none;
+        }
+
+        .node-input-native:focus {
+            border-color: #1677ff;
+            box-shadow: 0 0 0 2px rgba(5, 145, 255, 0.1);
+        }
+    }
+
+    // 最高优先级强制：一级/二级标题输入框与左侧“一级菜单/二级菜单”必须完全同字形
+    .tree-node-item.level-0.tree-node-item .node-row.node-row .node-title-prefix,
+    .tree-node-item.level-1.tree-node-item .node-row.node-row .node-title-prefix,
+    .tree-node-item.level-0.tree-node-item .node-row.node-row input.node-title.node-input-native,
+    .tree-node-item.level-1.tree-node-item .node-row.node-row input.node-title.node-input-native {
+        font-size: 13px !important;
+        font-weight: 400 !important;
+        line-height: 20px !important;
+        font-family: "Times New Roman", "SimSun", "Songti SC", "STSong", serif !important;
+        letter-spacing: 0 !important;
+        -webkit-text-size-adjust: 100% !important;
+        text-size-adjust: 100% !important;
+    }
+
+    .tree-node-item.level-0.tree-node-item .node-row.node-row input.node-title.node-input-native,
+    .tree-node-item.level-1.tree-node-item .node-row.node-row input.node-title.node-input-native {
+        height: 28px !important;
+        padding-top: 3px !important;
+        padding-bottom: 3px !important;
     }
 }

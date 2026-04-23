@@ -354,20 +354,19 @@ class Server(object):
             if n and n not in names:
                 names.append(n)
         code_norm = self.__normalize_name(target_code)
+        require_name_match = len(names) > 0
 
         best_logic = ""
         best_name = ""
-        fallback = ""
+        best_code = ""
 
         def walk(node_list: List[SdsNodeForm]):
-            nonlocal best_logic, best_name, fallback
+            nonlocal best_logic, best_name, best_code
             for node in node_list or []:
                 img = self.__extract_first_image_under_node(node)
                 if not img:
                     walk(getattr(node, "children", None) or [])
                     continue
-                if not fallback:
-                    fallback = img
                 merged = self.__normalize_name(
                     f"{getattr(node, 'title', '')}{getattr(node, 'label', '')}{getattr(node, 'text', '')}"
                 )
@@ -375,14 +374,23 @@ class Server(object):
                     has_logic = ("程序逻辑" in merged) or ("逻辑" in merged)
                     has_name = any(name and name in merged for name in names)
                     has_code = bool(code_norm and code_norm in merged)
-                    if (has_logic and (has_name or has_code)) and not best_logic:
+                    # 有需求名称时，必须按名称命中，避免同 SDS 编码下串到其他需求图片
+                    if require_name_match:
+                        if (has_logic and has_name) and not best_logic:
+                            best_logic = img
+                        elif has_name and not best_name:
+                            best_name = img
+                        # 名称命中模式下不接受仅 code 命中
+                    elif (has_logic and (has_name or has_code)) and not best_logic:
                         best_logic = img
                     elif (has_name or has_code) and not best_name:
                         best_name = img
+                    elif has_code and not best_code:
+                        best_code = img
                 walk(getattr(node, "children", None) or [])
 
         walk(nodes or [])
-        return best_logic or best_name or fallback
+        return best_logic or best_name or best_code
 
     def __find_best_req_node(self, tree: List[SdsNodeForm], req: SrsReq, row_srsreqd: SrsReqd):
         req_names = []
@@ -393,23 +401,36 @@ class Server(object):
         req_names = list(dict.fromkeys(req_names))
         if not req_names:
             return None
+        best_node = None
+        best_score = -1
 
-        exact_hit = None
-        fuzzy_hit = None
+        def score_node(node: SdsNodeForm, merged: str, exact: bool):
+            score = 0
+            score += 100 if exact else 70
+            title_label = f"{getattr(node, 'title', '')}{getattr(node, 'label', '')}"
+            if "接口" not in title_label:
+                score += 20
+            # 同名候选中优先选“自身/子树有图”的节点（如 7.6.1 用户登录），避免命中无图的接口节点
+            if self.__extract_logic_image_under_node(node):
+                score += 50
+            return score
 
         def walk(nodes):
-            nonlocal exact_hit, fuzzy_hit
+            nonlocal best_node, best_score
             for node in nodes or []:
                 merged = self.__normalize_name(f"{getattr(node, 'title', '')}{getattr(node, 'label', '')}")
                 if merged:
-                    if any(merged == name for name in req_names):
-                        exact_hit = exact_hit or node
-                    elif any(len(name) >= 2 and name in merged for name in req_names):
-                        fuzzy_hit = fuzzy_hit or node
+                    is_exact = any(merged == name for name in req_names)
+                    is_fuzzy = any(len(name) >= 2 and name in merged for name in req_names)
+                    if is_exact or is_fuzzy:
+                        cur_score = score_node(node, merged, is_exact)
+                        if cur_score > best_score:
+                            best_score = cur_score
+                            best_node = node
                 walk(getattr(node, "children", None) or [])
 
         walk(tree or [])
-        return exact_hit or fuzzy_hit
+        return best_node
 
     def __extract_imported_fields(self, tree: List[SdsNodeForm], req: SrsReq, row_srsreqd: SrsReqd):
         if not tree:
@@ -445,7 +466,12 @@ class Server(object):
 
         # 优先在 SDS 编码命中的节点范围内按需求/代码名称定位，避免串到其他模块
         req_node = self.__find_best_req_node(code_nodes or tree, req, row_srsreqd)
-        named_img = self.__pick_named_logic_image(code_nodes or tree, req, row_srsreqd, target_code)
+        named_img = ""
+        if req_node:
+            # 严格限定到当前需求节点子树，避免“关于”兜到其他需求图片
+            named_img = self.__pick_named_logic_image([req_node], req, row_srsreqd, target_code)
+        elif code_nodes:
+            named_img = self.__pick_named_logic_image(code_nodes, req, row_srsreqd, target_code)
         if not req_node:
             if named_img:
                 by_code["logic_img"] = named_img
@@ -460,10 +486,11 @@ class Server(object):
             by_name["logic_img"] = by_name_img
         # 以 SDS 编码命中的内容为主，名称命中作为补充
         merged = self.__merge_values(by_code, by_name)
-        if named_img:
+        # 已命中当前需求节点时，仅使用该节点内命中的图，避免串到同章节其他需求的图
+        if by_name_img:
+            merged["logic_img"] = by_name_img
+        elif named_img:
             merged["logic_img"] = named_img
-        if by_code_img:
-            merged["logic_img"] = by_code_img
         return merged
 
     def __split_mixed_io_interface(self, values: dict):
@@ -591,6 +618,19 @@ class Server(object):
         rows = self.__resort_rows(rows)
         doc_ids = list(set([row_sdsdoc.id for _, _, _, _, row_sdsdoc, _, _ in rows]))
         doc_trees = self.__query_doc_tree(doc_ids)
+        reqd_ids = list(set([row_reqd.id for row_reqd, *_ in rows if getattr(row_reqd, "id", None)]))
+        logic_img_by_reqd_id = {}
+        if reqd_ids:
+            logic_rows: List[Logic] = db.session.execute(
+                select(Logic).where(Logic.reqd_id.in_(reqd_ids)).order_by(desc(Logic.id))
+            ).scalars().all()
+            for logic_row in logic_rows:
+                reqd_id = getattr(logic_row, "reqd_id", None)
+                if not reqd_id or reqd_id in logic_img_by_reqd_id:
+                    continue
+                logic_img = self.__normalize_img_url(getattr(logic_row, "img_url", "") or "")
+                if logic_img:
+                    logic_img_by_reqd_id[reqd_id] = logic_img
         changed = False
         objs = []
         for row_reqd, row_req, row_srsreqd, row_type, row_sdsdoc, row_srsdoc, row_product in rows:
@@ -636,7 +676,10 @@ class Server(object):
             if row_product:
                 obj.product_name = row_product.name
                 obj.product_version = row_product.full_version
-            obj.logic_img = self.__normalize_img_url(values.get("logic_img") or "") or "/"
+            imported_logic_img = self.__normalize_img_url(values.get("logic_img") or "")
+            fallback_logic_img = logic_img_by_reqd_id.get(getattr(row_reqd, "id", None), "")
+            # 需求编辑页手动上传的逻辑图优先级更高，应覆盖自动抽取的图
+            obj.logic_img = fallback_logic_img or imported_logic_img or "/"
             # 若仅识别到图题文字（如“图23 退出登录”），不作为逻辑文本展示
             if re.match(r"^\s*(?:图|figure)\s*\d+[\s、.．:：-]*", (obj.logic_txt or "").strip(), re.I):
                 obj.logic_txt = ""

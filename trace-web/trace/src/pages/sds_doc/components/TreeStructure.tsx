@@ -1,7 +1,7 @@
 import "./TreeStructure.less";
 import { useState, useEffect } from "react";
 import { Button, Input, Space, Popconfirm, Upload, Table, message, Empty, Tooltip, Image } from "antd";
-import { PlusOutlined, DeleteOutlined, TableOutlined, EditOutlined, UploadOutlined, FileOutlined, CaretRightOutlined, CaretDownOutlined } from "@ant-design/icons";
+import { PlusOutlined, DeleteOutlined, TableOutlined, EditOutlined, UploadOutlined, FileOutlined, CaretRightOutlined, CaretDownOutlined, CloseOutlined } from "@ant-design/icons";
 import { numberToChinese } from "@/common";
 import { useTranslation } from "react-i18next";
 import EditableTableGenerator, { TableDataWithHeaders } from "./EditableTableGenerator";
@@ -152,6 +152,102 @@ function normalizeKeywordText(value?: string): string {
     return String(value || "").replace(/\s+/g, "").toLowerCase();
 }
 
+function extractSdsCodeToken(text?: string): string {
+    const raw = String(text || "")
+        .replace(/[\u00a0\u2002\u2003\u2009]/g, " ")
+        .replace(/[－–—]/g, "-")
+        .replace(/[：]/g, ":")
+        .replace(/Ｓ/g, "S")
+        .replace(/Ｄ/g, "D")
+        .replace(/ｓ/g, "s")
+        .replace(/ｄ/g, "d");
+    const matched = raw.match(/S\s*D\s*S\s*[-_:：]?\s*[A-Za-z0-9]+(?:\s*[._-]\s*[A-Za-z0-9]+)*/i);
+    if (!matched) return "";
+    const normalized = String(matched[0] || "")
+        .replace(/\s+/g, "")
+        .replace(/[－–—]/g, "-")
+        .replace(/[:：_]/g, "-")
+        .toUpperCase();
+    const tail = normalized.replace(/^SDS-?/, "");
+    return tail ? `SDS-${tail}` : "";
+}
+
+function extractCodeAfterDesignMarker(text?: string): string {
+    const raw = String(text || "")
+        .replace(/[\u00a0\u2002\u2003\u2009]/g, " ")
+        .replace(/[：]/g, ":")
+        .replace(/[－–—]/g, "-");
+    const markerMatch = raw.match(/设\s*计\s*编\s*号\s*:?\s*([\s\S]{0,120})/);
+    if (!markerMatch) return "";
+    const chunk = String(markerMatch[1] || "").trim();
+    const sdsCode = extractSdsCodeToken(chunk);
+    if (sdsCode) return sdsCode;
+    // 兜底：即使不是标准 SDS，也先把“设计编号”后的首段文本放进 SDS 输入框
+    const fallback = chunk
+        .split(/\n/)
+        .map((line) => String(line || "").trim())
+        .filter(Boolean)[0] || "";
+    return fallback.replace(/\s+/g, "").toUpperCase();
+}
+
+function extractSdsCodeFromNodeText(text?: string): { code: string; nextText: string } {
+    const raw = String(text || "");
+    const normalizedRaw = raw
+        .replace(/[\u00a0\u2002\u2003\u2009]/g, " ")
+        .replace(/[：]/g, ":")
+        .replace(/[－–—]/g, "-");
+    const lines = raw.replace(/\r/g, "").split("\n");
+    if (lines.length === 0) return { code: "", nextText: raw };
+    // 先走全量兜底：按“设计编号”标识后截取，再提取 SDS token
+    const markerMatched = normalizedRaw.match(/设\s*计\s*编\s*号/);
+    const markerIdx = markerMatched ? markerMatched.index ?? -1 : -1;
+    if (markerIdx >= 0) {
+        const markerTail = normalizedRaw.slice(markerIdx);
+        const maybeCode = extractCodeAfterDesignMarker(markerTail) || extractSdsCodeToken(markerTail);
+        if (maybeCode) {
+            let nextText = raw.replace(/设计编号[\s\S]{0,80}?S\s*D\s*S\s*[-－–—]\s*[A-Za-z0-9._-]+(?:\s*[-_]\s*[A-Za-z0-9._-]+)*/i, "");
+            if (nextText === raw) {
+                nextText = raw.replace(/设\s*计\s*编\s*号[\s\S]{0,120}/, "");
+            }
+            nextText = nextText.replace(/\n{3,}/g, "\n\n").replace(/^\n+|\n+$/g, "");
+            return { code: maybeCode, nextText };
+        }
+    }
+    for (let i = 0; i < lines.length; i++) {
+        const line = String(lines[i] || "").trim();
+        const matched = line.match(/设计编号\s*[：:]?\s*(.*)$/);
+        if (!matched) continue;
+        let consumedCount = 1;
+        const mergedChunks: string[] = [String(matched[1] || "").trim()];
+        for (let j = i + 1; j < Math.min(lines.length, i + 4); j++) {
+            const nextLine = String(lines[j] || "").trim();
+            if (!nextLine) break;
+            // 遇到新段落标题时停止，避免吞正文
+            if (/^\d+(?:\.\d+)*[\s、.．]/.test(nextLine) || /^(图|表)\s*\d+/.test(nextLine)) break;
+            mergedChunks.push(nextLine);
+            consumedCount += 1;
+            if (extractSdsCodeToken(mergedChunks.join("\n"))) break;
+        }
+        const mergedText = mergedChunks.join("\n").trim();
+        let code = extractSdsCodeToken(mergedText);
+        if (!code) {
+            // 按“设计编号”标识做兜底：即使不是标准 SDS 格式也先回填到 SDS 输入框，避免留空
+            const fallback = mergedText
+                .replace(/^[:：\s-]+/, "")
+                .replace(/\s+/g, "")
+                .toUpperCase();
+            if (fallback) {
+                code = fallback;
+            }
+        }
+        if (!code) return { code: "", nextText: raw };
+        const remained = lines.filter((_row, idx) => idx < i || idx >= (i + consumedCount));
+        const nextText = remained.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+|\n+$/g, "");
+        return { code, nextText };
+    }
+    return { code: "", nextText: raw };
+}
+
 function inferDataTableDisplayTitle(node: TreeNode): string {
     const headers = (node.table?.headers || [])
         .map((h: any) => `${String(h?.code || "")} ${String(h?.name || "")}`)
@@ -276,6 +372,9 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const [uploadLoading, setUploadLoading] = useState(false);
     // 性能优化：默认仅展开前两级，减少初始渲染压力
     const [expanded, setExpanded] = useState(level <= 0);
+    const normalizedNodeSdsCode = String(node.sds_code ?? "").trim();
+    const sdsCodeFallbackFromText = extractSdsCodeFromNodeText(node.text);
+    const resolvedSdsCode = normalizedNodeSdsCode || extractCodeAfterDesignMarker(node.text) || extractSdsCodeToken(node.text) || sdsCodeFallbackFromText.code;
 
     // 当节点的 img_url 变化时，更新 fileList
     useEffect(() => {
@@ -488,6 +587,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         }
     });
     const displayImageUrl = node.img_url || embeddedImageChild?.img_url || firstImageChild?.img_url || "";
+    const hasDisplayImage = !!String(displayImageUrl || "").trim();
+    const compactWithImage = !readOnly && hasDisplayImage;
+    const imageSourceNodeId = node.img_url
+        ? node.id
+        : (embeddedImageChild?.id || firstImageChild?.id || node.id);
     const visibleChildren = (node.children || []).filter((child) => {
         if (!readOnly) {
             if (mergedImageChildIdSet.has(String(child.id)) || mergedImageChildIdSet.has(String(child.n_id || ""))) {
@@ -604,6 +708,26 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         !isTableCaptionCarrierNode &&
         !isPureTableCarrierNode
     );
+    const chapterTextStyle = {
+        fontSize: 13,
+        lineHeight: 1.5,
+        fontWeight: 400 as const,
+        fontFamily: '"Times New Roman", "SimSun", "Songti SC", serif',
+    };
+    // 编辑态输入框兜底：直接落在组件 style，避免外层 less/theme 被覆盖导致一级和二级观感不一致
+    const unifiedInputStyle = {
+        font: '400 13px/1.5 "Times New Roman", "SimSun", "Songti SC", "STSong", serif',
+        height: 28,
+        paddingTop: 3,
+        paddingBottom: 3,
+        letterSpacing: 0,
+    };
+    const titleInputStyle = compactWithImage
+        ? { ...unifiedInputStyle, flex: "0 0 110px", maxWidth: 110, marginRight: 6 }
+        : unifiedInputStyle;
+    const sdsInputStyle = compactWithImage
+        ? { ...unifiedInputStyle, flex: "0 0 86px", maxWidth: 86, marginRight: 6 }
+        : unifiedInputStyle;
     const stackContentBelowTitle = !!(
         readOnly &&
         !hideNodeRow
@@ -687,7 +811,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         <div style={{ marginLeft: level * 32 }}>
           <div className={`tree-node-item level-${level}`}>
               {!hideNodeRow && (
-              <div className="node-row">
+              <div className={`node-row ${!readOnly && hasDisplayImage ? "node-row-has-image" : ""}`}>
                   {hasChildren ? (
                       <Button
                           type="text"
@@ -713,13 +837,20 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   {readOnly ? (
                       <span className="node-title-prefix">{displayChapterFromDoc || (showChapterNo ? chapterNo : "")}</span>
                   ) : (
-                      <span className="node-title-prefix">{numberToChinese(level + 1)}{ts('level_menu')}</span>
+                      <span
+                          className="node-title-prefix"
+                          style={compactWithImage ? { ...chapterTextStyle, marginRight: 8 } : chapterTextStyle}
+                      >
+                          {numberToChinese(level + 1)}{ts('level_menu')}
+                      </span>
                   )}
                   {readOnly ? (
                       <div className="node-title">{displayTitle}</div>
                   ) : (
-                      <Input
-                          className="node-title"
+                      <input
+                          className="node-title node-input-native"
+                          type="text"
+                          style={titleInputStyle as React.CSSProperties}
                           value={editDisplayTitle}
                           onChange={(e) => onTitleChange(node.id, e.target.value)}
                           placeholder={ts('please_input_title')}
@@ -728,9 +859,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   )}
                   {
                     ('sds_code' in node) && !readOnly && (
-                        <Input
-                            className="node-sds-code"
-                            value={node.sds_code ?? ''}
+                        <input
+                            className="node-sds-code node-input-native"
+                            type="text"
+                            style={sdsInputStyle as React.CSSProperties}
+                            value={resolvedSdsCode}
                             onChange={(e) => onSdsCodeChange(node.id, e.target.value)}
                             placeholder={ts('please_input_sds_code')}
                             disabled={readOnly}
@@ -764,6 +897,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   ) : (
                       <Input.TextArea
                           className="node-content node-text-area"
+                          styles={{ textarea: chapterTextStyle }}
+                          style={compactWithImage ? { marginRight: 8 } : undefined}
                           value={node.text}
                           onChange={(e) => onContentChange(node.id, e.target.value)}
                           placeholder={ts('srs_doc.please_input_content')}
@@ -775,28 +910,85 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   )}
                   {/* 编辑态：沿用原有逻辑，展示已上传图片预览和上传按钮 */}
                   {level <= 2 && !readOnly && displayImageUrl && (
-                      <div className="node-pic node-pic-readonly">
+                      <div
+                          className="node-pic node-pic-readonly node-pic-editable"
+                          style={compactWithImage ? {
+                              width: 128,
+                              height: 128,
+                              minWidth: 128,
+                              minHeight: 128,
+                              maxWidth: 128,
+                              maxHeight: 128,
+                              marginRight: 8,
+                          } : undefined}
+                      >
                           <Image
                               src={displayImageUrl.startsWith('http') ? displayImageUrl : `${window.location.origin}/${displayImageUrl.replace(/^\//, '')}`}
                               alt={displayTitle || 'image'}
                               preview={true}
                           />
+                          <Button
+                              type="text"
+                              size="small"
+                              className="node-pic-remove-btn"
+                              icon={<CloseOutlined />}
+                              onClick={() => {
+                                  onImageChange(imageSourceNodeId, "");
+                                  setFileList([]);
+                              }}
+                              title="删除图片"
+                              style={{
+                                  position: "absolute",
+                                  top: 2,
+                                  right: 2,
+                                  zIndex: 999,
+                                  width: 22,
+                                  height: 22,
+                                  minWidth: 22,
+                                  borderRadius: "50%",
+                                  color: "rgba(0,0,0,0.65)",
+                                  background: "transparent",
+                                  border: "none",
+                                  boxShadow: "none",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                              }}
+                          />
                       </div>
                   )}
                   {level <= 2 && !readOnly && (
-                      <Upload {...uploadProps} className="node-pic">
-                          <Button size="small" icon={<UploadOutlined />}>
-                              {node.img_url ? "重新上传" : ts("select_file")}
-                          </Button>
-                      </Upload>
+                      <Space className="node-pic" size={compactWithImage ? 4 : 8} style={compactWithImage ? { marginRight: 6 } : undefined}>
+                          <Upload {...uploadProps}>
+                              <Button
+                                  size="small"
+                                  icon={<UploadOutlined />}
+                                  style={compactWithImage ? { height: 28, padding: "0 8px", fontSize: 13 } : undefined}
+                              >
+                                  {hasDisplayImage ? "重新上传" : ts("select_file")}
+                              </Button>
+                          </Upload>
+                      </Space>
                   )}
                   {node.ref_type === 'sds_reqds' && onOpenReqdList && (
-                      <Button type="primary" size="small" className="node-srsreq-btn" onClick={onOpenReqdList}>
+                      <Button
+                          type="primary"
+                          size="small"
+                          className="node-srsreq-btn"
+                          onClick={onOpenReqdList}
+                          style={compactWithImage ? { marginRight: 6, height: 28, padding: "0 8px", fontSize: 13 } : undefined}
+                      >
                           {ts('menu.sds_reqds') || '设计列表'}
                       </Button>
                   )}
                   {node.ref_type === 'sds_traces' && onOpenTraceList && (
-                      <Button type="primary" size="small" className="node-srsreq-btn" onClick={onOpenTraceList}>
+                      <Button
+                          type="primary"
+                          size="small"
+                          className="node-srsreq-btn"
+                          onClick={onOpenTraceList}
+                          style={compactWithImage ? { marginRight: 6, height: 28, padding: "0 8px", fontSize: 13 } : undefined}
+                      >
                           {ts('menu.sds_traces') || '需求追溯表'}
                       </Button>
                   )}
@@ -812,12 +1004,13 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                     </Tooltip>
                   )}
                   {!readOnly && (
-                  <Space className="node-actions" size={8}>
+                  <Space className="node-actions" size={compactWithImage ? 4 : 8}>
                       {
                         level < 2 && (
                         <Button
                           size="small"
                           icon={<PlusOutlined />}
+                          style={compactWithImage ? { height: 28, padding: "0 8px", fontSize: 13 } : undefined}
                           onClick={() => onAdd(node.id)}>
                           {ts('add')}{numberToChinese(level + 2)}{ts('level_menu')}
                         </Button>)
@@ -826,6 +1019,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                       <Button
                           size="small"
                           icon={<TableOutlined />}
+                          style={compactWithImage ? { height: 28, padding: "0 8px", fontSize: 13 } : undefined}
                           onClick={() => onAddTable(node.id)}>
                           {ts('srs_doc.table')}
                       </Button>
@@ -834,7 +1028,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                       <Upload {...tableImportProps}>
                           <Button
                               size="small"
-                              icon={<UploadOutlined />}>
+                              icon={<UploadOutlined />}
+                              style={compactWithImage ? { height: 28, padding: "0 8px", fontSize: 13 } : undefined}>
                               导入表格
                           </Button>
                       </Upload>
@@ -847,6 +1042,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           <Button
                               size="small"
                               danger
+                              style={compactWithImage ? { height: 28, padding: "0 8px", fontSize: 13 } : undefined}
                               icon={<DeleteOutlined />}>
                               {ts('delete')}
                           </Button>
@@ -997,7 +1193,6 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
           </div>
             {showExpandedBody && finalVisibleChildren.map((child) => {
                 const childTitle = String(child.title || "").trim();
-                const childLabel = String(child.label || "").trim();
                 const childHasTable = hasRenderableTable(child.table);
                 const childIsPureTableCarrier = !!(
                     childHasTable &&
@@ -1066,19 +1261,45 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
     const [currentNodeId, setCurrentNodeId] = useState<number | null>(null);
     const [initialTableData, setInitialTableData] = useState<TableDataWithHeaders | undefined>(undefined);
     const [tableCellsBackup, setTableCellsBackup] = useState<TableData["cells"] | undefined>(undefined);
+    const hydrateSdsCodeFallback = (nodeList: TreeNode[]): TreeNode[] => {
+        return (nodeList || []).map((node) => {
+            const nextChildren = hydrateSdsCodeFallback(node.children || []);
+            let nextNode: TreeNode = { ...node, children: nextChildren };
+            if ("sds_code" in nextNode) {
+                const currentCode = String(nextNode.sds_code ?? "").trim();
+                if (!currentCode) {
+                    const fallback = extractSdsCodeFromNodeText(nextNode.text);
+                    const markerCode = extractCodeAfterDesignMarker(nextNode.text);
+                    const directCode = extractSdsCodeToken(nextNode.text);
+                    const finalCode = markerCode || directCode || fallback.code;
+                    if (fallback.code) {
+                        nextNode = {
+                            ...nextNode,
+                            sds_code: finalCode,
+                            text: fallback.nextText || nextNode.text,
+                        };
+                    } else if (directCode) {
+                        nextNode = { ...nextNode, sds_code: directCode };
+                    }
+                }
+            }
+            return nextNode;
+        });
+    };
 
     // 同步外部传入的 value 到内部状态
     useEffect(() => {
-        setNodes(value);
+        setNodes(hydrateSdsCodeFallback(value));
     }, [value]);
     useEffect(() => {
         onNodesSnapshot?.(nodes);
     }, [nodes, onNodesSnapshot]);
 
     const updateNodes = (newNodes: TreeNode[]) => {
-        onNodesSnapshot?.(newNodes);
-        setNodes(newNodes);
-        onChange?.(newNodes);
+        const normalizedNodes = hydrateSdsCodeFallback(newNodes);
+        onNodesSnapshot?.(normalizedNodes);
+        setNodes(normalizedNodes);
+        onChange?.(normalizedNodes);
     };
 
     const generateId = () => {
@@ -1517,7 +1738,6 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                     let rootChapterCounter = 0;
                     return visibleNodes.map((node) => {
                         const nodeTitle = String(node.title || "").trim();
-                        const nodeLabel = String(node.label || "").trim();
                         const nodeHasTable = hasRenderableTable(node.table);
                         const nodeIsPureTableCarrier = !!(
                             nodeHasTable &&

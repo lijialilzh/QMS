@@ -467,6 +467,80 @@ class Server(object):
         if Document is None or Pt is None or dox_enum is None:
             return
         from .serv_utils import docx_util
+        def __norm_title(value: str):
+            txt = (value or "").strip()
+            txt = re.sub(r"\s+", " ", txt)
+            # 清理导出中偶发的前导符号（如 ".2 概述"、"·2 概述"）
+            txt = re.sub(r"^[\s\u3000•·▪■◆●○□◇\-–—\.．]+(?=\d)", "", txt)
+            return txt
+
+        def __biz_title(value: str):
+            txt = __norm_title(value)
+            txt = re.sub(r"^([0-9０-９]+(?:[\.．][0-9０-９]+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))", "", txt)
+            return re.sub(r"\s+", "", txt)
+
+        def __is_revision_label(value: str):
+            return __biz_title(value) == "文件修订记录"
+
+        def __is_catalog(value: str):
+            return __biz_title(value) == "目录"
+
+        def __is_design_cover(value: str):
+            return __biz_title(value) == "软件详细设计"
+
+        def __parse_heading(value: str):
+            txt = __norm_title(value)
+            matched = re.match(r"^([0-9]+(?:\.[0-9]+)*)\s*(.*)$", txt)
+            if not matched:
+                return None, txt
+            nums = [int(p) for p in (matched.group(1) or "").split(".") if p != ""]
+            if not nums:
+                return None, txt
+            return nums, (matched.group(2) or "").strip()
+
+        def __major_of_text(value: str):
+            nums, _ = __parse_heading(value)
+            if not nums:
+                return None
+            return nums[0]
+
+        def __first_major(nodes: List[SdsNodeForm]):
+            for node in nodes or []:
+                title = getattr(node, "title", "") or ""
+                label = getattr(node, "label", "") or ""
+                if not (__is_catalog(title) or __is_design_cover(title) or __is_revision_label(title)):
+                    major = __major_of_text(title)
+                    if major and major > 0:
+                        return major
+                if not (__is_catalog(label) or __is_design_cover(label) or __is_revision_label(label)):
+                    major = __major_of_text(label)
+                    if major and major > 0:
+                        return major
+                child_major = __first_major(getattr(node, "children", None) or [])
+                if child_major:
+                    return child_major
+            return None
+
+        def __shift_heading(value: str, major_offset: int):
+            txt = __norm_title(value)
+            if major_offset <= 0:
+                return txt
+            nums, rest = __parse_heading(txt)
+            if not nums:
+                return txt
+            nums[0] = max(1, nums[0] - major_offset)
+            prefix = ".".join(str(n) for n in nums)
+            return f"{prefix} {rest}".rstrip()
+
+        def __write_revision_body_title(docx: Document):
+            p = docx.add_paragraph()
+            p.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.CENTER
+            p.paragraph_format.first_line_indent = Pt(0)
+            p.paragraph_format.line_spacing = 1.5
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            p.paragraph_format.keep_with_next = True
+            docx_util.fonted_txt(p, "文件修订记录", font_size=14.0, bold=True)
         async def __query_sds_traces_x():
             resp = await sdstrace_serv.list_sds_trace(None, doc_id=id, page_size=5000)
             reqs: List[SdsTraceObj] = resp.data.rows or []
@@ -542,7 +616,7 @@ class Server(object):
             __fix_chapter(p_title, p_nodes)
             return p_nodes
 
-        async def __writenodes(nodes: List[SdsNodeForm], docx: Document, level: int = 0):
+        async def __writenodes(nodes: List[SdsNodeForm], docx: Document, level: int = 0, major_offset: int = 0):
             font_def = 10.5
             font_size = font_def
             if level == 0 :
@@ -552,28 +626,41 @@ class Server(object):
             font_name = "宋体"
             for node in nodes or []:
                 if node.title:
-                    docx_util.save_title2docx(node.title, docx, level+1, font_size)
+                    if __is_revision_label(node.title):
+                        __write_revision_body_title(docx)
+                    elif __is_design_cover(node.title):
+                        # 封面标题保持原样，不参与任何章节偏移
+                        docx_util.save_title2docx(__norm_title(node.title), docx, level+1, font_size)
+                    else:
+                        docx_util.save_title2docx(__shift_heading(node.title, major_offset), docx, level+1, font_size)
                 if node.sds_code:
                     docx_util.save_txt2docx("设计编号：" + node.sds_code, docx, font_def)
                 if node.label:
-                    docx_util.save_txt2docx(node.label, docx, font_def)
+                    if __is_revision_label(node.label):
+                        __write_revision_body_title(docx)
+                    else:
+                        # 部分导入文档的章节号在 label 字段，正文也要按偏移修正
+                        docx_util.save_txt2docx(__shift_heading(node.label, major_offset), docx, font_def)
                 if node.text:
-                    docx_util.save_txt2docx(node.text, docx, font_def)
+                    if __is_revision_label(node.text):
+                        __write_revision_body_title(docx)
+                    else:
+                        docx_util.save_txt2docx(node.text, docx, font_def)
                 if node.img_url:
                     docx_util.save_img2docx(node.img_url, docx, mw=500, mh=500)
 
                 if node.ref_type == RefTypes.sds_traces.value:
                     results = await __query_sds_traces_x()
-                    await __writenodes(results, docx, level + 1)
+                    await __writenodes(results, docx, level + 1, major_offset)
                 elif node.ref_type == RefTypes.sds_reqds.value:
                     sds_reqds = await __query_sds_reqds(node.title)
-                    await __writenodes(sds_reqds, docx, level + 1)
+                    await __writenodes(sds_reqds, docx, level + 1, major_offset)
                 else:
                     if node.table and node.table.headers:
                         docx_util.save_tab2docx(node.table, docx)
                         
                 if node.children:
-                    await __writenodes(node.children, docx, level + 1)
+                    await __writenodes(node.children, docx, level + 1, major_offset)
 
         resp = await self.get_sds_doc(id=id, with_tree=True)
         sds_doc: SdsDocObj = resp.data
@@ -583,8 +670,10 @@ class Server(object):
             header_para = docx.sections[0].header.add_paragraph()
             header_para.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.RIGHT
             docx_util.fonted_txt(header_para, sds_doc.file_no)
-            
-            await __writenodes(sds_doc.content, docx, level=0)
+
+            first_major = __first_major(sds_doc.content or [])
+            major_offset = (first_major - 1) if (first_major and first_major > 1) else 0
+            await __writenodes(sds_doc.content, docx, level=0, major_offset=major_offset)
 
             docx.save(output)
             output.seek(0)
