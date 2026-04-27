@@ -678,6 +678,66 @@ export default () => {
         }
         return roots;
     };
+    const relocateReviewTablesToStandalonePage = (roots: TreeNode[]): TreeNode[] => {
+        if (!Array.isArray(roots) || roots.length === 0) return roots;
+        const isReviewTable = (table: any): boolean => {
+            if (!hasRenderableTable(table)) return false;
+            const headerText = String((table.headers || []).map((h: any) => String(h?.name || "").trim()).join("|"));
+            if (!headerText) return false;
+            return /(评审|审查|结论|法规标准引用)/.test(headerText);
+        };
+        const isNodeMeaningfulWithoutTable = (node: TreeNode): boolean => {
+            const hasText = !!String(node.text || "").trim();
+            const hasLabel = !!String(node.label || "").trim();
+            const hasImage = !!String(node.img_url || "").trim();
+            const hasChildren = Array.isArray(node.children) && node.children.length > 0;
+            const title = String(node.title || "").trim();
+            const hasChapterLikeTitle = /^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/.test(title);
+            return hasText || hasLabel || hasImage || hasChildren || hasChapterLikeTitle;
+        };
+        const detachedTables: TreeNode[] = [];
+        let detachedSeed = 1;
+        const walk = (nodes: TreeNode[]): TreeNode[] => {
+            const next: TreeNode[] = [];
+            for (const raw of (nodes || [])) {
+                const node: TreeNode = { ...raw, children: walk(raw.children || []) };
+                if (isReviewTable(node.table)) {
+                    detachedTables.push({
+                        ...node,
+                        id: node.id ? Number(`${node.id}${detachedSeed}`) : Date.now() + detachedSeed,
+                        n_id: 0,
+                        p_id: 0,
+                        title: String(node.title || "").trim() || "评审记录",
+                        text: "",
+                        img_url: "",
+                        children: [],
+                    });
+                    detachedSeed += 1;
+                    node.table = {} as any;
+                    if (!isNodeMeaningfulWithoutTable(node)) {
+                        continue;
+                    }
+                }
+                next.push(node);
+            }
+            return next;
+        };
+        const cleanedRoots = walk(roots);
+        if (detachedTables.length === 0) return cleanedRoots;
+        const reviewRoot: TreeNode = {
+            id: Date.now(),
+            doc_id: cleanedRoots[0]?.doc_id || 0,
+            n_id: 0,
+            p_id: 0,
+            title: "评审记录",
+            label: "",
+            img_url: "",
+            text: "",
+            table: {} as any,
+            children: detachedTables,
+        };
+        return [...cleanedRoots, reviewRoot];
+    };
 
     useEffect(() => {
         const id = params.id;
@@ -707,7 +767,9 @@ export default () => {
                         normalizeJsonLikeHeadings(normalizeFalseSingleDigitHeadings(parsedTree))
                     );
                     const relocatedTree = relocateDataStructureTables(normalizedTree);
-                    const parsedTreeForView = decorateImportedWordTree(relocatedTree);
+                    const parsedTreeForView = decorateImportedWordTree(
+                        isReadOnly ? relocateReviewTablesToStandalonePage(relocatedTree) : relocatedTree
+                    );
                     const parsedContent = isReadOnly
                         ? bindTableCaptionsForPersist(parsedTreeForView)
                         : parsedTreeForView;
@@ -1188,7 +1250,9 @@ export default () => {
                                 normalizeJsonLikeHeadings(normalizeFalseSingleDigitHeadings(parsedTree))
                             );
                             const relocatedTree = relocateDataStructureTables(normalizedTree);
-                            const parsedTreeForView = decorateImportedWordTree(relocatedTree);
+                            const parsedTreeForView = decorateImportedWordTree(
+                                isReadOnly ? relocateReviewTablesToStandalonePage(relocatedTree) : relocatedTree
+                            );
                             const parsedContent = isReadOnly
                                 ? bindTableCaptionsForPersist(parsedTreeForView)
                                 : parsedTreeForView;

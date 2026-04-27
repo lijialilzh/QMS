@@ -30,11 +30,18 @@ async def add_sds_doc(form: SdsDocForm):
 @try_log(perm=Perms.sds_doc_edit)
 async def import_sds_doc_word(
     product_id: int = Form(...),
+    srsdoc_id: int = Form(0),
     version: str = Form(...),
     change_log: str = Form(""),
     file: UploadFile = File(...)
 ):
-    return await server.import_sds_doc_word(product_id=product_id, version=version, change_log=change_log, file=file)
+    return await server.import_sds_doc_word(
+        product_id=product_id,
+        srsdoc_id=srsdoc_id,
+        version=version,
+        change_log=change_log,
+        file=file,
+    )
 
 
 @router.get("/duplicate_sds_doc", summary="复制SDS_DOC", response_model=Resp[SdsDocForm])

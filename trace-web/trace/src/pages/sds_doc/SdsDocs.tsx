@@ -7,6 +7,7 @@ import { useNavigate } from "react-router-dom";
 import { useData } from "@/common";
 import * as Api from "@/api/ApiSdsDoc";
 import * as ApiProduct from "@/api/ApiProduct";
+import * as ApiSrsDoc from "@/api/ApiSrsDoc";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 
 const pageSizeOptions = [10, 20, 50];
@@ -139,6 +140,7 @@ export default () => {
         loadingProducts: false,
         products: [],
         versionOptions: [] as { value: string; label: string }[],
+        importSrsDocList: [] as any[],
         importFiles: [],
     });
 
@@ -195,13 +197,14 @@ export default () => {
             dispatch({ loading: true });
             Api.import_sds_doc_word({
                 product_id: values.product_id,
+                srsdoc_id: values.srsdoc_id,
                 version: values.version,
                 change_log: values.change_log || "",
                 file,
             }).then((res: any) => {
                 dispatch({ loading: false });
                 if (res.code === Api.C_OK) {
-                    dispatch({ dlgType: null, importFiles: [] });
+                    dispatch({ dlgType: null, importFiles: [], importSrsDocList: [] });
                     importForm.resetFields();
                     message.success(res.msg || "导入成功");
                     doSearch(queryForm.getFieldsValue(), 1, data.pageSize);
@@ -218,6 +221,20 @@ export default () => {
                     content: "Word导入请求异常，请稍后重试。",
                 });
             });
+        });
+    };
+
+    const loadImportSrsDocList = (productId: number) => {
+        ApiSrsDoc.list_srs_doc({ product_id: productId, page_index: 0, page_size: 1000 }).then((res: any) => {
+            if (res.code === Api.C_OK) {
+                dispatch({ importSrsDocList: res.data?.rows || [] });
+            } else {
+                dispatch({ importSrsDocList: [] });
+                message.error(res.msg || "加载需求文档列表失败");
+            }
+        }).catch(() => {
+            dispatch({ importSrsDocList: [] });
+            message.error("加载需求文档列表失败");
         });
     };
 
@@ -396,7 +413,7 @@ export default () => {
                 confirmLoading={data.loading}
                 onOk={doImportWord}
                 onCancel={() => {
-                    dispatch({ dlgType: null, importFiles: [] });
+                    dispatch({ dlgType: null, importFiles: [], importSrsDocList: [] });
                     importForm.resetFields();
                 }}>
                 <Form form={importForm} layout="vertical">
@@ -409,7 +426,31 @@ export default () => {
                             allowClear
                             namePlaceholder={ts("product.name")}
                             versionPlaceholder={ts("product.full_version")}
-                            onChange={(value) => importForm.setFieldValue("product_id", value)}
+                            onChange={(value) => {
+                                importForm.setFieldValue("product_id", value);
+                                importForm.setFieldValue("srsdoc_id", undefined);
+                                if (value) {
+                                    loadImportSrsDocList(value);
+                                } else {
+                                    dispatch({ importSrsDocList: [] });
+                                }
+                            }}
+                        />
+                    </Form.Item>
+                    <Form.Item
+                        label={ts("sds_doc.req_doc")}
+                        name="srsdoc_id"
+                        rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("sds_doc.req_doc") }) }]}>
+                        <Select
+                            placeholder={ts("sds_doc.please_select_req_doc")}
+                            showSearch
+                            allowClear
+                            optionFilterProp="label"
+                            disabled={!data.importSrsDocList.length}
+                            options={data.importSrsDocList.map((item: any) => ({
+                                label: `${item.version || item.full_version || ""}`,
+                                value: item.id,
+                            }))}
                         />
                     </Form.Item>
                     <Form.Item

@@ -44,6 +44,7 @@ from ..model.product import Product, UserProd
 from ..model.srs_req import ReqRcm, SrsReq
 from ..model.srs_reqd import SrsReqd
 from ..obj.vobj_srs_doc import SrsDocObj
+from ..obj.vobj_sds_doc import CompareObj
 from ..model.srs_doc import SrsDoc, SrsNode
 from ..obj.tobj_srs_doc import SrsDocForm, SrsNodeForm
 from ..utils.sql_ctx import db
@@ -1403,6 +1404,79 @@ class Server(object):
                 obj.product_version = row_prd.full_version
             objs.append(obj)
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
+
+    async def compare_srs_doc(self, id0: int, id1: int):
+        def __feature_label(req: SrsReq):
+            # 仅按“功能编号”判定新增/减少，名称改动不应算新增或减少
+            code = (req.code or "").strip()
+            if code:
+                return code
+            module = (req.module or "").strip()
+            function = (req.function or "").strip()
+            return " - ".join([v for v in [module, function] if v])
+
+        def __to_text(values: List[str]):
+            return "；".join(values) if values else "无"
+
+        def __query_feature_sets():
+            feature_dict = {id0: set(), id1: set()}
+            rows: List[SrsReq] = db.session.execute(
+                select(SrsReq).where(SrsReq.doc_id.in_([id0, id1])).order_by(SrsReq.doc_id, SrsReq.module, SrsReq.function, SrsReq.code)
+            ).scalars().all()
+            for req in rows:
+                label = __feature_label(req)
+                if label:
+                    feature_dict.setdefault(req.doc_id, set()).add(label)
+            return feature_dict
+
+        sql = select(SrsDoc, Product).join(Product, SrsDoc.product_id == Product.id).where(SrsDoc.id.in_([id0, id1]))
+        rows: List[Tuple[SrsDoc, Product]] = db.session.execute(sql).all()
+        if not rows:
+            return Resp.resp_err(msg=ts("msg_obj_null"))
+
+        feature_dict = __query_feature_sets()
+        features0 = feature_dict.get(id0) or set()
+        features1 = feature_dict.get(id1) or set()
+        added0 = sorted(features0 - features1)
+        added1 = sorted(features1 - features0)
+        removed0 = added1
+        removed1 = added0
+
+        infos = {}
+        for row_srsdoc, row_prd in rows:
+            infos[row_srsdoc.id] = dict(
+                product_name=row_prd.name,
+                product_type_code=row_prd.type_code,
+                product_version=row_prd.full_version,
+                product_udi=row_prd.udi,
+                product_scope=row_prd.scope,
+                srs_version=row_srsdoc.version,
+            )
+        info0 = infos.get(id0) or {}
+        info1 = infos.get(id1) or {}
+
+        results = []
+        for column in ["product_name", "product_type_code", "product_version", "product_udi", "product_scope", "srs_version"]:
+            value0 = info0.get(column) or ""
+            value1 = info1.get(column) or ""
+            same_flag = 1 if value0 == value1 else 0
+            results.append(CompareObj(column_code=column, column_name=ts(f"sdsdiff.{column}"), same_flag=same_flag, values=[value0, value1]))
+
+        results += [
+            CompareObj(
+                column_code="feature_added",
+                column_name="新增功能",
+                same_flag=1 if not added0 and not added1 else 0,
+                values=[__to_text(added0), __to_text(added1)],
+            ),
+            CompareObj(
+                column_code="feature_removed",
+                column_name="减少功能",
+                same_flag=1 if not removed0 and not removed1 else 0,
+                values=[__to_text(removed0), __to_text(removed1)],
+            ),
+        ]
+        return Resp.resp_ok(data=results)
 
     async def export_srs_doc(self, output, doc_id, *args, **kwargs):
         if Document is None or Pt is None or dox_enum is None:

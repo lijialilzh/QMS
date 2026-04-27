@@ -1,10 +1,11 @@
 import "./ProdComparison.less";
-import { Form, Button, Table, message, Row, Col, Select } from "antd";
+import { Form, Button, Table, message, Row, Col, Select, Radio } from "antd";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as ApiDoc from "@/api/ApiSdsDoc";
+import * as ApiSrsDoc from "@/api/ApiSrsDoc";
 import { doSearchProducts } from "../prod_risk/util";
 
 const columnsDef = (ts: (key: string) => string) => [
@@ -61,6 +62,7 @@ export default () => {
     const { t: ts } = useTranslation();
     const [queryForm] = Form.useForm();
     const [data, dispatch] = useData({
+        docType: "srs",
         products: [],
         docsA: [],
         docsB: [],
@@ -69,9 +71,18 @@ export default () => {
     });
 
     const doSearchDocsA = (params: { product_id: number }) => {
-        ApiDoc.list_sds_doc(params).then((res: any) => {
+        const fn = data.docType === "srs" ? ApiSrsDoc.list_srs_doc : ApiDoc.list_sds_doc;
+        fn({ ...params, page_index: 0, page_size: 1000 }).then((res: any) => {
             if (res.code === ApiDoc.C_OK) {
-                dispatch({ docsA: res.data.rows || [] });
+                const rows = res.data.rows || [];
+                const versionMap = new Map<string, any>();
+                rows.forEach((item: any) => {
+                    const key = (item.version || "").trim();
+                    if (key && !versionMap.has(key)) {
+                        versionMap.set(key, item);
+                    }
+                });
+                dispatch({ docsA: Array.from(versionMap.values()) });
             } else {
                 dispatch({ docsA: [] });
                 message.error(res.msg);
@@ -80,9 +91,18 @@ export default () => {
     };
 
     const doSearchDocsB = (params: { product_id: number }) => {
-        ApiDoc.list_sds_doc(params).then((res: any) => {
+        const fn = data.docType === "srs" ? ApiSrsDoc.list_srs_doc : ApiDoc.list_sds_doc;
+        fn({ ...params, page_index: 0, page_size: 1000 }).then((res: any) => {
             if (res.code === ApiDoc.C_OK) {
-                dispatch({ docsB: res.data.rows || [] });
+                const rows = res.data.rows || [];
+                const versionMap = new Map<string, any>();
+                rows.forEach((item: any) => {
+                    const key = (item.version || "").trim();
+                    if (key && !versionMap.has(key)) {
+                        versionMap.set(key, item);
+                    }
+                });
+                dispatch({ docsB: Array.from(versionMap.values()) });
             } else {
                 dispatch({ docsB: [] });
                 message.error(res.msg);
@@ -102,7 +122,8 @@ export default () => {
                 return;
             }
             dispatch({ loading: true });
-            ApiDoc.compare_sds_doc({
+            const fn = data.docType === "srs" ? ApiSrsDoc.compare_srs_doc : ApiDoc.compare_sds_doc;
+            fn({
                 id0: doc_a_id,
                 id1: doc_b_id,
             }).then((res: any) => {
@@ -131,74 +152,84 @@ export default () => {
         <div className="page div-v prod-comparison">
             <div className="div-v detail-content">
                 <div className="searchbar">
-                    <Form form={queryForm} onFinish={() => doCompare()}>
+                    <Form className="comparison-form" form={queryForm} onFinish={() => doCompare()}>
+                        <Row gutter={24}>
+                            <Col span={24}>
+                                <Form.Item label="文档类型" name="doc_type" initialValue="srs">
+                                    <Radio.Group
+                                        optionType="button"
+                                        buttonStyle="solid"
+                                        onChange={(e) => {
+                                            const docType = e.target.value;
+                                            dispatch({ docType, docsA: [], docsB: [], rows: [] });
+                                            queryForm.setFieldsValue({
+                                                prod_a_id: undefined,
+                                                doc_a_id: undefined,
+                                                prod_b_id: undefined,
+                                                doc_b_id: undefined,
+                                            });
+                                        }}>
+                                        <Radio.Button value="srs">需求规格说明</Radio.Button>
+                                        <Radio.Button value="sds">软件详细设计</Radio.Button>
+                                    </Radio.Group>
+                                </Form.Item>
+                            </Col>
+                        </Row>
                         <Row gutter={24} className="comparison-form-row">
                             <Col span={12}>
                                 <div className="comparison-form-block">
-                                    <Row gutter={10}>
-                                        <Col>
-                                            <Form.Item label={ts("prod_comparison.prodA")} name="prod_a_id">
-                                                <ProductVersionSelect
-                                                    products={data.products}
-                                                    allowClear
-                                                    namePlaceholder={ts("product.name")}
-                                                    versionPlaceholder={ts("product.full_version")}
-                                                    onChange={(value) => {
-                                                        queryForm.setFieldValue("prod_a_id", value);
-                                                        dispatch({ docsA: [] });
-                                                        queryForm.setFieldsValue({ doc_a_id: undefined });
-                                                        if (value) doSearchDocsA({ product_id: value });
-                                                    }}
-                                                />
-                                            </Form.Item>
-                                        </Col>
-                                        <Col>
-                                            <Form.Item label={ts("sds_doc.version")} name="doc_a_id">
-                                                <Select
-                                                    allowClear
-                                                    placeholder={ts("sds_doc.version")}
-                                                    options={data.docsA.map((item: any) => ({
-                                                        label: item.version,
-                                                        value: item.id,
-                                                    }))}
-                                                />
-                                            </Form.Item>
-                                        </Col>
-                                    </Row>
+                                    <Form.Item label={ts("prod_comparison.prodA")} name="prod_a_id">
+                                        <ProductVersionSelect
+                                            products={data.products}
+                                            allowClear
+                                            namePlaceholder={ts("product.name")}
+                                            versionPlaceholder={ts("product.full_version")}
+                                            onChange={(value) => {
+                                                queryForm.setFieldValue("prod_a_id", value);
+                                                dispatch({ docsA: [] });
+                                                queryForm.setFieldsValue({ doc_a_id: undefined });
+                                                if (value) doSearchDocsA({ product_id: value });
+                                            }}
+                                        />
+                                    </Form.Item>
+                                    <Form.Item label={data.docType === "srs" ? ts("srs_doc.version") : ts("sds_doc.version")} name="doc_a_id">
+                                        <Select
+                                            allowClear
+                                            placeholder={data.docType === "srs" ? ts("srs_doc.version") : ts("sds_doc.version")}
+                                            options={data.docsA.map((item: any) => ({
+                                                label: item.version,
+                                                value: item.id,
+                                            }))}
+                                        />
+                                    </Form.Item>
                                 </div>
                             </Col>
                             <Col span={12}>
                                 <div className="comparison-form-block">
-                                    <Row gutter={10}>
-                                        <Col>
-                                            <Form.Item label={ts("prod_comparison.prodB")} name="prod_b_id">
-                                                <ProductVersionSelect
-                                                    products={data.products}
-                                                    allowClear
-                                                    namePlaceholder={ts("product.name")}
-                                                    versionPlaceholder={ts("product.full_version")}
-                                                    onChange={(value) => {
-                                                        queryForm.setFieldValue("prod_b_id", value);
-                                                        dispatch({ docsB: [] });
-                                                        queryForm.setFieldsValue({ doc_b_id: undefined });
-                                                        if (value) doSearchDocsB({ product_id: value });
-                                                    }}
-                                                />
-                                            </Form.Item>
-                                        </Col>
-                                        <Col>
-                                            <Form.Item label={ts("sds_doc.version")} name="doc_b_id">
-                                                <Select
-                                                    allowClear
-                                                    placeholder={ts("sds_doc.version")}
-                                                    options={data.docsB.map((item: any) => ({
-                                                        label: item.version,
-                                                        value: item.id,
-                                                    }))}
-                                                />
-                                            </Form.Item>
-                                        </Col>
-                                    </Row>
+                                    <Form.Item label={ts("prod_comparison.prodB")} name="prod_b_id">
+                                        <ProductVersionSelect
+                                            products={data.products}
+                                            allowClear
+                                            namePlaceholder={ts("product.name")}
+                                            versionPlaceholder={ts("product.full_version")}
+                                            onChange={(value) => {
+                                                queryForm.setFieldValue("prod_b_id", value);
+                                                dispatch({ docsB: [] });
+                                                queryForm.setFieldsValue({ doc_b_id: undefined });
+                                                if (value) doSearchDocsB({ product_id: value });
+                                            }}
+                                        />
+                                    </Form.Item>
+                                    <Form.Item label={data.docType === "srs" ? ts("srs_doc.version") : ts("sds_doc.version")} name="doc_b_id">
+                                        <Select
+                                            allowClear
+                                            placeholder={data.docType === "srs" ? ts("srs_doc.version") : ts("sds_doc.version")}
+                                            options={data.docsB.map((item: any) => ({
+                                                label: item.version,
+                                                value: item.id,
+                                            }))}
+                                        />
+                                    </Form.Item>
                                 </div>
                             </Col>
                         </Row>

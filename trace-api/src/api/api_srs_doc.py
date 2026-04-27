@@ -11,6 +11,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Form, File, UploadFile
 from fastapi.responses import StreamingResponse
 from ..obj.vobj_srs_doc import SrsDocObj
+from ..obj.vobj_sds_doc import CompareObj
 from ..obj.tobj_srs_doc import SrsDocForm, SrsNodeForm
 from ..obj.tobj_role import Perms
 from ..obj import Resp, Page
@@ -129,3 +130,9 @@ async def export_doc_trace(id: int = 0):
         media_type="application/octet-stream",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
     )
+
+
+@router.get("/compare_srs_doc", summary="对比SRS_DOC", response_model=Resp[List[CompareObj]])
+@try_log(perm=Perms.srs_doc_view)
+async def compare_srs_doc(id0: int, id1: int):
+    return await server.compare_srs_doc(id0, id1)

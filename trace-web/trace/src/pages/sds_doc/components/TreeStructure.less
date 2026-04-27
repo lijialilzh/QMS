@@ -177,6 +177,12 @@
             .node-pic-inline {
                 display: flex;
                 margin: 8px 0 10px;
+                &.node-pic-readonly {
+                    min-width: 72px;
+                    min-height: 72px;
+                    max-width: 120px;
+                    max-height: 120px;
+                }
             }
 
             .node-content {
@@ -307,6 +313,9 @@
         .node-content-below-title {
             margin-top: 6px;
         }
+        .node-content-below-table {
+            margin-left: 28px;
+        }
 
         .node-table {
             margin-top: 12px;
@@ -400,6 +409,7 @@
                     line-height: 1.5;
                     font-family: "Times New Roman", "SimSun", "Songti SC", serif;
                 }
+
             }
 
             .node-content-below-title {
@@ -445,10 +455,10 @@
                     display: inline-flex;
                     align-items: center;
                     justify-content: center;
-                    min-width: 100px;
-                    min-height: 100px;
-                    max-width: 200px;
-                    max-height: 200px;
+                    min-width: 50px;
+                    min-height: 50px;
+                    max-width: 100px;
+                    max-height: 100px;
                     border: 1px dashed #d9d9d9;
                     border-radius: 8px;
                     background: #fafafa;
@@ -465,6 +475,12 @@
                 .node-pic-inline {
                     display: flex;
                     margin: 8px 0 10px;
+                    &.node-pic-readonly {
+                        min-width: 72px;
+                        min-height: 72px;
+                        max-width: 120px;
+                        max-height: 120px;
+                    }
                 }
             }
         }

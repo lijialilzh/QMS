@@ -279,13 +279,29 @@ class Server(object):
                     setattr(row, field, val)
         db.session.commit()
 
-    async def import_sds_doc_word(self, product_id: int, version: str, change_log: str, file):
+    async def import_sds_doc_word(self, product_id: int, srsdoc_id: int, version: str, change_log: str, file):
         if Document is None or DocxTable is None or Paragraph is None:
             return Resp.resp_err(msg="当前环境缺少 python-docx 依赖，暂不可用 Word 导入。")
         try:
-            srs_row = db.session.execute(
-                select(SrsDoc).where(SrsDoc.product_id == product_id).order_by(desc(SrsDoc.create_time), desc(SrsDoc.id))
-            ).scalars().first()
+            srs_row = None
+            import_version = (version or "").strip()
+            if srsdoc_id:
+                srs_row = db.session.execute(
+                    select(SrsDoc).where(SrsDoc.id == srsdoc_id, SrsDoc.product_id == product_id)
+                ).scalars().first()
+                if not srs_row:
+                    return Resp.resp_err(msg="导入失败：未找到匹配的需求文档版本，请重新选择。")
+            # 优先绑定“同版本”需求文档，避免导入 A0 时误关联到最新 A1
+            if not srs_row and import_version:
+                srs_row = db.session.execute(
+                    select(SrsDoc)
+                    .where(SrsDoc.product_id == product_id, SrsDoc.version == import_version)
+                    .order_by(desc(SrsDoc.create_time), desc(SrsDoc.id))
+                ).scalars().first()
+            if not srs_row:
+                srs_row = db.session.execute(
+                    select(SrsDoc).where(SrsDoc.product_id == product_id).order_by(desc(SrsDoc.create_time), desc(SrsDoc.id))
+                ).scalars().first()
             if not srs_row:
                 return Resp.resp_err(msg="导入失败：当前产品下未找到需求规格说明，请先导入需求规格说明。")
 
@@ -1651,78 +1667,53 @@ class Server(object):
         return Resp.resp_ok(data=txts)
 
     async def compare_sds_doc(self, id0: int, id1: int):
-        def __query_srs_reqs():
-            sql = select(SrsReqd, SrsReq, SrsDoc, SdsDoc).join(SrsReq, SrsReqd.req_id == SrsReq.id)
-            sql = sql.join(SrsDoc, SrsReq.doc_id == SrsDoc.id)
-            sql = sql.join(SdsDoc, SdsDoc.srsdoc_id == SrsDoc.id)
-            sql = sql.where(SdsDoc.id.in_([id0, id1])).order_by(SrsDoc.id, SdsDoc.id, SrsReq.module, SrsReq.function, SrsReq.code)
-            rows:  List[Tuple[SrsReqd, SrsReq, SrsDoc, SdsDoc]] = db.session.execute(sql).all()
-            attrs_dict = dict()
-            for reqd, req, srsdoc, sdsdoc in rows:
-                values =  [reqd.overview, reqd.participant, reqd.pre_condition,
-                           reqd.trigger, reqd.work_flow, reqd.post_condition, reqd.exception, reqd.constraint,
-                           req.module, req.function, req.code]
-                values = [value for value in values if value]
-                attrs: List[str] = attrs_dict.setdefault(sdsdoc.id, [])
-                attrs += values
-            return attrs_dict
-        
-        def __query_sds_reqds():
-            sql = select(SdsReqd).where(SdsReqd.doc_id.in_([id0, id1]))
-            rows: List[SdsReqd] = db.session.execute(sql).scalars().all()
-            attrs_dict = dict()
-            for reqd in rows:
-                values =  [reqd.overview, reqd.func_detail, reqd.logic_txt, reqd.intput, reqd.output, reqd.interface]
-                values = [value for value in values if value]
-                attrs: List[str] = attrs_dict.setdefault(reqd.doc_id, [])
-                attrs += values
-            return attrs_dict
-        
-        def __query_sds_traces():
-            sql = select(SdsTrace).where(SdsTrace.doc_id.in_([id0, id1]))
-            rows: List[SdsTrace] = db.session.execute(sql).scalars().all()
-            attrs_dict = dict()
-            for trace in rows:
-                values =  [trace.sds_code, trace.chapter]
-                values = [value for value in values if value]
-                attrs: List[str] = attrs_dict.setdefault(trace.doc_id, [])
-                attrs += values
-            return attrs_dict
-        
-        async def __query_srsdocs():
-            result = dict()
-            result[id0] = (await srsdoc_serv.get_srs_doc_txts(id0)).data
-            result[id1] = (await srsdoc_serv.get_srs_doc_txts(id1)).data
-            return result
-        
-        async def __query_sdsdocs():
-            result = dict()
-            result[id0] = (await self.get_sds_doc_txts(id0)).data
-            result[id1] = (await self.get_sds_doc_txts(id1)).data
-            return result
+        def __feature_label(code: str, module: str, function: str):
+            # 仅按“功能编号”判定新增/减少，名称改动不应算新增或减少
+            code = (code or "").strip()
+            if code:
+                return code
+            module = (module or "").strip()
+            function = (function or "").strip()
+            return " - ".join([v for v in [module, function] if v])
+
+        def __to_text(values: List[str]):
+            return "；".join(values) if values else "无"
+
+        def __query_feature_sets():
+            feature_dict = {id0: set(), id1: set()}
+            sql = select(SdsReqd, SrsReq).join(SrsReq, SdsReqd.req_id == SrsReq.id)
+            sql = sql.where(SdsReqd.doc_id.in_([id0, id1])).order_by(SdsReqd.doc_id, SrsReq.module, SrsReq.function, SrsReq.code)
+            rows: List[Tuple[SdsReqd, SrsReq]] = db.session.execute(sql).all()
+            for reqd, req in rows:
+                label = __feature_label(req.code, req.module, req.function)
+                if label:
+                    feature_dict.setdefault(reqd.doc_id, set()).add(label)
+
+            trace_rows: List[SdsTrace] = db.session.execute(
+                select(SdsTrace).where(SdsTrace.doc_id.in_([id0, id1]))
+            ).scalars().all()
+            for trace in trace_rows:
+                label = (trace.sds_code or trace.chapter or "").strip()
+                if label:
+                    feature_dict.setdefault(trace.doc_id, set()).add(label)
+            return feature_dict
 
         sql = select(SdsDoc, SrsDoc, Product).join(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id).join(Product, SrsDoc.product_id == Product.id).where(SdsDoc.id.in_([id0, id1]))
         rows: List[Tuple[SdsDoc, SrsDoc, Product]] = db.session.execute(sql).all()
         if not rows:
             return Resp.resp_err(msg=ts("msg_obj_null"))
-        
-        srs_reqs_dict = __query_srs_reqs()
-        sds_reqds_dict = __query_sds_reqds()
-        sds_traces_dict = __query_sds_traces()
-        srsdocs_dict = await __query_srsdocs()
-        sdsdocs_dict = await __query_sdsdocs()
-        infos = dict()
+
+        feature_dict = __query_feature_sets()
+        features0 = feature_dict.get(id0) or set()
+        features1 = feature_dict.get(id1) or set()
+        added0 = sorted(features0 - features1)
+        added1 = sorted(features1 - features0)
+        removed0 = added1
+        removed1 = added0
+
+        infos = {}
         for row_sdsdoc, row_srsdoc, row_prd in rows:
-            srs_reqs = srs_reqs_dict.get(row_sdsdoc.id) or []
-
-            sds_reqds = sds_reqds_dict.get(row_sdsdoc.id) or []
-            sds_traces = sds_traces_dict.get(row_sdsdoc.id) or []
-            sds_reqds += sds_traces
-            
-            srsdoc_txts = srsdocs_dict.get(row_sdsdoc.id) or []
-            sdsdoc_txts = sdsdocs_dict.get(row_sdsdoc.id) or []
-
-            info = dict(
+            infos[row_sdsdoc.id] = dict(
                 product_name=row_prd.name,
                 product_type_code=row_prd.type_code,
                 product_version=row_prd.full_version,
@@ -1730,21 +1721,30 @@ class Server(object):
                 product_scope=row_prd.scope,
                 srs_version=row_srsdoc.version,
                 sds_version=row_sdsdoc.version,
-
-                srs_reqs=srs_reqs,
-                sds_reqds=sds_reqds,
-                srsdoc_txts=srsdoc_txts,
-                sdsdoc_txts=sdsdoc_txts,
             )
-            infos[row_sdsdoc.id] = info
-        info0 = infos.get(id0) or dict()
-        info1 = infos.get(id1) or dict()
+        info0 = infos.get(id0) or {}
+        info1 = infos.get(id1) or {}
+
         results = []
-        for column in ["product_name", "product_type_code", "product_version", "product_udi", "product_scope", "srs_version", "sds_version", 
-                       "srs_reqs", "sds_reqds", "srsdoc_txts", "sdsdoc_txts"]:
+        for column in ["product_name", "product_type_code", "product_version", "product_udi", "product_scope", "srs_version", "sds_version"]:
             value0 = info0.get(column) or ""
             value1 = info1.get(column) or ""
-            same_flag =  1 if value0 == value1 else 0
+            same_flag = 1 if value0 == value1 else 0
             results.append(CompareObj(column_code=column, column_name=ts(f"sdsdiff.{column}"), same_flag=same_flag, values=[value0, value1]))
+
+        results += [
+            CompareObj(
+                column_code="feature_added",
+                column_name="新增功能",
+                same_flag=1 if not added0 and not added1 else 0,
+                values=[__to_text(added0), __to_text(added1)],
+            ),
+            CompareObj(
+                column_code="feature_removed",
+                column_name="减少功能",
+                same_flag=1 if not removed0 and not removed1 else 0,
+                values=[__to_text(removed0), __to_text(removed1)],
+            ),
+        ]
         return Resp.resp_ok(data=results)
         

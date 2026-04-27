@@ -56,9 +56,9 @@ export default function ProductVersionSelect({
     }, [selectedName, products]);
 
     return (
-        <div className="product-version-select" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div className="product-version-select" style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
             <Select
-                style={{ minWidth: 180, width: 180 }}
+                style={{ flex: 1, minWidth: 0 }}
                 allowClear={allowClear}
                 showSearch
                 optionFilterProp="label"
@@ -78,7 +78,7 @@ export default function ProductVersionSelect({
                 }}
             />
             <Select
-                style={{ minWidth: 180, width: 180 }}
+                style={{ flex: 1, minWidth: 0 }}
                 allowClear={allowClear}
                 showSearch
                 optionFilterProp="label"

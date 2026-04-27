@@ -130,6 +130,15 @@ function hasRenderableTable(table?: TableData | null): boolean {
     return hasRows || hasCells;
 }
 
+function isReviewStyleTable(table?: TableData | null): boolean {
+    if (!table || !Array.isArray(table.headers) || table.headers.length === 0) return false;
+    const headerText = table.headers
+        .map((h) => String(h?.name || "").trim())
+        .filter(Boolean)
+        .join("|");
+    return /(评审|审查|结论|法规标准引用)/.test(headerText);
+}
+
 function extractImageCaptions(rawText: string | undefined): string[] {
     return String(rawText || "")
         .replace(/\r/g, "")
@@ -277,6 +286,7 @@ function isSyntheticTableCaption(value?: string): boolean {
     if (/^col_\d+\s*[:：]/.test(txt)) return true;
     if (/^col_\d+$/.test(txt)) return true;
     if (/^数据表\d*$/.test(txt)) return true;
+    if (/^导入表格\d*$/.test(txt)) return true;
     return false;
 }
 
@@ -324,11 +334,54 @@ function getInlineHeadingType(line: string): "" | "h2" | "h3" | "h4" {
     return "";
 }
 
+function isReadOnlyBulletIntroLine(line: string): boolean {
+    const txt = String(line || "").trim();
+    if (!txt) return false;
+    if (/^[（(]\s*2\s*[）)]\s*功能\s*$/.test(txt)) return true;
+    return /(如下|下列|包括|步骤|流程|要求)\s*[:：]?$/.test(txt);
+}
+
+function isReadOnlyBulletCandidateLine(line: string): boolean {
+    const txt = String(line || "").trim();
+    if (!txt) return false;
+    if (txt.length < 4 || txt.length > 220) return false;
+    if (/^[（(]\s*\d+\s*[）)]/.test(txt)) return false;
+    if (/^\d+(?:\.\d+)+(?:[\s、.．]+|$)/.test(txt)) return false;
+    if (/^(图|表)\s*\d+/i.test(txt)) return false;
+    if (/^[\{\}\[\]]/.test(txt)) return false;
+    if (/^[\"']\s*[^\"']+\s*[\"']\s*:/.test(txt)) return false;
+    if (/^(点击|单击|双击|输入|选择|若|如果|然后|最后|开启|支持|提供|定期|按照|根据|设置|删除|编辑|新增|重置)/.test(txt)) return true;
+    return false;
+}
+
+function isReadOnlyBulletExemptLine(line: string): boolean {
+    const txt = String(line || "").trim();
+    if (!txt) return true;
+    if (/^(图|表)\s*\d+/i.test(txt)) return true;
+    if (/^[\{\}\[\]]/.test(txt)) return true;
+    if (/^[\"']\s*[^\"']+\s*[\"']\s*:/.test(txt)) return true;
+    return false;
+}
+
+function stripReadOnlyBulletPrefix(line: string): string {
+    const raw = String(line || "");
+    const m = raw.match(/^\s*(?:[•●▪◦·\uf0b7]|\-|\*)\s+(.+?)\s*$/);
+    return m ? m[1] : raw.trim();
+}
+
 function stripChapterPrefixForTableCaption(value?: string): string {
     return String(value || "")
         .trim()
         .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
         .trim();
+}
+
+function normalizeInlineTableCaption(value?: string): string {
+    const txt = stripChapterPrefixForTableCaption(value);
+    if (!txt) return "";
+    if (isSystemPlaceholderTitle(txt)) return "";
+    if (isSyntheticTableCaption(txt)) return "";
+    return txt;
 }
 
 function shiftChapterMajor(chapter: string, offset: number): string {
@@ -529,17 +582,24 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         mergedImageOnlyChildren.flatMap((child) => [String(child.id), String(child.n_id || "")])
     );
     const tableChildren = (node.children || []).filter((child) => hasRenderableTable(child.table) && !child.img_url);
-    const inlineTableChildren = (readOnly)
-        ? (node.children || []).filter((child) => {
+    const isChapter7ComplianceContext = /法规符合性需求|网络安全/.test(`${title || ""} ${node.text || ""}`);
+    const candidateInlineTableChildren = (node.children || []).filter((child) => {
             const childHasTable = hasRenderableTable(child.table);
             const childTitle = String(child.title || "").trim();
             const isPureTableChild = childHasTable && !child.img_url && !String(child.text || "").trim() && (!child.children || child.children.length === 0);
             if (isInterfaceSubSection) return childHasTable && !child.img_url;
+            if (readOnly && isChapter7ComplianceContext) return childHasTable && !child.img_url;
             return childHasTable && (
                 (isStrictTableCaptionTitle(childTitle) && !child.img_url && !String(child.text || "").trim())
                 || (isDataStructureSection && isPureTableChild)
             );
-        })
+        });
+    const complianceTableChildren = (node.children || []).filter((child) => hasRenderableTable(child.table) && !child.img_url);
+    const enableEditInlineComplianceLayout = !readOnly
+        && complianceTableChildren.length >= 2
+        && /法规符合性需求|网络安全/.test(`${title || ""} ${node.text || ""}`);
+    const inlineTableChildren = (readOnly || enableEditInlineComplianceLayout)
+        ? (enableEditInlineComplianceLayout ? complianceTableChildren : candidateInlineTableChildren)
         : [];
     const inlineTableChildIdSet = new Set(
         inlineTableChildren.flatMap((child) => [String(child.id), String(child.n_id || "")])
@@ -582,6 +642,9 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const visibleChildren = (node.children || []).filter((child) => {
         if (!readOnly) {
             if (mergedImageChildIdSet.has(String(child.id)) || mergedImageChildIdSet.has(String(child.n_id || ""))) {
+                return false;
+            }
+            if (inlineTableChildIdSet.has(String(child.id)) || inlineTableChildIdSet.has(String(child.n_id || ""))) {
                 return false;
             }
             return true;
@@ -661,6 +724,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const editDisplayNodeText = tableTargetCount > 0 ? tableCaptionPack.body : (node.text || "");
     const interfaceOutputSplit = (() => {
         if (!(readOnly && isInterfaceSubSection && (hasTable || inlineTableChildren.length > 0) && String(displayNodeText || "").trim())) return null;
+        if (isReviewStyleTable(node.table)) return null;
+        if (inlineTableChildren.some((child) => isReviewStyleTable(child.table))) return null;
         const raw = String(displayNodeText || "");
         const idx = raw.search(/[（(]2[）)]\s*输出项/);
         if (idx <= 0) return null;
@@ -669,12 +734,73 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
             after: raw.slice(idx).trimStart(),
         };
     })();
-    const displayTextBeforeTable = interfaceOutputSplit?.before ?? displayNodeText;
-    const displayTextAfterTable = interfaceOutputSplit?.after ?? "";
-    const anchoredInlineTables = (readOnly && isInterfaceSubSection && interfaceOutputSplit)
-        ? inlineTableChildren
-        : [];
-    const trailingInlineTables = anchoredInlineTables.length > 0 ? [] : inlineTableChildren;
+    const complianceTcpSplit = (() => {
+        if (!readOnly || isInterfaceSubSection || inlineTableChildren.length < 2) return null;
+        const mergedHint = `${title || ""} ${titleWithoutChapter || ""} ${displayNodeText || ""}`;
+        if (!/法规符合性需求|网络安全/.test(mergedHint)) return null;
+        const lines = String(displayNodeText || "").replace(/\r/g, "").split("\n");
+        if (lines.length < 4) return null;
+        const firstAnchor = lines.findIndex((line) => /提供下列\s*TCP\s*服务/i.test(String(line || "").trim()));
+        const secondAnchor = lines.findIndex((line, idx) => idx > firstAnchor && /只能访问.*TCP\s*端口/i.test(String(line || "").trim()));
+        if (firstAnchor < 0 || secondAnchor <= firstAnchor) return null;
+        return {
+            before: lines.slice(0, firstAnchor + 1).join("\n").trimEnd(),
+            middle: lines.slice(firstAnchor + 1, secondAnchor + 1).join("\n").trim(),
+            after: lines.slice(secondAnchor + 1).join("\n").trimStart(),
+        };
+    })();
+    const chapter7TableSplit = (() => {
+        if (!readOnly || isInterfaceSubSection || inlineTableChildren.length <= 0) return null;
+        const mergedHint = `${title || ""} ${titleWithoutChapter || ""} ${displayNodeText || ""}`;
+        if (!/法规符合性需求|网络安全/.test(mergedHint)) return null;
+        if (!/提供下列\s*TCP\s*服务/i.test(mergedHint) || !/只能访问.*TCP\s*端口/i.test(mergedHint)) return null;
+        const lines = String(displayNodeText || "").replace(/\r/g, "").split("\n");
+        if (lines.length < 3) return null;
+        const sectionIdx = lines
+            .map((line, idx) => ({ idx, line: String(line || "").trim() }))
+            .filter((item) => /^[（(]\s*\d+\s*[）)]\s*\S+/.test(item.line))
+            .map((item) => item.idx);
+        if (sectionIdx.length < 2) return null;
+        const firstCut = sectionIdx[1];
+        if (firstCut <= 0) return null;
+        const secondCut = sectionIdx.length >= 3 ? sectionIdx[2] : -1;
+        if (inlineTableChildren.length >= 2 && secondCut > firstCut) {
+            return {
+                before: lines.slice(0, firstCut).join("\n").trimEnd(),
+                middle: lines.slice(firstCut, secondCut).join("\n").trim(),
+                after: lines.slice(secondCut).join("\n").trimStart(),
+            };
+        }
+        return {
+            before: lines.slice(0, firstCut).join("\n").trimEnd(),
+            middle: "",
+            after: lines.slice(firstCut).join("\n").trimStart(),
+        };
+    })();
+    const displayTextBeforeTable = interfaceOutputSplit?.before ?? complianceTcpSplit?.before ?? chapter7TableSplit?.before ?? displayNodeText;
+    const displayTextBetweenTables = complianceTcpSplit?.middle ?? chapter7TableSplit?.middle ?? "";
+    const displayTextAfterTable = interfaceOutputSplit?.after ?? complianceTcpSplit?.after ?? chapter7TableSplit?.after ?? "";
+    const anchoredInlineTables = (() => {
+        if (readOnly && isInterfaceSubSection && interfaceOutputSplit) return inlineTableChildren;
+        if (complianceTcpSplit) return inlineTableChildren.slice(0, 1);
+        if (chapter7TableSplit) return inlineTableChildren.slice(0, 1);
+        return [];
+    })();
+    const middleAnchoredInlineTables = (complianceTcpSplit || chapter7TableSplit) ? inlineTableChildren.slice(1, 2) : [];
+    const trailingInlineTables = (() => {
+        if (readOnly && isInterfaceSubSection && interfaceOutputSplit) return [];
+        if (complianceTcpSplit) return inlineTableChildren.slice(2);
+        if (chapter7TableSplit) return inlineTableChildren.slice(2);
+        return inlineTableChildren;
+    })();
+    const showComplianceInlineInEdit = false;
+    const editTextBeforeTable = showComplianceInlineInEdit ? (complianceTcpSplit?.before || "") : editDisplayNodeText;
+    const editTextBetweenTables = showComplianceInlineInEdit ? (complianceTcpSplit?.middle || "") : "";
+    const editTextAfterTable = showComplianceInlineInEdit ? (complianceTcpSplit?.after || "") : "";
+    const mergeComplianceText = (before: string, middle: string, after: string): string => {
+        const parts = [String(before || "").trim(), String(middle || "").trim(), String(after || "").trim()].filter(Boolean);
+        return parts.join("\n");
+    };
     const hasDisplayTextContent = !!String(displayNodeText || "").trim();
     const isPureTableCarrierNode = !!(
         hasTable &&
@@ -797,17 +923,43 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     );
     const alignSplitTailWithNodeRow = !!(
         readOnly &&
-        isInterfaceSubSection &&
         !hideNodeRow &&
-        !stackContentBelowTitle
+        (isInterfaceSubSection || !!complianceTcpSplit || !!chapter7TableSplit)
     );
     let childChapterCounter = 0;
     const inlineImageUrlForText = (readOnly && displayImageUrl)
         ? (displayImageUrl.startsWith('http') ? displayImageUrl : `${window.location.origin}/${displayImageUrl.replace(/^\//, '')}`)
         : "";
+    const hasInlineImageSplit = !!(readOnly && (interfaceOutputSplit || complianceTcpSplit || chapter7TableSplit));
+    const hasCaptionInBefore = /^图\s*\d+/m.test(String(displayTextBeforeTable || ""));
+    const hasCaptionInBetween = /^图\s*\d+/m.test(String(displayTextBetweenTables || ""));
+    const hasCaptionInAfter = /^图\s*\d+/m.test(String(displayTextAfterTable || ""));
+    const inlineImageUrlForBefore = hasInlineImageSplit
+        ? (hasCaptionInBefore ? inlineImageUrlForText : "")
+        : inlineImageUrlForText;
+    const inlineImageUrlForBetween = hasInlineImageSplit
+        ? (!hasCaptionInBefore && hasCaptionInBetween ? inlineImageUrlForText : "")
+        : "";
+    const inlineImageUrlForAfter = hasInlineImageSplit
+        ? ((!hasCaptionInBefore && !hasCaptionInBetween && hasCaptionInAfter) || (!hasCaptionInBefore && !hasCaptionInBetween && !hasCaptionInAfter)
+            ? inlineImageUrlForText
+            : "")
+        : "";
     const renderReadOnlyText = (raw: string, options?: { inlineImageUrl?: string }) => {
         const lines = String(raw || "").replace(/\r/g, "").split("\n");
         const inlineImageUrl = String(options?.inlineImageUrl || "").trim();
+        const chapterHint = `${title || ""} ${titleWithoutChapter || ""} ${displayTitle || ""}`.trim();
+        const isChapter7Context = /^7(?:[.\s、]|$)/.test(chapterHint) || /^7(?:[.\s、]|$)/.test(String(chapterNo || "").trim());
+        const inlineImgSize = isChapter7Context ? 100 : 120;
+        const inlineImgBoxStyle: React.CSSProperties = {
+            width: inlineImgSize,
+            height: inlineImgSize,
+            minWidth: inlineImgSize,
+            minHeight: inlineImgSize,
+            maxWidth: inlineImgSize,
+            maxHeight: inlineImgSize,
+        };
+        let bulletMode = false;
         let injected = false;
         const chunks: JSX.Element[] = [];
         lines.forEach((line, idx) => {
@@ -819,9 +971,12 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                 return;
             }
             if (headingType) {
+                if (/^[（(]\s*\d+\s*[）)]/.test(trimmed)) {
+                    bulletMode = /^[（(]\s*2\s*[）)]\s*功能\s*$/.test(trimmed);
+                }
                 if (!!inlineImageUrl && !injected && isImageCaptionLine) {
                     chunks.push(
-                        <div className="node-pic node-pic-readonly node-pic-inline" key={`line-image-${idx}`}>
+                        <div className="node-pic node-pic-readonly node-pic-inline" style={inlineImgBoxStyle} key={`line-image-${idx}`}>
                             <Image
                                 src={inlineImageUrl}
                                 alt={displayTitle || "image"}
@@ -840,7 +995,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
             }
             if (!!inlineImageUrl && !injected && isImageCaptionLine) {
                 chunks.push(
-                    <div className="node-pic node-pic-readonly node-pic-inline" key={`line-image-${idx}`}>
+                    <div className="node-pic node-pic-readonly node-pic-inline" style={inlineImgBoxStyle} key={`line-image-${idx}`}>
                         <Image
                             src={inlineImageUrl}
                             alt={displayTitle || "image"}
@@ -850,6 +1005,23 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                 );
                 injected = true;
             }
+            if (isChapter7Context) {
+                if (isReadOnlyBulletIntroLine(trimmed)) {
+                    bulletMode = true;
+                }
+                const explicitBullet = /^\s*(?:[•●▪◦·\uf0b7]|\-|\*)\s+/.test(line);
+                const forceBullet = bulletMode && !isReadOnlyBulletExemptLine(trimmed);
+                const asBullet = explicitBullet || forceBullet || isReadOnlyBulletCandidateLine(trimmed);
+                if (asBullet) {
+                    const bulletText = stripReadOnlyBulletPrefix(line);
+                    chunks.push(
+                        <div key={`line-${idx}`} className="node-inline-line">
+                            {`• ${bulletText}`}
+                        </div>
+                    );
+                    return;
+                }
+            }
             chunks.push(
                 <div key={`line-${idx}`} className="node-inline-line">
                     {line}
@@ -858,7 +1030,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         });
         if (!!inlineImageUrl && !injected) {
             chunks.push(
-                <div className="node-pic node-pic-readonly node-pic-inline" key="line-image-fallback">
+                <div className="node-pic node-pic-readonly node-pic-inline" style={inlineImgBoxStyle} key="line-image-fallback">
                     <Image
                         src={inlineImageUrl}
                         alt={displayTitle || "image"}
@@ -868,6 +1040,19 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
             );
         }
         return <div className="node-content node-text-area">{chunks}</div>;
+    };
+    const wrapReadOnlyAlignedTable = (content: JSX.Element, key: string): JSX.Element => {
+        if (!(readOnly && !hideNodeRow)) return content;
+        return (
+            <div className="node-row node-row-follow" key={key}>
+                <span className="node-expand-placeholder" />
+                <div className="node-content-below-title node-content-below-table">
+                    <div style={{ marginLeft: 36 }}>
+                        {content}
+                    </div>
+                </div>
+            </div>
+        );
     };
 
     return (
@@ -954,16 +1139,22 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                       </div>
                   )}
                   {readOnly ? (
-                      (String(displayTextBeforeTable || "").trim() || !!inlineImageUrlForText)
-                          ? (stackContentBelowTitle ? null : renderReadOnlyText(displayTextBeforeTable, { inlineImageUrl: inlineImageUrlForText }))
+                      (String(displayTextBeforeTable || "").trim() || !!inlineImageUrlForBefore)
+                          ? (stackContentBelowTitle ? null : renderReadOnlyText(displayTextBeforeTable, { inlineImageUrl: inlineImageUrlForBefore }))
                           : null
                   ) : (
                       <Input.TextArea
                           className="node-content node-text-area"
                           styles={{ textarea: chapterTextStyle }}
                           style={compactWithImage ? { marginRight: 8 } : undefined}
-                          value={editDisplayNodeText}
-                          onChange={(e) => onContentChange(node.id, e.target.value)}
+                          value={editTextBeforeTable}
+                          onChange={(e) => {
+                              const nextBefore = e.target.value;
+                              const nextText = showComplianceInlineInEdit
+                                  ? mergeComplianceText(nextBefore, editTextBetweenTables, editTextAfterTable)
+                                  : nextBefore;
+                              onContentChange(node.id, nextText);
+                          }}
                           placeholder={ts('srs_doc.please_input_content')}
                           size="small"
                           rows={1}
@@ -1122,8 +1313,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           {displayChapterFromDoc || (showChapterNo ? chapterNo : "") || "-"}
                       </span>
                       <div className="node-content-below-title">
-                          {(String(displayTextBeforeTable || "").trim() || !!inlineImageUrlForText)
-                              ? renderReadOnlyText(displayTextBeforeTable, { inlineImageUrl: inlineImageUrlForText })
+                          {(String(displayTextBeforeTable || "").trim() || !!inlineImageUrlForBefore)
+                              ? renderReadOnlyText(displayTextBeforeTable, { inlineImageUrl: inlineImageUrlForBefore })
                               : null}
                       </div>
                   </div>
@@ -1131,6 +1322,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
               
               {/* 显示表格数据（ref_type 节点不展示表格） */}
               {showExpandedBody && hasTable && !isDocImageRefType(node.ref_type) && node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces' && (
+                  wrapReadOnlyAlignedTable(
                   <div className={`node-table${flushOwnTableTop ? " node-table--flush-top" : ""}`}>
                       {!readOnly && !!sanitizedEditTableCaption && (
                           <div className="node-content" style={{ marginBottom: 8, textAlign: "center", fontSize: 13, fontWeight: 400 }}>
@@ -1176,18 +1368,19 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           </Space>
                           )}
                       </div>
-                  </div>
+                  </div>,
+                  `own-table-${node.id}`
+                  )
               )}
-              {showExpandedBody && readOnly && anchoredInlineTables.map((child, idx) => {
-                  const caption = stripChapterPrefixForTableCaption(
+              {showExpandedBody && (readOnly || showComplianceInlineInEdit) && anchoredInlineTables.map((child, idx) => {
+                  const caption = normalizeInlineTableCaption(
                       childTableCaptionById.get(String(child.id))
                       || childTableCaptionById.get(String(child.n_id || ""))
                       || String(child.label || "").trim()
-                      || String(child.title || "").trim()
                   )
                       || "";
                   const sanitizedCaption = isSyntheticTableCaption(caption) ? "" : caption;
-                  return (
+                  return wrapReadOnlyAlignedTable((
                       <div
                           className={`node-table${flushFirstInlineTableTop && idx === 0 ? " node-table--flush-top" : ""}`}
                           key={`anchored-inline-table-${child.id}-${idx}`}
@@ -1208,36 +1401,146 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       tableLayout="fixed"
                                   />
                               </div>
+                              {!readOnly && (
+                                  <Space className="node-table-actions" size={8}>
+                                      <Button
+                                          size="small"
+                                          icon={<EditOutlined />}
+                                          onClick={() => onEditTable(child.id)}>
+                                          {ts('edit')}
+                                      </Button>
+                                      <Popconfirm
+                                          title={ts('srs_doc.confirm_delete_table')}
+                                          onConfirm={() => onDeleteTable(child.id)}
+                                          okText={ts('confirm')}
+                                          cancelText={ts('cancel')}>
+                                          <Button
+                                              size="small"
+                                              danger
+                                              icon={<DeleteOutlined />}>
+                                              {ts('delete')}
+                                          </Button>
+                                      </Popconfirm>
+                                  </Space>
+                              )}
                           </div>
                       </div>
-                  );
+                  ), `aligned-anchored-inline-table-${child.id}-${idx}`);
               })}
-              {showExpandedBody && readOnly && !!String(displayTextAfterTable || "").trim() && (
-                  alignSplitTailWithNodeRow ? (
+              {showExpandedBody && ((readOnly && !!String(displayTextBetweenTables || "").trim()) || (showComplianceInlineInEdit && !!String(editTextBetweenTables || "").trim())) && (
+                  (readOnly && alignSplitTailWithNodeRow) ? (
                       <div className="node-row node-row-follow">
                           <span className="node-expand-placeholder" />
-                          <span className="node-title-prefix" style={{ visibility: "hidden" }}>
-                              {displayChapterFromDoc || (showChapterNo ? chapterNo : "") || "-"}
-                          </span>
-                          <span className="node-title" style={{ visibility: "hidden" }}>
-                              {displayTitle || "-"}
-                          </span>
-                          {renderReadOnlyText(displayTextAfterTable)}
+                          <div className="node-content-below-title" style={{ marginLeft: 36 }}>
+                              {renderReadOnlyText(displayTextBetweenTables, { inlineImageUrl: inlineImageUrlForBetween })}
+                          </div>
                       </div>
                   ) : (
-                      renderReadOnlyText(displayTextAfterTable)
+                      readOnly
+                          ? renderReadOnlyText(displayTextBetweenTables, { inlineImageUrl: inlineImageUrlForBetween })
+                          : (
+                              <Input.TextArea
+                                  className="node-content node-text-area"
+                                  styles={{ textarea: chapterTextStyle }}
+                                  value={editTextBetweenTables}
+                                  onChange={(e) => onContentChange(node.id, mergeComplianceText(editTextBeforeTable, e.target.value, editTextAfterTable))}
+                                  placeholder={ts('srs_doc.please_input_content')}
+                                  size="small"
+                                  rows={1}
+                                  autoSize={{ minRows: 1, maxRows: 6 }}
+                              />
+                          )
                   )
               )}
-              {showExpandedBody && readOnly && trailingInlineTables.map((child, idx) => {
-                  const caption = stripChapterPrefixForTableCaption(
+              {showExpandedBody && (readOnly || showComplianceInlineInEdit) && middleAnchoredInlineTables.map((child, idx) => {
+                  const caption = normalizeInlineTableCaption(
                       childTableCaptionById.get(String(child.id))
                       || childTableCaptionById.get(String(child.n_id || ""))
                       || String(child.label || "").trim()
-                      || String(child.title || "").trim()
                   )
                       || "";
                   const sanitizedCaption = isSyntheticTableCaption(caption) ? "" : caption;
-                  return (
+                  return wrapReadOnlyAlignedTable((
+                      <div
+                          className="node-table"
+                          key={`middle-inline-table-${child.id}-${idx}`}
+                      >
+                          {!!sanitizedCaption && (
+                              <div className="node-content" style={{ marginBottom: 8, textAlign: "center", fontSize: 13, fontWeight: 400 }}>
+                                  {sanitizedCaption}
+                              </div>
+                          )}
+                          <div className="node-table-header">
+                              <div className="node-table-scroll">
+                                  <Table
+                                      columns={buildTableColumns(child.table)}
+                                      dataSource={buildTableDataSource(child.table)}
+                                      pagination={false}
+                                      size="small"
+                                      bordered
+                                      tableLayout="fixed"
+                                  />
+                              </div>
+                              {!readOnly && (
+                                  <Space className="node-table-actions" size={8}>
+                                      <Button
+                                          size="small"
+                                          icon={<EditOutlined />}
+                                          onClick={() => onEditTable(child.id)}>
+                                          {ts('edit')}
+                                      </Button>
+                                      <Popconfirm
+                                          title={ts('srs_doc.confirm_delete_table')}
+                                          onConfirm={() => onDeleteTable(child.id)}
+                                          okText={ts('confirm')}
+                                          cancelText={ts('cancel')}>
+                                          <Button
+                                              size="small"
+                                              danger
+                                              icon={<DeleteOutlined />}>
+                                              {ts('delete')}
+                                          </Button>
+                                      </Popconfirm>
+                                  </Space>
+                              )}
+                          </div>
+                      </div>
+                  ), `aligned-middle-inline-table-${child.id}-${idx}`);
+              })}
+              {showExpandedBody && ((readOnly && !!String(displayTextAfterTable || "").trim()) || (showComplianceInlineInEdit && !!String(editTextAfterTable || "").trim())) && (
+                  (readOnly && alignSplitTailWithNodeRow) ? (
+                      <div className="node-row node-row-follow">
+                          <span className="node-expand-placeholder" />
+                          <div className="node-content-below-title" style={{ marginLeft: 36 }}>
+                              {renderReadOnlyText(displayTextAfterTable, { inlineImageUrl: inlineImageUrlForAfter })}
+                          </div>
+                      </div>
+                  ) : (
+                      readOnly
+                          ? renderReadOnlyText(displayTextAfterTable, { inlineImageUrl: inlineImageUrlForAfter })
+                          : (
+                              <Input.TextArea
+                                  className="node-content node-text-area"
+                                  styles={{ textarea: chapterTextStyle }}
+                                  value={editTextAfterTable}
+                                  onChange={(e) => onContentChange(node.id, mergeComplianceText(editTextBeforeTable, editTextBetweenTables, e.target.value))}
+                                  placeholder={ts('srs_doc.please_input_content')}
+                                  size="small"
+                                  rows={1}
+                                  autoSize={{ minRows: 1, maxRows: 6 }}
+                              />
+                          )
+                  )
+              )}
+              {showExpandedBody && (readOnly || showComplianceInlineInEdit) && trailingInlineTables.map((child, idx) => {
+                  const caption = normalizeInlineTableCaption(
+                      childTableCaptionById.get(String(child.id))
+                      || childTableCaptionById.get(String(child.n_id || ""))
+                      || String(child.label || "").trim()
+                  )
+                      || "";
+                  const sanitizedCaption = isSyntheticTableCaption(caption) ? "" : caption;
+                  return wrapReadOnlyAlignedTable((
                       <div
                           className={`node-table${flushFirstInlineTableTop && idx === 0 ? " node-table--flush-top" : ""}`}
                           key={`inline-table-${child.id}-${idx}`}
@@ -1258,9 +1561,31 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       tableLayout="fixed"
                                   />
                               </div>
+                              {!readOnly && (
+                                  <Space className="node-table-actions" size={8}>
+                                      <Button
+                                          size="small"
+                                          icon={<EditOutlined />}
+                                          onClick={() => onEditTable(child.id)}>
+                                          {ts('edit')}
+                                      </Button>
+                                      <Popconfirm
+                                          title={ts('srs_doc.confirm_delete_table')}
+                                          onConfirm={() => onDeleteTable(child.id)}
+                                          okText={ts('confirm')}
+                                          cancelText={ts('cancel')}>
+                                          <Button
+                                              size="small"
+                                              danger
+                                              icon={<DeleteOutlined />}>
+                                              {ts('delete')}
+                                          </Button>
+                                      </Popconfirm>
+                                  </Space>
+                              )}
                           </div>
                       </div>
-                  );
+                  ), `aligned-inline-table-${child.id}-${idx}`);
               })}
           </div>
             {showExpandedBody && finalVisibleChildren.map((child) => {
@@ -1620,9 +1945,9 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                     const target = nodeList[idx];
                     const currentSheet = importedTables[0];
                     const siblingSheets = importedTables.slice(1);
-                    const getSheetTitle = (sheetName: string, fallbackIndex: number) => {
+                    const getSheetTitle = (sheetName: string, _fallbackIndex: number) => {
                         const normalized = String(sheetName || "").trim();
-                        return normalized || `导入表格${fallbackIndex}`;
+                        return normalized || "";
                     };
                     const currentNode: TreeNode = {
                         ...target,
