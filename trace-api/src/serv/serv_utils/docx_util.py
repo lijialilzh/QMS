@@ -18,6 +18,12 @@ from ...obj.tobj_srs_doc import Table
 
 def __fonted_cell(cell, text, font_size=10.5):
     for paragraph in cell.paragraphs:
+        paragraph.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.LEFT
+        paragraph.paragraph_format.first_line_indent = Pt(0)
+        paragraph.paragraph_format.left_indent = Pt(0)
+        paragraph.paragraph_format.right_indent = Pt(0)
+        paragraph.paragraph_format.space_before = Pt(0)
+        paragraph.paragraph_format.space_after = Pt(0)
         fonted_txt(paragraph, text, font_size)
 
 def __apply_table_border(tabx):
@@ -45,6 +51,88 @@ def __apply_two_col_width(tabx, col_count: int):
         row.cells[0].width = left_w
         row.cells[1].width = right_w
 
+def __text_visual_len(value: str) -> float:
+    txt = str(value or "").strip()
+    if not txt:
+        return 0.0
+    # 中文按双宽估算，英文/数字按单宽估算；防止超长URL把比例拉爆
+    score = 0.0
+    for ch in txt:
+        score += 2.0 if "\u4e00" <= ch <= "\u9fff" else 1.0
+    return min(score, 80.0)
+
+def __distribute_col_widths(scores, total_width: float, min_width: float, max_width: float):
+    col_count = len(scores)
+    if col_count == 0:
+        return []
+    if total_width <= col_count * min_width:
+        return [total_width / col_count for _ in range(col_count)]
+    safe_scores = [max(0.1, float(s or 0.1)) for s in scores]
+    score_sum = sum(safe_scores) or 1.0
+    widths = [total_width * (s / score_sum) for s in safe_scores]
+    widths = [max(min_width, min(max_width, w)) for w in widths]
+    cur_sum = sum(widths)
+    # 迭代收敛到目标总宽
+    for _ in range(6):
+        diff = total_width - cur_sum
+        if abs(diff) < 0.01:
+            break
+        if diff > 0:
+            grow_idx = [i for i, w in enumerate(widths) if w < max_width - 1e-6]
+            if not grow_idx:
+                break
+            base = sum(safe_scores[i] for i in grow_idx) or len(grow_idx)
+            for i in grow_idx:
+                inc = diff * ((safe_scores[i] / base) if base else (1 / len(grow_idx)))
+                widths[i] = min(max_width, widths[i] + inc)
+        else:
+            shrink_idx = [i for i, w in enumerate(widths) if w > min_width + 1e-6]
+            if not shrink_idx:
+                break
+            base = sum(safe_scores[i] for i in shrink_idx) or len(shrink_idx)
+            for i in shrink_idx:
+                dec = (-diff) * ((safe_scores[i] / base) if base else (1 / len(shrink_idx)))
+                widths[i] = max(min_width, widths[i] - dec)
+        cur_sum = sum(widths)
+    return widths
+
+def __apply_adaptive_col_width(tabx, headers, rows):
+    col_count = len(headers or [])
+    if col_count <= 0:
+        return
+    # 两列表格保留原有版式（封面信息/修订记录等）
+    if col_count == 2:
+        __apply_two_col_width(tabx, col_count)
+        return
+    # A4常规页边距下可用宽度约 6.5~6.9 英寸，这里取中值
+    total_width = 6.7
+    min_width = 0.78
+    max_width = 3.6
+    scores = []
+    for ci, header in enumerate(headers or []):
+        hname = str(getattr(header, "name", "") or "")
+        header_score = max(2.0, __text_visual_len(hname) * 1.2)
+        col_samples = []
+        for row in (rows or [])[:40]:
+            if isinstance(row, dict):
+                col_samples.append(str(row.get(getattr(header, "code", ""), "") or ""))
+        sample_max = max((__text_visual_len(x) for x in col_samples), default=0.0)
+        sample_avg = (sum(__text_visual_len(x) for x in col_samples) / max(1, len(col_samples))) if col_samples else 0.0
+        score = max(header_score, sample_max * 0.9, sample_avg * 1.1, 2.0)
+        # URL/备注/描述这类文本列给更高权重，避免被压窄
+        if re.search(r"(url|uri|http|路径|地址|链接|备注|说明|描述|内容|参数|详情)", hname, re.I):
+            score *= 1.55
+        # 编号/序号类列适度收窄
+        if re.search(r"(编号|序号|id|编码)", hname, re.I):
+            score *= 0.85
+        scores.append(score)
+    widths = __distribute_col_widths(scores, total_width=total_width, min_width=min_width, max_width=max_width)
+    tabx.autofit = False
+    for row in tabx.rows:
+        for ci, width in enumerate(widths):
+            if ci < len(row.cells):
+                row.cells[ci].width = Inches(width)
+
 def save_tab2docx(tab: Table,  docx: Document):
     # 优先使用 cells 导出（保留Word导入时的合并单元格结构）
     if tab.cells and len(tab.cells) > 0:
@@ -66,7 +154,28 @@ def save_tab2docx(tab: Table,  docx: Document):
                     end_c = min(col_count - 1, ci + max(1, cs) - 1)
                     if end_r > ri or end_c > ci:
                         tabx.cell(ri, ci).merge(tabx.cell(end_r, end_c))
-            __apply_two_col_width(tabx, col_count)
+            header_names = []
+            if tab.show_header and row_count > 0:
+                try:
+                    header_names = [str(tab.cells[0][ci].value or "") for ci in range(col_count)]
+                except Exception:
+                    header_names = []
+            pseudo_headers = tab.headers or [type("Header", (), {"code": f"c{idx}", "name": (header_names[idx] if idx < len(header_names) else f"列{idx+1}")}) for idx in range(col_count)]
+            pseudo_rows = []
+            data_start = 1 if (tab.show_header and row_count > 0) else 0
+            for ri in range(data_start, row_count):
+                row_dict = {}
+                for ci in range(col_count):
+                    code = getattr(pseudo_headers[ci], "code", f"c{ci}")
+                    val = ""
+                    try:
+                        cell = tab.cells[ri][ci]
+                        val = "" if cell is None else str(getattr(cell, "value", "") or "")
+                    except Exception:
+                        val = ""
+                    row_dict[code] = val
+                pseudo_rows.append(row_dict)
+            __apply_adaptive_col_width(tabx, pseudo_headers, pseudo_rows)
             __apply_table_border(tabx)
             empty = docx.add_paragraph()
             empty.paragraph_format.space_after = Pt(20)
@@ -89,14 +198,22 @@ def save_tab2docx(tab: Table,  docx: Document):
             text = str(cell_value) if cell_value is not None else ""
             __fonted_cell(row_cells[ci], text)
 
-    __apply_two_col_width(tabx, len(tab.headers))
+    __apply_adaptive_col_width(tabx, tab.headers, tab.rows or [])
     __apply_table_border(tabx)
 
     empty = docx.add_paragraph()
     empty.paragraph_format.space_after = Pt(20)
 
 
-def save_img2docx(path: str, docx: Document, mw: int = 600, mh: int = 600):
+def save_img2docx(
+    path: str,
+    docx: Document,
+    mw: int = 600,
+    mh: int = 600,
+    min_w: int = 0,
+    min_h: int = 0,
+    target_long: int = 0,
+):
     PIXELS_PER_INCH = 96
     SPACE_VALUE = Pt(20)
     image_source = None
@@ -112,6 +229,24 @@ def save_img2docx(path: str, docx: Document, mw: int = 600, mh: int = 600):
 
     if image_source is None:
         return
+
+    # 结合页面可用宽高做硬限制，避免图片在一页内展示不下
+    try:
+        section = docx.sections[-1] if docx.sections else None
+        if section is not None:
+            page_w_in = float(section.page_width) / 914400.0
+            page_h_in = float(section.page_height) / 914400.0
+            margin_l_in = float(section.left_margin) / 914400.0
+            margin_r_in = float(section.right_margin) / 914400.0
+            margin_t_in = float(section.top_margin) / 914400.0
+            margin_b_in = float(section.bottom_margin) / 914400.0
+            avail_w_px = max(120.0, (page_w_in - margin_l_in - margin_r_in) * PIXELS_PER_INCH)
+            avail_h_px = max(120.0, (page_h_in - margin_t_in - margin_b_in) * PIXELS_PER_INCH)
+            # 预留上下正文与题注空间，避免“单图吃满一页”
+            mw = int(min(float(mw), avail_w_px * 0.60))
+            mh = int(min(float(mh), avail_h_px * 0.32))
+    except Exception:
+        pass
 
     node_para = docx.add_paragraph()
     node_para.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.CENTER
@@ -131,9 +266,22 @@ def save_img2docx(path: str, docx: Document, mw: int = 600, mh: int = 600):
         else:
             with Image.open(image_source) as img:
                 ow, oh = img.size
-        scale = 1.0
-        if ow > mw or oh > mh:
-            scale = min(mw / ow, mh / oh)
+        max_scale = min(mw / ow, mh / oh)
+        min_scale = 0.0
+        if min_w > 0 or min_h > 0:
+            min_scale = max(
+                (min_w / ow) if min_w > 0 else 0.0,
+                (min_h / oh) if min_h > 0 else 0.0,
+            )
+        if min_scale > max_scale:
+            # 极端长宽比时，优先保证不超出最大边界
+            min_scale = max_scale
+
+        if target_long and target_long > 0:
+            base_scale = target_long / max(ow, oh)
+        else:
+            base_scale = 1.0
+        scale = min(max(base_scale, min_scale), max_scale)
         img_w = (ow * scale) / PIXELS_PER_INCH
         img_h = (oh * scale) / PIXELS_PER_INCH
         node_para.add_run().add_picture(image_source, width=Inches(img_w), height=Inches(img_h))
@@ -150,7 +298,10 @@ def save_title2docx(title: str, docx: Document, level: int = 1, font_size=10.5):
     is_bold = level <= 2
     # 使用Heading样式，便于Word目录域(TOC)识别并生成可点击目录
     node_para = docx.add_heading("", level=max(1, min(level, 9)))
+    node_para.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.LEFT
     node_para.paragraph_format.first_line_indent = Pt(0)
+    node_para.paragraph_format.left_indent = Pt(0)
+    node_para.paragraph_format.right_indent = Pt(0)
     node_para.paragraph_format.line_spacing = 1.5
     node_para.paragraph_format.space_before = Pt(0)
     node_para.paragraph_format.space_after = Pt(0)
@@ -163,7 +314,10 @@ def save_txt2docx(text: str, docx: Document, font_size=10.5):
         if not text:
             continue
         node_para = docx.add_paragraph()
+        node_para.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.LEFT
         node_para.paragraph_format.first_line_indent = Pt(font_size*2)
+        node_para.paragraph_format.left_indent = Pt(0)
+        node_para.paragraph_format.right_indent = Pt(0)
         node_para.paragraph_format.line_spacing = 1.5
         node_para.paragraph_format.space_before = Pt(0)
         node_para.paragraph_format.space_after = Pt(0)

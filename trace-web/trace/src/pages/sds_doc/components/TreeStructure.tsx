@@ -95,6 +95,12 @@ function isSystemPlaceholderTitle(text: string): boolean {
     return /^导入(?:图片|表格)\d*$/.test(value) || isUuidLike(value);
 }
 
+function isJsonLikeKeyValueLine(text?: string): boolean {
+    const value = String(text || "").trim();
+    if (!value) return false;
+    return /^['"]\s*[^'"]+\s*['"]\s*:\s*.+$/.test(value);
+}
+
 function shouldAssignChapterNo(node: TreeNode): boolean {
     const title = String(node.title || "").trim();
     const label = String(node.label || "").trim();
@@ -135,10 +141,27 @@ function extractImageCaptions(rawText: string | undefined): string[] {
 function isLikelyTableCaptionLine(line: string): boolean {
     const txt = String(line || "").trim();
     if (!txt) return false;
-    if (/^(表|table)\s*\d+/i.test(txt)) return true;
-    if (/^图\s*\d+/i.test(txt)) return false;
-    if (/^[A-Za-z][A-Za-z0-9_]{1,64}\s*[:：]\s*.+$/.test(txt)) return true;
-    if (/[:：]/.test(txt) && txt.length <= 80 && !/[。！？]$/.test(txt)) return true;
+    // JSON 键值行不是表题（如 "code":0, / "filename":"x.zip"）
+    if (isJsonLikeKeyValueLine(txt)) return false;
+    const normalized = txt
+        // 兼容“1. xxx”、“- xxx”、“（一）xxx”等前缀
+        .replace(/^[\s\-–—•·▪■◆●○□◇()（）【】\[\]0-9一二三四五六七八九十百千万、.．]+/, "")
+        .trim();
+    if (!normalized) return false;
+    if (/^(表|table)\s*\d+/i.test(normalized)) return true;
+    if (/^图\s*\d+/i.test(normalized)) return false;
+    if (/.+表\s*[:：]?$/.test(normalized)) return true;
+    if (/^[A-Za-z][A-Za-z0-9_]{1,64}[:：]\s*.+$/.test(normalized)) return true;
+    if (/[:：]/.test(normalized) && normalized.length <= 80 && !/[。！？]$/.test(normalized)) {
+        const parts = normalized.split(/[:：]/).map((p) => String(p || "").trim());
+        const left = parts[0] || "";
+        const right = parts.slice(1).join("").trim();
+        const leftIsIdentifier = /^[A-Za-z][A-Za-z0-9_]{1,64}$/.test(left);
+        // 冒号前后都有值时，仅“英文标识符”或“含表”视为表题
+        if (left && right && (leftIsIdentifier || /表/.test(left))) return true;
+        // 冒号后为空时，仅“含表”才视作表名，避免“库2数据库：”误命中
+        if (left && !right && /表/.test(left)) return true;
+    }
     return false;
 }
 
@@ -248,58 +271,6 @@ function extractSdsCodeFromNodeText(text?: string): { code: string; nextText: st
     return { code: "", nextText: raw };
 }
 
-function inferDataTableDisplayTitle(node: TreeNode): string {
-    const headers = (node.table?.headers || [])
-        .map((h: any) => `${String(h?.code || "")} ${String(h?.name || "")}`)
-        .join(" ");
-    const rows = (node.table?.rows || [])
-        .map((row: any) => Object.values(row || {}).map((v) => String(v || "")).join(" "))
-        .join(" ");
-    const merged = normalizeKeywordText(`${node.title || ""} ${node.text || ""} ${headers} ${rows}`);
-    const valueTokens = new Set(
-        String(`${headers} ${rows}`)
-            .toLowerCase()
-            .replace(/[^a-z0-9_]+/g, " ")
-            .split(/\s+/)
-            .filter(Boolean)
-    );
-
-    const hasAny = (...keys: string[]) => keys.some((k) => merged.includes(k) || valueTokens.has(k));
-    if (merged.includes("clinical_stage") || merged.includes("clinicalstage") || merged.includes("clinial_stage") || merged.includes("clinialstage") || merged.includes("分期")) {
-        return "clinical_stage: 分期表";
-    }
-    if (hasAny("eng_name", "is_default", "level", "等级", "是否默认", "英文名称")) {
-        return "clinical_stage: 分期表";
-    }
-    if (merged.includes("departmentnotice") || merged.includes("department_notice") || merged.includes("科室通知")) {
-        return "department: 科室通知";
-    }
-    if (hasAny("notice_title", "notice_content", "notice_type", "通知标题", "通知内容", "通知类型")) {
-        return "department: 科室通知";
-    }
-    if (merged.includes("department") || merged.includes("departement") || merged.includes("科室")) {
-        return "department: 科室表";
-    }
-    if (hasAny(
-        "department_code",
-        "departmentcode",
-        "diagnose_nums",
-        "diagnose_num",
-        "diagnosenums",
-        "solutions",
-        "科室代码",
-        "判断数量",
-        "解决方案"
-    )) {
-        return "department: 科室表";
-    }
-    const snakeCaseToken = Array.from(valueTokens).find((token) => /^[a-z]+(?:_[a-z0-9]+)+$/.test(token));
-    if (snakeCaseToken) {
-        return `${snakeCaseToken}: 数据表`;
-    }
-    return "";
-}
-
 function isSyntheticTableCaption(value?: string): boolean {
     const txt = String(value || "").trim().toLowerCase();
     if (!txt) return false;
@@ -307,18 +278,6 @@ function isSyntheticTableCaption(value?: string): boolean {
     if (/^col_\d+$/.test(txt)) return true;
     if (/^数据表\d*$/.test(txt)) return true;
     return false;
-}
-
-function isInterfaceLikeTable(node: TreeNode): boolean {
-    const titleText = normalizeKeywordText(`${node.title || ""} ${node.text || ""}`);
-    const headerText = normalizeKeywordText(
-        (node.table?.headers || []).map((h: any) => `${String(h?.code || "")} ${String(h?.name || "")}`).join(" ")
-    );
-    const merged = `${titleText} ${headerText}`;
-    return merged.includes("接口")
-        || merged.includes("接口url")
-        || merged.includes("接口设计编号")
-        || merged.includes("sds-if");
 }
 
 function pickTableCaptions(rawText: string | undefined, tableCount: number): { captions: string[]; body: string } {
@@ -329,13 +288,24 @@ function pickTableCaptions(rawText: string | undefined, tableCount: number): { c
     const entries = lines
         .map((line, index) => ({ line: String(line || "").trim(), index }))
         .filter((item) => isLikelyTableCaptionLine(item.line));
-    const selected = entries.slice(-tableCount);
+    // 按出现顺序与表格一一对应，避免“后移一位”的错配
+    const selected = entries.slice(0, tableCount);
     const selectedIndexSet = new Set(selected.map((item) => item.index));
     const body = lines.filter((_line, index) => !selectedIndexSet.has(index)).join("\n");
     return {
         captions: selected.map((item) => item.line),
         body,
     };
+}
+
+function pickEditableTableCaption(rawText: string | undefined): string {
+    const lines = String(rawText || "")
+        .replace(/\r/g, "")
+        .split("\n")
+        .map((line) => String(line || "").trim())
+        .filter(Boolean);
+    const hit = lines.find((line) => isLikelyTableCaptionLine(line) && !/^图\s*\d+/i.test(line));
+    return String(hit || "").trim();
 }
 
 function getInlineHeadingType(line: string): "" | "h2" | "h3" | "h4" {
@@ -352,6 +322,13 @@ function getInlineHeadingType(line: string): "" | "h2" | "h3" | "h4" {
         return "h4";
     }
     return "";
+}
+
+function stripChapterPrefixForTableCaption(value?: string): string {
+    return String(value || "")
+        .trim()
+        .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+        .trim();
 }
 
 function shiftChapterMajor(chapter: string, offset: number): string {
@@ -442,7 +419,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         },
     };
 
-    // 构建表格列配置：列少时加大列宽，列多时缩小并启用横向滚动
+    // 构建表格列配置：编辑态不强制列宽，避免出现横向滚动条
     const buildTableColumns = (targetTable?: TableData | null): ColumnsType<any> => {
         const table = targetTable || node.table;
         if (!table || !table.headers || table.headers.length === 0) {
@@ -450,14 +427,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         }
         const tableCells = table.cells || [];
         const hasMergedCells = Array.isArray(tableCells) && tableCells.length > 1;
-        const colCount = table.headers.length;
-        const colWidth = Math.max(150, Math.min(380, 1200 / colCount));
         return table.headers.map((header, index) => {
             const col: any = {
                 title: header.name,
                 dataIndex: header.code,
                 key: `col_${index}`,
-                width: readOnly ? undefined : colWidth,
             };
             if (hasMergedCells) {
                 col.render = (_val: any, _row: any, rowIndex: number) => {
@@ -508,6 +482,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     };
 
     const title = String(node.title || "").trim();
+    const safeNodeLabel = isJsonLikeKeyValueLine(node.label) ? "" : String(node.label || "").trim();
     const normalizedTitle = title.replace(/^[\s\u3000•·▪■◆●○□◇\-–—]+/, "").trim();
     const chapterMatch = normalizedTitle.match(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))?(.*)$/);
     const chapterFromDoc = chapterMatch ? chapterMatch[1] : "";
@@ -520,7 +495,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     );
 
     const hasTable = hasRenderableTable(node.table);
-    const hideImportedTablePlaceholderTitle = !readOnly && hasTable && isSystemPlaceholderTitle(title);
+    const titleIsTableCaption = hasTable && isLikelyTableCaptionLine(titleWithoutChapter || title);
+    const hideImportedTablePlaceholderTitle = !readOnly && hasTable && (isSystemPlaceholderTitle(title) || titleIsTableCaption);
     const editDisplayTitle = hideImportedTablePlaceholderTitle ? "" : node.title;
     const isDataStructureSection = (() => {
         const merged = normalizeKeywordText(`${node.title || ""} ${node.text || ""}`);
@@ -568,10 +544,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const inlineTableChildIdSet = new Set(
         inlineTableChildren.flatMap((child) => [String(child.id), String(child.n_id || "")])
     );
-    const tableTargetCount = (readOnly && !isInterfaceSubSection) ? ((hasTable ? 1 : 0) + tableChildren.length) : 0;
-    const tableCaptionPack = readOnly
-        ? pickTableCaptions(node.text, tableTargetCount)
-        : { captions: [] as string[], body: node.text || "" };
+    const tableTargetCount = (!isInterfaceSubSection) ? ((hasTable ? 1 : 0) + tableChildren.length) : 0;
+    const tableCaptionPack = pickTableCaptions(node.text, tableTargetCount);
     const ownTableCaption = hasTable
         ? (tableCaptionPack.captions[0] || tableCaptionFromParent || "")
         : "";
@@ -586,6 +560,19 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
             if (child.n_id) childTableCaptionById.set(String(child.n_id), cap);
         }
     });
+    // 兜底：若当前节点仅作为容器（无表），但从父级拿到了表名，则传给其首个表子节点
+    if (
+        readOnly
+        && !hasTable
+        && !childTableCaptionById.size
+        && !!String(tableCaptionFromParent || "").trim()
+        && tableChildren.length > 0
+    ) {
+        const firstTableChild = tableChildren[0];
+        const cap = String(tableCaptionFromParent || "").trim();
+        childTableCaptionById.set(String(firstTableChild.id), cap);
+        if (firstTableChild.n_id) childTableCaptionById.set(String(firstTableChild.n_id), cap);
+    }
     const displayImageUrl = node.img_url || embeddedImageChild?.img_url || firstImageChild?.img_url || "";
     const hasDisplayImage = !!String(displayImageUrl || "").trim();
     const compactWithImage = !readOnly && hasDisplayImage;
@@ -612,11 +599,66 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         // 父节点正文已有“图X 标题”时，图片子节点并入父节点展示，不再单独列出。
         return !(isImageNodeOnly(child) && !!cap);
     });
-    const finalVisibleChildren = visibleChildren;
+    const reassignedChildTableCaptionById = new Map<string, string>();
+    const finalVisibleChildren = (() => {
+        if (!readOnly || !Array.isArray(visibleChildren) || visibleChildren.length === 0) return visibleChildren;
+        const result: TreeNode[] = [];
+        const isCaptionOnlyNode = (n: TreeNode): boolean => {
+            const titleTxt = String(n.title || "").trim();
+            const labelTxt = String(n.label || "").trim();
+            const txt = titleTxt || labelTxt;
+            if (!txt) return false;
+            if (!isLikelyTableCaptionLine(txt)) return false;
+            if (hasRenderableTable(n.table) || n.img_url) return false;
+            if (String(n.text || "").trim()) return false;
+            return !(n.children && n.children.length > 0);
+        };
+        const hasTableDescendant = (n: TreeNode): boolean => hasRenderableTable(n.table) || hasTableInSubtree(n);
+        for (let i = 0; i < visibleChildren.length; i++) {
+            const current = visibleChildren[i];
+            if (!isCaptionOnlyNode(current)) {
+                result.push(current);
+                continue;
+            }
+            let targetIdx = -1;
+            for (let j = i + 1; j < visibleChildren.length; j++) {
+                if (hasTableDescendant(visibleChildren[j])) {
+                    targetIdx = j;
+                    break;
+                }
+                // 遇到新的正文节点即停止跨段绑定
+                if (String(visibleChildren[j].text || "").trim() || String(visibleChildren[j].img_url || "").trim()) {
+                    break;
+                }
+            }
+            if (targetIdx >= 0) {
+                const cap = String(current.title || current.label || "").trim();
+                const target = visibleChildren[targetIdx];
+                reassignedChildTableCaptionById.set(String(target.id), cap);
+                if (target.n_id) reassignedChildTableCaptionById.set(String(target.n_id), cap);
+                continue; // 吞掉纯标题节点，不单独渲染
+            }
+            result.push(current);
+        }
+        return result;
+    })();
     const hasChildren = finalVisibleChildren.length > 0;
+    const tableBodyLines = String(tableCaptionPack.body || "")
+        .replace(/\r/g, "")
+        .split("\n")
+        .map((line) => String(line || "").trim());
+    const dbHeadingCandidates = tableBodyLines.filter((line) => /数据库\s*[:：]?$/.test(line));
+    const fallbackDbHeadingForOwnTable = readOnly && hasTable && !ownTableCaption
+        ? (dbHeadingCandidates.length > 0 ? dbHeadingCandidates[dbHeadingCandidates.length - 1] : "")
+        : "";
     const displayNodeText = readOnly
-        ? (tableTargetCount > 0 ? tableCaptionPack.body : (node.text || ""))
+        ? (tableTargetCount > 0
+            ? tableBodyLines
+                .filter((line) => !(fallbackDbHeadingForOwnTable && line === fallbackDbHeadingForOwnTable))
+                .join("\n")
+            : (node.text || ""))
         : (node.text || "");
+    const editDisplayNodeText = tableTargetCount > 0 ? tableCaptionPack.body : (node.text || "");
     const interfaceOutputSplit = (() => {
         if (!(readOnly && isInterfaceSubSection && (hasTable || inlineTableChildren.length > 0) && String(displayNodeText || "").trim())) return null;
         const raw = String(displayNodeText || "");
@@ -641,22 +683,19 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         !hasChildren
     );
     const displayTitle = (() => {
-        const label = String(node.label || "").trim();
+        const label = safeNodeLabel;
         if (!readOnly) return title;
         if (isSystemPlaceholderTitle(title) && displayImageUrl) {
             return captionFromParent || label || getFileNameFromUrl(displayImageUrl) || "图片";
         }
         if (isSystemPlaceholderTitle(title) && hasTable) {
-            return inferDataTableDisplayTitle(node) || captionFromParent || tableCaptionFromParent || label || "数据表";
+            return captionFromParent || tableCaptionFromParent || label || "";
         }
         if (isSystemPlaceholderTitle(title)) {
             return "";
         }
         const baseTitle = titleWithoutChapter || captionFromParent || label || "";
         if (baseTitle) return baseTitle;
-        if (hasTable) {
-            return inferDataTableDisplayTitle(node) || "数据表";
-        }
         return "-";
     })();
     const isTableCaptionCarrierNode = !!(
@@ -667,8 +706,19 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         !hasDisplayTextContent
     );
     const hasDisplayTitle = !!String(displayTitle || "").trim() && displayTitle !== "-";
+    const hideEditRowForPureTableNode = !!(
+        !readOnly
+        && hasTable
+        && !hasDisplayImage
+        && !String(node.text || "").trim()
+        && (!String(node.title || "").trim() || titleIsTableCaption)
+        && !String(node.sds_code || "").trim()
+        && !node.ref_type
+        && (!node.children || node.children.length === 0)
+    );
     const hideNodeRow = !!(
         isTableCaptionCarrierNode
+        || hideEditRowForPureTableNode
         || (readOnly && isPureTableCarrierNode)
     );
     /** 只读：同一节点内「标题/正文行」之后紧跟表格时，去掉首张表顶部的分割线留白，避免像多套了一层容器 */
@@ -681,23 +731,36 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         ? (
             ownTableCaption ||
             (
-                isPureTableCarrierNode && !hasDisplayTitle
-                    ? (displayTitle || inferDataTableDisplayTitle(node))
+                // 纯表节点会隐藏节点行，标题需在表格上方兜底展示
+                isPureTableCarrierNode
+                    ? (
+                        stripChapterPrefixForTableCaption(tableCaptionFromParent)
+                        || stripChapterPrefixForTableCaption(safeNodeLabel)
+                        || (isLikelyTableCaptionLine(titleWithoutChapter || title) ? stripChapterPrefixForTableCaption(titleWithoutChapter || title) : "")
+                    )
                     : ""
             )
         )
         : "";
     const normalizedResolvedCaption = String(resolvedTableCaption || "").trim();
-    const isInterfaceChapter = /接口/.test(titleWithoutChapter || title);
     const finalTableCaption = readOnly
         ? (
             (normalizedResolvedCaption && normalizedResolvedCaption !== "-" ? normalizedResolvedCaption : "")
-            || (hasTable && (isInterfaceChapter || isInterfaceLikeTable(node)) ? "接口列表" : "")
-            || inferDataTableDisplayTitle(node)
-            || (hasTable ? "数据表" : "")
+            || stripChapterPrefixForTableCaption(safeNodeLabel)
+            || (isLikelyTableCaptionLine(titleWithoutChapter || title) ? stripChapterPrefixForTableCaption(titleWithoutChapter || title) : "")
         )
         : "";
     const sanitizedFinalTableCaption = isSyntheticTableCaption(finalTableCaption) ? "" : finalTableCaption;
+    const editFinalTableCaption = !readOnly
+        ? (
+            tableCaptionFromParent
+            || stripChapterPrefixForTableCaption(safeNodeLabel)
+            || (isLikelyTableCaptionLine(titleWithoutChapter || title) ? stripChapterPrefixForTableCaption(titleWithoutChapter || title) : "")
+            || pickEditableTableCaption(node.text)
+            || ""
+        )
+        : "";
+    const sanitizedEditTableCaption = isSyntheticTableCaption(editFinalTableCaption) ? "" : editFinalTableCaption;
     // 性能优化：编辑态也按展开状态渲染子内容，避免大文档首屏一次性挂载全部节点。
     const showExpandedBody = !hasChildren || expanded || isTableCaptionCarrierNode;
     const showChapterNo = !!(
@@ -899,7 +962,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           className="node-content node-text-area"
                           styles={{ textarea: chapterTextStyle }}
                           style={compactWithImage ? { marginRight: 8 } : undefined}
-                          value={node.text}
+                          value={editDisplayNodeText}
                           onChange={(e) => onContentChange(node.id, e.target.value)}
                           placeholder={ts('srs_doc.please_input_content')}
                           size="small"
@@ -1069,7 +1132,12 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
               {/* 显示表格数据（ref_type 节点不展示表格） */}
               {showExpandedBody && hasTable && !isDocImageRefType(node.ref_type) && node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces' && (
                   <div className={`node-table${flushOwnTableTop ? " node-table--flush-top" : ""}`}>
-                      {readOnly && hideNodeRow && !!sanitizedFinalTableCaption && (
+                      {!readOnly && !!sanitizedEditTableCaption && (
+                          <div className="node-content" style={{ marginBottom: 8, textAlign: "center", fontSize: 13, fontWeight: 400 }}>
+                              {sanitizedEditTableCaption}
+                          </div>
+                      )}
+                      {readOnly && !!sanitizedFinalTableCaption && (
                           <div className="node-content" style={{ marginBottom: 8, textAlign: "center", fontSize: 13, fontWeight: 400 }}>
                               {sanitizedFinalTableCaption}
                           </div>
@@ -1111,11 +1179,13 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   </div>
               )}
               {showExpandedBody && readOnly && anchoredInlineTables.map((child, idx) => {
-                  const caption = childTableCaptionById.get(String(child.id))
+                  const caption = stripChapterPrefixForTableCaption(
+                      childTableCaptionById.get(String(child.id))
                       || childTableCaptionById.get(String(child.n_id || ""))
+                      || String(child.label || "").trim()
                       || String(child.title || "").trim()
-                      || inferDataTableDisplayTitle(child)
-                      || `数据表${idx + 1}`;
+                  )
+                      || "";
                   const sanitizedCaption = isSyntheticTableCaption(caption) ? "" : caption;
                   return (
                       <div
@@ -1159,11 +1229,13 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   )
               )}
               {showExpandedBody && readOnly && trailingInlineTables.map((child, idx) => {
-                  const caption = childTableCaptionById.get(String(child.id))
+                  const caption = stripChapterPrefixForTableCaption(
+                      childTableCaptionById.get(String(child.id))
                       || childTableCaptionById.get(String(child.n_id || ""))
+                      || String(child.label || "").trim()
                       || String(child.title || "").trim()
-                      || inferDataTableDisplayTitle(child)
-                      || `数据表${idx + 1}`;
+                  )
+                      || "";
                   const sanitizedCaption = isSyntheticTableCaption(caption) ? "" : caption;
                   return (
                       <div
@@ -1231,7 +1303,12 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         onOpenTraceList={onOpenTraceList}
                         readOnlyChapterOffset={readOnlyChapterOffset}
                         captionFromParent={childCaptionById.get(String(child.id)) || childCaptionById.get(String(child.n_id || ""))}
-                        tableCaptionFromParent={childTableCaptionById.get(String(child.id)) || childTableCaptionById.get(String(child.n_id || ""))}
+                        tableCaptionFromParent={
+                            childTableCaptionById.get(String(child.id))
+                            || childTableCaptionById.get(String(child.n_id || ""))
+                            || reassignedChildTableCaptionById.get(String(child.id))
+                            || reassignedChildTableCaptionById.get(String(child.n_id || ""))
+                        }
                     />
                 );
             })}
@@ -1623,9 +1700,12 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
 
         const tableData: TableDataWithHeaders = {
             headers,
-            data: rows.map(row => 
+            data: rows.map(row =>
                 headers.map(header => row[header.code] || '')
-            )
+            ),
+            tableName: stripChapterPrefixForTableCaption(
+                String(targetNode.label || "").trim() || String(targetNode.title || "").trim() || ""
+            ),
         };
 
         setCurrentNodeId(id);
@@ -1704,6 +1784,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
 
         const newNodes = findNodeAndUpdate(nodes, currentNodeId, (node) => ({
             ...node,
+            label: stripChapterPrefixForTableCaption(String(tableData.tableName || '').trim()),
             table: tableFormat
         }));
         updateNodes(newNodes);

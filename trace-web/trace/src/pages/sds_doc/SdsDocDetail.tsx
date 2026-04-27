@@ -219,6 +219,7 @@ export default () => {
     const IMPORTED_PLACEHOLDER_RE = /^导入(表格|图片)\d*$/;
     const HEADING_NUM_RE = /^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/;
     const TABLE_CAPTION_RE = /^\s*(?:表|table)\s*\d+(?:[.\-_]\d+)*\s*[:：、.．-]?\s*.*$/i;
+    const JSON_KV_LINE_RE = /^\s*['"]\s*[^'"]+\s*['"]\s*:\s*.+$/;
     const hasChapterTitle = (title?: string) => /^\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))\S+/.test(stripTitlePrefixMarks(title));
     const hasRenderableTable = (table: any): boolean => {
         if (!table || !Array.isArray(table.headers) || table.headers.length === 0) return false;
@@ -303,16 +304,194 @@ export default () => {
         const matched = String(title || "").trim().match(HEADING_NUM_RE);
         return matched?.[1];
     };
+    const stripHeadingPrefix = (value?: string): string => {
+        return String(value || "")
+            .trim()
+            .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z"']))/, "")
+            .trim();
+    };
+    const isJsonLikeBodyLine = (value?: string): boolean => {
+        const txt = String(value || "").trim();
+        if (!txt) return false;
+        if (JSON_KV_LINE_RE.test(txt)) return true;
+        const noChapter = stripHeadingPrefix(txt);
+        return !!noChapter && JSON_KV_LINE_RE.test(noChapter);
+    };
+    const insertJsonLineBeforeFirstJsonKv = (parentText: string, jsonLine: string): string => {
+        const normalizedLine = String(jsonLine || "").trim();
+        if (!normalizedLine) return String(parentText || "").trim();
+        const lines = String(parentText || "")
+            .replace(/\r/g, "")
+            .split("\n");
+        const targetIdx = lines.findIndex((line) => isJsonLikeBodyLine(line));
+        if (targetIdx >= 0) {
+            const nextLines = [...lines];
+            nextLines.splice(targetIdx, 0, normalizedLine);
+            return nextLines.map((line) => String(line || "").trim()).filter(Boolean).join("\n");
+        }
+        // 若尚未出现键值行，则尽量放在第一个 "{" 之后
+        const braceIdx = lines.findIndex((line) => String(line || "").trim() === "{");
+        if (braceIdx >= 0) {
+            const nextLines = [...lines];
+            nextLines.splice(braceIdx + 1, 0, normalizedLine);
+            return nextLines.map((line) => String(line || "").trim()).filter(Boolean).join("\n");
+        }
+        return [...lines, normalizedLine].map((line) => String(line || "").trim()).filter(Boolean).join("\n");
+    };
     const isPlaceholderTitle = (title?: string): boolean => IMPORTED_PLACEHOLDER_RE.test(String(title || "").trim());
     const isNumberableNode = (node: TreeNode): boolean => {
         const title = String(node.title || "").trim();
         if (!title) return false;
         if (IMPORTED_PLACEHOLDER_RE.test(title)) return false;
+        if (isJsonLikeBodyLine(title)) return false;
         const pureTitle = title
             .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
             .replace(/\s+/g, "");
         if (/^(目录|需求规格说明|文件修订记录|软件详细设计说明书|软件详细设计)$/.test(pureTitle)) return false;
+        // 句子型文本（含逗号/句号/分号/冒号等）不是章节，不自动补编号（避免出现“7.1 ...”误识别）
+        if (/[，,。；;：:！？!?]/.test(pureTitle)) return false;
+        // 过长标题更像正文段落，不自动编号
+        if (pureTitle.length > 24) return false;
         return true;
+    };
+    const normalizeJsonLikeHeadings = (nodes: TreeNode[], parent?: TreeNode): TreeNode[] => {
+        if (!Array.isArray(nodes) || nodes.length === 0) return nodes;
+        const out: TreeNode[] = [];
+        for (const raw of nodes) {
+            const normalizedChildren = normalizeJsonLikeHeadings(raw.children || [], raw);
+            const node: TreeNode = { ...raw, children: normalizedChildren };
+            const title = String(node.title || "").trim();
+            if (isJsonLikeBodyLine(title) && out.length > 0) {
+                const prev = out[out.length - 1];
+                const normalizedJsonLine = stripHeadingPrefix(title) || title;
+                let mergedText = insertJsonLineBeforeFirstJsonKv(String(prev.text || ""), normalizedJsonLine);
+                const nodeText = String(node.text || "").trim();
+                if (nodeText) {
+                    mergedText = [mergedText, nodeText].filter(Boolean).join("\n");
+                }
+                const mergedPrev: TreeNode = {
+                    ...prev,
+                    text: mergedText,
+                    children: [...(prev.children || []), ...(node.children || [])],
+                };
+                const hasOwnPayload = !!(
+                    hasRenderableTable(node.table)
+                    || !!String(node.img_url || "").trim()
+                );
+                if (hasOwnPayload) {
+                    mergedPrev.children = [
+                        ...(mergedPrev.children || []),
+                        {
+                            ...node,
+                            title: "",
+                            label: isJsonLikeBodyLine(node.label) ? "" : node.label,
+                            text: "",
+                            children: node.children || [],
+                        },
+                    ];
+                }
+                out[out.length - 1] = mergedPrev;
+                continue;
+            }
+            if (isJsonLikeBodyLine(title) && parent) {
+                const normalizedJsonLine = stripHeadingPrefix(title) || title;
+                let mergedParentText = insertJsonLineBeforeFirstJsonKv(String(parent.text || ""), normalizedJsonLine);
+                const nodeText = String(node.text || "").trim();
+                if (nodeText) {
+                    mergedParentText = [mergedParentText, nodeText].filter(Boolean).join("\n");
+                }
+                parent.text = mergedParentText;
+                const hasOwnPayload = !!(
+                    hasRenderableTable(node.table)
+                    || !!String(node.img_url || "").trim()
+                    || (node.children || []).length > 0
+                );
+                if (hasOwnPayload) {
+                    out.push({
+                        ...node,
+                        title: "",
+                        label: isJsonLikeBodyLine(node.label) ? "" : node.label,
+                        text: "",
+                        children: node.children || [],
+                    });
+                }
+                continue;
+            }
+            out.push(node);
+        }
+        return out;
+    };
+    const isBodyLikeHeadingLine = (value?: string): boolean => {
+        const txt = stripTitlePrefixMarks(value);
+        if (!txt) return false;
+        const bodyPart = txt
+            .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z"']))/, "")
+            .trim();
+        const probe = bodyPart || txt;
+        if (isJsonLikeBodyLine(probe) || isJsonLikeBodyLine(txt)) return true;
+        // 即使带章节号前缀，只要是句子型长文本（含标点）也视为正文，不当作章节
+        if (/[，,。；;：:！？!?]/.test(probe)) return true;
+        return probe.length > 24;
+    };
+    const normalizeBodyLikeHeadingNodes = (nodes: TreeNode[], parent?: TreeNode): TreeNode[] => {
+        if (!Array.isArray(nodes) || nodes.length === 0) return nodes;
+        const out: TreeNode[] = [];
+        for (const raw of nodes) {
+            const normalizedChildren = normalizeBodyLikeHeadingNodes(raw.children || [], raw);
+            const node: TreeNode = { ...raw, children: normalizedChildren };
+            const title = String(node.title || "").trim();
+            const shouldDemote = !!(
+                title
+                && isBodyLikeHeadingLine(title)
+                && !isPlaceholderTitle(title)
+                && !isJsonLikeBodyLine(title)
+            );
+            if (!shouldDemote) {
+                out.push(node);
+                continue;
+            }
+            const normalizedLine = stripHeadingPrefix(title) || title;
+            const hasOwnPayload = !!(
+                hasRenderableTable(node.table)
+                || !!String(node.img_url || "").trim()
+                || !!String(node.text || "").trim()
+                || (node.children || []).length > 0
+            );
+            if (out.length > 0) {
+                const prev = out[out.length - 1];
+                const mergedPrevText = [String(prev.text || "").trim(), normalizedLine].filter(Boolean).join("\n");
+                const nextPrev: TreeNode = { ...prev, text: mergedPrevText };
+                if (hasOwnPayload) {
+                    nextPrev.children = [
+                        ...(nextPrev.children || []),
+                        {
+                            ...node,
+                            title: "",
+                            label: "",
+                            text: String(node.text || "").trim(),
+                            children: node.children || [],
+                        },
+                    ];
+                }
+                out[out.length - 1] = nextPrev;
+                continue;
+            }
+            if (parent) {
+                parent.text = [String(parent.text || "").trim(), normalizedLine].filter(Boolean).join("\n");
+                if (hasOwnPayload) {
+                    out.push({
+                        ...node,
+                        title: "",
+                        label: "",
+                        text: String(node.text || "").trim(),
+                        children: node.children || [],
+                    });
+                }
+                continue;
+            }
+            out.push(node);
+        }
+        return out;
     };
     const decorateImportedWordTree = (roots: TreeNode[]): TreeNode[] => {
         const counters = [0, 0, 0, 0, 0];
@@ -332,8 +511,10 @@ export default () => {
         const firstRootMajor = rootExistingNumbers
             .map((num) => Number(String(num).split(".")[0]))
             .find((n) => Number.isFinite(n) && n > 0);
-        // 目录/封面等前置章节常占用“1”，业务章节应从 1 开始显示
-        const rootMajorOffset = firstRootMajor && firstRootMajor > 1 ? (firstRootMajor - 1) : 0;
+        // 仅编辑页做“首章归一到1”，查看页保持原文编号
+        const rootMajorOffset = !isReadOnly && firstRootMajor && firstRootMajor > 1
+            ? (firstRootMajor - 1)
+            : 0;
         const normalizeExistingNumber = (number: string): string => {
             if (!rootMajorOffset) return number;
             const parts = String(number || "").split(".").map((p) => Number(p));
@@ -522,9 +703,14 @@ export default () => {
 
                     // 解析树状结构数据
                     const parsedTree = (targetRow.content || []).map((node: any) => parseTreeNode(node));
-                    const normalizedTree = normalizeFalseSingleDigitHeadings(parsedTree);
+                    const normalizedTree = normalizeBodyLikeHeadingNodes(
+                        normalizeJsonLikeHeadings(normalizeFalseSingleDigitHeadings(parsedTree))
+                    );
                     const relocatedTree = relocateDataStructureTables(normalizedTree);
-                    const parsedContent = decorateImportedWordTree(relocatedTree);
+                    const parsedTreeForView = decorateImportedWordTree(relocatedTree);
+                    const parsedContent = isReadOnly
+                        ? bindTableCaptionsForPersist(parsedTreeForView)
+                        : parsedTreeForView;
 
                     dispatch({
                         loading: false,
@@ -775,6 +961,109 @@ export default () => {
     };
 
     // 清理树节点数据，确保符合后端接口要求
+    const isImportedTablePlaceholderTitle = (value?: string) => /^导入表格\d*$/.test(String(value || "").trim());
+    const isJsonLikeKeyValueLine = (value?: string): boolean => {
+        const txt = String(value || "").trim();
+        if (!txt) return false;
+        return /^['"]\s*[^'"]+\s*['"]\s*:\s*.+$/.test(txt);
+    };
+    const isLikelyWrongFieldCaption = (value?: string, table?: any): boolean => {
+        const txt = String(value || "").trim();
+        if (!txt || !table) return false;
+        const headers = Array.isArray(table.headers) ? table.headers : [];
+        const rows = Array.isArray(table.rows) ? table.rows : [];
+        if (headers.length < 2 || rows.length < 1) return false;
+        const firstRow = rows[0] || {};
+        const left = String(firstRow?.[headers[0]?.code] ?? "").trim();
+        const right = String(firstRow?.[headers[1]?.code] ?? "").trim();
+        if (!left || !right) return false;
+        return txt === `${left}: ${right}` || txt === `${left}:${right}` || txt === `${left}：${right}`;
+    };
+    const inferTableTitleForPersist = (node: TreeNode): string => {
+        if (!hasRenderableTable((node as any).table)) return "";
+        // 仅在文本中存在“明确表名行”时回填，避免把字段值误识别成表名
+        const lines = String((node as any).text || "")
+            .replace(/\r/g, "")
+            .split("\n")
+            .map((line) => String(line || "").trim())
+            .filter(Boolean);
+        const candidate = lines.find((line) => isLikelyTableCaptionLineForPersist(line) && !/^图\s*\d+/i.test(line)) || "";
+        if (candidate) return candidate;
+        return "";
+    };
+    const isLikelyTableCaptionLineForPersist = (line?: string) => {
+        const txt = String(line || "").trim();
+        if (!txt) return false;
+        // JSON 键值行不是表题（如 "code":0, / "filename":"x.zip"）
+        if (isJsonLikeKeyValueLine(txt)) return false;
+        if (/^(表|table)\s*\d+/i.test(txt)) return true;
+        if (/^图\s*\d+/i.test(txt)) return false;
+        if (/.+表\s*[:：]?$/.test(txt)) return true;
+        if (/^[A-Za-z][A-Za-z0-9_]{1,64}[:：]\s*.+$/.test(txt)) return true;
+        if (/[:：]/.test(txt) && txt.length <= 80 && !/[。！？]$/.test(txt)) {
+            const parts = txt.split(/[:：]/).map((p) => String(p || "").trim());
+            const left = parts[0] || "";
+            const right = parts.slice(1).join("").trim();
+            const leftIsIdentifier = /^[A-Za-z][A-Za-z0-9_]{1,64}$/.test(left);
+            if (left && right && (leftIsIdentifier || /表/.test(left))) return true;
+            if (left && !right && /表/.test(left)) return true;
+            return false;
+        }
+        return false;
+    };
+    const bindTableCaptionsForPersist = (roots: TreeNode[]): TreeNode[] => {
+        const walk = (nodes: TreeNode[]): TreeNode[] => {
+            return (nodes || []).map((node) => {
+                const nextChildren = walk((node.children || []) as TreeNode[]);
+                const tableChildIdx = nextChildren
+                    .map((child, idx) => ({ child, idx }))
+                    .filter(({ child }) => hasRenderableTable((child as any).table));
+                let nextText = String(node.text || "");
+                if (tableChildIdx.length > 0) {
+                    const lines = nextText.replace(/\r/g, "").split("\n");
+                    const captions = lines
+                        .map((line, idx) => ({ idx, txt: String(line || "").trim() }))
+                        .filter((item) => isLikelyTableCaptionLineForPersist(item.txt));
+                    if (captions.length > 0) {
+                        const used = new Set<number>();
+                        tableChildIdx.forEach(({ idx }, order) => {
+                            const cap = captions[order];
+                            if (!cap?.txt) return;
+                            if (isJsonLikeKeyValueLine(cap.txt)) return;
+                            const child = nextChildren[idx];
+                            const titleTxt = String(child.title || "").trim();
+                            if (!titleTxt || isImportedTablePlaceholderTitle(titleTxt)) {
+                                // 表名用于表格展示，不塞进“菜单标题”输入框
+                                nextChildren[idx] = { ...child, label: cap.txt };
+                            }
+                            used.add(cap.idx);
+                        });
+                        if (used.size > 0) {
+                            nextText = lines
+                                .filter((_line, idx) => !used.has(idx))
+                                .map((line) => String(line || "").trim())
+                                .filter(Boolean)
+                                .join("\n");
+                        }
+                    }
+                }
+                let nextLabel = String((node as any).label || "").trim();
+                if (isLikelyWrongFieldCaption(nextLabel, (node as any).table)) {
+                    nextLabel = "";
+                }
+                if (isJsonLikeKeyValueLine(nextLabel)) {
+                    nextLabel = "";
+                }
+                if (hasRenderableTable((node as any).table) && !nextLabel) {
+                    const inferred = inferTableTitleForPersist(node);
+                    if (inferred) nextLabel = inferred;
+                }
+                return { ...node, ...(nextLabel ? { label: nextLabel } : {}), text: nextText, children: nextChildren };
+            });
+        };
+        return walk((roots || []) as TreeNode[]);
+    };
+
     const cleanTreeNode = (node: any, docId: number = 0, parentId: number = 0): any => {
         // 处理 table 数据：
         // - 如果是 null、空对象、或 headers 无效，设置为空对象 {}
@@ -845,7 +1134,8 @@ export default () => {
 
         // 清理树状结构数据，传入文档ID和根节点的父ID（0表示无父节点）
         const currentTree = (((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) || []) as any[];
-        const cleanedContent = currentTree.map((node: any) =>
+        const normalizedTree = currentTree as TreeNode[];
+        const cleanedContent = normalizedTree.map((node: any) =>
             cleanTreeNode(node, docId, 0)
         );
 
@@ -894,9 +1184,14 @@ export default () => {
                             }
 
                             const parsedTree = (targetRow.content || []).map((node: any) => parseTreeNode(node));
-                            const normalizedTree = normalizeFalseSingleDigitHeadings(parsedTree);
+                            const normalizedTree = normalizeBodyLikeHeadingNodes(
+                                normalizeJsonLikeHeadings(normalizeFalseSingleDigitHeadings(parsedTree))
+                            );
                             const relocatedTree = relocateDataStructureTables(normalizedTree);
-                            const parsedContent = decorateImportedWordTree(relocatedTree);
+                            const parsedTreeForView = decorateImportedWordTree(relocatedTree);
+                            const parsedContent = isReadOnly
+                                ? bindTableCaptionsForPersist(parsedTreeForView)
+                                : parsedTreeForView;
                             dispatch({
                                 changeDescription: targetRow.change_log || "",
                                 docNId: targetRow.n_id || 0,

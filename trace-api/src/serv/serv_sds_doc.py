@@ -5,12 +5,14 @@ import re
 import io
 import base64
 import os
+import builtins
 from typing import Dict, List, Tuple, Union
 from sqlalchemy import select, delete, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import desc
 try:
     from docx import Document
+    from docx.oxml import OxmlElement
     from docx.table import Table as DocxTable
     from docx.text.paragraph import Paragraph
     from docx.shared import Pt
@@ -19,6 +21,7 @@ try:
     from docx.shared import RGBColor
 except Exception:
     Document = None
+    OxmlElement = None
     DocxTable = None
     Paragraph = None
     Pt = None
@@ -66,6 +69,81 @@ class RefTypes(Enum):
     sds_reqds = "sds_reqds"
 
 class Server(object):
+    @staticmethod
+    def __is_imported_table_title(value: str):
+        return re.match(r"^导入表格\d*$", (value or "").strip()) is not None
+
+    @staticmethod
+    def __is_table_caption_line(line: str):
+        txt = (line or "").strip()
+        if not txt:
+            return False
+        # JSON 键值行不是表题（如 "code":0, / "filename":"a.zip"）
+        if re.match(r'^[\'"]\s*[^\'"]+\s*[\'"]\s*:\s*.+$', txt):
+            return False
+        if re.match(r"^(表|table)\s*\d+", txt, re.I):
+            return True
+        if re.match(r"^图\s*\d+", txt):
+            return False
+        # 兼容“alembic_version 数据库迁移表：”这类末尾冒号标题
+        if "表" in txt and re.match(r"^.+表\s*[:：]?$", txt):
+            return True
+        # 仅将“字段名: 值”这类无空格英文标识识别为表题，避免误判整句正文
+        if re.match(r"^[A-Za-z][A-Za-z0-9_]{1,64}[:：]\s*.+$", txt):
+            return True
+        if re.search(r"[:：]", txt) and len(txt) <= 80 and re.search(r"[。！？]$", txt) is None:
+            parts = [seg.strip() for seg in re.split(r"[:：]", txt)]
+            left = parts[0] if parts else ""
+            right = "".join(parts[1:]).strip() if len(parts) > 1 else ""
+            left_is_identifier = re.match(r"^[A-Za-z][A-Za-z0-9_]{1,64}$", left or "") is not None
+            if left and right and (left_is_identifier or "表" in left):
+                return True
+            # 冒号后为空时，仅“含表”才视作表名，避免“库2数据库：”误命中
+            if left and not right and "表" in left:
+                return True
+        return False
+
+    def __bind_imported_table_titles(self, nodes: List[SdsNodeForm]):
+        def walk(node_list: List[SdsNodeForm]):
+            for node in node_list or []:
+                children = list(getattr(node, "children", None) or [])
+                table_children = [
+                    child for child in children
+                    if getattr(child, "table", None) and getattr(getattr(child, "table", None), "headers", None)
+                ]
+                if table_children:
+                    lines = str(getattr(node, "text", "") or "").replace("\r", "").split("\n")
+                    caption_entries = [
+                        (idx, (line or "").strip())
+                        for idx, line in enumerate(lines)
+                        if self.__is_table_caption_line(line)
+                    ]
+                    if caption_entries:
+                        used_line_idx = set()
+                        for idx, child in enumerate(table_children):
+                            if idx >= len(caption_entries):
+                                break
+                            line_idx, caption = caption_entries[idx]
+                            if not caption:
+                                continue
+                            child_title = str(getattr(child, "title", "") or "").strip()
+                            child_label = str(getattr(child, "label", "") or "").strip()
+                            if not child_title or self.__is_imported_table_title(child_title):
+                                child.title = caption
+                            elif not child_label:
+                                child.label = caption
+                            used_line_idx.add(line_idx)
+                        if used_line_idx:
+                            remained = [
+                                (line or "").strip()
+                                for idx, line in enumerate(lines)
+                                if idx not in used_line_idx and str(line or "").strip()
+                            ]
+                            node.text = "\n".join(remained)
+                if children:
+                    walk(children)
+        walk(nodes or [])
+
     def __persist_data_url_images(self, nodes: List[SdsNodeForm]):
         ext_map = {
             "image/png": "png",
@@ -231,6 +309,8 @@ class Server(object):
                 return SdsNodeForm(**data)
 
             sds_content = [to_sds_node(node) for node in (content or [])]
+            # 导入入库前，先把“正文里的表名”绑定到对应表节点，避免后续查看/编辑再做文本猜测
+            self.__bind_imported_table_titles(sds_content)
             self.__persist_data_url_images(sds_content)
             form = SdsDocForm(
                 srsdoc_id=srs_row.id,
@@ -470,9 +550,17 @@ class Server(object):
         def __norm_title(value: str):
             txt = (value or "").strip()
             txt = re.sub(r"\s+", " ", txt)
-            # 清理导出中偶发的前导符号（如 ".2 概述"、"·2 概述"）
-            txt = re.sub(r"^[\s\u3000•·▪■◆●○□◇\-–—\.．]+(?=\d)", "", txt)
+            # 仅清理异常前导符号，不改章节号数值
+            txt = re.sub(r"^[\s\u3000•·▪■◆●○□◇\-–—\.．]+(?=[0-9０-９A-Za-z\u4e00-\u9fff])", "", txt)
             return txt
+
+        def __is_cover_section_title(title: str):
+            txt = __biz_title(title)
+            return txt in ["软件详细设计", "软件详细设计说明书", "文件修订记录"]
+
+        def __is_pure_punct_line(value: str):
+            txt = (value or "").strip()
+            return re.match(r"^[\s\u3000•·▪■◆●○□◇\-–—\.．:：,，;；_]+$", txt) is not None
 
         def __biz_title(value: str):
             txt = __norm_title(value)
@@ -486,11 +574,14 @@ class Server(object):
             return __biz_title(value) == "目录"
 
         def __is_design_cover(value: str):
-            return __biz_title(value) == "软件详细设计"
+            return __biz_title(value) in ["软件详细设计", "软件详细设计说明书"]
+
+        def __is_rev_title(value: str):
+            return __biz_title(value) == "文件修订记录"
 
         def __parse_heading(value: str):
             txt = __norm_title(value)
-            matched = re.match(r"^([0-9]+(?:\.[0-9]+)*)\s*(.*)$", txt)
+            matched = re.match(r"^([0-9]+(?:\.[0-9]+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))(.*)$", txt)
             if not matched:
                 return None, txt
             nums = [int(p) for p in (matched.group(1) or "").split(".") if p != ""]
@@ -506,14 +597,10 @@ class Server(object):
 
         def __first_major(nodes: List[SdsNodeForm]):
             for node in nodes or []:
-                title = getattr(node, "title", "") or ""
-                label = getattr(node, "label", "") or ""
-                if not (__is_catalog(title) or __is_design_cover(title) or __is_revision_label(title)):
-                    major = __major_of_text(title)
-                    if major and major > 0:
-                        return major
-                if not (__is_catalog(label) or __is_design_cover(label) or __is_revision_label(label)):
-                    major = __major_of_text(label)
+                for val in [getattr(node, "title", ""), getattr(node, "label", "")]:
+                    if __is_cover_section_title(val) or __is_catalog(val):
+                        continue
+                    major = __major_of_text(val)
                     if major and major > 0:
                         return major
                 child_major = __first_major(getattr(node, "children", None) or [])
@@ -532,6 +619,401 @@ class Server(object):
             prefix = ".".join(str(n) for n in nums)
             return f"{prefix} {rest}".rstrip()
 
+        def __is_imported_placeholder_title(value: str):
+            txt = (value or "").strip()
+            return re.match(r"^导入(表格|图片)\d*$", txt) is not None
+
+        def __is_imported_table_title(value: str):
+            return re.match(r"^导入表格\d*$", (value or "").strip()) is not None
+
+        def __is_imported_image_title(value: str):
+            return re.match(r"^导入图片\d*$", (value or "").strip()) is not None
+
+        def __is_table_caption_line(line: str):
+            txt = (line or "").strip()
+            if not txt:
+                return False
+            # JSON 键值行不是表题（如 "code":0, / "filename":"a.zip"）
+            if re.match(r'^[\'"]\s*[^\'"]+\s*[\'"]\s*:\s*.+$', txt):
+                return False
+            if re.match(r"^\s*表\s*\d+\s*", txt):
+                return True
+            # 仅将“字段名: 值”这类无空格英文标识识别为表题，避免误判整句正文
+            if re.match(r"^[A-Za-z][A-Za-z0-9_]{1,64}[:：]\s*.+$", txt):
+                return True
+            if re.search(r"[:：]", txt) and len(txt) <= 80 and re.search(r"[。！？]$", txt) is None:
+                parts = [seg.strip() for seg in re.split(r"[:：]", txt)]
+                left = parts[0] if parts else ""
+                right = "".join(parts[1:]).strip() if len(parts) > 1 else ""
+                left_is_identifier = re.match(r"^[A-Za-z][A-Za-z0-9_]{1,64}$", left or "") is not None
+                if left and right and (left_is_identifier or "表" in left):
+                    return True
+                if left and not right and "表" in left:
+                    return True
+            if "表" in txt and re.match(r"^.+表\s*[:：]?$", txt):
+                return True
+            return False
+
+        def __strip_chapter_prefix(value: str):
+            txt = __norm_title(value)
+            return re.sub(
+                r"^([0-9]+(?:\.[0-9]+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))",
+                "",
+                txt,
+            ).strip()
+
+        def __is_data_table_title(value: str):
+            txt = __strip_chapter_prefix(value)
+            if not txt:
+                return False
+            if __is_table_caption_line(txt):
+                return True
+            if re.match(r"^[A-Za-z][A-Za-z0-9_]{1,64}\s*[:：]?$", txt):
+                return True
+            return False
+
+        def __looks_like_body_text_title(value: str):
+            txt = __norm_title(value)
+            if not txt:
+                return False
+            txt_no_mark = re.sub(r"^[\s\u3000•·▪■◆●○□◇\-–—]+", "", txt).strip()
+            txt_body = re.sub(
+                r"^([0-9]+(?:\.[0-9]+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z\"']))",
+                "",
+                txt_no_mark,
+            ).strip()
+            probe = txt_body or txt_no_mark
+            # JSON / 字典片段：不应作为章节标题
+            if re.match(r'^[\'"]\s*[A-Za-z0-9_\-]+\s*[\'"]\s*:\s*.+$', probe):
+                return True
+            # JSON 标量值行（数组元素）也不应作为章节标题
+            if re.match(r'^(?:".*"|-?\d+(?:\.\d+)?|true|false|null)\s*,?$', probe, re.I):
+                return True
+            if re.match(r'^[\{\[\}].*$', probe):
+                return True
+            if re.match(r'^.*[:：]\s*[\{\[]\s*$', probe):
+                return True
+            if re.match(r'^.*[,，]\s*$', probe) and (":" in probe or "：" in probe):
+                return True
+            # 句子型长文本（含中文标点）在导出中按正文处理，不作为章节
+            if re.search(r"[，,。；;：:！？!?]", probe):
+                return True
+            if len(probe) > 24:
+                return True
+            return False
+
+        def __is_image_caption_line(line: str):
+            return re.match(r"^\s*图\s*\d+\s*", (line or "").strip()) is not None
+
+        def __is_only_table_caption_text(text: str):
+            lines = [(line or "").strip() for line in str(text or "").splitlines() if (line or "").strip()]
+            if not lines:
+                return False
+            return all(__is_table_caption_line(line) for line in lines)
+
+        def __is_only_image_caption_text(text: str):
+            lines = [(line or "").strip() for line in str(text or "").splitlines() if (line or "").strip()]
+            if not lines:
+                return False
+            return all(__is_image_caption_line(line) for line in lines)
+
+        def __normalize_json_block_order(lines: List[str]) -> List[str]:
+            clean_lines = [str(line or "").rstrip() for line in (lines or [])]
+            if not clean_lines:
+                return clean_lines
+            first_kv_idx = next((idx for idx, line in enumerate(clean_lines) if re.match(r'^\s*[\'"]\s*[^\'"]+\s*[\'"]\s*:\s*.+$', line)), -1)
+            if first_kv_idx < 0:
+                return clean_lines
+            version_idx = next((idx for idx, line in enumerate(clean_lines) if re.match(r'^\s*[\'"]\s*version\s*[\'"]\s*:\s*.+$', line, re.I)), -1)
+            if version_idx < 0 or version_idx <= first_kv_idx:
+                return clean_lines
+            version_line = clean_lines.pop(version_idx)
+            clean_lines.insert(first_kv_idx, version_line)
+            return clean_lines
+
+        def __is_json_kv_line(line: str):
+            txt = str(line or "").strip()
+            if not txt:
+                return False
+            if re.match(r'^\s*[\'"]\s*[^\'"]+\s*[\'"]\s*:\s*.+$', txt):
+                return True
+            txt_wo_chapter = re.sub(r'^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z"\']))', '', txt).strip()
+            return re.match(r'^\s*[\'"]\s*[^\'"]+\s*[\'"]\s*:\s*.+$', txt_wo_chapter) is not None
+
+        def __insert_json_line_before_first_kv(lines: List[str], json_line: str):
+            items = [str(line or "").rstrip() for line in (lines or [])]
+            line = str(json_line or "").strip()
+            if not line:
+                return items
+            first_kv_idx = next((idx for idx, it in enumerate(items) if __is_json_kv_line(it)), -1)
+            if first_kv_idx >= 0:
+                items.insert(first_kv_idx, line)
+                return items
+            brace_idx = next((idx for idx, it in enumerate(items) if str(it).strip() == "{"), -1)
+            if brace_idx >= 0:
+                items.insert(brace_idx + 1, line)
+                return items
+            items.append(line)
+            return items
+
+        def __is_json_export_line(line: str):
+            txt = str(line or "").strip()
+            if not txt:
+                return False
+            if __is_json_kv_line(txt):
+                return True
+            if re.match(r'^\s*[\'"]\s*[^\'"]+\s*[\'"]\s*:\s*$', txt):
+                return True
+            return re.match(r'^[\{\}\[\]],?$', txt) is not None
+
+        def __is_json_value_line(line: str):
+            txt = str(line or "").strip()
+            if not txt:
+                return False
+            return re.match(r'^(?:".*"|-?\d+(?:\.\d+)?|true|false|null)\s*,?$', txt, re.I) is not None
+
+        def __format_json_like_lines(lines: List[str]) -> List[str]:
+            raw_lines = [str(line or "").strip() for line in (lines or []) if str(line or "").strip()]
+            if not raw_lines:
+                return []
+            if not any(__is_json_export_line(line) for line in raw_lines):
+                return raw_lines
+            out: List[str] = []
+            indent = 0
+            in_json_context = False
+            for raw in raw_lines:
+                line = raw
+                if __is_json_kv_line(line):
+                    line = __strip_chapter_prefix(line) or line
+                opens_block = re.search(r'[\{\[]\s*,?$', line) is not None
+                closes_block = re.match(r'^[\}\]],?$', line) is not None
+                is_kv = re.match(r'^[\'"]([^\'"]+)[\'"]\s*:\s*(.+?)(,?)$', line) is not None
+                is_scalar_value = re.match(r'^(?:".*"|-?\d+(?:\.\d+)?|true|false|null)\s*,?$', line, re.I) is not None
+
+                if closes_block:
+                    indent = max(0, indent - 1)
+
+                formatted = line
+                kv = re.match(r'^[\'"]([^\'"]+)[\'"]\s*:\s*(.+?)(,?)$', line)
+                if kv:
+                    key = kv.group(1)
+                    val = (kv.group(2) or "").strip()
+                    comma = kv.group(3) or ""
+                    formatted = f'"{key}": {val}'
+                    if comma and not formatted.endswith(","):
+                        formatted += ","
+
+                if __is_json_export_line(line) or (in_json_context and (is_scalar_value or is_kv)):
+                    formatted = (" " * (4 * indent)) + formatted
+                out.append(formatted)
+
+                if __is_json_export_line(line) or is_kv or is_scalar_value:
+                    in_json_context = True
+                if opens_block and not closes_block:
+                    indent += 1
+            return out
+
+        def __strip_explicit_bullet_prefix(text: str):
+            raw = str(text or "")
+            m = re.match(r"^\s*(?:[•●▪◦·\uf0b7]|\-|\*)\s+(.+?)\s*$", raw)
+            if m:
+                return m.group(1), True
+            return raw, False
+
+        def __is_bullet_intro_line(line: str):
+            txt = str(line or "").strip()
+            if not txt:
+                return False
+            if re.match(r"^[（(]\s*\d+\s*[）)]\s*(功能|步骤|流程|操作说明)\s*$", txt):
+                return True
+            return re.search(r"(如下|下列|包括|满足下列|技术要求|部署要求)\s*[:：]?$", txt) is not None
+
+        def __is_numbered_section_line(line: str):
+            txt = str(line or "").strip()
+            if not txt:
+                return False
+            return re.match(r"^[（(]\s*\d+\s*[）)]\s*[^:：\n]{0,24}$", txt) is not None
+
+        def __is_force_bullet_section_line(line: str):
+            txt = str(line or "").strip()
+            if not txt:
+                return False
+            return re.match(r"^[（(]\s*\d+\s*[）)]\s*(功能|步骤|流程|操作说明|实现|关键点|要点)\s*$", txt) is not None
+
+        def __can_render_as_bullet_content(line: str):
+            txt = str(line or "").strip()
+            if not txt:
+                return False
+            if __is_numbered_section_line(txt):
+                return False
+            if __is_table_caption_line(txt) or __is_image_caption_line(txt):
+                return False
+            if __is_json_export_line(txt) or __is_json_value_line(txt):
+                return False
+            return True
+
+        def __is_operation_step_line(line: str):
+            txt = str(line or "").strip()
+            if not txt:
+                return False
+            return re.match(
+                r"^(点\s*击|单\s*击|双\s*击|输\s*入|选\s*择|填\s*写|若|如\s*果|然\s*后|最\s*后|确\s*认|保\s*存|删\s*除|编\s*辑|新\s*增|重\s*置)",
+                txt,
+            ) is not None
+
+        def __is_bullet_candidate_line(line: str):
+            txt = str(line or "").strip()
+            if not txt:
+                return False
+            if len(txt) < 4 or len(txt) > 200:
+                return False
+            if txt.endswith(("：", ":")):
+                return False
+            if re.match(r"^\d+(?:\.\d+)+(?:[\s、.．]+|$)", txt):
+                return False
+            if re.match(r"^[（(]\s*\d+\s*[）)]", txt):
+                return False
+            if __is_table_caption_line(txt) or __is_image_caption_line(txt):
+                return False
+            if __is_json_export_line(txt) or __is_json_value_line(txt):
+                return False
+            if __is_operation_step_line(txt):
+                return True
+            return re.match(r"^(支持|提供|开启|定期|按照|根据|设置|接收|导入|对|可|需|必须|禁止|允许|具备|包含|检查|维护|升级)", txt) is not None
+
+        def __save_line_txt(
+            docx: Document,
+            text: str,
+            font_size: float = 10.5,
+            is_json: bool = False,
+            is_bullet: bool = False,
+        ):
+            txt = str(text or "")
+            if not txt.strip():
+                return
+            leading_spaces = len(txt) - len(txt.lstrip(" "))
+            json_level = max(0, leading_spaces // 4) if is_json else 0
+            # JSON 内容去掉前导空格，改由段落缩进体现层级（可视化更稳定）
+            render_txt = txt.strip() if is_json else txt.strip()
+            if is_bullet:
+                p = docx.add_paragraph(style="List Bullet")
+            else:
+                p = docx.add_paragraph()
+            p.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.LEFT
+            if not is_bullet:
+                # 详细设计正文统一左对齐且不首行缩进
+                p.paragraph_format.first_line_indent = Pt(0)
+                # JSON 使用固定段落缩进表达层级，避免不同字体下空格缩进显示不稳定
+                p.paragraph_format.left_indent = Pt(json_level * 10) if is_json else Pt(0)
+            p.paragraph_format.right_indent = Pt(0)
+            p.paragraph_format.line_spacing = 1.5
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            docx_util.fonted_txt(p, render_txt, font_size)
+
+        def __save_body_line_auto_bullet(
+            docx: Document,
+            text: str,
+            font_size: float,
+            is_json: bool,
+            bullet_state: dict,
+            allow_bullet: bool = True,
+        ):
+            raw = str(text or "")
+            stripped = raw.strip()
+            if not stripped:
+                return
+            is_bullet = False
+            render_txt = raw
+            if (not is_json) and allow_bullet:
+                render_txt, explicit_bullet = __strip_explicit_bullet_prefix(raw)
+                if __is_numbered_section_line(stripped):
+                    # 遇到新的“小节标识”时重置列表状态；若是功能/步骤小节则开启强制列表模式
+                    bullet_state["active"] = False
+                    bullet_state["remain"] = 0
+                    bullet_state["force_mode"] = __is_force_bullet_section_line(stripped)
+                if explicit_bullet:
+                    is_bullet = True
+                    bullet_state["active"] = True
+                    bullet_state["remain"] = 12
+                elif __is_operation_step_line(stripped):
+                    is_bullet = True
+                    bullet_state["active"] = True
+                    bullet_state["remain"] = 12
+                elif bullet_state.get("force_mode") and __can_render_as_bullet_content(stripped):
+                    is_bullet = True
+                else:
+                    if __is_bullet_intro_line(stripped):
+                        bullet_state["active"] = True
+                        bullet_state["remain"] = 12
+                    elif (
+                        bullet_state.get("active")
+                        and int(bullet_state.get("remain", 0)) > 0
+                        and __is_bullet_candidate_line(stripped)
+                    ):
+                        is_bullet = True
+                        bullet_state["remain"] = int(bullet_state.get("remain", 0)) - 1
+                    elif len(stripped) > 160 and not bullet_state.get("force_mode"):
+                        bullet_state["active"] = False
+                        bullet_state["remain"] = 0
+            elif not allow_bullet:
+                # 接口/JSON章节强制保持纯左对齐正文，避免列表样式带来的额外缩进
+                bullet_state["active"] = False
+                bullet_state["remain"] = 0
+                bullet_state["force_mode"] = False
+            __save_line_txt(docx, render_txt, font_size, is_json, is_bullet=is_bullet)
+
+        def __split_interface_io_text(raw_text: str):
+            lines = [str(line or "") for line in str(raw_text or "").replace("\r", "").split("\n")]
+            output_idx = next(
+                (idx for idx, line in enumerate(lines) if re.search(r'[（(]\s*2\s*[）)]\s*输出项', (line or "").strip())),
+                -1
+            )
+            if output_idx <= 0:
+                return None
+            before = [line for line in lines[:output_idx]]
+            after = [line for line in lines[output_idx:]]
+            return before, after
+
+        def __is_revision_table(table):
+            if not table:
+                return False
+            header_txt = "".join((getattr(h, "name", "") or "").strip() for h in (getattr(table, "headers", None) or []))
+            keys = ["修改日期", "版本号", "修订说明", "修订人", "批准人"]
+            return sum(1 for key in keys if key in header_txt) >= 3
+
+        def __insert_toc_field(docx: Document):
+            if OxmlElement is None or qn is None:
+                return
+            p = docx.add_paragraph()
+            run_begin = p.add_run()
+            fld_begin = OxmlElement("w:fldChar")
+            fld_begin.set(qn("w:fldCharType"), "begin")
+            fld_begin.set(qn("w:dirty"), "true")
+            instr = OxmlElement("w:instrText")
+            instr.set(qn("xml:space"), "preserve")
+            instr.text = ' TOC \\o "1-3" \\h \\z \\u '
+            fld_separate = OxmlElement("w:fldChar")
+            fld_separate.set(qn("w:fldCharType"), "separate")
+            run_end = p.add_run()
+            fld_end = OxmlElement("w:fldChar")
+            fld_end.set(qn("w:fldCharType"), "end")
+            run_begin._r.append(fld_begin)
+            run_begin._r.append(instr)
+            run_begin._r.append(fld_separate)
+            p.add_run("目录将在打开文档后自动更新")
+            run_end._r.append(fld_end)
+
+        def __write_center_section_title(docx: Document, title: str):
+            p = docx.add_paragraph()
+            p.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.CENTER
+            font_size = 22.0 if __is_design_cover(title) else 16.0
+            docx_util.fonted_txt(p, title, font_size=font_size)
+
+        def __add_blank_lines(docx: Document, line_count: int):
+            for _ in range(max(0, line_count)):
+                docx.add_paragraph("")
+
         def __write_revision_body_title(docx: Document):
             p = docx.add_paragraph()
             p.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.CENTER
@@ -541,6 +1023,56 @@ class Server(object):
             p.paragraph_format.space_after = Pt(0)
             p.paragraph_format.keep_with_next = True
             docx_util.fonted_txt(p, "文件修订记录", font_size=14.0, bold=True)
+
+        def __node_has_revision_marker(node: SdsNodeForm):
+            for val in [getattr(node, "title", ""), getattr(node, "label", ""), getattr(node, "text", "")]:
+                if __is_revision_label(__norm_title(val or "")):
+                    return True
+            return False
+
+        # 详细设计导出图片统一尺寸区间（像素）：
+        # - 大图缩小，小图适度放大，最终视觉尺寸统一且可读
+        IMG_MAX_W = 300
+        IMG_MAX_H = 200
+        IMG_MIN_W = 120
+        IMG_MIN_H = 90
+        IMG_TARGET_LONG = 200
+        # 6章节“功能类/程序逻辑”图片再缩小一档，避免单图占据过大版面
+        IMG_MAX_W_FUNC = 260
+        IMG_MAX_H_FUNC = 180
+        IMG_MIN_W_FUNC = 110
+        IMG_MIN_H_FUNC = 80
+        IMG_TARGET_LONG_FUNC = 180
+
+        export_state = {"pending_rev_label": False, "pending_table_caps": [], "pending_image_caps": []}
+
+        def __save_caption_txt(docx: Document, text: str, font_size: float = 10.5, align: str = "left"):
+            txt = (text or "").strip()
+            if not txt:
+                return
+            p = docx.add_paragraph()
+            p.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.LEFT if align == "left" else dox_enum.text.WD_ALIGN_PARAGRAPH.CENTER
+            p.paragraph_format.first_line_indent = Pt(0)
+            p.paragraph_format.line_spacing = 1.5
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            docx_util.fonted_txt(p, txt, font_size)
+
+        def __save_table_caption_txt(docx: Document, text: str, font_size: float = 10.5):
+            __save_caption_txt(docx, text, font_size, align="left")
+
+        def __save_image_caption_txt(docx: Document, text: str, font_size: float = 10.5):
+            __save_caption_txt(docx, text, font_size, align="center")
+
+        def __flush_table_caption(docx: Document, font_size: float = 10.5):
+            if export_state["pending_table_caps"]:
+                cap = export_state["pending_table_caps"].pop(0)
+                __save_table_caption_txt(docx, cap, font_size)
+
+        def __flush_image_caption(docx: Document, font_size: float = 10.5):
+            if export_state["pending_image_caps"]:
+                cap = export_state["pending_image_caps"].pop(0)
+                __save_image_caption_txt(docx, cap, font_size)
         async def __query_sds_traces_x():
             resp = await sdstrace_serv.list_sds_trace(None, doc_id=id, page_size=5000)
             reqs: List[SdsTraceObj] = resp.data.rows or []
@@ -616,64 +1148,489 @@ class Server(object):
             __fix_chapter(p_title, p_nodes)
             return p_nodes
 
-        async def __writenodes(nodes: List[SdsNodeForm], docx: Document, level: int = 0, major_offset: int = 0):
+        def __is_compact_img_context(node: SdsNodeForm):
+            title = __norm_title(getattr(node, "title", "") or "")
+            label = __norm_title(getattr(node, "label", "") or "")
+            text = __norm_title(getattr(node, "text", "") or "")
+            is_ch6 = re.match(r"^6(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))", title) is not None
+            is_func_logic = ("程序逻辑" in title) or ("程序逻辑" in label) or ("程序逻辑" in text)
+            return is_ch6 or is_func_logic
+
+        async def __writenodes(
+            nodes: List[SdsNodeForm],
+            docx: Document,
+            level: int = 0,
+            major_offset: int = 0,
+            compact_img: bool = False,
+            force_plain_context: bool = False,
+        ):
             font_def = 10.5
             font_size = font_def
             if level == 0 :
                 font_size = 16.0
             elif level == 1:
                 font_size = 14.0
-            font_name = "宋体"
             for node in nodes or []:
+                node_compact_img = compact_img or __is_compact_img_context(node)
+                img_max_w = IMG_MAX_W_FUNC if node_compact_img else IMG_MAX_W
+                img_max_h = IMG_MAX_H_FUNC if node_compact_img else IMG_MAX_H
+                img_min_w = IMG_MIN_W_FUNC if node_compact_img else IMG_MIN_W
+                img_min_h = IMG_MIN_H_FUNC if node_compact_img else IMG_MIN_H
+                img_target_long = IMG_TARGET_LONG_FUNC if node_compact_img else IMG_TARGET_LONG
+                written_child_ids = set()
+                table_written = False
+                image_written = False
+                node_text_effective = str(node.text or "")
+                pending_table_captions: List[str] = []
+                pending_image_captions: List[str] = []
+                imported_table_children = [
+                    child for child in (node.children or [])
+                    if getattr(child, "table", None) and child.table.headers
+                ]
+                imported_image_children = [
+                    child for child in (node.children or [])
+                    if getattr(child, "img_url", None)
+                ]
+                node_title_norm = __norm_title(getattr(node, "title", "") or "")
+                node_label_norm = __norm_title(getattr(node, "label", "") or "")
+                node_text_hint = str(node_text_effective or "")
+                is_interface_io_context = (
+                    re.match(r"^\d+\.7\.[2-5](?:[\s、.．]+|$)", node_title_norm) is not None
+                    or (
+                        re.search(r"[（(]\s*1\s*[）)]\s*输入项", node_text_hint) is not None
+                        and re.search(r"[（(]\s*2\s*[）)]\s*输出项", node_text_hint) is not None
+                    )
+                    or ("接口" in node_title_norm and ("输入项" in node_text_hint or "输出项" in node_text_hint))
+                    or ("json示例" in node_text_hint.lower())
+                    or ("json" in node_label_norm.lower())
+                )
+                current_plain_context = force_plain_context or is_interface_io_context
+                # 子节点中若存在“仅 JSON 键值标题（如 "version":4,）”，并入父节点正文，
+                # 这样导出顺序可与编辑页保持一致，且不会单独漂移到后段。
+                for child in (node.children or []):
+                    c_title = __norm_title(getattr(child, "title", "") or "")
+                    c_text = str(getattr(child, "text", "") or "").strip()
+                    c_has_payload = bool(
+                        (getattr(child, "table", None) and getattr(getattr(child, "table", None), "headers", None))
+                        or getattr(child, "img_url", None)
+                        or c_text
+                        or (getattr(child, "children", None) or [])
+                    )
+                    if c_title and (__is_json_export_line(c_title) or __is_json_value_line(c_title)):
+                        normalized_title = __strip_chapter_prefix(c_title) or c_title
+                        if __is_json_kv_line(c_title):
+                            node_text_effective = "\n".join(
+                                __insert_json_line_before_first_kv(
+                                    str(node_text_effective or "").replace("\r", "").split("\n"),
+                                    normalized_title
+                                )
+                            )
+                        else:
+                            node_text_effective = "\n".join(
+                                [*str(node_text_effective or "").replace("\r", "").split("\n"), normalized_title]
+                            ).strip()
+                        if c_has_payload:
+                            # 保留子节点承载的图/表/正文结构，但清空 JSON 标题，避免重复输出
+                            child.title = ""
+                        else:
+                            # 纯 JSON 占位子节点在并入父节点后可直接跳过
+                            written_child_ids.add(builtins.id(child))
+                is_catalog_root = level == 0 and __is_catalog(node.title)
                 if node.title:
-                    if __is_revision_label(node.title):
-                        __write_revision_body_title(docx)
-                    elif __is_design_cover(node.title):
-                        # 封面标题保持原样，不参与任何章节偏移
-                        docx_util.save_title2docx(__norm_title(node.title), docx, level+1, font_size)
+                    norm_title = __norm_title(node.title)
+                    if not norm_title or __is_pure_punct_line(norm_title):
+                        pass
+                    elif __is_imported_placeholder_title(norm_title):
+                        pass
+                    elif __is_data_table_title(norm_title) and ((node.table and node.table.headers) or imported_table_children):
+                        # 数据表标题不是章节：不写入Heading，避免进入Word目录
+                        pending_table_captions.append(__strip_chapter_prefix(norm_title))
+                    elif __looks_like_body_text_title(norm_title):
+                        # 形如 `"version": 4,` 的内容是正文，不是章节
+                        __save_line_txt(
+                            docx,
+                            norm_title,
+                            font_def,
+                            __is_json_export_line(norm_title) or __is_json_value_line(norm_title),
+                        )
+                    elif is_catalog_root:
+                        __write_center_section_title(docx, "目录")
+                        __insert_toc_field(docx)
+                    elif level == 0 and __is_cover_section_title(norm_title):
+                        if __is_design_cover(norm_title):
+                            # 与SRS导出版式一致：封面标题上方保留10行
+                            __add_blank_lines(docx, 10)
+                        __write_center_section_title(docx, norm_title if __is_rev_title(norm_title) else "软件详细设计")
+                        # 与SRS导出版式一致：封面/修订标题与下方内容保持固定留白
+                        __add_blank_lines(docx, 9 if __is_design_cover(norm_title) else 2)
                     else:
-                        docx_util.save_title2docx(__shift_heading(node.title, major_offset), docx, level+1, font_size)
+                        docx_util.save_title2docx(__shift_heading(norm_title, major_offset), docx, level+1, font_size)
+                if is_catalog_root:
+                    # 目录页由TOC域生成，不再输出旧目录节点文本和子节点
+                    continue
                 if node.sds_code:
-                    docx_util.save_txt2docx("设计编号：" + node.sds_code, docx, font_def)
+                    __save_line_txt(docx, "设计编号：" + node.sds_code, font_def, False)
                 if node.label:
-                    if __is_revision_label(node.label):
-                        __write_revision_body_title(docx)
+                    norm_label = __norm_title(node.label)
+                    if not norm_label or __is_pure_punct_line(norm_label):
+                        pass
+                    elif __is_revision_label(norm_label):
+                        export_state["pending_rev_label"] = True
+                    elif __is_table_caption_line(norm_label) and ((node.table and node.table.headers) or imported_table_children):
+                        pending_table_captions.append(norm_label)
+                    elif __is_image_caption_line(norm_label) and (node.img_url or imported_image_children):
+                        pending_image_captions.append(norm_label)
+                    elif __is_table_caption_line(norm_label):
+                        export_state["pending_table_caps"].append(norm_label)
+                    elif __is_image_caption_line(norm_label):
+                        export_state["pending_image_caps"].append(norm_label)
                     else:
-                        # 部分导入文档的章节号在 label 字段，正文也要按偏移修正
-                        docx_util.save_txt2docx(__shift_heading(node.label, major_offset), docx, font_def)
-                if node.text:
-                    if __is_revision_label(node.text):
-                        __write_revision_body_title(docx)
+                        __save_line_txt(
+                            docx,
+                            norm_label,
+                            font_def,
+                            __is_json_export_line(norm_label) or __is_json_value_line(norm_label),
+                        )
+                if node_text_effective:
+                    raw_text_effective = str(node_text_effective or "")
+                    norm_text = __norm_title(raw_text_effective)
+                    if __is_revision_label(norm_text):
+                        export_state["pending_rev_label"] = True
+                    # “仅图题/仅表题”必须基于原始多行文本判断，不能用 __norm_title 压平成一行后判断
+                    # 否则会把“图 15 ... + 正文”整段误判成图题，导致后续正文被居中输出。
+                    elif __is_only_table_caption_text(raw_text_effective):
+                        lines = [(line or "").strip() for line in raw_text_effective.splitlines() if (line or "").strip()]
+                        if node.table and node.table.headers:
+                            # 表题下置：先表后题
+                            docx_util.save_tab2docx(node.table, docx)
+                            table_written = True
+                            for line in lines:
+                                __save_table_caption_txt(docx, line, font_def)
+                        elif imported_table_children:
+                            for idx, line in enumerate(lines):
+                                if idx < len(imported_table_children):
+                                    tab_node = imported_table_children[idx]
+                                    docx_util.save_tab2docx(tab_node.table, docx)
+                                    __flush_table_caption(docx, font_def)
+                                    table_written = True
+                                    written_child_ids.add(builtins.id(tab_node))
+                                __save_table_caption_txt(docx, line, font_def)
+                        else:
+                            export_state["pending_table_caps"].extend(lines)
+                    elif __is_only_image_caption_text(raw_text_effective):
+                        lines = [(line or "").strip() for line in raw_text_effective.splitlines() if (line or "").strip()]
+                        if node.img_url:
+                            # 图题下置：先图后题
+                            docx_util.save_img2docx(
+                                node.img_url,
+                                docx,
+                                mw=img_max_w,
+                                mh=img_max_h,
+                                min_w=img_min_w,
+                                min_h=img_min_h,
+                                target_long=img_target_long,
+                            )
+                            __flush_image_caption(docx, font_def)
+                            image_written = True
+                            for line in lines:
+                                __save_image_caption_txt(docx, line, font_def)
+                        elif imported_image_children:
+                            for idx, line in enumerate(lines):
+                                if idx < len(imported_image_children):
+                                    img_node = imported_image_children[idx]
+                                    docx_util.save_img2docx(
+                                        img_node.img_url,
+                                        docx,
+                                        mw=img_max_w,
+                                        mh=img_max_h,
+                                        min_w=img_min_w,
+                                        min_h=img_min_h,
+                                        target_long=img_target_long,
+                                    )
+                                    __flush_image_caption(docx, font_def)
+                                    image_written = True
+                                    written_child_ids.add(builtins.id(img_node))
+                                __save_image_caption_txt(docx, line, font_def)
+                        else:
+                            export_state["pending_image_caps"].extend(lines)
                     else:
-                        docx_util.save_txt2docx(node.text, docx, font_def)
-                if node.img_url:
-                    docx_util.save_img2docx(node.img_url, docx, mw=500, mh=500)
+                        split_io = __split_interface_io_text(node_text_effective)
+                        has_own_table = bool(node.table and node.table.headers)
+                        has_child_table = len(imported_table_children) > 0
+                        if split_io and (has_own_table or has_child_table) and not table_written:
+                            before_lines, after_lines = split_io
+                            before_lines = __format_json_like_lines(__normalize_json_block_order(before_lines))
+                            after_lines = __format_json_like_lines(__normalize_json_block_order(after_lines))
+                            bullet_state = {"active": False, "remain": 0, "force_mode": False}
+
+                            for raw_line in before_lines:
+                                line_raw = str(raw_line or "")
+                                line = line_raw.strip()
+                                if not line:
+                                    continue
+                                if __is_table_caption_line(line):
+                                    pending_table_captions.append(line)
+                                elif __is_image_caption_line(line):
+                                    pending_image_captions.append(line)
+                                else:
+                                    __save_body_line_auto_bullet(
+                                        docx,
+                                        line_raw,
+                                        font_def,
+                                        __is_json_export_line(line_raw) or __is_json_value_line(line_raw),
+                                        bullet_state,
+                                        allow_bullet=not current_plain_context,
+                                    )
+
+                            if has_own_table:
+                                docx_util.save_tab2docx(node.table, docx)
+                            else:
+                                first_tab_node = imported_table_children[0]
+                                docx_util.save_tab2docx(first_tab_node.table, docx)
+                                written_child_ids.add(builtins.id(first_tab_node))
+                            __flush_table_caption(docx, font_def)
+                            table_written = True
+                            if pending_table_captions:
+                                for cap in pending_table_captions:
+                                    __save_table_caption_txt(docx, cap, font_def)
+                                pending_table_captions = []
+
+                            for raw_line in after_lines:
+                                line_raw = str(raw_line or "")
+                                line = line_raw.strip()
+                                if not line:
+                                    continue
+                                if __is_table_caption_line(line):
+                                    export_state["pending_table_caps"].append(line)
+                                elif __is_image_caption_line(line):
+                                    export_state["pending_image_caps"].append(line)
+                                else:
+                                    __save_body_line_auto_bullet(
+                                        docx,
+                                        line_raw,
+                                        font_def,
+                                        __is_json_export_line(line_raw) or __is_json_value_line(line_raw),
+                                        bullet_state,
+                                        allow_bullet=not current_plain_context,
+                                    )
+                        else:
+                            normalized_lines = __format_json_like_lines(__normalize_json_block_order(str(node_text_effective or "").splitlines()))
+                            tcp_anchor_table_children: List[SdsNodeForm] = []
+                            if (not has_own_table) and len(imported_table_children) >= 2:
+                                # 历史导入数据中，多张“端口表”常挂在同一父节点下，正文仍保留在父节点 text。
+                                # 命中稳定语义锚点时，按原始阅读顺序内联写出，避免多表被连续挤在一起。
+                                if re.search(r"TCP", str(node_text_effective or ""), re.I):
+                                    tcp_anchor_table_children = list(imported_table_children)
+                            first_tcp_table_written = False
+                            second_tcp_table_written = False
+                            bullet_state = {"active": False, "remain": 0, "force_mode": False}
+                            for raw_line in normalized_lines:
+                                line_raw = str(raw_line or "")
+                                line = line_raw.strip()
+                                if not line:
+                                    continue
+                                if __is_table_caption_line(line):
+                                    if (node.table and node.table.headers) or imported_table_children:
+                                        pending_table_captions.append(line)
+                                    else:
+                                        export_state["pending_table_caps"].append(line)
+                                elif __is_image_caption_line(line):
+                                    if node.img_url or imported_image_children:
+                                        pending_image_captions.append(line)
+                                    else:
+                                        export_state["pending_image_caps"].append(line)
+                                else:
+                                    __save_body_line_auto_bullet(
+                                        docx,
+                                        line_raw,
+                                        font_def,
+                                        __is_json_export_line(line_raw) or __is_json_value_line(line_raw),
+                                        bullet_state,
+                                        allow_bullet=not current_plain_context,
+                                    )
+                                    if tcp_anchor_table_children:
+                                        if (not first_tcp_table_written) and re.search(r"提供下列\s*TCP\s*服务", line, re.I):
+                                            first_tab_node = tcp_anchor_table_children[0]
+                                            if getattr(first_tab_node, "table", None) and first_tab_node.table.headers:
+                                                docx_util.save_tab2docx(first_tab_node.table, docx)
+                                                __flush_table_caption(docx, font_def)
+                                                written_child_ids.add(builtins.id(first_tab_node))
+                                                first_tcp_table_written = True
+                                        elif (
+                                            first_tcp_table_written
+                                            and (not second_tcp_table_written)
+                                            and len(tcp_anchor_table_children) > 1
+                                            and re.search(r"只能访问.*TCP\s*端口", line, re.I)
+                                        ):
+                                            second_tab_node = tcp_anchor_table_children[1]
+                                            if getattr(second_tab_node, "table", None) and second_tab_node.table.headers:
+                                                docx_util.save_tab2docx(second_tab_node.table, docx)
+                                                __flush_table_caption(docx, font_def)
+                                                written_child_ids.add(builtins.id(second_tab_node))
+                                                second_tcp_table_written = True
+                elif node.img_url and not image_written:
+                    docx_util.save_img2docx(
+                        node.img_url,
+                        docx,
+                        mw=img_max_w,
+                        mh=img_max_h,
+                        min_w=img_min_w,
+                        min_h=img_min_h,
+                        target_long=img_target_long,
+                    )
+                    __flush_image_caption(docx, font_def)
+                    image_written = True
+                if image_written and pending_image_captions:
+                    for cap in pending_image_captions:
+                        __save_image_caption_txt(docx, cap, font_def)
+                    pending_image_captions = []
+                if table_written and pending_table_captions:
+                    for cap in pending_table_captions:
+                        __save_table_caption_txt(docx, cap, font_def)
+                    pending_table_captions = []
 
                 if node.ref_type == RefTypes.sds_traces.value:
                     results = await __query_sds_traces_x()
-                    await __writenodes(results, docx, level + 1, major_offset)
+                    await __writenodes(results, docx, level + 1, major_offset, node_compact_img, current_plain_context)
                 elif node.ref_type == RefTypes.sds_reqds.value:
                     sds_reqds = await __query_sds_reqds(node.title)
-                    await __writenodes(sds_reqds, docx, level + 1, major_offset)
+                    await __writenodes(sds_reqds, docx, level + 1, major_offset, node_compact_img, current_plain_context)
                 else:
-                    if node.table and node.table.headers:
+                    if node.table and node.table.headers and not table_written:
+                        if export_state["pending_rev_label"] and __is_revision_table(node.table):
+                            __write_revision_body_title(docx)
+                            export_state["pending_rev_label"] = False
                         docx_util.save_tab2docx(node.table, docx)
+                        __flush_table_caption(docx, font_def)
+                        table_written = True
+                        for cap in pending_table_captions:
+                            __save_table_caption_txt(docx, cap, font_def)
+                        pending_table_captions = []
                         
                 if node.children:
-                    await __writenodes(node.children, docx, level + 1, major_offset)
+                    next_children = [child for child in node.children if builtins.id(child) not in written_child_ids]
+                    await __writenodes(next_children, docx, level + 1, major_offset, node_compact_img, current_plain_context)
+                # 兜底：图/表在子节点时，将父节点标题下置到子节点图/表之后
+                if pending_image_captions:
+                    for cap in pending_image_captions:
+                        __save_image_caption_txt(docx, cap, font_def)
+                if pending_table_captions:
+                    for cap in pending_table_captions:
+                        __save_table_caption_txt(docx, cap, font_def)
+                    pending_table_captions = []
+            while export_state["pending_image_caps"]:
+                __flush_image_caption(docx, font_def)
+            while export_state["pending_table_caps"]:
+                __flush_table_caption(docx, font_def)
+
+        async def __writenodes_legacy(nodes: List[SdsNodeForm], docx: Document, level: int = 0):
+            # 兜底导出：尽量保证可导出成功，避免接口直接报错
+            font_def = 10.5
+            font_size = 16.0 if level == 0 else (14.0 if level == 1 else font_def)
+            for node in nodes or []:
+                if node.title:
+                    docx_util.save_title2docx(__norm_title(node.title), docx, level + 1, font_size)
+                if node.sds_code:
+                    docx_util.save_txt2docx("设计编号：" + node.sds_code, docx, font_def)
+                if node.label:
+                    docx_util.save_txt2docx(__norm_title(node.label), docx, font_def)
+                if node.text:
+                    docx_util.save_txt2docx(node.text, docx, font_def)
+                if node.img_url:
+                    docx_util.save_img2docx(
+                        node.img_url,
+                        docx,
+                        mw=IMG_MAX_W,
+                        mh=IMG_MAX_H,
+                        min_w=IMG_MIN_W,
+                        min_h=IMG_MIN_H,
+                        target_long=IMG_TARGET_LONG,
+                    )
+                if node.table and node.table.headers:
+                    docx_util.save_tab2docx(node.table, docx)
+                if node.children:
+                    await __writenodes_legacy(node.children, docx, level + 1)
 
         resp = await self.get_sds_doc(id=id, with_tree=True)
         sds_doc: SdsDocObj = resp.data
         if sds_doc:
             docx = Document()
+            try:
+                if OxmlElement is not None and qn is not None:
+                    try:
+                        update_fields = OxmlElement("w:updateFields")
+                        update_fields.set(qn("w:val"), "true")
+                        docx.settings.element.append(update_fields)
+                    except Exception:
+                        logger.exception("enable sds docx updateFields failed")
 
-            header_para = docx.sections[0].header.add_paragraph()
-            header_para.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.RIGHT
-            docx_util.fonted_txt(header_para, sds_doc.file_no)
+                header_para = docx.sections[0].header.add_paragraph()
+                header_para.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.RIGHT
+                docx_util.fonted_txt(header_para, sds_doc.file_no)
 
-            first_major = __first_major(sds_doc.content or [])
-            major_offset = (first_major - 1) if (first_major and first_major > 1) else 0
-            await __writenodes(sds_doc.content, docx, level=0, major_offset=major_offset)
+                roots = sds_doc.content or []
+                design_root = next((n for n in roots if __is_design_cover(getattr(n, "title", ""))), None)
+                rev_root = next((n for n in roots if __is_revision_label(getattr(n, "title", ""))), None)
+                catalog_root = next((n for n in roots if __is_catalog(getattr(n, "title", ""))), None)
+                used_ids = {builtins.id(node) for node in [design_root, rev_root, catalog_root] if node is not None}
+                remaining_roots = [n for n in roots if builtins.id(n) not in used_ids]
+
+                # 兼容历史导入数据：有些文档把“封面/修订记录/正文”都挂在“软件详细设计”根节点下
+                # 这里做一次拆分，保证第一页/第二页样式稳定一致
+                design_section_nodes = [design_root] if design_root else [SdsNodeForm(title="软件详细设计", children=[])]
+                rev_section_nodes = [rev_root] if rev_root else []
+                body_from_design = []
+                if design_root:
+                    cover_node = SdsNodeForm(title="软件详细设计", children=[])
+                    cover_table_picked = False
+                    rev_nodes_from_design = []
+                    for child in (design_root.children or []):
+                        if __node_has_revision_marker(child) or __is_revision_table(getattr(child, "table", None)):
+                            rev_nodes_from_design.append(child)
+                            continue
+                        if (not cover_table_picked) and getattr(child, "table", None) and not __is_revision_table(child.table):
+                            cover_node.children.append(child)
+                            cover_table_picked = True
+                            continue
+                        body_from_design.append(child)
+
+                    design_section_nodes = [cover_node]
+                    if (not rev_section_nodes) and rev_nodes_from_design:
+                        rev_section_nodes = [SdsNodeForm(title="文件修订记录", children=rev_nodes_from_design)]
+
+                if not rev_section_nodes:
+                    rev_section_nodes = [SdsNodeForm(title="文件修订记录", children=[])]
+
+                remaining_roots = body_from_design + remaining_roots
+                first_major = __first_major(remaining_roots)
+                body_major_offset = (first_major - 1) if (first_major and first_major > 1) else 0
+
+                export_sections = [
+                    ("design", design_section_nodes),
+                    ("rev", rev_section_nodes),
+                    ("catalog", [catalog_root] if catalog_root else [SdsNodeForm(title="目录", children=[])]),
+                    ("body", remaining_roots),
+                ]
+                first_section = True
+                for section_name, section_nodes in export_sections:
+                    if not section_nodes:
+                        continue
+                    if not first_section:
+                        docx.add_page_break()
+                    major_offset = body_major_offset if section_name == "body" else 0
+                    await __writenodes(section_nodes, docx, level=0, major_offset=major_offset)
+                    if section_name == "rev":
+                        # 与SRS导出版式一致：修订记录页末保留5行
+                        __add_blank_lines(docx, 5)
+                    first_section = False
+            except Exception:
+                logger.exception("export_sds_doc styled-export failed, fallback to legacy exporter")
+                # 重建文档，确保兜底导出不受前面失败状态影响
+                docx = Document()
+                header_para = docx.sections[0].header.add_paragraph()
+                header_para.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.RIGHT
+                docx_util.fonted_txt(header_para, sds_doc.file_no)
+                await __writenodes_legacy(sds_doc.content or [], docx, level=0)
 
             docx.save(output)
             output.seek(0)

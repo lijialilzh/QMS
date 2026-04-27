@@ -21,6 +21,7 @@ export interface TableHeaderItem {
 export interface TableDataWithHeaders {
   headers: TableHeaderItem[];
   data: string[][];
+  tableName?: string;
 }
 
 // 组件 Props 类型
@@ -39,6 +40,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
   const [rowCount, setRowCount] = useState<number>(0); // 行数
   const [colCount, setColCount] = useState<number>(0); // 列数
   const [headerInput, setHeaderInput] = useState<string>(''); // 表头输入（逗号分隔，仅存储name）
+  const [tableName, setTableName] = useState<string>(''); // 表名称（显示在表格上方）
   const [tableData, setTableData] = useState<TableRowData[]>([]); // 表格核心数据
   const [customHeaders, setCustomHeaders] = useState<TableHeaderItem[]>([]); // 自定义表头数组（新结构）
   const [form] = Form.useForm(); // 表单实例，用于收集和重置行列数
@@ -56,6 +58,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       setColCount(headers.length);
       setRowCount(data.length);
       setHeaderInput(headers.map(h => h.name).join(',')); // 输入框只显示name
+      setTableName(String(initialData.tableName || '').trim());
       setCustomHeaders(headers);
       
       // 初始化表格数据
@@ -71,7 +74,8 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       form.setFieldsValue({
         rowCount: data.length,
         colCount: headers.length,
-        headerInput: headers.map(h => h.name).join(',')
+        headerInput: headers.map(h => h.name).join(','),
+        tableName: String(initialData.tableName || '').trim(),
       });
     } else if (open && !initialData) {
       // 新增模式：重置所有数据
@@ -79,6 +83,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       setRowCount(0);
       setColCount(0);
       setHeaderInput('');
+      setTableName('');
       setTableData([]);
       setCustomHeaders([]);
     }
@@ -90,6 +95,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
     setRowCount(0);
     setColCount(0);
     setHeaderInput('');
+    setTableName('');
     setTableData([]);
     setCustomHeaders([]);
     onCancel?.();
@@ -236,7 +242,8 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
 
     const result: TableDataWithHeaders = {
       headers,
-      data
+      data,
+      tableName: String(tableName || '').trim(),
     };
 
     onConfirm?.(result);
@@ -290,6 +297,17 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
             />
           </Form.Item>
         </div>
+
+        <Form.Item
+          name="tableName"
+          label="表名称"
+        >
+          <Input
+            value={tableName}
+            onChange={(e) => setTableName(e.target.value)}
+            placeholder="请输入表名称（如：alembic_version: 版本管理）"
+          />
+        </Form.Item>
 
         <Form.Item
           name="headerInput"

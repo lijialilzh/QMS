@@ -223,6 +223,13 @@ class Server(object):
         txt = (para.text or "").strip()
         if not txt:
             return None
+        # JSON 键值行（如 "version":4,）按正文处理，不能当作章节标题
+        if re.match(r'^\s*[\'"]\s*[^\'"]+\s*[\'"]\s*:\s*.+$', txt):
+            return None
+        # 带章节号前缀的 JSON 行（如 5.7.1.1 "version":4,）也按正文处理
+        txt_wo_chapter = re.sub(r'^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z"\']))', '', txt).strip()
+        if txt_wo_chapter and re.match(r'^\s*[\'"]\s*[^\'"]+\s*[\'"]\s*:\s*.+$', txt_wo_chapter):
+            return None
         # 业务规则：仅“章节号 + 粗体”识别为标题
         if not Server.__is_bold_paragraph(para):
             return None
@@ -248,9 +255,22 @@ class Server(object):
             # 句末为分号/冒号/句号等更像正文项，不识别为标题。
             if re.search(r"[;；:：,，。！？!?]$", tail):
                 return None
+            # 非粗体的两级编号（如 7.1 xxx）误识别概率高，增加约束：
+            # 仅当尾部很短且无正文标点时才作为标题。
+            if (not Server.__is_bold_paragraph(para)) and chapter_no.count(".") == 1:
+                if len(tail) > 24:
+                    return None
+                if re.search(r"[，,。；;：:！？!?]", tail):
+                    return None
             return max(1, min(chapter_no.count(".") + 1, 5))
         # 文本无显式编号但为粗体标题时，尝试读取 Word 编号层级（numPr/outlineLvl）
         numpr_level = Server.__guess_numpr_level(para)
+        if numpr_level is not None:
+            # 编号列表中的句子型文本（常见于正文要点）不应识别为章节标题
+            if len(txt) > 24:
+                return None
+            if re.search(r"[，,。；;：:！？!?]", txt):
+                return None
         return numpr_level
 
     @staticmethod

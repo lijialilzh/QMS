@@ -1,6 +1,6 @@
 import "./UserInfo.less";
 import { Dropdown, message, Modal, Form, Input } from "antd";
-import { RightOutlined, DownOutlined } from "@ant-design/icons";
+import { DownOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
 import type { MenuProps } from "antd";
 import * as Api from "@/api/ApiUser";
@@ -72,7 +72,6 @@ export default ({ ...attrs }: any) => {
     const [data, dispatch] = useData({
         dlgExit: false,
         dlgPwd: false,
-        open: false,
     });
     const navigate = useNavigate();
     const user = useSelector((state: Root) => state.user);
@@ -101,6 +100,8 @@ export default ({ ...attrs }: any) => {
             {user.id && (
                 <Dropdown
                     {...attrs}
+                    overlayClassName="user-info-dropdown"
+                    placement="bottomRight"
                     menu={{
                         items,
                         onClick: (item) => {
@@ -111,13 +112,11 @@ export default ({ ...attrs }: any) => {
                             }
                         },
                     }}
-                    onOpenChange={(open) => dispatch({ open })}
                     trigger={["click"]}>
                     <div className="div-h center-v cursor-on">
                         <img src="assets/icon/user.svg" />
                         <div className="seltxt">{user.nick_name || user.name}</div>
-                        {data.open && <DownOutlined />}
-                        {!data.open && <RightOutlined />}
+                        <DownOutlined />
                     </div>
                 </Dropdown>
             )}

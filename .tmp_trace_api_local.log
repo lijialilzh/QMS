@@ -1,0 +1,500 @@
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'ra', 'perm_code': 'role_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 780005), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 780008)}
+INFO:__main__:init: role_perm row: {'role_code': 'ra', 'perm_code': 'role_view'}
+2026-04-24 10:48:02,780 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,780 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'ra', 'perm_code': 'role_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 780799), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 780802)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'ra', 'perm_code': 'role_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 780799), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 780802)}
+INFO:__main__:init: role_perm row: {'role_code': 'ra', 'perm_code': 'sds_doc'}
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,781 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,781 INFO sqlalchemy.engine.Engine [no key 0.00012s] {'role_code': 'ra', 'perm_code': 'sds_doc', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 781657), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 781660)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00012s] {'role_code': 'ra', 'perm_code': 'sds_doc', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 781657), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 781660)}
+INFO:__main__:init: role_perm row: {'role_code': 'ra', 'perm_code': 'sds_doc_edit'}
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,782 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,782 INFO sqlalchemy.engine.Engine [no key 0.00014s] {'role_code': 'ra', 'perm_code': 'sds_doc_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 782492), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 782495)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00014s] {'role_code': 'ra', 'perm_code': 'sds_doc_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 782492), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 782495)}
+INFO:__main__:init: role_perm row: {'role_code': 'ra', 'perm_code': 'sds_doc_view'}
+2026-04-24 10:48:02,783 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'ra', 'perm_code': 'sds_doc_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 783286), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 783289)}
+2026-04-24 10:48:02,783 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'ra', 'perm_code': 'sds_doc_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 783286), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 783289)}
+INFO:__main__:init: role_perm row: {'role_code': 'ra', 'perm_code': 'srs_doc'}
+2026-04-24 10:48:02,784 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,784 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'ra', 'perm_code': 'srs_doc', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 784099), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 784102)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'ra', 'perm_code': 'srs_doc', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 784099), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 784102)}
+INFO:__main__:init: role_perm row: {'role_code': 'ra', 'perm_code': 'srs_doc_edit'}
+2026-04-24 10:48:02,784 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,785 INFO sqlalchemy.engine.Engine [no key 0.00012s] {'role_code': 'ra', 'perm_code': 'srs_doc_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 784930), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 784934)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00012s] {'role_code': 'ra', 'perm_code': 'srs_doc_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 784930), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 784934)}
+INFO:__main__:init: role_perm row: {'role_code': 'ra', 'perm_code': 'srs_doc_view'}
+2026-04-24 10:48:02,785 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,785 INFO sqlalchemy.engine.Engine [no key 0.00012s] {'role_code': 'ra', 'perm_code': 'srs_doc_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 785760), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 785763)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00012s] {'role_code': 'ra', 'perm_code': 'srs_doc_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 785760), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 785763)}
+INFO:__main__:init: role_perm row: {'role_code': 'ra', 'perm_code': 'test_case'}
+2026-04-24 10:48:02,786 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,786 INFO sqlalchemy.engine.Engine [no key 0.00012s] {'role_code': 'ra', 'perm_code': 'test_case', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 786593), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 786596)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00012s] {'role_code': 'ra', 'perm_code': 'test_case', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 786593), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 786596)}
+INFO:__main__:init: role_perm row: {'role_code': 'ra', 'perm_code': 'test_case_edit'}
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,787 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00013s] {'role_code': 'ra', 'perm_code': 'test_case_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 787395), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 787398)}
+2026-04-24 10:48:02,787 INFO sqlalchemy.engine.Engine [no key 0.00013s] {'role_code': 'ra', 'perm_code': 'test_case_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 787395), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 787398)}
+INFO:__main__:init: role_perm row: {'role_code': 'ra', 'perm_code': 'test_case_view'}
+2026-04-24 10:48:02,788 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,788 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'ra', 'perm_code': 'test_case_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 788193), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 788196)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'ra', 'perm_code': 'test_case_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 788193), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 788196)}
+INFO:__main__:init: role_perm row: {'role_code': 'ra', 'perm_code': 'test_set'}
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,789 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,789 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'ra', 'perm_code': 'test_set', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 788996), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 788999)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'ra', 'perm_code': 'test_set', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 788996), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 788999)}
+INFO:__main__:init: role_perm row: {'role_code': 'ra', 'perm_code': 'test_set_edit'}
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,789 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,789 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'ra', 'perm_code': 'test_set_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 789798), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 789801)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'ra', 'perm_code': 'test_set_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 789798), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 789801)}
+INFO:__main__:init: role_perm row: {'role_code': 'ra', 'perm_code': 'test_set_view'}
+2026-04-24 10:48:02,790 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,790 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'ra', 'perm_code': 'test_set_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 790614), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 790617)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'ra', 'perm_code': 'test_set_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 790614), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 790617)}
+INFO:__main__:init: role_perm row: {'role_code': 'ra', 'perm_code': 'user'}
+2026-04-24 10:48:02,791 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,791 INFO sqlalchemy.engine.Engine [no key 0.00013s] {'role_code': 'ra', 'perm_code': 'user', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 791428), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 791431)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00013s] {'role_code': 'ra', 'perm_code': 'user', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 791428), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 791431)}
+INFO:__main__:init: role_perm row: {'role_code': 'ra', 'perm_code': 'user_edit'}
+2026-04-24 10:48:02,792 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,792 INFO sqlalchemy.engine.Engine [no key 0.00015s] {'role_code': 'ra', 'perm_code': 'user_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 792603), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 792609)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00015s] {'role_code': 'ra', 'perm_code': 'user_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 792603), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 792609)}
+INFO:__main__:init: role_perm row: {'role_code': 'ra', 'perm_code': 'user_view'}
+2026-04-24 10:48:02,793 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,793 INFO sqlalchemy.engine.Engine [no key 0.00013s] {'role_code': 'ra', 'perm_code': 'user_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 793593), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 793596)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00013s] {'role_code': 'ra', 'perm_code': 'user_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 793593), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 793596)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'doc_file_flow'}
+2026-04-24 10:48:02,794 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00012s] {'role_code': 'product_manager', 'perm_code': 'doc_file_flow', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 794421), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 794424)}
+2026-04-24 10:48:02,794 INFO sqlalchemy.engine.Engine [no key 0.00012s] {'role_code': 'product_manager', 'perm_code': 'doc_file_flow', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 794421), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 794424)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'doc_file_flow_edit'}
+2026-04-24 10:48:02,795 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00013s] {'role_code': 'product_manager', 'perm_code': 'doc_file_flow_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 795244), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 795249)}
+2026-04-24 10:48:02,795 INFO sqlalchemy.engine.Engine [no key 0.00013s] {'role_code': 'product_manager', 'perm_code': 'doc_file_flow_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 795244), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 795249)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'doc_file_flow_view'}
+2026-04-24 10:48:02,796 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'doc_file_flow_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 796115), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 796119)}
+2026-04-24 10:48:02,796 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'doc_file_flow_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 796115), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 796119)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'doc_file_struct'}
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,796 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,797 INFO sqlalchemy.engine.Engine [no key 0.00012s] {'role_code': 'product_manager', 'perm_code': 'doc_file_struct', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 796925), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 796928)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00012s] {'role_code': 'product_manager', 'perm_code': 'doc_file_struct', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 796925), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 796928)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'doc_file_struct_edit'}
+2026-04-24 10:48:02,797 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,797 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'doc_file_struct_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 797749), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 797751)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'doc_file_struct_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 797749), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 797751)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'doc_file_struct_view'}
+2026-04-24 10:48:02,798 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,798 INFO sqlalchemy.engine.Engine [no key 0.00012s] {'role_code': 'product_manager', 'perm_code': 'doc_file_struct_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 798579), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 798582)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00012s] {'role_code': 'product_manager', 'perm_code': 'doc_file_struct_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 798579), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 798582)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'doc_file_topo'}
+2026-04-24 10:48:02,799 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,799 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'doc_file_topo', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 799346), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 799349)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'doc_file_topo', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 799346), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 799349)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'doc_file_topo_edit'}
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,800 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,800 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'product_manager', 'perm_code': 'doc_file_topo_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 800142), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 800145)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'product_manager', 'perm_code': 'doc_file_topo_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 800142), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 800145)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'doc_file_topo_view'}
+2026-04-24 10:48:02,801 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,801 INFO sqlalchemy.engine.Engine [no key 0.00012s] {'role_code': 'product_manager', 'perm_code': 'doc_file_topo_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 801016), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 801021)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00012s] {'role_code': 'product_manager', 'perm_code': 'doc_file_topo_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 801016), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 801021)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'prod_cst'}
+2026-04-24 10:48:02,801 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,801 INFO sqlalchemy.engine.Engine [no key 0.00012s] {'role_code': 'product_manager', 'perm_code': 'prod_cst', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 801884), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 801888)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00012s] {'role_code': 'product_manager', 'perm_code': 'prod_cst', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 801884), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 801888)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'prod_cst_edit'}
+2026-04-24 10:48:02,802 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,802 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'prod_cst_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 802717), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 802721)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'prod_cst_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 802717), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 802721)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'prod_cst_view'}
+2026-04-24 10:48:02,803 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00013s] {'role_code': 'product_manager', 'perm_code': 'prod_cst_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 803585), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 803588)}
+2026-04-24 10:48:02,803 INFO sqlalchemy.engine.Engine [no key 0.00013s] {'role_code': 'product_manager', 'perm_code': 'prod_cst_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 803585), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 803588)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'prod_haz'}
+2026-04-24 10:48:02,804 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,804 INFO sqlalchemy.engine.Engine [no key 0.00012s] {'role_code': 'product_manager', 'perm_code': 'prod_haz', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 804358), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 804361)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00012s] {'role_code': 'product_manager', 'perm_code': 'prod_haz', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 804358), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 804361)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'prod_haz_edit'}
+2026-04-24 10:48:02,805 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,805 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'product_manager', 'perm_code': 'prod_haz_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 805133), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 805136)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'product_manager', 'perm_code': 'prod_haz_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 805133), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 805136)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'prod_haz_view'}
+2026-04-24 10:48:02,805 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,806 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'prod_haz_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 805926), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 805929)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'prod_haz_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 805926), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 805929)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'prod_rcm'}
+2026-04-24 10:48:02,806 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,806 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'prod_rcm', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 806701), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 806704)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'prod_rcm', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 806701), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 806704)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'prod_rcm_edit'}
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,807 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'prod_rcm_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 807459), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 807462)}
+2026-04-24 10:48:02,807 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'prod_rcm_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 807459), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 807462)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'prod_rcm_view'}
+2026-04-24 10:48:02,808 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,808 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'product_manager', 'perm_code': 'prod_rcm_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 808195), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 808198)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'product_manager', 'perm_code': 'prod_rcm_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 808195), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 808198)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'product'}
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,809 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,809 INFO sqlalchemy.engine.Engine [no key 0.00017s] {'role_code': 'product_manager', 'perm_code': 'product', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 809244), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 809250)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00017s] {'role_code': 'product_manager', 'perm_code': 'product', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 809244), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 809250)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'product_edit'}
+2026-04-24 10:48:02,810 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,810 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'product_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 810207), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 810210)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'product_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 810207), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 810210)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'product_view'}
+2026-04-24 10:48:02,811 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'product_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 810991), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 810994)}
+2026-04-24 10:48:02,811 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'product_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 810991), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 810994)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'srs_doc'}
+2026-04-24 10:48:02,811 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,811 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'srs_doc', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 811748), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 811751)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'product_manager', 'perm_code': 'srs_doc', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 811748), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 811751)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'srs_doc_edit'}
+2026-04-24 10:48:02,812 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00013s] {'role_code': 'product_manager', 'perm_code': 'srs_doc_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 812543), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 812547)}
+2026-04-24 10:48:02,812 INFO sqlalchemy.engine.Engine [no key 0.00013s] {'role_code': 'product_manager', 'perm_code': 'srs_doc_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 812543), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 812547)}
+INFO:__main__:init: role_perm row: {'role_code': 'product_manager', 'perm_code': 'srs_doc_view'}
+2026-04-24 10:48:02,813 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,813 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'product_manager', 'perm_code': 'srs_doc_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 813282), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 813284)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'product_manager', 'perm_code': 'srs_doc_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 813282), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 813284)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'doc_file_flow'}
+2026-04-24 10:48:02,814 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,814 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'developer', 'perm_code': 'doc_file_flow', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 814034), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 814037)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'developer', 'perm_code': 'doc_file_flow', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 814034), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 814037)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'doc_file_flow_edit'}
+2026-04-24 10:48:02,814 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'developer', 'perm_code': 'doc_file_flow_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 814789), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 814792)}
+2026-04-24 10:48:02,814 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'developer', 'perm_code': 'doc_file_flow_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 814789), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 814792)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'doc_file_flow_view'}
+2026-04-24 10:48:02,815 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'developer', 'perm_code': 'doc_file_flow_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 815564), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 815567)}
+2026-04-24 10:48:02,815 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'developer', 'perm_code': 'doc_file_flow_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 815564), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 815567)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'doc_file_struct'}
+2026-04-24 10:48:02,816 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'developer', 'perm_code': 'doc_file_struct', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 816290), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 816293)}
+2026-04-24 10:48:02,816 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'developer', 'perm_code': 'doc_file_struct', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 816290), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 816293)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'doc_file_struct_edit'}
+2026-04-24 10:48:02,817 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,817 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'developer', 'perm_code': 'doc_file_struct_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 817020), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 817023)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'developer', 'perm_code': 'doc_file_struct_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 817020), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 817023)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'doc_file_struct_view'}
+2026-04-24 10:48:02,817 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'developer', 'perm_code': 'doc_file_struct_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 817754), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 817757)}
+2026-04-24 10:48:02,817 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'developer', 'perm_code': 'doc_file_struct_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 817754), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 817757)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'doc_file_topo'}
+2026-04-24 10:48:02,818 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,818 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'developer', 'perm_code': 'doc_file_topo', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 818514), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 818517)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'developer', 'perm_code': 'doc_file_topo', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 818514), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 818517)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'doc_file_topo_edit'}
+2026-04-24 10:48:02,819 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,819 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'developer', 'perm_code': 'doc_file_topo_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 819265), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 819268)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'developer', 'perm_code': 'doc_file_topo_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 819265), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 819268)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'doc_file_topo_view'}
+2026-04-24 10:48:02,820 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,820 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'developer', 'perm_code': 'doc_file_topo_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 820026), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 820029)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'developer', 'perm_code': 'doc_file_topo_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 820026), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 820029)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'prod_cst'}
+2026-04-24 10:48:02,820 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,820 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'developer', 'perm_code': 'prod_cst', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 820814), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 820817)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'developer', 'perm_code': 'prod_cst', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 820814), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 820817)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'prod_cst_edit'}
+2026-04-24 10:48:02,821 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'developer', 'perm_code': 'prod_cst_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 821584), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 821587)}
+2026-04-24 10:48:02,821 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'developer', 'perm_code': 'prod_cst_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 821584), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 821587)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'prod_cst_view'}
+2026-04-24 10:48:02,822 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,822 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'developer', 'perm_code': 'prod_cst_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 822311), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 822314)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'developer', 'perm_code': 'prod_cst_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 822311), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 822314)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'prod_haz'}
+2026-04-24 10:48:02,823 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,823 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'developer', 'perm_code': 'prod_haz', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 823060), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 823062)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'developer', 'perm_code': 'prod_haz', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 823060), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 823062)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'prod_haz_edit'}
+2026-04-24 10:48:02,823 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'developer', 'perm_code': 'prod_haz_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 823804), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 823807)}
+2026-04-24 10:48:02,823 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'developer', 'perm_code': 'prod_haz_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 823804), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 823807)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'prod_haz_view'}
+2026-04-24 10:48:02,824 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,824 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'developer', 'perm_code': 'prod_haz_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 824573), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 824575)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'developer', 'perm_code': 'prod_haz_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 824573), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 824575)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'prod_rcm'}
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,826 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,826 INFO sqlalchemy.engine.Engine [no key 0.00015s] {'role_code': 'developer', 'perm_code': 'prod_rcm', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 825967), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 825974)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00015s] {'role_code': 'developer', 'perm_code': 'prod_rcm', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 825967), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 825974)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'prod_rcm_edit'}
+2026-04-24 10:48:02,826 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,827 INFO sqlalchemy.engine.Engine [no key 0.00016s] {'role_code': 'developer', 'perm_code': 'prod_rcm_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 826919), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 826924)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00016s] {'role_code': 'developer', 'perm_code': 'prod_rcm_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 826919), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 826924)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'prod_rcm_view'}
+2026-04-24 10:48:02,827 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,828 INFO sqlalchemy.engine.Engine [no key 0.00013s] {'role_code': 'developer', 'perm_code': 'prod_rcm_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 827920), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 827924)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00013s] {'role_code': 'developer', 'perm_code': 'prod_rcm_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 827920), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 827924)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'product'}
+2026-04-24 10:48:02,828 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,828 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'developer', 'perm_code': 'product', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 828798), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 828801)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'developer', 'perm_code': 'product', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 828798), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 828801)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'product_view'}
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,829 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,829 INFO sqlalchemy.engine.Engine [no key 0.00012s] {'role_code': 'developer', 'perm_code': 'product_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 829682), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 829685)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00012s] {'role_code': 'developer', 'perm_code': 'product_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 829682), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 829685)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'sds_doc'}
+2026-04-24 10:48:02,830 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,830 INFO sqlalchemy.engine.Engine [no key 0.00012s] {'role_code': 'developer', 'perm_code': 'sds_doc', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 830548), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 830553)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00012s] {'role_code': 'developer', 'perm_code': 'sds_doc', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 830548), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 830553)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'sds_doc_edit'}
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,831 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,831 INFO sqlalchemy.engine.Engine [no key 0.00015s] {'role_code': 'developer', 'perm_code': 'sds_doc_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 831390), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 831393)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00015s] {'role_code': 'developer', 'perm_code': 'sds_doc_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 831390), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 831393)}
+INFO:__main__:init: role_perm row: {'role_code': 'developer', 'perm_code': 'sds_doc_view'}
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,832 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,832 INFO sqlalchemy.engine.Engine [no key 0.00012s] {'role_code': 'developer', 'perm_code': 'sds_doc_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 832232), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 832235)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00012s] {'role_code': 'developer', 'perm_code': 'sds_doc_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 832232), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 832235)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'doc_file_flow'}
+2026-04-24 10:48:02,833 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,833 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'tester', 'perm_code': 'doc_file_flow', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 833053), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 833056)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'tester', 'perm_code': 'doc_file_flow', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 833053), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 833056)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'doc_file_flow_edit'}
+2026-04-24 10:48:02,833 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,834 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'tester', 'perm_code': 'doc_file_flow_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 833891), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 833895)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'tester', 'perm_code': 'doc_file_flow_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 833891), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 833895)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'doc_file_flow_view'}
+2026-04-24 10:48:02,834 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,834 INFO sqlalchemy.engine.Engine [no key 0.00013s] {'role_code': 'tester', 'perm_code': 'doc_file_flow_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 834748), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 834751)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00013s] {'role_code': 'tester', 'perm_code': 'doc_file_flow_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 834748), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 834751)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'doc_file_struct'}
+2026-04-24 10:48:02,835 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,835 INFO sqlalchemy.engine.Engine [no key 0.00012s] {'role_code': 'tester', 'perm_code': 'doc_file_struct', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 835706), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 835711)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00012s] {'role_code': 'tester', 'perm_code': 'doc_file_struct', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 835706), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 835711)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'doc_file_struct_edit'}
+2026-04-24 10:48:02,836 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00013s] {'role_code': 'tester', 'perm_code': 'doc_file_struct_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 836574), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 836578)}
+2026-04-24 10:48:02,836 INFO sqlalchemy.engine.Engine [no key 0.00013s] {'role_code': 'tester', 'perm_code': 'doc_file_struct_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 836574), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 836578)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'doc_file_struct_view'}
+2026-04-24 10:48:02,837 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,837 INFO sqlalchemy.engine.Engine [no key 0.00013s] {'role_code': 'tester', 'perm_code': 'doc_file_struct_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 837387), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 837390)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00013s] {'role_code': 'tester', 'perm_code': 'doc_file_struct_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 837387), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 837390)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'doc_file_topo'}
+2026-04-24 10:48:02,838 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,838 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'tester', 'perm_code': 'doc_file_topo', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 838210), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 838214)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'tester', 'perm_code': 'doc_file_topo', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 838210), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 838214)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'doc_file_topo_edit'}
+2026-04-24 10:48:02,839 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,839 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'tester', 'perm_code': 'doc_file_topo_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 839010), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 839013)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'tester', 'perm_code': 'doc_file_topo_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 839010), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 839013)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'doc_file_topo_view'}
+2026-04-24 10:48:02,839 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,839 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'tester', 'perm_code': 'doc_file_topo_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 839820), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 839823)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'tester', 'perm_code': 'doc_file_topo_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 839820), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 839823)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'prod_cst'}
+2026-04-24 10:48:02,840 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00018s] {'role_code': 'tester', 'perm_code': 'prod_cst', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 840676), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 840680)}
+2026-04-24 10:48:02,840 INFO sqlalchemy.engine.Engine [no key 0.00018s] {'role_code': 'tester', 'perm_code': 'prod_cst', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 840676), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 840680)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'prod_cst_edit'}
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,842 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,842 INFO sqlalchemy.engine.Engine [no key 0.00018s] {'role_code': 'tester', 'perm_code': 'prod_cst_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 842114), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 842120)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00018s] {'role_code': 'tester', 'perm_code': 'prod_cst_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 842114), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 842120)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'prod_cst_view'}
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,843 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,843 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'tester', 'perm_code': 'prod_cst_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 843164), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 843167)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'tester', 'perm_code': 'prod_cst_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 843164), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 843167)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'prod_dhf'}
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,843 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,844 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'tester', 'perm_code': 'prod_dhf', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 843946), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 843948)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'tester', 'perm_code': 'prod_dhf', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 843946), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 843948)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'prod_dhf_edit'}
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,844 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,844 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'tester', 'perm_code': 'prod_dhf_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 844690), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 844693)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'tester', 'perm_code': 'prod_dhf_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 844690), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 844693)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'prod_dhf_view'}
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,845 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00013s] {'role_code': 'tester', 'perm_code': 'prod_dhf_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 845428), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 845431)}
+2026-04-24 10:48:02,845 INFO sqlalchemy.engine.Engine [no key 0.00013s] {'role_code': 'tester', 'perm_code': 'prod_dhf_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 845428), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 845431)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'prod_haz'}
+2026-04-24 10:48:02,846 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,846 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'tester', 'perm_code': 'prod_haz', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 846176), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 846179)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'tester', 'perm_code': 'prod_haz', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 846176), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 846179)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'prod_haz_edit'}
+2026-04-24 10:48:02,846 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,847 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'tester', 'perm_code': 'prod_haz_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 846926), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 846929)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'tester', 'perm_code': 'prod_haz_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 846926), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 846929)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'prod_haz_view'}
+2026-04-24 10:48:02,847 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,847 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'tester', 'perm_code': 'prod_haz_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 847677), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 847680)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'tester', 'perm_code': 'prod_haz_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 847677), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 847680)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'prod_rcm'}
+2026-04-24 10:48:02,848 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00013s] {'role_code': 'tester', 'perm_code': 'prod_rcm', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 848426), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 848429)}
+2026-04-24 10:48:02,848 INFO sqlalchemy.engine.Engine [no key 0.00013s] {'role_code': 'tester', 'perm_code': 'prod_rcm', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 848426), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 848429)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'prod_rcm_edit'}
+2026-04-24 10:48:02,849 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,849 INFO sqlalchemy.engine.Engine [no key 0.00009s] {'role_code': 'tester', 'perm_code': 'prod_rcm_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 849151), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 849154)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00009s] {'role_code': 'tester', 'perm_code': 'prod_rcm_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 849151), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 849154)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'prod_rcm_view'}
+2026-04-24 10:48:02,849 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,850 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'tester', 'perm_code': 'prod_rcm_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 849923), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 849926)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'tester', 'perm_code': 'prod_rcm_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 849923), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 849926)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'product'}
+2026-04-24 10:48:02,850 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,850 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'tester', 'perm_code': 'product', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 850673), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 850676)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'tester', 'perm_code': 'product', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 850673), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 850676)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'product_view'}
+2026-04-24 10:48:02,851 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:[no key 0.00011s] {'role_code': 'tester', 'perm_code': 'product_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 851416), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 851419)}
+2026-04-24 10:48:02,851 INFO sqlalchemy.engine.Engine [no key 0.00011s] {'role_code': 'tester', 'perm_code': 'product_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 851416), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 851419)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'sds_doc'}
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,852 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,852 INFO sqlalchemy.engine.Engine [no key 0.00013s] {'role_code': 'tester', 'perm_code': 'sds_doc', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 852236), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 852241)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00013s] {'role_code': 'tester', 'perm_code': 'sds_doc', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 852236), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 852241)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'sds_doc_edit'}
+2026-04-24 10:48:02,853 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,853 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'tester', 'perm_code': 'sds_doc_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 853069), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 853072)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'tester', 'perm_code': 'sds_doc_edit', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 853069), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 853072)}
+INFO:__main__:init: role_perm row: {'role_code': 'tester', 'perm_code': 'sds_doc_view'}
+2026-04-24 10:48:02,853 INFO sqlalchemy.engine.Engine INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO role_perm (role_code, perm_code, create_time, update_time) VALUES (%(role_code)s, %(perm_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING role_perm.id
+2026-04-24 10:48:02,853 INFO sqlalchemy.engine.Engine [no key 0.00010s] {'role_code': 'tester', 'perm_code': 'sds_doc_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 853838), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 853841)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00010s] {'role_code': 'tester', 'perm_code': 'sds_doc_view', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 853838), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 853841)}
+2026-04-24 10:48:02,854 INFO sqlalchemy.engine.Engine COMMIT
+INFO:sqlalchemy.engine.Engine:COMMIT
+INFO:__main__:init: usr row: {'name': 'master', 'nick_name': 'master', 'pwd': '96f3d222b10ef89707fd64bf16f35da7', 'pwd_sk': '#20260424.104802', 'role_code': 'root'}
+2026-04-24 10:48:02,855 INFO sqlalchemy.engine.Engine BEGIN (implicit)
+INFO:sqlalchemy.engine.Engine:BEGIN (implicit)
+2026-04-24 10:48:02,856 INFO sqlalchemy.engine.Engine INSERT INTO usr (name, pwd, pwd_sk, nick_name, role_code, create_time, update_time) VALUES (%(name)s, %(pwd)s, %(pwd_sk)s, %(nick_name)s, %(role_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING usr.id
+INFO:sqlalchemy.engine.Engine:INSERT INTO usr (name, pwd, pwd_sk, nick_name, role_code, create_time, update_time) VALUES (%(name)s, %(pwd)s, %(pwd_sk)s, %(nick_name)s, %(role_code)s, %(create_time)s, %(update_time)s) ON CONFLICT DO NOTHING RETURNING usr.id
+2026-04-24 10:48:02,856 INFO sqlalchemy.engine.Engine [no key 0.00016s] {'name': 'master', 'pwd': '96f3d222b10ef89707fd64bf16f35da7', 'pwd_sk': '#20260424.104802', 'nick_name': 'master', 'role_code': 'root', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 856021), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 856025)}
+INFO:sqlalchemy.engine.Engine:[no key 0.00016s] {'name': 'master', 'pwd': '96f3d222b10ef89707fd64bf16f35da7', 'pwd_sk': '#20260424.104802', 'nick_name': 'master', 'role_code': 'root', 'create_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 856021), 'update_time': datetime.datetime(2026, 4, 24, 10, 48, 2, 856025)}
+INFO:sqlalchemy.engine.Engine:COMMIT
+2026-04-24 10:48:02,856 INFO sqlalchemy.engine.Engine COMMIT
+INFO:src.utils.i18n:src-res/i18n/lang/zh-CN.json
+INFO:src.utils.i18n:src-res/i18n/lang/en-US.json
+INFO:dotenv.main:Python-dotenv could not find configuration file .env.
+INFO:     Uvicorn running on http://0.0.0.0:80 (Press CTRL+C to quit)
+2026-04-24 10:48:06,120 INFO [config.py.585]: Uvicorn running on http://0.0.0.0:80 (Press CTRL+C to quit)
+2026-04-24 10:48:06,121 INFO [multiprocess.py.53]: Started parent process [1]
+INFO:     Started parent process [1]
+INFO:src.utils.i18n:src-res/i18n/lang/zh-CN.json
+INFO:src.utils.i18n:src-res/i18n/lang/en-US.json
+INFO:dotenv.main:Python-dotenv could not find configuration file .env.
+INFO:src.utils.i18n:src-res/i18n/lang/zh-CN.json
+INFO:src.utils.i18n:src-res/i18n/lang/en-US.json
+INFO:src.utils.i18n:src-res/i18n/lang/zh-CN.json
+INFO:src.utils.i18n:src-res/i18n/lang/zh-CN.json
+INFO:src.utils.i18n:src-res/i18n/lang/en-US.json
+INFO:src.utils.i18n:src-res/i18n/lang/en-US.json
+INFO:dotenv.main:Python-dotenv could not find configuration file .env.
+INFO:dotenv.main:Python-dotenv could not find configuration file .env.
+INFO:dotenv.main:Python-dotenv could not find configuration file .env.
+INFO:     Started server process [41]
+2026-04-24 10:48:12,240 INFO [server.py.75]: Started server process [41]
+INFO:     Waiting for application startup.
+2026-04-24 10:48:12,241 INFO [on.py.47]: Waiting for application startup.
+INFO:     Application startup complete.
+2026-04-24 10:48:12,242 INFO [on.py.61]: Application startup complete.
+INFO:     Started server process [38]
+2026-04-24 10:48:12,286 INFO [server.py.75]: Started server process [38]
+2026-04-24 10:48:12,287 INFO [on.py.47]: Waiting for application startup.
+INFO:     Waiting for application startup.
+2026-04-24 10:48:12,288 INFO [on.py.61]: Application startup complete.
+INFO:     Application startup complete.
+INFO:     Started server process [40]
+2026-04-24 10:48:12,413 INFO [server.py.75]: Started server process [40]
+2026-04-24 10:48:12,413 INFO [on.py.47]: Waiting for application startup.
+INFO:     Waiting for application startup.
+2026-04-24 10:48:12,414 INFO [on.py.61]: Application startup complete.
+INFO:     Application startup complete.
+INFO:     Started server process [39]
+2026-04-24 10:48:12,505 INFO [server.py.75]: Started server process [39]
+INFO:     Waiting for application startup.
+2026-04-24 10:48:12,505 INFO [on.py.47]: Waiting for application startup.
+2026-04-24 10:48:12,506 INFO [on.py.61]: Application startup complete.
+INFO:     Application startup complete.

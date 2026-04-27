@@ -15,16 +15,15 @@ enum DlgTypes {
     menu = "menu",
 }
 
-const transformMenus = (menus: any, perms: any, openKeys: string[]) => {
+const transformMenus = (menus: any, perms: any) => {
     const newMenus = menus.map((munu: any) => {
             if (!munu.children) {
                 return munu;
             }
-            const children = transformMenus(munu.children, perms, openKeys);
+            const children = transformMenus(munu.children, perms);
             if (children.length == 0){
                 return null;
             }
-            openKeys.push(munu.key);
             return {
                 ...munu,
                 children,
@@ -44,6 +43,20 @@ const findFirstLeaf = (menus: any)=>{
         }
     }
 }
+
+const findParentKeyByChild = (menus: any, targetKey: string, parentKey?: string): string | undefined => {
+    for (const menu of menus) {
+        if (menu.key === targetKey) {
+            return parentKey;
+        }
+        if (menu.children) {
+            const key = findParentKeyByChild(menu.children, targetKey, menu.key);
+            if (key) {
+                return key;
+            }
+        }
+    }
+};
 
 const HomeMenu = ({ className, items, openKeys, selectedKeys, onClick, dispatchFn }: any) => {
     const { i18n } = useTranslation();
@@ -309,9 +322,11 @@ export default () => {
     useEffect(() => {
         if (user.id) {
             const role_perms = new Set(user.role_perms || []);
-            const openKeys = [] as any;
-            const menus = transformMenus(MENUS, role_perms, openKeys);
-            dispatch({ menus, openKeys });
+            const menus = transformMenus(MENUS, role_perms);
+            const selectedKey = data.menuSelectedKey ?? data.path;
+            const parentKey = selectedKey ? findParentKeyByChild(menus, selectedKey) : undefined;
+            // 初始化时仅展开当前菜单所属父级，若为一级菜单则全部收起
+            dispatch({ menus, openKeys: parentKey ? [parentKey] : [] });
             if (menus.length > 0) {
                 const leaf = findFirstLeaf(menus) as any;
                 if ((!data.path || data.path === "/") && leaf) {
@@ -319,7 +334,7 @@ export default () => {
                 }
             }
         }
-    }, [user, i18n.language]);
+    }, [user, i18n.language, data.menuSelectedKey, data.path]);
 
     if (data.loadingUser) {
         return <Loading />;
@@ -361,16 +376,18 @@ export default () => {
                 placement="left"
                 open={data.dlgType === DlgTypes.menu}
                 onClose={() => dispatch({ dlgType: null })}>
-                <HomeMenu
-                    items={data.menus}
-                    openKeys={data.openKeys}
-                    selectedKeys={[data.menuSelectedKey ?? data.path]}
-                    dispatchFn={dispatch}
-                    onClick={(e: any) => {
-                        dispatch({ dlgType: null });
-                        navigate(e.key);
-                    }}
-                />
+                {data.dlgType === DlgTypes.menu && (
+                    <HomeMenu
+                        items={data.menus}
+                        openKeys={data.openKeys}
+                        selectedKeys={[data.menuSelectedKey ?? data.path]}
+                        dispatchFn={dispatch}
+                        onClick={(e: any) => {
+                            dispatch({ dlgType: null });
+                            navigate(e.key);
+                        }}
+                    />
+                )}
             </Drawer>
         </div>
     );
