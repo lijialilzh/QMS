@@ -10,7 +10,7 @@ import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiSrsDoc from "@/api/ApiSrsDoc";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 
-const pageSizeOptions = [10, 20, 50];
+const pageSizeOptions = [20, 50, 100];
 
 enum DlgTypes {
     delete = "delete",
@@ -142,7 +142,47 @@ export default () => {
         versionOptions: [] as { value: string; label: string }[],
         importSrsDocList: [] as any[],
         importFiles: [],
+        editingFileNoId: 0,
+        editingFileNoValue: "",
+        savingFileNoId: 0,
+        exportingId: 0,
     });
+
+    const handleStartEditFileNo = (row: any) => {
+        dispatch({
+            editingFileNoId: row.id,
+            editingFileNoValue: row.file_no || "",
+        });
+    };
+
+    const handleSaveFileNo = async (row: any) => {
+        if (!data.editingFileNoId || data.editingFileNoId !== row.id) return;
+        if (data.savingFileNoId === row.id) return;
+        const nextFileNo = (data.editingFileNoValue || "").trim();
+        const currentFileNo = (row.file_no || "").trim();
+        if (nextFileNo === currentFileNo) {
+            dispatch({ editingFileNoId: 0, editingFileNoValue: "", savingFileNoId: 0 });
+            return;
+        }
+
+        dispatch({ savingFileNoId: row.id });
+        try {
+            const res: any = await Api.update_sds_doc_file_no({ id: row.id, file_no: nextFileNo });
+            if (res.code === Api.C_OK) {
+                const rows = (data.rows || []).map((item: any) => (
+                    item.id === row.id ? { ...item, file_no: nextFileNo } : item
+                ));
+                dispatch({ rows, editingFileNoId: 0, editingFileNoValue: "", savingFileNoId: 0 });
+                message.success("文件编号已保存");
+            } else {
+                dispatch({ savingFileNoId: 0 });
+                message.error(res.msg || "保存失败");
+            }
+        } catch (_err) {
+            dispatch({ savingFileNoId: 0 });
+            message.error("保存失败");
+        }
+    };
 
     const productId = Form.useWatch("product_id", queryForm);
     useEffect(() => {
@@ -267,6 +307,21 @@ export default () => {
         });
     };
 
+    const handleExport = async (row: any) => {
+        if (data.exportingId === row.id) return;
+        dispatch({ exportingId: row.id });
+        try {
+            const res: any = await Api.export_sds_doc({ id: row.id });
+            if (res.code !== Api.C_OK) {
+                message.error(res.msg || "导出失败");
+            }
+        } catch (_err) {
+            message.error("导出失败");
+        } finally {
+            dispatch({ exportingId: 0 });
+        }
+    };
+
     const columns = [
         {
             title: ts("product.name"),
@@ -287,6 +342,33 @@ export default () => {
         {
             title: ts("sds_doc.file_no"),
             dataIndex: "file_no",
+            render: (value: string, row: any) => {
+                const isEditing = data.editingFileNoId === row.id;
+                const isSaving = data.savingFileNoId === row.id;
+                if (isEditing) {
+                    return (
+                        <Input
+                            autoFocus
+                            size="small"
+                            value={data.editingFileNoValue}
+                            disabled={isSaving}
+                            onChange={(e) => dispatch({ editingFileNoValue: e.target.value })}
+                            onBlur={() => handleSaveFileNo(row)}
+                            onPressEnter={() => handleSaveFileNo(row)}
+                            placeholder="请输入文件编号"
+                            style={{ width: 220 }}
+                        />
+                    );
+                }
+                return (
+                    <span
+                        style={{ cursor: "text", display: "inline-block", minWidth: 80 }}
+                        title="单击编辑文件编号"
+                        onClick={() => handleStartEditFileNo(row)}>
+                        {value || "-"}
+                    </span>
+                );
+            },
         },
         {
             title: ts("sds_doc.change_log"),
@@ -303,6 +385,13 @@ export default () => {
                     <Space>
                         <Button type="link" size="small" onClick={() => navigate(`/sds_docs/view/${row.id}`)}>
                             {ts("view")}
+                        </Button>
+                        <Button
+                            type="link"
+                            size="small"
+                            loading={data.exportingId === row.id}
+                            onClick={() => handleExport(row)}>
+                            {ts("export")}
                         </Button>
                         <Button type="link" size="small" onClick={() => handleCopy(row)}>
                             {ts("sds_doc.copy")}
@@ -327,7 +416,7 @@ export default () => {
 
     return (
         <div className="page div-v">
-            <div className="div-h searchbar">
+            <div className="div-h searchbar list-searchbar-align">
                 <Form
                     form={queryForm}
                     className="expand"
@@ -336,7 +425,7 @@ export default () => {
                     }}>
                     <Row gutter={20}>
                         <Col>
-                            <Form.Item label={ts("product.product")} name="product_id">
+                            <Form.Item label={ts("srs_doc.select_product")} name="product_id">
                                 <ProductVersionSelect
                                     products={data.products}
                                     allowClear

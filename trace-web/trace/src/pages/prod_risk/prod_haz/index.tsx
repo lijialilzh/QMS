@@ -1,4 +1,4 @@
-import { Form, Button, Table, message, Row, Col, Modal, Select, Input, Tag, Tooltip } from "antd";
+import { Form, Button, Table, message, Row, Col, Modal, Select, Input, Tag } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -12,7 +12,7 @@ import EditDlg from "./EditDlg";
 import "./index.less";
 
 
-const pageSizeOptions = [10, 20, 50];
+const pageSizeOptions = [20, 50, 100];
 
 enum DlgTypes {
     add = "add",
@@ -77,24 +77,14 @@ export default () => {
     };
 
     const renderRiskTip = (row: any, type: "init" | "cur") => {
-        const rateTxt = (type === "init" ? HAZDICT_RATES[row.init_rate] : HAZDICT_RATES[row.cur_rate]) ?? "";
-        const degreeTxt = (type === "init" ? HAZDICT_DEGREES[row.init_degree] : HAZDICT_DEGREES[row.cur_degree]) ?? "";
-        const levelTxt = (type === "init" ? HAZDICT_LEVELS[row.init_level] : HAZDICT_LEVELS[row.cur_level]) ?? "";
+        const rateTxt = (type === "init" ? HAZDICT_RATES[row.init_rate] ?? row.init_rate : HAZDICT_RATES[row.cur_rate] ?? row.cur_rate) ?? "";
+        const degreeTxt = (type === "init" ? HAZDICT_DEGREES[row.init_degree] ?? row.init_degree : HAZDICT_DEGREES[row.cur_degree] ?? row.cur_degree) ?? "";
+        const levelTxt = (type === "init" ? HAZDICT_LEVELS[row.init_level] ?? row.init_level : HAZDICT_LEVELS[row.cur_level] ?? row.cur_level) ?? "";
+        const tipText = `概率：${rateTxt}\n程度：${degreeTxt}\n危险水平：${levelTxt}`;
         return (
-            <Tooltip
-                title={
-                    <div className="tip">
-                        <div>概率：{rateTxt}</div>
-                        <div>程度：{degreeTxt}</div>
-                        <div>危险水平：{levelTxt}</div>
-                    </div>
-                }>
-                <div>
-                    <div>概率：{rateTxt}</div>
-                    <div>程度：{degreeTxt}</div>
-                    <div>危险水平：{levelTxt}</div>
-                </div>
-            </Tooltip>
+            <div title={tipText}>
+                概率：{rateTxt} 程度：{degreeTxt} 危险水平：{levelTxt}
+            </div>
         );
     };
 
@@ -383,7 +373,7 @@ export default () => {
 
     return (
         <div className="page div-v prod_haz">
-            <div className="div-h searchbar">
+            <div className="div-h searchbar list-searchbar-align">
                 <Form
                     form={queryForm}
                     className="expand"
@@ -392,7 +382,7 @@ export default () => {
                     }}>
                     <Row gutter={10}>
                         <Col>
-                            <Form.Item label={ts("product.product")} name="prod_id">
+                            <Form.Item label={ts("srs_doc.select_product")} name="prod_id">
                                 <ProductVersionSelect
                                     products={data.products}
                                     allowClear

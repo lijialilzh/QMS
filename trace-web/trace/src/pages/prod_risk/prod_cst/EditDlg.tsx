@@ -8,7 +8,7 @@ import { useData } from "@/common";
 import * as ApiCst from "@/api/ApiCst";
 import * as ApiProdCst from "@/api/ApiProdCst";
 
-const pageSizeOptions = [10, 20, 50];
+const pageSizeOptions = [20, 50, 100];
 
 export default ({ prod_id, isOpen, onClose }: any) => {
     const { t: ts } = useTranslation();

@@ -1,4 +1,4 @@
-import { Form, Input, Button, Table, message, Row, Col, Modal, Select, Upload } from "antd";
+import { Form, Input, Button, Table, message, Row, Col, Modal, Select, Upload, Space } from "antd";
 import { SearchOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -10,7 +10,7 @@ import * as ApiProduct from "@/api/ApiProduct";
 import TestCases from "./TestCases";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 
-const pageSizeOptions = [10, 20, 50];
+const pageSizeOptions = [20, 50, 100];
 
 enum DlgTypes {
     add = "add",
@@ -203,7 +203,7 @@ export default () => {
             title: ts("action"),
             render: (_value: any, row: any) => {
                 return (
-                    <div>
+                    <Space wrap>
                         <Button type="link" onClick={() => dispatch({ dlgType: DlgTypes.edit, targetRow: row })}>
                             {ts("edit")}
                         </Button>
@@ -227,7 +227,7 @@ export default () => {
                             }}>
                             {ts("test_set.export_test_cases")}
                         </Button>
-                    </div>
+                    </Space>
                 );
             },
         },
@@ -241,7 +241,7 @@ export default () => {
 
     return (
         <div className="page div-v">
-            <div className="div-h searchbar">
+            <div className="div-h searchbar list-searchbar-align">
                 <Form
                     form={queryForm}
                     className="expand"
@@ -250,7 +250,7 @@ export default () => {
                     }}>
                     <Row gutter={10}>
                         <Col>
-                            <Form.Item label={ts("product.product")} name="product_id">
+                            <Form.Item label={ts("srs_doc.select_product")} name="product_id">
                                 <ProductVersionSelect
                                     products={data.products}
                                     allowClear
@@ -323,10 +323,11 @@ export default () => {
             />
             <Modal
                 width="95%"
-                title={`${ts("test_set.test_cases")}: ${data.targetRow.product_name}-${data.targetRow.product_version}/${data.targetRow.stage}`}
+                title={data.targetRow.stage || ""}
                 open={data.dlgType === DlgTypes.test_cases}
                 maskClosable={false}
                 footer={null}
+                destroyOnClose
                 onCancel={() => dispatch({ dlgType: null })}>
                 <TestCases set_id={data.targetRow.id} />
             </Modal>

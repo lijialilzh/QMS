@@ -9,7 +9,7 @@ import * as Api from "@/api/ApiProdRcm";
 import { doSearchProducts } from "../util";
 import EditDlg from "./EditDlg";
 
-const pageSizeOptions = [10, 20, 50];
+const pageSizeOptions = [20, 50, 100];
 
 enum DlgTypes {
     add = "add",
@@ -127,7 +127,7 @@ export default () => {
 
     return (
         <div className="page div-v">
-            <div className="div-h searchbar">
+            <div className="div-h searchbar list-searchbar-align">
                 <Form
                     form={queryForm}
                     className="expand"
@@ -136,7 +136,7 @@ export default () => {
                     }}>
                     <Row gutter={10}>
                         <Col>
-                            <Form.Item label={ts("product.product")} name="prod_id">
+                            <Form.Item label={ts("srs_doc.select_product")} name="prod_id">
                                 <ProductVersionSelect
                                     products={data.products}
                                     allowClear

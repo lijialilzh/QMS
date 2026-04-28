@@ -1,5 +1,5 @@
 import "./Products.less";
-import { Form, Input, Button, Table, message, Row, Col, Modal, Select } from "antd";
+import { Form, Input, Button, Table, message, Row, Col, Modal, Select, Space } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -8,7 +8,7 @@ import { renderOneLineWithTooltip, useData } from "@/common";
 import * as Api from "@/api/ApiProduct";
 import * as ApiProject from "@/api/ApiProject";
 
-const pageSizeOptions = [10, 20, 50];
+const pageSizeOptions = [20, 50, 100];
 
 enum DlgTypes {
     add = "add",
@@ -269,100 +269,100 @@ export default () => {
         {
             title: ts("product.name"),
             dataIndex: "name",
-            width: 130,
+            width: 110,
             ellipsis: true,
             render: (value: any) => renderOneLineWithTooltip(value),
         },
         {
             title: ts("product.country"),
             dataIndex: "country",
-            width: 65,
+            width: 45,
             ellipsis: true,
             render: (value: any) => renderOneLineWithTooltip(value),
         },
         {
             title: ts("product.category"),
             dataIndex: "category",
-            width: 70,
+            width: 55,
             ellipsis: true,
             render: (value: any) => renderOneLineWithTooltip(value),
         },
         {
             title: ts("product.type_code"),
             dataIndex: "type_code",
-            width: 95,
+            width: 75,
             ellipsis: true,
             render: (value: any) => renderOneLineWithTooltip(value),
         },
         {
             title: ts("product.full_version"),
             dataIndex: "full_version",
-            width: 70,
+            width: 60,
             ellipsis: true,
             render: (value: any) => renderOneLineWithTooltip(value),
         },
         {
             title: ts("product.release_version"),
             dataIndex: "release_version",
-            width: 60,
+            width: 50,
             ellipsis: true,
             render: (value: any) => renderOneLineWithTooltip(value),
         },
         {
             title: ts("product.udi"),
             dataIndex: "udi",
-            width: 145,
+            width: 110,
             ellipsis: true,
             render: (value: any) => renderOneLineWithTooltip(value),
         },
         {
             title: "产品代码",
             dataIndex: "product_code",
-            width: 60,
+            width: 50,
             ellipsis: true,
             render: (value: any) => renderOneLineWithTooltip(value),
         },
         {
             title: ts("product.scope"),
             dataIndex: "scope",
-            width: 145,
+            width: 90,
             ellipsis: true,
             render: (value: any) => renderOneLineWithTooltip(value),
         },
         {
             title: ts("product.component"),
             dataIndex: "component",
-            width: 145,
+            width: 90,
             ellipsis: true,
             render: (value: any) => renderOneLineWithTooltip(value),
         },
         {
             title: ts("product.note"),
             dataIndex: "note",
-            width: 90,
+            width: 70,
             ellipsis: true,
             render: (value: any) => renderOneLineWithTooltip(value),
         },
         {
             title: ts("create_time"),
             dataIndex: "create_time",
-            width: 95,
+            width: 80,
             ellipsis: true,
             render: (value: any) => renderOneLineWithTooltip(value),
         },
         {
             title: ts("action"),
-            width: 85,
+            width: 110,
             render: (_value: any, row: any) => {
                 return (
-                    <div>
-                        <Button type="link" onClick={() => dispatch({ dlgType: DlgTypes.edit, targetRow: row })}>
+                    <Space>
+                        <Button type="link" size="small" onClick={() => dispatch({ dlgType: DlgTypes.edit, targetRow: row })}>
                             {ts("edit")}
                         </Button>
-                        <Button type="link" danger onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
+                        <Button type="link" size="small" danger onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
                             {ts("delete")}
                         </Button>
-                    </div>
+                    </Space>
                 );
             },
         },
@@ -375,7 +375,7 @@ export default () => {
 
     return (
         <div className="page div-v product">
-            <div className="div-h searchbar">
+            <div className="div-h searchbar list-searchbar-align">
                 <Form
                     form={queryForm}
                     className="expand"

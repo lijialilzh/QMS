@@ -1,12 +1,12 @@
-import { Form, Input, Button, Table, message, Row, Col, Modal, Upload } from "antd";
+import { Form, Input, Button, Table, message, Row, Col, Modal, Upload, Space } from "antd";
 import { SearchOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
-import { useData } from "@/common";
+import { renderOneLineWithTooltip, useData } from "@/common";
 import * as Api from "@/api/ApiRcm";
 
-const pageSizeOptions = [10, 20, 50];
+const pageSizeOptions = [20, 50, 100];
 
 enum DlgTypes {
     add = "add",
@@ -185,35 +185,51 @@ export default () => {
         {
             title: ts("rcm.code"),
             dataIndex: "code",
+            width: 90,
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value, { emptyText: "" }),
         },
         {
             title: ts("rcm.description"),
             dataIndex: "description",
+            width: 260,
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value, { emptyText: "" }),
         },
         {
             title: ts("rcm.proof"),
             dataIndex: "proof",
+            width: 160,
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value, { emptyText: "" }),
         },
         {
             title: ts("rcm.note"),
             dataIndex: "note",
+            width: 120,
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value, { emptyText: "" }),
         },
         {
             title: ts("create_time"),
             dataIndex: "create_time",
+            width: 130,
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value, { emptyText: "" }),
         },
         {
             title: ts("action"),
+            width: 100,
             render: (_value: any, row: any) => {
                 return (
-                    <div>
+                    <Space>
                         <Button type="link" onClick={() => dispatch({ dlgType: DlgTypes.edit, targetRow: row })}>
                             {ts("edit")}
                         </Button>
                         <Button type="link" danger onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
                             {ts("delete")}
                         </Button>
-                    </div>
+                    </Space>
                 );
             },
         },
@@ -226,7 +242,7 @@ export default () => {
 
     return (
         <div className="page div-v">
-            <div className="div-h searchbar">
+            <div className="div-h searchbar list-searchbar-align">
                 <Form
                     form={queryForm}
                     className="expand"
@@ -285,6 +301,8 @@ export default () => {
             </div>
             <Table
                 className="expand"
+                tableLayout="fixed"
+                sticky
                 rowSelection={{
                     selectedRowKeys: data.selectedRowKeys || [],
                     onChange: (keys: any) => dispatch({ selectedRowKeys: keys }),

@@ -1,5 +1,5 @@
 import "./Roles.less";
-import { Form, Input, Button, Table, message, Row, Col, Modal, Checkbox } from "antd";
+import { Form, Input, Button, Table, message, Row, Col, Modal, Checkbox, Space } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import { useEffect, useMemo } from "react";
 import { sprintf } from "sprintf-js";
@@ -8,7 +8,7 @@ import { useData } from "@/common";
 import { Root, useSelector } from "@/store";
 import * as Api from "@/api/ApiRole";
 
-const pageSizeOptions = [10, 20, 50];
+const pageSizeOptions = [20, 50, 100];
 
 const ROOT = "root";
 
@@ -137,6 +137,7 @@ const RoleDlg = ({ data, dispatch, onSaved }: any) => {
     return (
         <Modal
             centered
+            width={760}
             title={data.dlgType === DlgTypes.add ? ts("add") : ts("edit")}
             open={data.dlgType === DlgTypes.add || data.dlgType === DlgTypes.edit}
             maskClosable={false}
@@ -165,44 +166,34 @@ const RoleDlg = ({ data, dispatch, onSaved }: any) => {
                             }}>
                             {ts("select_all")}
                         </Checkbox>
-                        <div className="perm_scope_table_wrap">
-                            <table className="perm_scope_table">
-                                <thead>
-                                    <tr>
-                                        {moduleRows.map((item) => (
-                                            <th key={item.moduleName}>{item.moduleName}</th>
-                                        ))}
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr>
-                                        {moduleRows.map((item) => {
-                                            const checked = item.codes.length > 0 && item.codes.every((code) => (data.targetRow.role_perms || []).includes(code));
-                                            const disabled = data.targetRow.code === ROOT || item.codes.length === 0;
-                                            return (
-                                                <td key={item.moduleName}>
-                                                    <Checkbox
-                                                        checked={checked}
-                                                        disabled={disabled}
-                                                        onChange={(e) => {
-                                                            const current = new Set(data.targetRow.role_perms || []);
-                                                            if (e.target.checked) {
-                                                                item.codes.forEach((code) => current.add(code));
-                                                            } else {
-                                                                item.codes.forEach((code) => {
-                                                                    if (!fixedPerms.has(code)) current.delete(code);
-                                                                });
-                                                            }
-                                                            const merged = Array.from(new Set([...Array.from(current), ...Array.from(fixedPerms)]));
-                                                            dispatch({ targetRow: { ...data.targetRow, role_perms: merged } });
-                                                        }}
-                                                    />
-                                                </td>
-                                            );
-                                        })}
-                                    </tr>
-                                </tbody>
-                            </table>
+                        <div className="perm_scope_grid">
+                            {moduleRows.map((item) => {
+                                const checked = item.codes.length > 0 && item.codes.every((code) => (data.targetRow.role_perms || []).includes(code));
+                                const disabled = data.targetRow.code === ROOT || item.codes.length === 0;
+                                return (
+                                    <div key={item.moduleName} className="perm_scope_card">
+                                        <div className="perm_scope_card_title">{item.moduleName}</div>
+                                        <div className="perm_scope_card_check">
+                                            <Checkbox
+                                                checked={checked}
+                                                disabled={disabled}
+                                                onChange={(e) => {
+                                                    const current = new Set(data.targetRow.role_perms || []);
+                                                    if (e.target.checked) {
+                                                        item.codes.forEach((code) => current.add(code));
+                                                    } else {
+                                                        item.codes.forEach((code) => {
+                                                            if (!fixedPerms.has(code)) current.delete(code);
+                                                        });
+                                                    }
+                                                    const merged = Array.from(new Set([...Array.from(current), ...Array.from(fixedPerms)]));
+                                                    dispatch({ targetRow: { ...data.targetRow, role_perms: merged } });
+                                                }}
+                                            />
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
                         <div className="perm_scope_tip">
                             仅展示导航模块权限范围，不展示查看/编辑等子权限项。
@@ -309,11 +300,11 @@ export default () => {
             title: ts("action"),
             render: (_value: any, row: any) => {
                 return (
-                    <div>
+                    <Space>
                         <Button type="link" onClick={() => dispatch({ dlgType: DlgTypes.edit, targetRow: row })}>
                             权限范围
                         </Button>
-                    </div>
+                    </Space>
                 );
             },
         },
@@ -326,7 +317,7 @@ export default () => {
 
     return (
         <div className="page div-v">
-            <div className="div-h searchbar">
+            <div className="div-h searchbar list-searchbar-align">
                 <Form
                     form={queryForm}
                     className="expand"

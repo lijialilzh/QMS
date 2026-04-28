@@ -102,6 +102,40 @@ const App = () => {
         dispatch({ antLocale: ANT_LOCALES[i18n.language] });
         document.title = ts("html_title");
     }, [i18n.language]);
+
+    useEffect(() => {
+        let rafId = 0;
+        const setTableCellTitle = () => {
+            const cells = document.querySelectorAll<HTMLElement>(".ant-table-tbody td.ant-table-cell");
+            cells.forEach((cell) => {
+                // 交互控件单元格不加 title，避免遮挡点击
+                if (cell.querySelector("input, textarea, button, .ant-btn, .ant-select, .ant-picker, .ant-switch, .ant-checkbox")) {
+                    cell.removeAttribute("title");
+                    return;
+                }
+                const text = (cell.textContent || "").replace(/\s+/g, " ").trim();
+                if (text) {
+                    cell.setAttribute("title", text);
+                } else {
+                    cell.removeAttribute("title");
+                }
+            });
+        };
+
+        const schedule = () => {
+            if (rafId) cancelAnimationFrame(rafId);
+            rafId = requestAnimationFrame(setTableCellTitle);
+        };
+
+        schedule();
+        const observer = new MutationObserver(schedule);
+        observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+        return () => {
+            if (rafId) cancelAnimationFrame(rafId);
+            observer.disconnect();
+        };
+    }, []);
+
     return (
         <Provider store={store}>
             <ConfigProvider locale={data.antLocale}>

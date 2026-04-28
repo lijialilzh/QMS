@@ -3,6 +3,7 @@ import re
 import sys
 from typing import List, Tuple, Union
 from sqlalchemy import select, func, or_, and_
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import desc
 from ..obj.vobj_user import UserObj
 from ..obj.node import Node
@@ -37,6 +38,41 @@ NAME_DICT = {
 }
 
 class Server(object):
+    def __ensure_sds_traces(self, prod_id: int = None, doc_id: int = None):
+        if not prod_id and not doc_id:
+            return
+        try:
+            sql_docs = select(SdsDoc.id, SdsDoc.srsdoc_id).join(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id)
+            if doc_id:
+                sql_docs = sql_docs.where(SdsDoc.id == doc_id)
+            if prod_id:
+                sql_docs = sql_docs.where(SrsDoc.product_id == prod_id)
+            docs = db.session.execute(sql_docs).all()
+            for sds_doc_id, srs_doc_id in docs:
+                reqs = db.session.execute(
+                    select(SrsReq.id, SrsReq.code, SrsReq.module, SrsReq.function)
+                    .where(SrsReq.doc_id == srs_doc_id)
+                    .where(SrsReq.type_code != "reqd")
+                ).all()
+                if not reqs:
+                    continue
+                values = []
+                for req_id, code, module, function in reqs:
+                    values.append(
+                        dict(
+                            doc_id=sds_doc_id,
+                            req_id=req_id,
+                            sds_code=(code or "").replace("SRS", "SDS"),
+                            chapter=function or module or "/",
+                        )
+                    )
+                if values:
+                    db.session.execute(pg_insert(SdsTrace).values(values).on_conflict_do_nothing())
+            db.session.commit()
+        except Exception:
+            logger.exception("ensure_sds_traces_failed")
+            db.session.rollback()
+
     @staticmethod
     def __normalize_name(value: str):
         txt = (value or "").strip()
@@ -225,6 +261,7 @@ class Server(object):
                         or (name in label_norms)
                         or (merged_norm == name)
                         or (name in merged_norm)
+                        or (merged_norm in name)
                     )
                     for name in names or []
                 )
@@ -347,6 +384,7 @@ class Server(object):
     async def list_sds_trace(self, op_user: UserObj, prod_id: int = None, doc_id: int = None, type_code: str = None, page_index: int = 0, page_size: int = 10):
         page_index = page_index if page_index >= 0 else 0
         page_size = page_size if page_size > 0 else 10 
+        self.__ensure_sds_traces(prod_id=prod_id, doc_id=doc_id)
 
         sql = select(SdsTrace, SrsReq, SrsType, SdsDoc, SrsDoc, Product)
         sql = sql.outerjoin(SrsType, SrsReq.type_code == SrsType.type_code)
@@ -399,6 +437,13 @@ class Server(object):
                 exact_names = self.__build_match_names(row_req.sub_function, row_req.function, row_req.module)
                 for name in exact_names:
                     paths, _ = self.__find_path_by_names(0, [name], doc_tree, [], exact_only=True)
+                    if paths:
+                        break
+            # 严格匹配失败时，回退到模糊匹配，兼容“安装包” vs “制作安装包”等命名差异
+            if not paths:
+                fuzzy_names = self.__build_match_names(row_req.sub_function, row_req.function, row_req.module)
+                for name in fuzzy_names:
+                    paths, _ = self.__find_path_by_names(0, [name], doc_tree, [], exact_only=False)
                     if paths:
                         break
             # 详细设计树中未命中路径则不展示

@@ -1551,7 +1551,7 @@ export default () => {
     return (
         <div className="page div-v srs-manage">
             {/* 搜索框 */}
-            <div className="div-h searchbar">
+            <div className="div-h searchbar list-searchbar-align">
                 <Form 
                     form={editForm} 
                     className="expand"
@@ -1604,7 +1604,7 @@ export default () => {
             <div className="div-v detail-content">
 
                 {/* 主表格 */}
-<div className="doc-section">
+<div className="doc-section srs-main-table-section">
 <div className="doc-section-header">
     <div className="srs-table-title">
                             {ts("srs_doc.srs_table") || "SRS表"}
@@ -1624,6 +1624,7 @@ export default () => {
                             dataSource={data.mainTableData} 
                             columns={mainColumns}
                             rowKey="key"
+                            bordered
                             pagination={false}
                             loading={data.loading}
                         />
@@ -1695,6 +1696,7 @@ export default () => {
                                     dataSource={table.data} 
                                     columns={buildChangeColumns(table.id)}
                                     rowKey="key"
+                                    bordered
                                     pagination={false}
                                     loading={data.loading}
                                 />
@@ -1724,6 +1726,7 @@ export default () => {
                             dataSource={data.otherReqData} 
                             columns={otherColumns}
                             rowKey="key"
+                            bordered
                             pagination={false}
                             loading={data.loading}
                         />

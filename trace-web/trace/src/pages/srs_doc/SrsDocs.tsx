@@ -9,7 +9,7 @@ import * as Api from "@/api/ApiSrsDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 
-const pageSizeOptions = [10, 20, 50];
+const pageSizeOptions = [20, 50, 100];
 
 enum DlgTypes {
     delete = "delete",
@@ -31,7 +31,47 @@ export default () => {
         products: [],
         versionOptions: [] as { value: string; label: string }[],
         importFiles: [],
+        editingFileNoId: 0,
+        editingFileNoValue: "",
+        savingFileNoId: 0,
+        exportingId: 0,
     });
+
+    const handleStartEditFileNo = (row: any) => {
+        dispatch({
+            editingFileNoId: row.id,
+            editingFileNoValue: row.file_no || "",
+        });
+    };
+
+    const handleSaveFileNo = async (row: any) => {
+        if (!data.editingFileNoId || data.editingFileNoId !== row.id) return;
+        if (data.savingFileNoId === row.id) return;
+        const nextFileNo = (data.editingFileNoValue || "").trim();
+        const currentFileNo = (row.file_no || "").trim();
+        if (nextFileNo === currentFileNo) {
+            dispatch({ editingFileNoId: 0, editingFileNoValue: "", savingFileNoId: 0 });
+            return;
+        }
+
+        dispatch({ savingFileNoId: row.id });
+        try {
+            const res: any = await Api.update_srs_doc_file_no({ id: row.id, file_no: nextFileNo });
+            if (res.code === Api.C_OK) {
+                const rows = (data.rows || []).map((item: any) => (
+                    item.id === row.id ? { ...item, file_no: nextFileNo } : item
+                ));
+                dispatch({ rows, editingFileNoId: 0, editingFileNoValue: "", savingFileNoId: 0 });
+                message.success("文件编号已保存");
+            } else {
+                dispatch({ savingFileNoId: 0 });
+                message.error(res.msg || "保存失败");
+            }
+        } catch (_err) {
+            dispatch({ savingFileNoId: 0 });
+            message.error("保存失败");
+        }
+    };
 
     useEffect(() => {
         ApiProduct.list_product({ page_index: 0, page_size: 1000 }).then((res: any) => {
@@ -149,6 +189,21 @@ export default () => {
         });
     };
 
+    const handleExport = async (row: any) => {
+        if (data.exportingId === row.id) return;
+        dispatch({ exportingId: row.id });
+        try {
+            const res: any = await Api.export_srs_doc({ id: row.id });
+            if (res.code !== Api.C_OK) {
+                message.error(res.msg || "导出失败");
+            }
+        } catch (_err) {
+            message.error("导出失败");
+        } finally {
+            dispatch({ exportingId: 0 });
+        }
+    };
+
     const columns = [
         {
             title: ts("product.name"),
@@ -165,6 +220,33 @@ export default () => {
         {
             title: ts("srs_doc.file_no"),
             dataIndex: "file_no",
+            render: (value: string, row: any) => {
+                const isEditing = data.editingFileNoId === row.id;
+                const isSaving = data.savingFileNoId === row.id;
+                if (isEditing) {
+                    return (
+                        <Input
+                            autoFocus
+                            size="small"
+                            value={data.editingFileNoValue}
+                            disabled={isSaving}
+                            onChange={(e) => dispatch({ editingFileNoValue: e.target.value })}
+                            onBlur={() => handleSaveFileNo(row)}
+                            onPressEnter={() => handleSaveFileNo(row)}
+                            placeholder="请输入文件编号"
+                            style={{ width: 220 }}
+                        />
+                    );
+                }
+                return (
+                    <span
+                        style={{ cursor: "text", display: "inline-block", minWidth: 80 }}
+                        title="单击编辑文件编号"
+                        onClick={() => handleStartEditFileNo(row)}>
+                        {value || "-"}
+                    </span>
+                );
+            },
         },
         {
             title: "文件夹名称",
@@ -186,6 +268,13 @@ export default () => {
                         <Button type="link" size="small" onClick={() => navigate(`/srs_docs/view/${row.id}`)}>
                             {ts("view")}
                         </Button>
+                        <Button
+                            type="link"
+                            size="small"
+                            loading={data.exportingId === row.id}
+                            onClick={() => handleExport(row)}>
+                            {ts("export")}
+                        </Button>
                         <Button type="link" size="small" onClick={() => handleCopy(row)}>
                             {ts("srs_doc.copy")}
                         </Button>
@@ -199,7 +288,12 @@ export default () => {
                 );
             },
         },
-    ];
+    ].map((col: any) => ({
+        ...col,
+        onHeaderCell: () => ({
+            style: { whiteSpace: "nowrap" },
+        }),
+    }));
 
     useEffect(() => {
         const form = queryForm.getFieldsValue();
@@ -208,7 +302,7 @@ export default () => {
 
     return (
         <div className="page div-v">
-            <div className="div-h searchbar">
+            <div className="div-h searchbar list-searchbar-align">
                 <Form
                     form={queryForm}
                     className="expand"
@@ -283,7 +377,13 @@ export default () => {
                 confirmLoading={data.loading}
                 onOk={doDelete}
                 onCancel={() => dispatch({ dlgType: null })}>
-                <div>{ts("confirm_delete")}</div>
+                <div style={{ lineHeight: 1.8 }}>
+                    <div style={{ marginBottom: 8 }}>确认要删除吗？</div>
+                    <div style={{ color: "#d4380d" }}>
+                        提醒：删除后对应SRS管理及需求列表一起清空，并且已绑定的详细设计文档解除绑定，
+                        如需操作设计管理需重新上传或新增需求。
+                    </div>
+                </div>
             </Modal>
             <Modal
                 centered

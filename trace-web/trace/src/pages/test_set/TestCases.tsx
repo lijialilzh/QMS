@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
 import * as Api from "@/api/ApiTestCase";
+import { renderOneLineWithTooltip } from "@/common/tableRenderers";
 
 export default ({ set_id }: any) => {
     const { t: ts } = useTranslation();
@@ -28,42 +29,62 @@ export default ({ set_id }: any) => {
         {
             title: ts("test_case.code"),
             dataIndex: "code",
+            width: "9%",
+            render: renderOneLineWithTooltip,
         },
         {
             title: ts("test_case.srs_code"),
             dataIndex: "srs_code",
+            width: "9%",
+            render: renderOneLineWithTooltip,
         },
         {
             title: ts("test_case.test_type"),
             dataIndex: "test_type",
+            width: "8%",
+            render: renderOneLineWithTooltip,
         },
         {
             title: ts("test_case.stage"),
             dataIndex: "stage",
+            width: "8%",
+            render: renderOneLineWithTooltip,
         },
         {
             title: ts("test_case.function"),
             dataIndex: "function",
+            width: "8%",
+            render: renderOneLineWithTooltip,
         },
         {
             title: ts("test_case.description"),
             dataIndex: "description",
+            width: "13%",
+            render: renderOneLineWithTooltip,
         },
         {
             title: ts("test_case.precondition"),
             dataIndex: "precondition",
+            width: "13%",
+            render: renderOneLineWithTooltip,
         },
         {
             title: ts("test_case.test_step"),
             dataIndex: "test_step",
+            width: "13%",
+            render: renderOneLineWithTooltip,
         },
         {
             title: ts("test_case.expect"),
             dataIndex: "expect",
+            width: "13%",
+            render: renderOneLineWithTooltip,
         },
         {
             title: ts("test_case.note"),
             dataIndex: "note",
+            width: "6%",
+            render: renderOneLineWithTooltip,
         },
     ];
 
@@ -73,7 +94,17 @@ export default ({ set_id }: any) => {
 
     return (
         <div className="div-v table-box">
-            <Table className="expand scroll-y" pagination={false} columns={columns} rowKey={(item: any) => item.id} dataSource={data.rows} loading={data.loading} />
+            <Table
+                className="expand"
+                tableLayout="fixed"
+                sticky
+                scroll={{ y: "68vh" }}
+                pagination={false}
+                columns={columns}
+                rowKey={(item: any) => item.id}
+                dataSource={data.rows}
+                loading={data.loading}
+            />
         </div>
     );
 };

@@ -9,7 +9,7 @@ import { tabColumns } from "./TabColumns";
 import * as ApiHaz from "@/api/ApiHaz";
 import * as ApiProdHaz from "@/api/ApiProdHaz";
 
-const pageSizeOptions = [10, 20, 50];
+const pageSizeOptions = [20, 50, 100];
 
 export default ({ prod_id, isOpen, onClose }: any) => {
     const { t: ts } = useTranslation();

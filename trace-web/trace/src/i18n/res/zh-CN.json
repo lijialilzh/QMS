@@ -226,7 +226,7 @@
         "module": "模块",
         "function": "功能",
         "sub_function": "子功能",
-        "srs_table": "SRS表",
+        "srs_table": "标准需求",
         "add_row": "添加行",
         "add_change_table": "新增变更表格",
         "delete_table": "删除表格",

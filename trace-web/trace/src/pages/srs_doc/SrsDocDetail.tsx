@@ -903,26 +903,6 @@ export default () => {
                                     <Input allowClear placeholder={ts("srs_doc.please_input_version")} disabled={isReadOnly} style={{ width: 200 }} />
                                 </Form.Item>
                             </Col>
-                            <Col span={8}>
-                                <Form.Item
-                                    label="文件夹名称"
-                                    name="folder_name">
-                                    <Input allowClear placeholder="文件夹名称" disabled={isReadOnly} style={{ width: 200 }} />
-                                </Form.Item>
-                            </Col>
-                            <Col span={8}>
-                                <Form.Item
-                                    label={ts("srs_doc.file_no")}
-                                    name="file_no">
-                                    <Input
-                                        allowClear
-                                        placeholder={ts("srs_doc.file_no")}
-                                        disabled={isReadOnly}
-                                        style={{ width: 320 }}
-                                        title={editForm.getFieldValue("file_no") || ""}
-                                    />
-                                </Form.Item>
-                            </Col>
                         </Row>
                     ) : (
                         <Row gutter={24}>
@@ -946,25 +926,6 @@ export default () => {
                                     name="version"
                                     rules={[{ required: true, message: "" }]}>
                                     <Input allowClear placeholder={ts("srs_doc.please_input_version")} style={{ width: 200 }} />
-                                </Form.Item>
-                            </Col>
-                            <Col span={8}>
-                                <Form.Item
-                                    label="文件夹名称"
-                                    name="folder_name">
-                                    <Input allowClear placeholder="文件夹名称" style={{ width: 200 }} />
-                                </Form.Item>
-                            </Col>
-                            <Col span={8}>
-                                <Form.Item
-                                    label={ts("srs_doc.file_no")}
-                                    name="file_no">
-                                    <Input
-                                        allowClear
-                                        placeholder={ts("srs_doc.file_no")}
-                                        style={{ width: 320 }}
-                                        title={editForm.getFieldValue("file_no") || ""}
-                                    />
                                 </Form.Item>
                             </Col>
                         </Row>

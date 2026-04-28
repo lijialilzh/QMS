@@ -1,4 +1,4 @@
-import { Form, Input, Button, Table, message, Row, Col, Modal, Select } from "antd";
+import { Form, Input, Button, Table, message, Row, Col, Modal, Select, Space } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -9,7 +9,7 @@ import * as ApiRole from "@/api/ApiRole";
 
 const MASTER = "master";
 
-const pageSizeOptions = [10, 20, 50];
+const pageSizeOptions = [20, 50, 100];
 
 enum DlgTypes {
     add = "add",
@@ -286,7 +286,7 @@ export default () => {
             title: ts("action"),
             render: (_value: any, row: any) => {
                 return (
-                    <div>
+                    <Space>
                         <Button type="link" onClick={() => dispatch({ dlgType: DlgTypes.edit, targetRow: row })}>
                             {ts("edit")}
                         </Button>
@@ -301,7 +301,7 @@ export default () => {
                             onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
                             {ts("delete")}
                         </Button>
-                    </div>
+                    </Space>
                 );
             },
         },
@@ -315,7 +315,7 @@ export default () => {
 
     return (
         <div className="page div-v">
-            <div className="div-h searchbar">
+            <div className="div-h searchbar list-searchbar-align">
                 <Form
                     form={queryForm}
                     className="expand"

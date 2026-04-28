@@ -280,18 +280,14 @@ const handleProductChange = (productId: number) => {
         {
             title: ts("srs_doc.srs_code") || "需求编号",
             dataIndex: "code",
-            width: 120,
-            render: (text: string) => (
-                <span style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{text || "-"}</span>
-            ),
+            width: 200,
+            render: (text: string) => renderOneLineWithTooltip(text),
         },
         {
             title: ts("sds_reqd.name") || "需求名称",
             dataIndex: "name",
-            width: 180,
-            render: (text: string) => (
-                <span style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{text || "-"}</span>
-            ),
+            width: 140,
+            render: (text: string) => renderOneLineWithTooltip(text),
         },
         {
             title: ts("srs_reqd.overview") || "需求概述",
@@ -393,7 +389,7 @@ const handleProductChange = (productId: number) => {
     return (
         <div className="page div-v srs-manage">
         {/* 搜索框 */}
-        <div className="div-h searchbar">
+        <div className="div-h searchbar list-searchbar-align">
           <Form
               form={editForm}
                   className="expand"
@@ -442,24 +438,15 @@ const handleProductChange = (productId: number) => {
           <div className="div-v detail-content">
 
               {/* 表格 */}
-<div className="doc-section">
-<div className="doc-section-header">
-  <div className="srs-table-title">
-                          {ts("srs_doc.req_list") || "需求列表"}
-  </div>
-</div>
-<div>
-                      <Table
-                          dataSource={data.tableData}
-                          columns={columns}
-                          tableLayout="fixed"
-                          rowKey="key"
-                          pagination={false}
-                          loading={data.loading}
-                          scroll={{ x: 1800 }}
-                      />
-</div>
-</div>
+              <Table
+                  dataSource={data.tableData}
+                  columns={columns}
+                  tableLayout="fixed"
+                  rowKey="key"
+                  pagination={false}
+                  loading={data.loading}
+                  scroll={{ x: 1800 }}
+              />
 
               {/* 查看/编辑弹框 */}
               <Modal

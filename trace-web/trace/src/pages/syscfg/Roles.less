@@ -14,30 +14,38 @@
     overflow-y: auto;
 }
 
-.perm_scope_table_wrap {
+.perm_scope_grid {
     margin-top: 8px;
-    overflow-x: auto;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+    width: 680px;
+    max-width: 100%;
 }
 
-.perm_scope_table {
-    width: 100%;
-    border-collapse: collapse;
-    min-width: 900px;
-    table-layout: fixed;
-}
-
-.perm_scope_table th,
-.perm_scope_table td {
+.perm_scope_card {
     border: 1px solid #f0f0f0;
-    padding: 10px 6px;
-    text-align: center;
-    vertical-align: middle;
+    border-radius: 3px;
+    overflow: hidden;
+    background: #fff;
 }
 
-.perm_scope_table th {
+.perm_scope_card_title {
     background: #fafafa;
     font-weight: 500;
+    font-size: 11px;
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: center;
+    padding: 3px 4px;
+}
+
+.perm_scope_card_check {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 4px 2px;
 }
 
 .perm_scope_tip {

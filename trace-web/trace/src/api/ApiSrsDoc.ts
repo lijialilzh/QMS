@@ -23,6 +23,10 @@ export const update_srs_doc = async (params: any) => {
     return await httpPost("/trace-api/srs_doc/update_srs_doc", params);
 };
 
+export const update_srs_doc_file_no = async (params: { id: number; file_no: string }) => {
+    return await httpPost("/trace-api/srs_doc/update_srs_doc_file_no", params2form(params));
+};
+
 export const delete_srs_node = async (params: any) => {
     return await httpDelete("/trace-api/srs_doc/delete_srs_node", params);
 };

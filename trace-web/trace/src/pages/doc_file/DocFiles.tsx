@@ -8,7 +8,7 @@ import * as Api from "@/api/ApiDocFile";
 import * as ApiProduct from "@/api/ApiProduct";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 
-const pageSizeOptions = [10, 20, 50];
+const pageSizeOptions = [20, 50, 100];
 
 enum DlgTypes {
     add = "add",
@@ -257,7 +257,7 @@ export default ({ fileType }: any) => {
 
     return (
         <div className="page div-v">
-            <div className="div-h searchbar">
+            <div className="div-h searchbar list-searchbar-align">
                 <Form
                     form={queryForm}
                     className="expand"
@@ -266,7 +266,7 @@ export default ({ fileType }: any) => {
                     }}>
                     <Row gutter={20}>
                         <Col>
-                            <Form.Item label={ts("product.product")} name="product_id">
+                            <Form.Item label={ts("srs_doc.select_product")} name="product_id">
                                 <ProductVersionSelect
                                     products={data.products}
                                     allowClear

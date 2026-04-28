@@ -23,6 +23,21 @@
     }
 }
 
+.page .searchbar {
+    padding-left: 10px !important;
+    padding-right: 16px !important;
+}
+
+/* 清掉首列的 gutter 左偏移，避免第一项被推右 */
+.page .searchbar .ant-row {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+}
+
+.page .searchbar .ant-row > .ant-col:first-child {
+    padding-left: 0 !important;
+}
+
 .hspace > *:not(:last-child) {
   margin-right: 10px;
 }

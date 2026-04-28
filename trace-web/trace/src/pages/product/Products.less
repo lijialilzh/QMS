@@ -1,11 +1,13 @@
 .product {
     .ant-table {
-        table-layout: fixed;
+        table-layout: fixed !important;
     }
 
     .ant-table-thead > tr > th {
         white-space: nowrap;
         padding: 8px 6px;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
     .ant-table-tbody > tr > td {
@@ -13,6 +15,18 @@
         overflow: hidden;
         text-overflow: ellipsis;
         padding: 8px 6px;
+        vertical-align: middle;
+    }
+
+    .ant-table-tbody > tr > td .stxt {
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+    }
+
+    .ant-table-content,
+    .ant-table-body {
+        overflow-x: hidden !important;
     }
 
     .scope {

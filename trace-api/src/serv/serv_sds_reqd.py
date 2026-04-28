@@ -3,6 +3,7 @@ import sys
 import re
 from typing import Any, List, Tuple
 from sqlalchemy import select, func, delete, or_
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import desc
 from ..obj.vobj_user import UserObj
 from ..model.srs_type import SrsType
@@ -589,10 +590,34 @@ class Server(object):
         filtered_rows.sort(key=lambda x: (-x[4].id, x[1].code))
         return filtered_rows
 
+    def __ensure_sds_reqd_rows(self, prod_id: int = None, doc_id: int = None):
+        if not prod_id and not doc_id:
+            return
+        try:
+            sql_docs = select(SdsDoc.id, SdsDoc.srsdoc_id).join(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id)
+            if doc_id:
+                sql_docs = sql_docs.where(SdsDoc.id == doc_id)
+            if prod_id:
+                sql_docs = sql_docs.where(SrsDoc.product_id == prod_id)
+            docs = db.session.execute(sql_docs).all()
+            for sds_doc_id, srs_doc_id in docs:
+                reqs = db.session.execute(
+                    select(SrsReq.id).where(SrsReq.doc_id == srs_doc_id, SrsReq.type_code != "reqd")
+                ).all()
+                if not reqs:
+                    continue
+                values = [dict(doc_id=sds_doc_id, req_id=req_id) for (req_id,) in reqs]
+                db.session.execute(pg_insert(SdsReqd).values(values).on_conflict_do_nothing())
+            db.session.commit()
+        except Exception:
+            logger.exception("ensure_sds_reqd_rows_failed")
+            db.session.rollback()
+
 
     async def list_sds_reqd(self, op_user: UserObj, prod_id: int = None, doc_id: int = None, page_index: int = 0, page_size: int = 10):
         page_index = page_index if page_index >= 0 else 0
         page_size = page_size if page_size > 0 else 10 
+        self.__ensure_sds_reqd_rows(prod_id=prod_id, doc_id=doc_id)
 
         sql = select(SdsReqd, SrsReq, SrsReqd, SrsType, SdsDoc, SrsDoc, Product)
         sql = sql.join(SrsReq, SdsReqd.req_id == SrsReq.id)
@@ -631,41 +656,46 @@ class Server(object):
                 logic_img = self.__normalize_img_url(getattr(logic_row, "img_url", "") or "")
                 if logic_img:
                     logic_img_by_reqd_id[reqd_id] = logic_img
-        changed = False
         objs = []
         for row_reqd, row_req, row_srsreqd, row_type, row_sdsdoc, row_srsdoc, row_product in rows:
-            values = self.__extract_imported_fields(doc_trees.get(row_sdsdoc.id), row_req, row_srsreqd)
-            for field in ["logic_txt", "intput", "output", "interface"]:
+            doc_tree = doc_trees.get(row_sdsdoc.id)
+            has_imported_design = bool(doc_tree)
+            values = self.__extract_imported_fields(doc_tree, row_req, row_srsreqd) if has_imported_design else {}
+            for field in ["overview", "func_detail", "logic_txt", "intput", "output", "interface"]:
                 cur_val = (getattr(row_reqd, field, None) or "").strip()
                 if cur_val and not values.get(field):
                     values[field] = cur_val
             values = self.__split_mixed_io_interface(values)
-            # 仅回填“详细设计来源”字段：逻辑描述/输入项/输出项/接口
-            for field in ["logic_txt", "intput", "output", "interface"]:
-                old_val = (getattr(row_reqd, field, None) or "").strip()
-                new_val = (values.get(field) or "").strip()
-                # 详细设计为权威来源：只要解析出新值且与旧值不同，就覆盖旧值
-                should_update = bool(new_val) and (old_val != new_val)
-                # 已有脏数据（如接口列里混入“输入项/输出项”）时允许覆盖清洗
-                if field == "interface" and old_val and re.search(r"(输入项|输出项)", old_val):
-                    should_update = old_val != new_val
-                if should_update:
-                    setattr(row_reqd, field, new_val)
-                    changed = True
 
             obj = SdsReqdObj(**row_reqd.dict())
             obj.srs_code = row_req.code
             srs_flow_text = self.__pick_srs_flow_text(row_srsreqd)
             if row_srsreqd:
-                # 需求编号/名称/概述/功能 固定来源于 SRS
                 obj.name = row_srsreqd.name or row_req.sub_function or row_req.function or row_req.module
-                obj.overview = row_srsreqd.overview
-                obj.func_detail = srs_flow_text
+                if has_imported_design:
+                    # 已导入详细设计：严格以详细设计文档解析结果为准，避免历史脏值干扰
+                    obj.overview = values.get("overview") or ""
+                    obj.func_detail = values.get("func_detail") or ""
+                    obj.logic_txt = values.get("logic_txt") or ""
+                    obj.intput = values.get("intput") or ""
+                    obj.output = values.get("output") or ""
+                    obj.interface = values.get("interface") or ""
+                else:
+                    # 未导入详细设计：内容按SRS来源展示
+                    obj.overview = row_srsreqd.overview
+                    obj.func_detail = srs_flow_text
+                    obj.logic_txt = row_reqd.logic_txt
+                    obj.intput = row_reqd.intput
+                    obj.output = row_reqd.output
+                    obj.interface = row_reqd.interface
             else:
                 obj.name = row_req.sub_function or row_req.function or row_req.module
-                # SRS详情缺失时保留历史数据兜底
-                obj.overview = row_reqd.overview
-                obj.func_detail = row_reqd.func_detail
+                obj.overview = values.get("overview") or row_reqd.overview
+                obj.func_detail = values.get("func_detail") or row_reqd.func_detail
+                obj.logic_txt = values.get("logic_txt") or row_reqd.logic_txt
+                obj.intput = values.get("intput") or row_reqd.intput
+                obj.output = values.get("output") or row_reqd.output
+                obj.interface = values.get("interface") or row_reqd.interface
             obj.module = row_req.module
             obj.function = row_req.function
             obj.sub_function = row_req.sub_function
@@ -684,8 +714,6 @@ class Server(object):
             if re.match(r"^\s*(?:图|figure)\s*\d+[\s、.．:：-]*", (obj.logic_txt or "").strip(), re.I):
                 obj.logic_txt = ""
             objs.append(obj)
-        if changed:
-            db.session.commit()
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
         
     async def get_sds_reqd(self, id: int):

@@ -59,6 +59,12 @@ async def update_srs_doc(form: SrsDocForm):
     return await server.update_srs_doc(form) 
 
 
+@router.post("/update_srs_doc_file_no", summary="更新SRS文件编号", response_model=Resp[Any])
+@try_log(perm=Perms.srs_doc_edit)
+async def update_srs_doc_file_no(id: int = Form(...), file_no: str = Form("")):
+    return await server.update_srs_doc_file_no(id=id, file_no=file_no)
+
+
 @router.get("/list_srs_doc", summary="查询SRS_DOC列表", response_model=Resp[Page[SrsDocObj]])
 @try_log(perm=Perms.srs_doc_view)
 async def list_srs_doc(product_id: int = 0, version: str = None, page_index: int = 0, page_size: int = 10):

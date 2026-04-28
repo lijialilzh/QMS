@@ -50,6 +50,156 @@ class Server(object):
         return txt
 
     @staticmethod
+    def __clean_title_text(value: str):
+        txt = str(value or "").strip()
+        txt = re.sub(r"^\s*\d+(?:\.\d+)*[\s、.．:：\-]*", "", txt)
+        txt = re.sub(r"\bSRS[-_\sA-Za-z0-9.]+\b", "", txt, flags=re.I)
+        txt = re.sub(r"\s+", " ", txt).strip()
+        return txt
+
+    def __repair_reqs_from_nodes(self, doc_id: int):
+        if not doc_id:
+            return
+        exists_count = db.session.execute(select(func.count(SrsReq.id)).where(SrsReq.doc_id == doc_id)).scalar()
+        if exists_count and exists_count > 0:
+            return
+
+        nodes: List[SrsNode] = db.session.execute(
+            select(SrsNode).where(SrsNode.doc_id == doc_id).order_by(SrsNode.priority, SrsNode.n_id)
+        ).scalars().all()
+        if not nodes:
+            return
+
+        # 仅对“导入Word”的文档做自动回填；手动新增场景保持手工维护
+        is_imported_doc = any(
+            str(getattr(node, "title", "") or "").startswith("导入表格")
+            or str(getattr(node, "title", "") or "").startswith("导入图片")
+            or str(getattr(node, "title", "") or "").startswith("导入正文")
+            for node in nodes
+        )
+        if not is_imported_doc:
+            return
+
+        node_map = {row.n_id: row for row in nodes}
+        values = []
+        seen_codes = set()
+
+        def add_req(code: str, module: str = None, function: str = None, sub_function: str = None, location: str = None, type_code: str = "1"):
+            norm_code = self.__normalize_req_code(code or "")
+            if not norm_code or norm_code in seen_codes:
+                return
+            seen_codes.add(norm_code)
+            values.append(
+                dict(
+                    doc_id=doc_id,
+                    code=norm_code,
+                    module=self.__normalize_name_part(module) or None,
+                    function=self.__normalize_name_part(function) or None,
+                    sub_function=self.__normalize_name_part(sub_function) or None,
+                    location=self.__normalize_name_part(location) or None,
+                    type_code=type_code or "1",
+                )
+            )
+
+        for node in nodes:
+            table = getattr(node, "table", None)
+            if isinstance(table, str):
+                try:
+                    table = json.loads(table)
+                except Exception:
+                    table = None
+            if not isinstance(table, dict):
+                continue
+            headers = table.get("headers") or []
+            rows_data = table.get("rows") or []
+            if not isinstance(headers, list) or not isinstance(rows_data, list) or not headers or not rows_data:
+                continue
+
+            header_names = [str((h or {}).get("name", "") or "") if isinstance(h, dict) else "" for h in headers]
+            header_norm = [self.__normalize_header(h) for h in header_names]
+            col_codes = [str((h or {}).get("code", "") or "") if isinstance(h, dict) else "" for h in headers]
+            col_idx = {}
+            for idx, h in enumerate(header_norm):
+                if ("需求编号" in h or h in ["srscode", "code"]) and "code" not in col_idx:
+                    col_idx["code"] = idx
+                if ("模块" in h or h == "module") and "module" not in col_idx:
+                    col_idx["module"] = idx
+                if ("子功能" in h or "subfunction" in h) and "sub_function" not in col_idx:
+                    col_idx["sub_function"] = idx
+                if ("功能" in h or h == "function") and "function" not in col_idx:
+                    col_idx["function"] = idx
+                if ("章节" in h or "位置" in h or h == "location") and "location" not in col_idx:
+                    col_idx["location"] = idx
+
+            # 标准需求表/其他需求表
+            if "code" in col_idx and ("module" in col_idx or "function" in col_idx or "location" in col_idx):
+                for row in rows_data:
+                    if not isinstance(row, dict):
+                        continue
+                    values_arr = [str(row.get(code, "") or "") for code in col_codes]
+                    code = values_arr[col_idx["code"]] if col_idx["code"] < len(values_arr) else ""
+                    module = values_arr[col_idx["module"]] if "module" in col_idx and col_idx["module"] < len(values_arr) else None
+                    function = values_arr[col_idx["function"]] if "function" in col_idx and col_idx["function"] < len(values_arr) else None
+                    sub_function = values_arr[col_idx["sub_function"]] if "sub_function" in col_idx and col_idx["sub_function"] < len(values_arr) else None
+                    location = values_arr[col_idx["location"]] if "location" in col_idx and col_idx["location"] < len(values_arr) else None
+                    req_type = "2" if location and not function and not sub_function else "1"
+                    add_req(code=code, module=module, function=function, sub_function=sub_function, location=location, type_code=req_type)
+                continue
+
+            # 兜底：两列表格（需求编号|编号值 + 键值对）
+            if len(headers) >= 2 and col_codes and len(col_codes) >= 2:
+                left_code = col_codes[0]
+                right_code = col_codes[1]
+                left_name = str((headers[0] or {}).get("name", "") or "") if isinstance(headers[0], dict) else ""
+                right_name = str((headers[1] or {}).get("name", "") or "") if isinstance(headers[1], dict) else ""
+                pairs = [(left_name, right_name)]
+                for row in rows_data:
+                    if not isinstance(row, dict):
+                        continue
+                    left = str(row.get(left_code, "") or "")
+                    right = str(row.get(right_code, "") or "")
+                    if left or right:
+                        pairs.append((left, right))
+                code = ""
+                module = function = sub_function = location = None
+                for left, right in pairs:
+                    field = self.__map_field(left)
+                    if field == "code":
+                        code = right
+                    elif field == "module":
+                        module = right
+                    elif field == "function":
+                        function = right
+                    elif field == "sub_function":
+                        sub_function = right
+                    elif field == "location":
+                        location = right
+                if code:
+                    req_type = "2" if location and not function and not sub_function else "1"
+                    add_req(code=code, module=module, function=function, sub_function=sub_function, location=location, type_code=req_type)
+
+        # 最后兜底：节点 srs_code
+        for node in nodes:
+            code = self.__normalize_req_code(getattr(node, "srs_code", "") or "")
+            if not code or code in seen_codes:
+                continue
+            function = self.__clean_title_text(getattr(node, "title", "") or "")
+            module = ""
+            p_id = getattr(node, "p_id", 0)
+            while p_id and p_id in node_map:
+                p_node = node_map[p_id]
+                parent_title = self.__clean_title_text(getattr(p_node, "title", "") or "")
+                if parent_title:
+                    module = parent_title
+                    break
+                p_id = getattr(p_node, "p_id", 0)
+            add_req(code=code, module=module, function=function, type_code="1")
+
+        if values:
+            db.session.execute(pg_insert(SrsReq).values(values).on_conflict_do_nothing())
+            db.session.commit()
+
+    @staticmethod
     def __normalize_header(value: str):
         return re.sub(r"[\s_:/（）()]+", "", (value or "").lower())
 
@@ -360,6 +510,10 @@ class Server(object):
 
         page_index = page_index if page_index >= 0 else 0
         page_size = page_size if page_size > 0 else 10 
+
+        # 兜底修复：导入后若 SRS 管理为空，则尝试从 srs_node 的 srs_code 自动回填
+        if doc_id:
+            self.__repair_reqs_from_nodes(doc_id)
 
         sql = select(SrsReq)
         if doc_id:

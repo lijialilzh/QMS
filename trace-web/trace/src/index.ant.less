@@ -56,3 +56,41 @@
 .ant-spin {
     max-height: 100% !important;
 }
+
+/* 全站表格正文单元格统一单行显示 */
+.ant-table-tbody > tr > td.ant-table-cell {
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    height: 30px !important;
+    line-height: 30px !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+}
+
+.ant-table-thead > tr > th.ant-table-cell {
+    height: 36px !important;
+    line-height: 36px !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+}
+
+/* 全局统一操作列按钮间距（链接按钮） */
+.ant-table-tbody > tr > td.ant-table-cell .ant-space {
+    column-gap: 12px !important;
+    row-gap: 4px !important;
+}
+
+.ant-table-tbody > tr > td.ant-table-cell .ant-space .ant-space-item {
+    margin-inline-end: 12px !important;
+}
+
+.ant-table-tbody > tr > td.ant-table-cell .ant-space .ant-space-item:last-child {
+    margin-inline-end: 0 !important;
+}
+
+.ant-table-tbody > tr > td.ant-table-cell .ant-space .ant-btn.ant-btn-link {
+    padding-inline: 0 !important;
+    font-size: 12px !important;
+}

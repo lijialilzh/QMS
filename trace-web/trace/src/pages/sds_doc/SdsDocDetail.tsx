@@ -120,6 +120,7 @@ export default () => {
         docProductId: undefined as number | undefined,
         docSrsdocId: undefined as number | undefined,
         docVersion: "" as string,
+        requireRebindSrs: false,
     });
 
     // 加载产品列表
@@ -746,12 +747,13 @@ export default () => {
             Api.get_sds_doc({ id }).then((res: any) => {
                 if (res.code === Api.C_OK) {
                     const targetRow = res.data;
+                    const needRebindSrs = !targetRow.srsdoc_id;
 
                     // 映射后端字段名到表单字段名
                     editForm.setFieldsValue({
                         id: targetRow.id,
                         product_id: targetRow.product_id,
-                        srsdoc_id: targetRow.srsdoc_id,
+                        srsdoc_id: targetRow.srsdoc_id || undefined,
                         version: targetRow.version, // 后端 version -> 前端 full_version
                         file_no: targetRow.file_no,
                     });
@@ -776,14 +778,21 @@ export default () => {
 
                     dispatch({
                         loading: false,
+                        requireRebindSrs: needRebindSrs,
                         changeDescription: targetRow.change_log || "",
                         docNId: targetRow.n_id || 0, // 保存文档级别的 n_id
                         treeStructure: parsedContent,
                         docProductId: targetRow.product_id,
-                        docSrsdocId: targetRow.srsdoc_id,
+                        docSrsdocId: targetRow.srsdoc_id || undefined,
                         docVersion: targetRow.version ?? "",
                     });
                     treeStructureRef.current = parsedContent;
+                    if (needRebindSrs) {
+                        message.warning("该详细设计未绑定需求规格说明版本，请先绑定该产品下需求规格说明后再进行操作。");
+                        if (isReadOnly) {
+                            navigate("/sds_docs");
+                        }
+                    }
                 } else {
                     message.error(res.msg);
                     dispatch({ loading: false });
@@ -793,7 +802,7 @@ export default () => {
         } else {
             // 新增模式
             editForm.resetFields();
-            dispatch({ isEdit: false });
+            dispatch({ isEdit: false, requireRebindSrs: false });
             treeStructureRef.current = [];
         }
     }, [params.id]);
@@ -1235,7 +1244,7 @@ export default () => {
                             editForm.setFieldsValue({
                                 id: targetRow.id,
                                 product_id: targetRow.product_id,
-                                srsdoc_id: targetRow.srsdoc_id,
+                                srsdoc_id: targetRow.srsdoc_id || undefined,
                                 version: targetRow.version,
                                 file_no: targetRow.file_no,
                             });
@@ -1260,6 +1269,7 @@ export default () => {
                                 changeDescription: targetRow.change_log || "",
                                 docNId: targetRow.n_id || 0,
                                 treeStructure: parsedContent,
+                                requireRebindSrs: !targetRow.srsdoc_id,
                             });
                             treeStructureRef.current = parsedContent;
 
@@ -1447,7 +1457,7 @@ export default () => {
                     <Form.Item hidden name="id">
                         <Input allowClear />
                     </Form.Item>
-                    {(data.isEdit || isReadOnly) ? (
+                    {(data.isEdit || isReadOnly) && !data.requireRebindSrs ? (
                         <Row gutter={24} className="form-display-row">
                             <Col span={6}>
                                 <span className="form-display-label">{ts("sds_doc.current_product")}：</span>
@@ -1463,13 +1473,6 @@ export default () => {
                                     name="version"
                                     rules={[{ required: !isReadOnly, message: "" }]}>
                                     <Input allowClear placeholder={ts("sds_doc.please_input_version")} disabled={isReadOnly} style={{ width: 200 }} />
-                                </Form.Item>
-                            </Col>
-                            <Col span={6}>
-                                <Form.Item
-                                    label={ts("sds_doc.file_no")}
-                                    name="file_no">
-                                    <Input allowClear placeholder={ts("sds_doc.file_no")} disabled={isReadOnly} style={{ width: 200 }} />
                                 </Form.Item>
                             </Col>
                         </Row>
@@ -1518,13 +1521,6 @@ export default () => {
                                     name="version"
                                     rules={[{ required: true, message: "" }]}>
                                     <Input allowClear placeholder={ts("sds_doc.please_input_version")} style={{ width: 200 }} />
-                                </Form.Item>
-                            </Col>
-                            <Col span={6}>
-                                <Form.Item
-                                    label={ts("sds_doc.file_no")}
-                                    name="file_no">
-                                    <Input allowClear placeholder={ts("sds_doc.file_no")} style={{ width: 200 }} />
                                 </Form.Item>
                             </Col>
                         </Row>

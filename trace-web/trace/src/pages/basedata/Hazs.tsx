@@ -1,5 +1,5 @@
 import "./Hazx.less";
-import { Form, Input, Button, Table, message, Row, Col, Modal, Switch, Select, Tag, Tooltip, Upload } from "antd";
+import { Form, Input, Button, Table, message, Row, Col, Modal, Switch, Select, Tag, Upload, Space } from "antd";
 import { SearchOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -8,7 +8,7 @@ import { renderOneLineWithTooltip, useData } from "@/common";
 import * as Api from "@/api/ApiHaz";
 import * as ApiRcm from "@/api/ApiRcm";
 
-const pageSizeOptions = [10, 20, 50];
+const pageSizeOptions = [20, 50, 100];
 
 enum DlgTypes {
     add = "add",
@@ -335,24 +335,16 @@ export default () => {
         degreeKey: "init_degree" | "cur_degree",
         levelKey: "init_level" | "cur_level"
     ) => {
-        const rateTxt = HAZDICT_RATES[row[rateKey]] ?? "";
-        const degreeTxt = HAZDICT_DEGREES[row[degreeKey]] ?? "";
-        const levelTxt = HAZDICT_LEVELS[row[levelKey]] ?? "";
+        const rateTxt = HAZDICT_RATES[row[rateKey]] ?? row[rateKey] ?? "";
+        const degreeTxt = HAZDICT_DEGREES[row[degreeKey]] ?? row[degreeKey] ?? "";
+        const levelTxt = HAZDICT_LEVELS[row[levelKey]] ?? row[levelKey] ?? "";
+        const tipText = `概率：${rateTxt}\n程度：${degreeTxt}\n危险水平：${levelTxt}`;
         return (
-            <Tooltip
-                title={
-                    <div className="tip">
-                        <div>概率：{rateTxt}</div>
-                        <div>程度：{degreeTxt}</div>
-                        <div>危险水平：{levelTxt}</div>
-                    </div>
-                }>
-                <div>
-                    <div>概率：{rateTxt}</div>
-                    <div>程度：{degreeTxt}</div>
-                    <div>危险水平：{levelTxt}</div>
-                </div>
-            </Tooltip>
+            <div title={tipText} style={{ whiteSpace: "normal", lineHeight: "20px" }}>
+                <div>概率：{rateTxt}</div>
+                <div>程度：{degreeTxt}</div>
+                <div>危险水平：{levelTxt}</div>
+            </div>
         );
     };
 
@@ -360,35 +352,51 @@ export default () => {
         {
             title: ts("haz.code"),
             dataIndex: "code",
-            width: 150,
-            onHeaderCell: () => ({ style: { minWidth: 150 } }),
-            onCell: () => ({ style: { minWidth: 150 } }),
+            width: 120,
+            onHeaderCell: () => ({ style: { minWidth: 120 } }),
+            onCell: () => ({ style: { minWidth: 120 } }),
         },
         {
             title: ts("haz.source"),
             dataIndex: "source",
+            width: 190,
             render: (value: any) => renderOneLineWithTooltip(value, { emptyText: "" }),
         },
         {
             title: ts("haz.event"),
             dataIndex: "event",
+            width: 190,
             render: (value: any) => renderOneLineWithTooltip(value, { emptyText: "" }),
         },
         {
             title: ts("haz.situation"),
             dataIndex: "situation",
+            width: 190,
             render: (value: any) => renderOneLineWithTooltip(value, { emptyText: "" }),
         },
         {
             title: ts("haz.damage"),
             dataIndex: "damage",
+            width: 180,
             render: (value: any) => renderOneLineWithTooltip(value, { emptyText: "" }),
         },
         {
             title: ts("haz.init_risk"),
-            width: 180,
-            onHeaderCell: () => ({ style: { minWidth: 150 } }),
-            onCell: () => ({ style: { minWidth: 150 } }),
+            width: 140,
+            onHeaderCell: () => ({ style: { minWidth: 140 } }),
+            onCell: () => ({
+                style: {
+                    minWidth: 140,
+                    whiteSpace: "normal",
+                    overflow: "visible",
+                    textOverflow: "unset",
+                    height: "auto",
+                    lineHeight: "20px",
+                    paddingTop: 4,
+                    paddingBottom: 4,
+                    verticalAlign: "top",
+                },
+            }),
             render: (_value: any, row: any) => {
                 return renderRiskTip(row, "init_rate", "init_degree", "init_level");
             },
@@ -396,23 +404,64 @@ export default () => {
         {
             title: ts("haz.deal"),
             dataIndex: "deal",
+            width: 260,
             render: (value: any) => renderOneLineWithTooltip(value, { emptyText: "" }),
         },
         {
             title: ts("haz.rcms"),
             dataIndex: "rcms",
-            render: (value: any) => renderOneLineWithTooltip(value, { emptyText: "" }),
+            width: 220,
+            className: "haz-rcms-col",
+            onCell: () => ({
+                className: "haz-rcms-col",
+                style: {
+                    whiteSpace: "normal",
+                    overflow: "visible",
+                    textOverflow: "unset",
+                    height: "auto",
+                    lineHeight: "20px",
+                    paddingTop: 4,
+                    paddingBottom: 4,
+                    verticalAlign: "top",
+                    wordBreak: "break-all",
+                },
+            }),
+            render: (value: any) => {
+                const text = value || "";
+                const lines = String(text)
+                    .split(/[\s,，]+/)
+                    .map((item) => item.trim())
+                    .filter((item) => item !== "");
+                return (
+                    <div className="haz-rcms-wrap" title={text} style={{ whiteSpace: "normal", wordBreak: "break-all", lineHeight: "20px" }}>
+                        {lines.length > 0 ? lines.map((item, idx) => <div key={`${item}-${idx}`}>{item}</div>) : text}
+                    </div>
+                );
+            },
         },
         {
             title: ts("haz.evidence"),
             dataIndex: "evidence",
+            width: 220,
             render: (value: any) => renderOneLineWithTooltip(value, { emptyText: "" }),
         },
         {
             title: ts("haz.cur_risk"),
-            width: 180,
-            onHeaderCell: () => ({ style: { minWidth: 150 } }),
-            onCell: () => ({ style: { minWidth: 150 } }),
+            width: 140,
+            onHeaderCell: () => ({ style: { minWidth: 140 } }),
+            onCell: () => ({
+                style: {
+                    minWidth: 140,
+                    whiteSpace: "normal",
+                    overflow: "visible",
+                    textOverflow: "unset",
+                    height: "auto",
+                    lineHeight: "20px",
+                    paddingTop: 4,
+                    paddingBottom: 4,
+                    verticalAlign: "top",
+                },
+            }),
             dataIndex: "cur_rate",
             render: (_value: any, row: any) => {
                 return renderRiskTip(row, "cur_rate", "cur_degree", "cur_level");
@@ -421,9 +470,9 @@ export default () => {
         {
             title: ts("haz.benefit_flag"),
             dataIndex: "benefit_flag",
-            width: 150,
-            onHeaderCell: () => ({ style: { minWidth: 150 } }),
-            onCell: () => ({ style: { minWidth: 150 } }),
+            width: 90,
+            onHeaderCell: () => ({ style: { minWidth: 90 } }),
+            onCell: () => ({ style: { minWidth: 90 } }),
             render: (_value: any, row: any) => {
                 return row.benefit_flag ? ts("yes") : ts("no");
             },
@@ -441,18 +490,35 @@ export default () => {
             fixed: "right" as const,
             render: (_value: any, row: any) => {
                 return (
-                    <div>
+                    <Space>
                         <Button type="link" onClick={() => dispatch({ dlgType: DlgTypes.edit, targetRow: row })}>
                             {ts("edit")}
                         </Button>
                         <Button type="link" danger onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
                             {ts("delete")}
                         </Button>
-                    </div>
+                    </Space>
                 );
             },
         },
     ];
+
+    const displayColumns = columns.map((col: any) => {
+        const oldHeaderCell = col.onHeaderCell;
+        return {
+            ...col,
+            onHeaderCell: (...args: any[]) => {
+                const prev = oldHeaderCell ? oldHeaderCell(...args) : {};
+                return {
+                    ...prev,
+                    style: {
+                        ...(prev?.style || {}),
+                        whiteSpace: "nowrap",
+                    },
+                };
+            },
+        };
+    });
 
     useEffect(() => {
         const form = queryForm.getFieldsValue();
@@ -461,7 +527,7 @@ export default () => {
 
     return (
         <div className="page div-v haz">
-            <div className="div-h searchbar">
+            <div className="div-h searchbar list-searchbar-align">
                 <Form
                     form={queryForm}
                     className="expand"
@@ -520,11 +586,12 @@ export default () => {
             </div>
             <Table
                 className="expand"
+                sticky
                 rowSelection={{
                     selectedRowKeys: data.selectedRowKeys || [],
                     onChange: (keys: any) => dispatch({ selectedRowKeys: keys }),
                 }}
-                columns={columns}
+                columns={displayColumns}
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}
                 loading={data.loading}

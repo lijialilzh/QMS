@@ -23,6 +23,10 @@ export const update_sds_doc = async (params: any) => {
     return await httpPost("/trace-api/sds_doc/update_sds_doc", params);
 };
 
+export const update_sds_doc_file_no = async (params: { id: number; file_no: string }) => {
+    return await httpPost("/trace-api/sds_doc/update_sds_doc_file_no", params2form(params));
+};
+
 export const delete_sds_node = async (params: any) => {
     return await httpDelete("/trace-api/sds_doc/delete_sds_node", params);
 };

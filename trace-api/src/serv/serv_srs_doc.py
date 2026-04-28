@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Tuple
 from sqlalchemy import select, delete, func
@@ -35,7 +36,8 @@ from ..model.srs_type import SrsType
 from ..model.sds_trace import SdsTrace
 from ..obj.vobj_srs_reqd import SrsReqdObj
 from ..model.doc_file import DocFile
-from ..model.sds_doc import SdsDoc
+from ..model.sds_doc import SdsDoc, SdsNode
+from ..model.sds_reqd import SdsReqd, Logic
 from ..model.test_set import TestSet
 from ..model.test_case import TestCase
 from ..model.rcm import Rcm
@@ -60,6 +62,7 @@ from . import msg_err_db, save_file
 logger = logging.getLogger(__name__)
 srsreq_serv = ServSrsReq()
 srsreqd_serv = ServSrsReqd()
+DELETED_SRS_VERSION_PREFIX = "__deleted_srs__"
 
 DEF_SRS = [
     ("SRS-XUS00-001", "数据库要求"),
@@ -504,8 +507,16 @@ class Server(object):
         code_pattern = re.compile(r"^[A-Z]{2,}(?:[-_][A-Z0-9.]+)+$", re.I)
         rcm_pattern = re.compile(r"\bRCM[-_A-Za-z0-9]+\b", re.I)
         seen = set()
+        heading_no_re = re.compile(r"^\s*\d+(?:\.\d+)*[\s、.．:：\-]*")
 
-        def walk(items: List[SrsNodeForm]):
+        def clean_title(txt: str):
+            value = self.__normalize_text(txt or "")
+            value = heading_no_re.sub("", value).strip()
+            value = re.sub(r"\bSRS[-_\sA-Za-z0-9.]+\b", "", value, flags=re.I).strip()
+            return value
+
+        def walk(items: List[SrsNodeForm], parent_titles: List[str] = None):
+            parent_titles = parent_titles or []
             for node in items or []:
                 table = getattr(node, "table", None)
                 headers = getattr(table, "headers", None) if table else None
@@ -545,9 +556,29 @@ class Server(object):
                                 rcm_codes = {code for code in rcm_codes if code}
                                 if rcm_codes:
                                     req_rcm_map.setdefault(code_upper, set()).update(rcm_codes)
-                walk(getattr(node, "children", None) or [])
+                # 兜底：从章节节点上的 srs_code 直接生成需求，避免因表格格式变化导致 SRS 管理为空
+                node_srs_code = self.__normalize_srs_code(str(getattr(node, "srs_code", "") or ""))
+                if node_srs_code and code_pattern.match(node_srs_code):
+                    key = ("1", node_srs_code.upper())
+                    if key not in seen:
+                        seen.add(key)
+                        title_txt = clean_title(getattr(node, "title", "") or "")
+                        parent_txt = clean_title(parent_titles[-1] if parent_titles else "")
+                        req_rows.append(
+                            dict(
+                                code=node_srs_code.upper(),
+                                type_code="1",
+                                module=parent_txt or None,
+                                function=title_txt or None,
+                                sub_function=None,
+                                location=None,
+                            )
+                        )
 
-        walk(nodes or [])
+                next_parents = parent_titles + [getattr(node, "title", "") or ""]
+                walk(getattr(node, "children", None) or [], next_parents)
+
+        walk(nodes or [], [])
         return req_rows, req_rcm_map
 
     def __map_reqd_field(self, label: str):
@@ -1203,19 +1234,35 @@ class Server(object):
         return Resp.resp_err(msg=ts(msg_err_db))
    
     async def delete_srs_doc(self, id):
-        sql = select(func.count(SdsDoc.id)).where(SdsDoc.srsdoc_id == id)
-        count = db.session.execute(sql).scalar()
-        if count > 0:
-            return Resp.resp_err(msg=ts("msg_srsdoc_x_sdsdoc"))
-        
-        req_ids = [id for id, in db.session.query(SrsReq.id).filter(SrsReq.doc_id == id).all()]
-        db.session.execute(delete(SrsReqd).where(SrsReqd.req_id.in_(req_ids)))
-        db.session.execute(delete(SrsReq).where(SrsReq.doc_id == id))
-        db.session.execute(delete(SrsNode).where(SrsNode.doc_id == id))
-        db.session.execute(delete(SrsDoc).where(SrsDoc.id == id))
+        try:
+            sql = select(func.count(SdsDoc.id)).where(SdsDoc.srsdoc_id == id)
+            count = db.session.execute(sql).scalar()
 
-        db.session.commit()
-        return Resp.resp_ok()
+            # 清理SRS管理数据
+            req_ids = [req_id for req_id, in db.session.query(SrsReq.id).filter(SrsReq.doc_id == id).all()]
+            if req_ids:
+                db.session.execute(delete(ReqRcm).where(ReqRcm.req_id.in_(req_ids)))
+                db.session.execute(delete(SrsReqd).where(SrsReqd.req_id.in_(req_ids)))
+            db.session.execute(delete(SrsReq).where(SrsReq.doc_id == id))
+            db.session.execute(delete(SrsType).where(SrsType.doc_id == id))
+            db.session.execute(delete(SrsNode).where(SrsNode.doc_id == id))
+            if count > 0:
+                # 若已绑定详细设计：保留SRS主记录用于维持产品绑定，但标记为“已删除”并从可选列表隐藏
+                row = db.session.execute(select(SrsDoc).where(SrsDoc.id == id)).scalars().first()
+                if not row:
+                    return Resp.resp_err(msg=ts("msg_obj_null"))
+                stamp = datetime.now().strftime("%y%m%d%H%M%S")
+                row.version = f"{DELETED_SRS_VERSION_PREFIX}{id}_{stamp}"
+                row.change_log = "已删除需求规格说明（保留绑定占位）"
+                row.n_id = 0
+            else:
+                db.session.execute(delete(SrsDoc).where(SrsDoc.id == id))
+            db.session.commit()
+            return Resp.resp_ok()
+        except Exception:
+            logger.exception("")
+            db.session.rollback()
+        return Resp.resp_err(msg=ts(msg_err_db))
     
     async def add_srs_node(self, node: SrsNodeForm):
         sql = select(SrsNode, SrsDoc).join(SrsDoc, SrsNode.doc_id == SrsDoc.id)
@@ -1266,6 +1313,20 @@ class Server(object):
             self.__update_nodes(row, 0, form.content)
             db.session.commit()
             self.__fix_rcms(row)
+            return Resp.resp_ok()
+        except Exception:
+            logger.exception("")
+            db.session.rollback()
+        return Resp.resp_err(msg=ts(msg_err_db))
+
+    async def update_srs_doc_file_no(self, id: int, file_no: str):
+        try:
+            sql = select(SrsDoc).where(SrsDoc.id == id)
+            row: SrsDoc = db.session.execute(sql).scalars().first()
+            if not row:
+                return Resp.resp_err(msg=ts("msg_obj_null"))
+            row.file_no = (file_no or "").strip() or None
+            db.session.commit()
             return Resp.resp_ok()
         except Exception:
             logger.exception("")
@@ -1341,6 +1402,8 @@ class Server(object):
         row, row_prod = db.session.execute(sql).first() or (None, None)
         if not row:
             return Resp.resp_err(msg=ts("msg_obj_null"))
+        if (row.version or "").startswith(DELETED_SRS_VERSION_PREFIX):
+            return Resp.resp_err(msg=ts("msg_obj_null"))
         objs_dict, tree = self.__tree(row) if with_tree else (None, [])
         product_name = row_prod.name if row_prod else ""
         product_version = row_prod.full_version if row_prod else ""
@@ -1383,6 +1446,7 @@ class Server(object):
         page_size = page_size if page_size > 0 else 10 
     
         sql = select(SrsDoc, Product).outerjoin(Product, SrsDoc.product_id == Product.id)
+        sql = sql.where(~SrsDoc.version.like(f"{DELETED_SRS_VERSION_PREFIX}%"))
         if product_id:
             sql = sql.where(SrsDoc.product_id == product_id)
         if version:
@@ -1406,8 +1470,8 @@ class Server(object):
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
 
     async def compare_srs_doc(self, id0: int, id1: int):
-        def __feature_label(req: SrsReq):
-            # 仅按“功能编号”判定新增/减少，名称改动不应算新增或减少
+        def __feature_key(req: SrsReq):
+            # 判定新增/减少时仅按功能编号，避免名称改动造成误判
             code = (req.code or "").strip()
             if code:
                 return code
@@ -1415,30 +1479,44 @@ class Server(object):
             function = (req.function or "").strip()
             return " - ".join([v for v in [module, function] if v])
 
+        def __feature_display(req: SrsReq):
+            code = (req.code or "").strip()
+            module = (req.module or "").strip()
+            function = (req.function or "").strip()
+            name = " - ".join([v for v in [module, function] if v])
+            if code and name:
+                return f"{code} {name}"
+            return code or name
+
         def __to_text(values: List[str]):
             return "；".join(values) if values else "无"
 
-        def __query_feature_sets():
+        def __query_feature_maps():
             feature_dict = {id0: set(), id1: set()}
+            feature_name_dict = {id0: {}, id1: {}}
             rows: List[SrsReq] = db.session.execute(
                 select(SrsReq).where(SrsReq.doc_id.in_([id0, id1])).order_by(SrsReq.doc_id, SrsReq.module, SrsReq.function, SrsReq.code)
             ).scalars().all()
             for req in rows:
-                label = __feature_label(req)
-                if label:
-                    feature_dict.setdefault(req.doc_id, set()).add(label)
-            return feature_dict
+                key = __feature_key(req)
+                if not key:
+                    continue
+                feature_dict.setdefault(req.doc_id, set()).add(key)
+                feature_name_dict.setdefault(req.doc_id, {}).setdefault(key, __feature_display(req) or key)
+            return feature_dict, feature_name_dict
 
         sql = select(SrsDoc, Product).join(Product, SrsDoc.product_id == Product.id).where(SrsDoc.id.in_([id0, id1]))
         rows: List[Tuple[SrsDoc, Product]] = db.session.execute(sql).all()
         if not rows:
             return Resp.resp_err(msg=ts("msg_obj_null"))
 
-        feature_dict = __query_feature_sets()
+        feature_dict, feature_name_dict = __query_feature_maps()
         features0 = feature_dict.get(id0) or set()
         features1 = feature_dict.get(id1) or set()
-        added0 = sorted(features0 - features1)
-        added1 = sorted(features1 - features0)
+        added0_keys = sorted(features0 - features1)
+        added1_keys = sorted(features1 - features0)
+        added0 = [feature_name_dict.get(id0, {}).get(key, key) for key in added0_keys]
+        added1 = [feature_name_dict.get(id1, {}).get(key, key) for key in added1_keys]
         removed0 = added1
         removed1 = added0
 

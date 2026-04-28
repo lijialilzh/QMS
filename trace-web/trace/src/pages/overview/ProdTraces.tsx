@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
 import * as Api from "@/api/ApiProduct";
 
-const pageSizeOptions = [10, 20, 50];
+const pageSizeOptions = [20, 50, 100];
 
 export default () => {
     const { t: ts } = useTranslation();
@@ -106,7 +106,7 @@ export default () => {
 
     return (
         <div className="page div-v">
-            <div className="div-h searchbar">
+            <div className="div-h searchbar list-searchbar-align">
                 <Form
                     form={queryForm}
                     className="expand"
