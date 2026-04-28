@@ -2,11 +2,13 @@ import logging
 import base64
 import os
 import re
+from typing import Any
 from typing import List, Tuple
 from sqlalchemy import select, delete, func
 from sqlalchemy.sql import desc
 from ..obj.vobj_user import UserObj
 from ..model.srs_doc import SrsDoc, SrsNode
+from ..model.sds_doc import SdsDoc, SdsNode
 from ..model.product import Product, UserProd
 from ..obj.vobj_doc_file import DocFileObj
 from ..model.doc_file import DocFile
@@ -29,6 +31,11 @@ class Server(object):
     @staticmethod
     def __normalize_text(value):
         return (value or "").replace("\xa0", " ").strip()
+
+    @staticmethod
+    def __normalize_for_match(value):
+        txt = (value or "").replace("\xa0", " ").strip().lower()
+        return re.sub(r"\s+", "", txt)
 
     @staticmethod
     def __extract_data_url_blob(data_url: str):
@@ -54,14 +61,21 @@ class Server(object):
             return None, None
         return blob, ext
 
-    def __node_context_text(self, node: SrsNode, node_map: dict):
+    def __node_context_text(self, node: Any, node_map: dict):
         texts = []
         cur = node
         safety = 0
         while cur and safety < 100:
             title = self.__normalize_text(getattr(cur, "title", "") or "")
+            label = self.__normalize_text(getattr(cur, "label", "") or "")
+            text = self.__normalize_text(getattr(cur, "text", "") or "")
             if title:
                 texts.append(title)
+            if label:
+                texts.append(label)
+            # 只取正文首行用于语义匹配，避免上下文过长
+            if text:
+                texts.append(text.splitlines()[0][:120])
             p_id = getattr(cur, "p_id", 0) or 0
             if p_id == 0:
                 break
@@ -69,6 +83,60 @@ class Server(object):
             safety += 1
         texts.reverse()
         return " ".join(texts)
+
+    def __contains_keywords(self, text: str, keywords: List[str]):
+        norm_text = self.__normalize_for_match(text)
+        for word in keywords or []:
+            if self.__normalize_for_match(word) in norm_text:
+                return True
+        return False
+
+    def __match_score(self, category: str, text: str):
+        norm = self.__normalize_for_match(text)
+        if not norm:
+            return 0
+        if category == "img_flow":
+            # 按“名称优先”匹配：网络安全流程图 > 安全流程图 > 泛流程图
+            if "网络安全流程图" in norm:
+                return 1000
+            if "安全流程图" in norm:
+                return 800
+            if ("网络安全" in norm) and ("流程图" in norm):
+                return 700
+            if "流程图" in norm:
+                return 100
+            return 0
+        if category == "img_topo":
+            if "物理拓扑图" in norm:
+                return 1000
+            if "拓扑图" in norm:
+                return 500
+            return 0
+        if category == "img_struct":
+            if "系统结构图" in norm or "体系结构图" in norm:
+                return 1000
+            if "结构图" in norm:
+                return 500
+            return 0
+        return 0
+
+    def __extract_image_blob_and_ext(self, img_url: str):
+        if not img_url:
+            return None, None
+        img_url = str(img_url).strip()
+        if img_url.startswith("data:"):
+            return self.__extract_data_url_blob(img_url)
+        # 兼容已落盘图片路径（例如 SDS 导入后节点图片）
+        path = img_url
+        if not os.path.exists(path):
+            return None, None
+        ext = os.path.splitext(path)[1] or ".png"
+        try:
+            with open(path, "rb") as fs:
+                blob = fs.read()
+            return blob, ext
+        except Exception:
+            return None, None
 
     def __backfill_doc_file_from_srs(self, product_id: int, category: str):
         if not product_id or category not in self.DOC_IMG_KEYWORDS:
@@ -104,7 +172,7 @@ class Server(object):
         if not matched_data_url:
             return
 
-        blob, ext = self.__extract_data_url_blob(matched_data_url)
+        blob, ext = self.__extract_image_blob_and_ext(matched_data_url)
         if not blob:
             return
 
@@ -118,6 +186,78 @@ class Server(object):
         new_row.file_name = f"{category}{ext}"
         new_row.file_size = len(blob)
         new_row.file_url = path
+        db.session.commit()
+
+    def __backfill_doc_file_from_sds(self, product_id: int, category: str):
+        if not product_id or category not in self.DOC_IMG_KEYWORDS:
+            return
+
+        docs = db.session.execute(
+            select(SdsDoc)
+            .join(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id)
+            .where(SrsDoc.product_id == product_id)
+            .order_by(desc(SdsDoc.id))
+        ).scalars().all()
+        if not docs:
+            return
+
+        keywords = self.DOC_IMG_KEYWORDS.get(category) or []
+        matched_img = None
+        # 按 SDS 文档版本倒序扫描：先匹配关键词，未命中时对流程图允许首图兜底
+        for doc in docs:
+            nodes = db.session.execute(
+                select(SdsNode).where(SdsNode.doc_id == doc.id).order_by(SdsNode.priority, SdsNode.n_id)
+            ).scalars().all()
+            if not nodes:
+                continue
+            node_map = {row.n_id: row for row in nodes}
+            first_img = None
+            best_img = None
+            best_score = 0
+            for row in nodes:
+                img_url = getattr(row, "img_url", None)
+                if not img_url:
+                    continue
+                if not first_img:
+                    first_img = img_url
+                ctx_text = self.__node_context_text(row, node_map)
+                if self.__contains_keywords(ctx_text, keywords):
+                    score = self.__match_score(category, ctx_text)
+                    if score > best_score:
+                        best_score = score
+                        best_img = img_url
+            if best_img:
+                matched_img = best_img
+                break
+            if category == "img_flow" and first_img:
+                matched_img = first_img
+                break
+        if not matched_img:
+            return
+
+        blob, ext = self.__extract_image_blob_and_ext(matched_img)
+        if not blob:
+            return
+
+        # 流程图按名称重新命中后，允许覆盖旧记录，避免历史误匹配一直存在
+        row = db.session.execute(
+            select(DocFile)
+            .where(DocFile.product_id == product_id, DocFile.category == category)
+            .order_by(desc(DocFile.id))
+            .limit(1)
+        ).scalars().first()
+        if not row:
+            row = DocFile(product_id=product_id, category=category)
+            db.session.add(row)
+            db.session.flush()
+
+        path = os.path.join("data.trace", category, f"{row.id}{ext}")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "wb") as fs:
+            fs.write(blob)
+        row.file_name = f"{category}{ext}"
+        row.file_size = len(blob)
+        row.file_url = path
         db.session.commit()
 
     async def add_doc_file(self, form: DocFileForm, file):
@@ -178,8 +318,13 @@ class Server(object):
         page_index = page_index if page_index >= 0 else 0
         page_size = page_size if page_size > 0 else 10 
         if category in self.DOC_IMG_KEYWORDS and product_id > 0:
-            # 兜底：已有SRS文档但尚未生成图表文件记录时，按需自动回填一次
-            self.__backfill_doc_file_from_srs(product_id, category)
+            # 图源规则：
+            # - 网络安全流程图：从详细设计（SDS）节点取图
+            # - 其他图：保持原有 SRS 兜底逻辑
+            if category == "img_flow":
+                self.__backfill_doc_file_from_sds(product_id, category)
+            else:
+                self.__backfill_doc_file_from_srs(product_id, category)
     
         sql = select(DocFile, Product).outerjoin(Product, DocFile.product_id == Product.id)
         if category:
@@ -188,7 +333,8 @@ class Server(object):
             sql = sql.where(Product.id == product_id)
         if file_name:
             sql = sql.where(DocFile.file_name.like(f"%{file_name}%"))
-        if not product_id and op_user and op_user.id != 1:
+        # 三类图表页面默认显示所有产品（未选择产品时不按用户产品关系限制）
+        if category not in self.DOC_IMG_KEYWORDS and not product_id and op_user and op_user.id != 1:
             subquery = select(UserProd.product_id).where(UserProd.user_id == op_user.id).scalar_subquery()
             sql = sql.where(Product.id.in_(subquery))
         

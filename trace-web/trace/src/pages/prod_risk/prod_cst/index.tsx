@@ -1,4 +1,4 @@
-import { Form, Button, Table, message, Row, Col, Modal, Select, InputNumber, Tag } from "antd";
+import { Form, Button, Table, message, Row, Col, Modal, Select, InputNumber, Tag, Space } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -8,6 +8,7 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProdCst";
 import { doSearchProducts, doSearchRcms } from "../util";
 import EditDlg from "./EditDlg";
+import "./index.less";
 
 const pageSizeOptions = [20, 50, 100];
 
@@ -241,16 +242,10 @@ export default () => {
             },
         },
         {
-            title: ts("product.product"),
-            render: (_value: any, row: any) => {
-                return `${row.product_name}-${row.product_version}`;
-            },
-        },
-        {
             title: ts("action"),
             render: (_value: any, row: any) => {
                 return (
-                    <div>
+                    <Space size={8} style={{ whiteSpace: "nowrap" }}>
                         {data.targetEdit.id === row.id && (
                             <Button type="link" onClick={() => dispatch({ targetEdit: {} })}>
                                 {ts("cancel")}
@@ -274,7 +269,7 @@ export default () => {
                                 {ts("delete")}
                             </Button>
                         )}
-                    </div>
+                    </Space>
                 );
             },
         },
@@ -287,7 +282,7 @@ export default () => {
     }, []);
 
     return (
-        <div className="page div-v">
+        <div className="page div-v prod-cst">
             <div className="div-h searchbar list-searchbar-align">
                 <Form
                     form={queryForm}
@@ -344,7 +339,7 @@ export default () => {
                 </div>
             </div>
             <Table
-                className="expand"
+                className="expand prod-cst-table"
                 columns={columns}
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}

@@ -21,8 +21,10 @@ from ..utils import get_uuid
 from ..utils.i18n import ts
 from ..obj import Page, Resp
 from . import msg_err_db, save_file
+from .serv_srs_reqd import Server as ServSrsReqd
 
 logger = logging.getLogger(__name__)
+srsreqd_serv = ServSrsReqd()
 
 
 class Server(object):
@@ -43,6 +45,18 @@ class Server(object):
             return work_flow
         # 兼容SRS里把“事件流”写在触发器/触发条件字段中的情况
         return trigger
+
+    @staticmethod
+    def __compose_srs_func_detail(row_srsreqd: SrsReqd):
+        if not row_srsreqd:
+            return ""
+        trigger = (getattr(row_srsreqd, "trigger", None) or "").strip()
+        work_flow = (getattr(row_srsreqd, "work_flow", None) or "").strip()
+        if trigger and work_flow:
+            if trigger == work_flow:
+                return trigger
+            return f"{trigger}\n{work_flow}"
+        return trigger or work_flow
 
     @staticmethod
     def __extract_io_sections_from_text(text: str):
@@ -192,6 +206,9 @@ class Server(object):
         if not raw:
             return {}
         marker_map = {
+            "总体描述": "overview",
+            "需求概述": "overview",
+            "概述": "overview",
             "功能": "func_detail",
             "程序逻辑": "logic_txt",
             "逻辑描述": "logic_txt",
@@ -200,7 +217,7 @@ class Server(object):
             "输出项": "output",
             "接口": "interface",
         }
-        marker_re = re.compile(rf"{self.SECTION_PREFIX_RE}(功能|程序逻辑|逻辑描述|逻辑|输入项|输出项|接口)(?:描述)?\s*[：:]?")
+        marker_re = re.compile(rf"{self.SECTION_PREFIX_RE}(总体描述|需求概述|概述|功能|程序逻辑|逻辑描述|逻辑|输入项|输出项|接口)(?:描述)?\s*[：:]?")
         hits = list(marker_re.finditer(raw))
         if not hits:
             return {}
@@ -394,20 +411,26 @@ class Server(object):
         return best_logic or best_name or best_code
 
     def __find_best_req_node(self, tree: List[SdsNodeForm], req: SrsReq, row_srsreqd: SrsReqd):
-        req_names = []
-        for txt in [getattr(row_srsreqd, "name", None), req.sub_function, req.function, req.module]:
+        # 优先用“需求名称/子功能/功能”精确匹配，模块名仅作为最后兜底，避免串到相邻功能点
+        primary_names = []
+        for txt in [getattr(row_srsreqd, "name", None), req.sub_function, req.function]:
             n = self.__normalize_name(txt)
-            if n:
-                req_names.append(n)
-        req_names = list(dict.fromkeys(req_names))
-        if not req_names:
+            if n and n not in primary_names:
+                primary_names.append(n)
+        fallback_names = []
+        for txt in [req.module]:
+            n = self.__normalize_name(txt)
+            if n and n not in fallback_names:
+                fallback_names.append(n)
+        if not primary_names and not fallback_names:
             return None
         best_node = None
         best_score = -1
 
         def score_node(node: SdsNodeForm, merged: str, exact: bool):
             score = 0
-            score += 100 if exact else 70
+            # exact 远高于 fuzzy，避免“安装包”这类通用词把节点串走
+            score += 2000 if exact else 100
             title_label = f"{getattr(node, 'title', '')}{getattr(node, 'label', '')}"
             if "接口" not in title_label:
                 score += 20
@@ -421,10 +444,17 @@ class Server(object):
             for node in nodes or []:
                 merged = self.__normalize_name(f"{getattr(node, 'title', '')}{getattr(node, 'label', '')}")
                 if merged:
-                    is_exact = any(merged == name for name in req_names)
-                    is_fuzzy = any(len(name) >= 2 and name in merged for name in req_names)
-                    if is_exact or is_fuzzy:
-                        cur_score = score_node(node, merged, is_exact)
+                    is_exact_primary = any(merged == name for name in primary_names)
+                    is_fuzzy_primary = any(len(name) >= 2 and name in merged for name in primary_names)
+                    is_exact_fallback = any(merged == name for name in fallback_names)
+                    is_fuzzy_fallback = any(len(name) >= 2 and name in merged for name in fallback_names)
+                    if is_exact_primary or is_fuzzy_primary:
+                        cur_score = score_node(node, merged, is_exact_primary) + 500
+                        if cur_score > best_score:
+                            best_score = cur_score
+                            best_node = node
+                    elif is_exact_fallback or is_fuzzy_fallback:
+                        cur_score = score_node(node, merged, is_exact_fallback)
                         if cur_score > best_score:
                             best_score = cur_score
                             best_node = node
@@ -493,6 +523,20 @@ class Server(object):
         elif named_img:
             merged["logic_img"] = named_img
         return merged
+
+    @staticmethod
+    def __has_effective_sds_content(tree: List[SdsNodeForm]):
+        # 仅有模板节点（标题为空内容）不应视为“已导入详细设计”
+        stack = list(tree or [])
+        while stack:
+            node = stack.pop()
+            text = (getattr(node, "text", "") or "").strip()
+            sds_code = (getattr(node, "sds_code", "") or "").strip()
+            img_url = (getattr(node, "img_url", "") or "").strip()
+            if text or sds_code or img_url:
+                return True
+            stack.extend(getattr(node, "children", None) or [])
+        return False
 
     def __split_mixed_io_interface(self, values: dict):
         result = dict(values or {})
@@ -643,6 +687,18 @@ class Server(object):
         rows = self.__resort_rows(rows)
         doc_ids = list(set([row_sdsdoc.id for _, _, _, _, row_sdsdoc, _, _ in rows]))
         doc_trees = self.__query_doc_tree(doc_ids)
+        doc_has_effective_content = {doc_id: self.__has_effective_sds_content(tree) for doc_id, tree in doc_trees.items()}
+        srs_doc_ids = list(set([row_srsdoc.id for _, _, _, _, _, row_srsdoc, _ in rows if row_srsdoc]))
+        srs_reqd_fallback = {}
+        for srs_doc_id in srs_doc_ids:
+            try:
+                resp = await srsreqd_serv.list_srs_reqd(doc_id=srs_doc_id, page_size=5000)
+                for item in (resp.data.rows or []):
+                    req_id = getattr(item, "req_id", None)
+                    if req_id:
+                        srs_reqd_fallback[req_id] = item
+            except Exception:
+                logger.exception("query_srs_reqd_fallback_failed: %s", srs_doc_id)
         reqd_ids = list(set([row_reqd.id for row_reqd, *_ in rows if getattr(row_reqd, "id", None)]))
         logic_img_by_reqd_id = {}
         if reqd_ids:
@@ -659,19 +715,22 @@ class Server(object):
         objs = []
         for row_reqd, row_req, row_srsreqd, row_type, row_sdsdoc, row_srsdoc, row_product in rows:
             doc_tree = doc_trees.get(row_sdsdoc.id)
-            has_imported_design = bool(doc_tree)
+            has_imported_design = doc_has_effective_content.get(row_sdsdoc.id, False)
             values = self.__extract_imported_fields(doc_tree, row_req, row_srsreqd) if has_imported_design else {}
-            for field in ["overview", "func_detail", "logic_txt", "intput", "output", "interface"]:
-                cur_val = (getattr(row_reqd, field, None) or "").strip()
-                if cur_val and not values.get(field):
-                    values[field] = cur_val
+            row_srsreqd_source = row_srsreqd or srs_reqd_fallback.get(getattr(row_req, "id", None))
+            # 未导入详细设计时，才允许使用历史/手工值兜底
+            if not has_imported_design:
+                for field in ["overview", "func_detail", "logic_txt", "intput", "output", "interface"]:
+                    cur_val = (getattr(row_reqd, field, None) or "").strip()
+                    if cur_val and not values.get(field):
+                        values[field] = cur_val
             values = self.__split_mixed_io_interface(values)
 
             obj = SdsReqdObj(**row_reqd.dict())
             obj.srs_code = row_req.code
-            srs_flow_text = self.__pick_srs_flow_text(row_srsreqd)
-            if row_srsreqd:
-                obj.name = row_srsreqd.name or row_req.sub_function or row_req.function or row_req.module
+            srs_flow_text = self.__compose_srs_func_detail(row_srsreqd_source)
+            if row_srsreqd_source:
+                obj.name = getattr(row_srsreqd_source, "name", None) or row_req.sub_function or row_req.function or row_req.module
                 if has_imported_design:
                     # 已导入详细设计：严格以详细设计文档解析结果为准，避免历史脏值干扰
                     obj.overview = values.get("overview") or ""
@@ -682,7 +741,7 @@ class Server(object):
                     obj.interface = values.get("interface") or ""
                 else:
                     # 未导入详细设计：内容按SRS来源展示
-                    obj.overview = row_srsreqd.overview
+                    obj.overview = (getattr(row_srsreqd_source, "overview", None) or "").strip()
                     obj.func_detail = srs_flow_text
                     obj.logic_txt = row_reqd.logic_txt
                     obj.intput = row_reqd.intput
@@ -690,12 +749,21 @@ class Server(object):
                     obj.interface = row_reqd.interface
             else:
                 obj.name = row_req.sub_function or row_req.function or row_req.module
-                obj.overview = values.get("overview") or row_reqd.overview
-                obj.func_detail = values.get("func_detail") or row_reqd.func_detail
-                obj.logic_txt = values.get("logic_txt") or row_reqd.logic_txt
-                obj.intput = values.get("intput") or row_reqd.intput
-                obj.output = values.get("output") or row_reqd.output
-                obj.interface = values.get("interface") or row_reqd.interface
+                if has_imported_design:
+                    obj.overview = values.get("overview") or ""
+                    obj.func_detail = values.get("func_detail") or ""
+                    obj.logic_txt = values.get("logic_txt") or ""
+                    obj.intput = values.get("intput") or ""
+                    obj.output = values.get("output") or ""
+                    obj.interface = values.get("interface") or ""
+                else:
+                    # 未导入详细设计：优先使用SRS需求详细（需求概述/触发器/工作流），无数据时保留手工值
+                    obj.overview = values.get("overview") or row_reqd.overview or ""
+                    obj.func_detail = values.get("func_detail") or row_reqd.func_detail or ""
+                    obj.logic_txt = values.get("logic_txt") or row_reqd.logic_txt
+                    obj.intput = values.get("intput") or row_reqd.intput
+                    obj.output = values.get("output") or row_reqd.output
+                    obj.interface = values.get("interface") or row_reqd.interface
             obj.module = row_req.module
             obj.function = row_req.function
             obj.sub_function = row_req.sub_function
@@ -729,11 +797,60 @@ class Server(object):
         rows: List[Logic] = db.session.execute(sql).scalars().all()
         logics = [LogicForm(**row.dict()) for row in rows]
 
+        # 与列表页保持一致：详情也使用“导入SDS优先，否则SRS回填”的同一套取值逻辑
+        row_sdsdoc, row_srsdoc = db.session.execute(
+            select(SdsDoc, SrsDoc).outerjoin(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id).where(SdsDoc.id == row_reqd.doc_id)
+        ).first() or (None, None)
+        doc_tree = []
+        if row_sdsdoc:
+            doc_tree = self.__query_doc_tree([row_sdsdoc.id]).get(row_sdsdoc.id) or []
+        has_imported_design = self.__has_effective_sds_content(doc_tree)
+
+        row_srsreqd_source = row_srsreqd
+        if not row_srsreqd_source and row_srsdoc:
+            try:
+                resp = await srsreqd_serv.list_srs_reqd(doc_id=row_srsdoc.id, page_size=5000)
+                for item in (resp.data.rows or []):
+                    if getattr(item, "req_id", None) == getattr(row_req, "id", None):
+                        row_srsreqd_source = item
+                        break
+            except Exception:
+                logger.exception("get_sds_reqd_query_srs_reqd_fallback_failed: %s", row_srsdoc.id)
+
+        values = self.__extract_imported_fields(doc_tree, row_req, row_srsreqd_source) if has_imported_design else {}
+        if not has_imported_design:
+            for field in ["overview", "func_detail", "logic_txt", "intput", "output", "interface"]:
+                cur_val = (getattr(row_reqd, field, None) or "").strip()
+                if cur_val and not values.get(field):
+                    values[field] = cur_val
+        values = self.__split_mixed_io_interface(values)
+
         obj = SdsReqdObj(**row_reqd.dict(), srs_code=row_req.code)
         obj.logics = logics
-        obj.name = row_req.sub_function or row_req.function or row_req.module
-        obj.overview = row_reqd.overview or row_srsreqd.overview
-        srs_flow_text = self.__pick_srs_flow_text(row_srsreqd)
-        obj.func_detail = srs_flow_text if self.__is_placeholder(row_reqd.func_detail) else row_reqd.func_detail
+        obj.name = (getattr(row_srsreqd_source, "name", None) or row_req.sub_function or row_req.function or row_req.module)
+        fallback_logic_img = ""
+        for logic in reversed(logics or []):
+            img = self.__normalize_img_url(getattr(logic, "img_url", "") or "")
+            if img:
+                fallback_logic_img = img
+                break
+        if has_imported_design:
+            obj.overview = values.get("overview") or ""
+            obj.func_detail = values.get("func_detail") or ""
+            obj.logic_txt = values.get("logic_txt") or ""
+            obj.intput = values.get("intput") or ""
+            obj.output = values.get("output") or ""
+            obj.interface = values.get("interface") or ""
+            obj.logic_img = fallback_logic_img or self.__normalize_img_url(values.get("logic_img") or "")
+        else:
+            srs_overview = (getattr(row_srsreqd_source, "overview", None) or "").strip() if row_srsreqd_source else ""
+            srs_flow_text = self.__compose_srs_func_detail(row_srsreqd_source)
+            obj.overview = srs_overview or row_reqd.overview or ""
+            obj.func_detail = srs_flow_text or row_reqd.func_detail or ""
+            obj.logic_txt = values.get("logic_txt") or row_reqd.logic_txt or ""
+            obj.intput = values.get("intput") or row_reqd.intput or ""
+            obj.output = values.get("output") or row_reqd.output or ""
+            obj.interface = values.get("interface") or row_reqd.interface or ""
+            obj.logic_img = fallback_logic_img or self.__normalize_img_url(values.get("logic_img") or row_reqd.logic_img or "")
         return Resp.resp_ok(data=obj)
     

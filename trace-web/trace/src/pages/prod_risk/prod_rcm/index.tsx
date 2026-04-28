@@ -1,4 +1,5 @@
-import { Form, Button, Table, message, Row, Col, Modal } from "antd";
+import "./index.less";
+import { Form, Button, Table, message, Row, Col, Modal, Space } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -96,12 +97,6 @@ export default () => {
             dataIndex: "note",
         },
         {
-            title: ts("product.product"),
-            render: (_value: any, row: any) => {
-                return `${row.product_name}-${row.product_version}`;
-            },
-        },
-        {
             title: ts("create_time"),
             dataIndex: "create_time",
         },
@@ -109,11 +104,11 @@ export default () => {
             title: ts("action"),
             render: (_value: any, row: any) => {
                 return (
-                    <div>
+                    <Space size={8} style={{ whiteSpace: "nowrap" }}>
                         <Button type="link" danger onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
                             {ts("delete")}
                         </Button>
-                    </div>
+                    </Space>
                 );
             },
         },
@@ -126,7 +121,7 @@ export default () => {
     }, []);
 
     return (
-        <div className="page div-v">
+        <div className="page div-v prod-rcm">
             <div className="div-h searchbar list-searchbar-align">
                 <Form
                     form={queryForm}
@@ -183,11 +178,12 @@ export default () => {
                 </div>
             </div>
             <Table
-                className="expand"
+                className="expand prod-rcm-table"
                 columns={columns}
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}
                 loading={data.loading}
+                tableLayout="fixed"
                 pagination={{
                     total: data.total,
                     current: data.pageIndex,

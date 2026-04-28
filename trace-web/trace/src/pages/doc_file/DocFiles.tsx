@@ -1,4 +1,4 @@
-import { Form, Input, Button, Table, message, Row, Col, Modal, Upload } from "antd";
+import { Form, Input, Button, Table, message, Row, Col, Modal, Upload, Space } from "antd";
 import { SearchOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -231,7 +231,7 @@ export default ({ fileType }: any) => {
             title: ts("action"),
             render: (_value: any, row: any) => {
                 return (
-                    <div>
+                    <Space>
                         <Button type="link" onClick={() => dispatch({ dlgType: DlgTypes.edit, targetRow: row })}>
                             {ts("edit")}
                         </Button>
@@ -241,7 +241,7 @@ export default ({ fileType }: any) => {
                         <Button type="link" onClick={() => window.open(`/${row.file_url}`, "_blank")}>
                             {ts("download")}
                         </Button>
-                    </div>
+                    </Space>
                 );
             },
         },
@@ -274,11 +274,6 @@ export default ({ fileType }: any) => {
                                     versionPlaceholder={ts("product.full_version")}
                                     onChange={(value) => queryForm.setFieldValue("product_id", value)}
                                 />
-                            </Form.Item>
-                        </Col>
-                        <Col>
-                            <Form.Item label={ts("doc_file.file_name")} name="file_name">
-                                <Input allowClear />
                             </Form.Item>
                         </Col>
                         <Col>

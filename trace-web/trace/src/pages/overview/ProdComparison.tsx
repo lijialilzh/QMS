@@ -1,5 +1,5 @@
 import "./ProdComparison.less";
-import { Form, Button, Table, message, Row, Col, Select, Radio } from "antd";
+import { Form, Button, message, Row, Col, Select, Radio, Spin } from "antd";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
@@ -8,55 +8,10 @@ import * as ApiDoc from "@/api/ApiSdsDoc";
 import * as ApiSrsDoc from "@/api/ApiSrsDoc";
 import { doSearchProducts } from "../prod_risk/util";
 
-const columnsDef = (ts: (key: string) => string) => [
-    {
-        title: ts("prod_comparison.comparison_name"),
-        dataIndex: "column_name",
-        width: 200,
-    },
-    {
-        title: ts("prod_comparison.prodA"),
-        dataIndex: "values",
-        render: (values: string[]) => values?.[0] || "-",
-    },
-    {
-        title: ts("prod_comparison.prodB"),
-        dataIndex: "values",
-        render: (values: string[]) => values?.[1] || "-",
-    },
-    {
-        title: ts("prod_comparison.comparison_status"),
-        dataIndex: "same_flag",
-        width: 120,
-        render: (same_flag: number) => {
-            return same_flag === 1 ? (
-                <span
-                    style={{
-                        display: "inline-block",
-                        padding: "4px 12px",
-                        backgroundColor: "#52c41a",
-                        color: "#fff",
-                        borderRadius: "4px",
-                        fontSize: "14px",
-                    }}>
-                    相同
-                </span>
-            ) : (
-                <span
-                    style={{
-                        display: "inline-block",
-                        padding: "4px 12px",
-                        backgroundColor: "#faad14",
-                        color: "#fff",
-                        borderRadius: "4px",
-                        fontSize: "14px",
-                    }}>
-                    不同
-                </span>
-            );
-        },
-    },
-];
+const toCellText = (value: any) => {
+    if (value === null || value === undefined || value === "") return "-";
+    return String(value);
+};
 
 export default () => {
     const { t: ts } = useTranslation();
@@ -145,8 +100,6 @@ export default () => {
     useEffect(() => {
         doSearchProducts(data, dispatch);
     }, []);
-
-    const columns = columnsDef(ts);
 
     return (
         <div className="page div-v prod-comparison">
@@ -241,14 +194,53 @@ export default () => {
                     </Form>
                 </div>
                 <div className="doc-section">
-                    <Table
-                        className="expand"
-                        columns={columns}
-                        rowKey={(item: any) => item.column_code}
-                        dataSource={data.rows}
-                        loading={data.loading}
-                        pagination={false}
-                    />
+                    <Spin spinning={data.loading}>
+                        <div className="comparison-table-wrap">
+                            <table className="comparison-plain-table">
+                                <thead>
+                                    <tr>
+                                        <th>{ts("prod_comparison.comparison_name")}</th>
+                                        <th>{ts("prod_comparison.prodA")}</th>
+                                        <th>{ts("prod_comparison.prodB")}</th>
+                                        <th>{ts("prod_comparison.comparison_status")}</th>
+                                    </tr>
+                                </thead>
+                                <colgroup>
+                                    <col style={{ width: "18%" }} />
+                                    <col style={{ width: "34%" }} />
+                                    <col style={{ width: "34%" }} />
+                                    <col style={{ width: "14%" }} />
+                                </colgroup>
+                                <tbody>
+                                    {(data.rows || []).map((row: any) => (
+                                        <tr key={row.column_code}>
+                                            <td title={toCellText(row.column_name)}>
+                                                <span className="comparison-cell-text">{toCellText(row.column_name)}</span>
+                                            </td>
+                                            <td title={toCellText(row.values?.[0])}>
+                                                <span className="comparison-cell-text">{toCellText(row.values?.[0])}</span>
+                                            </td>
+                                            <td title={toCellText(row.values?.[1])}>
+                                                <span className="comparison-cell-text">{toCellText(row.values?.[1])}</span>
+                                            </td>
+                                            <td title={row.same_flag === 1 ? "相同" : "不同"}>
+                                                {row.same_flag === 1 ? (
+                                                    <span className="comparison-tag same">相同</span>
+                                                ) : (
+                                                    <span className="comparison-tag diff">不同</span>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {(!data.rows || data.rows.length === 0) && !data.loading && (
+                                        <tr>
+                                            <td colSpan={4} className="comparison-empty-cell">-</td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </Spin>
                 </div>
             </div>
         </div>

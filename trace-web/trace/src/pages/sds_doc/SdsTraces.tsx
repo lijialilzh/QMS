@@ -1,4 +1,4 @@
-import { Form, Input, Button, Table, message, Row, Col, Modal, Select } from "antd";
+import { Form, Input, Button, Table, message, Row, Col, Modal, Select, Space } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -130,6 +130,10 @@ export default () => {
     });
 
     const doSearch = (params: any, pageIndex: any, pageSize: any) => {
+        if (!params?.prod_id || !params?.doc_id) {
+            dispatch({ loading: false, pageIndex, pageSize, total: 0, rows: [] });
+            return;
+        }
         dispatch({ loading: true });
         Api.list_sds_trace({ ...params, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
             if (res.code === Api.C_OK) {
@@ -182,19 +186,17 @@ export default () => {
             title: ts("action"),
             render: (_value: any, row: any) => {
                 return (
-                    <div>
+                    <Space size={8} style={{ whiteSpace: "nowrap" }}>
                         <Button type="link" onClick={() => dispatch({ dlgType: DlgTypes.edit, targetRow: row })}>
                             {ts("edit")}
                         </Button>
-                    </div>
+                    </Space>
                 );
             },
         },
     ];
 
     useEffect(() => {
-        const form = queryForm.getFieldsValue();
-        doSearch(form, data.pageIndex, data.pageSize);
         doSearchProducts(data, dispatch);
     }, []);
 
@@ -217,7 +219,7 @@ export default () => {
                                     versionPlaceholder={ts("product.full_version")}
                                     onChange={(value) => {
                                         queryForm.setFieldValue("prod_id", value);
-                                        dispatch({ docs: [] });
+                                        dispatch({ docs: [], rows: [], total: 0, pageIndex: 1 });
                                         queryForm.setFieldsValue({ doc_id: null });
                                         doSearchDocs({ product_id: value });
                                     }}

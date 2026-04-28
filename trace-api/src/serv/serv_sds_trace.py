@@ -430,8 +430,16 @@ class Server(object):
                 obj.product_version = row_product.full_version
             obj.type_code = row_req.type_code
             obj.type_name = type_names.get(row_req.id) or default_types.get(row_req.type_code) or row_req.type_code
-            # 严格按详细设计树节点读取章节号：优先 sds_code 命中；无编码时仅做标题精确匹配
             doc_tree = doc_trees.get(row_sdsdoc.id)
+            # 未导入详细设计：从SRS需求结构字段回退，避免结果被过滤为空
+            if not doc_tree:
+                obj.name = row_req.sub_function or row_req.function or row_req.module or "/"
+                obj.chapter = obj.name
+                # 章节号仅来自详细设计侧（SDS），不回退SRS章节号
+                obj.location = obj.location or None
+                objs.append(obj)
+                continue
+            # 严格按详细设计树节点读取章节号：优先 sds_code 命中；无编码时仅做标题精确匹配
             paths, _ = self.__find_path(0, row_reqd.sds_code, doc_tree, [])
             if not paths:
                 exact_names = self.__build_match_names(row_req.sub_function, row_req.function, row_req.module)
@@ -446,8 +454,12 @@ class Server(object):
                     paths, _ = self.__find_path_by_names(0, [name], doc_tree, [], exact_only=False)
                     if paths:
                         break
-            # 详细设计树中未命中路径则不展示
+            # 详细设计树中未命中路径时，仍按SRS基础信息展示，便于后续在追溯页手工编辑
             if not paths:
+                obj.name = row_req.sub_function or row_req.function or row_req.module or "/"
+                obj.chapter = obj.name
+                obj.location = self.__extract_chapter_code(obj.location) or None
+                objs.append(obj)
                 continue
             # 需求/代码固定取 SRS需求名称（子功能 > 功能 > 模块），占位值时用树标题兜底
             obj.name = self.__pick_req_display_name(row_req, paths)
@@ -469,9 +481,7 @@ class Server(object):
                 obj.location = self.__find_chapter(paths)
                 logger.info("location: %s %s", row_reqd.sds_code, obj.location)
             obj.location = self.__extract_chapter_code(obj.location) or None
-            # 命中路径但仍无法解析章节号时，不展示
-            if not obj.location:
-                continue
+            # 命中路径但暂未解析出章节号时，保留行供人工维护
             if obj.location:
                 chapter_offset = doc_chapter_offsets.get(row_sdsdoc.id, 0)
                 obj.location = self.__shift_chapter_major(obj.location, chapter_offset) or obj.location

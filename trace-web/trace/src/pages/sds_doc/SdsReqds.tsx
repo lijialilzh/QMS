@@ -1,6 +1,6 @@
 import "./SdsReqds.less";
 
-import { Form, Input, Button, Table, message, Row, Col, Modal, Select, Upload } from "antd";
+import { Form, Input, Button, Table, message, Row, Col, Modal, Select, Upload, Space } from "antd";
 import { SearchOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -12,6 +12,15 @@ import * as ApiDoc from "@/api/ApiSdsDoc";
 import { doSearchProducts } from "../prod_risk/util";
 
 const pageSizeOptions = [1000, 100, 500];
+
+const normalizeImgUrl = (url?: string) => {
+    const txt = String(url || "").trim();
+    if (!txt || txt === "/") return "";
+    if (txt.startsWith("http://") || txt.startsWith("https://") || txt.startsWith("data:")) return txt;
+    if (txt.startsWith("/data.trace/")) return txt;
+    if (txt.startsWith("data.trace/")) return `/${txt}`;
+    return txt;
+};
 
 enum DlgTypes {
     edit = "edit",
@@ -46,7 +55,13 @@ const DetailDlg = ({ data, dispatch, onSaved }: any) => {
                 dispatch({ loading: true });
                 Api.get_sds_reqd({ id: data.targetRow.id }).then((res: any) => {
                     if (res.code === Api.C_OK) {
-                        const targetRow = res.data;
+                        const detailRow = res.data || {};
+                        const targetRow = {
+                            ...data.targetRow,
+                            ...detailRow,
+                            // 详情接口偶发未返回 logic_img 时，保留列表中的已解析逻辑图
+                            logic_img: normalizeImgUrl(detailRow.logic_img) || normalizeImgUrl(data.targetRow.logic_img),
+                        };
                         editForm.setFieldsValue(targetRow);
                         dispatch({ loading: false, targetRow });
                     } else {
@@ -111,6 +126,11 @@ const DetailDlg = ({ data, dispatch, onSaved }: any) => {
                                     <Button icon={<UploadOutlined />}> {ts("select_file")}</Button>
                                 </Upload>
                             </Form.Item>
+                            {normalizeImgUrl(data.targetRow.logic_img) ? (
+                                <div style={{ marginTop: -12, marginBottom: 8 }}>
+                                    <img src={normalizeImgUrl(data.targetRow.logic_img)} alt="logic" className="sds-logic-img" />
+                                </div>
+                            ) : null}
                         </Col>
                     </Row>
                     <Row gutter={24}>
@@ -219,6 +239,10 @@ export default () => {
     });
 
     const doSearch = (params: any, pageIndex: any, pageSize: any) => {
+        if (!params?.prod_id || !params?.doc_id) {
+            dispatch({ loading: false, pageIndex, pageSize, total: 0, rows: [] });
+            return;
+        }
         dispatch({ loading: true });
         Api.list_sds_reqd({ ...params, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
             if (res.code === Api.C_OK) {
@@ -258,15 +282,6 @@ export default () => {
         });
     };
 
-    const normalizeImgUrl = (url?: string) => {
-        const txt = String(url || "").trim();
-        if (!txt || txt === "/") return "";
-        if (txt.startsWith("http://") || txt.startsWith("https://") || txt.startsWith("data:")) return txt;
-        if (txt.startsWith("/data.trace/")) return txt;
-        if (txt.startsWith("data.trace/")) return `/${txt}`;
-        return txt;
-    };
-
     const columns = [
         {
             title: ts("srs_req.code"),
@@ -297,10 +312,11 @@ export default () => {
         {
             title: ts("sds_reqd.logic_txt"),
             dataIndex: "logic_txt",
+            className: "sds-logic-img-col",
             render: (_t: any, row: any) => {
                 const img = normalizeImgUrl(row?.logic_img);
                 if (img) {
-                    return <img src={img} alt="logic" style={{ maxWidth: 160, maxHeight: 80, objectFit: "contain" }} />;
+                    return <img src={img} alt="logic" className="sds-logic-img" />;
                 }
                 return "/";
             },
@@ -336,19 +352,17 @@ export default () => {
             fixed: "right" as const,
             render: (_value: any, row: any) => {
                 return (
-                    <div>
+                    <Space>
                         <Button type="link" onClick={() => dispatch({ dlgType: DlgTypes.edit, targetRow: row })}>
                             {ts("edit")}
                         </Button>
-                    </div>
+                    </Space>
                 );
             },
         },
     ];
 
     useEffect(() => {
-        const form = queryForm.getFieldsValue();
-        doSearch(form, data.pageIndex, data.pageSize);
         doSearchProducts(data, dispatch);
     }, []);
 
@@ -371,7 +385,7 @@ export default () => {
                                     versionPlaceholder={ts("product.full_version")}
                                     onChange={(value) => {
                                         queryForm.setFieldValue("prod_id", value);
-                                        dispatch({ docs: [] });
+                                        dispatch({ docs: [], rows: [], total: 0, pageIndex: 1 });
                                         queryForm.setFieldsValue({ doc_id: null });
                                         doSearchDocs({ product_id: value });
                                     }}
@@ -391,11 +405,12 @@ export default () => {
             </div>
             <Table
                 className="expand"
+                sticky
                 columns={columns}
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}
                 loading={data.loading}
-                scroll={{ x: 1800 }}
+                scroll={{ x: 1800, y: "68vh" }}
                 pagination={{
                     total: data.total,
                     current: data.pageIndex,

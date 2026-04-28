@@ -1,4 +1,4 @@
-import { Form, Button, Table, message, Row, Col, Modal, Select, Input, Tag } from "antd";
+import { Form, Button, Table, message, Row, Col, Modal, Select, Input, Tag, Space } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -335,7 +335,7 @@ export default () => {
             fixed: "right" as const,
             render: (_value: any, row: any) => {
                 return (
-                    <div>
+                    <Space size={8} style={{ whiteSpace: "nowrap" }}>
                         {data.targetEdit.id === row.id && (
                             <Button type="link" onClick={() => dispatch({ targetEdit: {} })}>
                                 {ts("cancel")}
@@ -359,7 +359,7 @@ export default () => {
                                 {ts("delete")}
                             </Button>
                         )}
-                    </div>
+                    </Space>
                 );
             },
         },
@@ -434,7 +434,8 @@ export default () => {
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}
                 loading={data.loading}
-                scroll={{ x: 1800 }}
+                sticky
+                scroll={{ x: 1800, y: "68vh" }}
                 pagination={{
                     total: data.total,
                     current: data.pageIndex,
