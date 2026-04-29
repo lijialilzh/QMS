@@ -93,6 +93,17 @@ class Server(object):
         "img_struct": ["系统结构图", "结构图"],
         "img_flow": ["网络安全流程图", "安全流程图", "流程图"],
     }
+    TRACE_FIXED_NOTE_CODE = "SRS-RCN300-009"
+    TRACE_FIXED_NOTE_PRODUCT_CODE_FALLBACK = "RCN3V2000"
+
+    @classmethod
+    def __build_trace_fixed_note_text(cls, product_code: str):
+        code = str(product_code or "").strip() or cls.TRACE_FIXED_NOTE_PRODUCT_CODE_FALLBACK
+        return (
+            f"TX-TF-{code}-RD-009-A0 IEC62304《医疗器械软件 软件生存周期过程》符合性核查表"
+            "、TX-TF-SD-001-A0 《DICOM一致性声明》"
+            f"、TX-TF-{code}-RD-014-A0 《网络安全漏洞自评报告》"
+        )
 
     @staticmethod
     def __extract_data_url_blob(data_url: str):
@@ -1893,6 +1904,26 @@ class Server(object):
         return Resp.resp_ok(data=path)  
 
     async def list_doc_trace(self, id: int):
+        def __build_trace_rule_from_srs_code(srs_code: str):
+            code = str(srs_code or "").strip().upper()
+            matched = re.match(r"^SRS-([A-Z]+)(\d+)-(\d+)$", code)
+            if not matched:
+                return None
+            prefix = matched.group(1)
+            major = matched.group(2)
+            minor = matched.group(3)
+            if len(major) < 2:
+                return None
+            if_code = major[-2:]
+            minor_int = str(int(minor)) if minor.isdigit() else minor
+            minor3 = minor.zfill(3)
+            return {
+                "if_code": if_code,  # IF00 / IF06
+                "unit_group": minor3,  # 005 / 003
+                "sis_prefix": f"SDS-IF{if_code}-{prefix}{major}{minor_int}-",  # SDS-IF00-RCN3005-
+                "unit_prefix": f"TU{if_code}-{minor3}-",  # TU00-005-
+            }
+
         def __query_rcms(srs_ids: list[int]):
             sql = select(ReqRcm, Rcm).join(Rcm, ReqRcm.rcm_id == Rcm.id).where(ReqRcm.req_id.in_(srs_ids))
             rows: list[ReqRcm, Rcm] = db.session.execute(sql).all()
@@ -1902,13 +1933,179 @@ class Server(object):
                 rcms.append(row_rcm)
                 req_rcms[row_req.req_id] = rcms
             return req_rcms
+
+        def __query_reqd_text_rcm_codes(req_ids: list[int]):
+            if not req_ids:
+                return {}
+            sql = select(SrsReqd).where(SrsReqd.req_id.in_(req_ids))
+            rows: List[SrsReqd] = db.session.execute(sql).scalars().all()
+            result: dict[int, list[str]] = {}
+            for row in rows:
+                merged_text = "\n".join([
+                    str(getattr(row, "name", "") or ""),
+                    str(getattr(row, "overview", "") or ""),
+                    str(getattr(row, "participant", "") or ""),
+                    str(getattr(row, "pre_condition", "") or ""),
+                    str(getattr(row, "trigger", "") or ""),
+                    str(getattr(row, "work_flow", "") or ""),
+                    str(getattr(row, "post_condition", "") or ""),
+                    str(getattr(row, "exception", "") or ""),
+                    str(getattr(row, "constraint", "") or ""),
+                ])
+                picked = []
+                for hit in re.findall(r"RCM[\s\-_]*\d{2,4}", merged_text, flags=re.IGNORECASE):
+                    code_norm = re.sub(r"[\s\-_]", "", self.__normalize_rcm_code(hit))
+                    if code_norm.startswith("RCM") and code_norm[3:].isdigit():
+                        picked.append(code_norm)
+                dedup = list(dict.fromkeys(picked))
+                if dedup:
+                    result[int(row.req_id)] = dedup
+            return result
+
+        def __query_node_rcm_codes(doc_id: int, srs_codes: list[str]):
+            if not doc_id or not srs_codes:
+                return {}
+            srs_set = {str(code or "").strip().upper() for code in (srs_codes or []) if str(code or "").strip()}
+            sql = select(
+                SrsNode.n_id,
+                SrsNode.p_id,
+                SrsNode.srs_code,
+                SrsNode.rcm_codes,
+                SrsNode.title,
+                SrsNode.label,
+                SrsNode.text,
+                SrsNode.table,
+            ).where(SrsNode.doc_id == doc_id)
+            rows = db.session.execute(sql).all()
+            node_map = {
+                int(n_id): {
+                    "p_id": int(p_id or 0),
+                    "srs_code": str(srs_code or "").strip().upper(),
+                    "rcm_codes": str(rcm_codes or ""),
+                    "title": str(title or ""),
+                    "label": str(label or ""),
+                    "text": str(text or ""),
+                    "table": table,
+                }
+                for n_id, p_id, srs_code, rcm_codes, title, label, text, table in rows
+            }
+
+            def resolve_srs_code(start_nid: int) -> str:
+                cur = node_map.get(start_nid)
+                safety = 0
+                while cur and safety < 200:
+                    code = str(cur.get("srs_code") or "").strip().upper()
+                    if code:
+                        return code
+                    pid = int(cur.get("p_id") or 0)
+                    if pid <= 0:
+                        break
+                    cur = node_map.get(pid)
+                    safety += 1
+                return ""
+
+            result: dict[str, list[str]] = {}
+            for n_id, _p_id, own_code, raw_codes, title, label, text, table in rows:
+                merged_text = "\n".join([
+                    str(title or ""),
+                    str(label or ""),
+                    str(text or ""),
+                    json.dumps(table, ensure_ascii=False) if table is not None else "",
+                ])
+                parts = [str(item or "").strip() for item in re.split(r"[,，;；\s]+", str(raw_codes or "")) if str(item or "").strip()]
+                if not parts:
+                    picked = []
+                    for hit in re.findall(r"RCM[\s\-_]*\d{2,4}", merged_text, flags=re.IGNORECASE):
+                        code_norm = re.sub(r"[\s\-_]", "", self.__normalize_rcm_code(hit))
+                        if code_norm.startswith("RCM") and code_norm[3:].isdigit():
+                            picked.append(code_norm)
+                    parts = list(dict.fromkeys(picked))
+                if not parts:
+                    continue
+                # 兜底：节点正文中显式出现了 SRS 编号时，直接按“编号->RCM”关联
+                mentioned_srs_codes = []
+                for hit in re.findall(r"SRS[\s\-]*[A-Z]+[\s\-]*\d{2,4}\s*-\s*\d{3}", merged_text, flags=re.IGNORECASE):
+                    code_norm = self.__normalize_srs_code(re.sub(r"\s+", "", hit).replace("--", "-"))
+                    if code_norm and code_norm not in mentioned_srs_codes:
+                        mentioned_srs_codes.append(code_norm)
+                for mcode in mentioned_srs_codes:
+                    if srs_set and mcode not in srs_set:
+                        continue
+                    existed = result.get(mcode) or []
+                    result[mcode] = list(dict.fromkeys(existed + parts))
+                srs_code = str(own_code or "").strip().upper() or resolve_srs_code(int(n_id))
+                if not srs_code:
+                    continue
+                if srs_set and srs_code not in srs_set:
+                    continue
+                existed = result.get(srs_code) or []
+                merged = list(dict.fromkeys(existed + parts))
+                result[srs_code] = merged
+            return result
         
         def __query_tests(product_id: int) -> dict:
+            def __normalize_stage(stage: str) -> str:
+                txt = str(stage or "").strip()
+                if "单元" in txt:
+                    return "单元测试"
+                if "集成" in txt:
+                    return "集成测试"
+                if "系统" in txt:
+                    return "系统测试"
+                if "用户" in txt:
+                    return "用户测试"
+                return txt
+
+            def __to_srs_code(raw_code: str) -> list[str]:
+                code = str(raw_code or "").strip().upper()
+                if not code:
+                    return []
+                candidates: list[str] = []
+                # 兼容历史接口编码：SDS-IF{xx}-RUS{yy}-...
+                matched = re.match(r"SDS-IF(\d+)-RUS(\d+)-\d+", code)
+                if matched:
+                    candidates.append(f"SRS-RUS{matched.group(1)}-{matched.group(2)}")
+                # 兼容接口编码：SDS-IF00-RCN300-005 / SDS-IF00-XXX...
+                matched2 = re.match(r"SDS-IF\d+-([A-Z0-9]+-\d+)$", code)
+                if matched2:
+                    candidates.append(f"SRS-{matched2.group(1)}")
+                    # 兼容压缩段：SDS-IF00-RCN3005-001 -> SRS-RCN300-005
+                    seg = matched2.group(1)
+                    seg_parts = seg.split("-")
+                    if len(seg_parts) == 2:
+                        left, right = seg_parts
+                        m3 = re.match(r"^([A-Z]+)(\d{3,})(\d)$", left)
+                        if m3:
+                            req_group = str(m3.group(3) or "").zfill(3)
+                            candidates.append(f"SRS-{m3.group(1)}{m3.group(2)}-{req_group}")
+                # 若本身已是 SRS 编号也接受
+                if code.startswith("SRS-"):
+                    candidates.append(code)
+                # 去重并保持顺序
+                seen = set()
+                uniq = []
+                for item in candidates:
+                    if item and item not in seen:
+                        seen.add(item)
+                        uniq.append(item)
+                return uniq
+
             sql = select(TestCase, TestSet).join(TestSet, TestCase.set_id == TestSet.id).where(TestSet.product_id == product_id).order_by(TestCase.code)
             rows: List[Tuple[TestCase, TestSet]] = db.session.execute(sql).all()
             all_tests = dict()
+            stage_code_index = dict()
+            # 单元测试用例编号 -> 接口编号(SDS-IF...) 映射
+            unit_case_to_sis = dict()
             for row_test, row_set in rows:
-                all_tests.setdefault(row_test.srs_code, {}).setdefault(row_set.stage, []).append(row_test)
+                norm_stage = __normalize_stage(row_set.stage)
+                all_tests.setdefault(row_test.srs_code, {}).setdefault(norm_stage, []).append(row_test)
+                code = str(row_test.code or "").strip().upper()
+                if code:
+                    stage_code_index.setdefault(norm_stage, []).append(code)
+                code = str(row_test.code or "").strip().upper()
+                srs_code_raw = str(row_test.srs_code or "").strip().upper()
+                if code and srs_code_raw.startswith("SDS-IF"):
+                    unit_case_to_sis.setdefault(code, set()).add(srs_code_raw)
             
             test_codes = dict()
             for srs_code, test_data in all_tests.items():
@@ -1919,41 +2116,61 @@ class Server(object):
 
             req_pairs = dict()
             sds_uset = dict()
-            for _, test_data in all_tests.items():
-                for stage, items in test_data.items():
-                    for item in items:
-                        matched = item.srs_code and re.match(r"SDS-IF(\d+)-RUS(\d+)-\d+", item.srs_code)
-                        srs_code = f"SRS-RUS{matched.group(1)}-{matched.group(2)}" if matched else None
-                        if not srs_code:
+            for row_test, row_set in rows:
+                src_code = str(row_test.srs_code or "").strip().upper()
+                if not src_code:
+                    continue
+                # 接口编号列只取“单元测试”阶段中的接口测试编码（SDS-IF...）
+                norm_stage = __normalize_stage(getattr(row_set, "stage", "") or "")
+                if norm_stage != "单元测试":
+                    continue
+                if not src_code.startswith("SDS-IF"):
+                    continue
+                for srs_code in __to_srs_code(src_code):
+                    uset = sds_uset.setdefault(srs_code, set())
+                    if src_code not in uset:
+                        uset.add(src_code)
+                        req_pairs.setdefault(srs_code, []).append((src_code, row_test.code))
+
+            # 补充链路：通过“单元测试用例编号”反查接口编号，填充到对应 SRS 需求
+            for srs_code, test_data in all_tests.items():
+                srs_code_norm = str(srs_code or "").strip().upper()
+                if not srs_code_norm.startswith("SRS-"):
+                    continue
+                unit_items = test_data.get("单元测试") or []
+                uset = sds_uset.setdefault(srs_code_norm, set())
+                for item in unit_items:
+                    unit_code = str(getattr(item, "code", "") or "").strip().upper()
+                    if not unit_code:
+                        continue
+                    sis_codes = sorted(unit_case_to_sis.get(unit_code) or [])
+                    for sis_code in sis_codes:
+                        if sis_code in uset:
                             continue
-                        uset = sds_uset.setdefault(srs_code, set())
-                        if item.srs_code not in uset:
-                            uset.add(item.srs_code)
-                            req_pairs.setdefault(srs_code,[]).append((item.srs_code, item.code))
+                        uset.add(sis_code)
+                        req_pairs.setdefault(srs_code_norm, []).append((sis_code, unit_code))
+
             for srs_code, codes in req_pairs.items():
                 codes.sort(key=lambda x: x[0])
-            return test_codes, req_pairs
+            for stage, codes in stage_code_index.items():
+                uniq = list(dict.fromkeys(codes))
+                stage_code_index[stage] = uniq
+            all_stage_codes = []
+            for _, codes in stage_code_index.items():
+                all_stage_codes.extend(codes)
+            stage_code_index["__all__"] = list(dict.fromkeys(all_stage_codes))
+            return test_codes, req_pairs, stage_code_index
         
         def __resort_rows(rows: List[Tuple[SdsTrace, SdsDoc, SrsReq]], srsdoc_id: int):
-            sql = select(SrsType).where(SrsType.doc_id == srsdoc_id)
-            srs_types: List[SrsType] = db.session.execute(sql).scalars().all()
-            srs_types = {row.type_code: row.id for row in srs_types}
-            srs_types["1"] = -1
-            srs_types["2"] = sys.maxsize
-
-            sortable_rows = []
-            for row in rows:
-                type_id = srs_types.get(row[2].type_code)
-                type_id = type_id if type_id is not None else sys.maxsize
-                sortable_rows.append((type_id, row[2].code, row))
-            sortable_rows.sort(key=lambda x: (x[1]))
-
+            # 按 SRS 导入后的原始顺序（req_id 升序）返回，确保“从安装包打开SRS第一个开始”
+            sortable_rows = sorted(rows, key=lambda row: (getattr(row[2], "id", 0) or 0))
             results = []
             exist_codes = set()
             for row in sortable_rows:
-                if row[1] not in exist_codes:
-                    exist_codes.add(row[1])
-                    results.append(row[2])
+                code = (row[2].code or "").strip()
+                if code and code not in exist_codes:
+                    exist_codes.add(code)
+                    results.append(row)
             return results
      
         sql = select(SdsDoc, SrsDoc).join(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id).where(SrsDoc.id == id).order_by(desc(SdsDoc.id)).limit(1)
@@ -1965,16 +2182,44 @@ class Server(object):
         sql = sql.where(SdsDoc.id == row_sdsdoc.id)
         rows: List[Tuple[SdsTrace, SdsDoc, SrsReq]] = db.session.execute(sql).all()
         rows = __resort_rows(rows, row_sdsdoc.srsdoc_id)
-        req_rcms = __query_rcms([row.id for _, _, row in rows])
-        req_tests, req_pairs = __query_tests(row_srsdoc.product_id)
+        # 以当前SDS文档节点为准，建立“设计编号 -> 章节标题”映射，避免导出章节名错配
+        sds_code_chapter_map = {}
+        node_rows = db.session.execute(
+            select(SdsNode.sds_code, SdsNode.title).where(SdsNode.doc_id == row_sdsdoc.id)
+        ).all()
+        for code_raw, title_raw in node_rows:
+            code = str(code_raw or "").strip().upper()
+            if not code:
+                continue
+            title = str(title_raw or "").strip()
+            # 章节标题通常是“3 DataProcessing”，导出时去掉前缀序号
+            title = re.sub(r"^\d+\s*[\.、\-]?\s*", "", title).strip()
+            if title and code not in sds_code_chapter_map:
+                sds_code_chapter_map[code] = title
+        req_ids = [row.id for _, _, row in rows]
+        req_rcms = __query_rcms(req_ids)
+        reqd_text_rcm_codes = __query_reqd_text_rcm_codes(req_ids)
+        node_rcm_codes = __query_node_rcm_codes(row_srsdoc.id, [str(row.code or "").strip().upper() for _, _, row in rows])
+        req_tests, req_pairs, stage_code_index = __query_tests(row_srsdoc.product_id)
+        row_product = db.session.execute(select(Product).where(Product.id == row_srsdoc.product_id)).scalars().first()
+        product_code = str(getattr(row_product, "product_code", "") or "").strip()
+        fixed_note_text = self.__build_trace_fixed_note_text(product_code)
         results = []
         for row_trace, _, row in rows:
             rcms: List[Rcm] = req_rcms.get(row.id) or []
-            rcm_codes = [rcm.code for rcm in rcms]
+            relation_rcm_codes = [rcm.code for rcm in rcms]
+            text_rcm_codes = reqd_text_rcm_codes.get(int(row.id)) or []
+            node_rcm_fallback = node_rcm_codes.get(str(row.code or "").strip().upper()) or []
+            rcm_codes = list(dict.fromkeys(relation_rcm_codes + text_rcm_codes + node_rcm_fallback))
+            if not rcm_codes:
+                rcm_codes = []
             rcm_flag = True if rcm_codes else False
-            chapter = row_trace.chapter or row.sub_function or row.function or row.module or ""
-            chapter = NAME_DICT.get(chapter) or chapter
-            chapter = chapter if row.type_code == "2" else "NeoViewer"
+            sds_code_norm = str(row_trace.sds_code or "").strip().upper()
+            chapter = sds_code_chapter_map.get(sds_code_norm) or ""
+            if not chapter:
+                chapter = row_trace.chapter or row.sub_function or row.function or row.module or ""
+                chapter = NAME_DICT.get(chapter) or chapter
+                chapter = chapter if row.type_code == "2" else "NeoViewer"
 
             test_data = req_tests.get(row.code) or {}
 
@@ -1985,9 +2230,44 @@ class Server(object):
 
             srs_pairs = req_pairs.get(row.code) or []
             sis_codes = [sis[0] for sis in srs_pairs]
-
             test_codes = [sis[1] for sis in srs_pairs]
 
+            # 关键规则：SRS-RCN300-005 -> IF00 + RCN3005（由 SRS 编号反推并过滤）
+            trace_rule = __build_trace_rule_from_srs_code(row.code)
+            if trace_rule:
+                # 精准匹配：若不满足规则，直接清空，不保留旧值
+                pair_filtered = [
+                    (str(s or ""), str(t or ""))
+                    for s, t in srs_pairs
+                    if str(s or "").startswith(trace_rule["sis_prefix"])
+                ]
+                sis_codes = [item[0] for item in pair_filtered]
+                test_codes = [item[1] for item in pair_filtered]
+
+                # 单元测试记录按 TU{IF}-{group}- 严格过滤
+                unit_filtered = [
+                    str(code or "")
+                    for code in (tests_unit or [])
+                    if str(code or "").startswith(trace_rule["unit_prefix"])
+                ]
+                tests_unit = test_codes if test_codes else unit_filtered
+                # 系统测试严格匹配：先过滤当前值，不命中再从“系统测试阶段/全量用例”反查
+                sys_prefix = f"TS{trace_rule['if_code']}-{trace_rule['unit_group']}-"
+                sys_filtered = [
+                    str(code or "")
+                    for code in (tests_sys or [])
+                    if str(code or "").startswith(sys_prefix)
+                ]
+                if not sys_filtered:
+                    sys_stage = stage_code_index.get("系统测试") or []
+                    sys_filtered = [code for code in sys_stage if str(code or "").startswith(sys_prefix)]
+                if not sys_filtered:
+                    sys_all = stage_code_index.get("__all__") or []
+                    sys_filtered = [code for code in sys_all if str(code or "").startswith(sys_prefix)]
+                tests_sys = [sys_filtered[0], sys_filtered[-1]] if len(sys_filtered) > 1 else sys_filtered
+
+            row_srs_code = str(row.code or "").strip().upper()
+            note = fixed_note_text if row_srs_code == self.TRACE_FIXED_NOTE_CODE else None
             result = dict(
                 srs_code=row.code,
                 rcm_flag=rcm_flag,
@@ -2006,7 +2286,7 @@ class Server(object):
 
                 rcm_codes=rcm_codes,
 
-                note=None
+                note=note
             )
             results.append(result)
         return Resp.resp_ok(data=results)
@@ -2032,6 +2312,10 @@ class Server(object):
     arr_columns = set(["tests_integ", "tests_sys", "tests_user"])
 
     async def export_doc_trace(self, output, id: int):
+        def __slash(v):
+            txt = str(v or "").strip()
+            return txt if txt else "/"
+
         resp = await self.list_doc_trace(id)
 
         temp_path = os.path.join(os.path.dirname(__file__), "temp_srs_doc_trace.xlsx")
@@ -2040,33 +2324,65 @@ class Server(object):
 
         all_subs = 0
         for ridx, obj in enumerate(resp.data or [], 4):
-            srs_code = obj.get("srs_code")
+            srs_code = __slash(obj.get("srs_code"))
             rcm_flag = ts("yes") if obj.get("rcm_flag") else ts("no")
-            sds_code = f"{obj.get('sds_code') or ''}（{obj.get('chapter') or ''}）"
-            sis_codes = obj.get("sis_codes")
+            sds_code_raw = str(obj.get("sds_code") or "").strip()
+            chapter_raw = str(obj.get("chapter") or "").strip()
+            hide_chapter_codes = {
+                "SDS-RCN300-001",
+                "SDS-RCN300-002",
+                "SDS-RCN300-003",
+                "SDS-RCN300-008",
+                "SDS-RCN300-009",
+                "SDS-RCN300-010",
+            }
+            if sds_code_raw in hide_chapter_codes or not chapter_raw:
+                sds_code = sds_code_raw
+            else:
+                sds_code = f"{sds_code_raw}（{chapter_raw}）"
+            sis_codes = obj.get("sis_codes") or []
 
-            test_codes = obj.get("test_codes")
-            tests_unit = " ~ ".join(obj.get("tests_unit"))
+            test_codes = obj.get("test_codes") or []
+            tests_unit = " ~ ".join(obj.get("tests_unit") or [])
 
-            tests_integ = " ~ ".join(obj.get("tests_integ"))
-            tests_sys = " ~ ".join(obj.get("tests_sys"))
-            tests_user = " ~ ".join(obj.get("tests_user"))
-            rcm_codes = ",".join(obj.get("rcm_codes"))
-            note = obj.get("note")
+            tests_integ = " ~ ".join(obj.get("tests_integ") or [])
+            tests_sys = " ~ ".join(obj.get("tests_sys") or [])
+            tests_user = " ~ ".join(obj.get("tests_user") or [])
+            rcm_codes = "\n".join(obj.get("rcm_codes") or [])
+            note_raw = str(obj.get("note") or "").strip()
+            note = "\n".join([item.strip() for item in note_raw.split("、") if item and item.strip()]) if note_raw else ""
 
             if len(sis_codes) <= 1:
                 sis_code = sis_codes[0] if sis_codes else ""
                 tests_unit = test_codes[0] if test_codes else tests_unit
-                ws.append([srs_code, rcm_flag, sds_code, sis_code, tests_unit, tests_integ, tests_sys, tests_user, rcm_codes, note])
-
-                if len(sis_codes) == 0:
-                    r_idx = ridx + all_subs
-                    ws.merge_cells(f"D{r_idx}:E{r_idx}")
+                ws.append([
+                    srs_code,
+                    __slash(rcm_flag),
+                    __slash(sds_code),
+                    __slash(sis_code),
+                    __slash(tests_unit),
+                    __slash(tests_integ),
+                    __slash(tests_sys),
+                    __slash(tests_user),
+                    __slash(rcm_codes),
+                    __slash(note),
+                ])
             else:
                 temp_subs = len(sis_codes) - 1
                 for idx, sis_code in enumerate(sis_codes):
-                    test_code = test_codes[idx]
-                    ws.append([srs_code, rcm_flag, sds_code, sis_code, test_code, tests_integ, tests_sys, tests_user, rcm_codes, note])
+                    test_code = test_codes[idx] if idx < len(test_codes) else ""
+                    ws.append([
+                        srs_code,
+                        __slash(rcm_flag),
+                        __slash(sds_code),
+                        __slash(sis_code),
+                        __slash(test_code),
+                        __slash(tests_integ),
+                        __slash(tests_sys),
+                        __slash(tests_user),
+                        __slash(rcm_codes),
+                        __slash(note),
+                    ])
                 r_idx0 = ridx + all_subs
                 r_idx1 = ridx + all_subs + temp_subs
                 all_subs += temp_subs
@@ -2084,6 +2400,14 @@ class Server(object):
         for row in ws.iter_rows():
             for cell in row:
                 cell.alignment = align
+        # RCM列（I列）按行展示
+        for row_idx in range(4, ws.max_row + 1):
+            cell = ws[f"I{row_idx}"]
+            cell.alignment = Alignment(vertical='top', wrap_text=True)
+        # 备注列（J列）按行展示
+        for row_idx in range(4, ws.max_row + 1):
+            cell = ws[f"J{row_idx}"]
+            cell.alignment = Alignment(vertical='top', wrap_text=True)
         wb.save(output)
         output.seek(0)
         

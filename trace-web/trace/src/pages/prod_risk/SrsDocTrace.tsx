@@ -37,104 +37,164 @@ const DetailDlg = ({ data, dispatch }: any) => {
         }
     }, [data.targetRow.id, data.dlgType]);
 
+    const expandedTraceRows = (data.traceRows || []).flatMap((row: any, rowIndex: number) => {
+        const sisCodes = Array.isArray(row?.sis_codes) ? row.sis_codes : [];
+        const rawUnitCodes = Array.isArray(row?.test_codes) && row.test_codes.length > 0
+            ? row.test_codes
+            : (Array.isArray(row?.tests_unit) ? row.tests_unit : []);
+        const unitCodes = (rawUnitCodes.length === 2 && sisCodes.length <= 1)
+            ? [`${rawUnitCodes[0]} ~ ${rawUnitCodes[1]}`]
+            : rawUnitCodes;
+        const subCount = Math.max(sisCodes.length, unitCodes.length, 1);
+        return Array.from({ length: subCount }).map((_, idx) => ({
+            ...row,
+            __rowKey: `${row?.srs_code || rowIndex}-${idx}`,
+            __rowSpan: idx === 0 ? subCount : 0,
+            __sisCode: sisCodes[idx] || "/",
+            __unitCode: unitCodes[idx] || "/",
+        }));
+    });
+
+    const mergedCell = (row: any) => ({ rowSpan: row?.__rowSpan ?? 1 });
+    const renderMultilineCaseCodes = (values: any) => {
+        const list = Array.isArray(values) ? values.filter(Boolean) : [];
+        if (list.length === 0) return "/";
+        if (list.length === 1) return list[0];
+        return (
+            <>
+                <div className="stxt">{list[0]} ~</div>
+                <div className="stxt">{list[list.length - 1]}</div>
+            </>
+        );
+    };
+    const renderMultilineRcmCodes = (values: any) => {
+        const raw = Array.isArray(values) ? values : [values];
+        const list = raw
+            .flatMap((item) => String(item || "").split(/[,\n，]/g))
+            .map((item) => item.trim())
+            .filter(Boolean);
+        if (list.length === 0) return "/";
+        if (list.length === 1) return list[0];
+        return (
+            <>
+                {list.map((code) => (
+                    <div key={code} className="stxt">{code}</div>
+                ))}
+            </>
+        );
+    };
+    const renderMultilineNote = (value: any) => {
+        const text = String(value || "").trim();
+        if (!text) return "/";
+        const parts = text.split("、").map((item) => item.trim()).filter(Boolean);
+        if (parts.length <= 1) return <div className="trace-note-line">{text}</div>;
+        return (
+            <>
+                {parts.map((item) => (
+                    <div key={item} className="trace-note-line">{item}</div>
+                ))}
+            </>
+        );
+    };
+
     return (
         <Modal
-            width={"95%"}
+            width={"98vw"}
             centered
             title={`${data.targetRow.product_name}-${data.targetRow.product_version}: ${data.targetRow.version}`}
             open={data.dlgType === DlgTypes.view}
             maskClosable={false}
             footer={null}
+            styles={{ body: { overflowX: "hidden" } }}
             onCancel={() => dispatch({ dlgType: null })}>
             <Table
                 className="table-box"
                 loading={data.loadingTrace}
-                dataSource={data.traceRows}
-                rowKey={(item: any) => item.srs_id}
+                dataSource={expandedTraceRows}
+                rowKey={(item: any) => item.__rowKey}
+                size="small"
+                tableLayout="auto"
                 columns={[
                     {
                         title: ts("srs_req.code"),
                         dataIndex: "srs_code",
+                        onCell: mergedCell,
+                        width: 105,
                     },
                     {
                         title: ts("srs_req.rcm_flag"),
                         dataIndex: "rcm_flag",
                         render: (rcm_flag: any) => (rcm_flag ? ts("yes") : ts("no")),
+                        width: 60,
                     },
                     {
                         title: "软件详细设计",
                         dataIndex: "sds_code",
+                        onCell: mergedCell,
+                        width: 120,
                     },
                     {
                         title: "接口编号",
-                        dataIndex: "sis_codes",
-                        render: (values: any) => {
-                            const rows = (values || []).map((item: any) => {
-                                return (
-                                    <div className="stxt">
-                                        {item}
-                                        <br />
-                                    </div>
-                                );
-                            });
-                            return (
-                                <Tooltip title={<div className="tip">{rows}</div>}>
-                                    <div className="stxt">{rows[0]}</div>
-                                </Tooltip>
-                            );
-                        },
-                    },
-                    {
-                        title: "",
-                        dataIndex: "test_codes",
-                        render: (values: any) => {
-                            const rows = (values || []).map((item: any) => {
-                                return (
-                                    <div className="stxt">
-                                        {item}
-                                        <br />
-                                    </div>
-                                );
-                            });
-                            return (
-                                <Tooltip title={<div className="tip">{rows}</div>}>
-                                    <div className="stxt">{rows[0]}</div>
-                                </Tooltip>
-                            );
-                        },
+                        dataIndex: "__sisCode",
+                        render: (value: any) => value || "/",
+                        width: 95,
                     },
                     {
                         title: "单元测试记录",
-                        dataIndex: "tests_unit",
-                        render: (values: any) => {
-                            return (values || []).join(" ~ ");
+                        dataIndex: "__unitCode",
+                        width: 95,
+                        render: (value: any) => {
+                            const text = String(value || "").trim();
+                            if (!text) return "/";
+                            if (!text.includes("~")) return text;
+                            const parts = text.split("~").map((item) => item.trim()).filter(Boolean);
+                            if (parts.length < 2) return text;
+                            return (
+                                <>
+                                    <div className="stxt">{parts[0]} ~</div>
+                                    <div className="stxt">{parts[parts.length - 1]}</div>
+                                </>
+                            );
                         },
                     },
                     {
                         title: "集成测试记录",
                         dataIndex: "tests_integ",
+                        width: 95,
                         render: (values: any) => {
-                            return (values || []).join(" ~ ");
+                            return renderMultilineCaseCodes(values);
                         },
                     },
                     {
                         title: "系统测试记录",
                         dataIndex: "tests_sys",
+                        width: 95,
                         render: (values: any) => {
-                            return (values || []).join(" ~ ");
+                            return renderMultilineCaseCodes(values);
                         },
                     },
                     {
                         title: "用户测试记录",
                         dataIndex: "tests_user",
+                        width: 95,
                         render: (values: any) => {
-                            return (values || []).join(" ~ ");
+                            return renderMultilineCaseCodes(values);
                         },
                     },
                     {
                         title: "RCM",
                         dataIndex: "rcm_codes",
-                        render: (values: any) => (values || []).join(","),
+                        width: 110,
+                        render: (values: any) => {
+                            return renderMultilineRcmCodes(values);
+                        },
+                    },
+                    {
+                        title: "备注",
+                        dataIndex: "note",
+                        className: "trace-note-col",
+                        onCell: mergedCell,
+                        render: (value: any) => renderMultilineNote(value),
                     },
                 ]}
                 pagination={false}

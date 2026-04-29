@@ -93,6 +93,15 @@ function normalizeRcmCode(code: string | undefined): string {
         .replace(/[，。；;、,.]+$/g, "");
 }
 
+function extractRcmCodesFromText(text: string | undefined): string[] {
+    const content = String(text || "");
+    const hits = content.match(/RCM[\s\-_]*\d{2,4}/gi) || [];
+    const normalized = hits
+        .map((hit) => normalizeRcmCode(hit).replace(/[\s\-_]/g, ""))
+        .filter((code) => /^RCM\d{2,4}$/.test(code));
+    return Array.from(new Set(normalized));
+}
+
 const KV_FIELD_LABELS = new Set([
     "需求编号",
     "需求名称",
@@ -209,7 +218,7 @@ interface TreeNodeItemProps {
     docId?: number;
     readOnly?: boolean;
     rcmOptions: Array<{ value: number; label: string; description?: string }>;
-    onRcmSelectChange: (nodeId: number, selectedRcmIds: number[]) => void;
+    onRcmSelectChange: (nodeId: number, selectedRcmIds: Array<number | string>) => void;
     onAdd: (parentId: number) => void;
     onAddSibling: (nodeId: number, position: 'before' | 'after', defaultTitle: string) => void;
     onDelete: (id: number) => Promise<void>;
@@ -319,6 +328,24 @@ const TreeNodeItem = ({
         accept: "image/*",
         showUploadList: false,
     };
+
+    const rcmSelectOptions = (() => {
+        const options = [...(rcmOptions || [])];
+        const existed = new Set(
+            options.map((o) => normalizeRcmCode(o.label))
+        );
+        for (const code of (Array.isArray(node.rcm_codes) ? node.rcm_codes : [])) {
+            const normalized = normalizeRcmCode(code);
+            if (!normalized || existed.has(normalized)) continue;
+            existed.add(normalized);
+            options.push({
+                value: normalized, // 兜底值：非产品RCM库内编号也允许显示
+                label: normalized,
+                description: "",
+            } as any);
+        }
+        return options as Array<{ value: number | string; label: string; description?: string }>;
+    })();
 
     const tableImportProps: UploadProps = {
         showUploadList: false,
@@ -555,24 +582,24 @@ const TreeNodeItem = ({
                                   allowClear
                                   optionFilterProp="label"
                                   placeholder={ts("srs_doc.select_rcm_code") || "选择RCM"}
-                                  options={rcmOptions}
+                                  options={rcmSelectOptions}
                                   value={(() => {
                                       const codes = Array.isArray(node.rcm_codes) ? node.rcm_codes.filter(Boolean) : [];
                                       const normalizedCodes = codes.map((code) => normalizeRcmCode(code));
                                       return codes
                                           .map((code, idx) => {
                                               const codeNorm = normalizedCodes[idx];
-                                              return rcmOptions.find((o) => normalizeRcmCode(o.label) === codeNorm)?.value;
+                                              return rcmSelectOptions.find((o) => normalizeRcmCode(o.label) === codeNorm)?.value;
                                           })
-                                          .filter((v): v is number => typeof v === "number");
+                                          .filter((v): v is number | string => typeof v === "number" || typeof v === "string");
                                   })()}
-                                  onChange={(vals) => onRcmSelectChange(node.id, (vals || []) as number[])}
-                                  disabled={readOnly || !rcmOptions.length}
+                                  onChange={(vals) => onRcmSelectChange(node.id, (vals || []) as Array<number | string>)}
+                                  disabled={readOnly || !rcmSelectOptions.length}
                                   // 容器变窄时避免 responsive 模式不渲染选中 tag
                                   maxTagCount={999}
                                   tagRender={(tagProps: any) => {
                                       const code = String(tagProps?.label ?? "");
-                                      const opt = rcmOptions.find((o) => o.label === code);
+                                      const opt = rcmSelectOptions.find((o) => o.label === code);
                                       return (
                                           <Tooltip title={opt?.description || ""} placement="topLeft">
                                               <Tag color="blue">{code}</Tag>
@@ -961,9 +988,26 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
     const [initialTableData, setInitialTableData] = useState<TableDataWithHeaders | undefined>(undefined);
     const [tableCellsBackup, setTableCellsBackup] = useState<TableData["cells"] | undefined>(undefined);
 
+    const syncRcmCodesFromText = (nodeList: TreeNode[]): TreeNode[] => {
+        return (nodeList || []).map((node) => {
+            const children = syncRcmCodesFromText(node.children || []);
+            // 仅对“本就具备 RCM 选择能力”的节点进行文本回填，避免误开更多 RCM 控件
+            if (!Array.isArray(node.rcm_codes)) {
+                return { ...node, children };
+            }
+            const extracted = extractRcmCodesFromText(node.text);
+            if (extracted.length === 0) {
+                return { ...node, children };
+            }
+            const current = (node.rcm_codes || []).map((c) => normalizeRcmCode(c));
+            const merged = Array.from(new Set([...current, ...extracted])).filter(Boolean);
+            return { ...node, rcm_codes: merged, children };
+        });
+    };
+
     // 同步外部传入的 value 到内部状态
     useEffect(() => {
-        setNodes(value);
+        setNodes(syncRcmCodesFromText(value));
     }, [value]);
     // 把组件内部“最新树状态”实时回传给父组件，避免保存时拿到滞后值
     useEffect(() => {
@@ -1124,10 +1168,22 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
     };
 
     const handleContentChange = (id: number, text: string) => {
-        const newNodes = findNodeAndUpdate(nodes, id, (node) => ({
-            ...node,
-            text
-        }));
+        const newNodes = findNodeAndUpdate(nodes, id, (node) => {
+            if (!Array.isArray(node.rcm_codes)) {
+                return {
+                    ...node,
+                    text,
+                };
+            }
+            const extracted = extractRcmCodesFromText(text);
+            const current = (node.rcm_codes || []).map((c) => normalizeRcmCode(c));
+            const merged = Array.from(new Set([...current, ...extracted])).filter(Boolean);
+            return {
+                ...node,
+                text,
+                rcm_codes: merged,
+            };
+        });
         updateNodes(newNodes);
     };
 
@@ -1148,12 +1204,16 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
     };
 
     // 选择章节 RCM 后，自动拼接“RCM编号 + 详细描述”写入当前节点 text
-    const handleRcmSelectChange = (nodeId: number, selectedRcmIds: number[]) => {
-        const selectedOptions = (selectedRcmIds || [])
-            .map((id) => rcmOptions.find((o) => o.value === id))
-            .filter((o): o is { value: number; label: string; description?: string } => !!o);
+    const handleRcmSelectChange = (nodeId: number, selectedRcmIds: Array<number | string>) => {
+        const selectedOptions = (selectedRcmIds || []).map((id) => {
+            const matched = rcmOptions.find((o) => o.value === id);
+            if (matched) return matched;
+            const code = normalizeRcmCode(String(id || ""));
+            if (!code) return undefined;
+            return { value: id, label: code, description: "" };
+        }).filter((o): o is { value: number | string; label: string; description?: string } => !!o);
 
-        const nextRcmCodes = selectedOptions.map((o) => o.label);
+        const nextRcmCodes = selectedOptions.map((o) => normalizeRcmCode(o.label)).filter(Boolean);
         const nextText = selectedOptions
             // 只写详细描述
             .map((o) => o.description ?? "")
