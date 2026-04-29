@@ -34,6 +34,7 @@ export default () => {
         targetProdId: null,
         targetEdit: {},
         rcms: [],
+        selectedRowKeys: [],
     });
 
     const doSearch = (params: any, pageIndex: any, pageSize: any) => {
@@ -52,13 +53,46 @@ export default () => {
         dispatch({ loading: true });
         Api.delete_prod_csts({ id: data.targetRow.id }).then((res: any) => {
             if (res.code === Api.C_OK) {
-                dispatch({ loading: false, dlgType: null });
+                dispatch({ loading: false, dlgType: null, selectedRowKeys: [] });
                 message.success(res.msg);
                 doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
             } else {
                 dispatch({ loading: false });
                 message.error(res.msg);
             }
+        });
+    };
+
+    const doBatchDelete = () => {
+        const keys = data.selectedRowKeys || [];
+        if (keys.length === 0) {
+            message.warning(ts("please_select_items"));
+            return;
+        }
+        Modal.confirm({
+            title: ts("action"),
+            content: sprintf(ts("batch_delete_confirm"), { count: keys.length }),
+            onOk: async () => {
+                dispatch({ loading: true });
+                const idToRow = Object.fromEntries((data.rows || []).map((r: any) => [r.id, r]));
+                let successCount = 0;
+                const failedIds: any[] = [];
+                for (const id of keys) {
+                    try {
+                        const res: any = await Api.delete_prod_csts({ id });
+                        if (res.code === Api.C_OK) successCount++;
+                        else failedIds.push(id);
+                    } catch {
+                        failedIds.push(id);
+                    }
+                }
+                const failedItems = failedIds.map((id) => idToRow[id]?.code ?? id).join("、");
+                dispatch({ loading: false, selectedRowKeys: [] });
+                if (failedIds.length === 0) message.success(ts("batch_delete_success"));
+                else if (successCount > 0) message.warning(sprintf(ts("batch_delete_partial"), { success: successCount, items: failedItems }));
+                else message.error(sprintf(ts("batch_delete_all_failed"), { items: failedItems }));
+                doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
+            },
         });
     };
 
@@ -336,10 +370,17 @@ export default () => {
                         }}>
                         {ts("add")}
                     </Button>
+                    <Button disabled={!(data.selectedRowKeys || []).length} danger onClick={doBatchDelete}>
+                        {ts("batch_delete")}
+                    </Button>
                 </div>
             </div>
             <Table
                 className="expand prod-cst-table"
+                rowSelection={{
+                    selectedRowKeys: data.selectedRowKeys || [],
+                    onChange: (keys: any) => dispatch({ selectedRowKeys: keys }),
+                }}
                 columns={columns}
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}

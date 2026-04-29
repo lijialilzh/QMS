@@ -128,6 +128,12 @@ const doSearchProducts = (data: any, dispatch: any) => {
 
 export default ({ fileType }: any) => {
     const { t: ts } = useTranslation();
+    const getFileTypeLabel = () => {
+        if (fileType === "img_topo") return "物理拓扑图";
+        if (fileType === "img_struct") return "体系结构图";
+        if (fileType === "img_flow") return "网络安全流程图";
+        return fileType || "";
+    };
     const [queryForm] = Form.useForm();
     const [data, dispatch] = useData({
         total: 0,
@@ -142,10 +148,27 @@ export default ({ fileType }: any) => {
         docs: [],
         selectedRowKeys: [],
     });
+    const normalizeQueryParams = (params: any) => {
+        const source = params || {};
+        return Object.fromEntries(
+            Object.entries(source).filter(([, value]) => value !== undefined && value !== null && value !== "")
+        );
+    };
+    const formatDisplayFileName = (row: any) => {
+        const productName = String(row?.product_name || "").trim();
+        const fileName = String(row?.file_name || "").trim();
+        const fileTypeLabel = getFileTypeLabel();
+        const extMatch = fileName.match(/(\.[A-Za-z0-9]+)$/);
+        const ext = extMatch?.[1] || "";
+        const base = [productName, fileTypeLabel].filter(Boolean).join("_");
+        if (base) return `${base}${ext}`;
+        return fileName || "-";
+    };
 
     const doSearch = (params: any, pageIndex: any, pageSize: any) => {
         dispatch({ loading: true });
-        Api.list_doc_file(fileType, { ...params, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
+        const query = normalizeQueryParams(params);
+        Api.list_doc_file(fileType, { ...query, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
             if (res.code === Api.C_OK) {
                 dispatch({ loading: false, pageIndex, pageSize, total: res.data.total, rows: res.data.rows });
             } else {
@@ -192,7 +215,7 @@ export default ({ fileType }: any) => {
                         failedIds.push(id);
                     }
                 }
-                const failedItems = failedIds.map((id) => idToRow[id]?.file_name ?? id).join("、");
+                const failedItems = failedIds.map((id) => formatDisplayFileName(idToRow[id]) || id).join("、");
                 dispatch({ loading: false, selectedRowKeys: [] });
                 if (failedIds.length === 0) message.success(ts("batch_delete_success"));
                 else if (successCount > 0) message.warning(sprintf(ts("batch_delete_partial"), { success: successCount, items: failedItems }));
@@ -218,6 +241,7 @@ export default ({ fileType }: any) => {
         {
             title: ts("doc_file.file_name"),
             dataIndex: "file_name",
+            render: (_value: any, row: any) => formatDisplayFileName(row),
         },
         {
             title: ts("doc_file.file_size"),
@@ -249,9 +273,8 @@ export default ({ fileType }: any) => {
 
     useEffect(() => {
         queryForm.resetFields();
-        dispatch({ selectedRowKeys: [] });
-        const form = queryForm.getFieldsValue();
-        doSearch(form, data.pageIndex, data.pageSize);
+        dispatch({ selectedRowKeys: [], pageIndex: 1 });
+        doSearch({}, 1, data.pageSize);
         doSearchProducts(data, dispatch);
     }, [fileType]);
 

@@ -12,6 +12,7 @@ import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiSrsDoc from "@/api/ApiSrsDoc";
 import * as ApiSdsReqd from "@/api/ApiSdsReqd";
 import * as ApiSdsTrace from "@/api/ApiSdsTrace";
+import * as ApiDocFile from "@/api/ApiDocFile";
 import TreeStructure, { TreeNode } from "./components/TreeStructure";
 
 /** 详细设计页：antd Input/TextArea 字号来自 theme token.inputFontSize（= token.fontSize），需在此统一为 13 */
@@ -25,6 +26,7 @@ const SDS_DOC_DETAIL_THEME = {
 };
 
 export default () => {
+    const DOC_IMAGE_REF_TYPES = ["img_topo", "img_struct", "img_flow"] as const;
     const normalizeImgUrl = (url?: string) => {
         const txt = String(url || "").trim();
         if (!txt || txt === "/") return "";
@@ -33,54 +35,150 @@ export default () => {
         if (txt.startsWith("data.trace/")) return `/${txt}`;
         return txt;
     };
-    const normalizeCodeToken = (value?: string) => String(value || "").trim().toUpperCase().replace(/\s+/g, "");
-    const toSdsCode = (value?: string) => {
-        const code = normalizeCodeToken(value);
-        if (code.startsWith("SRS-")) return `SDS-${code.slice(4)}`;
-        return code;
+    const withCacheBuster = (url?: string, seed?: string | number) => {
+        const base = normalizeImgUrl(url);
+        if (!base) return "";
+        const token = String(seed ?? Date.now());
+        return `${base}${base.includes("?") ? "&" : "?"}_v=${encodeURIComponent(token)}`;
     };
     const normalizeLooseText = (value?: string) => String(value || "")
         .toLowerCase()
         .replace(/[\s\u3000\-_.:：，,。；;、()（）【】\[\]/\\]+/g, "");
-    const pickFirstImageFromNode = (node?: TreeNode): string => {
-        if (!node) return "";
-        const selfImg = normalizeImgUrl((node as any).img_url);
-        if (selfImg) return selfImg;
-        const children = (node.children || []) as TreeNode[];
-        for (const child of children) {
-            const childImg = pickFirstImageFromNode(child);
-            if (childImg) return childImg;
-        }
-        return "";
-    };
     const resolveLogicImgFromTree = (item: any, treeNodes: TreeNode[]): string => {
         if (!Array.isArray(treeNodes) || treeNodes.length === 0) return "";
-        const targetSdsCode = toSdsCode(item?.srs_code || "");
-        const targetName = normalizeLooseText(item?.name || item?.sub_function || item?.function || item?.module || "");
-        const targetCodeLoose = normalizeLooseText(targetSdsCode);
-        let best: { score: number; img: string } = { score: 0, img: "" };
+        const logicTxtRaw = String(item?.logic_txt || "");
+        const targetFigureNo = (logicTxtRaw.match(/图\s*(\d+)/) || [])[1] || "";
+        const figureCaptionNames = Array.from(logicTxtRaw.matchAll(/图\s*\d+\s*([^\n，。；;]*)/g))
+            .map((m) => normalizeLooseText(String(m?.[1] || "").trim()))
+            .filter(Boolean);
+        const fallbackName = normalizeLooseText(item?.name || "");
+        const targetNames = Array.from(new Set(
+            (figureCaptionNames.length > 0 ? figureCaptionNames : [fallbackName]).filter(Boolean)
+        ));
+        if (targetNames.length === 0) return "";
+        let bestByName: { score: number; img: string } = { score: 0, img: "" };
 
-        const walk = (nodes: TreeNode[], inheritedCode = "") => {
-            for (const node of nodes || []) {
-                const nodeCodeRaw = String((node as any).sds_code || inheritedCode || "");
-                const nodeCode = normalizeCodeToken(nodeCodeRaw);
-                const mergedTxt = `${(node as any).title || ""}${(node as any).label || ""}${(node as any).text || ""}`;
-                const mergedLoose = normalizeLooseText(mergedTxt);
-                const img = pickFirstImageFromNode(node);
-                if (img) {
-                    let score = 0;
-                    if (targetSdsCode && nodeCode && nodeCode === targetSdsCode) score += 100;
-                    else if (targetCodeLoose && mergedLoose.includes(targetCodeLoose)) score += 70;
-                    if (targetName && mergedLoose.includes(targetName)) score += 60;
-                    if (/逻辑|流程/.test(mergedTxt)) score += 10;
-                    if (score > best.score) best = { score, img };
-                }
-                walk((node.children || []) as TreeNode[], nodeCodeRaw || inheritedCode);
+        const extractExactCandidates = (txt?: string): string[] => {
+            const raw = String(txt || "");
+            const result = [normalizeLooseText(raw)];
+            const matchedList = Array.from(raw.matchAll(/图\s*\d+\s*([^\n，。；;]*)/g)).map((m) => String(m?.[1] || "").trim());
+            matchedList.forEach((name) => result.push(normalizeLooseText(name)));
+            return result.filter((v) => !!v);
+        };
+        const extractImageCaptionsFromText = (txt?: string): string[] => {
+            const lines = String(txt || "").replace(/\r/g, "").split("\n").map((line) => String(line || "").trim()).filter(Boolean);
+            return lines.filter((line) => /^图\s*\d+/i.test(line));
+        };
+        const extractFigureNo = (txt?: string): string => {
+            const matched = String(txt || "").match(/图\s*(\d+)/);
+            return matched?.[1] || "";
+        };
+        const applyExactMatch = (img: string, candidates: string[], baseScore = 100) => {
+            if (!img || candidates.length === 0) return;
+            if (candidates.some((name) => targetNames.includes(name))) {
+                if (baseScore > bestByName.score) bestByName = { score: baseScore, img };
             }
         };
 
-        walk(treeNodes, "");
-        return best.img;
+        const walk = (nodes: TreeNode[]) => {
+            for (const node of nodes || []) {
+                const titleTxt = String((node as any).title || "");
+                const labelTxt = String((node as any).label || "");
+                const bodyTxt = String((node as any).text || "");
+                const img = normalizeImgUrl((node as any).img_url);
+                if (img) {
+                    const nodeFigureNo = extractFigureNo(`${titleTxt}\n${labelTxt}\n${bodyTxt}`);
+                    if (targetFigureNo && nodeFigureNo && nodeFigureNo !== targetFigureNo) {
+                        walk((node.children || []) as TreeNode[]);
+                        continue;
+                    }
+                    const candidates = [
+                        ...extractExactCandidates(titleTxt),
+                        ...extractExactCandidates(labelTxt),
+                        ...extractExactCandidates(bodyTxt),
+                        ...extractExactCandidates(`${titleTxt}${labelTxt}`),
+                    ];
+                    let score = 100;
+                    if (targetNames.includes(normalizeLooseText(titleTxt)) || targetNames.includes(normalizeLooseText(`${titleTxt}${labelTxt}`))) score += 30;
+                    if (/逻辑|流程/.test(`${titleTxt}${labelTxt}${bodyTxt}`)) score += 10;
+                    applyExactMatch(img, candidates, score);
+                }
+                // 导入文档常见结构：父节点正文写“图X 标题”，子节点仅存 img_url；按顺序绑定标题与子图
+                const imageChildren = (node.children || []).filter((child) => !!normalizeImgUrl((child as any).img_url));
+                const captions = extractImageCaptionsFromText(bodyTxt);
+                imageChildren.forEach((child, idx) => {
+                    const childImg = normalizeImgUrl((child as any).img_url);
+                    if (!childImg) return;
+                    const childTitle = String((child as any).title || "");
+                    const childLabel = String((child as any).label || "");
+                    const caption = captions[idx] || "";
+                    const captionFigureNo = extractFigureNo(caption);
+                    const childFigureNo = extractFigureNo(`${childTitle}\n${childLabel}`);
+                    if (targetFigureNo) {
+                        const figureNo = captionFigureNo || childFigureNo;
+                        if (figureNo && figureNo !== targetFigureNo) return;
+                    }
+                    const candidates = [
+                        ...extractExactCandidates(caption),
+                        ...extractExactCandidates(childTitle),
+                        ...extractExactCandidates(childLabel),
+                    ];
+                    applyExactMatch(childImg, candidates, 140);
+                });
+                walk((node.children || []) as TreeNode[]);
+            }
+        };
+
+        walk(treeNodes);
+        return bestByName.img;
+    };
+    const remapRefTypeImagesByProduct = async (treeNodes: TreeNode[], productId?: number, docVersion?: string) => {
+        if (!productId || !Array.isArray(treeNodes) || treeNodes.length === 0) return treeNodes;
+        const fileMaps = new Map<string, string>();
+        await Promise.all(
+            DOC_IMAGE_REF_TYPES.map(async (fileType) => {
+                try {
+                    const res: any = await ApiDocFile.list_doc_file(fileType, { product_id: productId, page_index: 0, page_size: 1000 });
+                    if (res?.code === ApiDocFile.C_OK) {
+                        const rows = res?.data?.rows || [];
+                        const normalizedVersion = String(docVersion || "").trim();
+                        const scopedRows = normalizedVersion
+                            ? (rows.filter((row: any) => String(row?.product_version || "").trim() === normalizedVersion))
+                            : rows;
+                        const sortedRows = [...scopedRows].sort((a: any, b: any) => {
+                            const ta = new Date(a?.update_time || a?.create_time || 0).getTime();
+                            const tb = new Date(b?.update_time || b?.create_time || 0).getTime();
+                            if (ta !== tb) return tb - ta;
+                            return Number(b?.id || 0) - Number(a?.id || 0);
+                        });
+                        const firstRow = sortedRows[0] || rows[0];
+                        const fileUrl = withCacheBuster(firstRow?.file_url, `${firstRow?.id || ""}_${firstRow?.update_time || firstRow?.create_time || ""}`);
+                        if (fileUrl) {
+                            fileMaps.set(fileType, fileUrl);
+                        }
+                    }
+                } catch (error) {
+                    console.error("加载产品图片文件失败:", error);
+                }
+            })
+        );
+        if (fileMaps.size === 0) return treeNodes;
+        const walk = (nodes: TreeNode[]): TreeNode[] =>
+            (nodes || []).map((node) => {
+                const refType = String((node as any).ref_type || "");
+                const currentUrl = withCacheBuster((node as any).img_url, Date.now());
+                const mappedUrl = fileMaps.get(refType);
+                // 网络安全流程图严格使用详细设计树内图片，避免被图表文件管理旧记录覆盖
+                const finalUrl = refType === "img_flow"
+                    ? (currentUrl || "")
+                    : (mappedUrl || currentUrl || "");
+                return {
+                    ...node,
+                    ...(finalUrl ? { img_url: finalUrl } : {}),
+                    children: walk((node.children || []) as TreeNode[]),
+                };
+            });
+        return walk(treeNodes);
     };
 
     const { t: ts } = useTranslation();
@@ -739,12 +837,66 @@ export default () => {
         };
         return [...cleanedRoots, reviewRoot];
     };
+    const rebindFlowImageToFlowChild = (roots: TreeNode[]): TreeNode[] => {
+        const walk = (nodes: TreeNode[]): TreeNode[] => {
+            return (nodes || []).map((node) => {
+                const nextChildren = walk((node.children || []) as TreeNode[]);
+                const nodeTitle = String(node.title || "");
+                const nodeLabel = String(node.label || "");
+                const nodeText = String(node.text || "");
+                const nodeHasFlowHint = /网络安全|流程图/.test(`${nodeTitle} ${nodeLabel} ${nodeText}`);
+                let nextNode: TreeNode = { ...node, children: nextChildren };
+                if (nodeHasFlowHint && String(node.img_url || "").trim() && nextChildren.length > 0) {
+                    const targetIdx = nextChildren.findIndex((child) => /网络安全|流程图/.test(`${child.title || ""} ${child.label || ""}`));
+                    const placeholderIdx = nextChildren.findIndex((child) => /^导入图片\d+$/i.test(String(child.title || "").trim()));
+                    const pickedIdx = targetIdx >= 0 ? targetIdx : placeholderIdx;
+                    if (pickedIdx >= 0) {
+                        const target = { ...nextChildren[pickedIdx] };
+                        if (!String(target.img_url || "").trim()) {
+                            target.img_url = String(node.img_url || "");
+                        }
+                        target.ref_type = "img_flow";
+                        if (/^导入图片\d+$/i.test(String(target.title || "").trim())) {
+                            target.title = "网络安全流程图";
+                        }
+                        const mergedChildren = [...nextChildren];
+                        mergedChildren[pickedIdx] = target;
+                        nextNode = { ...nextNode, img_url: "", children: mergedChildren };
+                    }
+                }
+                return nextNode;
+            });
+        };
+        return walk(roots || []);
+    };
+    const normalizeImageRefTypes = (roots: TreeNode[]): TreeNode[] => {
+        const detectRefType = (txt: string): string | undefined => {
+            const merged = String(txt || "");
+            if (/网络安全|流程图/.test(merged)) return "img_flow";
+            if (/物理拓扑图|拓扑图/.test(merged)) return "img_topo";
+            if (/系统结构图|体系结构图|结构图/.test(merged)) return "img_struct";
+            return undefined;
+        };
+        const walk = (nodes: TreeNode[]): TreeNode[] => {
+            return (nodes || []).map((node) => {
+                const merged = `${node.title || ""} ${node.label || ""} ${node.text || ""}`;
+                const guessedRefType = detectRefType(merged);
+                const nextChildren = walk((node.children || []) as TreeNode[]);
+                return {
+                    ...node,
+                    ...(guessedRefType ? { ref_type: guessedRefType } : {}),
+                    children: nextChildren,
+                };
+            });
+        };
+        return walk(roots || []);
+    };
 
     useEffect(() => {
         const id = params.id;
         if (id) {
             dispatch({ loading: true, isEdit: !isReadOnly });
-            Api.get_sds_doc({ id }).then((res: any) => {
+            Api.get_sds_doc({ id }).then(async (res: any) => {
                 if (res.code === Api.C_OK) {
                     const targetRow = res.data;
                     const needRebindSrs = !targetRow.srsdoc_id;
@@ -772,21 +924,24 @@ export default () => {
                     const parsedTreeForView = decorateImportedWordTree(
                         isReadOnly ? relocateReviewTablesToStandalonePage(relocatedTree) : relocatedTree
                     );
+                    const flowReboundTree = rebindFlowImageToFlowChild(parsedTreeForView);
+                    const normalizedRefTree = normalizeImageRefTypes(flowReboundTree);
                     const parsedContent = isReadOnly
-                        ? bindTableCaptionsForPersist(parsedTreeForView)
-                        : parsedTreeForView;
+                        ? bindTableCaptionsForPersist(normalizedRefTree)
+                        : normalizedRefTree;
+                    const remappedContent = await remapRefTypeImagesByProduct(parsedContent, targetRow.product_id, targetRow.version);
 
                     dispatch({
                         loading: false,
                         requireRebindSrs: needRebindSrs,
                         changeDescription: targetRow.change_log || "",
                         docNId: targetRow.n_id || 0, // 保存文档级别的 n_id
-                        treeStructure: parsedContent,
+                        treeStructure: remappedContent,
                         docProductId: targetRow.product_id,
                         docSrsdocId: targetRow.srsdoc_id || undefined,
                         docVersion: targetRow.version ?? "",
                     });
-                    treeStructureRef.current = parsedContent;
+                    treeStructureRef.current = remappedContent;
                     if (needRebindSrs) {
                         message.warning("该详细设计未绑定需求规格说明版本，请先绑定该产品下需求规格说明后再进行操作。");
                         if (isReadOnly) {
@@ -853,17 +1008,59 @@ export default () => {
             return;
         }
         dispatch({ reqdListLoading: true });
-        ApiSdsReqd.list_sds_reqd({
-            doc_id: docId,
-            page_index: 0,
-            page_size: 10000,
-        }).then((res: any) => {
+        Promise.all([
+            Api.get_sds_doc({ id: docId }),
+            ApiSdsReqd.list_sds_reqd({
+                doc_id: docId,
+                page_index: 0,
+                page_size: 10000,
+                _ts: Date.now(),
+            }),
+        ]).then(async ([docRes, res]: any[]) => {
             if (res.code === ApiSdsReqd.C_OK) {
                 const rows = res.data?.rows || [];
-                const currentTree = (((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) || []) as TreeNode[];
+                let currentTree = (((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) || []) as TreeNode[];
+                if (docRes?.code === Api.C_OK) {
+                    const latestRow = docRes.data || {};
+                    const parsedTree = (latestRow.content || []).map((node: any) => parseTreeNode(node));
+                    const normalizedTree = normalizeBodyLikeHeadingNodes(
+                        normalizeJsonLikeHeadings(normalizeFalseSingleDigitHeadings(parsedTree))
+                    );
+                    const relocatedTree = relocateDataStructureTables(normalizedTree);
+                    const parsedTreeForView = decorateImportedWordTree(
+                        isReadOnly ? relocateReviewTablesToStandalonePage(relocatedTree) : relocatedTree
+                    );
+                    const flowReboundTree = rebindFlowImageToFlowChild(parsedTreeForView);
+                    const normalizedRefTree = normalizeImageRefTypes(flowReboundTree);
+                    const parsedContent = isReadOnly
+                        ? bindTableCaptionsForPersist(normalizedRefTree)
+                        : normalizedRefTree;
+                    const remappedContent = await remapRefTypeImagesByProduct(parsedContent, latestRow.product_id, latestRow.version);
+                    currentTree = remappedContent as TreeNode[];
+                    treeStructureRef.current = remappedContent;
+                    dispatch({ treeStructure: remappedContent });
+                }
+                const flowDebugRows: any[] = [];
                 const tableData = rows.map((item: any, index: number) => {
                     const backendLogicImg = normalizeImgUrl(item.logic_img);
-                    const logicImg = backendLogicImg || resolveLogicImgFromTree(item, currentTree) || "";
+                    const logicTxtRaw = String(item?.logic_txt || "");
+                    const hasFigureCaption = /图\s*\d+\s*[^\n，。；;]*/.test(logicTxtRaw);
+                    const matchedTreeImg = resolveLogicImgFromTree(item, currentTree);
+                    // 若逻辑文本已明确给出“图X 名称”，仅接受按图名命中的树内图片，避免回退到历史错误图。
+                    const logicImg = withCacheBuster(
+                        matchedTreeImg || (hasFigureCaption ? "" : backendLogicImg) || "",
+                        `${item.id || item.req_id || index}_${Date.now()}`
+                    );
+                    if (/流程图|网络安全/.test(logicTxtRaw) || /流程图|网络安全/.test(String(item?.name || ""))) {
+                        flowDebugRows.push({
+                            req_id: item.srs_code || item.req_id || item.id,
+                            name: item.name || "",
+                            logic_txt: logicTxtRaw,
+                            matchedTreeImg,
+                            backendLogicImg,
+                            finalLogicImg: logicImg,
+                        });
+                    }
                     return {
                         key: item.req_id || `reqd_${index}_${Date.now()}`,
                         req_id: item.srs_code,
@@ -882,6 +1079,10 @@ export default () => {
                         product_version: item.product_version || "",
                     };
                 });
+                if (flowDebugRows.length > 0 && typeof window !== "undefined") {
+                    (window as any).__sdsFlowDebugRows = flowDebugRows;
+                    console.table(flowDebugRows);
+                }
                 dispatch({ reqdListData: tableData, reqdListLoading: false });
             } else {
                 message.error(res.msg || "加载设计列表数据失败");
@@ -1236,7 +1437,7 @@ export default () => {
                     navigate(`/sds_docs/edit/${res.data.id}`, { replace: true });
                 } else if (params.id) {
                     // 如果是编辑，重新加载数据以获取后端生成的新 n_id
-                    Api.get_sds_doc({ id: params.id }).then((reloadRes: any) => {
+                    Api.get_sds_doc({ id: params.id }).then(async (reloadRes: any) => {
                         if (reloadRes.code === Api.C_OK) {
                             const targetRow = reloadRes.data;
 
@@ -1262,16 +1463,19 @@ export default () => {
                             const parsedTreeForView = decorateImportedWordTree(
                                 isReadOnly ? relocateReviewTablesToStandalonePage(relocatedTree) : relocatedTree
                             );
+                            const flowReboundTree = rebindFlowImageToFlowChild(parsedTreeForView);
+                            const normalizedRefTree = normalizeImageRefTypes(flowReboundTree);
                             const parsedContent = isReadOnly
-                                ? bindTableCaptionsForPersist(parsedTreeForView)
-                                : parsedTreeForView;
+                                ? bindTableCaptionsForPersist(normalizedRefTree)
+                                : normalizedRefTree;
+                            const remappedContent = await remapRefTypeImagesByProduct(parsedContent, targetRow.product_id, targetRow.version);
                             dispatch({
                                 changeDescription: targetRow.change_log || "",
                                 docNId: targetRow.n_id || 0,
-                                treeStructure: parsedContent,
+                                treeStructure: remappedContent,
                                 requireRebindSrs: !targetRow.srsdoc_id,
                             });
-                            treeStructureRef.current = parsedContent;
+                            treeStructureRef.current = remappedContent;
 
                         }
                     });

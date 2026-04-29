@@ -25,9 +25,8 @@ export const tabColumns = (ts: any) => {
             render: (_value: any, row: any) => {
                 return (
                     <div>
-                        <div>
-                            概率：{row.init_rate}程度：{row.init_degree}
-                        </div>
+                        <div>概率：{row.init_rate}</div>
+                        <div>程度：{row.init_degree}</div>
                         <div>危险水平：{row.init_level}</div>
                     </div>
                 );
@@ -51,10 +50,9 @@ export const tabColumns = (ts: any) => {
             render: (_value: any, row: any) => {
                 return (
                     <div>
-                        <div>
-                            概率：{row.init_rate}程度：{row.init_degree}
-                        </div>
-                        <div>危险水平：{row.init_level}</div>
+                        <div>概率：{row.cur_rate}</div>
+                        <div>程度：{row.cur_degree}</div>
+                        <div>危险水平：{row.cur_level}</div>
                     </div>
                 );
             },

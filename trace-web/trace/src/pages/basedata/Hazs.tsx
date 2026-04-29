@@ -348,6 +348,44 @@ export default () => {
         );
     };
 
+    const buildEvidenceLines = (value: any) => {
+        const tokens = String(value || "")
+            .split(/[\s、]+/)
+            .map((item) => item.trim())
+            .filter((item) => item !== "");
+        const lines: string[] = [];
+        for (let i = 0; i < tokens.length; i += 1) {
+            const token = tokens[i];
+            if (token === "至" && lines.length > 0 && i + 1 < tokens.length) {
+                const prev = lines.pop() as string;
+                const next = tokens[i + 1];
+                lines.push(`${prev} 至 ${next}`);
+                i += 1;
+                continue;
+            }
+            lines.push(token);
+        }
+        return lines;
+    };
+
+    const buildDealLines = (value: any) => {
+        const text = String(value || "").trim();
+        if (!text) {
+            return [];
+        }
+        const normalized = text.replace(/\r?\n+/g, " ").replace(/\s+/g, " ");
+        const lines: string[] = [];
+        const regex = /(RCM\d+)\s*[.:：]?\s*([\s\S]*?)(?=(?:RCM\d+\s*[.:：]?)|$)/gi;
+        let match = regex.exec(normalized);
+        while (match) {
+            const code = (match[1] || "").trim().toUpperCase();
+            const content = (match[2] || "").replace(/^[-,，。；;:：\s]+/, "").trim();
+            lines.push(content ? `${code}: ${content}` : code);
+            match = regex.exec(normalized);
+        }
+        return lines.length > 0 ? lines : [normalized];
+    };
+
     const columns = [
         {
             title: ts("haz.code"),
@@ -404,8 +442,37 @@ export default () => {
         {
             title: ts("haz.deal"),
             dataIndex: "deal",
-            width: 260,
-            render: (value: any) => renderOneLineWithTooltip(value, { emptyText: "" }),
+            width: 360,
+            className: "haz-deal-col",
+            onHeaderCell: () => ({ style: { minWidth: 320 } }),
+            onCell: () => ({
+                className: "haz-deal-col",
+                style: {
+                    minWidth: 320,
+                    maxWidth: 420,
+                    whiteSpace: "normal",
+                    overflow: "visible",
+                    textOverflow: "unset",
+                    height: "auto",
+                    lineHeight: "20px",
+                    paddingTop: 4,
+                    paddingBottom: 4,
+                    verticalAlign: "top",
+                },
+            }),
+            render: (value: any) => {
+                const text = value || "";
+                const lines = buildDealLines(text);
+                return (
+                    <div className="haz-deal-wrap" title={text}>
+                        {lines.map((item, idx) => (
+                            <div key={`${item}-${idx}`} className="haz-deal-item">
+                                {item}
+                            </div>
+                        ))}
+                    </div>
+                );
+            },
         },
         {
             title: ts("haz.rcms"),
@@ -415,9 +482,11 @@ export default () => {
             onCell: () => ({
                 className: "haz-rcms-col",
                 style: {
+                    minWidth: 180,
+                    maxWidth: 240,
                     whiteSpace: "normal",
-                    overflow: "visible",
-                    textOverflow: "unset",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
                     height: "auto",
                     lineHeight: "20px",
                     paddingTop: 4,
@@ -433,7 +502,7 @@ export default () => {
                     .map((item) => item.trim())
                     .filter((item) => item !== "");
                 return (
-                    <div className="haz-rcms-wrap" title={text} style={{ whiteSpace: "normal", wordBreak: "break-all", lineHeight: "20px" }}>
+                    <div className="haz-rcms-wrap" title={text}>
                         {lines.length > 0 ? lines.map((item, idx) => <div key={`${item}-${idx}`}>{item}</div>) : text}
                     </div>
                 );
@@ -443,7 +512,29 @@ export default () => {
             title: ts("haz.evidence"),
             dataIndex: "evidence",
             width: 220,
-            render: (value: any) => renderOneLineWithTooltip(value, { emptyText: "" }),
+            className: "haz-evidence-col",
+            onCell: () => ({
+                className: "haz-evidence-col",
+                style: {
+                    whiteSpace: "normal",
+                    overflow: "visible",
+                    textOverflow: "unset",
+                    height: "auto",
+                    lineHeight: "20px",
+                    paddingTop: 4,
+                    paddingBottom: 4,
+                    verticalAlign: "top",
+                },
+            }),
+            render: (value: any) => {
+                const text = value || "";
+                const lines = buildEvidenceLines(text);
+                return (
+                    <div className="haz-evidence-wrap" title={text}>
+                        {lines.length > 0 ? lines.map((item, idx) => <div key={`${item}-${idx}`}>{item}</div>) : text}
+                    </div>
+                );
+            },
         },
         {
             title: ts("haz.cur_risk"),

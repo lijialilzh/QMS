@@ -138,6 +138,71 @@ class Server(object):
         except Exception:
             return None, None
 
+    def __pick_sds_flow_img_by_name(self, nodes: List[SdsNode]):
+        if not nodes:
+            return None
+        keywords = self.DOC_IMG_KEYWORDS.get("img_flow") or []
+        node_map = {row.n_id: row for row in nodes}
+        children_map = {}
+        for row in nodes:
+            p_id = getattr(row, "p_id", 0) or 0
+            children_map.setdefault(p_id, []).append(row)
+
+        # 1) 直接命中：节点自身带图，且标题/标签/正文包含“网络安全流程图”等关键词
+        best_img = None
+        best_score = 0
+        for row in nodes:
+            img_url = getattr(row, "img_url", None)
+            if not img_url:
+                continue
+            own_text = " ".join([
+                self.__normalize_text(getattr(row, "title", "") or ""),
+                self.__normalize_text(getattr(row, "label", "") or ""),
+                self.__normalize_text(getattr(row, "text", "") or ""),
+            ])
+            own_score = self.__match_score("img_flow", own_text)
+            if own_score > best_score:
+                best_score = own_score
+                best_img = img_url
+        if best_img:
+            return best_img
+
+        # 2) 同级命中：一个子节点是“网络安全流程图”标题，另一个子节点（常为“导入图片xx”）携带图片
+        for p_id, siblings in children_map.items():
+            has_flow_marker = False
+            for sib in siblings:
+                marker_text = " ".join([
+                    self.__normalize_text(getattr(sib, "title", "") or ""),
+                    self.__normalize_text(getattr(sib, "label", "") or ""),
+                    self.__normalize_text(getattr(sib, "text", "") or ""),
+                ])
+                if self.__contains_keywords(marker_text, keywords):
+                    has_flow_marker = True
+                    break
+            if not has_flow_marker:
+                continue
+
+            for sib in siblings:
+                img_url = getattr(sib, "img_url", None)
+                if img_url:
+                    return img_url
+
+            parent = node_map.get(p_id)
+            if parent and getattr(parent, "img_url", None):
+                return getattr(parent, "img_url")
+
+        # 3) 上下文兜底：按祖先上下文关键词评分
+        for row in nodes:
+            img_url = getattr(row, "img_url", None)
+            if not img_url:
+                continue
+            ctx_text = self.__node_context_text(row, node_map)
+            score = self.__match_score("img_flow", ctx_text)
+            if score > best_score:
+                best_score = score
+                best_img = img_url
+        return best_img
+
     def __backfill_doc_file_from_srs(self, product_id: int, category: str):
         if not product_id or category not in self.DOC_IMG_KEYWORDS:
             return
@@ -191,6 +256,12 @@ class Server(object):
     def __backfill_doc_file_from_sds(self, product_id: int, category: str):
         if not product_id or category not in self.DOC_IMG_KEYWORDS:
             return
+        # 已存在记录时不自动覆盖，避免用户手工上传/替换被“回填逻辑”改回旧图
+        exists = db.session.execute(
+            select(DocFile.id).where(DocFile.product_id == product_id, DocFile.category == category).limit(1)
+        ).scalar()
+        if exists:
+            return
 
         docs = db.session.execute(
             select(SdsDoc)
@@ -201,25 +272,27 @@ class Server(object):
         if not docs:
             return
 
-        keywords = self.DOC_IMG_KEYWORDS.get(category) or []
         matched_img = None
-        # 按 SDS 文档版本倒序扫描：先匹配关键词，未命中时对流程图允许首图兜底
+        keywords = self.DOC_IMG_KEYWORDS.get(category) or []
+        # 按 SDS 文档版本倒序扫描：流程图优先按“图名称/同级节点”精确匹配
         for doc in docs:
             nodes = db.session.execute(
                 select(SdsNode).where(SdsNode.doc_id == doc.id).order_by(SdsNode.priority, SdsNode.n_id)
             ).scalars().all()
             if not nodes:
                 continue
+            if category == "img_flow":
+                flow_img = self.__pick_sds_flow_img_by_name(nodes)
+                if flow_img:
+                    matched_img = flow_img
+                    break
             node_map = {row.n_id: row for row in nodes}
-            first_img = None
             best_img = None
             best_score = 0
             for row in nodes:
                 img_url = getattr(row, "img_url", None)
                 if not img_url:
                     continue
-                if not first_img:
-                    first_img = img_url
                 ctx_text = self.__node_context_text(row, node_map)
                 if self.__contains_keywords(ctx_text, keywords):
                     score = self.__match_score(category, ctx_text)
@@ -229,9 +302,6 @@ class Server(object):
             if best_img:
                 matched_img = best_img
                 break
-            if category == "img_flow" and first_img:
-                matched_img = first_img
-                break
         if not matched_img:
             return
 
@@ -239,17 +309,9 @@ class Server(object):
         if not blob:
             return
 
-        # 流程图按名称重新命中后，允许覆盖旧记录，避免历史误匹配一直存在
-        row = db.session.execute(
-            select(DocFile)
-            .where(DocFile.product_id == product_id, DocFile.category == category)
-            .order_by(desc(DocFile.id))
-            .limit(1)
-        ).scalars().first()
-        if not row:
-            row = DocFile(product_id=product_id, category=category)
-            db.session.add(row)
-            db.session.flush()
+        row = DocFile(product_id=product_id, category=category)
+        db.session.add(row)
+        db.session.flush()
 
         path = os.path.join("data.trace", category, f"{row.id}{ext}")
         os.makedirs(os.path.dirname(path), exist_ok=True)

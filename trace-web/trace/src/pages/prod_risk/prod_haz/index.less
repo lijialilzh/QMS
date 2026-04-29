@@ -17,4 +17,84 @@
         }
     }
 
+    // 风险列允许多行展示（覆盖全局单行截断）
+    .ant-table-tbody > tr > td.ant-table-cell.risk-cell {
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: unset !important;
+        height: auto !important;
+        line-height: 20px !important;
+        padding-top: 4px !important;
+        padding-bottom: 4px !important;
+        vertical-align: top;
+    }
+
+    .risk-tip {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .risk-tip > div {
+        line-height: 20px;
+        white-space: normal;
+        overflow: visible;
+        text-overflow: unset;
+        word-break: break-all;
+    }
+
+    // RCM ID / 证据列允许换行，覆盖全局单行截断
+    .ant-table-tbody > tr > td.ant-table-cell.wrap-cell {
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: unset !important;
+        height: auto !important;
+        line-height: 20px !important;
+        padding-top: 4px !important;
+        padding-bottom: 4px !important;
+        vertical-align: top;
+    }
+
+    .wrap-cell-content {
+        white-space: normal;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+        line-height: 20px;
+    }
+
+    .wrap-list-cell {
+        white-space: normal;
+        line-height: 20px;
+    }
+
+    .wrap-list-item {
+        line-height: 20px;
+    }
+
+    .ant-table-tbody > tr > td.ant-table-cell.deal-cell {
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: unset !important;
+        line-height: 20px !important;
+        height: auto !important;
+        padding-top: 4px !important;
+        padding-bottom: 4px !important;
+        vertical-align: top !important;
+    }
+
+    .deal-wrap {
+        display: flex !important;
+        flex-direction: column;
+        white-space: normal !important;
+        line-height: 20px !important;
+        word-break: break-word !important;
+        overflow-wrap: anywhere !important;
+    }
+
+    .deal-item {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        line-height: 20px;
+    }
+
 }

@@ -1,4 +1,4 @@
-import { Form, Input, Button, Table, message, Row, Col } from "antd";
+import { Form, Input, Button, Table, message, Row, Col, Space } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -77,9 +77,15 @@ export default () => {
         },
         {
             title: ts("action"),
+            width: 140,
+            onCell: () => ({
+                style: {
+                    whiteSpace: "nowrap",
+                },
+            }),
             render: (_value: any, row: any) => {
                 return (
-                    <div>
+                    <Space size={12} style={{ whiteSpace: "nowrap" }}>
                         <Button
                             type="link"
                             onClick={() => {
@@ -93,7 +99,7 @@ export default () => {
                             }}>
                             {ts("export")}
                         </Button>
-                    </div>
+                    </Space>
                 );
             },
         },

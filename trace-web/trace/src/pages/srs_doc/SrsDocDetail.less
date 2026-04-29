@@ -2,6 +2,24 @@
 @import "../../index.app.less";
 
 .srs-doc-detail {
+    // 全文统一：13px，中文宋体，英文 Times
+    font-size: 13px;
+    font-family: "Times New Roman", "SimSun", "Songti SC", serif;
+
+    .ant-btn,
+    .ant-input,
+    .ant-input-textarea textarea,
+    .ant-select-selector,
+    .ant-select-selection-item,
+    .ant-form-item-label > label,
+    .ant-table,
+    .ant-table-cell,
+    .ant-modal-title,
+    .ant-modal-content {
+        font-size: 13px !important;
+        font-family: "Times New Roman", "SimSun", "Songti SC", serif !important;
+    }
+
     // 查看模式：禁用输入框文字加深，便于阅读
     &.read-only {
         .ant-input[disabled],
@@ -119,6 +137,31 @@
         .extracted-empty {
             color: #999;
             padding: 6px 0;
+        }
+
+        // 仅 SRS 新增/编辑页：封面与文件修订记录表行高 36px
+        .srs-extracted-edit-table.srs-cover-table,
+        .srs-extracted-edit-table.srs-change-log-table {
+            .ant-table-thead > tr > th.ant-table-cell,
+            .ant-table-tbody > tr > td.ant-table-cell {
+                height: 38px !important;
+                line-height: 1.5 !important;
+                padding-top: 3px !important;
+                padding-bottom: 3px !important;
+                vertical-align: middle !important;
+            }
+
+            .ant-table-tbody > tr > td.ant-table-cell .ant-input {
+                height: 28px !important;
+                line-height: 28px !important;
+            }
+
+            .ant-table-tbody > tr > td.ant-table-cell .ant-input-textarea textarea {
+                min-height: 28px !important;
+                line-height: 1.5 !important;
+                padding-top: 3px !important;
+                padding-bottom: 3px !important;
+            }
         }
     }
 

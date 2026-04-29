@@ -61,28 +61,36 @@
             background-color: #fafafa;
         }
 
-        &.level-0 .node-row .node-title {
-            font-size: 15px;
-            line-height: 1.35;
+        &.level-0 .node-row .node-title,
+        &.level-1 .node-row .node-title {
+            font-size: 13px;
+            line-height: 1.5;
             font-weight: 400;
         }
 
-        &.level-1 .node-row .node-title {
-            font-size: 14px;
-            line-height: 1.4;
-            font-weight: 400;
+        // 还原章节输入框宽度：避免 with-rcm 把标题框拉满整行
+        &.level-0 .node-row .node-title.with-rcm,
+        &.level-1 .node-row .node-title.with-rcm,
+        &.level-0 .node-row .node-title.with-rcm-text,
+        &.level-1 .node-row .node-title.with-rcm-text {
+            flex: 0 0 220px;
+            min-width: 220px;
+            max-width: 220px;
+            white-space: nowrap;
+            word-break: normal;
+            overflow-wrap: normal;
         }
 
         &.level-2 .node-row .node-title {
             font-size: 13px;
-            line-height: 1.45;
+            line-height: 1.5;
             font-weight: 400;
         }
 
         &.level-3 .node-row .node-title,
         &.level-4 .node-row .node-title,
         &.level-5 .node-row .node-title {
-            font-size: 12px;
+            font-size: 13px;
             line-height: 1.5;
             font-weight: 400;
         }
@@ -130,32 +138,37 @@
             }
 
             .node-title {
-                flex: 0 0 auto;
-                min-width: 160px;
+                flex: 0 0 200px;
+                min-width: 200px;
+                max-width: 200px;
                 margin-right: 10px;
                 white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
 
                 &.with-rcm {
-                    flex: 1 1 300px;
-                    min-width: 220px;
-                    white-space: normal;
-                    word-break: break-word;
-                    overflow-wrap: anywhere;
+                    flex: 0 0 200px;
+                    min-width: 200px;
+                    max-width: 200px;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
                 }
 
                 &.with-rcm-text {
-                    flex: 0 1 320px;
-                    min-width: 220px;
-                    white-space: normal;
-                    word-break: break-word;
-                    overflow-wrap: anywhere;
+                    flex: 0 0 200px;
+                    min-width: 200px;
+                    max-width: 200px;
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
                 }
             }
 
             .node-srs-code {
                 margin-right: 10px;
-                flex: 0 0 190px;
-                max-width: 190px;
+                flex: 0 0 160px;
+                max-width: 160px;
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
@@ -179,6 +192,13 @@
                     white-space: pre-line;
                     word-break: break-word;
                     overflow-wrap: anywhere;
+                }
+
+                .ant-select-selection-item,
+                .ant-select-item-option-content,
+                .ant-tag {
+                    font-size: 13px !important;
+                    line-height: 1.5 !important;
                 }
             }
 

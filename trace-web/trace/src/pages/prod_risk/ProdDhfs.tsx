@@ -1,4 +1,4 @@
-import { Form, Input, Button, Table, message, Row, Col, Modal, Upload } from "antd";
+import { Form, Input, Button, Table, message, Row, Col, Modal, Upload, Space } from "antd";
 import { SearchOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -216,16 +216,17 @@ export default () => {
         },
         {
             title: ts("action"),
+            width: 140,
             render: (_value: any, row: any) => {
                 return (
-                    <div>
+                    <Space size={12} style={{ whiteSpace: "nowrap" }}>
                         <Button type="link" onClick={() => dispatch({ dlgType: DlgTypes.edit, targetRow: row })}>
                             {ts("edit")}
                         </Button>
                         <Button type="link" danger onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
                             {ts("delete")}
                         </Button>
-                    </div>
+                    </Space>
                 );
             },
         },

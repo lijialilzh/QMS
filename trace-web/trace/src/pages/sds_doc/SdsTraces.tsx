@@ -9,7 +9,7 @@ import * as Api from "@/api/ApiSdsTrace";
 import * as ApiDoc from "@/api/ApiSdsDoc";
 import { doSearchProducts } from "../prod_risk/util";
 
-const pageSizeOptions = [1000, 100, 500];
+const pageSizeOptions = [100, 500, 1000];
 
 enum DlgTypes {
     edit = "edit",

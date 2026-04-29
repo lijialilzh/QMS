@@ -11,7 +11,16 @@ import * as Api from "@/api/ApiSdsReqd";
 import * as ApiDoc from "@/api/ApiSdsDoc";
 import { doSearchProducts } from "../prod_risk/util";
 
-const pageSizeOptions = [1000, 100, 500];
+const pageSizeOptions = [100, 500, 1000];
+
+const resetTableBodyScroll = () => {
+    requestAnimationFrame(() => {
+        const tableBody = document.querySelector(".sdsreqds .ant-table-body") as HTMLElement | null;
+        if (tableBody) {
+            tableBody.scrollTop = 0;
+        }
+    });
+};
 
 const normalizeImgUrl = (url?: string) => {
     const txt = String(url || "").trim();
@@ -239,6 +248,7 @@ export default () => {
     });
 
     const doSearch = (params: any, pageIndex: any, pageSize: any) => {
+        resetTableBodyScroll();
         if (!params?.prod_id || !params?.doc_id) {
             dispatch({ loading: false, pageIndex, pageSize, total: 0, rows: [] });
             return;
@@ -405,7 +415,7 @@ export default () => {
             </div>
             <Table
                 className="expand"
-                sticky
+                sticky={{ offsetScroll: 0 }}
                 columns={columns}
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}

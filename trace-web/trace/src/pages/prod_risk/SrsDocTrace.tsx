@@ -1,5 +1,5 @@
 import "./SrsDocTrace.less";
-import { Form, Button, Table, message, Modal, Row, Col, Select, Tooltip } from "antd";
+import { Form, Button, Table, message, Modal, Row, Col, Select, Tooltip, Space } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -199,9 +199,10 @@ export default () => {
         },
         {
             title: ts("action"),
+            width: 140,
             render: (_value: any, row: any) => {
                 return (
-                    <div>
+                    <Space size={12} style={{ whiteSpace: "nowrap" }}>
                         <Button type="link" onClick={() => dispatch({ dlgType: DlgTypes.view, targetRow: row })}>
                             {ts("view")}
                         </Button>
@@ -219,7 +220,7 @@ export default () => {
                             }}>
                             {ts("export")}
                         </Button>
-                    </div>
+                    </Space>
                 );
             },
         },

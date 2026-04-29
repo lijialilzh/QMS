@@ -64,6 +64,17 @@ export default () => {
         return invalid.has(txt) ? "" : txt;
     };
 
+    const buildStandardNodesWithIds = (): TreeNode[] => {
+        const addIdsToNodes = (nodes: any[]): TreeNode[] => {
+            return nodes.map((node) => ({
+                ...node,
+                id: `node_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                children: node.children ? addIdsToNodes(node.children) : [],
+            }));
+        };
+        return addIdsToNodes(standardNodes as any[]);
+    };
+
     // 加载产品列表
     useEffect(() => {
         ApiProduct.list_product({ page_index: 0, page_size: 1000 }).then((res: any) => {
@@ -219,8 +230,15 @@ export default () => {
         } else {
             // 新增模式
             editForm.resetFields();
-            dispatch({ isEdit: false, srsTableData: [], srsOtherReqData: [], srsChangeTables: [] });
-            treeStructureRef.current = [];
+            const initialTree = buildStandardNodesWithIds();
+            dispatch({
+                isEdit: false,
+                srsTableData: [],
+                srsOtherReqData: [],
+                srsChangeTables: [],
+                treeStructure: initialTree,
+            });
+            treeStructureRef.current = initialTree;
         }
     }, [params.id]);
 
@@ -347,16 +365,7 @@ export default () => {
             return;
         }
 
-        // 为标准节点生成临时 ID
-        const addIdsToNodes = (nodes: any[]): TreeNode[] => {
-            return nodes.map((node) => ({
-                ...node,
-                id: `node_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                children: node.children ? addIdsToNodes(node.children) : [],
-            }));
-        };
-
-        const nodesWithIds = addIdsToNodes(standardNodes as any[]);
+        const nodesWithIds = buildStandardNodesWithIds();
         // dispatch({ treeStructure: [...data.treeStructure, ...nodesWithIds] });
         dispatch({ treeStructure: nodesWithIds });
         message.success(ts("srs_doc.load_standard_structure_success"));
@@ -736,6 +745,7 @@ export default () => {
         return (
             <Table
                 key={`${keyPrefix}-${node.id}`}
+                className={`${isChangeRecordTable ? "srs-change-log-table" : "srs-cover-table"}${!isReadOnly ? " srs-extracted-edit-table" : ""}`}
                 dataSource={dataSource}
                 columns={columns}
                 pagination={false}

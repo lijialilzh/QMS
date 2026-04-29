@@ -34,6 +34,7 @@ export default () => {
         targetProdId: null,
         targetEdit: {},
         rcms: [],
+        selectedRowKeys: [],
     });
 
     const doSearch = (params: any, pageIndex: any, pageSize: any) => {
@@ -66,7 +67,7 @@ export default () => {
         dispatch({ loading: true });
         Api.delete_prod_hazs({ id: data.targetRow.id }).then((res: any) => {
             if (res.code === Api.C_OK) {
-                dispatch({ loading: false, dlgType: null });
+                dispatch({ loading: false, dlgType: null, selectedRowKeys: [] });
                 message.success(res.msg);
                 doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
             } else {
@@ -76,14 +77,49 @@ export default () => {
         });
     };
 
+    const doBatchDelete = () => {
+        const keys = data.selectedRowKeys || [];
+        if (keys.length === 0) {
+            message.warning(ts("please_select_items"));
+            return;
+        }
+        Modal.confirm({
+            title: ts("action"),
+            content: sprintf(ts("batch_delete_confirm"), { count: keys.length }),
+            onOk: async () => {
+                dispatch({ loading: true });
+                const idToRow = Object.fromEntries((data.rows || []).map((r: any) => [r.id, r]));
+                let successCount = 0;
+                const failedIds: any[] = [];
+                for (const id of keys) {
+                    try {
+                        const res: any = await Api.delete_prod_hazs({ id });
+                        if (res.code === Api.C_OK) successCount++;
+                        else failedIds.push(id);
+                    } catch {
+                        failedIds.push(id);
+                    }
+                }
+                const failedItems = failedIds.map((id) => idToRow[id]?.code ?? id).join("、");
+                dispatch({ loading: false, selectedRowKeys: [] });
+                if (failedIds.length === 0) message.success(ts("batch_delete_success"));
+                else if (successCount > 0) message.warning(sprintf(ts("batch_delete_partial"), { success: successCount, items: failedItems }));
+                else message.error(sprintf(ts("batch_delete_all_failed"), { items: failedItems }));
+                doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
+            },
+        });
+    };
+
     const renderRiskTip = (row: any, type: "init" | "cur") => {
         const rateTxt = (type === "init" ? HAZDICT_RATES[row.init_rate] ?? row.init_rate : HAZDICT_RATES[row.cur_rate] ?? row.cur_rate) ?? "";
         const degreeTxt = (type === "init" ? HAZDICT_DEGREES[row.init_degree] ?? row.init_degree : HAZDICT_DEGREES[row.cur_degree] ?? row.cur_degree) ?? "";
         const levelTxt = (type === "init" ? HAZDICT_LEVELS[row.init_level] ?? row.init_level : HAZDICT_LEVELS[row.cur_level] ?? row.cur_level) ?? "";
         const tipText = `概率：${rateTxt}\n程度：${degreeTxt}\n危险水平：${levelTxt}`;
         return (
-            <div title={tipText}>
-                概率：{rateTxt} 程度：{degreeTxt} 危险水平：{levelTxt}
+            <div title={tipText} className="risk-tip" style={{ lineHeight: "20px" }}>
+                <div>概率：{rateTxt}</div>
+                <div>程度：{degreeTxt}</div>
+                <div>危险水平：{levelTxt}</div>
             </div>
         );
     };
@@ -96,6 +132,44 @@ export default () => {
             .map((item: any) => (item.description || "").trim())
             .filter((text: string) => text !== "")
             .join("\n");
+    };
+
+    const buildEvidenceLines = (value: any) => {
+        const tokens = String(value || "")
+            .split(/[\s、]+/)
+            .map((item) => item.trim())
+            .filter((item) => item !== "");
+        const lines: string[] = [];
+        for (let i = 0; i < tokens.length; i += 1) {
+            const token = tokens[i];
+            if (token === "至" && lines.length > 0 && i + 1 < tokens.length) {
+                const prev = lines.pop() as string;
+                const next = tokens[i + 1];
+                lines.push(`${prev} 至 ${next}`);
+                i += 1;
+                continue;
+            }
+            lines.push(token);
+        }
+        return lines;
+    };
+
+    const buildDealLines = (value: any) => {
+        const text = String(value || "").trim();
+        if (!text) {
+            return [];
+        }
+        const normalized = text.replace(/\r?\n+/g, " ").replace(/\s+/g, " ");
+        const lines: string[] = [];
+        const regex = /(RCM\d+)\s*[.:：]?\s*([\s\S]*?)(?=(?:RCM\d+\s*[.:：]?)|$)/gi;
+        let match = regex.exec(normalized);
+        while (match) {
+            const code = (match[1] || "").trim().toUpperCase();
+            const content = (match[2] || "").replace(/^[-,，。；;:：\s]+/, "").trim();
+            lines.push(content ? `${code}: ${content}` : code);
+            match = regex.exec(normalized);
+        }
+        return lines.length > 0 ? lines : [normalized];
     };
 
     const columns = [
@@ -154,9 +228,24 @@ export default () => {
         },
         {
             title: ts("haz.init_risk"),
-            width: 180,
-            onHeaderCell: () => ({ style: { minWidth: 150 } }),
-            onCell: () => ({ style: { minWidth: 150 } }),
+            width: 220,
+            className: "risk-cell",
+            onHeaderCell: () => ({ style: { width: 220, minWidth: 220, maxWidth: 220 } }),
+            onCell: () => ({
+                style: {
+                    width: 220,
+                    minWidth: 220,
+                    maxWidth: 220,
+                    whiteSpace: "normal",
+                    overflow: "visible",
+                    textOverflow: "unset",
+                    height: "auto",
+                    lineHeight: "20px",
+                    paddingTop: 4,
+                    paddingBottom: 4,
+                    verticalAlign: "top",
+                },
+            }),
             render: (_value: any, row: any) => {
                 if (data.targetEdit.id !== row.id) {
                     return renderRiskTip(row, "init");
@@ -197,10 +286,37 @@ export default () => {
         {
             title: ts("haz.deal"),
             dataIndex: "deal",
-            width: 200,
+            width: 360,
+            className: "deal-cell",
+            onHeaderCell: () => ({ style: { minWidth: 320 } }),
+            onCell: () => ({
+                className: "deal-cell",
+                style: {
+                    minWidth: 320,
+                    maxWidth: 420,
+                    whiteSpace: "normal",
+                    overflow: "visible",
+                    textOverflow: "unset",
+                    height: "auto",
+                    lineHeight: "20px",
+                    paddingTop: 4,
+                    paddingBottom: 4,
+                    verticalAlign: "top",
+                },
+            }),
             render: (value: any, row: any) => {
                 if (data.targetEdit.id !== row.id) {
-                    return renderOneLineWithTooltip(value, { emptyText: "" });
+                    const text = value || "";
+                    const lines = buildDealLines(text);
+                    return (
+                        <div className="deal-wrap" title={text}>
+                            {lines.map((item, idx) => (
+                                <div key={`${item}-${idx}`} className="deal-item">
+                                    {item}
+                                </div>
+                            ))}
+                        </div>
+                    );
                 }
                 return (
                     <Input.TextArea
@@ -215,9 +331,22 @@ export default () => {
             title: ts("haz.rcms"),
             dataIndex: "rcms",
             width: 240,
+            className: "wrap-cell",
             render: (value: any, row: any) => {
                 if (data.targetEdit.id !== row.id) {
-                    return renderOneLineWithTooltip(value, { emptyText: "" });
+                    const rcms = String(value || "")
+                        .split(/[\s,，]+/)
+                        .map((item) => item.trim())
+                        .filter((item) => item !== "");
+                    return (
+                        <div className="wrap-list-cell" title={value || ""}>
+                            {rcms.map((item, idx) => (
+                                <div key={`${item}-${idx}`} className="wrap-list-item">
+                                    {item}
+                                </div>
+                            ))}
+                        </div>
+                    );
                 }
                 return (
                     <Select
@@ -249,9 +378,19 @@ export default () => {
             title: ts("haz.evidence"),
             dataIndex: "evidence",
             width: 200,
+            className: "wrap-cell",
             render: (value: any, row: any) => {
                 if (data.targetEdit.id !== row.id) {
-                    return renderOneLineWithTooltip(value, { emptyText: "" });
+                    const evidences = buildEvidenceLines(value);
+                    return (
+                        <div className="wrap-list-cell" title={value || ""}>
+                            {evidences.map((item, idx) => (
+                                <div key={`${item}-${idx}`} className="wrap-list-item">
+                                    {item}
+                                </div>
+                            ))}
+                        </div>
+                    );
                 }
                 return (
                     <Input.TextArea
@@ -264,10 +403,25 @@ export default () => {
         },
         {
             title: ts("haz.cur_risk"),
-            width: 180,
+            width: 220,
             dataIndex: "cur_rate",
-            onHeaderCell: () => ({ style: { minWidth: 150 } }),
-            onCell: () => ({ style: { minWidth: 150 } }),
+            className: "risk-cell",
+            onHeaderCell: () => ({ style: { width: 220, minWidth: 220, maxWidth: 220 } }),
+            onCell: () => ({
+                style: {
+                    width: 220,
+                    minWidth: 220,
+                    maxWidth: 220,
+                    whiteSpace: "normal",
+                    overflow: "visible",
+                    textOverflow: "unset",
+                    height: "auto",
+                    lineHeight: "20px",
+                    paddingTop: 4,
+                    paddingBottom: 4,
+                    verticalAlign: "top",
+                },
+            }),
             render: (_value: any, row: any) => {
                 if (data.targetEdit.id !== row.id) {
                     return renderRiskTip(row, "cur");
@@ -308,9 +462,9 @@ export default () => {
         {
             title: ts("haz.benefit_flag"),
             dataIndex: "benefit_flag",
-            width: 150,
-            onHeaderCell: () => ({ style: { minWidth: 150 } }),
-            onCell: () => ({ style: { minWidth: 150 } }),
+            width: 110,
+            onHeaderCell: () => ({ style: { minWidth: 110 } }),
+            onCell: () => ({ style: { minWidth: 110 } }),
             render: (_value: any, row: any) => {
                 return row.benefit_flag ? ts("yes") : ts("no");
             },
@@ -426,10 +580,17 @@ export default () => {
                         }}>
                         {ts("add")}
                     </Button>
+                    <Button disabled={!(data.selectedRowKeys || []).length} danger onClick={doBatchDelete}>
+                        {ts("batch_delete")}
+                    </Button>
                 </div>
             </div>
             <Table
                 className="expand"
+                rowSelection={{
+                    selectedRowKeys: data.selectedRowKeys || [],
+                    onChange: (keys: any) => dispatch({ selectedRowKeys: keys }),
+                }}
                 columns={columns}
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}

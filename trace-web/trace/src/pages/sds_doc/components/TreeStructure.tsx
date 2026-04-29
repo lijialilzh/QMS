@@ -557,6 +557,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     })();
     const childCaptions = extractImageCaptions(node.text);
     const imageOnlyChildren = (node.children || []).filter((child) => isImageNodeOnly(child));
+    const imageChildrenAll = (node.children || []).filter((child) => !!String(child.img_url || "").trim());
     const childCaptionById = new Map<string, string>();
     imageOnlyChildren.forEach((child, idx) => {
         const cap = childCaptions[idx];
@@ -575,6 +576,19 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         return !!(cap || child.label || child.img_url);
     }) : undefined;
     const firstImageChild = mergedImageOnlyChildren.find((child) => !!child.img_url) || imageOnlyChildren.find((child) => !!child.img_url);
+    const flowHintText = `${node.title || ""} ${node.label || ""} ${node.text || ""}`;
+    const suppressParentFlowImage = !!(
+        !readOnly &&
+        /网络安全|流程图/.test(flowHintText) &&
+        imageChildrenAll.length > 0
+    );
+    const preferredFlowImageChild = /网络安全|流程图/.test(flowHintText)
+        ? (imageChildrenAll.find((child) => {
+            const cap = childCaptionById.get(String(child.id)) || childCaptionById.get(String(child.n_id || ""));
+            const txt = `${cap || ""} ${child.title || ""} ${child.label || ""} ${child.text || ""}`;
+            return /网络安全|流程图/.test(txt);
+        }) || imageChildrenAll[imageChildrenAll.length - 1])
+        : undefined;
     const embeddedImageChildIdSet = new Set<string>(
         embeddedImageChild ? [String(embeddedImageChild.id), String(embeddedImageChild.n_id || "")] : []
     );
@@ -633,15 +647,20 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         childTableCaptionById.set(String(firstTableChild.id), cap);
         if (firstTableChild.n_id) childTableCaptionById.set(String(firstTableChild.n_id), cap);
     }
-    const displayImageUrl = node.img_url || embeddedImageChild?.img_url || firstImageChild?.img_url || "";
+    const displayImageUrl = suppressParentFlowImage
+        ? ""
+        : node.ref_type === "img_flow"
+        // 网络安全流程图章节只用子节点导入图，避免命中节点自身历史旧图
+        ? (preferredFlowImageChild?.img_url || embeddedImageChild?.img_url || firstImageChild?.img_url || "")
+        : (node.img_url || embeddedImageChild?.img_url || firstImageChild?.img_url || "");
     const hasDisplayImage = !!String(displayImageUrl || "").trim();
     const compactWithImage = !readOnly && hasDisplayImage;
-    const imageSourceNodeId = node.img_url
-        ? node.id
-        : (embeddedImageChild?.id || firstImageChild?.id || node.id);
+    const imageSourceNodeId = node.ref_type === "img_flow"
+        ? (preferredFlowImageChild?.id || embeddedImageChild?.id || firstImageChild?.id || node.id)
+        : (node.img_url ? node.id : (embeddedImageChild?.id || firstImageChild?.id || node.id));
     const visibleChildren = (node.children || []).filter((child) => {
         if (!readOnly) {
-            if (mergedImageChildIdSet.has(String(child.id)) || mergedImageChildIdSet.has(String(child.n_id || ""))) {
+            if (!suppressParentFlowImage && (mergedImageChildIdSet.has(String(child.id)) || mergedImageChildIdSet.has(String(child.n_id || "")))) {
                 return false;
             }
             if (inlineTableChildIdSet.has(String(child.id)) || inlineTableChildIdSet.has(String(child.n_id || ""))) {

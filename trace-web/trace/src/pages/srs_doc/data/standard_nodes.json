@@ -3,6 +3,60 @@
         "doc_id": 0,
         "n_id": 0,
         "p_id": 0,
+        "title": "需求规格说明",
+        "text": "",
+        "table": {
+            "headers": [
+                { "code": "dept", "name": "编制科室" },
+                { "code": "version", "name": "文件版本" },
+                { "code": "author", "name": "编制人" },
+                { "code": "reviewer", "name": "审核人" },
+                { "code": "approver", "name": "批准人" },
+                { "code": "effective_date", "name": "生效日期" }
+            ],
+            "rows": [
+                {
+                    "dept": "",
+                    "version": "",
+                    "author": "",
+                    "reviewer": "",
+                    "approver": "",
+                    "effective_date": ""
+                }
+            ]
+        },
+        "children": []
+    },
+    {
+        "doc_id": 0,
+        "n_id": 0,
+        "p_id": 0,
+        "title": "文件修订记录",
+        "text": "",
+        "table": {
+            "headers": [
+                { "code": "change_date", "name": "修改日期" },
+                { "code": "version_no", "name": "版本号" },
+                { "code": "change_desc", "name": "修订说明" },
+                { "code": "changer", "name": "修订人" },
+                { "code": "approver", "name": "批准人" }
+            ],
+            "rows": [
+                {
+                    "change_date": "",
+                    "version_no": "",
+                    "change_desc": "",
+                    "changer": "",
+                    "approver": ""
+                }
+            ]
+        },
+        "children": []
+    },
+    {
+        "doc_id": 0,
+        "n_id": 0,
+        "p_id": 0,
         "title": "1 介绍",
         "text": "",
         "table": [],
