@@ -12,4 +12,5 @@ class DocFileObj(DocFileForm):
     product_type_code: Optional[str] = Field(title="产品类型编码")
 
     srsdoc_version: Optional[str] = Field(title="需求文档版本")
+    doc_version: Optional[str] = Field(title="文档版本")
     

@@ -38,6 +38,26 @@ class Server(object):
         return re.sub(r"\s+", "", txt)
 
     @staticmethod
+    def __normalize_file_no(value):
+        return str(value or "").strip()
+
+    @staticmethod
+    def __normalize_doc_version(value):
+        return str(value or "").strip()
+
+    @staticmethod
+    def __extract_doc_version_from_file_name(file_name: str, category: str):
+        name = str(file_name or "").strip()
+        cat = str(category or "").strip()
+        if not name or not cat:
+            return ""
+        cat_re = re.escape(cat)
+        matched = re.match(rf"^(.+?)_{cat_re}(?:\.[A-Za-z0-9]+)?$", name)
+        if not matched:
+            return ""
+        return str(matched.group(1) or "").strip()
+
+    @staticmethod
     def __extract_data_url_blob(data_url: str):
         if not data_url or not str(data_url).startswith("data:"):
             return None, None
@@ -203,18 +223,21 @@ class Server(object):
                 best_img = img_url
         return best_img
 
-    def __backfill_doc_file_from_srs(self, product_id: int, category: str):
+    def __backfill_doc_file_from_srs(self, product_id: int, category: str, doc_version: str = None):
         if not product_id or category not in self.DOC_IMG_KEYWORDS:
             return
-        exists = db.session.execute(
-            select(DocFile.id).where(DocFile.product_id == product_id, DocFile.category == category).limit(1)
-        ).scalar()
+        normalized_doc_version = self.__normalize_doc_version(doc_version)
+        exists_sql = select(DocFile.id).where(DocFile.product_id == product_id, DocFile.category == category)
+        if normalized_doc_version:
+            exists_sql = exists_sql.where(DocFile.file_name.like(f"{normalized_doc_version}_%"))
+        exists = db.session.execute(exists_sql.limit(1)).scalar()
         if exists:
             return
 
-        latest_doc = db.session.execute(
-            select(SrsDoc).where(SrsDoc.product_id == product_id).order_by(desc(SrsDoc.id)).limit(1)
-        ).scalars().first()
+        sql_doc = select(SrsDoc).where(SrsDoc.product_id == product_id)
+        if normalized_doc_version:
+            sql_doc = sql_doc.where(SrsDoc.version == normalized_doc_version)
+        latest_doc = db.session.execute(sql_doc.order_by(desc(SrsDoc.id)).limit(1)).scalars().first()
         if not latest_doc:
             return
 
@@ -248,31 +271,34 @@ class Server(object):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as fs:
             fs.write(blob)
-        new_row.file_name = f"{category}{ext}"
+        latest_doc_version = self.__normalize_doc_version(getattr(latest_doc, "version", "") or "")
+        file_name_prefix = latest_doc_version or category
+        new_row.file_name = f"{file_name_prefix}_{category}{ext}"
         new_row.file_size = len(blob)
         new_row.file_url = path
         db.session.commit()
 
-    def __backfill_doc_file_from_sds(self, product_id: int, category: str):
+    def __backfill_doc_file_from_sds(self, product_id: int, category: str, doc_version: str = None):
         if not product_id or category not in self.DOC_IMG_KEYWORDS:
             return
+        normalized_doc_version = self.__normalize_doc_version(doc_version)
         # 已存在记录时不自动覆盖，避免用户手工上传/替换被“回填逻辑”改回旧图
-        exists = db.session.execute(
-            select(DocFile.id).where(DocFile.product_id == product_id, DocFile.category == category).limit(1)
-        ).scalar()
+        exists_sql = select(DocFile.id).where(DocFile.product_id == product_id, DocFile.category == category)
+        if normalized_doc_version:
+            exists_sql = exists_sql.where(DocFile.file_name.like(f"{normalized_doc_version}_%"))
+        exists = db.session.execute(exists_sql.limit(1)).scalar()
         if exists:
             return
 
-        docs = db.session.execute(
-            select(SdsDoc)
-            .join(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id)
-            .where(SrsDoc.product_id == product_id)
-            .order_by(desc(SdsDoc.id))
-        ).scalars().all()
+        sql_docs = select(SdsDoc).join(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id).where(SrsDoc.product_id == product_id)
+        if normalized_doc_version:
+            sql_docs = sql_docs.where(SdsDoc.version == normalized_doc_version)
+        docs = db.session.execute(sql_docs.order_by(desc(SdsDoc.id))).scalars().all()
         if not docs:
             return
 
         matched_img = None
+        matched_doc = None
         keywords = self.DOC_IMG_KEYWORDS.get(category) or []
         # 按 SDS 文档版本倒序扫描：流程图优先按“图名称/同级节点”精确匹配
         for doc in docs:
@@ -285,6 +311,7 @@ class Server(object):
                 flow_img = self.__pick_sds_flow_img_by_name(nodes)
                 if flow_img:
                     matched_img = flow_img
+                    matched_doc = doc
                     break
             node_map = {row.n_id: row for row in nodes}
             best_img = None
@@ -301,6 +328,7 @@ class Server(object):
                         best_img = img_url
             if best_img:
                 matched_img = best_img
+                matched_doc = doc
                 break
         if not matched_img:
             return
@@ -317,7 +345,9 @@ class Server(object):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as fs:
             fs.write(blob)
-        row.file_name = f"{category}{ext}"
+        matched_doc_version = self.__normalize_doc_version(getattr(matched_doc, "version", "") or "")
+        file_name_prefix = matched_doc_version or category
+        row.file_name = f"{file_name_prefix}_{category}{ext}"
         row.file_size = len(blob)
         row.file_url = path
         db.session.commit()
@@ -376,25 +406,32 @@ class Server(object):
         obj = DocFileObj(**row.dict())
         return Resp.resp_ok(data=obj)
 
-    async def list_doc_file(self, op_user: UserObj, category: str=None, product_id: int = 0, file_name: str = None, page_index: int = 0, page_size: int = 10):
+    async def list_doc_file(self, op_user: UserObj, category: str=None, product_id: int = 0, file_name: str = None, file_no: str = None, doc_version: str = None, product_name: str = None, product_version: str = None, page_index: int = 0, page_size: int = 10):
         page_index = page_index if page_index >= 0 else 0
         page_size = page_size if page_size > 0 else 10 
+        normalized_doc_version = self.__normalize_doc_version(doc_version)
         if category in self.DOC_IMG_KEYWORDS and product_id > 0:
             # 图源规则：
             # - 网络安全流程图：从详细设计（SDS）节点取图
             # - 其他图：保持原有 SRS 兜底逻辑
             if category == "img_flow":
-                self.__backfill_doc_file_from_sds(product_id, category)
+                self.__backfill_doc_file_from_sds(product_id, category, normalized_doc_version)
             else:
-                self.__backfill_doc_file_from_srs(product_id, category)
+                self.__backfill_doc_file_from_srs(product_id, category, normalized_doc_version)
     
         sql = select(DocFile, Product).outerjoin(Product, DocFile.product_id == Product.id)
         if category:
             sql = sql.where(DocFile.category == category)
         if product_id > 0:
             sql = sql.where(Product.id == product_id)
+        if product_name:
+            sql = sql.where(Product.name == product_name)
+        if product_version:
+            sql = sql.where(Product.full_version == product_version)
         if file_name:
             sql = sql.where(DocFile.file_name.like(f"%{file_name}%"))
+        if normalized_doc_version:
+            sql = sql.where(DocFile.file_name.like(f"{normalized_doc_version}_%"))
         # 三类图表页面默认显示所有产品（未选择产品时不按用户产品关系限制）
         if category not in self.DOC_IMG_KEYWORDS and not product_id and op_user and op_user.id != 1:
             subquery = select(UserProd.product_id).where(UserProd.user_id == op_user.id).scalar_subquery()
@@ -412,5 +449,6 @@ class Server(object):
                 obj.product_name = row_prd.name
                 obj.product_type_code = row_prd.type_code
                 obj.product_version = row_prd.full_version
+            obj.doc_version = self.__extract_doc_version_from_file_name(obj.file_name, obj.category)
             objs.append(obj)
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))

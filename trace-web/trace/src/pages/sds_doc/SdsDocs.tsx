@@ -386,18 +386,18 @@ export default () => {
                         <Button type="link" size="small" onClick={() => navigate(`/sds_docs/view/${row.id}`)}>
                             {ts("view")}
                         </Button>
+                        <Button type="link" size="small" onClick={() => navigate(`/sds_docs/edit/${row.id}`)}>
+                            {ts("edit")}
+                        </Button>
+                        <Button type="link" size="small" onClick={() => handleCopy(row)}>
+                            {ts("sds_doc.copy")}
+                        </Button>
                         <Button
                             type="link"
                             size="small"
                             loading={data.exportingId === row.id}
                             onClick={() => handleExport(row)}>
                             {ts("export")}
-                        </Button>
-                        <Button type="link" size="small" onClick={() => handleCopy(row)}>
-                            {ts("sds_doc.copy")}
-                        </Button>
-                        <Button type="link" onClick={() => navigate(`/sds_docs/edit/${row.id}`)}>
-                            {ts("edit")}
                         </Button>
                         <Button type="link" danger onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
                             {ts("delete")}

@@ -39,9 +39,9 @@ async def update_doc_file(id: int = Form(...), product_id: int = Form(default=No
 
 @router.get("/list_doc_file", summary="查询文档文件列表", response_model=Resp[Page[DocFileObj]])
 @try_log(perm=Perms.doc_file_struct_view)
-async def list_doc_file(product_id: int = 0, file_name: str = None, page_index: int = 0, page_size: int = 10):
+async def list_doc_file(product_id: int = 0, file_name: str = None, file_no: str = None, doc_version: str = None, product_name: str = None, product_version: str = None, page_index: int = 0, page_size: int = 10):
     op_user = CtxUser.get()
-    return await server.list_doc_file(op_user, category=category, product_id=product_id, file_name=file_name, page_index=page_index, page_size=page_size)
+    return await server.list_doc_file(op_user, category=category, product_id=product_id, file_name=file_name, file_no=file_no, doc_version=doc_version, product_name=product_name, product_version=product_version, page_index=page_index, page_size=page_size)
 
 
 @router.get("/get_doc_file", summary="查询文档文件详情", response_model=Resp[DocFileObj])

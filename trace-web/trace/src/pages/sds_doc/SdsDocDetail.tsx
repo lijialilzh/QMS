@@ -892,6 +892,85 @@ export default () => {
         return walk(roots || []);
     };
 
+    const generateTempNodeId = () => Date.now() + Math.floor(Math.random() * 100000);
+    const getTableHitCount = (node: any, keys: string[]) => {
+        const headers = Array.isArray(node?.table?.headers) ? node.table.headers : [];
+        const rows = Array.isArray(node?.table?.rows) ? node.table.rows : [];
+        const headerTxt = headers.map((h: any) => String(h?.name || "")).join(" ");
+        const rowTxt = rows.map((r: any) => Object.values(r || {}).join(" ")).join(" ");
+        const txt = `${headerTxt} ${rowTxt}`;
+        return keys.filter((k) => txt.includes(k)).length;
+    };
+    const createCoverTableNode = (): TreeNode => ({
+        id: generateTempNodeId(),
+        doc_id: 0,
+        n_id: 0,
+        p_id: 0,
+        title: "软件详细设计",
+        text: "",
+        table: {
+            headers: [
+                { code: "dept", name: "编制科室" },
+                { code: "version", name: "文件版本" },
+                { code: "author", name: "编制人" },
+                { code: "reviewer", name: "审核人" },
+                { code: "approver", name: "批准人" },
+                { code: "effective_date", name: "生效日期" },
+            ],
+            rows: [{ dept: "", version: "", author: "", reviewer: "", approver: "", effective_date: "" }],
+        } as any,
+        children: [],
+    });
+    const createChangeLogTableNode = (): TreeNode => ({
+        id: generateTempNodeId(),
+        doc_id: 0,
+        n_id: 0,
+        p_id: 0,
+        title: "文件修订记录",
+        text: "",
+        table: {
+            headers: [
+                { code: "change_date", name: "修改日期" },
+                { code: "version_no", name: "版本号" },
+                { code: "change_desc", name: "修订说明" },
+                { code: "changer", name: "修订人" },
+                { code: "approver", name: "批准人" },
+            ],
+            rows: [{ change_date: "", version_no: "", change_desc: "", changer: "", approver: "" }],
+        } as any,
+        children: [],
+    });
+    const ensureFrontMatterTables = (roots: TreeNode[]): TreeNode[] => {
+        const list = [...(roots || [])];
+        let hasCover = false;
+        let hasChange = false;
+        const walk = (nodes: TreeNode[]) => {
+            (nodes || []).forEach((node) => {
+                const title = String(node?.title || "").replace(/\s+/g, "");
+                if (title.includes("软件详细设计")) hasCover = true;
+                if (title.includes("文件修订记录")) hasChange = true;
+                if (getTableHitCount(node, ["编制科室", "文件版本", "编制人", "审核人", "批准人", "生效日期"]) >= 3) hasCover = true;
+                if (getTableHitCount(node, ["修改日期", "版本号", "修订说明", "修订人", "批准人"]) >= 3) hasChange = true;
+                walk((node.children || []) as TreeNode[]);
+            });
+        };
+        walk(list);
+        const prefix: TreeNode[] = [];
+        if (!hasCover) prefix.push(createCoverTableNode());
+        if (!hasChange) prefix.push(createChangeLogTableNode());
+        return prefix.length > 0 ? [...prefix, ...list] : list;
+    };
+    const buildStandardNodesWithIds = (): TreeNode[] => {
+        const addIdsToNodes = (nodes: any[]): TreeNode[] => {
+            return nodes.map((node) => ({
+                ...node,
+                id: generateTempNodeId(),
+                children: node.children ? addIdsToNodes(node.children) : [],
+            }));
+        };
+        return ensureFrontMatterTables(addIdsToNodes(standardNodes as any[]));
+    };
+
     useEffect(() => {
         const id = params.id;
         if (id) {
@@ -930,18 +1009,19 @@ export default () => {
                         ? bindTableCaptionsForPersist(normalizedRefTree)
                         : normalizedRefTree;
                     const remappedContent = await remapRefTypeImagesByProduct(parsedContent, targetRow.product_id, targetRow.version);
+                    const ensuredContent = ensureFrontMatterTables(remappedContent as TreeNode[]);
 
                     dispatch({
                         loading: false,
                         requireRebindSrs: needRebindSrs,
                         changeDescription: targetRow.change_log || "",
                         docNId: targetRow.n_id || 0, // 保存文档级别的 n_id
-                        treeStructure: remappedContent,
+                        treeStructure: ensuredContent,
                         docProductId: targetRow.product_id,
                         docSrsdocId: targetRow.srsdoc_id || undefined,
                         docVersion: targetRow.version ?? "",
                     });
-                    treeStructureRef.current = remappedContent;
+                    treeStructureRef.current = ensuredContent;
                     if (needRebindSrs) {
                         message.warning("该详细设计未绑定需求规格说明版本，请先绑定该产品下需求规格说明后再进行操作。");
                         if (isReadOnly) {
@@ -957,8 +1037,9 @@ export default () => {
         } else {
             // 新增模式
             editForm.resetFields();
-            dispatch({ isEdit: false, requireRebindSrs: false });
-            treeStructureRef.current = [];
+            const initialTree = buildStandardNodesWithIds();
+            dispatch({ isEdit: false, requireRebindSrs: false, treeStructure: initialTree });
+            treeStructureRef.current = initialTree;
         }
     }, [params.id]);
 
@@ -1036,9 +1117,10 @@ export default () => {
                         ? bindTableCaptionsForPersist(normalizedRefTree)
                         : normalizedRefTree;
                     const remappedContent = await remapRefTypeImagesByProduct(parsedContent, latestRow.product_id, latestRow.version);
-                    currentTree = remappedContent as TreeNode[];
-                    treeStructureRef.current = remappedContent;
-                    dispatch({ treeStructure: remappedContent });
+                    const ensuredContent = ensureFrontMatterTables(remappedContent as TreeNode[]);
+                    currentTree = ensuredContent as TreeNode[];
+                    treeStructureRef.current = ensuredContent;
+                    dispatch({ treeStructure: ensuredContent });
                 }
                 const flowDebugRows: any[] = [];
                 const tableData = rows.map((item: any, index: number) => {
@@ -1198,16 +1280,7 @@ export default () => {
             return;
         }
 
-        // 为标准节点生成临时 ID
-        const addIdsToNodes = (nodes: any[]): TreeNode[] => {
-            return nodes.map((node) => ({
-                ...node,
-                id: `node_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                children: node.children ? addIdsToNodes(node.children) : [],
-            }));
-        };
-
-        const nodesWithIds = addIdsToNodes(standardNodes as any[]);
+        const nodesWithIds = buildStandardNodesWithIds();
         // dispatch({ treeStructure: [...data.treeStructure, ...nodesWithIds] });
         treeStructureRef.current = nodesWithIds;
         dispatch({ treeStructure: nodesWithIds });
@@ -1469,13 +1542,14 @@ export default () => {
                                 ? bindTableCaptionsForPersist(normalizedRefTree)
                                 : normalizedRefTree;
                             const remappedContent = await remapRefTypeImagesByProduct(parsedContent, targetRow.product_id, targetRow.version);
+                            const ensuredContent = ensureFrontMatterTables(remappedContent as TreeNode[]);
                             dispatch({
                                 changeDescription: targetRow.change_log || "",
                                 docNId: targetRow.n_id || 0,
-                                treeStructure: remappedContent,
+                                treeStructure: ensuredContent,
                                 requireRebindSrs: !targetRow.srsdoc_id,
                             });
-                            treeStructureRef.current = remappedContent;
+                            treeStructureRef.current = ensuredContent;
 
                         }
                     });

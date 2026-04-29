@@ -1,4 +1,4 @@
-import { Form, Input, Button, Table, message, Row, Col, Modal, Upload, Space } from "antd";
+import { Form, Input, Button, Table, message, Row, Col, Modal, Upload, Space, Select } from "antd";
 import { SearchOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -6,6 +6,8 @@ import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
 import * as Api from "@/api/ApiDocFile";
 import * as ApiProduct from "@/api/ApiProduct";
+import * as ApiSrsDoc from "@/api/ApiSrsDoc";
+import * as ApiSdsDoc from "@/api/ApiSdsDoc";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 
 const pageSizeOptions = [20, 50, 100];
@@ -134,6 +136,11 @@ export default ({ fileType }: any) => {
         if (fileType === "img_flow") return "网络安全流程图";
         return fileType || "";
     };
+    const getDocVersionLabel = () => "文档版本";
+    const getDocVersionPlaceholder = () => {
+        if (fileType === "img_flow") return "请选择详细设计文档版本";
+        return "请选择需求规格说明文档版本";
+    };
     const [queryForm] = Form.useForm();
     const [data, dispatch] = useData({
         total: 0,
@@ -146,8 +153,11 @@ export default ({ fileType }: any) => {
         loadingProducts: false,
         files: [],
         docs: [],
+        docVersionOptions: [] as Array<{ label: string; value: string }>,
+        loadingDocVersions: false,
         selectedRowKeys: [],
     });
+    const productId = Form.useWatch("product_id", queryForm);
     const normalizeQueryParams = (params: any) => {
         const source = params || {};
         return Object.fromEntries(
@@ -175,6 +185,31 @@ export default ({ fileType }: any) => {
                 dispatch({ loading: false, pageIndex, pageSize, total: 0, rows: [] });
                 message.error(res.msg);
             }
+        });
+    };
+    const loadDocVersions = (selectedProductId?: number) => {
+        const pid = Number(selectedProductId || 0);
+        if (!pid) {
+            dispatch({ docVersionOptions: [], loadingDocVersions: false });
+            return;
+        }
+        dispatch({ loadingDocVersions: true });
+        const fnRequest = fileType === "img_flow" ? ApiSdsDoc.list_sds_doc : ApiSrsDoc.list_srs_doc;
+        fnRequest({ product_id: pid, page_index: 0, page_size: 10000 }).then((res: any) => {
+            if (res.code === Api.C_OK) {
+                const rows = res?.data?.rows || [];
+                const versions = Array.from(
+                    new Set(rows.map((row: any) => String(row?.version || "").trim()).filter(Boolean))
+                );
+                dispatch({
+                    loadingDocVersions: false,
+                    docVersionOptions: versions.map((v) => ({ label: v, value: v })),
+                });
+            } else {
+                dispatch({ loadingDocVersions: false, docVersionOptions: [] });
+            }
+        }).catch(() => {
+            dispatch({ loadingDocVersions: false, docVersionOptions: [] });
         });
     };
 
@@ -239,6 +274,11 @@ export default ({ fileType }: any) => {
             dataIndex: "product_version",
         },
         {
+            title: "文档版本",
+            dataIndex: "doc_version",
+            render: (value: string) => value || "-",
+        },
+        {
             title: ts("doc_file.file_name"),
             dataIndex: "file_name",
             render: (_value: any, row: any) => formatDisplayFileName(row),
@@ -273,10 +313,14 @@ export default ({ fileType }: any) => {
 
     useEffect(() => {
         queryForm.resetFields();
-        dispatch({ selectedRowKeys: [], pageIndex: 1 });
+        dispatch({ selectedRowKeys: [], pageIndex: 1, docVersionOptions: [], loadingDocVersions: false });
         doSearch({}, 1, data.pageSize);
         doSearchProducts(data, dispatch);
     }, [fileType]);
+    useEffect(() => {
+        queryForm.setFieldValue("doc_version", undefined);
+        loadDocVersions(productId ? Number(productId) : 0);
+    }, [productId, fileType]);
 
     return (
         <div className="page div-v">
@@ -295,7 +339,23 @@ export default ({ fileType }: any) => {
                                     allowClear
                                     namePlaceholder={ts("product.name")}
                                     versionPlaceholder={ts("product.full_version")}
-                                    onChange={(value) => queryForm.setFieldValue("product_id", value)}
+                                    onChange={(value) => {
+                                        queryForm.setFieldValue("product_id", value);
+                                        queryForm.setFieldValue("doc_version", undefined);
+                                    }}
+                                />
+                            </Form.Item>
+                        </Col>
+                        <Col>
+                            <Form.Item label={getDocVersionLabel()} name="doc_version">
+                                <Select
+                                    allowClear
+                                    showSearch
+                                    optionFilterProp="label"
+                                    placeholder={getDocVersionPlaceholder()}
+                                    style={{ width: 220 }}
+                                    options={data.docVersionOptions}
+                                    loading={data.loadingDocVersions}
                                 />
                             </Form.Item>
                         </Col>
