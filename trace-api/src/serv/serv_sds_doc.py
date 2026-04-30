@@ -6,7 +6,7 @@ import io
 import base64
 import os
 import builtins
-from typing import Dict, List, Tuple, Union
+from typing import Any, Dict, List, Tuple, Union
 from sqlalchemy import select, delete, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import desc
@@ -143,6 +143,546 @@ class Server(object):
                             node.text = "\n".join(remained)
                 if children:
                     walk(children)
+        walk(nodes or [])
+
+    def __bind_imported_image_titles(self, nodes: List[SdsNodeForm]):
+        def is_imported_image_title(value: str):
+            return re.match(r"^导入图片\d*$", (value or "").strip()) is not None
+
+        def is_image_caption_line(value: str):
+            return re.match(r"^\s*图\s*\d+\s*", (value or "").strip()) is not None
+
+        def walk(node_list: List[SdsNodeForm]):
+            for node in node_list or []:
+                children = list(getattr(node, "children", None) or [])
+                image_children = [
+                    child for child in children
+                    if str(getattr(child, "img_url", "") or "").strip()
+                ]
+                if image_children:
+                    lines = str(getattr(node, "text", "") or "").replace("\r", "").split("\n")
+                    caption_entries = [
+                        (idx, (line or "").strip())
+                        for idx, line in enumerate(lines)
+                        if is_image_caption_line(line)
+                    ]
+                    if caption_entries:
+                        used_line_idx = set()
+                        for idx, child in enumerate(image_children):
+                            if idx >= len(caption_entries):
+                                break
+                            line_idx, caption = caption_entries[idx]
+                            if not caption:
+                                continue
+                            child_title = str(getattr(child, "title", "") or "").strip()
+                            child_label = str(getattr(child, "label", "") or "").strip()
+                            if not child_title or is_imported_image_title(child_title):
+                                child.title = caption
+                            elif not child_label:
+                                child.label = caption
+                            used_line_idx.add(line_idx)
+                        if used_line_idx:
+                            remained = [
+                                (line or "").strip()
+                                for idx, line in enumerate(lines)
+                                if idx not in used_line_idx and str(line or "").strip()
+                            ]
+                            node.text = "\n".join(remained)
+                if children:
+                    walk(children)
+        walk(nodes or [])
+
+    @staticmethod
+    def __has_table_payload(node: SdsNodeForm):
+        table = getattr(node, "table", None)
+        headers = getattr(table, "headers", None) if table else None
+        return bool(headers)
+
+    def __extract_data_structure_db_table_plan(self, docx: Document) -> List[Dict[str, Any]]:
+        plans: List[Dict[str, Any]] = []
+        if docx is None or Paragraph is None or DocxTable is None:
+            return plans
+
+        def strip_heading_no(value: str):
+            return re.sub(r"^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))", "", value or "").strip()
+
+        def is_db_heading(value: str):
+            txt = strip_heading_no((value or "").strip())
+            if not txt:
+                return False
+            return re.search(r"数据库\s*[:：]?$", txt) is not None and not self.__is_table_caption_line(txt)
+
+        active_plan: Union[Dict[str, Any], None] = None
+        current_db: Union[Dict[str, Any], None] = None
+        pending_caption = ""
+
+        for child in docx.element.body.iterchildren():
+            tag = str(child.tag).lower()
+            if tag.endswith("}p"):
+                para = Paragraph(child, docx._body)
+                txt = (para.text or "").replace("\xa0", " ").strip()
+                if not txt:
+                    continue
+                heading_no = self.__extract_heading_no(txt)
+                heading_level = (heading_no.count(".") + 1) if heading_no else None
+                if active_plan and heading_level is not None and heading_level <= int(active_plan.get("level") or 1):
+                    if heading_no != active_plan.get("chapter"):
+                        active_plan = None
+                        current_db = None
+                        pending_caption = ""
+                if "数据结构" in txt and heading_no:
+                    active_plan = {
+                        "chapter": heading_no,
+                        "title": txt,
+                        "level": heading_level or 1,
+                        "dbs": [],
+                    }
+                    plans.append(active_plan)
+                    current_db = None
+                    pending_caption = ""
+                    continue
+                if not active_plan:
+                    continue
+                if is_db_heading(txt):
+                    current_db = {
+                        "title": txt,
+                        "captions": [],
+                    }
+                    active_plan["dbs"].append(current_db)
+                    pending_caption = ""
+                    continue
+                if current_db is not None and self.__is_table_caption_line(txt):
+                    pending_caption = txt
+                continue
+
+            if tag.endswith("}tbl") and active_plan and current_db is not None:
+                # Word 原始顺序里遇到一张表，就归到当前库标题下；表题用最近一行表名。
+                current_db["captions"].append(pending_caption)
+                pending_caption = ""
+
+        for plan in plans:
+            logger.info("[DB_PLAN] 数据结构=%r dbs=%s",
+                plan.get("title"),
+                [
+                    {
+                        "title": db.get("title"),
+                        "count": len(db.get("captions") or []),
+                        "captions": db.get("captions") or [],
+                    }
+                    for db in (plan.get("dbs") or [])
+                ],
+            )
+        return plans
+
+    @staticmethod
+    def __extract_heading_no(title: str):
+        matched = re.match(r"^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))", (title or "").strip())
+        return (matched.group(1) if matched else "")
+
+    def __split_data_structure_db_tables(self, nodes: List[SdsNodeForm], db_table_plans: List[Dict[str, Any]] = None):
+        db_heading_re = re.compile(r"((?:[A-Za-z]+\s*)?库\s*[0-9一二三四五六七八九十]+\s*数据库\s*[:：])", re.I)
+        caption_re = re.compile(r"((?:表\s*\d+(?:[.\-_]\d+)*|[A-Za-z][A-Za-z0-9_]{1,64})\s*[:：]\s*[^\n]{0,80})", re.I)
+        plan_used_indexes = set()
+
+        def is_db_heading_title(value: str):
+            txt = (value or "").strip()
+            if not txt:
+                return False
+            txt = re.sub(r"^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))", "", txt).strip()
+            return re.search(r"数据库\s*[:：]?$", txt) is not None
+
+        def is_real_table_title(value: str):
+            txt = (value or "").strip()
+            if not txt:
+                return False
+            if is_db_heading_title(txt):
+                return False
+            return self.__is_table_caption_line(txt)
+
+        def is_placeholder_title(value: str):
+            txt = (value or "").strip()
+            if not txt:
+                return True
+            return self.__is_imported_table_title(txt)
+
+        def extract_caption_matches(raw_text: str):
+            txt = (raw_text or "")
+            matches = []
+            for m in caption_re.finditer(txt):
+                cap = (m.group(1) or "").strip()
+                if not cap:
+                    continue
+                if is_db_heading_title(cap):
+                    continue
+                if not is_real_table_title(cap):
+                    continue
+                matches.append({"text": cap, "pos": m.start()})
+            return matches
+
+        def extract_db_index(value: str):
+            txt = (value or "").strip()
+            hit = re.search(r"库\s*([0-9一二三四五六七八九十]+)\s*数据库", txt, re.I)
+            if not hit:
+                return 0
+            raw = (hit.group(1) or "").strip()
+            if raw.isdigit():
+                return int(raw)
+            zh_map = {
+                "一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
+                "六": 6, "七": 7, "八": 8, "九": 9, "十": 10
+            }
+            return zh_map.get(raw, 0)
+
+        def normalize_compare(value: str):
+            return re.sub(r"[\s\u3000:：]+", "", re.sub(r"^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))", "", value or "")).lower()
+
+        def pick_docx_plan_for_node(node_title: str):
+            plans = db_table_plans or []
+            if not plans:
+                return None
+            node_heading = self.__extract_heading_no(node_title)
+            node_plain = normalize_compare(node_title)
+            for idx, plan in enumerate(plans):
+                if idx in plan_used_indexes:
+                    continue
+                if node_heading and node_heading == plan.get("chapter"):
+                    plan_used_indexes.add(idx)
+                    return plan
+            for idx, plan in enumerate(plans):
+                if idx in plan_used_indexes:
+                    continue
+                if node_plain and node_plain == normalize_compare(str(plan.get("title") or "")):
+                    plan_used_indexes.add(idx)
+                    return plan
+            available = [idx for idx in range(len(plans)) if idx not in plan_used_indexes]
+            if len(available) == 1:
+                idx = available[0]
+                plan_used_indexes.add(idx)
+                return plans[idx]
+            return None
+
+        def collect_table_nodes(node_list: List[SdsNodeForm]):
+            result: List[SdsNodeForm] = []
+            def _walk(items: List[SdsNodeForm]):
+                for item in items or []:
+                    if self.__has_table_payload(item):
+                        result.append(item)
+                        continue
+                    _walk(list(getattr(item, "children", None) or []))
+            _walk(node_list or [])
+            return result
+
+        def apply_docx_plan(node: SdsNodeForm, plan: Dict[str, Any]):
+            db_defs = [db for db in (plan.get("dbs") or []) if db.get("title")]
+            if len(db_defs) < 2:
+                return False
+            all_tables = collect_table_nodes(list(getattr(node, "children", None) or []))
+            if not all_tables:
+                return False
+            base_heading = self.__extract_heading_no(str(getattr(node, "title", "") or ""))
+            existing_anchors = [
+                child for child in list(getattr(node, "children", None) or [])
+                if is_db_heading_title(str(getattr(child, "title", "") or ""))
+            ]
+            rebuilt_children: List[SdsNodeForm] = []
+            cursor = 0
+            for idx, db_def in enumerate(db_defs):
+                raw_title = str(db_def.get("title") or "").strip()
+                db_title = raw_title
+                if base_heading and not self.__extract_heading_no(db_title):
+                    db_title = f"{base_heading}.{idx + 1} {db_title}".strip()
+                captions = [str(c or "").strip() for c in (db_def.get("captions") or [])]
+                take = len(captions)
+                if idx == len(db_defs) - 1:
+                    take = max(take, len(all_tables) - cursor)
+                take = max(0, min(take, len(all_tables) - cursor))
+                assigned = all_tables[cursor: cursor + take]
+                cursor += take
+                for tab_idx, tab in enumerate(assigned):
+                    if tab_idx < len(captions) and captions[tab_idx]:
+                        tab.title = captions[tab_idx]
+                db_idx = extract_db_index(db_title)
+                anchor = next(
+                    (
+                        item for item in existing_anchors
+                        if db_idx > 0 and extract_db_index(str(getattr(item, "title", "") or "")) == db_idx
+                    ),
+                    None,
+                ) or (existing_anchors[idx] if idx < len(existing_anchors) else None)
+                if anchor is None:
+                    anchor = SdsNodeForm(title=db_title, children=[])
+                anchor.title = db_title
+                anchor.children = assigned
+                rebuilt_children.append(anchor)
+            if cursor < len(all_tables) and rebuilt_children:
+                rebuilt_children[-1].children = (rebuilt_children[-1].children or []) + all_tables[cursor:]
+            node.children = rebuilt_children
+            logger.info("[DB_SPLIT_APPLY] title=%r -> %s",
+                getattr(node, "title", ""),
+                [
+                    {
+                        "db": getattr(child, "title", ""),
+                        "count": len(getattr(child, "children", None) or []),
+                        "tables": [getattr(t, "title", "") for t in (getattr(child, "children", None) or [])],
+                    }
+                    for child in rebuilt_children
+                ],
+            )
+            return True
+
+        def fix_postgresql_prefix_split(node: SdsNodeForm):
+            db_nodes = [
+                child for child in list(getattr(node, "children", None) or [])
+                if is_db_heading_title(str(getattr(child, "title", "") or ""))
+            ]
+            if len(db_nodes) != 2:
+                return False
+            first_db, second_db = db_nodes[0], db_nodes[1]
+            first_tables = [c for c in list(getattr(first_db, "children", None) or []) if self.__has_table_payload(c)]
+            second_tables = [c for c in list(getattr(second_db, "children", None) or []) if self.__has_table_payload(c)]
+            first_title = str(getattr(first_db, "title", "") or "")
+            if "Postgresql" not in first_title and "postgresql" not in first_title.lower():
+                return False
+            if len(first_tables) != 1 or len(second_tables) < 2:
+                return False
+            split_idx = -1
+            for idx, tab in enumerate(second_tables):
+                tab_title = str(getattr(tab, "title", "") or "")
+                if "weekly_statistic" in tab_title or "周度综合统计表" in tab_title:
+                    split_idx = idx
+            if split_idx < 0:
+                return False
+            moved_to_first = second_tables[:split_idx + 1]
+            remained_second = second_tables[split_idx + 1:]
+            if not moved_to_first or not remained_second:
+                return False
+            first_non_tables = [c for c in list(getattr(first_db, "children", None) or []) if not self.__has_table_payload(c)]
+            second_non_tables = [c for c in list(getattr(second_db, "children", None) or []) if not self.__has_table_payload(c)]
+            first_db.children = [*first_non_tables, *first_tables, *moved_to_first]
+            second_db.children = [*second_non_tables, *remained_second]
+            logger.info("[DB_SPLIT_FIX] title=%r 库1=%d 库2=%d 库1表=%s 库2表=%s",
+                getattr(node, "title", ""),
+                len([c for c in (first_db.children or []) if self.__has_table_payload(c)]),
+                len([c for c in (second_db.children or []) if self.__has_table_payload(c)]),
+                [str(getattr(c, "title", "") or "") for c in (first_db.children or []) if self.__has_table_payload(c)],
+                [str(getattr(c, "title", "") or "") for c in (second_db.children or []) if self.__has_table_payload(c)],
+            )
+            return True
+
+        def walk(node_list: List[SdsNodeForm]):
+            for node in node_list or []:
+                title = str(getattr(node, "title", "") or "").strip()
+                text = str(getattr(node, "text", "") or "")
+                children = list(getattr(node, "children", None) or [])
+
+                merged_hint = f"{title} {text}"
+                is_data_structure_node = "数据结构" in merged_hint
+                if is_data_structure_node and children:
+                    docx_plan = pick_docx_plan_for_node(title)
+                    if docx_plan and apply_docx_plan(node, docx_plan):
+                        if getattr(node, "children", None):
+                            walk(node.children or [])
+                        continue
+                    # 优先使用“已解析出的库标题节点”作为锚点重挂后续表节点：
+                    # 结构应为 5.6 -> 5.6.1库1 / 5.6.2库2 -> 各自表节点（与编辑页层级一致）。
+                    db_anchor_indexes = [
+                        idx for idx, child in enumerate(children)
+                        if is_db_heading_title(str(getattr(child, "title", "") or ""))
+                    ]
+                    if db_anchor_indexes:
+                        rebuilt_children: List[SdsNodeForm] = []
+                        current_anchor: Union[SdsNodeForm, None] = None
+                        for child in children:
+                            child_title = str(getattr(child, "title", "") or "").strip()
+                            if is_db_heading_title(child_title):
+                                current_anchor = child
+                                current_anchor.children = list(getattr(current_anchor, "children", None) or [])
+                                rebuilt_children.append(current_anchor)
+                                continue
+                            if current_anchor is not None and self.__has_table_payload(child):
+                                current_anchor.children.append(child)
+                                continue
+                            rebuilt_children.append(child)
+                        node.children = rebuilt_children
+                        children = rebuilt_children
+
+                    # 若已存在“库1/库2”锚点，按正文中的库标题区间重新分配各库下表数量（允许某库为0张）
+                    # 解决“库2起始表被挂到库1”的问题。
+                    db_anchor_nodes = [
+                        child for child in children
+                        if is_db_heading_title(str(getattr(child, "title", "") or ""))
+                    ]
+                    if len(db_anchor_nodes) >= 2:
+                        heading_matches = [
+                            {"text": (m.group(1) or "").strip(), "pos": m.start()}
+                            for m in db_heading_re.finditer(text or "")
+                        ]
+                        heading_matches = [item for item in heading_matches if item["text"]]
+                        caption_matches = extract_caption_matches(text or "")
+                        logger.info("[DB_SPLIT_DETAIL] node=%r anchor节点=%s | text中找到库标题=%s | text中找到表标题(%d)=%s",
+                            title,
+                            [str(getattr(a, "title", "") or "") for a in db_anchor_nodes],
+                            [h["text"] for h in heading_matches],
+                            len(caption_matches),
+                            [c["text"] for c in caption_matches],
+                        )
+                        if len(heading_matches) >= 2 and len(caption_matches) > 0:
+                            # 与下方逻辑保持一致：显式库序号（库1/库2）必须保留
+                            filtered_headings = [heading_matches[0]]
+                            for item in heading_matches[1:]:
+                                prev = filtered_headings[-1]
+                                prev_idx = extract_db_index(str(prev.get("text") or ""))
+                                curr_idx = extract_db_index(str(item.get("text") or ""))
+                                if prev_idx > 0 and curr_idx == prev_idx + 1:
+                                    filtered_headings.append(item)
+                                    continue
+                                between_caps = [
+                                    c for c in caption_matches
+                                    if int(prev["pos"]) < int(c["pos"]) < int(item["pos"])
+                                ]
+                                if len(between_caps) == 0:
+                                    continue
+                                filtered_headings.append(item)
+                            heading_matches = filtered_headings
+
+                            use_count = min(len(db_anchor_nodes), len(heading_matches))
+                            if use_count >= 2:
+                                flat_tables: List[SdsNodeForm] = []
+                                anchor_non_tables: Dict[int, List[SdsNodeForm]] = {}
+                                for idx, db_node in enumerate(db_anchor_nodes):
+                                    original_children = list(getattr(db_node, "children", None) or [])
+                                    non_tables = [c for c in original_children if not self.__has_table_payload(c)]
+                                    tables = [c for c in original_children if self.__has_table_payload(c)]
+                                    anchor_non_tables[idx] = non_tables
+                                    flat_tables.extend(tables)
+
+                                if flat_tables:
+                                    counts: List[int] = []
+                                    for i in range(use_count - 1):
+                                        start = int(heading_matches[i]["pos"])
+                                        end = int(heading_matches[i + 1]["pos"])
+                                        cnt = len([c for c in caption_matches if start < int(c["pos"]) < end])
+                                        counts.append(max(0, cnt))
+                                    logger.info("[DB_SPLIT_DETAIL] flat_tables=%d counts(前n-1)=%s heading_matches_used=%s",
+                                        len(flat_tables), counts, [h["text"] for h in heading_matches[:use_count]])
+                                    used = sum(counts)
+                                    counts.append(max(0, len(flat_tables) - used))
+
+                                    cursor = 0
+                                    for i in range(use_count):
+                                        db_node = db_anchor_nodes[i]
+                                        take = counts[i] if i < len(counts) else 0
+                                        if i == use_count - 1:
+                                            take = len(flat_tables) - cursor
+                                        take = max(0, min(take, len(flat_tables) - cursor))
+                                        assigned = flat_tables[cursor: cursor + take]
+                                        cursor += take
+                                        db_node.children = [*(anchor_non_tables.get(i, []) or []), *assigned]
+
+                                        # 表名按该库区间的标题顺序回填
+                                        h_start = int(heading_matches[i]["pos"])
+                                        h_end = int(heading_matches[i + 1]["pos"]) if i + 1 < use_count else 10**9
+                                        db_caps = [str(c["text"]) for c in caption_matches if h_start < int(c["pos"]) < h_end]
+                                        cap_cursor = 0
+                                        for tab in assigned:
+                                            old_title = str(getattr(tab, "title", "") or "").strip()
+                                            if is_placeholder_title(old_title) and cap_cursor < len(db_caps):
+                                                tab.title = db_caps[cap_cursor]
+                                                cap_cursor += 1
+                        fix_postgresql_prefix_split(node)
+
+                    table_children = [child for child in children if self.__has_table_payload(child)]
+                    plain_children = [child for child in children if not self.__has_table_payload(child)]
+                    already_grouped = any(
+                        is_db_heading_title(str(getattr(child, "title", "") or ""))
+                        and any(self.__has_table_payload(gc) for gc in (getattr(child, "children", None) or []))
+                        for child in children
+                    )
+                    if table_children and not already_grouped:
+                        heading_matches = [
+                            {"text": (m.group(1) or "").strip(), "pos": m.start()}
+                            for m in db_heading_re.finditer(text or "")
+                        ]
+                        heading_matches = [item for item in heading_matches if item["text"]]
+                        caption_matches = extract_caption_matches(text or "")
+                        if len(heading_matches) > 1:
+                            # 清理“伪库标题”：若两个库标题之间没有任何表标题，后一个通常是正文误命中
+                            filtered_headings = [heading_matches[0]]
+                            for item in heading_matches[1:]:
+                                prev = filtered_headings[-1]
+                                prev_idx = extract_db_index(str(prev.get("text") or ""))
+                                curr_idx = extract_db_index(str(item.get("text") or ""))
+                                # 显式“库1/库2/库3 ...”标题必须保留，不能被误过滤
+                                if prev_idx > 0 and curr_idx == prev_idx + 1:
+                                    filtered_headings.append(item)
+                                    continue
+                                between_caps = [
+                                    c for c in caption_matches
+                                    if int(prev["pos"]) < int(c["pos"]) < int(item["pos"])
+                                ]
+                                if len(between_caps) == 0:
+                                    continue
+                                filtered_headings.append(item)
+                            heading_matches = filtered_headings
+
+                        if heading_matches:
+                            use_count = min(len(heading_matches), len(table_children))
+                            if use_count > 0:
+                                guessed_counts: List[int] = []
+                                if len(caption_matches) > 0 and use_count > 1:
+                                    for i in range(use_count - 1):
+                                        start = int(heading_matches[i]["pos"])
+                                        end = int(heading_matches[i + 1]["pos"])
+                                        guessed_counts.append(
+                                            len([c for c in caption_matches if start < int(c["pos"]) < end])
+                                        )
+
+                                assign_counts: List[int] = []
+                                remain_tables = len(table_children)
+                                for i in range(use_count):
+                                    if i == use_count - 1:
+                                        cnt = remain_tables
+                                    else:
+                                        guessed = guessed_counts[i] if i < len(guessed_counts) else 0
+                                        min_for_rest = use_count - i - 1
+                                        cnt = max(1, guessed)
+                                        cnt = min(cnt, max(1, remain_tables - min_for_rest))
+                                    assign_counts.append(cnt)
+                                    remain_tables -= cnt
+
+                                base_heading = self.__extract_heading_no(title)
+                                grouped_children: List[SdsNodeForm] = []
+                                table_cursor = 0
+                                for i in range(use_count):
+                                    cnt = assign_counts[i]
+                                    db_title_raw = str(heading_matches[i]["text"] or "").strip()
+                                    db_title = db_title_raw
+                                    if base_heading and not self.__extract_heading_no(db_title_raw):
+                                        db_title = f"{base_heading}.{i + 1} {db_title_raw}".strip()
+                                    db_tables = table_children[table_cursor: table_cursor + cnt]
+                                    # 为每个库下的表回填标题，避免前端展示时出现“只有表结构没表名”
+                                    h_start = int(heading_matches[i]["pos"])
+                                    h_end = int(heading_matches[i + 1]["pos"]) if i + 1 < use_count else 10**9
+                                    db_caps = [str(c["text"]) for c in caption_matches if h_start < int(c["pos"]) < h_end]
+                                    cap_cursor = 0
+                                    for tab in db_tables:
+                                        old_title = str(getattr(tab, "title", "") or "").strip()
+                                        if is_placeholder_title(old_title) and cap_cursor < len(db_caps):
+                                            tab.title = db_caps[cap_cursor]
+                                            cap_cursor += 1
+                                    table_cursor += cnt
+                                    grouped_children.append(SdsNodeForm(title=db_title, children=db_tables))
+                                if table_cursor < len(table_children) and grouped_children:
+                                    grouped_children[-1].children = (grouped_children[-1].children or []) + table_children[table_cursor:]
+
+                                node.children = [*plain_children, *grouped_children]
+
+                    # 最后兜底执行一次，确保“库1只有首表、库2吞了库1后续表”的情况在入库前被修正。
+                    fix_postgresql_prefix_split(node)
+
+                if getattr(node, "children", None):
+                    walk(node.children or [])
+
         walk(nodes or [])
 
     def __persist_data_url_images(self, nodes: List[SdsNodeForm]):
@@ -372,6 +912,7 @@ class Server(object):
 
             bys = await file.read()
             docx = Document(io.BytesIO(bys))
+            db_table_plans = self.__extract_data_structure_db_table_plan(docx)
             content, _ = srsdoc_serv._Server__parse_docx_content(docx)  # 复用 SRS 导入解析
             file_name = file.filename or ""
             _, file_no = srsdoc_serv._Server__extract_file_info(file_name)
@@ -390,8 +931,24 @@ class Server(object):
                 return SdsNodeForm(**data)
 
             sds_content = [to_sds_node(node) for node in (content or [])]
+            # 导入入库前，把“图X 标题”绑定到对应图片节点标题，避免编辑页只看到“导入图片X”
+            self.__bind_imported_image_titles(sds_content)
             # 导入入库前，先把“正文里的表名”绑定到对应表节点，避免后续查看/编辑再做文本猜测
             self.__bind_imported_table_titles(sds_content)
+            # 入库前固定“数据结构 -> 库 -> 表”层级，后续展示直接读取树关系，不再依赖前端二次猜测
+            self.__split_data_structure_db_tables(sds_content, db_table_plans)
+            # === 导入调试日志：数据结构分组结果 ===
+            def _log_db_split(nodes, path="root"):
+                for n in (nodes or []):
+                    t = str(getattr(n, "title", "") or "").strip()
+                    children = list(getattr(n, "children", None) or [])
+                    if "数据结构" in t or re.search(r"数据库\s*[:：]?$", re.sub(r"^\d[\d.]*\s*", "", t)):
+                        child_titles = [str(getattr(c, "title", "") or "").strip() for c in children]
+                        logger.info("[DB_SPLIT] path=%s title=%r children(%d)=%s", path, t, len(child_titles), child_titles)
+                    for c in children:
+                        _log_db_split([c], f"{path}/{t}")
+            _log_db_split(sds_content)
+            # === end ===
             self.__persist_data_url_images(sds_content)
             form = SdsDocForm(
                 srsdoc_id=srs_row.id,
@@ -774,6 +1331,12 @@ class Server(object):
             if re.match(r"^[A-Za-z][A-Za-z0-9_]{1,64}\s*[:：]?$", txt):
                 return True
             return False
+
+        def __is_database_heading_title(value: str):
+            txt = __strip_chapter_prefix(value)
+            if not txt:
+                return False
+            return re.search(r"数据库\s*[:：]?$", txt) is not None
 
         def __looks_like_body_text_title(value: str):
             txt = __norm_title(value)
@@ -1294,6 +1857,10 @@ class Server(object):
                     child for child in (node.children or [])
                     if getattr(child, "img_url", None)
                 ]
+                imported_db_children = [
+                    child for child in (node.children or [])
+                    if __is_database_heading_title(getattr(child, "title", "") or "")
+                ]
                 node_title_norm = __norm_title(getattr(node, "title", "") or "")
                 node_label_norm = __norm_title(getattr(node, "label", "") or "")
                 node_text_hint = str(node_text_effective or "")
@@ -1308,6 +1875,53 @@ class Server(object):
                     or ("json" in node_label_norm.lower())
                 )
                 current_plain_context = force_plain_context or is_interface_io_context
+                program_logic_image_written = False
+
+                def __image_caption_from_node(img_node: SdsNodeForm):
+                    for value in [
+                        getattr(img_node, "title", ""),
+                        getattr(img_node, "label", ""),
+                        getattr(img_node, "text", ""),
+                    ]:
+                        txt = __norm_title(value or "")
+                        if __is_image_caption_line(txt):
+                            return txt
+                    return ""
+
+                def __try_write_program_logic_image_after_line(line: str):
+                    nonlocal program_logic_image_written
+                    if program_logic_image_written:
+                        return
+                    if "程序逻辑" not in (line or ""):
+                        return
+                    candidates = [
+                        child for child in imported_image_children
+                        if builtins.id(child) not in written_child_ids
+                    ]
+                    matched = next(
+                        (
+                            child for child in candidates
+                            if re.search(r"程序逻辑|逻辑图", __image_caption_from_node(child))
+                        ),
+                        None,
+                    )
+                    if matched is None:
+                        return
+                    docx_util.save_img2docx(
+                        matched.img_url,
+                        docx,
+                        mw=img_max_w,
+                        mh=img_max_h,
+                        min_w=img_min_w,
+                        min_h=img_min_h,
+                        target_long=img_target_long,
+                    )
+                    caption = __image_caption_from_node(matched)
+                    if caption:
+                        __save_image_caption_txt(docx, caption, font_def)
+                    written_child_ids.add(builtins.id(matched))
+                    program_logic_image_written = True
+
                 # 子节点中若存在“仅 JSON 键值标题（如 "version":4,）”，并入父节点正文，
                 # 这样导出顺序可与编辑页保持一致，且不会单独漂移到后段。
                 for child in (node.children or []):
@@ -1348,6 +1962,12 @@ class Server(object):
                     elif __is_data_table_title(norm_title) and ((node.table and node.table.headers) or imported_table_children):
                         # 数据表标题不是章节：不写入Heading，避免进入Word目录
                         pending_table_captions.append(__strip_chapter_prefix(norm_title))
+                    elif __is_image_caption_line(norm_title) and (node.img_url or imported_image_children):
+                        # 图片标题不是章节：导出时放到图片下方作为题注
+                        pending_image_captions.append(norm_title)
+                    elif __is_database_heading_title(norm_title):
+                        # 数据结构下的“库X数据库:”是章节标题，不是普通正文；需要走章节号偏移。
+                        docx_util.save_title2docx(__shift_heading(norm_title, major_offset), docx, level+1, font_size)
                     elif __looks_like_body_text_title(norm_title):
                         # 形如 `"version": 4,` 的内容是正文，不是章节
                         __save_line_txt(
@@ -1471,6 +2091,8 @@ class Server(object):
                                 line = line_raw.strip()
                                 if not line:
                                     continue
+                                if imported_db_children and __is_database_heading_title(line):
+                                    continue
                                 if __is_table_caption_line(line):
                                     pending_table_captions.append(line)
                                 elif __is_image_caption_line(line):
@@ -1484,6 +2106,7 @@ class Server(object):
                                         bullet_state,
                                         allow_bullet=not current_plain_context,
                                     )
+                                    __try_write_program_logic_image_after_line(line)
 
                             if has_own_table:
                                 docx_util.save_tab2docx(node.table, docx)
@@ -1532,6 +2155,8 @@ class Server(object):
                                 line = line_raw.strip()
                                 if not line:
                                     continue
+                                if imported_db_children and __is_database_heading_title(line):
+                                    continue
                                 if __is_table_caption_line(line):
                                     if (node.table and node.table.headers) or imported_table_children:
                                         pending_table_captions.append(line)
@@ -1551,6 +2176,7 @@ class Server(object):
                                         bullet_state,
                                         allow_bullet=not current_plain_context,
                                     )
+                                    __try_write_program_logic_image_after_line(line)
                                     if tcp_anchor_table_children:
                                         if (not first_tcp_table_written) and re.search(r"提供下列\s*TCP\s*服务", line, re.I):
                                             first_tab_node = tcp_anchor_table_children[0]
@@ -1612,6 +2238,30 @@ class Server(object):
                         
                 if node.children:
                     next_children = [child for child in node.children if builtins.id(child) not in written_child_ids]
+                    logic_image_children = [
+                        child for child in next_children
+                        if getattr(child, "img_url", None)
+                        and re.search(r"程序逻辑|逻辑图", __image_caption_from_node(child))
+                    ]
+                    if logic_image_children:
+                        logic_image_ids = {builtins.id(child) for child in logic_image_children}
+                        reordered_children = []
+                        inserted_logic_images = False
+                        for child in next_children:
+                            if builtins.id(child) in logic_image_ids:
+                                continue
+                            reordered_children.append(child)
+                            child_marker = "\n".join([
+                                str(getattr(child, "title", "") or ""),
+                                str(getattr(child, "label", "") or ""),
+                                str(getattr(child, "text", "") or ""),
+                            ])
+                            if (not inserted_logic_images) and "程序逻辑" in child_marker:
+                                reordered_children.extend(logic_image_children)
+                                inserted_logic_images = True
+                        if not inserted_logic_images:
+                            reordered_children.extend(logic_image_children)
+                        next_children = reordered_children
                     await __writenodes(next_children, docx, level + 1, major_offset, node_compact_img, current_plain_context)
                 # 兜底：图/表在子节点时，将父节点标题下置到子节点图/表之后
                 if pending_image_captions:

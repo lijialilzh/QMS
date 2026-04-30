@@ -238,6 +238,7 @@ class Server(object):
         txt = (para.text or "").strip()
         if not txt:
             return None
+        is_bold = Server.__is_bold_paragraph(para)
         # JSON 键值行（如 "version":4,）按正文处理，不能当作章节标题
         if re.match(r'^\s*[\'"]\s*[^\'"]+\s*[\'"]\s*:\s*.+$', txt):
             return None
@@ -245,10 +246,7 @@ class Server(object):
         txt_wo_chapter = re.sub(r'^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z"\']))', '', txt).strip()
         if txt_wo_chapter and re.match(r'^\s*[\'"]\s*[^\'"]+\s*[\'"]\s*:\s*.+$', txt_wo_chapter):
             return None
-        # 业务规则：仅“章节号 + 粗体”识别为标题
-        if not Server.__is_bold_paragraph(para):
-            return None
-        # 放宽：只要标题文本带明确章节号（如 5.7.1），即使未加粗也按章节识别。
+        # 放宽：只要标题文本带明确章节号（如 5.7.1 / 5.6.1），即使未加粗也按章节识别。
         # 但排除“1.参数文件;”这类枚举项（单数字+点号+句末标点）。
         numbering = re.match(r"^(\d+(?:\.\d+){0,4})([\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))(.*)$", txt)
         if numbering:
@@ -272,12 +270,15 @@ class Server(object):
                 return None
             # 非粗体的两级编号（如 7.1 xxx）误识别概率高，增加约束：
             # 仅当尾部很短且无正文标点时才作为标题。
-            if (not Server.__is_bold_paragraph(para)) and chapter_no.count(".") == 1:
+            if (not is_bold) and chapter_no.count(".") == 1:
                 if len(tail) > 24:
                     return None
                 if re.search(r"[，,。；;：:！？!?]", tail):
                     return None
             return max(1, min(chapter_no.count(".") + 1, 5))
+        # 无明确章节号时，仍保持“粗体优先”约束，降低正文误判为标题
+        if not is_bold:
+            return None
         # 文本无显式编号但为粗体标题时，尝试读取 Word 编号层级（numPr/outlineLvl）
         numpr_level = Server.__guess_numpr_level(para)
         if numpr_level is not None:
@@ -305,6 +306,12 @@ class Server(object):
         txt = re.sub(r"\s+", "", txt)
         txt = re.sub(r"[，。；;、,.]+$", "", txt)
         return txt
+
+    def __clean_req_title(self, txt: str):
+        value = self.__normalize_text(txt or "")
+        value = re.sub(r"^\s*\d+(?:\.\d+)*[\s、.．:：\-]*", "", value).strip()
+        value = re.sub(r"\bSRS[-_\sA-Za-z0-9.]+\b", "", value, flags=re.I).strip()
+        return value
 
     def __normalize_rcm_codes(self, codes):
         result = []
@@ -521,10 +528,7 @@ class Server(object):
         heading_no_re = re.compile(r"^\s*\d+(?:\.\d+)*[\s、.．:：\-]*")
 
         def clean_title(txt: str):
-            value = self.__normalize_text(txt or "")
-            value = heading_no_re.sub("", value).strip()
-            value = re.sub(r"\bSRS[-_\sA-Za-z0-9.]+\b", "", value, flags=re.I).strip()
-            return value
+            return self.__clean_req_title(txt)
 
         def walk(items: List[SrsNodeForm], parent_titles: List[str] = None):
             parent_titles = parent_titles or []
@@ -634,6 +638,14 @@ class Server(object):
 
         def walk(items: List[SrsNodeForm]):
             for node in items or []:
+                node_code = self.__normalize_srs_code(str(getattr(node, "srs_code", "") or ""))
+                node_text = self.__normalize_text(str(getattr(node, "text", "") or ""))
+                if node_code and code_pattern.match(node_code) and node_text:
+                    merge_row(node_code, {
+                        "name": self.__normalize_text(str(getattr(node, "title", "") or "")),
+                        "overview": node_text,
+                    })
+
                 table = getattr(node, "table", None)
                 headers = getattr(table, "headers", None) if table else None
                 rows = getattr(table, "rows", None) if table else None
@@ -679,7 +691,7 @@ class Server(object):
         if not req_codes:
             return
         reqs = db.session.execute(
-            select(SrsReq).where(SrsReq.doc_id == doc_id, SrsReq.type_code == "1", SrsReq.code.in_(req_codes))
+            select(SrsReq).where(SrsReq.doc_id == doc_id, SrsReq.type_code != "2", SrsReq.code.in_(req_codes))
         ).scalars().all()
         req_map = {row.code: row for row in reqs}
         if not req_map:
@@ -703,6 +715,237 @@ class Server(object):
                 if val:
                     setattr(reqd_row, key, val)
         db.session.commit()
+
+    def __sync_srs_req_names_from_doc_nodes(self, doc_id: int, nodes: List[SrsNodeForm]):
+        sync_map: Dict[str, dict] = {}
+
+        def extract_req_code_from_table(table):
+            headers = getattr(table, "headers", None) if table else None
+            rows = getattr(table, "rows", None) if table else None
+            if not headers or not rows or len(headers) < 2:
+                return ""
+            col_codes = [getattr(h, "code", "") for h in headers]
+            pairs = []
+            h_left = self.__normalize_text(getattr(headers[0], "name", "") or "")
+            h_right = self.__normalize_text(getattr(headers[1], "name", "") or "")
+            if h_left or h_right:
+                pairs.append((h_left, h_right))
+            for row in rows or []:
+                left = self.__normalize_text(str((row or {}).get(col_codes[0], "") or ""))
+                right = self.__normalize_text(str((row or {}).get(col_codes[1], "") or ""))
+                if left or right:
+                    pairs.append((left, right))
+            for left, right in pairs:
+                if self.__map_reqd_field(left) == "code":
+                    return self.__normalize_srs_code(right or "")
+            return ""
+
+        def put_entry(code: str, titles: List[str]):
+            code = self.__normalize_srs_code(code or "")
+            if not code:
+                return
+            clean_titles = [self.__clean_req_title(title) for title in titles or []]
+            clean_titles = [title for title in clean_titles if title]
+            if not clean_titles:
+                return
+            # 第一层通常是“7 图像显示”这类大章；需求管理使用其下的模块/功能/子功能。
+            parts = clean_titles[1:] if len(clean_titles) > 1 else clean_titles
+            item = sync_map.setdefault(code, {})
+            item["name"] = parts[-1]
+            if len(parts) >= 1:
+                item["module"] = parts[0]
+            if len(parts) >= 2:
+                item["function"] = parts[1]
+            if len(parts) >= 3:
+                item["sub_function"] = parts[2]
+
+        def walk(items: List[SrsNodeForm], path: List[str] = None):
+            path = path or []
+            for node in items or []:
+                title = getattr(node, "title", "") or ""
+                next_path = path + [title]
+                node_code = self.__normalize_srs_code(str(getattr(node, "srs_code", "") or ""))
+                table_code = extract_req_code_from_table(getattr(node, "table", None))
+                table_path = path if table_code and re.match(r"^导入表格\d*$", title.strip()) else next_path
+                put_entry(node_code or table_code, table_path)
+                walk(getattr(node, "children", None) or [], next_path)
+
+        walk(nodes or [], [])
+        if not sync_map:
+            return
+        rows: List[SrsReq] = db.session.execute(
+            select(SrsReq).where(SrsReq.doc_id == doc_id, SrsReq.code.in_(list(sync_map.keys())), SrsReq.type_code != "2")
+        ).scalars().all()
+        if not rows:
+            return
+        req_ids = [row.id for row in rows]
+        reqd_rows: List[SrsReqd] = db.session.execute(select(SrsReqd).where(SrsReqd.req_id.in_(req_ids))).scalars().all()
+        reqd_map = {row.req_id: row for row in reqd_rows}
+        for row in rows:
+            item = sync_map.get(row.code) or {}
+            if item.get("module"):
+                row.module = item.get("module")
+            if item.get("function"):
+                row.function = item.get("function")
+            if item.get("sub_function"):
+                row.sub_function = item.get("sub_function")
+            if item.get("name"):
+                reqd_row = reqd_map.get(row.id)
+                if not reqd_row:
+                    reqd_row = SrsReqd(req_id=row.id)
+                    db.session.add(reqd_row)
+                    reqd_map[row.id] = reqd_row
+                reqd_row.name = item.get("name")
+        db.session.commit()
+
+    def __sync_doc_srs_tables_from_doc_nodes(self, nodes: List[SrsNodeForm]):
+        sync_map: Dict[str, dict] = {}
+
+        def extract_req_code_from_table(table):
+            headers = getattr(table, "headers", None) if table else None
+            rows = getattr(table, "rows", None) if table else None
+            if not headers or not rows or len(headers) < 2:
+                return ""
+            col_codes = [getattr(h, "code", "") for h in headers]
+            pairs = []
+            h_left = self.__normalize_text(getattr(headers[0], "name", "") or "")
+            h_right = self.__normalize_text(getattr(headers[1], "name", "") or "")
+            if h_left or h_right:
+                pairs.append((h_left, h_right))
+            for row in rows or []:
+                left = self.__normalize_text(str((row or {}).get(col_codes[0], "") or ""))
+                right = self.__normalize_text(str((row or {}).get(col_codes[1], "") or ""))
+                if left or right:
+                    pairs.append((left, right))
+            for left, right in pairs:
+                if self.__map_reqd_field(left) == "code":
+                    return self.__normalize_srs_code(right or "")
+            return ""
+
+        def put_entry(code: str, titles: List[str]):
+            code = self.__normalize_srs_code(code or "")
+            if not code:
+                return
+            clean_titles = [self.__clean_req_title(title) for title in titles or []]
+            clean_titles = [title for title in clean_titles if title]
+            if not clean_titles:
+                return
+            parts = clean_titles[1:] if len(clean_titles) > 1 else clean_titles
+            item = sync_map.setdefault(code, {})
+            if len(parts) >= 1:
+                item["module"] = parts[0]
+            if len(parts) >= 2:
+                item["function"] = parts[1]
+            if len(parts) >= 3:
+                item["sub_function"] = parts[2]
+
+        def collect(items: List[SrsNodeForm], path: List[str] = None):
+            path = path or []
+            for node in items or []:
+                title = getattr(node, "title", "") or ""
+                next_path = path + [title]
+                node_code = self.__normalize_srs_code(str(getattr(node, "srs_code", "") or ""))
+                table_code = extract_req_code_from_table(getattr(node, "table", None))
+                table_path = path if table_code and re.match(r"^导入表格\d*$", title.strip()) else next_path
+                put_entry(node_code or table_code, table_path)
+                collect(getattr(node, "children", None) or [], next_path)
+
+        def apply_tables(items: List[SrsNodeForm]):
+            for node in items or []:
+                table = getattr(node, "table", None)
+                headers = getattr(table, "headers", None) if table else None
+                rows = getattr(table, "rows", None) if table else None
+                if headers and rows:
+                    header_norm = [self.__normalize_header(getattr(h, "name", "") or "") for h in headers]
+                    col_idx = self.__resolve_req_columns(header_norm)
+                    if "code" in col_idx and ("module" in col_idx or "function" in col_idx or "sub_function" in col_idx):
+                        col_codes = [getattr(h, "code", "") for h in headers]
+                        for row in rows or []:
+                            code_col = col_codes[col_idx["code"]]
+                            code = self.__normalize_srs_code(str((row or {}).get(code_col, "") or ""))
+                            item = sync_map.get(code)
+                            if not item:
+                                continue
+                            if item.get("module") and "module" in col_idx:
+                                row[col_codes[col_idx["module"]]] = item.get("module")
+                            if item.get("function") and "function" in col_idx:
+                                row[col_codes[col_idx["function"]]] = item.get("function")
+                            if item.get("sub_function") and "sub_function" in col_idx:
+                                row[col_codes[col_idx["sub_function"]]] = item.get("sub_function")
+                apply_tables(getattr(node, "children", None) or [])
+
+        collect(nodes or [], [])
+        if sync_map:
+            apply_tables(nodes or [])
+
+    def __sync_saved_doc_srs_tables_from_req_rows(self, doc_id: int):
+        req_rows: List[SrsReq] = db.session.execute(
+            select(SrsReq).where(SrsReq.doc_id == doc_id, SrsReq.type_code.in_(["1", "reqd"]))
+        ).scalars().all()
+        req_map = {
+            self.__normalize_srs_code(row.code or ""): {
+                "module": row.module,
+                "function": row.function,
+                "sub_function": row.sub_function,
+            }
+            for row in req_rows
+            if self.__normalize_srs_code(row.code or "")
+        }
+        if not req_map:
+            return
+
+        nodes: List[SrsNode] = db.session.execute(
+            select(SrsNode).where(SrsNode.doc_id == doc_id, SrsNode.table.isnot(None))
+        ).scalars().all()
+        changed = False
+        for node in nodes:
+            try:
+                table = json.loads(node.table) if isinstance(node.table, str) else (node.table or {})
+            except Exception:
+                continue
+            headers = table.get("headers") or []
+            rows = table.get("rows") or []
+            if not headers or not rows:
+                continue
+            header_norm = [self.__normalize_header((h or {}).get("name") or "") for h in headers]
+            col_idx = self.__resolve_req_columns(header_norm)
+            if "code" not in col_idx or not any(key in col_idx for key in ["module", "function", "sub_function"]):
+                continue
+            header_codes = [(h or {}).get("code") or "" for h in headers]
+            table_changed = False
+            for row_idx, table_row in enumerate(rows):
+                code = self.__normalize_srs_code(str((table_row or {}).get(header_codes[col_idx["code"]], "") or ""))
+                req_item = req_map.get(code)
+                if not req_item:
+                    continue
+                for field in ["module", "function", "sub_function"]:
+                    if field not in col_idx:
+                        continue
+                    value = req_item.get(field)
+                    if value is None:
+                        continue
+                    col_code = header_codes[col_idx[field]]
+                    if table_row.get(col_code) != value:
+                        table_row[col_code] = value
+                        table_changed = True
+                    cells = table.get("cells") or []
+                    cell_row_idx = row_idx + 1
+                    cell_col_idx = col_idx[field]
+                    if (
+                        isinstance(cells, list) and
+                        cell_row_idx < len(cells) and
+                        isinstance(cells[cell_row_idx], list) and
+                        cell_col_idx < len(cells[cell_row_idx]) and
+                        isinstance(cells[cell_row_idx][cell_col_idx], dict) and
+                        cells[cell_row_idx][cell_col_idx].get("value") != value
+                    ):
+                        cells[cell_row_idx][cell_col_idx]["value"] = value
+                        table_changed = True
+            if table_changed:
+                node.table = json.dumps(table, ensure_ascii=False)
+                changed = True
+        if changed:
+            db.session.commit()
 
     def __parse_docx_table(self, tab):
         # Parse table content and merged-cell structure from Word XML.
@@ -1320,9 +1563,13 @@ class Server(object):
                 setattr(row, key, value)
             row.n_id = 0
             db.session.execute(delete(SrsNode).where(SrsNode.doc_id == row.id))
+            self.__sync_doc_srs_tables_from_doc_nodes(form.content or [])
             self.__reset_tree_node_ids(form.content or [])
             self.__update_nodes(row, 0, form.content)
             db.session.commit()
+            self.__sync_srs_req_names_from_doc_nodes(row.id, form.content or [])
+            self.__upsert_imported_srs_reqds(row.id, self.__extract_srs_reqds_from_nodes(form.content or []))
+            self.__sync_saved_doc_srs_tables_from_req_rows(row.id)
             self.__fix_rcms(row)
             return Resp.resp_ok()
         except Exception:
@@ -1584,6 +1831,48 @@ class Server(object):
         def __is_rev_title(title: str):
             return __norm_title(title) == "文件修订记录"
 
+        def __is_revision_label(value: str):
+            return __norm_title(value) == "文件修订记录"
+
+        def __is_imported_catalog_title(value: str):
+            txt = (value or "").strip()
+            if not txt:
+                return False
+            if __norm_title(txt) == "目录":
+                return True
+            # Word 原目录项常被导入成“1 介绍 1”“2.2 物理拓扑图 6”
+            return re.match(r"^\d+(?:\.\d+)*\.?\s+\S.*\s+\d+$", txt) is not None
+
+        def __is_imported_catalog_line(value: str):
+            txt = (value or "").strip()
+            if not txt:
+                return False
+            if __norm_title(txt) in ["需求规格说明", "文件修订记录", "目录"]:
+                return True
+            if __is_imported_catalog_title(txt):
+                return True
+            # 兼容带点线的目录行
+            return re.match(r"^\d+(?:\.\d+)*\s+\S.*[.·…]{3,}\s*\d+$", txt) is not None
+
+        def __is_imported_catalog_root(node: SrsNodeForm):
+            title = __norm_title(getattr(node, "title", "") or "")
+            text = str(getattr(node, "text", "") or "")
+            return title == "导入正文" and "目录" in text and any(
+                __is_imported_catalog_line(line) for line in text.splitlines()
+            )
+
+        def __strip_imported_catalog_suffix(value: str):
+            txt = (value or "").strip()
+            matched = re.match(r"^(\d+(?:\.\d+)*\.?\s+\S.*\S)\s+\d+$", txt)
+            return matched.group(1).strip() if matched else txt
+
+        def __strip_imported_catalog_lines(value: str):
+            lines = [
+                line for line in str(value or "").splitlines()
+                if not __is_imported_catalog_line(line)
+            ]
+            return "\n".join(lines).strip()
+
         def __is_imported_placeholder_title(title: str):
             txt = (title or "").strip()
             return re.match(r"^导入(表格|图片)\d*$", txt) is not None
@@ -1596,6 +1885,18 @@ class Server(object):
 
         def __is_image_caption_line(line: str):
             return re.match(r"^\s*图\s*\d+\s*", (line or "").strip()) is not None
+
+        def __save_image_caption_txt(docx: Document, text: str, font_size: float = 10.5):
+            txt = (text or "").strip()
+            if not txt:
+                return
+            p = docx.add_paragraph()
+            p.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.CENTER
+            p.paragraph_format.first_line_indent = Pt(0)
+            p.paragraph_format.line_spacing = 1.5
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            docx_util.fonted_txt(p, txt, font_size)
 
         def __insert_toc_field(docx: Document):
             # 使用Word目录域，支持点线+页码+可点击跳转（需Word更新域）
@@ -1627,7 +1928,7 @@ class Server(object):
                 line = (raw or "").strip()
                 if not line:
                     continue
-                matched = re.match(r"^(.*?)(\d+)\s*$", line)
+                matched = re.match(r"^(.*?)(?:[.·…]{3,}|\s+)(\d+)\s*$", line)
                 title_part = (matched.group(1).strip() if matched else line)
                 page_part = (matched.group(2).strip() if matched else "")
                 number = self.__extract_heading_number(title_part)
@@ -1647,6 +1948,35 @@ class Server(object):
                 content = f"{title_part}\t{page_part}" if page_part else title_part
                 docx_util.fonted_txt(para, content, font_size=10.5, bold=False)
 
+        def __extract_imported_catalog_text(*nodes: SrsNodeForm):
+            lines = []
+            def walk(node: SrsNodeForm):
+                if not node:
+                    return
+                title = str(getattr(node, "title", "") or "").strip()
+                if __is_imported_catalog_title(title) and __norm_title(title) != "目录":
+                    lines.append(title)
+                for raw in str(getattr(node, "text", "") or "").splitlines():
+                    line = (raw or "").strip()
+                    if not line:
+                        continue
+                    if __norm_title(line) in ["需求规格说明", "文件修订记录", "目录"]:
+                        continue
+                    if __is_imported_catalog_line(line):
+                        lines.append(line)
+                for child in (getattr(node, "children", None) or []):
+                    walk(child)
+            for node in nodes:
+                walk(node)
+            return "\n".join(lines).strip()
+
+        def __write_catalog_page(docx: Document, catalog_text: str):
+            __write_center_section_title(docx, "目录")
+            if catalog_text:
+                __write_catalog_fallback(docx, catalog_text)
+            else:
+                __insert_toc_field(docx)
+
         def __write_center_section_title(docx: Document, title: str):
             p = docx.add_paragraph()
             p.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.CENTER
@@ -1657,6 +1987,19 @@ class Server(object):
         def __add_blank_lines(docx: Document, line_count: int):
             for _ in range(max(0, line_count)):
                 docx.add_paragraph("")
+
+        def __is_revision_table(table):
+            if not table:
+                return False
+            header_txt = "".join((getattr(h, "name", "") or "").strip() for h in (getattr(table, "headers", None) or []))
+            keys = ["修改日期", "版本号", "修订说明", "修订人", "批准人"]
+            return sum(1 for key in keys if key in header_txt) >= 3
+
+        def __node_has_revision_marker(node: SrsNodeForm):
+            for val in [getattr(node, "title", ""), getattr(node, "label", ""), getattr(node, "text", "")]:
+                if __is_revision_label(val or ""):
+                    return True
+            return False
 
         async def __query_srs_reqs(type_code):
             resp = await srsreq_serv.list_srs_req(doc_id=doc_id, type_code=type_code, page_size=5000)
@@ -1742,24 +2085,34 @@ class Server(object):
                 font_size = 14.0
             font_name = "宋体"
             for node in nodes or []:
+                if __is_imported_catalog_root(node):
+                    continue
+                raw_node_title = getattr(node, "title", "") or ""
+                if __is_imported_catalog_title(raw_node_title):
+                    continue
+                node_title_for_export = __strip_imported_catalog_suffix(raw_node_title)
                 written_child_ids = set()
-                is_catalog_root = level == 0 and __norm_title(node.title) == "目录"
-                if node.title:
-                    if __is_imported_placeholder_title(node.title):
+                is_catalog_root = level == 0 and __norm_title(node_title_for_export) == "目录"
+                node_image_caption = ""
+                if node_title_for_export:
+                    if __is_imported_placeholder_title(node_title_for_export):
                         # 过滤系统中间占位标题，导出时不显示“导入表格X/导入图片X”等字样
                         pass
+                    elif __is_image_caption_line(node_title_for_export) and node.img_url:
+                        node_image_caption = node_title_for_export
                     elif is_catalog_root:
-                        __write_center_section_title(docx, "目录")
-                        __insert_toc_field(docx)
-                    elif level == 0 and __is_cover_section_title(node.title):
-                        if __is_spec_title(node.title):
+                        __write_catalog_page(docx, "")
+                    elif level == 0 and __is_cover_section_title(node_title_for_export):
+                        if __is_spec_title(node_title_for_export):
                             # 需求规格说明标题向上预留10行
                             __add_blank_lines(docx, 10)
-                        __write_center_section_title(docx, node.title)
+                        __write_center_section_title(docx, node_title_for_export)
                         # 标题与其下方表格之间保留空白
-                        __add_blank_lines(docx, 9 if __is_spec_title(node.title) else 2)
+                        __add_blank_lines(docx, 9 if __is_spec_title(node_title_for_export) else 2)
+                    elif __is_imported_catalog_title(node_title_for_export) and not (node.text or node.table or node.img_url):
+                        pass
                     else:
-                        docx_util.save_title2docx(node.title, docx, level+1, font_size)
+                        docx_util.save_title2docx(node_title_for_export, docx, level+1, font_size)
                 if is_catalog_root:
                     # 目录页由TOC域生成，不再输出旧的目录文本和子节点
                     continue
@@ -1772,8 +2125,12 @@ class Server(object):
                     if not has_code_in_text:
                         docx_util.save_txt2docx("需求编号：" + node.srs_code, docx, font_def)
                 if node.label:
-                    docx_util.save_txt2docx(node.label, docx, font_def)
-                if node.text:
+                    if __is_image_caption_line(node.label) and node.img_url:
+                        node_image_caption = node_image_caption or node.label
+                    else:
+                        docx_util.save_txt2docx(node.label, docx, font_def)
+                node_text_for_export = __strip_imported_catalog_lines(node.text)
+                if node_text_for_export:
                     imported_table_children = [
                         child for child in (node.children or [])
                         if __is_imported_table_title(child.title) and child.table and child.table.headers
@@ -1782,10 +2139,10 @@ class Server(object):
                         child for child in (node.children or [])
                         if (child.img_url and re.match(r"^导入图片\d*$", (child.title or "").strip()))
                     ]
-                    lines = (node.text or "").splitlines()
+                    lines = (node_text_for_export or "").splitlines()
                     has_caption = any(__is_table_caption_line(line) for line in lines)
                     has_image_caption = any(__is_image_caption_line(line) for line in lines)
-                    has_req_list_pair = ("产品需求列表" in (node.text or "") and "其他需求列表" in (node.text or ""))
+                    has_req_list_pair = ("产品需求列表" in node_text_for_export and "其他需求列表" in node_text_for_export)
                     if imported_table_children and has_req_list_pair:
                         table_idx = 0
                         for raw_line in lines:
@@ -1819,22 +2176,27 @@ class Server(object):
                             line = (raw_line or "").strip()
                             if not line:
                                 continue
-                            docx_util.save_txt2docx(line, docx, font_def)
                             if __is_table_caption_line(line) and table_idx < len(imported_table_children):
+                                docx_util.save_txt2docx(line, docx, font_def)
                                 tab_node = imported_table_children[table_idx]
                                 table_idx += 1
                                 docx_util.save_tab2docx(tab_node.table, docx)
                                 written_child_ids.add(id(tab_node))
-                            if __is_image_caption_line(line) and image_idx < len(imported_image_children):
+                            elif __is_image_caption_line(line) and image_idx < len(imported_image_children):
                                 img_node = imported_image_children[image_idx]
                                 image_idx += 1
                                 docx_util.save_img2docx(img_node.img_url, docx, mw=500, mh=500)
+                                __save_image_caption_txt(docx, line, font_def)
                                 written_child_ids.add(id(img_node))
+                            else:
+                                docx_util.save_txt2docx(line, docx, font_def)
                     else:
-                        docx_util.save_txt2docx(node.text, docx, font_def)
+                        docx_util.save_txt2docx(node_text_for_export, docx, font_def)
 
                 if node.img_url:
                     docx_util.save_img2docx(node.img_url, docx, mw=500, mh=500)
+                    if node_image_caption:
+                        __save_image_caption_txt(docx, node_image_caption, font_def)
 
                 if node.ref_type == RefTypes.srs_reqs.value:
                     table = await __query_srs_reqs("1")
@@ -1875,13 +2237,64 @@ class Server(object):
             spec_root = next((n for n in roots if "需求规格说明" in __norm_title(n.title)), None)
             rev_root = next((n for n in roots if "文件修订记录" in __norm_title(n.title)), None)
             catalog_root = next((n for n in roots if "目录" in __norm_title(n.title)), None)
-            used_ids = {id(node) for node in [spec_root, rev_root, catalog_root] if node is not None}
+            import_root = next(
+                (
+                    n for n in roots
+                    if __norm_title(getattr(n, "title", "") or "") == "导入正文"
+                    and ("需求规格说明" in str(getattr(n, "text", "") or "") or "目录" in str(getattr(n, "text", "") or ""))
+                ),
+                None,
+            )
+            used_ids = {id(node) for node in [spec_root, rev_root, catalog_root, import_root] if node is not None}
             remaining_roots = [n for n in roots if id(n) not in used_ids]
 
+            # 参考详细设计导出：兼容历史导入数据把“封面/修订记录/正文”都挂在根节点下的情况。
+            spec_section_nodes = [spec_root] if spec_root else [SrsNodeForm(title="需求规格说明", children=[])]
+            rev_section_nodes = [rev_root] if rev_root else []
+            body_from_spec = []
+            if spec_root:
+                cover_node = SrsNodeForm(title="需求规格说明", children=[])
+                cover_table_picked = False
+                rev_nodes_from_spec = []
+                for child in (spec_root.children or []):
+                    if __node_has_revision_marker(child) or __is_revision_table(getattr(child, "table", None)):
+                        rev_nodes_from_spec.append(child)
+                        continue
+                    if (not cover_table_picked) and getattr(child, "table", None) and not __is_revision_table(child.table):
+                        cover_node.children.append(child)
+                        cover_table_picked = True
+                        continue
+                    body_from_spec.append(child)
+
+                spec_section_nodes = [cover_node]
+                if (not rev_section_nodes) and rev_nodes_from_spec:
+                    rev_section_nodes = [SrsNodeForm(title="文件修订记录", children=rev_nodes_from_spec)]
+
+            if (not spec_root) and import_root:
+                cover_node = SrsNodeForm(title="需求规格说明", children=[])
+                rev_nodes_from_import = []
+                cover_table_picked = False
+                for child in (import_root.children or []):
+                    if __node_has_revision_marker(child) or __is_revision_table(getattr(child, "table", None)):
+                        rev_nodes_from_import.append(child)
+                        continue
+                    if (not cover_table_picked) and getattr(child, "table", None):
+                        cover_node.children.append(child)
+                        cover_table_picked = True
+                spec_section_nodes = [cover_node]
+                if (not rev_section_nodes) and rev_nodes_from_import:
+                    rev_section_nodes = [SrsNodeForm(title="文件修订记录", children=rev_nodes_from_import)]
+
+            if not rev_section_nodes:
+                rev_section_nodes = [SrsNodeForm(title="文件修订记录", children=[])]
+
+            remaining_roots = body_from_spec + remaining_roots
+            imported_catalog_text = __extract_imported_catalog_text(*(roots or []))
+
             export_sections = [
-                ("spec", [spec_root] if spec_root else []),
-                ("rev", [rev_root] if rev_root else []),
-                ("catalog", [catalog_root] if catalog_root else []),
+                ("spec", spec_section_nodes),
+                ("rev", rev_section_nodes),
+                ("catalog", [catalog_root] if catalog_root else [SrsNodeForm(title="目录", children=[])]),
                 ("body", remaining_roots),
             ]
             first_section = True
@@ -1890,7 +2303,10 @@ class Server(object):
                     continue
                 if not first_section:
                     docx.add_page_break()
-                await __writenodes(section_nodes, docx, level=0)
+                if section_name == "catalog":
+                    __write_catalog_page(docx, imported_catalog_text)
+                else:
+                    await __writenodes(section_nodes, docx, level=0)
                 if section_name == "rev":
                     # 第二页文件修订记录表格后保留5行空白
                     __add_blank_lines(docx, 5)

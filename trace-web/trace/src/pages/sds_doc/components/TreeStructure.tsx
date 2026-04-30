@@ -180,10 +180,6 @@ function isStrictTableCaptionTitle(line: string): boolean {
     return /^(表|table)\s*\d+/i.test(txt);
 }
 
-function normalizeKeywordText(value?: string): string {
-    return String(value || "").replace(/\s+/g, "").toLowerCase();
-}
-
 function extractSdsCodeToken(text?: string): string {
     const raw = String(text || "")
         .replace(/[\u00a0\u2002\u2003\u2009]/g, " ")
@@ -539,9 +535,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const normalizedTitle = title.replace(/^[\s\u3000•·▪■◆●○□◇\-–—]+/, "").trim();
     const chapterMatch = normalizedTitle.match(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))?(.*)$/);
     const chapterFromDoc = chapterMatch ? chapterMatch[1] : "";
-    const displayChapterFromDoc = readOnly ? shiftChapterMajor(chapterFromDoc, readOnlyChapterOffset) : chapterFromDoc;
+    // 查看页严格按 Word：仅展示标题里已有章节号，不做前端补号回退
+    const shiftedChapterFromDoc = readOnly ? shiftChapterMajor(chapterFromDoc, readOnlyChapterOffset) : chapterFromDoc;
+    const displayChapterFromDoc = String(shiftedChapterFromDoc || "").trim();
     const titleWithoutChapter = chapterMatch ? (chapterMatch[2] || "").trim() : normalizedTitle;
-    const effectiveChapter = String(chapterFromDoc || (readOnly ? chapterNo || "" : "")).trim();
+    const effectiveChapter = String(chapterFromDoc || "").trim();
     const isInterfaceSubSection = !!(
         readOnly &&
         /^\d+\.\d+\.\d+(?:\.\d+)*$/.test(effectiveChapter)
@@ -551,10 +549,6 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const titleIsTableCaption = hasTable && isLikelyTableCaptionLine(titleWithoutChapter || title);
     const hideImportedTablePlaceholderTitle = !readOnly && hasTable && (isSystemPlaceholderTitle(title) || titleIsTableCaption);
     const editDisplayTitle = hideImportedTablePlaceholderTitle ? "" : node.title;
-    const isDataStructureSection = (() => {
-        const merged = normalizeKeywordText(`${node.title || ""} ${node.text || ""}`);
-        return merged.includes("5.6") && merged.includes("数据结构");
-    })();
     const childCaptions = extractImageCaptions(node.text);
     const imageOnlyChildren = (node.children || []).filter((child) => isImageNodeOnly(child));
     const imageChildrenAll = (node.children || []).filter((child) => !!String(child.img_url || "").trim());
@@ -600,12 +594,10 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const candidateInlineTableChildren = (node.children || []).filter((child) => {
             const childHasTable = hasRenderableTable(child.table);
             const childTitle = String(child.title || "").trim();
-            const isPureTableChild = childHasTable && !child.img_url && !String(child.text || "").trim() && (!child.children || child.children.length === 0);
             if (isInterfaceSubSection) return childHasTable && !child.img_url;
             if (readOnly && isChapter7ComplianceContext) return childHasTable && !child.img_url;
             return childHasTable && (
-                (isStrictTableCaptionTitle(childTitle) && !child.img_url && !String(child.text || "").trim())
-                || (isDataStructureSection && isPureTableChild)
+                isStrictTableCaptionTitle(childTitle) && !child.img_url && !String(child.text || "").trim()
             );
         });
     const complianceTableChildren = (node.children || []).filter((child) => hasRenderableTable(child.table) && !child.img_url);
@@ -647,7 +639,9 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         childTableCaptionById.set(String(firstTableChild.id), cap);
         if (firstTableChild.n_id) childTableCaptionById.set(String(firstTableChild.n_id), cap);
     }
-    const displayImageUrl = suppressParentFlowImage
+    const displayImageUrl = !readOnly
+        ? String(node.img_url || "")
+        : suppressParentFlowImage
         ? ""
         : node.ref_type === "img_flow"
         // 网络安全流程图章节只用子节点导入图，避免命中节点自身历史旧图
@@ -655,7 +649,9 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         : (node.img_url || embeddedImageChild?.img_url || firstImageChild?.img_url || "");
     const hasDisplayImage = !!String(displayImageUrl || "").trim();
     const compactWithImage = !readOnly && hasDisplayImage;
-    const imageSourceNodeId = node.ref_type === "img_flow"
+    const imageSourceNodeId = !readOnly
+        ? node.id
+        : node.ref_type === "img_flow"
         ? (preferredFlowImageChild?.id || embeddedImageChild?.id || firstImageChild?.id || node.id)
         : (node.img_url ? node.id : (embeddedImageChild?.id || firstImageChild?.id || node.id));
     const visibleChildren = (node.children || []).filter((child) => {
@@ -812,6 +808,39 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         if (chapter7TableSplit) return inlineTableChildren.slice(2);
         return inlineTableChildren;
     })();
+    const isDataStructureContext = /数据结构/.test(`${title || ""} ${titleWithoutChapter || ""}`);
+    const dbHeadingLinesInText = (() => {
+        if (!readOnly || !isDataStructureContext) return [] as string[];
+        const raw = String(displayTextBeforeTable || "")
+            .replace(/\r/g, "\n");
+        const lines = raw
+            .split("\n")
+            .map((line) => String(line || "").trim())
+            .filter(Boolean);
+        const fromLine = lines
+            .filter((line) => /库\s*[0-9一二三四五六七八九十]+\s*数据库\s*[:：]?/.test(line) && line.length <= 80);
+        const fromInline = Array.from(
+            raw.matchAll(/((?:[A-Za-z]+\s*)?库\s*[0-9一二三四五六七八九十]+\s*数据库\s*[:：])/gi)
+        )
+            .map((m) => String(m?.[1] || "").trim())
+            .filter(Boolean);
+        return Array.from(new Set([...fromLine, ...fromInline]));
+    })();
+    const cleanedDisplayTextBeforeTable = (() => {
+        if (!dbHeadingLinesInText.length) return displayTextBeforeTable;
+        const escapeRegExp = (value: string) => String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        let nextText = String(displayTextBeforeTable || "");
+        dbHeadingLinesInText.forEach((line) => {
+            if (!line) return;
+            nextText = nextText.replace(new RegExp(escapeRegExp(line), "g"), "");
+        });
+        return nextText
+            .replace(/\r/g, "")
+            .split("\n")
+            .map((line) => String(line || "").trim())
+            .filter(Boolean)
+            .join("\n");
+    })();
     const showComplianceInlineInEdit = false;
     const editTextBeforeTable = showComplianceInlineInEdit ? (complianceTcpSplit?.before || "") : editDisplayNodeText;
     const editTextBetweenTables = showComplianceInlineInEdit ? (complianceTcpSplit?.middle || "") : "";
@@ -821,12 +850,6 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         return parts.join("\n");
     };
     const hasDisplayTextContent = !!String(displayNodeText || "").trim();
-    const isPureTableCarrierNode = !!(
-        hasTable &&
-        !displayImageUrl &&
-        !hasDisplayTextContent &&
-        !hasChildren
-    );
     const displayTitle = (() => {
         const label = safeNodeLabel;
         if (!readOnly) return title;
@@ -843,14 +866,30 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         if (baseTitle) return baseTitle;
         return "-";
     })();
+    const isDatabaseHeadingNode = /数据库\s*[:：]?$/.test(String(titleWithoutChapter || title || "").trim());
+    const forceHideRowForTableTitleNode = !!(
+        readOnly &&
+        hasTable &&
+        isLikelyTableCaptionLine(titleWithoutChapter || title) &&
+        !String(node.text || "").trim()
+    );
     const isTableCaptionCarrierNode = !!(
         readOnly &&
         !isInterfaceSubSection &&
         (hasTable || visibleChildren.some((child) => hasTableInSubtree(child))) &&
-        isStrictTableCaptionTitle(titleWithoutChapter || title) &&
+        isLikelyTableCaptionLine(titleWithoutChapter || title) &&
+        !isDatabaseHeadingNode &&
         !hasDisplayTextContent
     );
     const hasDisplayTitle = !!String(displayTitle || "").trim() && displayTitle !== "-";
+    const isPureTableCarrierNode = !!(
+        hasTable &&
+        !displayImageUrl &&
+        !hasDisplayTextContent &&
+        !hasChildren &&
+        // 有明确业务标题（如“5.6.1 Postgresql库1数据库:”）时必须展示节点行
+        !hasDisplayTitle
+    );
     const hideEditRowForPureTableNode = !!(
         !readOnly
         && hasTable
@@ -862,6 +901,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         && (!node.children || node.children.length === 0)
     );
     const hideNodeRow = !!(
+        forceHideRowForTableTitleNode ||
         isTableCaptionCarrierNode
         || hideEditRowForPureTableNode
         || (readOnly && isPureTableCarrierNode)
@@ -906,16 +946,19 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         )
         : "";
     const sanitizedEditTableCaption = isSyntheticTableCaption(editFinalTableCaption) ? "" : editFinalTableCaption;
-    // 性能优化：编辑态也按展开状态渲染子内容，避免大文档首屏一次性挂载全部节点。
-    const showExpandedBody = !hasChildren || expanded || isTableCaptionCarrierNode;
-    const showChapterNo = !!(
-        readOnly &&
-        chapterNo &&
-        displayTitle &&
-        displayTitle !== "-" &&
-        !isTableCaptionCarrierNode &&
-        !isPureTableCarrierNode
+    const hasTableBody = !!(
+        hasTable
+        || anchoredInlineTables.length > 0
+        || middleAnchoredInlineTables.length > 0
+        || trailingInlineTables.length > 0
     );
+    // 只读三级及以下标题：点击标题后才展开表内容（符合“5.6.1/5.6.2 点击后显示表”）
+    const collapseTableByDefault = !!(readOnly && level >= 2 && hasTableBody);
+    const hasToggle = hasChildren || collapseTableByDefault;
+    // 性能优化：编辑态也按展开状态渲染子内容，避免大文档首屏一次性挂载全部节点。
+    const showExpandedBody = collapseTableByDefault
+        ? (expanded || isTableCaptionCarrierNode)
+        : (!hasChildren || expanded || isTableCaptionCarrierNode);
     const chapterTextStyle = {
         fontSize: 13,
         lineHeight: 1.5,
@@ -940,6 +983,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         readOnly &&
         !hideNodeRow
     );
+    const currentChapterNo = String(chapterFromDoc || chapterNo || "").trim();
     const alignSplitTailWithNodeRow = !!(
         readOnly &&
         !hideNodeRow &&
@@ -964,6 +1008,16 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
             ? inlineImageUrlForText
             : "")
         : "";
+    const displayImageCaption = (() => {
+        if (!readOnly || !displayImageUrl) return "";
+        const candidates = [preferredFlowImageChild, embeddedImageChild, firstImageChild, node];
+        for (const item of candidates) {
+            if (!item) continue;
+            const caption = String((item as TreeNode).title || (item as TreeNode).label || "").trim();
+            if (/^图\s*\d+/.test(caption)) return caption;
+        }
+        return "";
+    })();
     const renderReadOnlyText = (raw: string, options?: { inlineImageUrl?: string }) => {
         const lines = String(raw || "").replace(/\r/g, "").split("\n");
         const inlineImageUrl = String(options?.inlineImageUrl || "").trim();
@@ -981,10 +1035,45 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         let bulletMode = false;
         let injected = false;
         const chunks: JSX.Element[] = [];
+        const renderInlineImageBlock = (key: string): JSX.Element => (
+            <div
+                className="node-image-with-caption"
+                key={key}
+                style={{ display: "inline-flex", flexDirection: "column", alignItems: "center", margin: "8px 0 10px" }}
+            >
+                <div className="node-pic node-pic-readonly node-pic-inline" style={{ ...inlineImgBoxStyle, margin: 0 }}>
+                    <Image
+                        src={inlineImageUrl}
+                        alt={displayTitle || "image"}
+                        preview={true}
+                    />
+                </div>
+                {displayImageCaption && (
+                    <div
+                        className="node-image-caption"
+                        style={{
+                            textAlign: "center",
+                            marginTop: 4,
+                            maxWidth: inlineImgSize * 2,
+                            lineHeight: 1.5,
+                        }}
+                    >
+                        {displayImageCaption}
+                    </div>
+                )}
+            </div>
+        );
         lines.forEach((line, idx) => {
             const headingType = getInlineHeadingType(line);
             const trimmed = String(line || "").trim();
             const isImageCaptionLine = /^图\s*\d+/.test(trimmed);
+            const shouldAnchorProgramLogicImage = !!(
+                inlineImageUrl &&
+                !injected &&
+                displayImageCaption &&
+                /程序逻辑/.test(displayImageCaption) &&
+                /程序逻辑/.test(trimmed)
+            );
             if (!trimmed) {
                 chunks.push(<div key={`line-${idx}`} style={{ height: 8 }} />);
                 return;
@@ -1010,18 +1099,14 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         {line}
                     </div>
                 );
+                if (shouldAnchorProgramLogicImage) {
+                    chunks.push(renderInlineImageBlock(`line-image-program-logic-${idx}`));
+                    injected = true;
+                }
                 return;
             }
             if (!!inlineImageUrl && !injected && isImageCaptionLine) {
-                chunks.push(
-                    <div className="node-pic node-pic-readonly node-pic-inline" style={inlineImgBoxStyle} key={`line-image-${idx}`}>
-                        <Image
-                            src={inlineImageUrl}
-                            alt={displayTitle || "image"}
-                            preview={true}
-                        />
-                    </div>
-                );
+                chunks.push(renderInlineImageBlock(`line-image-${idx}`));
                 injected = true;
             }
             if (isChapter7Context) {
@@ -1048,15 +1133,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
             );
         });
         if (!!inlineImageUrl && !injected) {
-            chunks.push(
-                <div className="node-pic node-pic-readonly node-pic-inline" style={inlineImgBoxStyle} key="line-image-fallback">
-                    <Image
-                        src={inlineImageUrl}
-                        alt={displayTitle || "image"}
-                        preview={true}
-                    />
-                </div>
-            );
+            chunks.push(renderInlineImageBlock("line-image-fallback"));
         }
         return <div className="node-content node-text-area">{chunks}</div>;
     };
@@ -1079,7 +1156,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
           <div className={`tree-node-item level-${level}`}>
               {!hideNodeRow && (
               <div className={`node-row ${!readOnly && hasDisplayImage ? "node-row-has-image" : ""}`}>
-                  {hasChildren ? (
+                  {hasToggle ? (
                       <Button
                           type="text"
                           size="small"
@@ -1102,7 +1179,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                     </Tooltip>
                   )}
                   {readOnly ? (
-                      <span className="node-title-prefix">{displayChapterFromDoc || (showChapterNo ? chapterNo : "")}</span>
+                      <span className="node-title-prefix">{displayChapterFromDoc || ""}</span>
                   ) : (
                       <span
                           className="node-title-prefix"
@@ -1137,7 +1214,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         />
                     )
                   }
-                  {isDocImageRefType(node.ref_type) && (
+                  {isDocImageRefType(node.ref_type) && !readOnly && (
                       <div className="node-file-ref node-content">
                           {node.img_url ? (
                               <a
@@ -1182,7 +1259,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                       />
                   )}
                   {/* 编辑态：沿用原有逻辑，展示已上传图片预览和上传按钮 */}
-                  {level <= 2 && !readOnly && displayImageUrl && (
+                  {!readOnly && displayImageUrl && (
                       <div
                           className="node-pic node-pic-readonly node-pic-editable"
                           style={compactWithImage ? {
@@ -1329,11 +1406,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   <div className="node-row node-row-follow node-row-content-below">
                       <span className="node-expand-placeholder" />
                       <span className="node-title-prefix" style={{ visibility: "hidden" }}>
-                          {displayChapterFromDoc || (showChapterNo ? chapterNo : "") || "-"}
+                          {displayChapterFromDoc || "-"}
                       </span>
                       <div className="node-content-below-title">
-                          {(String(displayTextBeforeTable || "").trim() || !!inlineImageUrlForBefore)
-                              ? renderReadOnlyText(displayTextBeforeTable, { inlineImageUrl: inlineImageUrlForBefore })
+                        {(String(cleanedDisplayTextBeforeTable || "").trim() || !!inlineImageUrlForBefore)
+                            ? renderReadOnlyText(cleanedDisplayTextBeforeTable, { inlineImageUrl: inlineImageUrlForBefore })
                               : null}
                       </div>
                   </div>
@@ -1395,6 +1472,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   const caption = normalizeInlineTableCaption(
                       childTableCaptionById.get(String(child.id))
                       || childTableCaptionById.get(String(child.n_id || ""))
+                      || String(child.title || "").trim()
                       || String(child.label || "").trim()
                   )
                       || "";
@@ -1475,6 +1553,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   const caption = normalizeInlineTableCaption(
                       childTableCaptionById.get(String(child.id))
                       || childTableCaptionById.get(String(child.n_id || ""))
+                      || String(child.title || "").trim()
                       || String(child.label || "").trim()
                   )
                       || "";
@@ -1555,6 +1634,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   const caption = normalizeInlineTableCaption(
                       childTableCaptionById.get(String(child.id))
                       || childTableCaptionById.get(String(child.n_id || ""))
+                      || String(child.title || "").trim()
                       || String(child.label || "").trim()
                   )
                       || "";
@@ -1607,7 +1687,9 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   ), `aligned-inline-table-${child.id}-${idx}`);
               })}
           </div>
-            {showExpandedBody && finalVisibleChildren.map((child) => {
+            {showExpandedBody && (() => {
+                const childrenForRender: TreeNode[] = finalVisibleChildren;
+                return childrenForRender.map((child) => {
                 const childTitle = String(child.title || "").trim();
                 const childHasTable = hasRenderableTable(child.table);
                 const childIsPureTableCarrier = !!(
@@ -1619,11 +1701,14 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                 const childHasTableDesc = hasTableInSubtree(child);
                 const childIsTableCaptionCarrier = !!(
                     childHasTableDesc &&
-                    isStrictTableCaptionTitle(childTitle) &&
+                    isLikelyTableCaptionLine(childTitle) &&
+                    !/数据库\s*[:：]?$/.test(String(childTitle || "").trim()) &&
                     !String(child.text || "").trim()
                 );
-                const childHasMeaningfulTitle = !childIsPureTableCarrier && !childIsTableCaptionCarrier && shouldAssignChapterNo(child);
-                const nextChapterNo = childHasMeaningfulTitle ? `${chapterNo || ""}.${++childChapterCounter}`.replace(/^\./, "") : chapterNo;
+                const childHasMeaningfulTitle = readOnly
+                    ? !!String(childTitle || "").trim()
+                    : (!childIsPureTableCarrier && !childIsTableCaptionCarrier && shouldAssignChapterNo(child));
+                const nextChapterNo = childHasMeaningfulTitle ? `${currentChapterNo}.${++childChapterCounter}`.replace(/^\./, "") : currentChapterNo;
                 return (
                     <TreeNodeItem
                         key={child.id}
@@ -1655,7 +1740,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         }
                     />
                 );
-            })}
+            });
+            })()}
         </div>
     );
 };
@@ -1675,7 +1761,7 @@ interface TreeStructureProps {
     onOpenTraceList?: () => void;  // 打开需求追溯表弹框
 }
 
-export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = [], onNodeDelete, readOnly, readOnlyChapterOffset = 0, readOnlyRootWrapper = true, onOpenReqdList, onOpenTraceList }: TreeStructureProps) => {
+export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = [], onNodeDelete, readOnly, readOnlyRootWrapper = true, onOpenReqdList, onOpenTraceList }: TreeStructureProps) => {
     const { t: ts } = useTranslation();
     const [nodes, setNodes] = useState<TreeNode[]>(value);
     const [tableModalVisible, setTableModalVisible] = useState(false);
@@ -2145,6 +2231,22 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
             }));
     };
     const visibleNodes = getVisibleNodes(nodes);
+    const effectiveReadOnlyChapterOffset = (() => {
+        if (!readOnly) return 0;
+        const majorFromTitle = (title?: string): number => {
+            const txt = String(title || "")
+                .replace(/^[\s\u3000•·▪■◆●○□◇\-–—]+/, "")
+                .trim();
+            const matched = txt.match(/^(\d+)(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/);
+            if (!matched) return 0;
+            const major = Number(matched[1]);
+            return Number.isFinite(major) ? major : 0;
+        };
+        const firstVisibleMajor = (visibleNodes || [])
+            .map((node) => majorFromTitle(node.title))
+            .find((major) => major > 0) || 0;
+        return firstVisibleMajor > 1 ? firstVisibleMajor - 1 : 0;
+    })();
 
     return (
         <>
@@ -2173,10 +2275,13 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                         const nodeHasTableDesc = hasTableInSubtree(node);
                         const nodeIsTableCaptionCarrier = !!(
                             nodeHasTableDesc &&
-                            isStrictTableCaptionTitle(nodeTitle) &&
+                            isLikelyTableCaptionLine(nodeTitle) &&
+                            !/数据库\s*[:：]?$/.test(String(nodeTitle || "").trim()) &&
                             !String(node.text || "").trim()
                         );
-                        const hasMeaningfulTitle = !nodeIsPureTableCarrier && !nodeIsTableCaptionCarrier && shouldAssignChapterNo(node);
+                        const hasMeaningfulTitle = readOnly
+                            ? !!String(nodeTitle || "").trim()
+                            : (!nodeIsPureTableCarrier && !nodeIsTableCaptionCarrier && shouldAssignChapterNo(node));
                         const rootChapterNo = hasMeaningfulTitle ? `${++rootChapterCounter}` : "";
                         const rootItemProps = {
                             node,
@@ -2197,7 +2302,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                             onDeleteTable: handleDeleteTable,
                             onOpenReqdList,
                             onOpenTraceList,
-                            readOnlyChapterOffset,
+                            readOnlyChapterOffset: effectiveReadOnlyChapterOffset,
                         };
                         return readOnly && !readOnlyRootWrapper ? (
                             <TreeNodeItem key={node.id} {...rootItemProps} />

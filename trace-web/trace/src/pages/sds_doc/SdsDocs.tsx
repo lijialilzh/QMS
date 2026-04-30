@@ -1,4 +1,4 @@
-import { Form, Input, Button, Table, message, Row, Col, Modal, Select, Space, Upload } from "antd";
+import { Form, Input, Button, Table, message, Row, Col, Modal, Select, Space, Upload, Checkbox } from "antd";
 import { SearchOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -235,13 +235,31 @@ export default () => {
                 return;
             }
             dispatch({ loading: true });
-            Api.import_sds_doc_word({
-                product_id: values.product_id,
-                srsdoc_id: values.srsdoc_id,
-                version: values.version,
-                change_log: values.change_log || "",
-                file,
-            }).then((res: any) => {
+            (async () => {
+                if (values.clear_before_import) {
+                    const listRes: any = await Api.list_sds_doc({
+                        product_id: values.product_id,
+                        page_index: 0,
+                        page_size: 10000,
+                    });
+                    if (listRes.code !== Api.C_OK) {
+                        throw new Error(listRes.msg || "清空历史数据失败");
+                    }
+                    const rows = listRes.data?.rows || [];
+                    for (const row of rows) {
+                        const delRes: any = await Api.delete_sds_doc({ id: row.id });
+                        if (delRes.code !== Api.C_OK) {
+                            throw new Error(delRes.msg || `删除失败(id=${row.id})`);
+                        }
+                    }
+                }
+                const res: any = await Api.import_sds_doc_word({
+                    product_id: values.product_id,
+                    srsdoc_id: values.srsdoc_id,
+                    version: values.version,
+                    change_log: values.change_log || "",
+                    file,
+                });
                 dispatch({ loading: false });
                 if (res.code === Api.C_OK) {
                     dispatch({ dlgType: null, importFiles: [], importSrsDocList: [] });
@@ -254,11 +272,11 @@ export default () => {
                         content: res.msg || "Word导入失败，请检查文档格式后重试。",
                     });
                 }
-            }).catch(() => {
+            })().catch((err: any) => {
                 dispatch({ loading: false });
                 Modal.error({
                     title: "导入失败",
-                    content: "Word导入请求异常，请稍后重试。",
+                    content: err?.message || "导入请求异常，请稍后重试。",
                 });
             });
         });
@@ -550,6 +568,11 @@ export default () => {
                     </Form.Item>
                     <Form.Item label={ts("sds_doc.change_log")} name="change_log">
                         <Input.TextArea rows={3} allowClear />
+                    </Form.Item>
+                    <Form.Item name="clear_before_import" valuePropName="checked">
+                        <Checkbox>
+                            导入前清空该产品历史详细设计
+                        </Checkbox>
                     </Form.Item>
                     <Form.Item label="Word文件" required>
                         <Upload

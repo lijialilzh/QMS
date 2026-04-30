@@ -24,6 +24,7 @@ export default () => {
     const isReadOnly = location.pathname.includes("/srs_docs/view/");
     const [editForm] = Form.useForm();
     const treeStructureRef = useRef<TreeNode[]>([]);
+    const initialEditTreeRef = useRef<TreeNode[]>([]);
     const [data, dispatch] = useData({
         loading: false,
         isEdit: false,
@@ -74,6 +75,8 @@ export default () => {
         };
         return addIdsToNodes(standardNodes as any[]);
     };
+
+    const cloneTree = (nodes: TreeNode[]): TreeNode[] => JSON.parse(JSON.stringify(nodes || []));
 
     // 加载产品列表
     useEffect(() => {
@@ -220,7 +223,9 @@ export default () => {
                         docVersion: targetRow.version ?? "",
                     });
                     treeStructureRef.current = parsedContent;
+                    initialEditTreeRef.current = cloneTree(parsedContent);
                     loadSrsTableData();
+                    loadReqListData();
                 } else {
                     message.error(res.msg);
                     dispatch({ loading: false });
@@ -231,6 +236,7 @@ export default () => {
             // 新增模式
             editForm.resetFields();
             const initialTree = buildStandardNodesWithIds();
+            initialEditTreeRef.current = [];
             dispatch({
                 isEdit: false,
                 srsTableData: [],
@@ -338,6 +344,17 @@ export default () => {
     };
 
     const handleInitTemplate = () => {
+        if (params.id && data.isEdit) {
+            const originalTree = cloneTree(initialEditTreeRef.current || []);
+            if (!originalTree.length) {
+                message.warning("暂无可恢复的初始内容，请刷新页面后重试");
+                return;
+            }
+            treeStructureRef.current = originalTree;
+            dispatch({ treeStructure: originalTree });
+            message.success("已恢复到进入编辑页时的内容");
+            return;
+        }
         handleLoadStandardNode();
     };
 
@@ -367,6 +384,7 @@ export default () => {
 
         const nodesWithIds = buildStandardNodesWithIds();
         // dispatch({ treeStructure: [...data.treeStructure, ...nodesWithIds] });
+        treeStructureRef.current = nodesWithIds;
         dispatch({ treeStructure: nodesWithIds });
         message.success(ts("srs_doc.load_standard_structure_success"));
     };
@@ -483,24 +501,48 @@ export default () => {
 
             const typeRows = typeRes.code === ApiSrsType.C_OK ? (typeRes.data?.rows || []) : [];
             const isBaseReq = (r: any) => r?.type_code === "1" || r?.type_code === "2";
-            const changeTablesData = typeRows.map((item: any, index: number) => {
-                const tableRows = rows
-                    .filter((reqItem: any) => !isBaseReq(reqItem) && reqItem.type_code === item.type_code)
-                    .map((reqItem: any, reqIndex: number) => ({
-                        key: reqItem.id || `change_${item.id}_${reqIndex}_${Date.now()}`,
-                        id: reqItem.id,
-                        doc_id: reqItem.doc_id,
-                        srs_code: reqItem.code || "",
-                        module: normalizeReqText(reqItem.module),
-                        function: normalizeReqText(reqItem.function),
-                        sub_function: normalizeReqText(reqItem.sub_function),
-                        location: reqItem.location || "",
-                        type_code: reqItem.type_code || "",
-                    }));
-                return {
-                    id: item.id || 0,
+            const toChangeRow = (reqItem: any, keyPrefix: string, reqIndex: number) => ({
+                key: reqItem.id || `${keyPrefix}_${reqIndex}_${Date.now()}`,
+                id: reqItem.id,
+                doc_id: reqItem.doc_id,
+                srs_code: reqItem.code || "",
+                module: normalizeReqText(reqItem.module),
+                function: normalizeReqText(reqItem.function),
+                sub_function: normalizeReqText(reqItem.sub_function),
+                location: reqItem.location || "",
+                type_code: reqItem.type_code || "",
+            });
+            const allChangeRows = rows.filter((reqItem: any) => !isBaseReq(reqItem));
+            const typeNameMap = new Map<string, { id: number | string; title: string }>();
+            typeRows.forEach((item: any, index: number) => {
+                const code = String(item.type_code || "");
+                if (!code) return;
+                typeNameMap.set(code, {
+                    id: item.id || `type_${index}`,
                     title: item.type_name || `变更表${index + 1}`,
-                    type_code: item.type_code || "",
+                });
+            });
+            const groupedByType = new Map<string, any[]>();
+            allChangeRows.forEach((reqItem: any) => {
+                const code = String(reqItem.type_code || "");
+                if (!code) return;
+                const list = groupedByType.get(code) || [];
+                list.push(reqItem);
+                groupedByType.set(code, list);
+            });
+            const typeCodes = Array.from(new Set([
+                ...Array.from(typeNameMap.keys()),
+                ...Array.from(groupedByType.keys()),
+            ]));
+            const changeTablesData = typeCodes.map((code, index) => {
+                const meta = typeNameMap.get(code);
+                const tableRows = (groupedByType.get(code) || []).map((reqItem: any, reqIndex: number) =>
+                    toChangeRow(reqItem, `change_${code || index}`, reqIndex)
+                );
+                return {
+                    id: meta?.id || `change_${code || index}`,
+                    title: meta?.title || "变更需求",
+                    type_code: code,
                     data: tableRows,
                 };
             });
@@ -562,13 +604,13 @@ export default () => {
         try {
             dispatch({ savingChangeReq: true });
             const oldRows = (target?.data || []).filter((r: any) => !!r?.id);
-            for (const item of oldRows) {
-                // 先清空原有行，再按编辑后结果重建，保证当前页编辑结果和管理页一致
-                await ApiSrsReq.delete_srs_req({ id: item.id });
-            }
-            for (const row of rows) {
+            const usedOldIds = new Set<number | string>();
+            for (const [index, row] of rows.entries()) {
+                const matchedOldRow =
+                    oldRows.find((item: any) => item.srs_code === row.code && !usedOldIds.has(item.id)) ||
+                    (oldRows[index] && !usedOldIds.has(oldRows[index].id) ? oldRows[index] : undefined);
                 const saveData = {
-                    id: 0,
+                    id: matchedOldRow?.id || 0,
                     doc_id: docId,
                     code: row.code,
                     module: row.module,
@@ -578,13 +620,23 @@ export default () => {
                     type_code: typeCode,
                     rcm_ids: [],
                 };
-                const saveRes = await ApiSrsReq.add_srs_req(saveData);
+                if (matchedOldRow?.id) {
+                    usedOldIds.add(matchedOldRow.id);
+                }
+                const saveRes = saveData.id
+                    ? await ApiSrsReq.update_srs_req(saveData)
+                    : await ApiSrsReq.add_srs_req(saveData);
                 if (saveRes.code !== ApiSrsReq.C_OK) {
                     throw new Error(saveRes.msg || "保存失败");
                 }
             }
+            const deletedRows = oldRows.filter((item: any) => !usedOldIds.has(item.id));
+            for (const item of deletedRows) {
+                await ApiSrsReq.delete_srs_req({ id: item.id });
+            }
             dispatch({ savingChangeReq: false, showChangeReqEditModal: false, changeReqEditInitialData: undefined, changeReqEditTarget: undefined });
             await loadSrsTableData();
+            await loadReqListData();
             message.success("变更需求已保存");
         } catch (error: any) {
             dispatch({ savingChangeReq: false });
@@ -613,6 +665,9 @@ export default () => {
                     doc_version: item.doc_version || "",
                     code: item.code || "",
                     name: item.name || "",
+                    module: item.module || "",
+                    function: item.function || "",
+                    sub_function: item.sub_function || "",
                     overview: item.overview || "",
                     participant: item.participant || "",
                     pre_condition: item.pre_condition || "",
@@ -622,6 +677,7 @@ export default () => {
                     exception: item.exception || "",
                     constraint: item.constraint || "",
                     rcm_codes: item.rcm_codes || [],
+                    type_code: item.type_code || "",
                 }));
                 dispatch({ reqListData: tableData, reqListLoading: false });
             } else {
@@ -654,6 +710,18 @@ export default () => {
     const isCatalogNode = (node: TreeNode) => normalizeText(node.title).includes("目录");
     const isApprovalNode = (node: TreeNode) => normalizeText(node.title).includes("需求规格说明") || isApprovalTable(node);
     const isChangeLogNode = (node: TreeNode) => normalizeText(node.title).includes("文件修订记录") || isChangeLogTable(node);
+    const isImportedCatalogNode = (node: TreeNode) => {
+        const title = String(node.title || "").trim();
+        const text = String(node.text || "");
+        if (/^导入正文$/.test(title) && /目录/.test(text) && /\d+(?:\.\d+)*\s+.+\s+\d+/.test(text)) {
+            return true;
+        }
+        // Word 目录项会带页码，如“1 介绍 1”“2.2 物理拓扑图 6”，正文标题不会带最后的页码。
+        if (/^\d+(?:\.\d+)*\s+\S.*\s+\d+$/.test(title)) {
+            return true;
+        }
+        return false;
+    };
 
     const subtreeMatches = (node: TreeNode, matchFn: (n: TreeNode) => boolean): boolean => {
         if (matchFn(node)) return true;
@@ -663,6 +731,14 @@ export default () => {
         const ids = [node.id];
         (node.children || []).forEach((child) => ids.push(...collectSubtreeIds(child)));
         return ids;
+    };
+    const collectMatchedSubtreeIds = (nodes: TreeNode[], matchFn: (n: TreeNode) => boolean): number[] => {
+        return (nodes || []).flatMap((node) => {
+            if (matchFn(node)) {
+                return collectSubtreeIds(node);
+            }
+            return collectMatchedSubtreeIds(node.children || [], matchFn);
+        });
     };
     const collectTableNodes = (node: TreeNode): TreeNode[] => {
         const list: TreeNode[] = [];
@@ -681,9 +757,12 @@ export default () => {
     const derivedFileNo = extractFileNoFromTree(treeRoots);
     const approvalRoots = approvalRoot ? [approvalRoot] : treeRoots.filter((node) => subtreeMatches(node, isApprovalNode));
     const changeLogRoots = changeLogRoot ? [changeLogRoot] : treeRoots.filter((node) => subtreeMatches(node, isChangeLogNode));
-    const hiddenNodeIds = treeRoots
-        .filter((node) => isCatalogNode(node) || subtreeMatches(node, isApprovalNode) || subtreeMatches(node, isChangeLogNode))
-        .flatMap((node) => collectSubtreeIds(node));
+    const hiddenNodeIds = Array.from(new Set([
+        ...collectMatchedSubtreeIds(treeRoots, (node) => isCatalogNode(node) || isImportedCatalogNode(node)),
+        ...treeRoots
+            .filter((node) => subtreeMatches(node, isApprovalNode) || subtreeMatches(node, isChangeLogNode))
+            .flatMap((node) => collectSubtreeIds(node)),
+    ]));
     const cnNameFromDoc = (derivedCoverTitle || approvalRoot?.title || "").trim();
     const extractedFileName = (/[一-龥]/.test(cnNameFromDoc) ? cnNameFromDoc : (folderName || "")).trim();
     const displayFileNo = (isIncompleteFileNo(fileNo) ? (derivedFileNo || fileNo || "") : (fileNo || "")).trim();
@@ -1020,54 +1099,52 @@ export default () => {
                     )}
                 </div> */}
 
-                {/* 目录结构区域 */}
                 <div className="doc-section doc-section-flex">
-                    <div className="doc-section-header">
-                        <div className="doc-section-title">
-                            {ts("srs_doc.directory_structure")}
-                        </div>
-                        <div className="doc-section-buttons">
-                            {!isReadOnly && (
-                            <Button 
-                                type="primary" 
+                    {!isReadOnly && (
+                        <div className="doc-section-header">
+                            <div className="doc-section-buttons">
+                            <Button
+                                type="primary"
                                 icon={<PlusOutlined />}
                                 onClick={handleAddRootNode}>
                                 {ts("srs_doc.add_root_menu")}
                             </Button>
-                            )}
                         </div>
                     </div>
-                    <TreeStructure
-                        value={data.treeStructure}
-                        onChange={isReadOnly ? undefined : (value) => {
-                            treeStructureRef.current = value as TreeNode[];
-                            dispatch({ treeStructure: value });
-                        }}
-                        docId={params.id ? parseInt(params.id) : undefined}
-                        hiddenNodeIds={hiddenNodeIds}
-                        onNodeDelete={isReadOnly ? undefined : handleNodeDelete}
-                        readOnly={isReadOnly}
-                        rcmOptions={data.rcmOptions}
-                        srsReqPreview={{
-                            main: data.srsTableData as any[],
-                            other: data.srsOtherReqData as any[],
-                            changes: data.srsChangeTables as Array<{ id: number | string; title: string; data: any[] }>,
-                        }}
-                        srsReqLoading={data.srsTableLoading}
-                        onNodesSnapshot={(nodes) => {
-                            treeStructureRef.current = (nodes || []) as TreeNode[];
-                        }}
-                        onOpenSrsTable={() => {
-                            loadSrsTableData();
-                            dispatch({ showSrsTableModal: true });
-                        }}
-                        onOpenReqList={() => {
-                            loadReqListData();
-                            dispatch({ showReqListModal: true });
-                        }}
-                        onEditSrsChangeTable={openChangeReqEditModal}
-                    />
-                </div>
+                    )}
+                        <TreeStructure
+                            value={data.treeStructure}
+                            onChange={isReadOnly ? undefined : (value) => {
+                                treeStructureRef.current = value as TreeNode[];
+                                dispatch({ treeStructure: value });
+                            }}
+                            docId={params.id ? parseInt(params.id) : undefined}
+                            hiddenNodeIds={hiddenNodeIds}
+                            onNodeDelete={isReadOnly ? undefined : handleNodeDelete}
+                            readOnly={isReadOnly}
+                            rcmOptions={data.rcmOptions}
+                            srsReqPreview={{
+                                main: data.srsTableData as any[],
+                                other: data.srsOtherReqData as any[],
+                                changes: data.srsChangeTables as Array<{ id: number | string; title: string; data: any[] }>,
+                            }}
+                            reqDetails={data.reqListData as any[]}
+                            srsReqLoading={data.srsTableLoading}
+                            onNodesSnapshot={(nodes) => {
+                                treeStructureRef.current = (nodes || []) as TreeNode[];
+                            }}
+                            onOpenSrsTable={() => {
+                                loadSrsTableData();
+                                dispatch({ showSrsTableModal: true });
+                            }}
+                            onOpenReqList={() => {
+                                loadSrsTableData();
+                                loadReqListData();
+                                dispatch({ showReqListModal: true });
+                            }}
+                            onEditSrsChangeTable={openChangeReqEditModal}
+                        />
+                    </div>
             </div>
 
             {/* 编辑版本变更说明的Modal */}

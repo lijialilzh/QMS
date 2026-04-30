@@ -37,6 +37,46 @@ NAME_DICT = {
     "图像预测": "DLServer",
 }
 
+FIXED_RCN300_TRACES = {
+    "SRS-RCN300-001": [
+        ("SDS-RCN300-005", "RePACS", "5"),
+    ],
+    "SRS-RCN300-002": [
+        ("SDS-RCN300-006", "DLServer", "4"),
+        ("SDS-RCN300-005", "RePACS", "5"),
+        ("SDS-RCN300-007", "NeoViewer", "6"),
+    ],
+    "SRS-RCN300-003": [
+        ("SDS-RCN300-004", "DataProcessing", "3"),
+        ("SDS-RCN300-006", "DLServer", "4"),
+        ("SDS-RCN300-005", "RePACS", "5"),
+        ("SDS-RCN300-007", "NeoViewer", "6"),
+    ],
+    "SRS-RCN300-004": [
+        ("SDS-RCN300-004", "DataProcessing", "3"),
+    ],
+    "SRS-RCN300-005": [
+        ("SDS-RCN300-005", "RePACS", "5"),
+    ],
+    "SRS-RCN300-006": [
+        ("SDS-RCN300-004", "DataProcessing", "3"),
+        ("SDS-RCN300-006", "DLServer", "4"),
+        ("SDS-RCN300-005", "RePACS", "5"),
+    ],
+    "SRS-RCN300-007": [
+        ("SDS-RCN300-007", "NeoViewer", "6"),
+    ],
+    "SRS-RCN300-008": [
+        ("SDS-RCN300-008", "文档需求", "8"),
+    ],
+    "SRS-RCN300-009": [
+        ("SDS-RCN300-009", "法规符合性需求", "9"),
+    ],
+    "SRS-RCN300-010": [
+        ("SDS-RCN300-010", "外部连接", "10"),
+    ],
+}
+
 class Server(object):
     def __ensure_sds_traces(self, prod_id: int = None, doc_id: int = None):
         if not prod_id and not doc_id:
@@ -57,7 +97,20 @@ class Server(object):
                 if not reqs:
                     continue
                 values = []
+                fixed_values = []
                 for req_id, code, module, function in reqs:
+                    fixed_trace = FIXED_RCN300_TRACES.get((code or "").strip().upper())
+                    if fixed_trace:
+                        fixed_values.append(
+                            dict(
+                                doc_id=sds_doc_id,
+                                req_id=req_id,
+                                sds_code="\n".join([item[0] for item in fixed_trace]),
+                                chapter="\n".join([item[1] for item in fixed_trace]),
+                                location="\n".join([item[2] for item in fixed_trace]),
+                            )
+                        )
+                        continue
                     values.append(
                         dict(
                             doc_id=sds_doc_id,
@@ -68,6 +121,18 @@ class Server(object):
                     )
                 if values:
                     db.session.execute(pg_insert(SdsTrace).values(values).on_conflict_do_nothing())
+                for item in fixed_values:
+                    insert_stmt = pg_insert(SdsTrace).values(item)
+                    db.session.execute(
+                        insert_stmt.on_conflict_do_update(
+                            index_elements=["doc_id", "req_id"],
+                            set_=dict(
+                                sds_code=insert_stmt.excluded.sds_code,
+                                chapter=insert_stmt.excluded.chapter,
+                                location=insert_stmt.excluded.location,
+                            ),
+                        )
+                    )
             db.session.commit()
         except Exception:
             logger.exception("ensure_sds_traces_failed")
@@ -430,6 +495,11 @@ class Server(object):
                 obj.product_version = row_product.full_version
             obj.type_code = row_req.type_code
             obj.type_name = type_names.get(row_req.id) or default_types.get(row_req.type_code) or row_req.type_code
+            if (row_req.code or "").strip().upper() in FIXED_RCN300_TRACES:
+                obj.chapter = row_reqd.chapter or ""
+                obj.location = row_reqd.location or None
+                objs.append(obj)
+                continue
             doc_tree = doc_trees.get(row_sdsdoc.id)
             # 未导入详细设计：从SRS需求结构字段回退，避免结果被过滤为空
             if not doc_tree:

@@ -143,6 +143,16 @@ function isFunctionalKvTable(table?: TableData | null): boolean {
     return KV_FIELD_LABELS.has(h1) && !!h2;
 }
 
+function hasRenderableTable(table?: TableData | null): boolean {
+    return !!(
+        table &&
+        Array.isArray(table.headers) &&
+        table.headers.length > 0 &&
+        Array.isArray(table.rows) &&
+        table.rows.length > 0
+    );
+}
+
 function isSrsCodeColumn(header?: { code: string; name: string }): boolean {
     const hName = normalizeCellText(header?.name);
     const hCode = normalizeCellText(header?.code);
@@ -238,6 +248,7 @@ interface TreeNodeItemProps {
         other: any[];
         changes: Array<{ id: number | string; title: string; data: any[] }>;
     };
+    reqDetails?: any[];
     srsReqLoading?: boolean;
     hideLevelPrefix?: boolean;
     disableHierarchyActions?: boolean;
@@ -265,6 +276,7 @@ const TreeNodeItem = ({
     onOpenReqList,
     onEditSrsChangeTable,
     srsReqPreview,
+    reqDetails,
     srsReqLoading,
     hideLevelPrefix = false,
     disableHierarchyActions = false,
@@ -366,19 +378,93 @@ const TreeNodeItem = ({
     const displayTable = node.table && node.table.headers?.length ? node.table : undefined;
     const visibleChildren = (node.children || []).filter((child) => !isImportedImageNode(child) && !isImportedTableNode(child));
     const hasVisibleChildren = visibleChildren.length > 0;
+    const isAutoReqNode = node.label === "__auto_req_group" || node.label === "__auto_req_detail";
     const hasRcm = Array.isArray(node.rcm_codes);
     const hasRcmText = readOnly && /RCM\d+/i.test(String(node.text || ""));
     const isSrsReqRefNode = node.ref_type === "srs_reqs" || node.ref_type === "srs_reqs_2";
-    const showReqExtraTables =
-        embeddedTableNodes.some((child) => isReqMainTable(child.table)) &&
-        embeddedTableNodes.some((child) => isReqOtherTable(child.table));
-    const isRenderableTable = (table?: TableData | null) => !!(
-        table &&
-        Array.isArray(table.headers) &&
-        table.headers.length > 0 &&
-        Array.isArray(table.rows) &&
-        table.rows.length > 0
+    const isSrsReqListNode = node.ref_type === "srs_reqds";
+    const normalizeSrsCode = (value?: string) => String(value || "").replace(/\s+/g, "").toUpperCase();
+    const nodeSrsCode = normalizeSrsCode(node.srs_code || "");
+    const getTitleMajorChapter = (title?: string) => {
+        const matched = String(title || "").trim().match(/^(\d+)/);
+        return matched?.[1] || "";
+    };
+    const isRootChapterTitle = (title?: string) => /^\d+\s+/.test(String(title || "").trim());
+    const isImportedReqTableAnchor = (() => {
+        if (isSrsReqRefNode || isSrsReqListNode) return false;
+        const title = String(node.title || "").replace(/\s+/g, "");
+        if (/^2\.1软件总体描述/.test(title)) return true;
+        if (/^2软件整体架构要求/.test(title)) {
+            return !(node.children || []).some((child) => /^2\.1软件总体描述/.test(String(child.title || "").replace(/\s+/g, "")));
+        }
+        return false;
+    })();
+    const isReqDetailAnchor = () => {
+        if (isSrsReqListNode) return true;
+        const title = String(node.title || "").replace(/\s+/g, "");
+        return /功能描述|需求列表/.test(title);
+    };
+    const matchedReqDetail = nodeSrsCode && (isReqDetailAnchor() || node.label === "__auto_req_detail")
+        ? (reqDetails || []).find((item: any) => normalizeSrsCode(item?.code) === nodeSrsCode)
+        : undefined;
+    const getSrsCodeMajorChapter = (code?: string) => {
+        const matched = normalizeSrsCode(code).match(/^SRS-[A-Z]+(\d+)-/);
+        const digits = matched?.[1] || "";
+        return digits ? String(parseInt(digits.slice(-1), 10)) : "";
+    };
+    const isBaseReqType = (typeCode?: string) => ["1", "2", ""].includes(String(typeCode || ""));
+    const nodeMajorChapter = getTitleMajorChapter(node.title);
+    const chapterReqDetails = !nodeSrsCode && isReqDetailAnchor()
+        ? (reqDetails || []).filter((item: any) => {
+            return nodeMajorChapter && getSrsCodeMajorChapter(item?.code) === nodeMajorChapter && !isBaseReqType(item?.type_code);
+        })
+        : [];
+    const shouldShowSrsReqPreviewTables = !!(
+        isSrsReqRefNode &&
+        srsReqPreview &&
+        (
+            (srsReqPreview.main || []).length > 0 ||
+            (srsReqPreview.other || []).length > 0 ||
+            (srsReqPreview.changes || []).length > 0
+        )
     );
+    const showReqExtraTables = false;
+    const shouldShowChangeReqTables = !!(
+        (isSrsReqListNode || isImportedReqTableAnchor) &&
+        (srsReqPreview?.changes || []).some((table) => (table.data || []).length > 0)
+    );
+    const reqDetailRows = (detail: any) => ([
+        { field: ts("srs_doc.srs_code") || "需求编号", value: detail?.code },
+        { field: ts("srs_reqd.name") || "需求名称", value: detail?.name || detail?.module || detail?.function || detail?.sub_function },
+        { field: ts("srs_reqd.overview") || "需求概述", value: detail?.overview },
+        { field: ts("srs_doc.main_participant") || "主参加者", value: detail?.participant },
+        { field: ts("test_case.precondition") || "前置条件", value: detail?.pre_condition },
+        { field: ts("srs_doc.trigger") || "触发器", value: detail?.trigger },
+        { field: "事件流", value: detail?.work_flow },
+        { field: ts("srs_doc.postcondition") || "后置条件", value: detail?.post_condition },
+        { field: ts("srs_doc.exception") || "异常情况", value: detail?.exception },
+        { field: ts("srs_doc.constraint") || "约束", value: detail?.constraint },
+    ].filter((row) => String(row.value || "").trim()));
+    const renderReqDetailTable = (detail: any, key: string) => (
+        <div className="node-table" key={key}>
+            <Table
+                size="small"
+                bordered
+                pagination={false}
+                rowKey="field"
+                dataSource={reqDetailRows(detail)}
+                columns={[
+                    { title: "字段", dataIndex: "field", width: 160 },
+                    { title: "内容", dataIndex: "value", render: (t: string) => <span style={{ whiteSpace: "pre-line", wordBreak: "break-word" }}>{t || "-"}</span> },
+                ]}
+            />
+        </div>
+    );
+    const renderChangeTableTitle = (title?: string) => {
+        const txt = String(title || "").trim();
+        return !txt || /^表格\d+$/.test(txt) ? "变更需求" : txt;
+    };
+    const isRenderableTable = hasRenderableTable;
     const orderedNormalTables = (!isSrsReqRefNode
         ? [
             ...(isRenderableTable(node.table) ? [{
@@ -556,7 +642,7 @@ const TreeNodeItem = ({
                       />
                   )}
                   {
-                    ('srs_code' in node) && node.srs_code !== null && (
+                    !isAutoReqNode && ('srs_code' in node) && node.srs_code !== null && (
                         readOnly ? (
                             <div className="node-srs-code">{node.srs_code || "-"}</div>
                         ) : (
@@ -571,7 +657,7 @@ const TreeNodeItem = ({
                     )
                   }
                   {/* 章节 RCM 选择：选择后自动拼接写入 text 文本框（与标题同一行） */}
-                  {Array.isArray(node.rcm_codes) && (
+                  {!isAutoReqNode && Array.isArray(node.rcm_codes) && (
                       <div className="node-rcm-select">
                           {readOnly ? (
                               <div>{(node.rcm_codes || []).join(", ") || "-"}</div>
@@ -823,10 +909,10 @@ const TreeNodeItem = ({
                       </div>
                   </div>
               ))}
-              {showReqExtraTables && (srsReqPreview?.changes || []).map((table) => (
+              {shouldShowChangeReqTables && (srsReqPreview?.changes || []).filter((table) => (table.data || []).length > 0).map((table) => (
                   <div className="node-table" key={`srs_change_${table.id}`}>
                       <div style={{ marginBottom: 8, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                          <span>{table.title || "变更表格"}</span>
+                          <span>{renderChangeTableTitle(table.title)}</span>
                           {!readOnly && (
                               <Button
                                   size="small"
@@ -856,47 +942,57 @@ const TreeNodeItem = ({
                       </div>
                   </div>
               ))}
-              {node.ref_type === "srs_reqs" && srsReqPreview && (
+              {matchedReqDetail && !isRenderableTable(node.table) && renderReqDetailTable(matchedReqDetail, `req_detail_${node.id}`)}
+              {chapterReqDetails.map((detail: any, idx: number) => renderReqDetailTable(detail, `chapter_req_detail_${node.id}_${detail?.code || idx}`))}
+              {shouldShowSrsReqPreviewTables && (
                   <div className="node-table">
-                      <div style={{ marginBottom: 8, fontWeight: 600 }}>{ts("srs_doc.srs_table") || "产品需求列表"}</div>
-                      <Table
-                          size="small"
-                          bordered
-                          pagination={false}
-                          rowKey="key"
-                          loading={!!srsReqLoading}
-                          locale={{ emptyText: "暂无数据" }}
-                          dataSource={srsReqPreview.main || []}
-                          columns={[
-                              { title: ts("srs_doc.srs_code") || "需求编号", dataIndex: "srs_code", width: 180 },
-                              { title: ts("srs_doc.module") || "模块", dataIndex: "module", width: 180 },
-                              { title: ts("srs_doc.function") || "功能", dataIndex: "function", width: 360, render: (t: string) => t ? <span style={{ whiteSpace: "pre-line", wordBreak: "break-word" }}>{t}</span> : "-" },
-                              { title: ts("srs_doc.sub_function") || "子功能", dataIndex: "sub_function", width: 360, render: (t: string) => t ? <span style={{ whiteSpace: "pre-line", wordBreak: "break-word" }}>{t}</span> : "-" },
-                          ]}
-                          scroll={{ x: 1060 }}
-                      />
+                      {(srsReqPreview.main || []).length > 0 && (
+                          <>
+                              <div style={{ marginBottom: 8, fontWeight: 600 }}>{ts("srs_doc.srs_table") || "产品需求列表"}</div>
+                              <Table
+                                  size="small"
+                                  bordered
+                                  pagination={false}
+                                  rowKey="key"
+                                  loading={!!srsReqLoading}
+                                  locale={{ emptyText: "暂无数据" }}
+                                  dataSource={srsReqPreview.main || []}
+                                  columns={[
+                                      { title: ts("srs_doc.srs_code") || "需求编号", dataIndex: "srs_code", width: 180 },
+                                      { title: ts("srs_doc.module") || "模块", dataIndex: "module", width: 180 },
+                                      { title: ts("srs_doc.function") || "功能", dataIndex: "function", width: 360, render: (t: string) => t ? <span style={{ whiteSpace: "pre-line", wordBreak: "break-word" }}>{t}</span> : "-" },
+                                      { title: ts("srs_doc.sub_function") || "子功能", dataIndex: "sub_function", width: 360, render: (t: string) => t ? <span style={{ whiteSpace: "pre-line", wordBreak: "break-word" }}>{t}</span> : "-" },
+                                  ]}
+                                  scroll={{ x: 1060 }}
+                              />
+                          </>
+                      )}
 
-                      <div style={{ marginTop: 16, marginBottom: 8, fontWeight: 600 }}>{ts("srs_doc.other_req_list") || "其他需求列表"}</div>
-                      <Table
-                          size="small"
-                          bordered
-                          pagination={false}
-                          rowKey="key"
-                          loading={!!srsReqLoading}
-                          locale={{ emptyText: "暂无数据" }}
-                          dataSource={srsReqPreview.other || []}
-                          columns={[
-                              { title: ts("srs_doc.srs_code") || "需求编号", dataIndex: "srs_code", width: 180 },
-                              { title: ts("srs_doc.module") || "需求模块", dataIndex: "module", width: 320 },
-                              { title: ts("srs_doc.chapter_number") || "对应的章节号", dataIndex: "location", width: 320 },
-                          ]}
-                          scroll={{ x: 820 }}
-                      />
+                      {(srsReqPreview.other || []).length > 0 && (
+                          <>
+                              <div style={{ marginTop: 16, marginBottom: 8, fontWeight: 600 }}>{ts("srs_doc.other_req_list") || "其他需求列表"}</div>
+                              <Table
+                                  size="small"
+                                  bordered
+                                  pagination={false}
+                                  rowKey="key"
+                                  loading={!!srsReqLoading}
+                                  locale={{ emptyText: "暂无数据" }}
+                                  dataSource={srsReqPreview.other || []}
+                                  columns={[
+                                      { title: ts("srs_doc.srs_code") || "需求编号", dataIndex: "srs_code", width: 180 },
+                                      { title: ts("srs_doc.module") || "需求模块", dataIndex: "module", width: 320 },
+                                      { title: ts("srs_doc.chapter_number") || "对应的章节号", dataIndex: "location", width: 320 },
+                                  ]}
+                                  scroll={{ x: 820 }}
+                              />
+                          </>
+                      )}
 
                       {(srsReqPreview.changes || []).map((table) => (
                           <div key={`srs_preview_change_${table.id}`} style={{ marginTop: 16 }}>
                               <div style={{ marginBottom: 8, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                                  <span>{table.title || "变更表格"}</span>
+                                  <span>{renderChangeTableTitle(table.title)}</span>
                                   {!readOnly && (
                                       <Button
                                           size="small"
@@ -953,6 +1049,7 @@ const TreeNodeItem = ({
                     onOpenReqList={onOpenReqList}
                     onEditSrsChangeTable={onEditSrsChangeTable}
                     srsReqPreview={srsReqPreview}
+                    reqDetails={reqDetails}
                     srsReqLoading={srsReqLoading}
                 />
             ))}
@@ -976,11 +1073,12 @@ interface TreeStructureProps {
         other: any[];
         changes: Array<{ id: number | string; title: string; data: any[] }>;
     };
+    reqDetails?: any[];
     srsReqLoading?: boolean;
     onNodesSnapshot?: (nodes: TreeNode[]) => void;
 }
 
-export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcmOptions, onNodeDelete, onOpenSrsTable, onOpenReqList, onEditSrsChangeTable, srsReqPreview, srsReqLoading, onNodesSnapshot }: TreeStructureProps) => {
+export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcmOptions, onNodeDelete, onOpenSrsTable, onOpenReqList, onEditSrsChangeTable, srsReqPreview, reqDetails, srsReqLoading, onNodesSnapshot }: TreeStructureProps) => {
     const { t: ts } = useTranslation();
     const [nodes, setNodes] = useState<TreeNode[]>(value);
     const [tableModalVisible, setTableModalVisible] = useState(false);
@@ -1005,10 +1103,166 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         });
     };
 
+    const normalizeSrsCode = (value?: string) => String(value || "").replace(/\s+/g, "").toUpperCase();
+    const getReqMajorChapter = (code?: string) => {
+        const matched = normalizeSrsCode(code).match(/^SRS-[A-Z]+(\d+)-/);
+        const digits = matched?.[1] || "";
+        return digits ? String(parseInt(digits.slice(-1), 10)) : "";
+    };
+    const normalizeTitleText = (value?: string) => String(value || "").replace(/\s+/g, "");
+    const isImportedCatalogTitle = (title?: string) => /^\d+(?:\.\d+)*\s+\S.*\s+\d+$/.test(String(title || "").trim());
+    const hasReqDetailContent = (detail: any) => [
+        detail?.overview,
+        detail?.participant,
+        detail?.pre_condition,
+        detail?.trigger,
+        detail?.work_flow,
+        detail?.post_condition,
+        detail?.exception,
+        detail?.constraint,
+    ].some((item) => String(item || "").trim());
+    const buildReqDetailTable = (detail: any): TableData => {
+        const leftCode = "field";
+        const rightCode = "value";
+        const rows = [
+            { [leftCode]: "需求编号", [rightCode]: detail?.code || "" },
+            { [leftCode]: "需求名称", [rightCode]: detail?.name || detail?.module || detail?.function || detail?.sub_function || "" },
+            { [leftCode]: "需求概述", [rightCode]: detail?.overview || "" },
+            { [leftCode]: "主参加者", [rightCode]: detail?.participant || "" },
+            { [leftCode]: "前置条件", [rightCode]: detail?.pre_condition || "" },
+            { [leftCode]: "触发器", [rightCode]: detail?.trigger || "" },
+            { [leftCode]: "事件流", [rightCode]: detail?.work_flow || "" },
+            { [leftCode]: "后置条件", [rightCode]: detail?.post_condition || "" },
+            { [leftCode]: "异常情况", [rightCode]: detail?.exception || "" },
+            { [leftCode]: "约束", [rightCode]: detail?.constraint || "" },
+        ];
+        return {
+            show_header: 1,
+            headers: [
+                { code: leftCode, name: "字段" },
+                { code: rightCode, name: "内容" },
+            ],
+            rows,
+        };
+    };
+    const buildAutoNode = (title: string, parent: TreeNode, extra: Partial<TreeNode> = {}): TreeNode => ({
+        id: Date.now() + Math.floor(Math.random() * 100000),
+        doc_id: docId,
+        n_id: 0,
+        p_id: parent.n_id || 0,
+        title,
+        srs_code: null,
+        rcm_codes: null,
+        text: "",
+        label: "__auto_req_group",
+        table: null,
+        children: [],
+        ...extra,
+    });
+    const getNextChildNo = (children: TreeNode[], prefix: string) => children.reduce((max, child) => {
+        const escaped = prefix.replace(/\./g, "\\.");
+        const matched = String(child.title || "").trim().match(new RegExp(`^${escaped}\\.(\\d+)`));
+        return matched ? Math.max(max, parseInt(matched[1], 10)) : max;
+    }, 0) + 1;
+    const findChildByTitleText = (children: TreeNode[], prefix: string, titleText: string) => {
+        const normalizedText = normalizeTitleText(titleText);
+        return (children || []).find((child) => {
+            const title = String(child.title || "").trim();
+            return title.startsWith(`${prefix}.`) && normalizeTitleText(title.replace(/^\d+(?:\.\d+)*\s*/, "")) === normalizedText;
+        });
+    };
+    const syncReqDetailsToTree = (nodeList: TreeNode[], details: any[] = []): TreeNode[] => {
+        const detailMap = new Map((details || []).map((detail: any) => [normalizeSrsCode(detail?.code), detail]));
+        const cloned = (nodeList || []).map((node) => {
+            const isAutoReqDetailNode = node.label === "__auto_req_detail";
+            const detail = detailMap.get(normalizeSrsCode(node.srs_code || ""));
+            const titlePrefix = String(node.title || "").trim().match(/^(\d+\.\d+)\s+/)?.[1];
+            const titleText = String(detail?.module || detail?.name || detail?.function || node.srs_code || "").trim();
+            return {
+                ...node,
+                title: isAutoReqDetailNode && titlePrefix && titleText ? `${titlePrefix} ${titleText}` : node.title,
+                // 自动补出来的需求章节，明细用下方表格展示，输入框保持空白，样式与导入的功能描述一致。
+                text: isAutoReqDetailNode ? "" : node.text,
+                table: isAutoReqDetailNode && detail && !hasRenderableTable(node.table) ? buildReqDetailTable(detail) : node.table,
+                children: syncReqDetailsToTree(node.children || [], details),
+            };
+        });
+        const existingCodes = new Set<string>();
+        const walkCodes = (items: TreeNode[]) => {
+            (items || []).forEach((node) => {
+                const code = normalizeSrsCode(node.srs_code || "");
+                if (code) existingCodes.add(code);
+                walkCodes(node.children || []);
+            });
+        };
+        walkCodes(cloned);
+
+        const candidates = (details || []).filter((detail: any) => {
+            const code = normalizeSrsCode(detail?.code);
+            const typeCode = String(detail?.type_code || "");
+            return code && !existingCodes.has(code) && !["1", "2", ""].includes(typeCode) && hasReqDetailContent(detail);
+        });
+        candidates.forEach((detail: any) => {
+            const code = normalizeSrsCode(detail?.code);
+            const chapter = getReqMajorChapter(code);
+            if (!chapter) return;
+            const parent = cloned.find((node) => {
+                const title = String(node.title || "").trim();
+                return title.startsWith(`${chapter} `) && !isImportedCatalogTitle(title);
+            });
+            if (!parent) return;
+            const moduleText = String(detail?.module || detail?.name || detail?.function || code || "").trim() || code;
+            const functionText = String(detail?.function || "").trim();
+            const subFunctionText = String(detail?.sub_function || "").trim();
+
+            parent.children = parent.children || [];
+            let moduleNode = findChildByTitleText(parent.children, chapter, moduleText);
+            if (!moduleNode) {
+                const moduleNo = getNextChildNo(parent.children, chapter);
+                moduleNode = buildAutoNode(`${chapter}.${moduleNo} ${moduleText}`, parent);
+                parent.children = [...parent.children, moduleNode];
+            }
+
+            let targetNode = moduleNode;
+            if (functionText) {
+                const modulePrefix = String(moduleNode.title || "").trim().match(/^(\d+\.\d+)/)?.[1] || `${chapter}.1`;
+                moduleNode.children = moduleNode.children || [];
+                let functionNode = findChildByTitleText(moduleNode.children, modulePrefix, functionText);
+                if (!functionNode) {
+                    const functionNo = getNextChildNo(moduleNode.children, modulePrefix);
+                    functionNode = buildAutoNode(`${modulePrefix}.${functionNo} ${functionText}`, moduleNode);
+                    moduleNode.children = [...moduleNode.children, functionNode];
+                }
+                targetNode = functionNode;
+            }
+
+            if (subFunctionText) {
+                const functionPrefix = String(targetNode.title || "").trim().match(/^(\d+\.\d+\.\d+)/)?.[1] || `${chapter}.1.1`;
+                targetNode.children = targetNode.children || [];
+                let subFunctionNode = findChildByTitleText(targetNode.children, functionPrefix, subFunctionText);
+                if (!subFunctionNode) {
+                    const subFunctionNo = getNextChildNo(targetNode.children, functionPrefix);
+                    subFunctionNode = buildAutoNode(`${functionPrefix}.${subFunctionNo} ${subFunctionText}`, targetNode);
+                    targetNode.children = [...targetNode.children, subFunctionNode];
+                }
+                targetNode = subFunctionNode;
+            }
+
+            targetNode.srs_code = code;
+            targetNode.rcm_codes = null;
+            targetNode.text = "";
+            targetNode.label = "__auto_req_detail";
+            targetNode.table = buildReqDetailTable(detail);
+            existingCodes.add(code);
+        });
+        return cloned;
+    };
+
     // 同步外部传入的 value 到内部状态
     useEffect(() => {
-        setNodes(syncRcmCodesFromText(value));
-    }, [value]);
+        const withRcm = syncRcmCodesFromText(value);
+        setNodes(syncReqDetailsToTree(withRcm, reqDetails || []));
+    }, [value, reqDetails]);
     // 把组件内部“最新树状态”实时回传给父组件，避免保存时拿到滞后值
     useEffect(() => {
         onNodesSnapshot?.(nodes);
@@ -1449,8 +1703,24 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
             }
         }
 
+        const getReqNameFromTable = () => {
+            const leftCode = tableData.headers[0]?.code;
+            const rightCode = tableData.headers[1]?.code;
+            if (!leftCode || !rightCode) return "";
+            const reqNameRow = rows.find((row) => normalizeCellText(row[leftCode]).includes("需求名称"));
+            return String(reqNameRow?.[rightCode] || "").trim();
+        };
+        const replaceTitleName = (title: string, name: string) => {
+            const txt = String(title || "").trim();
+            const newName = String(name || "").trim();
+            if (!newName) return title;
+            const matched = txt.match(/^(\d+(?:\.\d+)*\s*)(.*)$/);
+            return matched ? `${matched[1]}${newName}` : newName;
+        };
+        const reqNameFromTable = getReqNameFromTable();
         const newNodes = findNodeAndUpdate(nodes, currentNodeId, (node) => ({
             ...node,
+            title: node.label === "__auto_req_detail" && reqNameFromTable ? replaceTitleName(node.title, reqNameFromTable) : node.title,
             table: tableFormat
         }));
         updateNodes(newNodes);
@@ -1502,6 +1772,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                             onOpenReqList={onOpenReqList}
                             onEditSrsChangeTable={onEditSrsChangeTable}
                             srsReqPreview={srsReqPreview}
+                            reqDetails={reqDetails}
                             srsReqLoading={srsReqLoading}
                         />
                       </div>

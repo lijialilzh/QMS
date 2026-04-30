@@ -11,6 +11,43 @@ import { doSearchProducts } from "../prod_risk/util";
 
 const pageSizeOptions = [100, 500, 1000];
 
+const splitTraceLines = (value?: string) => {
+    const lines = String(value || "")
+        .replace(/\r/g, "")
+        .split("\n")
+        .map((line) => line.trim());
+    while (lines.length > 1 && !lines[lines.length - 1]) {
+        lines.pop();
+    }
+    return lines.length > 0 ? lines : [""];
+};
+
+const expandTraceRows = (rows: any[]) => {
+    return (rows || []).flatMap((row: any, rowIndex: number) => {
+        const sdsCodes = splitTraceLines(row.sds_code);
+        const chapters = splitTraceLines(row.chapter);
+        const locations = splitTraceLines(row.location);
+        const count = Math.max(1, sdsCodes.length, chapters.length, locations.length);
+        return Array.from({ length: count }).map((_, index) => ({
+            ...row,
+            key: `${row.id || row.key || rowIndex}_${index}`,
+            sds_code: sdsCodes[index] ?? "",
+            chapter: chapters[index] ?? "",
+            location: locations[index] ?? "",
+            _sourceRow: row,
+            _splitIndex: index,
+            _rowSpan: index === 0 ? count : 0,
+        }));
+    });
+};
+
+const renderMergedCell = (children: any, row: any) => ({
+    children,
+    props: {
+        rowSpan: row._rowSpan,
+    },
+});
+
 enum DlgTypes {
     edit = "edit",
     delete = "delete",
@@ -161,36 +198,43 @@ export default () => {
         {
             title: ts("sds_trace.srs_code"),
             dataIndex: "srs_code",
+            render: (t: string, row: any) => renderMergedCell(t || "-", row),
         },
         {
             title: ts("sds_trace.sds_code"),
             dataIndex: "sds_code",
+            render: (t: string) => t ? <span style={{ whiteSpace: "pre-line", wordBreak: "break-word" }}>{t}</span> : "-",
         },
         {
             title: ts("sds_trace.type_name"),
             dataIndex: "type_name",
+            render: (t: string, row: any) => renderMergedCell(t || "-", row),
         },
         {
             title: ts("sds_trace.chapter"),
             dataIndex: "chapter",
+            render: (t: string) => t ? <span style={{ whiteSpace: "pre-line", wordBreak: "break-word" }}>{t}</span> : "-",
         },
         {
             title: ts("sds_trace.location"),
             dataIndex: "location",
+            render: (t: string) => t ? <span style={{ whiteSpace: "pre-line", wordBreak: "break-word" }}>{t}</span> : "-",
         },
         {
             title: ts("sds_doc.version"),
             dataIndex: "sdsdoc_version",
+            render: (t: string, row: any) => renderMergedCell(t || "-", row),
         },
         {
             title: ts("action"),
             render: (_value: any, row: any) => {
-                return (
+                return renderMergedCell(
                     <Space size={8} style={{ whiteSpace: "nowrap" }}>
-                        <Button type="link" onClick={() => dispatch({ dlgType: DlgTypes.edit, targetRow: row })}>
+                        <Button type="link" onClick={() => dispatch({ dlgType: DlgTypes.edit, targetRow: row._sourceRow || row })}>
                             {ts("edit")}
                         </Button>
-                    </Space>
+                    </Space>,
+                    row
                 );
             },
         },
@@ -240,9 +284,10 @@ export default () => {
             <Table
                 className="expand"
                 columns={columns}
-                rowKey={(item: any) => item.id}
-                dataSource={data.rows}
+                rowKey={(item: any) => item.key}
+                dataSource={expandTraceRows(data.rows)}
                 loading={data.loading}
+                bordered
                 pagination={{
                     total: data.total,
                     current: data.pageIndex,

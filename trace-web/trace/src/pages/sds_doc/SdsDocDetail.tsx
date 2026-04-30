@@ -194,6 +194,7 @@ export default () => {
     })();
     const [editForm] = Form.useForm();
     const treeStructureRef = useRef<TreeNode[]>([]);
+    const initialEditTreeRef = useRef<TreeNode[]>([]);
     const [data, dispatch] = useData({
         loading: false,
         isEdit: false,
@@ -354,11 +355,13 @@ export default () => {
         return !hasRenderableTable(node.table) && (node.children || []).length > 0;
     };
     const isDataStructureChapter = (node: TreeNode) => {
-        const titleTxt = normalizePlain(node.title);
+        const rawTitle = String(node.title || "").trim();
+        const titleTxt = normalizePlain(rawTitle);
         const bodyTxt = normalizePlain(node.text);
         const merged = `${titleTxt} ${bodyTxt}`;
-        const hasChapter = merged.includes("5.6") || /^5\.6(?:[^0-9]|$)/.test(titleTxt) || /^5\.6(?:[^0-9]|$)/.test(bodyTxt);
-        return hasChapter && merged.includes("数据结构");
+        // 兼容 5.6 / 6.6 / 7.6 ... 等任意“章节号 + 数据结构”场景，避免写死 5.6 导致规则失效
+        const hasChapterPrefix = /^\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/.test(rawTitle);
+        return hasChapterPrefix && merged.includes("数据结构");
     };
     const isLikelyFalseSingleDigitHeading = (title?: string): boolean => {
         const txt = stripTitlePrefixMarks(title);
@@ -403,6 +406,110 @@ export default () => {
         const matched = String(title || "").trim().match(HEADING_NUM_RE);
         return matched?.[1];
     };
+    const normalizeEditRootChapterNumbers = (roots: TreeNode[]): TreeNode[] => {
+        if (isReadOnly || !Array.isArray(roots) || roots.length === 0) return roots;
+        const normalizeBusinessTitle = (title?: string) =>
+            String(title || "")
+                .trim()
+                .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+                .replace(/\s+/g, "");
+        const isFrontMatterTitle = (title?: string) =>
+            /^(目录|需求规格说明|文件修订记录|软件详细设计说明书|软件详细设计)$/.test(normalizeBusinessTitle(title));
+        const firstBodyMajor = roots
+            .filter((node) => !isFrontMatterTitle(node.title))
+            .map((node) => parseHeadingNumber(node.title))
+            .map((num) => Number(String(num || "").split(".")[0]))
+            .find((major) => Number.isFinite(major) && major > 0) || 0;
+        if (firstBodyMajor <= 1) return roots;
+        const offset = firstBodyMajor - 1;
+        const shiftTitle = (title?: string) => {
+            const raw = String(title || "");
+            const matched = raw.trim().match(HEADING_NUM_RE);
+            if (!matched?.[1]) return raw;
+            const parts = matched[1].split(".").map((part) => Number(part));
+            if (!parts.length || !Number.isFinite(parts[0]) || parts[0] <= offset) return raw;
+            parts[0] -= offset;
+            const nextNo = parts.map((part) => String(part)).join(".");
+            return raw.replace(matched[1], nextNo);
+        };
+        const walk = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => ({
+            ...node,
+            title: isFrontMatterTitle(node.title) ? node.title : shiftTitle(node.title),
+            children: walk(node.children || []),
+        }));
+        return walk(roots);
+    };
+    const normalizeTraceMatchText = (value?: string) => String(value || "")
+        .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+        .replace(/^[（(]?\s*(?:\d+|[一二三四五六七八九十]+)\s*[）)]?/, "")
+        .replace(/[\s\u3000:：，,。；;、()（）【】\[\]/\\\-_.]+/g, "")
+        .toLowerCase();
+    const applySdsCodesFromTraceRows = (roots: TreeNode[], traceRows: any[]): TreeNode[] => {
+        if (isReadOnly || !Array.isArray(roots) || roots.length === 0 || !Array.isArray(traceRows) || traceRows.length === 0) return roots;
+        const codeByLocation = new Map<string, string>();
+        const codeByName = new Map<string, string>();
+        traceRows.forEach((row: any) => {
+            const sdsCode = String(row?.sds_code || "").trim();
+            if (!sdsCode) return;
+            const location = String(row?.location || "").trim();
+            if (location && !codeByLocation.has(location)) {
+                codeByLocation.set(location, sdsCode);
+            }
+            [row?.chapter, row?.name, row?.sub_function, row?.function, row?.module]
+                .map((item) => normalizeTraceMatchText(String(item || "")))
+                .filter(Boolean)
+                .forEach((key) => {
+                    if (!codeByName.has(key)) codeByName.set(key, sdsCode);
+                });
+        });
+        if (codeByLocation.size === 0 && codeByName.size === 0) return roots;
+        const findMatchedCode = (node: TreeNode): string => {
+            const title = String(node.title || "").trim();
+            const headingNo = parseHeadingNumber(title) || "";
+            const nameKey = normalizeTraceMatchText(title);
+            return (headingNo && codeByLocation.get(headingNo)) || (nameKey && codeByName.get(nameKey)) || "";
+        };
+        const subtreeHasMatchedCode = (nodes: TreeNode[], code: string): boolean => {
+            if (!code) return false;
+            return (nodes || []).some((child) => {
+                if (findMatchedCode(child) === code) return true;
+                return subtreeHasMatchedCode((child.children || []) as TreeNode[], code);
+            });
+        };
+        const walk = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
+            const children = walk((node.children || []) as TreeNode[]);
+            const currentCode = String((node as any).sds_code ?? "").trim();
+            if (currentCode) {
+                return { ...node, children };
+            }
+            const matchedCode = findMatchedCode(node);
+            if (!matchedCode || subtreeHasMatchedCode(children, matchedCode)) {
+                return { ...node, children };
+            }
+            return {
+                ...node,
+                sds_code: matchedCode,
+                children,
+            };
+        });
+        return walk(roots);
+    };
+    const hydrateSdsCodesFromTrace = async (roots: TreeNode[], docId?: number): Promise<TreeNode[]> => {
+        if (isReadOnly || !docId || !Array.isArray(roots) || roots.length === 0) return roots;
+        try {
+            const res: any = await ApiSdsTrace.list_sds_trace({
+                doc_id: docId,
+                page_index: 0,
+                page_size: 10000,
+                _ts: Date.now(),
+            });
+            if (res?.code !== ApiSdsTrace.C_OK) return roots;
+            return applySdsCodesFromTraceRows(roots, res?.data?.rows || []);
+        } catch (error) {
+            console.error("加载需求追溯表回填SDS编号失败:", error);
+            return roots;
+        }
+    };
     const stripHeadingPrefix = (value?: string): string => {
         return String(value || "")
             .trim()
@@ -438,19 +545,42 @@ export default () => {
         return [...lines, normalizedLine].map((line) => String(line || "").trim()).filter(Boolean).join("\n");
     };
     const isPlaceholderTitle = (title?: string): boolean => IMPORTED_PLACEHOLDER_RE.test(String(title || "").trim());
+    const stripHeadingEmphasis = (value?: string): string => {
+        return String(value || "")
+            .trim()
+            .replace(/^(\*\*|__)\s*/, "")
+            .replace(/\s*(\*\*|__)$/, "")
+            .replace(/^<\s*(strong|b)\b[^>]*>/i, "")
+            .replace(/<\/\s*(strong|b)\s*>$/i, "")
+            .trim();
+    };
+    const isLikelyBoldStyledHeading = (value?: string): boolean => {
+        const txt = String(value || "").trim();
+        if (!txt) return false;
+        if (/^(\*\*|__).+(\*\*|__)$/.test(txt)) return true;
+        if (/^<\s*(strong|b)\b[^>]*>.+<\/\s*(strong|b)\s*>$/i.test(txt)) return true;
+        // 导入文本里常见「短标题 + 冒号」样式；仅作为补号兜底，不影响查看页渲染
+        if (/^[^，,。；;！？!?]{1,40}[:：]$/.test(txt)) return true;
+        return false;
+    };
     const isNumberableNode = (node: TreeNode): boolean => {
         const title = String(node.title || "").trim();
         if (!title) return false;
         if (IMPORTED_PLACEHOLDER_RE.test(title)) return false;
         if (isJsonLikeBodyLine(title)) return false;
-        const pureTitle = title
+        const pureTitleRaw = stripHeadingEmphasis(title
             .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
-            .replace(/\s+/g, "");
+        );
+        const pureTitle = pureTitleRaw.replace(/\s+/g, "");
+        const pureTitleWithoutTrailingColon = pureTitle.replace(/[:：]+$/, "");
         if (/^(目录|需求规格说明|文件修订记录|软件详细设计说明书|软件详细设计)$/.test(pureTitle)) return false;
         // 句子型文本（含逗号/句号/分号/冒号等）不是章节，不自动补编号（避免出现“7.1 ...”误识别）
-        if (/[，,。；;：:！？!?]/.test(pureTitle)) return false;
+        if (/[，,。；;！？!?]/.test(pureTitle)) return false;
+        const hasInnerColon = /[:：]/.test(pureTitleWithoutTrailingColon);
+        if (hasInnerColon) return false;
+        if (/[:：]$/.test(pureTitle) && !isLikelyBoldStyledHeading(stripHeadingEmphasis(title))) return false;
         // 过长标题更像正文段落，不自动编号
-        if (pureTitle.length > 24) return false;
+        if (pureTitleWithoutTrailingColon.length > 24) return false;
         return true;
     };
     const normalizeJsonLikeHeadings = (nodes: TreeNode[], parent?: TreeNode): TreeNode[] => {
@@ -523,10 +653,15 @@ export default () => {
     const isBodyLikeHeadingLine = (value?: string): boolean => {
         const txt = stripTitlePrefixMarks(value);
         if (!txt) return false;
+        // 带明确章节号前缀（如 5.6.1 / 7.2.3）的标题按 Word 原样保留为章节，
+        // 不因末尾冒号等标点被误降级为正文。
+        if (HEADING_NUM_RE.test(txt)) return false;
         const bodyPart = txt
             .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z"']))/, "")
             .trim();
         const probe = bodyPart || txt;
+        // 数据结构章节下常见二级标题（如“Postgresql库1数据库:”“库2数据库:”）需要保留为节点
+        if (/数据库\s*[:：]?$/.test(probe) && probe.length <= 40) return false;
         if (isJsonLikeBodyLine(probe) || isJsonLikeBodyLine(txt)) return true;
         // 即使带章节号前缀，只要是句子型长文本（含标点）也视为正文，不当作章节
         if (/[，,。；;：:！？!?]/.test(probe)) return true;
@@ -727,34 +862,136 @@ export default () => {
         }
 
         const allCandidates = [...(dataNode.children || []), ...trailingNodes];
-        const flattenedTableNodes: TreeNode[] = [];
-        const passthroughNodes: TreeNode[] = [];
-        const seen = new Set<string>();
-        const pushTableNode = (node: TreeNode) => {
-            const key = String(node.n_id || node.id || `${node.title}-${flattenedTableNodes.length}`);
-            if (seen.has(key)) return;
-            seen.add(key);
-            // 扁平化后作为 5.6 的直接子节点，避免多层套娃
-            flattenedTableNodes.push({ ...node, children: [] });
-        };
-        const visit = (node: TreeNode) => {
-            if (hasRenderableTable(node.table)) {
-                pushTableNode(node);
-                return;
+        // 5.6 数据结构需保持原始 Word 层级（如 5.6.1 库1 / 5.6.2 库2 各自挂对应表），不做扁平化
+        const keepHierarchy = (node: TreeNode): TreeNode => ({
+            ...node,
+            children: (node.children || []).map((child) => keepHierarchy(child)),
+        });
+        dataNode.children = allCandidates.map((node) => keepHierarchy(node));
+        // 兜底：后端已拆出“库X数据库:”子标题但未带章节号时，补成 5.6.1 / 5.6.2 ...
+        // 仅作用于“数据结构”章节下数据库标题，避免影响其它章节。
+        const baseChapterMatch = String(dataNode.title || "").trim().match(HEADING_NUM_RE);
+        const baseChapterNo = baseChapterMatch?.[1] || "";
+        if (baseChapterNo) {
+            let dbHeadingIdx = 0;
+            const ensureDbHeadingNo = (nodes: TreeNode[]): TreeNode[] => {
+                return (nodes || []).map((raw) => {
+                    const node: TreeNode = { ...raw, children: ensureDbHeadingNo(raw.children || []) };
+                    const rawTitle = String(node.title || "").trim();
+                    if (!rawTitle) return node;
+                    const hasNo = !!rawTitle.match(HEADING_NUM_RE);
+                    const plain = rawTitle.replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "").trim();
+                    const isDbHeading = /数据库\s*[:：]?$/.test(plain) && plain.length <= 80;
+                    if (isDbHeading && !hasNo) {
+                        dbHeadingIdx += 1;
+                        node.title = `${baseChapterNo}.${dbHeadingIdx} ${plain}`.trim();
+                    }
+                    return node;
+                });
+            };
+            dataNode.children = ensureDbHeadingNo(dataNode.children || []);
+        }
+
+        // 数据结构章节：将正文中的“库X数据库:”短标题提升为真实子标题节点（三级），并绑定到后续表格节点
+        const dataTextRaw = String(dataNode.text || "").replace(/\r/g, "\n");
+        const dbHeadingFromLine = dataTextRaw
+            .split("\n")
+            .map((line) => String(line || "").trim())
+            .filter((line) => /数据库\s*[:：]?$/.test(line) && line.length <= 60);
+        // 兼容“库标题在同一段中而非独占一行”的导入场景（例如：...存储。Postgresql库1数据库：库2数据库：）
+        const dbHeadingFromInline = Array.from(
+            dataTextRaw.matchAll(/((?:[A-Za-z]+\s*)?库[0-9一二三四五六七八九十]+数据库\s*[:：])/gi)
+        )
+            .map((m) => String(m?.[1] || "").trim())
+            .filter(Boolean);
+        const dbHeadingLines = Array.from(new Set([...dbHeadingFromLine, ...dbHeadingFromInline]));
+        if (dbHeadingLines.length > 0 && Array.isArray(dataNode.children) && dataNode.children.length > 0) {
+            const chapterMatch = String(dataNode.title || "").trim().match(HEADING_NUM_RE);
+            const baseChapter = chapterMatch?.[1] || "";
+            const children = [...dataNode.children];
+            const hasExistingDbHeadingNode = children.some((child) => {
+                const titleTxt = String(child.title || "").trim();
+                return /数据库\s*[:：]?$/.test(titleTxt) && hasTableInSubtree(child);
+            });
+            const carrierIndexes = children
+                .map((child, idx) => ({ child, idx }))
+                .filter(({ child }) => hasTableInSubtree(child))
+                .map((item) => item.idx);
+
+            const useCount = !hasExistingDbHeadingNode ? Math.min(dbHeadingLines.length, carrierIndexes.length) : 0;
+            if (useCount > 0) {
+                const nextChildren: TreeNode[] = [];
+                let cursor = 0;
+                for (let i = 0; i < useCount; i++) {
+                    const start = carrierIndexes[i];
+                    const end = i + 1 < useCount ? carrierIndexes[i + 1] : children.length;
+                    if (start > cursor) {
+                        nextChildren.push(...children.slice(cursor, start));
+                    }
+                    const groupChildren = children.slice(start, end);
+                    const headingText = String(dbHeadingLines[i] || "")
+                        .replace(/^[\s\u3000•·▪■◆●○□◇\-–—]+/, "")
+                        .trim();
+                    const numberedHeading = HEADING_NUM_RE.test(headingText)
+                        ? headingText
+                        : `${baseChapter ? `${baseChapter}.${i + 1}` : `${i + 1}`}. ${headingText}`;
+                    const syntheticId = Number(`${Date.now()}${i + 1}`);
+                    nextChildren.push({
+                        id: syntheticId,
+                        doc_id: dataNode.doc_id || 0,
+                        n_id: 0,
+                        p_id: dataNode.n_id || 0,
+                        title: numberedHeading,
+                        label: "",
+                        img_url: "",
+                        text: "",
+                        table: {},
+                        children: groupChildren,
+                    });
+                    cursor = end;
+                }
+                if (cursor < children.length) {
+                    nextChildren.push(...children.slice(cursor));
+                }
+                dataNode.children = nextChildren;
             }
-            const children = node.children || [];
-            if (children.length === 0) {
-                passthroughNodes.push(node);
-                return;
+
+            if (useCount > 0) {
+                const usedLines = dbHeadingLines.slice(0, useCount);
+                const escapeRegExp = (value: string) => String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+                let nextText = String(dataNode.text || "");
+                usedLines.forEach((line) => {
+                    if (!line) return;
+                    const reg = new RegExp(escapeRegExp(line), "g");
+                    nextText = nextText.replace(reg, "");
+                });
+                dataNode.text = nextText
+                    .replace(/\r/g, "")
+                    .split("\n")
+                    .map((line) => String(line || "").trim())
+                    .filter(Boolean)
+                    .join("\n");
             }
-            if (!hasTableInSubtree(node)) {
-                passthroughNodes.push(node);
-                return;
+            // 二次兜底：若数据库子标题已成为子节点，确保父节点正文中不再重复显示这些标题文本
+            const dbHeadingTitles = (dataNode.children || [])
+                .map((child) => String(child.title || "").trim())
+                .map((title) => title.replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "").trim())
+                .filter((title) => /数据库\s*[:：]?$/.test(title));
+            if (dbHeadingTitles.length > 0) {
+                const escapeRegExp = (value: string) => String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+                let nextText = String(dataNode.text || "");
+                dbHeadingTitles.forEach((title) => {
+                    const reg = new RegExp(escapeRegExp(title), "g");
+                    nextText = nextText.replace(reg, "");
+                });
+                dataNode.text = nextText
+                    .replace(/\r/g, "")
+                    .split("\n")
+                    .map((line) => String(line || "").trim())
+                    .filter(Boolean)
+                    .join("\n");
             }
-            children.forEach(visit);
-        };
-        allCandidates.forEach(visit);
-        dataNode.children = [...passthroughNodes, ...flattenedTableNodes];
+        }
         if (debug56Enabled) {
             const levelRows: Array<{ level: number; title: string; hasTable: boolean; childCount: number }> = [];
             const walk = (nodes: TreeNode[], level: number) => {
@@ -837,6 +1074,9 @@ export default () => {
         };
         return [...cleanedRoots, reviewRoot];
     };
+    // 保留历史函数实现（便于回滚），当前按“Word层级直出”路径不启用。
+    void decorateImportedWordTree;
+    void relocateDataStructureTables;
     const rebindFlowImageToFlowChild = (roots: TreeNode[]): TreeNode[] => {
         const walk = (nodes: TreeNode[]): TreeNode[] => {
             return (nodes || []).map((node) => {
@@ -844,10 +1084,10 @@ export default () => {
                 const nodeTitle = String(node.title || "");
                 const nodeLabel = String(node.label || "");
                 const nodeText = String(node.text || "");
-                const nodeHasFlowHint = /网络安全|流程图/.test(`${nodeTitle} ${nodeLabel} ${nodeText}`);
+                const nodeHasFlowHint = /网络安全流程图|安全流程图/.test(`${nodeTitle} ${nodeLabel} ${nodeText}`);
                 let nextNode: TreeNode = { ...node, children: nextChildren };
                 if (nodeHasFlowHint && String(node.img_url || "").trim() && nextChildren.length > 0) {
-                    const targetIdx = nextChildren.findIndex((child) => /网络安全|流程图/.test(`${child.title || ""} ${child.label || ""}`));
+                    const targetIdx = nextChildren.findIndex((child) => /网络安全流程图|安全流程图/.test(`${child.title || ""} ${child.label || ""}`));
                     const placeholderIdx = nextChildren.findIndex((child) => /^导入图片\d+$/i.test(String(child.title || "").trim()));
                     const pickedIdx = targetIdx >= 0 ? targetIdx : placeholderIdx;
                     if (pickedIdx >= 0) {
@@ -871,20 +1111,25 @@ export default () => {
     };
     const normalizeImageRefTypes = (roots: TreeNode[]): TreeNode[] => {
         const detectRefType = (txt: string): string | undefined => {
-            const merged = String(txt || "");
-            if (/网络安全|流程图/.test(merged)) return "img_flow";
-            if (/物理拓扑图|拓扑图/.test(merged)) return "img_topo";
-            if (/系统结构图|体系结构图|结构图/.test(merged)) return "img_struct";
+            const normalized = String(txt || "")
+                .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+                .replace(/^图\s*\d+\s*/, "")
+                .replace(/\s+/g, "")
+                .trim();
+            if (/^(网络安全流程图|安全流程图)$/.test(normalized)) return "img_flow";
+            if (/^(物理拓扑图|拓扑图)$/.test(normalized)) return "img_topo";
+            if (/^(系统结构图|体系结构图)$/.test(normalized)) return "img_struct";
             return undefined;
         };
         const walk = (nodes: TreeNode[]): TreeNode[] => {
             return (nodes || []).map((node) => {
-                const merged = `${node.title || ""} ${node.label || ""} ${node.text || ""}`;
+                const merged = `${node.title || ""} ${node.label || ""}`;
                 const guessedRefType = detectRefType(merged);
                 const nextChildren = walk((node.children || []) as TreeNode[]);
+                const keepExistingRefType = node.ref_type && !DOC_IMAGE_REF_TYPES.includes(node.ref_type as any);
                 return {
                     ...node,
-                    ...(guessedRefType ? { ref_type: guessedRefType } : {}),
+                    ref_type: guessedRefType || (keepExistingRefType ? node.ref_type : undefined),
                     children: nextChildren,
                 };
             });
@@ -971,6 +1216,8 @@ export default () => {
         return ensureFrontMatterTables(addIdsToNodes(standardNodes as any[]));
     };
 
+    const cloneTree = (nodes: TreeNode[]): TreeNode[] => JSON.parse(JSON.stringify(nodes || []));
+
     useEffect(() => {
         const id = params.id;
         if (id) {
@@ -996,20 +1243,20 @@ export default () => {
 
                     // 解析树状结构数据
                     const parsedTree = (targetRow.content || []).map((node: any) => parseTreeNode(node));
-                    const normalizedTree = normalizeBodyLikeHeadingNodes(
-                        normalizeJsonLikeHeadings(normalizeFalseSingleDigitHeadings(parsedTree))
-                    );
-                    const relocatedTree = relocateDataStructureTables(normalizedTree);
-                    const parsedTreeForView = decorateImportedWordTree(
-                        isReadOnly ? relocateReviewTablesToStandalonePage(relocatedTree) : relocatedTree
-                    );
+                    // 严格按 Word 导入层级展示：不做前端二次“章节重排/补号/拆分”
+                    const parsedTreeForView = isReadOnly
+                        ? relocateReviewTablesToStandalonePage(parsedTree)
+                        : normalizeEditRootChapterNumbers(parsedTree);
                     const flowReboundTree = rebindFlowImageToFlowChild(parsedTreeForView);
                     const normalizedRefTree = normalizeImageRefTypes(flowReboundTree);
                     const parsedContent = isReadOnly
                         ? bindTableCaptionsForPersist(normalizedRefTree)
                         : normalizedRefTree;
                     const remappedContent = await remapRefTypeImagesByProduct(parsedContent, targetRow.product_id, targetRow.version);
-                    const ensuredContent = ensureFrontMatterTables(remappedContent as TreeNode[]);
+                    const ensuredContent = await hydrateSdsCodesFromTrace(
+                        ensureFrontMatterTables(remappedContent as TreeNode[]),
+                        targetRow.id || (params.id ? parseInt(params.id) : undefined)
+                    );
 
                     dispatch({
                         loading: false,
@@ -1022,6 +1269,7 @@ export default () => {
                         docVersion: targetRow.version ?? "",
                     });
                     treeStructureRef.current = ensuredContent;
+                    initialEditTreeRef.current = cloneTree(ensuredContent as TreeNode[]);
                     if (needRebindSrs) {
                         message.warning("该详细设计未绑定需求规格说明版本，请先绑定该产品下需求规格说明后再进行操作。");
                         if (isReadOnly) {
@@ -1038,6 +1286,7 @@ export default () => {
             // 新增模式
             editForm.resetFields();
             const initialTree = buildStandardNodesWithIds();
+            initialEditTreeRef.current = [];
             dispatch({ isEdit: false, requireRebindSrs: false, treeStructure: initialTree });
             treeStructureRef.current = initialTree;
         }
@@ -1104,20 +1353,20 @@ export default () => {
                 if (docRes?.code === Api.C_OK) {
                     const latestRow = docRes.data || {};
                     const parsedTree = (latestRow.content || []).map((node: any) => parseTreeNode(node));
-                    const normalizedTree = normalizeBodyLikeHeadingNodes(
-                        normalizeJsonLikeHeadings(normalizeFalseSingleDigitHeadings(parsedTree))
-                    );
-                    const relocatedTree = relocateDataStructureTables(normalizedTree);
-                    const parsedTreeForView = decorateImportedWordTree(
-                        isReadOnly ? relocateReviewTablesToStandalonePage(relocatedTree) : relocatedTree
-                    );
+                    // 严格按 Word 导入层级展示：不做前端二次“章节重排/补号/拆分”
+                    const parsedTreeForView = isReadOnly
+                        ? relocateReviewTablesToStandalonePage(parsedTree)
+                        : normalizeEditRootChapterNumbers(parsedTree);
                     const flowReboundTree = rebindFlowImageToFlowChild(parsedTreeForView);
                     const normalizedRefTree = normalizeImageRefTypes(flowReboundTree);
                     const parsedContent = isReadOnly
                         ? bindTableCaptionsForPersist(normalizedRefTree)
                         : normalizedRefTree;
                     const remappedContent = await remapRefTypeImagesByProduct(parsedContent, latestRow.product_id, latestRow.version);
-                    const ensuredContent = ensureFrontMatterTables(remappedContent as TreeNode[]);
+                    const ensuredContent = await hydrateSdsCodesFromTrace(
+                        ensureFrontMatterTables(remappedContent as TreeNode[]),
+                        latestRow.id || docId
+                    );
                     currentTree = ensuredContent as TreeNode[];
                     treeStructureRef.current = ensuredContent;
                     dispatch({ treeStructure: ensuredContent });
@@ -1177,6 +1426,42 @@ export default () => {
         });
     };
 
+    const splitTraceLines = (value?: string) => {
+        const lines = String(value || "")
+            .replace(/\r/g, "")
+            .split("\n")
+            .map((line) => line.trim());
+        while (lines.length > 1 && !lines[lines.length - 1]) {
+            lines.pop();
+        }
+        return lines.length > 0 ? lines : [""];
+    };
+
+    const expandTraceRows = (rows: any[]) => {
+        return (rows || []).flatMap((row: any, rowIndex: number) => {
+            const sdsCodes = splitTraceLines(row.sds_code);
+            const chapters = splitTraceLines(row.chapter);
+            const locations = splitTraceLines(row.location);
+            const count = Math.max(1, sdsCodes.length, chapters.length, locations.length);
+            return Array.from({ length: count }).map((_, index) => ({
+                ...row,
+                key: `${row.id || row.key || rowIndex}_${index}`,
+                sds_code: sdsCodes[index] ?? "",
+                chapter: chapters[index] ?? "",
+                location: locations[index] ?? "",
+                _splitIndex: index,
+                _rowSpan: index === 0 ? count : 0,
+            }));
+        });
+    };
+
+    const renderMergedCell = (children: any, row: any) => ({
+        children,
+        props: {
+            rowSpan: row._rowSpan,
+        },
+    });
+
     // 加载需求追溯表数据
     const loadTraceListData = () => {
         const docId = params.id ? parseInt(params.id) : 0;
@@ -1198,11 +1483,12 @@ export default () => {
                     srs_code: item.srs_code || "",
                     sds_code: item.sds_code || "",
                     chapter: item.chapter || "",
+                    location: item.location || "",
                     product_name: item.product_name || "",
                     product_version: item.product_version || "",
                     doc_version: item.doc_version || "",
                 }));
-                dispatch({ traceListData: tableData, traceListLoading: false });
+                dispatch({ traceListData: expandTraceRows(tableData), traceListLoading: false });
             } else {
                 message.error(res.msg || "加载需求追溯表数据失败");
                 dispatch({ traceListData: [], traceListLoading: false });
@@ -1252,6 +1538,17 @@ export default () => {
     };
 
     const handleInitTemplate = () => {
+        if (params.id && data.isEdit) {
+            const originalTree = cloneTree(initialEditTreeRef.current || []);
+            if (!originalTree.length) {
+                message.warning("暂无可恢复的初始内容，请刷新页面后重试");
+                return;
+            }
+            treeStructureRef.current = originalTree;
+            dispatch({ treeStructure: originalTree });
+            message.success("已恢复到进入编辑页时的内容");
+            return;
+        }
         handleLoadStandardNode();
     };
 
@@ -1529,20 +1826,20 @@ export default () => {
                             }
 
                             const parsedTree = (targetRow.content || []).map((node: any) => parseTreeNode(node));
-                            const normalizedTree = normalizeBodyLikeHeadingNodes(
-                                normalizeJsonLikeHeadings(normalizeFalseSingleDigitHeadings(parsedTree))
-                            );
-                            const relocatedTree = relocateDataStructureTables(normalizedTree);
-                            const parsedTreeForView = decorateImportedWordTree(
-                                isReadOnly ? relocateReviewTablesToStandalonePage(relocatedTree) : relocatedTree
-                            );
+                            // 严格按 Word 导入层级展示：不做前端二次“章节重排/补号/拆分”
+                            const parsedTreeForView = isReadOnly
+                                ? relocateReviewTablesToStandalonePage(parsedTree)
+                                : normalizeEditRootChapterNumbers(parsedTree);
                             const flowReboundTree = rebindFlowImageToFlowChild(parsedTreeForView);
                             const normalizedRefTree = normalizeImageRefTypes(flowReboundTree);
                             const parsedContent = isReadOnly
                                 ? bindTableCaptionsForPersist(normalizedRefTree)
                                 : normalizedRefTree;
                             const remappedContent = await remapRefTypeImagesByProduct(parsedContent, targetRow.product_id, targetRow.version);
-                            const ensuredContent = ensureFrontMatterTables(remappedContent as TreeNode[]);
+                            const ensuredContent = await hydrateSdsCodesFromTrace(
+                                ensureFrontMatterTables(remappedContent as TreeNode[]),
+                                targetRow.id || (params.id ? parseInt(params.id) : undefined)
+                            );
                             dispatch({
                                 changeDescription: targetRow.change_log || "",
                                 docNId: targetRow.n_id || 0,
@@ -1621,8 +1918,6 @@ export default () => {
         .filter((node) => isCatalogNode(node) || subtreeMatches(node, isCoverNode) || subtreeMatches(node, isChangeLogNode))
         .flatMap((node) => collectSubtreeIds(node));
     const coverTitle = stripChapterPrefix(coverRoot?.title) || "软件详细设计";
-    const chapterOffsetMatch = String(coverRoot?.title || "").trim().match(/^(\d+)/);
-    const readOnlyChapterOffset = chapterOffsetMatch ? Number(chapterOffsetMatch[1] || 0) : 0;
 
     const updateExtractedTableCell = (targetNodeId: number, rowIndex: number, colCode: string, value: string) => {
         const updateNode = (nodes: TreeNode[]): TreeNode[] => {
@@ -1880,7 +2175,7 @@ export default () => {
                         hiddenNodeIds={hiddenNodeIds}
                         onNodeDelete={isReadOnly ? undefined : handleNodeDelete}
                         readOnly={isReadOnly}
-                        readOnlyChapterOffset={isReadOnly ? readOnlyChapterOffset : 0}
+                        readOnlyChapterOffset={0}
                         readOnlyRootWrapper={false}
                         onOpenReqdList={() => {
                             loadReqdListData();
@@ -1980,14 +2275,16 @@ export default () => {
                 <Table
                     dataSource={data.traceListData}
                     columns={[
-                        { title: ts("sds_trace.srs_code") || "SRS编号", dataIndex: "srs_code", width: 120, render: (t: string) => t || "-" },
-                        { title: ts("sds_trace.sds_code") || "SDS编号", dataIndex: "sds_code", width: 120, render: (t: string) => t || "-" },
-                        { title: ts("sds_trace.chapter") || "章节", dataIndex: "chapter", width: 300, render: (t: string) => t ? <span style={{ whiteSpace: 'pre-line', wordBreak: 'break-word' }}>{t}</span> : "-" },
+                        { title: ts("sds_trace.srs_code") || "SRS编号", dataIndex: "srs_code", width: 120, render: (t: string, row: any) => renderMergedCell(t || "-", row) },
+                        { title: ts("sds_trace.sds_code") || "SDS编号", dataIndex: "sds_code", width: 120, render: (t: string) => t ? <span style={{ whiteSpace: 'pre-line', wordBreak: 'break-word' }}>{t}</span> : "-" },
+                        { title: ts("sds_trace.chapter") || "需求代码", dataIndex: "chapter", width: 220, render: (t: string) => t ? <span style={{ whiteSpace: 'pre-line', wordBreak: 'break-word' }}>{t}</span> : "-" },
+                        { title: ts("sds_trace.location") || "章节号", dataIndex: "location", width: 120, render: (t: string) => t ? <span style={{ whiteSpace: 'pre-line', wordBreak: 'break-word' }}>{t}</span> : "-" },
                     ]}
                     rowKey="key"
                     pagination={false}
                     loading={data.traceListLoading}
-                    scroll={{ x: 540 }}
+                    bordered
+                    scroll={{ x: 680 }}
                 />
             </Modal>
         </div>

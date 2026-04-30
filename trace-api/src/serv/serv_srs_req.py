@@ -248,6 +248,81 @@ class Server(object):
             return
         cell["value"] = value or ""
 
+    def __replace_title_name(self, title: str, name: str):
+        title = str(title or "").strip()
+        name = self.__normalize_name_part(name)
+        if not name:
+            return title
+        matched = re.match(r"^(\s*\d+(?:\.\d+)*[\s、.．:：\-]*)(.*)$", title)
+        if matched:
+            return f"{matched.group(1)}{name}"
+        return name
+
+    def __extract_detail_table_req_code(self, table: dict):
+        headers = table.get("headers") or []
+        rows = table.get("rows") or []
+        if len(headers) < 2 or not isinstance(rows, list):
+            return ""
+        left_code = headers[0].get("code") if isinstance(headers[0], dict) else ""
+        right_code = headers[1].get("code") if isinstance(headers[1], dict) else ""
+        right_name = headers[1].get("name") if isinstance(headers[1], dict) else ""
+        code = self.__normalize_req_code(str(right_name or ""))
+        if code:
+            return code
+        if not left_code or not right_code:
+            return ""
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            left_text = str(row.get(left_code, "") or "").strip()
+            field = self.__map_field(left_text)
+            if not field and "需求编号" in left_text:
+                field = "code"
+            if field == "code":
+                return self.__normalize_req_code(str(row.get(right_code, "") or ""))
+        return ""
+
+    def __sync_req_to_node_titles(self, req_row: SrsReq):
+        code = self.__normalize_req_code(req_row.code or "")
+        name_value = self.__pick_req_name(req_row)
+        if not code or not name_value:
+            return
+
+        nodes: List[SrsNode] = db.session.execute(
+            select(SrsNode).where(SrsNode.doc_id == req_row.doc_id)
+        ).scalars().all()
+        if not nodes:
+            return
+        node_map = {node.n_id: node for node in nodes}
+        target_nodes = []
+        for node in nodes:
+            node_code = self.__normalize_req_code(getattr(node, "srs_code", "") or "")
+            if node_code == code:
+                target_nodes.append(node)
+
+            table = node.table
+            if isinstance(table, str):
+                try:
+                    table = json.loads(table)
+                except Exception:
+                    table = None
+            elif isinstance(table, (dict, list)):
+                table = json.loads(json.dumps(table, ensure_ascii=False))
+            if not isinstance(table, dict):
+                continue
+            table_code = self.__extract_detail_table_req_code(table)
+            if table_code == code:
+                target_nodes.append(node_map.get(node.p_id) or node)
+
+        seen = set()
+        for node in target_nodes:
+            if not node or node.id in seen:
+                continue
+            seen.add(node.id)
+            new_title = self.__replace_title_name(node.title, name_value)
+            if new_title and new_title != node.title:
+                node.title = new_title
+
     def __sync_req_to_node_tables(self, req_row: SrsReq):
         code = self.__normalize_req_code(req_row.code or "")
         if not code:
@@ -401,6 +476,7 @@ class Server(object):
                     sds_values = [dict(doc_id=sds_doc.id, req_id=row.id, sds_code=sds_code, chapter=chapter) for sds_doc in sds_docs]
                     db.session.execute(pg_insert(SdsTrace).values(sds_values).on_conflict_do_nothing())
             self.__sync_req_to_node_tables(row)
+            self.__sync_req_to_node_titles(row)
             db.session.commit()
             return Resp.resp_ok()
         except Exception:
@@ -431,6 +507,7 @@ class Server(object):
                     continue
                 setattr(row, key, value)
             self.__sync_req_to_node_tables(row)
+            self.__sync_req_to_node_titles(row)
             db.session.commit()
             return Resp.resp_ok()
         except Exception:
