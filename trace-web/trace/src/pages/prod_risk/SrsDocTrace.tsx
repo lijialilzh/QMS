@@ -37,7 +37,11 @@ const DetailDlg = ({ data, dispatch }: any) => {
         }
     }, [data.targetRow.id, data.dlgType]);
 
-    const expandedTraceRows = (data.traceRows || []).flatMap((row: any, rowIndex: number) => {
+    const isChangeTraceRow = (row: any) => {
+        const typeCode = String(row?.type_code || "").trim();
+        return !!typeCode && typeCode !== "1" && typeCode !== "2";
+    };
+    const expandTraceRows = (rows: any[], keyPrefix: string) => (rows || []).flatMap((row: any, rowIndex: number) => {
         const sisCodes = Array.isArray(row?.sis_codes) ? row.sis_codes : [];
         const rawUnitCodes = Array.isArray(row?.test_codes) && row.test_codes.length > 0
             ? row.test_codes
@@ -48,12 +52,23 @@ const DetailDlg = ({ data, dispatch }: any) => {
         const subCount = Math.max(sisCodes.length, unitCodes.length, 1);
         return Array.from({ length: subCount }).map((_, idx) => ({
             ...row,
-            __rowKey: `${row?.srs_code || rowIndex}-${idx}`,
+            __rowKey: `${keyPrefix}-${row?.srs_code || rowIndex}-${idx}`,
             __rowSpan: idx === 0 ? subCount : 0,
             __sisCode: sisCodes[idx] || "/",
             __unitCode: unitCodes[idx] || "/",
         }));
     });
+    const normalTraceRows = (data.traceRows || []).filter((row: any) => !isChangeTraceRow(row));
+    const changeTraceRows = (data.traceRows || []).filter((row: any) => isChangeTraceRow(row));
+    const expandedTraceRows = expandTraceRows(normalTraceRows, "normal");
+    const expandedChangeTraceRows = expandTraceRows(changeTraceRows, "change");
+    const productFullVersion = String(data.targetRow?.product_version || "").trim();
+    const mainTableScrollY = (() => {
+        const threshold = expandedChangeTraceRows.length > 0 ? 12 : 18;
+        if (expandedTraceRows.length <= threshold) return undefined;
+        return expandedChangeTraceRows.length > 0 ? "32vh" : "64vh";
+    })();
+    const changeTableScrollY = expandedChangeTraceRows.length > 10 ? "28vh" : undefined;
 
     const mergedCell = (row: any) => ({ rowSpan: row?.__rowSpan ?? 1 });
     const renderMultilineCaseCodes = (values: any) => {
@@ -83,6 +98,22 @@ const DetailDlg = ({ data, dispatch }: any) => {
             </>
         );
     };
+    const renderMultilineSdsCodes = (values: any) => {
+        const raw = Array.isArray(values) ? values : [values];
+        const list = raw
+            .flatMap((item) => String(item || "").split(/[,\n，\s]+/g))
+            .map((item) => item.trim())
+            .filter(Boolean);
+        if (list.length === 0) return "/";
+        if (list.length === 1) return list[0];
+        return (
+            <>
+                {list.map((code) => (
+                    <div key={code} className="stxt">{code}</div>
+                ))}
+            </>
+        );
+    };
     const renderMultilineNote = (value: any) => {
         const text = String(value || "").trim();
         if (!text) return "/";
@@ -96,6 +127,90 @@ const DetailDlg = ({ data, dispatch }: any) => {
             </>
         );
     };
+    const traceColumns = [
+        {
+            title: ts("srs_req.code"),
+            dataIndex: "srs_code",
+            onCell: mergedCell,
+            width: 105,
+        },
+        {
+            title: ts("srs_req.rcm_flag"),
+            dataIndex: "rcm_flag",
+            render: (rcm_flag: any) => (rcm_flag ? ts("yes") : ts("no")),
+            width: 60,
+        },
+        {
+            title: "软件详细设计",
+            dataIndex: "sds_code",
+            onCell: mergedCell,
+            render: (values: any) => renderMultilineSdsCodes(values),
+            width: 120,
+        },
+        {
+            title: "接口编号",
+            dataIndex: "__sisCode",
+            render: (value: any) => value || "/",
+            width: 95,
+        },
+        {
+            title: "单元测试记录",
+            dataIndex: "__unitCode",
+            width: 95,
+            render: (value: any) => {
+                const text = String(value || "").trim();
+                if (!text) return "/";
+                if (!text.includes("~")) return text;
+                const parts = text.split("~").map((item) => item.trim()).filter(Boolean);
+                if (parts.length < 2) return text;
+                return (
+                    <>
+                        <div className="stxt">{parts[0]} ~</div>
+                        <div className="stxt">{parts[parts.length - 1]}</div>
+                    </>
+                );
+            },
+        },
+        {
+            title: "集成测试记录",
+            dataIndex: "tests_integ",
+            width: 95,
+            render: (values: any) => {
+                return renderMultilineCaseCodes(values);
+            },
+        },
+        {
+            title: "系统测试记录",
+            dataIndex: "tests_sys",
+            width: 95,
+            render: (values: any) => {
+                return renderMultilineCaseCodes(values);
+            },
+        },
+        {
+            title: "用户测试记录",
+            dataIndex: "tests_user",
+            width: 95,
+            render: (values: any) => {
+                return renderMultilineCaseCodes(values);
+            },
+        },
+        {
+            title: "RCM",
+            dataIndex: "rcm_codes",
+            width: 110,
+            render: (values: any) => {
+                return renderMultilineRcmCodes(values);
+            },
+        },
+        {
+            title: "备注",
+            dataIndex: "note",
+            className: "trace-note-col",
+            onCell: mergedCell,
+            render: (value: any) => renderMultilineNote(value),
+        },
+    ];
 
     return (
         <Modal
@@ -114,91 +229,26 @@ const DetailDlg = ({ data, dispatch }: any) => {
                 rowKey={(item: any) => item.__rowKey}
                 size="small"
                 tableLayout="auto"
-                columns={[
-                    {
-                        title: ts("srs_req.code"),
-                        dataIndex: "srs_code",
-                        onCell: mergedCell,
-                        width: 105,
-                    },
-                    {
-                        title: ts("srs_req.rcm_flag"),
-                        dataIndex: "rcm_flag",
-                        render: (rcm_flag: any) => (rcm_flag ? ts("yes") : ts("no")),
-                        width: 60,
-                    },
-                    {
-                        title: "软件详细设计",
-                        dataIndex: "sds_code",
-                        onCell: mergedCell,
-                        width: 120,
-                    },
-                    {
-                        title: "接口编号",
-                        dataIndex: "__sisCode",
-                        render: (value: any) => value || "/",
-                        width: 95,
-                    },
-                    {
-                        title: "单元测试记录",
-                        dataIndex: "__unitCode",
-                        width: 95,
-                        render: (value: any) => {
-                            const text = String(value || "").trim();
-                            if (!text) return "/";
-                            if (!text.includes("~")) return text;
-                            const parts = text.split("~").map((item) => item.trim()).filter(Boolean);
-                            if (parts.length < 2) return text;
-                            return (
-                                <>
-                                    <div className="stxt">{parts[0]} ~</div>
-                                    <div className="stxt">{parts[parts.length - 1]}</div>
-                                </>
-                            );
-                        },
-                    },
-                    {
-                        title: "集成测试记录",
-                        dataIndex: "tests_integ",
-                        width: 95,
-                        render: (values: any) => {
-                            return renderMultilineCaseCodes(values);
-                        },
-                    },
-                    {
-                        title: "系统测试记录",
-                        dataIndex: "tests_sys",
-                        width: 95,
-                        render: (values: any) => {
-                            return renderMultilineCaseCodes(values);
-                        },
-                    },
-                    {
-                        title: "用户测试记录",
-                        dataIndex: "tests_user",
-                        width: 95,
-                        render: (values: any) => {
-                            return renderMultilineCaseCodes(values);
-                        },
-                    },
-                    {
-                        title: "RCM",
-                        dataIndex: "rcm_codes",
-                        width: 110,
-                        render: (values: any) => {
-                            return renderMultilineRcmCodes(values);
-                        },
-                    },
-                    {
-                        title: "备注",
-                        dataIndex: "note",
-                        className: "trace-note-col",
-                        onCell: mergedCell,
-                        render: (value: any) => renderMultilineNote(value),
-                    },
-                ]}
+                columns={traceColumns}
+                scroll={mainTableScrollY ? { y: mainTableScrollY } : undefined}
                 pagination={false}
             />
+            {expandedChangeTraceRows.length > 0 && (
+                <>
+                    <div className="trace-subtitle">{`${productFullVersion || "产品"}变更追溯`}</div>
+                    <Table
+                        className="table-box trace-change-table"
+                        loading={data.loadingTrace}
+                        dataSource={expandedChangeTraceRows}
+                        rowKey={(item: any) => item.__rowKey}
+                        size="small"
+                        tableLayout="auto"
+                        columns={traceColumns}
+                        scroll={changeTableScrollY ? { y: changeTableScrollY } : undefined}
+                        pagination={false}
+                    />
+                </>
+            )}
         </Modal>
     );
 };
@@ -268,17 +318,31 @@ export default () => {
                         </Button>
                         <Button
                             type="link"
-                            loading={data.exportingSet.has(row.id)}
+                            loading={data.exportingSet.has(`excel-${row.id}`)}
                             onClick={() => {
-                                dispatch({ exportingSet: new Set([...data.exportingSet, row.id]) });
+                                dispatch({ exportingSet: new Set([...data.exportingSet, `excel-${row.id}`]) });
                                 Api.export_doc_trace({ id: row.id }).then((res: any) => {
-                                    dispatch({ exportingSet: new Set([...data.exportingSet].filter((item: any) => item !== row.id)) });
+                                    dispatch({ exportingSet: new Set([...data.exportingSet].filter((item: any) => item !== `excel-${row.id}`)) });
                                     if (res.code !== Api.C_OK) {
                                         message.error(res.msg);
                                     }
                                 });
                             }}>
-                            {ts("export")}
+                            导出Excel
+                        </Button>
+                        <Button
+                            type="link"
+                            loading={data.exportingSet.has(`word-${row.id}`)}
+                            onClick={() => {
+                                dispatch({ exportingSet: new Set([...data.exportingSet, `word-${row.id}`]) });
+                                Api.export_doc_trace_word({ id: row.id }).then((res: any) => {
+                                    dispatch({ exportingSet: new Set([...data.exportingSet].filter((item: any) => item !== `word-${row.id}`)) });
+                                    if (res.code !== Api.C_OK) {
+                                        message.error(res.msg);
+                                    }
+                                });
+                            }}>
+                            导出Word
                         </Button>
                     </Space>
                 );

@@ -12,6 +12,7 @@ import * as ApiDoc from "@/api/ApiSdsDoc";
 import { doSearchProducts } from "../prod_risk/util";
 
 const pageSizeOptions = [100, 500, 1000];
+const tableScrollX = 2020;
 
 const resetTableBodyScroll = () => {
     requestAnimationFrame(() => {
@@ -86,6 +87,7 @@ const DetailDlg = ({ data, dispatch, onSaved }: any) => {
         <Modal
             width={"60%"}
             centered
+            className="sds-reqd-detail-modal"
             title={ts("edit")}
             open={data.dlgType === DlgTypes.edit}
             maskClosable={false}
@@ -137,7 +139,12 @@ const DetailDlg = ({ data, dispatch, onSaved }: any) => {
                             </Form.Item>
                             {normalizeImgUrl(data.targetRow.logic_img) ? (
                                 <div style={{ marginTop: -12, marginBottom: 8 }}>
-                                    <img src={normalizeImgUrl(data.targetRow.logic_img)} alt="logic" className="sds-logic-img" />
+                                    <img
+                                        src={normalizeImgUrl(data.targetRow.logic_img)}
+                                        alt="logic"
+                                        className="sds-logic-img sds-logic-img-edit"
+                                        style={{ width: "35%", maxWidth: "35%", height: "auto" }}
+                                    />
                                 </div>
                             ) : null}
                         </Col>
@@ -312,16 +319,19 @@ export default () => {
         {
             title: ts("sds_reqd.overview"),
             dataIndex: "overview",
+            width: 220,
             render: (t: any) => (t ? renderOneLineWithTooltip(t, { emptyText: "" }) : "-"),
         },
         {
             title: ts("sds_reqd.func_detail"),
             dataIndex: "func_detail",
+            width: 220,
             render: (t: any) => (t ? renderOneLineWithTooltip(t, { emptyText: "" }) : "-"),
         },
         {
             title: ts("sds_reqd.logic_txt"),
             dataIndex: "logic_txt",
+            width: 180,
             className: "sds-logic-img-col",
             render: (_t: any, row: any) => {
                 const img = normalizeImgUrl(row?.logic_img);
@@ -334,20 +344,24 @@ export default () => {
         {
             title: ts("sds_reqd.intput"),
             dataIndex: "intput",
+            width: 220,
             render: (t: any) => (t ? renderOneLineWithTooltip(t, { emptyText: "" }) : "-"),
         },
         {
             title: ts("sds_reqd.output"),
             dataIndex: "output",
+            width: 220,
             render: (t: any) => (t ? renderOneLineWithTooltip(t, { emptyText: "" }) : "-"),
         },
         {
             title: ts("sds_reqd.interface"),
             dataIndex: "interface",
+            width: 200,
             render: (t: any) => (t ? renderOneLineWithTooltip(t, { emptyText: "" }) : "-"),
         },
         {
             title: ts("product.product"),
+            width: 180,
             render: (_value: any, row: any) => {
                 return `${row.product_name}-${row.product_version}`;
             },
@@ -355,10 +369,11 @@ export default () => {
         {
             title: ts("sds_doc.version"),
             dataIndex: "sdsdoc_version",
+            width: 120,
         },
         {
             title: ts("action"),
-            width: 140,
+            width: 100,
             fixed: "right" as const,
             render: (_value: any, row: any) => {
                 return (
@@ -415,12 +430,12 @@ export default () => {
             </div>
             <Table
                 className="expand"
-                sticky={{ offsetScroll: 0 }}
                 columns={columns}
+                tableLayout="fixed"
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}
                 loading={data.loading}
-                scroll={{ x: 1800, y: "68vh" }}
+                scroll={{ x: tableScrollX, y: "68vh" }}
                 pagination={{
                     total: data.total,
                     current: data.pageIndex,

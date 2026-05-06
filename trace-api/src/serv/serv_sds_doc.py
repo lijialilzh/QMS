@@ -6,6 +6,11 @@ import io
 import base64
 import os
 import builtins
+import functools
+import shutil
+import subprocess
+import tempfile
+import time
 from typing import Any, Dict, List, Tuple, Union
 from sqlalchemy import select, delete, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -1207,6 +1212,27 @@ class Server(object):
         if Document is None or Pt is None or dox_enum is None:
             return
         from .serv_utils import docx_util
+        def __normalize_req_code(value: str):
+            return re.sub(r"\s+", "", str(value or "").strip().upper())
+
+        def __compare_req_code(a: str, b: str):
+            ax = [int(x) for x in re.findall(r"\d+", __normalize_req_code(a))]
+            bx = [int(x) for x in re.findall(r"\d+", __normalize_req_code(b))]
+            for idx in range(max(len(ax), len(bx))):
+                av = ax[idx] if idx < len(ax) else 0
+                bv = bx[idx] if idx < len(bx) else 0
+                if av != bv:
+                    return av - bv
+            left = __normalize_req_code(a)
+            right = __normalize_req_code(b)
+            return (left > right) - (left < right)
+
+        def __to_sds_code(value: str):
+            code = __normalize_req_code(value)
+            if not code:
+                return ""
+            return re.sub(r"^SRS-", "SDS-", code)
+
         def __norm_title(value: str):
             txt = (value or "").strip()
             txt = re.sub(r"\s+", " ", txt)
@@ -1248,6 +1274,265 @@ class Server(object):
             if not nums:
                 return None, txt
             return nums, (matched.group(2) or "").strip()
+
+        def __strip_heading_text(value: str):
+            _nums, rest = __parse_heading(value)
+            return (rest or __norm_title(value)).strip()
+
+        def __normalize_req_title(value: str):
+            raw = str(value or "").strip()
+            stripped = __strip_heading_text(raw)
+            return re.sub(r"\s+", "", stripped or raw).lower()
+
+        def __compose_req_description(row: SdsReqdObj):
+            return "\n".join([
+                f"(1) 总体描述\n{(getattr(row, 'overview', None) or '').strip() or '无'}",
+                f"(2) 功能\n{(getattr(row, 'func_detail', None) or '').strip() or '无'}",
+                f"(3) 程序逻辑\n{(getattr(row, 'logic_txt', None) or '').strip() or '无'}",
+                f"(4) 输入项\n{(getattr(row, 'intput', None) or '').strip() or '无'}",
+                f"(5) 输出项\n{(getattr(row, 'output', None) or '').strip() or '无'}",
+                f"(6) 接口\n{(getattr(row, 'interface', None) or '').strip() or '无'}",
+            ])
+
+        def __req_hierarchy_titles(row: SdsReqdObj):
+            titles = []
+            for value in [getattr(row, "module", None), getattr(row, "function", None), getattr(row, "sub_function", None)]:
+                txt = str(value or "").strip()
+                if not txt:
+                    continue
+                norm = __normalize_req_title(txt)
+                if norm and norm not in [item[0] for item in titles]:
+                    titles.append((norm, txt))
+            fallback = str(getattr(row, "name", None) or getattr(row, "srs_code", None) or "").strip()
+            return [item[1] for item in titles] or ([fallback] if fallback else [])
+
+        def __find_function_area_node(nodes: List[SdsNodeForm]):
+            for node in nodes or []:
+                nums, rest = __parse_heading(getattr(node, "title", "") or "")
+                title_txt = __normalize_req_title(rest or getattr(node, "title", "") or "")
+                if nums == [6] or "功能设计" in title_txt:
+                    return node
+                found = __find_function_area_node(getattr(node, "children", None) or [])
+                if found:
+                    return found
+            return None
+
+        def __is_function_stopper(value: str):
+            text = __normalize_req_title(value)
+            return "限制条件" in text or "尚未解决的问题" in text
+
+        def __with_heading(title: str, heading: str):
+            return f"{heading} {__strip_heading_text(title)}".strip()
+
+        def __assign_child_headings(node: SdsNodeForm):
+            nums, _rest = __parse_heading(getattr(node, "title", "") or "")
+            if not nums:
+                return node
+            for idx, child in enumerate(getattr(node, "children", None) or []):
+                child_heading = ".".join([*(str(num) for num in nums), str(idx + 1)])
+                child.title = __with_heading(getattr(child, "title", "") or "", child_heading)
+                __assign_child_headings(child)
+            return node
+
+        def __renumber_direct_children(parent: SdsNodeForm):
+            parent_nums, _ = __parse_heading(getattr(parent, "title", "") or "")
+            if not parent_nums:
+                return
+            for idx, child in enumerate(getattr(parent, "children", None) or []):
+                nums, _rest = __parse_heading(getattr(child, "title", "") or "")
+                if len(nums or []) != len(parent_nums) + 1:
+                    continue
+                heading = ".".join([*(str(num) for num in parent_nums), str(idx + 1)])
+                child.title = __with_heading(getattr(child, "title", "") or "", heading)
+
+        def __append_hierarchy_row(roots: List[SdsNodeForm], row: SdsReqdObj, code: str):
+            level_nodes = roots
+            titles = __req_hierarchy_titles(row)
+            for idx, title in enumerate(titles):
+                is_leaf = idx == len(titles) - 1
+                norm = __normalize_req_title(title)
+                target = next((node for node in level_nodes if __normalize_req_title(getattr(node, "title", "") or "") == norm), None)
+                if target is None:
+                    target = SdsNodeForm(
+                        title=title,
+                        sds_code=code if is_leaf else "",
+                        text=__compose_req_description(row) if is_leaf else "",
+                        children=[],
+                    )
+                    level_nodes.append(target)
+                elif is_leaf and not getattr(target, "sds_code", None):
+                    target.sds_code = code
+                    target.text = target.text or __compose_req_description(row)
+                if target.children is None:
+                    target.children = []
+                level_nodes = target.children
+
+        async def __sync_missing_reqd_nodes_for_export(roots: List[SdsNodeForm]):
+            try:
+                resp = await sdstreqd_serv.list_sds_reqd(None, doc_id=id, page_index=0, page_size=10000)
+                req_rows: List[SdsReqdObj] = resp.data.rows if resp and resp.data else []
+            except Exception:
+                logger.exception("sync export sds reqd nodes failed")
+                return roots
+            if not req_rows:
+                return roots
+            existing_codes = set()
+            def collect(nodes: List[SdsNodeForm]):
+                for node in nodes or []:
+                    code = __normalize_req_code(getattr(node, "sds_code", "") or "")
+                    if code:
+                        existing_codes.add(code)
+                    collect(getattr(node, "children", None) or [])
+            collect(roots)
+
+            missing_rows = []
+            for row in req_rows:
+                type_code = str(getattr(row, "type_code", "") or "").strip()
+                if type_code in ["1", "2"]:
+                    continue
+                code = __to_sds_code(getattr(row, "srs_code", "") or "")
+                if code and code not in existing_codes:
+                    missing_rows.append((code, row))
+            if not missing_rows:
+                return roots
+            function_node = __find_function_area_node(roots)
+            if not function_node:
+                return roots
+            if function_node.children is None:
+                function_node.children = []
+            virtual_roots: List[SdsNodeForm] = []
+            for code, row in sorted(missing_rows, key=lambda item: item[0]):
+                __append_hierarchy_row(virtual_roots, row, code)
+            if not virtual_roots:
+                return roots
+
+            insert_index = len(function_node.children)
+            for idx, child in enumerate(function_node.children):
+                if __is_function_stopper(getattr(child, "title", "") or ""):
+                    insert_index = idx
+                    break
+            parent_nums, _ = __parse_heading(getattr(function_node, "title", "") or "")
+            if not parent_nums:
+                return roots
+            start_index = insert_index + 1
+            for idx, node in enumerate(virtual_roots):
+                node.title = __with_heading(getattr(node, "title", "") or "", ".".join([*(str(num) for num in parent_nums), str(start_index + idx)]))
+                __assign_child_headings(node)
+            function_node.children[insert_index:insert_index] = virtual_roots
+            __renumber_direct_children(function_node)
+            logger.info("export synced missing sds reqd nodes: doc=%s count=%s", id, len(virtual_roots))
+            return roots
+
+        def __split_trace_lines(value: str):
+            lines = [line.strip() for line in str(value or "").replace("\r", "").split("\n")]
+            while len(lines) > 1 and not lines[-1]:
+                lines.pop()
+            return lines or [""]
+
+        def __build_sds_location_map_from_export_tree(nodes: List[SdsNodeForm]):
+            result = {}
+            def walk(items: List[SdsNodeForm]):
+                for item in items or []:
+                    nums, _rest = __parse_heading(getattr(item, "title", "") or "")
+                    heading = ".".join([str(num) for num in nums]) if nums else ""
+                    code = __normalize_req_code(getattr(item, "sds_code", "") or "")
+                    if code and heading and code not in result:
+                        result[code] = heading
+                    walk(getattr(item, "children", None) or [])
+            walk(nodes or [])
+            return result
+
+        def __is_trace_table_node(node: SdsNodeForm):
+            title = __biz_title(getattr(node, "title", "") or "")
+            ref_type = str(getattr(node, "ref_type", "") or "")
+            return ref_type == RefTypes.sds_traces.value or "设计与需求追溯表" in title or "设计与需求追溯列表" in title
+
+        def __is_change_trace_row(row: SdsTraceObj):
+            type_code = str(getattr(row, "type_code", "") or "").strip()
+            return bool(type_code) and type_code not in ["1", "2"]
+
+        def __make_trace_change_table_title(product_full_version: str):
+            version = str(product_full_version or "").strip()
+            return f"{version or '产品'}变更需求"
+
+        def __build_trace_table_from_rows(rows: List[SdsTraceObj], location_by_sds_code: Dict[str, str]):
+            headers = [
+                TabHeader(code="srs_code", name="需求编号"),
+                TabHeader(code="sds_code", name="设计编号"),
+                TabHeader(code="chapter", name="需求/代码"),
+            ]
+
+            def build_chapter_cell(row: SdsTraceObj):
+                sds_codes = __split_trace_lines(getattr(row, "sds_code", "") or "")
+                chapters = __split_trace_lines(getattr(row, "chapter", "") or "")
+                locations = __split_trace_lines(getattr(row, "location", "") or "")
+                count = max(1, len(sds_codes), len(chapters), len(locations))
+                values = []
+                for idx in range(count):
+                    chapter = chapters[idx].strip() if idx < len(chapters) else ""
+                    sds_code = __normalize_req_code(sds_codes[idx] if idx < len(sds_codes) else "")
+                    location = locations[idx].strip() if idx < len(locations) else ""
+                    if not location and sds_code:
+                        location = location_by_sds_code.get(sds_code, "")
+                    values.append(f"{chapter}{f'（章节 {location}）' if location else ''}")
+                return "\n".join(values)
+
+            sorted_rows = sorted(rows or [], key=functools.cmp_to_key(
+                lambda left, right: __compare_req_code(getattr(left, "srs_code", "") or "", getattr(right, "srs_code", "") or "")
+            ))
+            table_rows = []
+            for row in sorted_rows:
+                table_rows.append({
+                    "srs_code": getattr(row, "srs_code", "") or "",
+                    "sds_code": getattr(row, "sds_code", "") or "",
+                    "chapter": build_chapter_cell(row),
+                })
+            return Table(headers=headers, rows=table_rows)
+
+        async def __query_latest_sds_trace_tables(roots: List[SdsNodeForm]):
+            resp = await sdstrace_serv.list_sds_trace(None, doc_id=id, page_size=10000)
+            reqs: List[SdsTraceObj] = resp.data.rows or []
+            location_by_sds_code = __build_sds_location_map_from_export_tree(roots)
+            normal_rows = [row for row in reqs if not __is_change_trace_row(row)]
+            change_rows = [row for row in reqs if __is_change_trace_row(row)]
+            normal_table = __build_trace_table_from_rows(normal_rows, location_by_sds_code)
+            change_table = __build_trace_table_from_rows(change_rows, location_by_sds_code)
+            change_version = ""
+            for row in change_rows:
+                change_version = str(getattr(row, "product_version", "") or "").strip()
+                if change_version:
+                    break
+            return normal_table, change_table, change_rows, change_version
+
+        async def __sync_trace_table_nodes_for_export(roots: List[SdsNodeForm]):
+            try:
+                normal_table, change_table, change_rows, change_version = await __query_latest_sds_trace_tables(roots)
+            except Exception:
+                logger.exception("sync export sds trace table failed")
+                return roots
+
+            def is_old_trace_table_child(child: SdsNodeForm):
+                title = __biz_title(getattr(child, "title", "") or "")
+                label = __biz_title(getattr(child, "label", "") or "")
+                has_table = getattr(child, "table", None) and child.table.headers
+                return bool(has_table and (re.match(r"^导入表格\d*$", title or "") or label.endswith("变更需求") or title.endswith("变更需求")))
+
+            def walk(items: List[SdsNodeForm]):
+                for node in items or []:
+                    if __is_trace_table_node(node):
+                        node.ref_type = ""
+                        node.table = normal_table
+                        kept_children = [child for child in (getattr(node, "children", None) or []) if not is_old_trace_table_child(child)]
+                        if change_rows:
+                            kept_children.append(SdsNodeForm(
+                                label=__make_trace_change_table_title(change_version),
+                                table=change_table,
+                                children=[],
+                            ))
+                        node.children = kept_children
+                    walk(getattr(node, "children", None) or [])
+            walk(roots or [])
+            return roots
 
         def __major_of_text(value: str):
             nums, _ = __parse_heading(value)
@@ -1323,6 +1608,12 @@ class Server(object):
             ).strip()
 
         def __is_data_table_title(value: str):
+            nums, rest = __parse_heading(value)
+            if nums and rest:
+                # “2.4 设计与需求追溯表”这类带章节号的标题是章节，不是表题。
+                # 只有明确的“表 N ...”或英文标识符表名才继续按表题处理。
+                if not re.match(r"^(表|table)\s*\d+", rest, re.I) and not re.match(r"^[A-Za-z][A-Za-z0-9_]{1,64}\s*[:：]?$", rest):
+                    return False
             txt = __strip_chapter_prefix(value)
             if not txt:
                 return False
@@ -1348,12 +1639,13 @@ class Server(object):
                 "",
                 txt_no_mark,
             ).strip()
+            has_heading_prefix = txt_body != txt_no_mark
             probe = txt_body or txt_no_mark
             # JSON / 字典片段：不应作为章节标题
             if re.match(r'^[\'"]\s*[A-Za-z0-9_\-]+\s*[\'"]\s*:\s*.+$', probe):
                 return True
             # JSON 标量值行（数组元素）也不应作为章节标题
-            if re.match(r'^(?:".*"|-?\d+(?:\.\d+)?|true|false|null)\s*,?$', probe, re.I):
+            if (not has_heading_prefix) and re.match(r'^(?:".*"|-?\d+(?:\.\d+)?|true|false|null)\s*,?$', probe, re.I):
                 return True
             if re.match(r'^[\{\[\}].*$', probe):
                 return True
@@ -1382,6 +1674,14 @@ class Server(object):
             if not lines:
                 return False
             return all(__is_image_caption_line(line) for line in lines)
+
+        def __image_export_key(value: str):
+            txt = str(value or "").strip()
+            if not txt:
+                return ""
+            if txt.startswith("data:image/"):
+                return txt
+            return txt.split("?", 1)[0].lstrip("/")
 
         def __normalize_json_block_order(lines: List[str]) -> List[str]:
             clean_lines = [str(line or "").rstrip() for line in (lines or [])]
@@ -1652,22 +1952,23 @@ class Server(object):
             if OxmlElement is None or qn is None:
                 return
             p = docx.add_paragraph()
+
             run_begin = p.add_run()
             fld_begin = OxmlElement("w:fldChar")
             fld_begin.set(qn("w:fldCharType"), "begin")
             fld_begin.set(qn("w:dirty"), "true")
+            run_begin._r.append(fld_begin)
+
+            run_instr = p.add_run()
             instr = OxmlElement("w:instrText")
             instr.set(qn("xml:space"), "preserve")
-            instr.text = ' TOC \\o "1-3" \\h \\z \\u '
-            fld_separate = OxmlElement("w:fldChar")
-            fld_separate.set(qn("w:fldCharType"), "separate")
+            instr.text = ' TOC \\o "1-4" \\h \\z \\u '
+            run_instr._r.append(instr)
+
             run_end = p.add_run()
             fld_end = OxmlElement("w:fldChar")
             fld_end.set(qn("w:fldCharType"), "end")
-            run_begin._r.append(fld_begin)
-            run_begin._r.append(instr)
-            run_begin._r.append(fld_separate)
-            p.add_run("目录将在打开文档后自动更新")
+            fld_end.set(qn("w:dirty"), "true")
             run_end._r.append(fld_end)
 
         def __write_center_section_title(docx: Document, title: str):
@@ -1679,6 +1980,137 @@ class Server(object):
         def __add_blank_lines(docx: Document, line_count: int):
             for _ in range(max(0, line_count)):
                 docx.add_paragraph("")
+
+        def __refresh_toc_with_libreoffice(output_stream):
+            soffice = shutil.which("soffice") or shutil.which("libreoffice")
+            if not soffice:
+                logger.warning("LibreOffice not found, skip SDS TOC refresh")
+                return False
+            try:
+                output_stream.seek(0)
+                source_bytes = output_stream.read()
+                with tempfile.TemporaryDirectory(prefix="sds_docx_refresh_") as tmpdir:
+                    input_path = os.path.join(tmpdir, "input.docx")
+                    output_path = os.path.join(tmpdir, "output.docx")
+                    profile_dir = os.path.join(tmpdir, "lo_profile")
+                    script_path = os.path.join(tmpdir, "refresh_toc.py")
+                    with open(input_path, "wb") as f:
+                        f.write(source_bytes)
+                    script = r'''
+import sys
+import time
+import uno
+from com.sun.star.beans import PropertyValue
+
+input_path = sys.argv[1]
+output_path = sys.argv[2]
+
+def prop(name, value):
+    item = PropertyValue()
+    item.Name = name
+    item.Value = value
+    return item
+
+local_ctx = uno.getComponentContext()
+resolver = local_ctx.ServiceManager.createInstanceWithContext(
+    "com.sun.star.bridge.UnoUrlResolver",
+    local_ctx,
+)
+ctx = None
+last_error = None
+for _ in range(60):
+    try:
+        ctx = resolver.resolve("uno:socket,host=127.0.0.1,port=2002;urp;StarOffice.ComponentContext")
+        break
+    except Exception as exc:
+        last_error = exc
+        time.sleep(0.5)
+if ctx is None:
+    raise RuntimeError(f"connect libreoffice failed: {last_error}")
+
+desktop = ctx.ServiceManager.createInstanceWithContext("com.sun.star.frame.Desktop", ctx)
+doc = desktop.loadComponentFromURL(
+    uno.systemPathToFileUrl(input_path),
+    "_blank",
+    0,
+    (
+        prop("Hidden", True),
+        prop("ReadOnly", False),
+        prop("UpdateDocMode", 3),
+    ),
+)
+if doc is None:
+    raise RuntimeError("load docx failed")
+try:
+    indexes = doc.getDocumentIndexes()
+    for idx in range(indexes.getCount()):
+        indexes.getByIndex(idx).update()
+
+    fields = doc.getTextFields()
+    enum = fields.createEnumeration()
+    while enum.hasMoreElements():
+        field = enum.nextElement()
+        try:
+            field.update()
+        except Exception:
+            pass
+
+    doc.storeAsURL(
+        uno.systemPathToFileUrl(output_path),
+        (
+            prop("FilterName", "Office Open XML Text"),
+            prop("Overwrite", True),
+        ),
+    )
+finally:
+    doc.close(True)
+'''
+                    with open(script_path, "w", encoding="utf-8") as f:
+                        f.write(script)
+                    server = subprocess.Popen(
+                        [
+                            soffice,
+                            "--headless",
+                            "--nologo",
+                            "--nodefault",
+                            "--nofirststartwizard",
+                            "--nolockcheck",
+                            f"-env:UserInstallation=file://{profile_dir}",
+                            "--accept=socket,host=127.0.0.1,port=2002;urp;StarOffice.ServiceManager",
+                        ],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    try:
+                        env = os.environ.copy()
+                        dist_pkg = "/usr/lib/python3/dist-packages"
+                        env["PYTHONPATH"] = f"{dist_pkg}:{env.get('PYTHONPATH', '')}"
+                        subprocess.run(
+                            ["python3", script_path, input_path, output_path],
+                            check=True,
+                            timeout=120,
+                            env=env,
+                        )
+                    finally:
+                        server.terminate()
+                        try:
+                            server.wait(timeout=10)
+                        except subprocess.TimeoutExpired:
+                            server.kill()
+                    if not os.path.exists(output_path) or os.path.getsize(output_path) <= 0:
+                        output_stream.seek(0)
+                        return False
+                    with open(output_path, "rb") as f:
+                        refreshed = f.read()
+                    output_stream.seek(0)
+                    output_stream.truncate(0)
+                    output_stream.write(refreshed)
+                    output_stream.seek(0)
+                    return True
+            except Exception:
+                logger.exception("refresh SDS TOC with LibreOffice failed")
+                output_stream.seek(0)
+                return False
 
         def __write_revision_body_title(docx: Document):
             p = docx.add_paragraph()
@@ -1857,6 +2289,15 @@ class Server(object):
                     child for child in (node.children or [])
                     if getattr(child, "img_url", None)
                 ]
+                duplicate_child_image_keys = {
+                    __image_export_key(getattr(child, "img_url", "") or "")
+                    for child in imported_image_children
+                    if __image_export_key(getattr(child, "img_url", "") or "")
+                }
+                suppress_own_duplicate_image = bool(
+                    getattr(node, "img_url", None)
+                    and __image_export_key(getattr(node, "img_url", "") or "") in duplicate_child_image_keys
+                )
                 imported_db_children = [
                     child for child in (node.children or [])
                     if __is_database_heading_title(getattr(child, "title", "") or "")
@@ -2197,7 +2638,7 @@ class Server(object):
                                                 __flush_table_caption(docx, font_def)
                                                 written_child_ids.add(builtins.id(second_tab_node))
                                                 second_tcp_table_written = True
-                elif node.img_url and not image_written:
+                elif node.img_url and not image_written and not suppress_own_duplicate_image:
                     docx_util.save_img2docx(
                         node.img_url,
                         docx,
@@ -2312,7 +2753,7 @@ class Server(object):
                 if OxmlElement is not None and qn is not None:
                     try:
                         update_fields = OxmlElement("w:updateFields")
-                        update_fields.set(qn("w:val"), "true")
+                        update_fields.set(qn("w:val"), "1")
                         docx.settings.element.append(update_fields)
                     except Exception:
                         logger.exception("enable sds docx updateFields failed")
@@ -2321,7 +2762,8 @@ class Server(object):
                 header_para.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.RIGHT
                 docx_util.fonted_txt(header_para, sds_doc.file_no)
 
-                roots = sds_doc.content or []
+                roots = await __sync_missing_reqd_nodes_for_export(sds_doc.content or [])
+                roots = await __sync_trace_table_nodes_for_export(roots)
                 design_root = next((n for n in roots if __is_design_cover(getattr(n, "title", ""))), None)
                 rev_root = next((n for n in roots if __is_revision_label(getattr(n, "title", ""))), None)
                 catalog_root = next((n for n in roots if __is_catalog(getattr(n, "title", ""))), None)
@@ -2387,6 +2829,7 @@ class Server(object):
 
             docx.save(output)
             output.seek(0)
+            __refresh_toc_with_libreoffice(output)
 
     async def get_sds_doc_txts(self, doc_id):
         def __gather_nodes(texts:List[str],nodes: List[SdsNodeForm]):

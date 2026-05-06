@@ -3,6 +3,7 @@ import os
 import re
 import io
 import base64
+from urllib.parse import unquote, urlparse
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx import Document
@@ -217,15 +218,28 @@ def save_img2docx(
     PIXELS_PER_INCH = 96
     SPACE_VALUE = Pt(20)
     image_source = None
-    if path and str(path).startswith("data:image/"):
+    raw_path = str(path or "").strip()
+    if raw_path and not raw_path.startswith("data:image/"):
+        parsed = urlparse(raw_path)
+        clean_path = unquote(parsed.path or raw_path.split("?", 1)[0])
+        candidates = [clean_path]
+        if clean_path.startswith("/data.trace/"):
+            candidates.append(clean_path.lstrip("/"))
+        elif clean_path.startswith("data.trace/"):
+            candidates.append(clean_path)
+        else:
+            candidates.append(clean_path.lstrip("/"))
+        for candidate in candidates:
+            if candidate and os.path.exists(candidate):
+                image_source = candidate
+                break
+    if image_source is None and path and str(path).startswith("data:image/"):
         matched = re.match(r"^data:image/[a-zA-Z0-9.+-]+;base64,(.+)$", str(path), re.S)
         if matched:
             try:
                 image_source = io.BytesIO(base64.b64decode(matched.group(1)))
             except Exception:
                 image_source = None
-    elif path and os.path.exists(path):
-        image_source = path
 
     if image_source is None:
         return

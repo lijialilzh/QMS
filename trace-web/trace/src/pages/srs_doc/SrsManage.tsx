@@ -1,5 +1,5 @@
 import "./SrsManage.less";
-import { Form, Input, Button, Select, Row, Col, Table, Space, message, Tooltip, Tag } from "antd";
+import { Form, Input, Button, Select, Row, Col, Table, Space, message, Tooltip } from "antd";
 import { PlusOutlined, DeleteOutlined, SearchOutlined, EditOutlined, CheckOutlined, CloseOutlined, CopyOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
@@ -11,6 +11,13 @@ import * as Api from "@/api/ApiSrsDoc";
 import * as ApiSrsReq from "@/api/ApiSrsReq";
 import * as ApiSrsType from "@/api/ApiSrsType";
 import * as ApiProdRcm from "@/api/ApiProdRcm";
+
+const tableScrollY = 360;
+const tableScrollThreshold = 10;
+
+const getTableScroll = (rows: any[]) => {
+    return (rows || []).length > tableScrollThreshold ? { y: tableScrollY } : undefined;
+};
 
 export default () => {
     const { t: ts } = useTranslation();
@@ -98,7 +105,7 @@ export default () => {
     };
 
     // 当产品ID变化时，加载该产品下的SRS文档列表
-    const handleProductChange = (productId: number) => {
+    const handleProductChange = (productId?: number) => {
         // 产品变化时，清空当前版本和已加载的数据
         editForm.setFieldValue("doc_id", undefined);
         dispatch({ 
@@ -267,6 +274,7 @@ export default () => {
         {
             title: ts("srs_doc.srs_code") || "需求编号",
             dataIndex: "srs_code",
+            width: "18%",
             render: (value: any, record: any) => {
                 if (!isEditing(record)) {
                     return value || "";
@@ -285,6 +293,7 @@ export default () => {
         {
             title: ts("srs_doc.module") || "模块",
             dataIndex: "module",
+            width: "15%",
             render: (value: any, record: any) => {
                 if (!isEditing(record)) {
                     return value || "";
@@ -303,6 +312,7 @@ export default () => {
         {
             title: ts("srs_doc.function") || "功能",
             dataIndex: "function",
+            width: "20%",
             render: (value: any, record: any) => {
                 if (!isEditing(record)) {
                     return value || "";
@@ -321,6 +331,7 @@ export default () => {
         {
             title: ts("srs_doc.sub_function") || "子功能",
             dataIndex: "sub_function",
+            width: "22%",
             render: (value: any, record: any) => {
                 if (!isEditing(record)) {
                     return value || "";
@@ -697,6 +708,7 @@ export default () => {
         {
             title: ts("srs_doc.srs_code") || "需求编号",
             dataIndex: "srs_code",
+            width: "26%",
             render: (value: any, record: any) => {
                 if (data.targetEditOther.key !== record.key) {
                     return value || "";
@@ -715,6 +727,7 @@ export default () => {
         {
             title: ts("srs_doc.module") || "需求模块",
             dataIndex: "module",
+            width: "26%",
             render: (value: any, record: any) => {
                 if (data.targetEditOther.key !== record.key) {
                     return value || "";
@@ -733,6 +746,7 @@ export default () => {
         {
             title: ts("srs_doc.chapter_number") || "对应的章节号",
             dataIndex: "location",
+            width: "26%",
             render: (value: any, record: any) => {
                 if (data.targetEditOther.key !== record.key) {
                     return value || "";
@@ -755,19 +769,21 @@ export default () => {
         ...buildOtherEditableColumns(),
         {
             title: ts("action"),
-            width: 180,
+            className: "srs-manage-action-col",
+            width: "22%",
             render: (_value: any, row: any) => {
                 const isEditing = data.targetEditOther.key === row.key;
                 return (
-                    <Space>
-                        {!isEditing && (
+                    <Space size={4} className="srs-manage-action-space">
+                        <Tooltip title={ts("srs_doc.add_row") || "添加行"}>
                             <Button
                                 type="link"
-                                icon={<CopyOutlined />}
-                                onClick={() => handleCopyOtherRow(row)}>
-                                复制
-                            </Button>
-                        )}
+                                size="small"
+                                icon={<PlusOutlined />}
+                                disabled={!!data.targetEditOther.key || !!data.targetEdit.key || !editForm.getFieldValue("doc_id")}
+                                onClick={() => handleAddOtherRowBelow(row)}
+                            />
+                        </Tooltip>
                         {isEditing && (
                             <Button 
                                 type="link" 
@@ -809,6 +825,14 @@ export default () => {
                             {isEditing ? ts("save") : ts("edit")}
                         </Button>
                         {!isEditing && (
+                            <Button
+                                type="link"
+                                icon={<CopyOutlined />}
+                                onClick={() => handleCopyOtherRow(row)}>
+                                复制
+                            </Button>
+                        )}
+                        {!isEditing && (
                             <Button 
                                 type="link" 
                                 danger 
@@ -821,22 +845,6 @@ export default () => {
                 );
             },
         },
-        {
-            title: "",
-            width: 48,
-            align: "center" as const,
-            render: (_value: any, row: any) => (
-                <Tooltip title={ts("srs_doc.add_row") || "添加行"}>
-                    <Button
-                        type="link"
-                        size="small"
-                        icon={<PlusOutlined />}
-                        disabled={!!data.targetEditOther.key || !!data.targetEdit.key || !editForm.getFieldValue("doc_id")}
-                        onClick={() => handleAddOtherRowBelow(row)}
-                    />
-                </Tooltip>
-            ),
-        },
     ];
 
     // 主表格列定义
@@ -847,19 +855,21 @@ export default () => {
         ),
         {
             title: ts("action"),
-            width: 180,
+            className: "srs-manage-action-col",
+            width: "22%",
             render: (_value: any, row: any) => {
                 const isEditing = data.targetEdit.key === row.key;
                 return (
-                    <Space>
-                        {!isEditing && (
+                    <Space size={4} className="srs-manage-action-space">
+                        <Tooltip title={ts("srs_doc.add_row") || "添加行"}>
                             <Button
                                 type="link"
-                                icon={<CopyOutlined />}
-                                onClick={() => handleCopyRow(row)}>
-                                复制
-                            </Button>
-                        )}
+                                size="small"
+                                icon={<PlusOutlined />}
+                                disabled={!!data.targetEdit.key || !!data.targetEditOther.key || !editForm.getFieldValue("doc_id")}
+                                onClick={() => handleAddRowBelow(row)}
+                            />
+                        </Tooltip>
                         {isEditing && (
                             <Button 
                                 type="link" 
@@ -901,6 +911,14 @@ export default () => {
                             {isEditing ? ts("save") : ts("edit")}
                         </Button>
                         {!isEditing && (
+                            <Button
+                                type="link"
+                                icon={<CopyOutlined />}
+                                onClick={() => handleCopyRow(row)}>
+                                复制
+                            </Button>
+                        )}
+                        {!isEditing && (
                             <Button 
                                 type="link" 
                                 danger 
@@ -912,22 +930,6 @@ export default () => {
                     </Space>
                 );
             },
-        },
-        {
-            title: "",
-            width: 48,
-            align: "center" as const,
-            render: (_value: any, row: any) => (
-                <Tooltip title={ts("srs_doc.add_row") || "添加行"}>
-                    <Button
-                        type="link"
-                        size="small"
-                        icon={<PlusOutlined />}
-                        disabled={!!data.targetEdit.key || !!data.targetEditOther.key || !editForm.getFieldValue("doc_id")}
-                        onClick={() => handleAddRowBelow(row)}
-                    />
-                </Tooltip>
-            ),
         },
     ];
 
@@ -1141,6 +1143,7 @@ export default () => {
             {
                 title: ts("srs_doc.srs_code") || "需求编号",
                 dataIndex: "srs_code",
+                width: "18%",
                 render: (value: any, record: any) => {
                     if (!isEditing(record)) {
                         return value || "";
@@ -1159,6 +1162,7 @@ export default () => {
             {
                 title: ts("srs_doc.module") || "模块",
                 dataIndex: "module",
+                width: "15%",
                 render: (value: any, record: any) => {
                     if (!isEditing(record)) {
                         return value || "";
@@ -1177,6 +1181,7 @@ export default () => {
             {
                 title: ts("srs_doc.function") || "功能",
                 dataIndex: "function",
+                width: "20%",
                 render: (value: any, record: any) => {
                     if (!isEditing(record)) {
                         return value || "";
@@ -1195,6 +1200,7 @@ export default () => {
             {
                 title: ts("srs_doc.sub_function") || "子功能",
                 dataIndex: "sub_function",
+                width: "22%",
                 render: (value: any, record: any) => {
                     if (!isEditing(record)) {
                         return value || "";
@@ -1212,19 +1218,21 @@ export default () => {
             },
             {
                 title: ts("action"),
-                width: 180,
+                className: "srs-manage-action-col",
+                width: "22%",
                 render: (_value: any, row: any) => {
                     const editing = isEditing(row);
                     return (
-                        <Space>
-                            {!editing && (
+                        <Space size={4} className="srs-manage-action-space">
+                            <Tooltip title={ts("srs_doc.add_row") || "添加行"}>
                                 <Button
                                     type="link"
-                                    icon={<CopyOutlined />}
-                                    onClick={() => handleCopyChangeRow(tableId, row)}>
-                                    复制
-                                </Button>
-                            )}
+                                    size="small"
+                                    icon={<PlusOutlined />}
+                                    disabled={!!(data.targetEditChange[tableId]?.key) || !editForm.getFieldValue("doc_id")}
+                                    onClick={() => handleAddChangeRowBelow(tableId, row)}
+                                />
+                            </Tooltip>
                             {editing && (
                                 <Button 
                                     type="link" 
@@ -1282,6 +1290,14 @@ export default () => {
                                 {editing ? ts("save") : ts("edit")}
                             </Button>
                             {!editing && (
+                                <Button
+                                    type="link"
+                                    icon={<CopyOutlined />}
+                                    onClick={() => handleCopyChangeRow(tableId, row)}>
+                                    复制
+                                </Button>
+                            )}
+                            {!editing && (
                                 <Button 
                                     type="link" 
                                     danger 
@@ -1293,22 +1309,6 @@ export default () => {
                         </Space>
                     );
                 },
-            },
-            {
-                title: "",
-                width: 48,
-                align: "center" as const,
-                render: (_value: any, row: any) => (
-                    <Tooltip title={ts("srs_doc.add_row") || "添加行"}>
-                        <Button
-                            type="link"
-                            size="small"
-                            icon={<PlusOutlined />}
-                            disabled={!!(data.targetEditChange[tableId]?.key) || !editForm.getFieldValue("doc_id")}
-                            onClick={() => handleAddChangeRowBelow(tableId, row)}
-                        />
-                    </Tooltip>
-                ),
             },
         ];
     };
@@ -1623,10 +1623,12 @@ export default () => {
                         <Table 
                             dataSource={data.mainTableData} 
                             columns={mainColumns}
+                            tableLayout="fixed"
                             rowKey="key"
                             bordered
                             pagination={false}
                             loading={data.loading}
+                            scroll={getTableScroll(data.mainTableData)}
                         />
 </div>
 </div>
@@ -1695,10 +1697,12 @@ export default () => {
                                 <Table 
                                     dataSource={table.data} 
                                     columns={buildChangeColumns(table.id)}
+                                    tableLayout="fixed"
                                     rowKey="key"
                                     bordered
                                     pagination={false}
                                     loading={data.loading}
+                                    scroll={getTableScroll(table.data)}
                                 />
                             </div>
                         </div>
@@ -1725,10 +1729,12 @@ export default () => {
                         <Table 
                             dataSource={data.otherReqData} 
                             columns={otherColumns}
+                            tableLayout="fixed"
                             rowKey="key"
                             bordered
                             pagination={false}
                             loading={data.loading}
+                            scroll={getTableScroll(data.otherReqData)}
                         />
                     </div>
                 </div>

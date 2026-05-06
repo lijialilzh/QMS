@@ -351,6 +351,147 @@ class Server(object):
         return txt in ["", "/", "\\", "-", "--", "—", "N/A", "n/a", "无", "暂无"]
 
     @staticmethod
+    def __is_empty_location(value: str):
+        txt = (value or "").strip()
+        return txt in ["", "-", "--", "—", "/", "\\", "无", "暂无", "N/A", "n/a"]
+
+    def __build_sds_location_map(self, nodes: List[SdsNodeForm]):
+        result = {}
+
+        def walk(items: List[SdsNodeForm]):
+            for node in items or []:
+                code = (getattr(node, "sds_code", None) or "").strip()
+                chapter = self.__extract_chapter_code(getattr(node, "title", "") or "")
+                for token in self.__extract_code_tokens(code):
+                    if token and chapter and token not in result:
+                        result[token] = chapter
+                walk(getattr(node, "children", None) or [])
+
+        walk(nodes or [])
+        return result
+
+    @staticmethod
+    def __code_numbers(code: str):
+        return [int(item) for item in re.findall(r"\d+", (code or "").upper())]
+
+    @classmethod
+    def __compare_code(cls, code: str):
+        return cls.__code_numbers(code), (code or "").upper()
+
+    @staticmethod
+    def __increment_chapter(chapter: str):
+        parts = (chapter or "").strip().split(".")
+        if not parts:
+            return ""
+        try:
+            parts[-1] = str(int(parts[-1]) + 1)
+        except Exception:
+            return ""
+        return ".".join(parts)
+
+    def __is_function_stopper_title(self, title: str):
+        text = self.__normalize_name(self.__clean_path_title(title))
+        return "限制条件" in text or "尚未解决的问题" in text
+
+    def __find_function_area_insert_heading(self, nodes: List[SdsNodeForm]):
+        for node in nodes or []:
+            title = getattr(node, "title", "") or ""
+            heading = self.__extract_chapter_code(title)
+            is_function_area = heading == "6" or "功能设计" in self.__normalize_name(self.__clean_path_title(title))
+            if is_function_area:
+                child_infos = []
+                for child in getattr(node, "children", None) or []:
+                    child_heading = self.__extract_chapter_code(getattr(child, "title", "") or "")
+                    if child_heading:
+                        child_infos.append((getattr(child, "title", "") or "", child_heading))
+                for child_title, child_heading in child_infos:
+                    if self.__is_function_stopper_title(child_title):
+                        return child_heading
+                normal_headings = [child_heading for child_title, child_heading in child_infos if not self.__is_function_stopper_title(child_title)]
+                if normal_headings:
+                    return self.__increment_chapter(normal_headings[-1])
+                return f"{heading}.1" if heading else ""
+            child_heading = self.__find_function_area_insert_heading(getattr(node, "children", None) or [])
+            if child_heading:
+                return child_heading
+        return ""
+
+    def __req_hierarchy_titles(self, row_req: SrsReq):
+        titles = []
+        for value in [row_req.module, row_req.function, row_req.sub_function]:
+            txt = (value or "").strip()
+            if not self.__is_placeholder_name(txt):
+                norm = self.__normalize_name(txt) or txt.lower()
+                if norm and norm not in [item[0] for item in titles]:
+                    titles.append((norm, txt))
+        return [item[1] for item in titles]
+
+    def __build_virtual_location_map(self, rows: List[Tuple[SdsTrace, SrsReq, SrsType, SdsDoc, SrsDoc, Product]], doc_trees, doc_sds_locations):
+        result = {}
+        groups = {}
+        for row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product in rows:
+            if row_req.type_code in ["1", "2"]:
+                continue
+            code = ((row_req.code or "").replace("SRS", "SDS")).strip().upper()
+            if not code or not self.__is_empty_location(getattr(row_reqd, "location", "") or ""):
+                continue
+            if (doc_sds_locations.get(row_sdsdoc.id) or {}).get(code):
+                continue
+            groups.setdefault((row_sdsdoc.id, row_req.type_code), []).append((code, row_req))
+
+        for (doc_id, _type_code), items in groups.items():
+            insert_heading = self.__find_function_area_insert_heading(doc_trees.get(doc_id) or [])
+            if not insert_heading:
+                continue
+            parent_heading = ".".join(insert_heading.split(".")[:-1])
+            try:
+                start_index = int(insert_heading.split(".")[-1])
+            except Exception:
+                continue
+            roots = []
+            for code, row_req in sorted(items, key=lambda item: self.__compare_code(item[0])):
+                level_nodes = roots
+                titles = self.__req_hierarchy_titles(row_req)
+                if not titles:
+                    titles = [code]
+                for index, title in enumerate(titles):
+                    norm = self.__normalize_name(title) or (title or "").strip().lower()
+                    target = None
+                    for node in level_nodes:
+                        if node["norm"] == norm:
+                            target = node
+                            break
+                    if target is None:
+                        target = {"norm": norm, "title": title, "children": [], "code": None}
+                        level_nodes.append(target)
+                    if index == len(titles) - 1 and not target["code"]:
+                        target["code"] = code
+                    level_nodes = target["children"]
+
+            def assign(nodes, base_heading):
+                for index, node in enumerate(nodes):
+                    heading = f"{base_heading}.{index + 1}" if base_heading else str(start_index + index)
+                    if base_heading == parent_heading:
+                        heading = f"{parent_heading}.{start_index + index}" if parent_heading else str(start_index + index)
+                    if node.get("code") and node["code"] not in result:
+                        result[node["code"]] = heading
+                    assign(node.get("children") or [], heading)
+
+            assign(roots, parent_heading)
+        return result
+
+    def __resolve_sds_locations(self, row_reqd: SdsTrace, doc_id: int, doc_sds_locations, virtual_sds_locations):
+        locations = []
+        has_code = False
+        for token in self.__extract_code_tokens(getattr(row_reqd, "sds_code", "") or ""):
+            has_code = True
+            location = (doc_sds_locations.get(doc_id) or {}).get(token) or virtual_sds_locations.get(token) or ""
+            locations.append(location)
+        if not has_code:
+            return None
+        return "\n".join(locations) or None
+
+    @staticmethod
     def __clean_path_title(value: str):
         txt = (value or "").strip()
         if not txt:
@@ -479,6 +620,8 @@ class Server(object):
         doc_ids = list(set([row_sdsdoc.id for row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product in rows]))
         doc_trees = self.__query_doc_tree(doc_ids)
         doc_chapter_offsets = {d_id: self.__get_doc_chapter_offset(tree) for d_id, tree in doc_trees.items()}
+        doc_sds_locations = {d_id: self.__build_sds_location_map(tree) for d_id, tree in doc_trees.items()}
+        virtual_sds_locations = self.__build_virtual_location_map(rows, doc_trees, doc_sds_locations)
         objs = []
         for row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product in rows:
             obj = SdsTraceObj(**row_reqd.dict())
@@ -495,9 +638,10 @@ class Server(object):
                 obj.product_version = row_product.full_version
             obj.type_code = row_req.type_code
             obj.type_name = type_names.get(row_req.id) or default_types.get(row_req.type_code) or row_req.type_code
+            sds_location = self.__resolve_sds_locations(row_reqd, row_sdsdoc.id, doc_sds_locations, virtual_sds_locations)
             if (row_req.code or "").strip().upper() in FIXED_RCN300_TRACES:
                 obj.chapter = row_reqd.chapter or ""
-                obj.location = row_reqd.location or None
+                obj.location = sds_location
                 objs.append(obj)
                 continue
             doc_tree = doc_trees.get(row_sdsdoc.id)
@@ -506,7 +650,7 @@ class Server(object):
                 obj.name = row_req.sub_function or row_req.function or row_req.module or "/"
                 obj.chapter = obj.name
                 # 章节号仅来自详细设计侧（SDS），不回退SRS章节号
-                obj.location = obj.location or None
+                obj.location = sds_location
                 objs.append(obj)
                 continue
             # 严格按详细设计树节点读取章节号：优先 sds_code 命中；无编码时仅做标题精确匹配
@@ -528,7 +672,7 @@ class Server(object):
             if not paths:
                 obj.name = row_req.sub_function or row_req.function or row_req.module or "/"
                 obj.chapter = obj.name
-                obj.location = self.__extract_chapter_code(obj.location) or None
+                obj.location = sds_location
                 objs.append(obj)
                 continue
             # 需求/代码固定取 SRS需求名称（子功能 > 功能 > 模块），占位值时用树标题兜底
@@ -544,17 +688,16 @@ class Server(object):
                         break
             obj.chapter = obj.name
             levels = self.__extract_chapter_levels(paths)
-            # 章节号优先取命中路径中的最细级编码（如 6.7.12）
-            if levels:
+            # 章节号统一取详细设计侧：优先 sds_code 命中的 SDS 树/虚拟节点，其次才是 SDS 树标题路径。
+            if sds_location:
+                obj.location = sds_location
+            elif levels:
                 obj.location = levels[-1]
-            elif not obj.location:
+            elif self.__is_empty_location(obj.location):
                 obj.location = self.__find_chapter(paths)
                 logger.info("location: %s %s", row_reqd.sds_code, obj.location)
-            obj.location = self.__extract_chapter_code(obj.location) or None
-            # 命中路径但暂未解析出章节号时，保留行供人工维护
-            if obj.location:
-                chapter_offset = doc_chapter_offsets.get(row_sdsdoc.id, 0)
-                obj.location = self.__shift_chapter_major(obj.location, chapter_offset) or obj.location
+            if not sds_location:
+                obj.location = self.__extract_chapter_code(obj.location) or None
             objs.append(obj)
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
         

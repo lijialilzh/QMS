@@ -51,6 +51,10 @@ export const export_doc_trace = async (params: any) => {
     return await httpGet("/trace-api/srs_doc/export_doc_trace", params);
 };
 
+export const export_doc_trace_word = async (params: any) => {
+    return await httpGet("/trace-api/srs_doc/export_doc_trace_word", params);
+};
+
 export const import_srs_doc_word = async (params: any) => {
     return await httpPost("/trace-api/srs_doc/import_srs_doc_word", params2form(params));
 };

@@ -719,11 +719,11 @@ class Server(object):
     def __sync_srs_req_names_from_doc_nodes(self, doc_id: int, nodes: List[SrsNodeForm]):
         sync_map: Dict[str, dict] = {}
 
-        def extract_req_code_from_table(table):
+        def extract_req_detail_from_table(table):
             headers = getattr(table, "headers", None) if table else None
             rows = getattr(table, "rows", None) if table else None
             if not headers or not rows or len(headers) < 2:
-                return ""
+                return {}
             col_codes = [getattr(h, "code", "") for h in headers]
             pairs = []
             h_left = self.__normalize_text(getattr(headers[0], "name", "") or "")
@@ -735,10 +735,13 @@ class Server(object):
                 right = self.__normalize_text(str((row or {}).get(col_codes[1], "") or ""))
                 if left or right:
                     pairs.append((left, right))
+            result = {}
             for left, right in pairs:
                 if self.__map_reqd_field(left) == "code":
-                    return self.__normalize_srs_code(right or "")
-            return ""
+                    result["code"] = self.__normalize_srs_code(right or "")
+                elif self.__map_reqd_field(left) == "name":
+                    result["name"] = self.__normalize_text(right or "")
+            return result
 
         def put_entry(code: str, titles: List[str]):
             code = self.__normalize_srs_code(code or "")
@@ -765,9 +768,12 @@ class Server(object):
                 title = getattr(node, "title", "") or ""
                 next_path = path + [title]
                 node_code = self.__normalize_srs_code(str(getattr(node, "srs_code", "") or ""))
-                table_code = extract_req_code_from_table(getattr(node, "table", None))
+                table_detail = extract_req_detail_from_table(getattr(node, "table", None))
+                table_code = table_detail.get("code") or ""
                 table_path = path if table_code and re.match(r"^导入表格\d*$", title.strip()) else next_path
                 put_entry(node_code or table_code, table_path)
+                if table_code and table_detail.get("name"):
+                    sync_map.setdefault(table_code, {})["name"] = table_detail.get("name")
                 walk(getattr(node, "children", None) or [], next_path)
 
         walk(nodes or [], [])
@@ -2618,6 +2624,9 @@ class Server(object):
         node_rcm_codes = __query_node_rcm_codes(row_srsdoc.id, [str(row.code or "").strip().upper() for _, _, row in rows])
         req_tests, req_pairs, stage_code_index = __query_tests(row_srsdoc.product_id)
         row_product = db.session.execute(select(Product).where(Product.id == row_srsdoc.product_id)).scalars().first()
+        type_rows: List[SrsType] = db.session.execute(select(SrsType).where(SrsType.doc_id == row_srsdoc.id)).scalars().all()
+        type_names = {str(row.type_code or ""): row.type_name for row in type_rows}
+        default_type_names = {"1": "标准需求", "2": "文档需求"}
         product_code = str(getattr(row_product, "product_code", "") or "").strip()
         fixed_note_text = self.__build_trace_fixed_note_text(product_code)
         results = []
@@ -2686,6 +2695,8 @@ class Server(object):
             note = fixed_note_text if row_srs_code == self.TRACE_FIXED_NOTE_CODE else None
             result = dict(
                 srs_code=row.code,
+                type_code=row.type_code,
+                type_name=type_names.get(str(row.type_code or "")) or default_type_names.get(str(row.type_code or "")) or row.type_code,
                 rcm_flag=rcm_flag,
 
                 sds_code=row_trace.sds_code,
@@ -2732,18 +2743,149 @@ class Server(object):
             txt = str(v or "").strip()
             return txt if txt else "/"
 
+        def __is_change_trace_row(obj: dict):
+            type_code = str((obj or {}).get("type_code") or "").strip()
+            return bool(type_code) and type_code not in ["1", "2"]
+
+        def __safe_sheet_title(value: str):
+            txt = re.sub(r"[\[\]\*:/\\?]", "", str(value or "").strip()) or "变更追溯"
+            return txt[:31]
+
+        def __format_sds_code(value: str):
+            codes = [item.strip() for item in re.split(r"[,，\s]+", str(value or "").strip()) if item.strip()]
+            return "\n".join(codes) if len(codes) > 1 else str(value or "").strip()
+
+        def __write_trace_rows(ws, rows: list[dict]):
+            all_subs = 0
+            for ridx, obj in enumerate(rows or [], 4):
+                srs_code = __slash(obj.get("srs_code"))
+                rcm_flag = ts("yes") if obj.get("rcm_flag") else ts("no")
+                sds_code_raw = str(obj.get("sds_code") or "").strip()
+                chapter_raw = str(obj.get("chapter") or "").strip()
+                hide_chapter_codes = {
+                    "SDS-RCN300-001",
+                    "SDS-RCN300-002",
+                    "SDS-RCN300-003",
+                    "SDS-RCN300-008",
+                    "SDS-RCN300-009",
+                    "SDS-RCN300-010",
+                }
+                if sds_code_raw in hide_chapter_codes or not chapter_raw:
+                    sds_code = __format_sds_code(sds_code_raw)
+                else:
+                    sds_code = f"{__format_sds_code(sds_code_raw)}（{chapter_raw}）"
+                sis_codes = obj.get("sis_codes") or []
+
+                test_codes = obj.get("test_codes") or []
+                tests_unit = " ~ ".join(obj.get("tests_unit") or [])
+
+                tests_integ = " ~ ".join(obj.get("tests_integ") or [])
+                tests_sys = " ~ ".join(obj.get("tests_sys") or [])
+                tests_user = " ~ ".join(obj.get("tests_user") or [])
+                rcm_codes = "\n".join(obj.get("rcm_codes") or [])
+                note_raw = str(obj.get("note") or "").strip()
+                note = "\n".join([item.strip() for item in note_raw.split("、") if item and item.strip()]) if note_raw else ""
+
+                if len(sis_codes) <= 1:
+                    sis_code = sis_codes[0] if sis_codes else ""
+                    tests_unit = test_codes[0] if test_codes else tests_unit
+                    ws.append([
+                        srs_code,
+                        __slash(rcm_flag),
+                        __slash(sds_code),
+                        __slash(sis_code),
+                        __slash(tests_unit),
+                        __slash(tests_integ),
+                        __slash(tests_sys),
+                        __slash(tests_user),
+                        __slash(rcm_codes),
+                        __slash(note),
+                    ])
+                else:
+                    temp_subs = len(sis_codes) - 1
+                    for idx, sis_code in enumerate(sis_codes):
+                        test_code = test_codes[idx] if idx < len(test_codes) else ""
+                        ws.append([
+                            srs_code,
+                            __slash(rcm_flag),
+                            __slash(sds_code),
+                            __slash(sis_code),
+                            __slash(test_code),
+                            __slash(tests_integ),
+                            __slash(tests_sys),
+                            __slash(tests_user),
+                            __slash(rcm_codes),
+                            __slash(note),
+                        ])
+                    r_idx0 = ridx + all_subs
+                    r_idx1 = ridx + all_subs + temp_subs
+                    all_subs += temp_subs
+                    ws.merge_cells(f"A{r_idx0}:A{r_idx1}")
+                    ws.merge_cells(f"B{r_idx0}:B{r_idx1}")
+                    ws.merge_cells(f"C{r_idx0}:C{r_idx1}")
+
+                    ws.merge_cells(f"F{r_idx0}:F{r_idx1}")
+                    ws.merge_cells(f"G{r_idx0}:G{r_idx1}")
+                    ws.merge_cells(f"H{r_idx0}:H{r_idx1}")
+                    ws.merge_cells(f"I{r_idx0}:I{r_idx1}")
+                    ws.merge_cells(f"J{r_idx0}:J{r_idx1}")
+
+            align = Alignment(vertical='top')
+            for row in ws.iter_rows():
+                for cell in row:
+                    cell.alignment = align
+            # SDS/RCM/备注列按行展示
+            for row_idx in range(4, ws.max_row + 1):
+                for col in ["C", "I", "J"]:
+                    cell = ws[f"{col}{row_idx}"]
+                    cell.alignment = Alignment(vertical='top', wrap_text=True)
+
         resp = await self.list_doc_trace(id)
 
         temp_path = os.path.join(os.path.dirname(__file__), "temp_srs_doc_trace.xlsx")
         wb = load_workbook(temp_path)
         ws = wb[wb.sheetnames[0]]
+        rows = resp.data or []
+        normal_rows = [obj for obj in rows if not __is_change_trace_row(obj)]
+        change_rows = [obj for obj in rows if __is_change_trace_row(obj)]
+        ws_change = wb.copy_worksheet(ws) if change_rows else None
+        __write_trace_rows(ws, normal_rows)
 
-        all_subs = 0
-        for ridx, obj in enumerate(resp.data or [], 4):
-            srs_code = __slash(obj.get("srs_code"))
-            rcm_flag = ts("yes") if obj.get("rcm_flag") else ts("no")
-            sds_code_raw = str(obj.get("sds_code") or "").strip()
-            chapter_raw = str(obj.get("chapter") or "").strip()
+        if change_rows and ws_change is not None:
+            version = ""
+            doc_resp = await self.get_srs_doc(id)
+            doc = doc_resp.data if doc_resp else None
+            if doc:
+                version = str(getattr(doc, "product_version", "") or "").strip()
+            ws_change.title = __safe_sheet_title(f"{version or '产品'}变更追溯")
+            __write_trace_rows(ws_change, change_rows)
+        wb.save(output)
+        output.seek(0)
+
+    async def export_doc_trace_word(self, output, id: int):
+        if Document is None or Pt is None or dox_enum is None:
+            return
+        from .serv_utils import docx_util
+
+        def __slash(v):
+            txt = str(v or "").strip()
+            return txt if txt else "/"
+
+        def __is_change_trace_row(obj: dict):
+            type_code = str((obj or {}).get("type_code") or "").strip()
+            return bool(type_code) and type_code not in ["1", "2"]
+
+        def __format_sds_code(value: str):
+            codes = [item.strip() for item in re.split(r"[,，\s]+", str(value or "").strip()) if item.strip()]
+            return "\n".join(codes) if len(codes) > 1 else str(value or "").strip()
+
+        def __format_list(values):
+            if isinstance(values, list):
+                return "\n".join([str(item or "").strip() for item in values if str(item or "").strip()])
+            return str(values or "").strip()
+
+        def __build_rows(rows: list[dict]):
+            result = []
             hide_chapter_codes = {
                 "SDS-RCN300-001",
                 "SDS-RCN300-002",
@@ -2752,78 +2894,68 @@ class Server(object):
                 "SDS-RCN300-009",
                 "SDS-RCN300-010",
             }
-            if sds_code_raw in hide_chapter_codes or not chapter_raw:
-                sds_code = sds_code_raw
-            else:
-                sds_code = f"{sds_code_raw}（{chapter_raw}）"
-            sis_codes = obj.get("sis_codes") or []
+            for obj in rows or []:
+                sds_code_raw = str(obj.get("sds_code") or "").strip()
+                chapter_raw = str(obj.get("chapter") or "").strip()
+                if sds_code_raw in hide_chapter_codes or not chapter_raw:
+                    sds_code = __format_sds_code(sds_code_raw)
+                else:
+                    sds_code = f"{__format_sds_code(sds_code_raw)}（{chapter_raw}）"
+                sis_codes = obj.get("sis_codes") or []
+                test_codes = obj.get("test_codes") or []
+                tests_unit = test_codes if test_codes else (obj.get("tests_unit") or [])
+                note_raw = str(obj.get("note") or "").strip()
+                note = "\n".join([item.strip() for item in note_raw.split("、") if item and item.strip()]) if note_raw else ""
+                result.append({
+                    "srs_code": __slash(obj.get("srs_code")),
+                    "rcm_flag": ts("yes") if obj.get("rcm_flag") else ts("no"),
+                    "sds_code": __slash(sds_code),
+                    "sis_codes": __slash(__format_list(sis_codes)),
+                    "tests_unit": __slash(__format_list(tests_unit)),
+                    "tests_integ": __slash(" ~ ".join(obj.get("tests_integ") or [])),
+                    "tests_sys": __slash(" ~ ".join(obj.get("tests_sys") or [])),
+                    "tests_user": __slash(" ~ ".join(obj.get("tests_user") or [])),
+                    "rcm_codes": __slash(__format_list(obj.get("rcm_codes") or [])),
+                    "note": __slash(note),
+                })
+            return result
 
-            test_codes = obj.get("test_codes") or []
-            tests_unit = " ~ ".join(obj.get("tests_unit") or [])
+        def __write_trace_table(docx: Document, title: str, rows: list[dict]):
+            docx_util.save_title2docx(title, docx, level=1, font_size=16.0)
+            headers = [
+                TabHeader(code="srs_code", name="需求编号"),
+                TabHeader(code="rcm_flag", name="是否为RCM"),
+                TabHeader(code="sds_code", name="软件详细设计"),
+                TabHeader(code="sis_codes", name="接口编号"),
+                TabHeader(code="tests_unit", name="单元测试记录"),
+                TabHeader(code="tests_integ", name="集成测试记录"),
+                TabHeader(code="tests_sys", name="系统测试记录"),
+                TabHeader(code="tests_user", name="用户测试记录"),
+                TabHeader(code="rcm_codes", name="RCM"),
+                TabHeader(code="note", name="备注"),
+            ]
+            docx_util.save_tab2docx(Table(headers=headers, rows=__build_rows(rows)), docx)
 
-            tests_integ = " ~ ".join(obj.get("tests_integ") or [])
-            tests_sys = " ~ ".join(obj.get("tests_sys") or [])
-            tests_user = " ~ ".join(obj.get("tests_user") or [])
-            rcm_codes = "\n".join(obj.get("rcm_codes") or [])
-            note_raw = str(obj.get("note") or "").strip()
-            note = "\n".join([item.strip() for item in note_raw.split("、") if item and item.strip()]) if note_raw else ""
+        resp = await self.list_doc_trace(id)
+        doc_resp = await self.get_srs_doc(id)
+        doc = doc_resp.data if doc_resp else None
+        product_name = str(getattr(doc, "product_name", "") or "").strip()
+        product_version = str(getattr(doc, "product_version", "") or "").strip()
+        doc_version = str(getattr(doc, "version", "") or "").strip()
 
-            if len(sis_codes) <= 1:
-                sis_code = sis_codes[0] if sis_codes else ""
-                tests_unit = test_codes[0] if test_codes else tests_unit
-                ws.append([
-                    srs_code,
-                    __slash(rcm_flag),
-                    __slash(sds_code),
-                    __slash(sis_code),
-                    __slash(tests_unit),
-                    __slash(tests_integ),
-                    __slash(tests_sys),
-                    __slash(tests_user),
-                    __slash(rcm_codes),
-                    __slash(note),
-                ])
-            else:
-                temp_subs = len(sis_codes) - 1
-                for idx, sis_code in enumerate(sis_codes):
-                    test_code = test_codes[idx] if idx < len(test_codes) else ""
-                    ws.append([
-                        srs_code,
-                        __slash(rcm_flag),
-                        __slash(sds_code),
-                        __slash(sis_code),
-                        __slash(test_code),
-                        __slash(tests_integ),
-                        __slash(tests_sys),
-                        __slash(tests_user),
-                        __slash(rcm_codes),
-                        __slash(note),
-                    ])
-                r_idx0 = ridx + all_subs
-                r_idx1 = ridx + all_subs + temp_subs
-                all_subs += temp_subs
-                ws.merge_cells(f"A{r_idx0}:A{r_idx1}")
-                ws.merge_cells(f"B{r_idx0}:B{r_idx1}")
-                ws.merge_cells(f"C{r_idx0}:C{r_idx1}")
+        rows = resp.data or []
+        normal_rows = [obj for obj in rows if not __is_change_trace_row(obj)]
+        change_rows = [obj for obj in rows if __is_change_trace_row(obj)]
 
-                ws.merge_cells(f"F{r_idx0}:F{r_idx1}")
-                ws.merge_cells(f"G{r_idx0}:G{r_idx1}")
-                ws.merge_cells(f"H{r_idx0}:H{r_idx1}")
-                ws.merge_cells(f"I{r_idx0}:I{r_idx1}")
-                ws.merge_cells(f"J{r_idx0}:J{r_idx1}")
-
-        align = Alignment(vertical='top')
-        for row in ws.iter_rows():
-            for cell in row:
-                cell.alignment = align
-        # RCM列（I列）按行展示
-        for row_idx in range(4, ws.max_row + 1):
-            cell = ws[f"I{row_idx}"]
-            cell.alignment = Alignment(vertical='top', wrap_text=True)
-        # 备注列（J列）按行展示
-        for row_idx in range(4, ws.max_row + 1):
-            cell = ws[f"J{row_idx}"]
-            cell.alignment = Alignment(vertical='top', wrap_text=True)
-        wb.save(output)
+        docx = Document()
+        title = "-".join([item for item in [product_name, product_version, doc_version] if item])
+        if title:
+            p = docx.add_paragraph()
+            p.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.CENTER
+            docx_util.fonted_txt(p, f"{title} 追溯分析", font_size=16.0, bold=True)
+        __write_trace_table(docx, "追溯分析", normal_rows)
+        if change_rows:
+            __write_trace_table(docx, f"{product_version or '产品'}变更追溯", change_rows)
+        docx.save(output)
         output.seek(0)
         

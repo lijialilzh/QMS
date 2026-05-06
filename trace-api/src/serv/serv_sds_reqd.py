@@ -36,6 +36,22 @@ class Server(object):
         return txt in ["", "-", "--", "—", "/", "\\", "暂无", "无", "N/A", "n/a"]
 
     @staticmethod
+    def __normalize_name_part(value: str):
+        txt = str(value or "").strip()
+        if not txt:
+            return ""
+        if txt in {"/", "\\", "／", "＼", "-", "--", "_", "无", "N/A", "n/a", "NA", "na", "null", "NULL", "None", "none"}:
+            return ""
+        return txt
+
+    def __pick_req_name(self, req_row: SrsReq, *fallbacks):
+        for val in [req_row.sub_function, req_row.function, req_row.module, *fallbacks]:
+            txt = self.__normalize_name_part(val)
+            if txt:
+                return txt
+        return ""
+
+    @staticmethod
     def __pick_srs_flow_text(row_srsreqd: SrsReqd):
         if not row_srsreqd:
             return ""
@@ -57,6 +73,15 @@ class Server(object):
                 return trigger
             return f"{trigger}\n{work_flow}"
         return trigger or work_flow
+
+    @staticmethod
+    def __has_srs_detail_content(row_srsreqd: SrsReqd):
+        if not row_srsreqd:
+            return False
+        for field in ["overview", "trigger", "work_flow", "pre_condition", "post_condition", "exception", "constraint"]:
+            if (getattr(row_srsreqd, field, None) or "").strip():
+                return True
+        return False
 
     @staticmethod
     def __extract_io_sections_from_text(text: str):
@@ -717,7 +742,10 @@ class Server(object):
             doc_tree = doc_trees.get(row_sdsdoc.id)
             has_imported_design = doc_has_effective_content.get(row_sdsdoc.id, False)
             values = self.__extract_imported_fields(doc_tree, row_req, row_srsreqd) if has_imported_design else {}
-            row_srsreqd_source = row_srsreqd or srs_reqd_fallback.get(getattr(row_req, "id", None))
+            fallback_srsreqd = srs_reqd_fallback.get(getattr(row_req, "id", None))
+            row_srsreqd_source = row_srsreqd
+            if fallback_srsreqd and not self.__has_srs_detail_content(row_srsreqd_source):
+                row_srsreqd_source = fallback_srsreqd
             # 未导入详细设计时，才允许使用历史/手工值兜底
             if not has_imported_design:
                 for field in ["overview", "func_detail", "logic_txt", "intput", "output", "interface"]:
@@ -729,12 +757,13 @@ class Server(object):
             obj = SdsReqdObj(**row_reqd.dict())
             obj.srs_code = row_req.code
             srs_flow_text = self.__compose_srs_func_detail(row_srsreqd_source)
+            srs_overview = (getattr(row_srsreqd_source, "overview", None) or "").strip() if row_srsreqd_source else ""
+            obj.name = self.__pick_req_name(row_req, getattr(row_srsreqd_source, "name", None))
             if row_srsreqd_source:
-                obj.name = getattr(row_srsreqd_source, "name", None) or row_req.sub_function or row_req.function or row_req.module
                 if has_imported_design:
-                    # 已导入详细设计：严格以详细设计文档解析结果为准，避免历史脏值干扰
-                    obj.overview = values.get("overview") or ""
-                    obj.func_detail = values.get("func_detail") or ""
+                    # 已导入详细设计：优先展示详细设计解析结果，解析不到时回退到需求列表内容
+                    obj.overview = values.get("overview") or srs_overview
+                    obj.func_detail = values.get("func_detail") or srs_flow_text
                     obj.logic_txt = values.get("logic_txt") or ""
                     obj.intput = values.get("intput") or ""
                     obj.output = values.get("output") or ""
@@ -748,7 +777,6 @@ class Server(object):
                     obj.output = row_reqd.output
                     obj.interface = row_reqd.interface
             else:
-                obj.name = row_req.sub_function or row_req.function or row_req.module
                 if has_imported_design:
                     obj.overview = values.get("overview") or ""
                     obj.func_detail = values.get("func_detail") or ""
@@ -767,6 +795,7 @@ class Server(object):
             obj.module = row_req.module
             obj.function = row_req.function
             obj.sub_function = row_req.sub_function
+            obj.type_code = row_req.type_code
             if row_srsdoc:
                 obj.srsdoc_version = row_srsdoc.version
             if row_sdsdoc:
@@ -807,12 +836,13 @@ class Server(object):
         has_imported_design = self.__has_effective_sds_content(doc_tree)
 
         row_srsreqd_source = row_srsreqd
-        if not row_srsreqd_source and row_srsdoc:
+        if row_srsdoc:
             try:
                 resp = await srsreqd_serv.list_srs_reqd(doc_id=row_srsdoc.id, page_size=5000)
                 for item in (resp.data.rows or []):
                     if getattr(item, "req_id", None) == getattr(row_req, "id", None):
-                        row_srsreqd_source = item
+                        if not self.__has_srs_detail_content(row_srsreqd_source):
+                            row_srsreqd_source = item
                         break
             except Exception:
                 logger.exception("get_sds_reqd_query_srs_reqd_fallback_failed: %s", row_srsdoc.id)
@@ -827,24 +857,24 @@ class Server(object):
 
         obj = SdsReqdObj(**row_reqd.dict(), srs_code=row_req.code)
         obj.logics = logics
-        obj.name = (getattr(row_srsreqd_source, "name", None) or row_req.sub_function or row_req.function or row_req.module)
+        obj.name = self.__pick_req_name(row_req, getattr(row_srsreqd_source, "name", None))
         fallback_logic_img = ""
         for logic in reversed(logics or []):
             img = self.__normalize_img_url(getattr(logic, "img_url", "") or "")
             if img:
                 fallback_logic_img = img
                 break
+        srs_overview = (getattr(row_srsreqd_source, "overview", None) or "").strip() if row_srsreqd_source else ""
+        srs_flow_text = self.__compose_srs_func_detail(row_srsreqd_source)
         if has_imported_design:
-            obj.overview = values.get("overview") or ""
-            obj.func_detail = values.get("func_detail") or ""
+            obj.overview = values.get("overview") or srs_overview
+            obj.func_detail = values.get("func_detail") or srs_flow_text
             obj.logic_txt = values.get("logic_txt") or ""
             obj.intput = values.get("intput") or ""
             obj.output = values.get("output") or ""
             obj.interface = values.get("interface") or ""
             obj.logic_img = fallback_logic_img or self.__normalize_img_url(values.get("logic_img") or "")
         else:
-            srs_overview = (getattr(row_srsreqd_source, "overview", None) or "").strip() if row_srsreqd_source else ""
-            srs_flow_text = self.__compose_srs_func_detail(row_srsreqd_source)
             obj.overview = srs_overview or row_reqd.overview or ""
             obj.func_detail = srs_flow_text or row_reqd.func_detail or ""
             obj.logic_txt = values.get("logic_txt") or row_reqd.logic_txt or ""
@@ -852,5 +882,9 @@ class Server(object):
             obj.output = values.get("output") or row_reqd.output or ""
             obj.interface = values.get("interface") or row_reqd.interface or ""
             obj.logic_img = fallback_logic_img or self.__normalize_img_url(values.get("logic_img") or row_reqd.logic_img or "")
+        obj.module = row_req.module
+        obj.function = row_req.function
+        obj.sub_function = row_req.sub_function
+        obj.type_code = row_req.type_code
         return Resp.resp_ok(data=obj)
     

@@ -15,6 +15,7 @@ class SdsReqdObj(SdsReqdForm):
     module: Optional[str] = Field(title="模块")
     function: Optional[str] = Field(title="功能")
     sub_function: Optional[str] = Field(title="子功能")
+    type_code: Optional[str] = Field(title="需求类型")
     
     product_name: Optional[str] = Field(title="产品名称")
     product_version: Optional[str] = Field(title="产品版本")

@@ -77,6 +77,18 @@
             // 覆盖全局样式，确保表格正常显示
             .ant-table-wrapper {
                 height: auto !important;
+                max-width: 100%;
+                overflow-x: hidden;
+            }
+
+            .ant-table-container,
+            .ant-table-content,
+            .ant-table-body {
+                overflow-x: hidden !important;
+            }
+
+            .ant-table {
+                table-layout: fixed;
             }
 
             // 表格行高固定为 30px
@@ -85,6 +97,37 @@
                 line-height: 30px;
                 padding-top: 0;
                 padding-bottom: 0;
+            }
+
+            .ant-table-thead > tr > th,
+            .ant-table-tbody > tr > td {
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .ant-table-thead > tr > th.srs-manage-action-col,
+            .ant-table-tbody > tr > td.srs-manage-action-col {
+                overflow: visible;
+                text-overflow: clip;
+                white-space: nowrap;
+            }
+
+            .srs-manage-action-space {
+                display: inline-flex;
+                flex-wrap: nowrap;
+                align-items: center;
+                white-space: nowrap;
+            }
+
+            .ant-btn-link {
+                padding-left: 2px;
+                padding-right: 2px;
+                white-space: nowrap;
+            }
+
+            .ant-space {
+                gap: 4px !important;
             }
         }
 

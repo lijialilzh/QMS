@@ -439,77 +439,6 @@ export default () => {
         }));
         return walk(roots);
     };
-    const normalizeTraceMatchText = (value?: string) => String(value || "")
-        .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
-        .replace(/^[（(]?\s*(?:\d+|[一二三四五六七八九十]+)\s*[）)]?/, "")
-        .replace(/[\s\u3000:：，,。；;、()（）【】\[\]/\\\-_.]+/g, "")
-        .toLowerCase();
-    const applySdsCodesFromTraceRows = (roots: TreeNode[], traceRows: any[]): TreeNode[] => {
-        if (isReadOnly || !Array.isArray(roots) || roots.length === 0 || !Array.isArray(traceRows) || traceRows.length === 0) return roots;
-        const codeByLocation = new Map<string, string>();
-        const codeByName = new Map<string, string>();
-        traceRows.forEach((row: any) => {
-            const sdsCode = String(row?.sds_code || "").trim();
-            if (!sdsCode) return;
-            const location = String(row?.location || "").trim();
-            if (location && !codeByLocation.has(location)) {
-                codeByLocation.set(location, sdsCode);
-            }
-            [row?.chapter, row?.name, row?.sub_function, row?.function, row?.module]
-                .map((item) => normalizeTraceMatchText(String(item || "")))
-                .filter(Boolean)
-                .forEach((key) => {
-                    if (!codeByName.has(key)) codeByName.set(key, sdsCode);
-                });
-        });
-        if (codeByLocation.size === 0 && codeByName.size === 0) return roots;
-        const findMatchedCode = (node: TreeNode): string => {
-            const title = String(node.title || "").trim();
-            const headingNo = parseHeadingNumber(title) || "";
-            const nameKey = normalizeTraceMatchText(title);
-            return (headingNo && codeByLocation.get(headingNo)) || (nameKey && codeByName.get(nameKey)) || "";
-        };
-        const subtreeHasMatchedCode = (nodes: TreeNode[], code: string): boolean => {
-            if (!code) return false;
-            return (nodes || []).some((child) => {
-                if (findMatchedCode(child) === code) return true;
-                return subtreeHasMatchedCode((child.children || []) as TreeNode[], code);
-            });
-        };
-        const walk = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
-            const children = walk((node.children || []) as TreeNode[]);
-            const currentCode = String((node as any).sds_code ?? "").trim();
-            if (currentCode) {
-                return { ...node, children };
-            }
-            const matchedCode = findMatchedCode(node);
-            if (!matchedCode || subtreeHasMatchedCode(children, matchedCode)) {
-                return { ...node, children };
-            }
-            return {
-                ...node,
-                sds_code: matchedCode,
-                children,
-            };
-        });
-        return walk(roots);
-    };
-    const hydrateSdsCodesFromTrace = async (roots: TreeNode[], docId?: number): Promise<TreeNode[]> => {
-        if (isReadOnly || !docId || !Array.isArray(roots) || roots.length === 0) return roots;
-        try {
-            const res: any = await ApiSdsTrace.list_sds_trace({
-                doc_id: docId,
-                page_index: 0,
-                page_size: 10000,
-                _ts: Date.now(),
-            });
-            if (res?.code !== ApiSdsTrace.C_OK) return roots;
-            return applySdsCodesFromTraceRows(roots, res?.data?.rows || []);
-        } catch (error) {
-            console.error("加载需求追溯表回填SDS编号失败:", error);
-            return roots;
-        }
-    };
     const stripHeadingPrefix = (value?: string): string => {
         return String(value || "")
             .trim()
@@ -1216,6 +1145,357 @@ export default () => {
         return ensureFrontMatterTables(addIdsToNodes(standardNodes as any[]));
     };
 
+    const normalizeReqCode = (value?: string) => String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+    const toSdsCode = (srsCode?: string) => {
+        const code = normalizeReqCode(srsCode);
+        return code.startsWith("SRS-") ? `SDS-${code.slice(4)}` : code;
+    };
+    const compareReqCode = (a?: string, b?: string) => {
+        const ax = normalizeReqCode(a).match(/\d+/g)?.map(Number) || [];
+        const bx = normalizeReqCode(b).match(/\d+/g)?.map(Number) || [];
+        const len = Math.max(ax.length, bx.length);
+        for (let i = 0; i < len; i += 1) {
+            const diff = (ax[i] || 0) - (bx[i] || 0);
+            if (diff !== 0) return diff;
+        }
+        return normalizeReqCode(a).localeCompare(normalizeReqCode(b));
+    };
+    const normalizeReqTitle = (value?: string) => String(value || "")
+        .trim()
+        .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+        .replace(/\s+/g, "")
+        .toLowerCase();
+    const getReqSubFunctionTitle = (row: any) => String(row.sub_function || row.name || row.function || row.module || row.srs_code || "").trim();
+    const syncMissingReqdNodes = async (roots: TreeNode[], docId?: number): Promise<TreeNode[]> => {
+        if (isReadOnly || !docId || !Array.isArray(roots) || roots.length === 0) return roots;
+        try {
+            const res: any = await ApiSdsReqd.list_sds_reqd({
+                doc_id: docId,
+                page_index: 0,
+                page_size: 10000,
+                _ts: Date.now(),
+            });
+            if (res?.code !== ApiSdsReqd.C_OK) return roots;
+            const rows = res?.data?.rows || [];
+            if (!rows.length) return roots;
+
+            const rowBySdsCode = new Map<string, any>();
+            rows.forEach((row: any) => {
+                const code = toSdsCode(row.srs_code || row.req_id);
+                if (code) rowBySdsCode.set(code, row);
+            });
+            if (rowBySdsCode.size === 0) return roots;
+
+            const codeByTitle = new Map<string, string>();
+            const rowByCode = new Map<string, any>();
+            rows.forEach((row: any) => {
+                const code = toSdsCode(row.srs_code || row.req_id);
+                if (!code) return;
+                rowByCode.set(code, row);
+                [row.sub_function, row.name]
+                    .map((value) => normalizeReqTitle(String(value || "")))
+                    .filter(Boolean)
+                    .forEach((title) => {
+                        if (!codeByTitle.has(title)) codeByTitle.set(title, code);
+                    });
+            });
+            const composeReqDescription = (row: any, existingText?: string) => {
+                const currentText = String(existingText || "").trim();
+                if (currentText) return currentText;
+                const overview = String(row?.overview || "").trim();
+                const funcDetail = String(row?.func_detail || "").trim();
+                const logicTxt = String(row?.logic_txt || "").trim();
+                const intput = String(row?.intput || "").trim();
+                const output = String(row?.output || "").trim();
+                const interfaceText = String(row?.interface || "").trim();
+                return [
+                    `(1) 总体描述\n${overview || "无"}`,
+                    `(2) 功能\n${funcDetail || "无"}`,
+                    `(3) 程序逻辑\n${logicTxt || "无"}`,
+                    `(4) 输入项\n${intput || "无"}`,
+                    `(5) 输出项\n${output || "无"}`,
+                    `(6) 接口\n${interfaceText || "无"}`,
+                ].join("\n");
+            };
+            const hydrateExistingReqdNodes = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
+                const children = hydrateExistingReqdNodes((node.children || []) as TreeNode[]);
+                const currentCode = normalizeReqCode((node as any).sds_code);
+                if (currentCode || children.length > 0) {
+                    return { ...node, children };
+                }
+                const matchedCode = codeByTitle.get(normalizeReqTitle(node.title));
+                return matchedCode ? { ...node, sds_code: matchedCode, children } : { ...node, children };
+            });
+            const rootsWithCodes = hydrateExistingReqdNodes(roots);
+
+            const buildLeafNode = (row: any, code: string, existing?: TreeNode): TreeNode => ({
+                ...(existing || {}),
+                id: existing?.id || generateTempNodeId(),
+                doc_id: existing?.doc_id || 0,
+                n_id: existing?.n_id || 0,
+                p_id: existing?.p_id || 0,
+                title: existing?.title || getReqSubFunctionTitle(row),
+                sds_code: code,
+                img_url: existing?.img_url || "",
+                text: composeReqDescription(row, existing?.text) || existing?.text || "",
+                table: existing?.table || ({} as any),
+                children: (existing?.children || []) as TreeNode[],
+            });
+
+            const existingCodes = new Set<string>();
+            const existingTitles = new Set<string>();
+            const collectExistingNodes = (nodes: TreeNode[]) => {
+                (nodes || []).forEach((node) => {
+                    const code = normalizeReqCode((node as any).sds_code);
+                    if (code) existingCodes.add(code);
+                    const title = normalizeReqTitle(node.title);
+                    if (title) existingTitles.add(title);
+                    collectExistingNodes((node.children || []) as TreeNode[]);
+                });
+            };
+            collectExistingNodes(rootsWithCodes);
+
+            const codeNumbers = (code?: string) => normalizeReqCode(code).match(/\d+/g)?.map(Number) || [];
+            const codeMajor = (code?: string) => codeNumbers(code)[0];
+            const codeDistance = (a?: string, b?: string) => {
+                const ax = codeNumbers(a);
+                const bx = codeNumbers(b);
+                const len = Math.max(ax.length, bx.length);
+                let score = 0;
+                for (let i = 0; i < len; i += 1) {
+                    score += Math.abs((ax[i] || 0) - (bx[i] || 0)) * Math.pow(1000, len - i);
+                }
+                return score;
+            };
+            const pathKey = (path: number[]) => path.join(".");
+            const anchors: Array<{ code: string; parentPath: number[] }> = [];
+            const collectAnchors = (nodes: TreeNode[], parentPath: number[] = []) => {
+                (nodes || []).forEach((node, index) => {
+                    const code = normalizeReqCode((node as any).sds_code);
+                    if (code) anchors.push({ code, parentPath });
+                    collectAnchors((node.children || []) as TreeNode[], [...parentPath, index]);
+                });
+            };
+            collectAnchors(rootsWithCodes);
+            if (anchors.length === 0) return roots;
+            const maxExistingMajor = Math.max(...anchors.map((anchor) => codeMajor(anchor.code) || 0));
+            const shouldInsertRow = (code: string, row: any) => {
+                if (existingCodes.has(code)) return false;
+                const title = normalizeReqTitle(getReqSubFunctionTitle(row));
+                if (title && existingTitles.has(title)) return false;
+                const major = codeMajor(code) || 0;
+                return major >= maxExistingMajor;
+            };
+            if (!Array.from(rowBySdsCode.entries()).some(([code, row]) => shouldInsertRow(code, row))) return roots;
+
+            const findInsertTargetByCode = (code: string): { parentPath: number[]; afterIndex?: number } | undefined => {
+                const major = codeMajor(code);
+                const sameMajor = anchors.filter((anchor) => codeMajor(anchor.code) === major);
+                if (sameMajor.length) {
+                    return {
+                        parentPath: [...sameMajor].sort((a, b) => codeDistance(a.code, code) - codeDistance(b.code, code))[0].parentPath,
+                    };
+                }
+                const nearest = [...anchors].sort((a, b) => codeDistance(a.code, code) - codeDistance(b.code, code))[0];
+                if (!nearest) return undefined;
+                const nearestParentPath = nearest.parentPath || [];
+                if (nearestParentPath.length === 0) return { parentPath: [] };
+                return {
+                    parentPath: nearestParentPath.slice(0, -1),
+                    afterIndex: nearestParentPath[nearestParentPath.length - 1],
+                };
+            };
+
+            const insertionsByParent = new Map<string, Array<{ code: string; row: any; afterIndex?: number }>>();
+            Array.from(rowBySdsCode.entries())
+                .filter(([code, row]) => shouldInsertRow(code, row))
+                .sort(([a], [b]) => compareReqCode(a, b))
+                .forEach(([code, row]) => {
+                    const target = findInsertTargetByCode(code);
+                    if (!target) return;
+                    const key = pathKey(target.parentPath);
+                    const list = insertionsByParent.get(key) || [];
+                    list.push({ code, row, afterIndex: target.afterIndex });
+                    insertionsByParent.set(key, list);
+                });
+            if (insertionsByParent.size === 0) return roots;
+
+            const stripHeadingNumber = (title?: string) => String(title || "")
+                .trim()
+                .replace(HEADING_NUM_RE, "")
+                .trim();
+            const nextHeadingAfter = (siblings: TreeNode[], beforeIndex: number, offset: number) => {
+                for (let index = beforeIndex; index >= 0; index -= 1) {
+                    const heading = parseHeadingNumber(siblings[index]?.title);
+                    if (!heading) continue;
+                    const parts = heading.split(".").map((part) => Number(part));
+                    if (!parts.length || parts.some((part) => !Number.isFinite(part))) continue;
+                    parts[parts.length - 1] += offset;
+                    return parts.join(".");
+                }
+                return "";
+            };
+            const withSiblingChapterNo = (node: TreeNode, siblings: TreeNode[], insertIndex: number, offset: number, force = false): TreeNode => {
+                if (!force && parseHeadingNumber(node.title)) return node;
+                const heading = nextHeadingAfter(siblings, insertIndex - 1, offset);
+                if (!heading) return node;
+                const titleText = force ? String(node.title || "").trim() : stripHeadingNumber(node.title);
+                return { ...node, title: `${heading} ${titleText}`.trim() };
+            };
+            const withChildChapterNos = (node: TreeNode, force = false): TreeNode => {
+                const parentHeading = parseHeadingNumber(node.title);
+                const children = ((node.children || []) as TreeNode[]).map((child, index) => {
+                    const childWithNumber = (!force && parseHeadingNumber(child.title)) || !parentHeading
+                        ? child
+                        : { ...child, title: `${parentHeading}.${index + 1} ${force ? String(child.title || "").trim() : stripHeadingNumber(child.title)}`.trim() };
+                    return withChildChapterNos(childWithNumber, force);
+                });
+                return { ...node, children };
+            };
+            const getReqHierarchyTitles = (row: any) => {
+                const titles = [row.module, row.function, row.sub_function]
+                    .map((value) => String(value || "").trim())
+                    .filter(Boolean);
+                const uniqueTitles: string[] = [];
+                titles.forEach((title) => {
+                    if (!uniqueTitles.some((item) => normalizeReqTitle(item) === normalizeReqTitle(title))) {
+                        uniqueTitles.push(title);
+                    }
+                });
+                return uniqueTitles.length ? uniqueTitles : [getReqSubFunctionTitle(row)].filter(Boolean);
+            };
+            const appendHierarchyRow = (nodes: TreeNode[], row: any, code: string) => {
+                const titles = getReqHierarchyTitles(row);
+                let levelNodes = nodes;
+                titles.forEach((title, index) => {
+                    const isLeaf = index === titles.length - 1;
+                    let target = levelNodes.find((node) => normalizeReqTitle(node.title) === normalizeReqTitle(title));
+                    if (!target) {
+                        target = {
+                            id: generateTempNodeId(),
+                            doc_id: 0,
+                            n_id: 0,
+                            p_id: 0,
+                            title,
+                            ...(isLeaf && { sds_code: code }),
+                            img_url: "",
+                            text: isLeaf ? composeReqDescription(row) : "",
+                            table: {} as any,
+                            children: [],
+                        } as TreeNode;
+                        levelNodes.push(target);
+                    } else if (isLeaf && !(target as any).sds_code) {
+                        (target as any).sds_code = code;
+                        target.text = composeReqDescription(row, target.text) || target.text || "";
+                    } else if (isLeaf) {
+                        target.text = composeReqDescription(row, target.text) || target.text || "";
+                    }
+                    levelNodes = (target.children || []) as TreeNode[];
+                });
+            };
+            const buildHierarchyNodes = (insertions: Array<{ code: string; row: any }>) => {
+                const nodes: TreeNode[] = [];
+                insertions.forEach(({ code, row }) => appendHierarchyRow(nodes, row, code));
+                return nodes;
+            };
+            const renumberFollowingSiblings = (siblings: TreeNode[]) => {
+                const result = siblings.map((child) => ({ ...child }));
+                let previousHeading = "";
+                result.forEach((child, index) => {
+                    const currentHeading = parseHeadingNumber(child.title);
+                    if (!currentHeading) return;
+                    if (previousHeading) {
+                        const previousParts = previousHeading.split(".").map((part) => Number(part));
+                        const currentParts = currentHeading.split(".").map((part) => Number(part));
+                        if (
+                            previousParts.length === currentParts.length
+                            && previousParts.slice(0, -1).every((part, partIndex) => part === currentParts[partIndex])
+                            && currentParts[currentParts.length - 1] <= previousParts[previousParts.length - 1]
+                        ) {
+                            currentParts[currentParts.length - 1] = previousParts[previousParts.length - 1] + 1;
+                            const nextHeading = currentParts.join(".");
+                            result[index] = {
+                                ...child,
+                                title: `${nextHeading} ${stripHeadingNumber(child.title)}`.trim(),
+                            };
+                            previousHeading = nextHeading;
+                            return;
+                        }
+                    }
+                    previousHeading = parseHeadingNumber(result[index].title) || currentHeading;
+                });
+                return result;
+            };
+
+            const insertReqdNodes = (children: TreeNode[], insertions: Array<{ code: string; row: any; afterIndex?: number }>) => {
+                let nextChildren = (children || []).map((child) => ({ ...child }));
+                let afterIndexOffset = 0;
+                const groupedInsertions = insertions.reduce<Array<Array<{ code: string; row: any; afterIndex?: number }>>>((groups, item) => {
+                    const lastGroup = groups[groups.length - 1];
+                    if (lastGroup && lastGroup[0]?.afterIndex === item.afterIndex) {
+                        lastGroup.push(item);
+                    } else {
+                        groups.push([item]);
+                    }
+                    return groups;
+                }, []);
+                groupedInsertions.forEach((group) => {
+                    const afterIndex = group[0]?.afterIndex;
+                    const pendingRows = group.filter(({ code }) => !existingCodes.has(code));
+                    if (!pendingRows.length) return;
+                    if (afterIndex !== undefined) {
+                        const insertIndex = afterIndex + 1 + afterIndexOffset;
+                        const previewChildren = [...nextChildren];
+                        const hierarchyNodes = buildHierarchyNodes(pendingRows).map((node, index) => {
+                            const targetIndex = insertIndex + index;
+                            const numberedNode = withChildChapterNos(withSiblingChapterNo(node, previewChildren, targetIndex, 1, true), true);
+                            previewChildren.splice(targetIndex, 0, numberedNode);
+                            return numberedNode;
+                        });
+                        nextChildren.splice(insertIndex, 0, ...hierarchyNodes);
+                        afterIndexOffset += hierarchyNodes.length;
+                        pendingRows.forEach(({ code }) => existingCodes.add(code));
+                        return;
+                    }
+                    pendingRows.forEach(({ code, row }) => {
+                        if (existingCodes.has(code)) return;
+                    const baseLeafNode = buildLeafNode(row, code);
+                    const greaterIndex = nextChildren.findIndex((child) => {
+                        const childCode = normalizeReqCode((child as any).sds_code);
+                        return childCode && compareReqCode(childCode, code) > 0;
+                    });
+                    if (greaterIndex >= 0) {
+                        const leafNode = withSiblingChapterNo(baseLeafNode, nextChildren, greaterIndex, 1);
+                        nextChildren.splice(greaterIndex, 0, leafNode);
+                    } else {
+                        const lastCodeIndex = nextChildren.reduce((lastIndex, child, index) =>
+                            normalizeReqCode((child as any).sds_code) ? index : lastIndex, -1);
+                        const insertIndex = lastCodeIndex + 1;
+                        const leafNode = withSiblingChapterNo(baseLeafNode, nextChildren, insertIndex, 1);
+                        nextChildren.splice(insertIndex, 0, leafNode);
+                    }
+                    existingCodes.add(code);
+                    });
+                });
+                nextChildren = renumberFollowingSiblings(nextChildren);
+                return nextChildren;
+            };
+
+            const applyInsertions = (nodes: TreeNode[], currentPath: number[] = []): TreeNode[] => {
+                const directInsertions = insertionsByParent.get(pathKey(currentPath));
+                const currentNodes = directInsertions ? insertReqdNodes(nodes, directInsertions) : (nodes || []).map((node) => ({ ...node }));
+                return currentNodes.map((node, index) => ({
+                    ...node,
+                    children: applyInsertions((node.children || []) as TreeNode[], [...currentPath, index]),
+                }));
+            };
+            return applyInsertions(rootsWithCodes);
+        } catch (error) {
+            console.error("同步新增设计需求节点失败:", error);
+            return roots;
+        }
+    };
+
     const cloneTree = (nodes: TreeNode[]): TreeNode[] => JSON.parse(JSON.stringify(nodes || []));
 
     useEffect(() => {
@@ -1253,9 +1533,14 @@ export default () => {
                         ? bindTableCaptionsForPersist(normalizedRefTree)
                         : normalizedRefTree;
                     const remappedContent = await remapRefTypeImagesByProduct(parsedContent, targetRow.product_id, targetRow.version);
-                    const ensuredContent = await hydrateSdsCodesFromTrace(
+                    const ensuredReqdContent = await syncMissingReqdNodes(
                         ensureFrontMatterTables(remappedContent as TreeNode[]),
                         targetRow.id || (params.id ? parseInt(params.id) : undefined)
+                    );
+                    const ensuredContent = await syncTraceTableNodes(
+                        ensuredReqdContent as TreeNode[],
+                        targetRow.id || (params.id ? parseInt(params.id) : undefined),
+                        targetRow.product_version
                     );
 
                     dispatch({
@@ -1363,9 +1648,14 @@ export default () => {
                         ? bindTableCaptionsForPersist(normalizedRefTree)
                         : normalizedRefTree;
                     const remappedContent = await remapRefTypeImagesByProduct(parsedContent, latestRow.product_id, latestRow.version);
-                    const ensuredContent = await hydrateSdsCodesFromTrace(
+                    const ensuredReqdContent = await syncMissingReqdNodes(
                         ensureFrontMatterTables(remappedContent as TreeNode[]),
                         latestRow.id || docId
+                    );
+                    const ensuredContent = await syncTraceTableNodes(
+                        ensuredReqdContent as TreeNode[],
+                        latestRow.id || docId,
+                        latestRow.product_version
                     );
                     currentTree = ensuredContent as TreeNode[];
                     treeStructureRef.current = ensuredContent;
@@ -1437,7 +1727,7 @@ export default () => {
         return lines.length > 0 ? lines : [""];
     };
 
-    const expandTraceRows = (rows: any[]) => {
+    const expandTraceRows = (rows: any[], locationBySdsCode?: Map<string, string>) => {
         return (rows || []).flatMap((row: any, rowIndex: number) => {
             const sdsCodes = splitTraceLines(row.sds_code);
             const chapters = splitTraceLines(row.chapter);
@@ -1448,11 +1738,128 @@ export default () => {
                 key: `${row.id || row.key || rowIndex}_${index}`,
                 sds_code: sdsCodes[index] ?? "",
                 chapter: chapters[index] ?? "",
-                location: locations[index] ?? "",
+                location: locations[index] || locationBySdsCode?.get(normalizeReqCode(sdsCodes[index] ?? "")) || "",
                 _splitIndex: index,
                 _rowSpan: index === 0 ? count : 0,
             }));
         });
+    };
+
+    const buildSdsLocationMapFromTree = (nodes: TreeNode[]) => {
+        const map = new Map<string, string>();
+        const walk = (items: TreeNode[]) => {
+            (items || []).forEach((node) => {
+                const heading = parseHeadingNumber(node.title) || "";
+                const code = normalizeReqCode((node as any).sds_code);
+                if (code && heading && !map.has(code)) {
+                    map.set(code, heading);
+                }
+                walk((node.children || []) as TreeNode[]);
+            });
+        };
+        walk(nodes || []);
+        return map;
+    };
+
+    const isTraceTableNode = (node: TreeNode) => {
+        const title = normalizeReqTitle(node.title);
+        const refType = String((node as any).ref_type || "");
+        return refType === "sds_traces" || title.includes("设计与需求追溯表") || title.includes("设计与需求追溯列表");
+    };
+
+    const buildTraceTableFromRows = (rows: any[], locationBySdsCode?: Map<string, string>) => {
+        const sortedRows = [...(rows || [])].sort((a: any, b: any) => compareReqCode(a?.srs_code, b?.srs_code));
+        const buildChapterCell = (row: any) => {
+            const sdsCodes = splitTraceLines(row.sds_code);
+            const chapters = splitTraceLines(row.chapter);
+            const locations = splitTraceLines(row.location);
+            const count = Math.max(1, sdsCodes.length, chapters.length, locations.length);
+            return Array.from({ length: count }).map((_, index) => {
+                const chapter = String(chapters[index] ?? "").trim();
+                const sdsCode = normalizeReqCode(sdsCodes[index] ?? "");
+                const location = String(
+                    locations[index]
+                    || locationBySdsCode?.get(sdsCode)
+                    || ""
+                ).trim();
+                return `${chapter}${location ? `（章节 ${location}）` : ""}`;
+            }).join("\n");
+        };
+        return {
+            headers: [
+                { code: "srs_code", name: "需求编号" },
+                { code: "sds_code", name: "设计编号" },
+                { code: "chapter", name: "需求/代码" },
+            ],
+            rows: sortedRows.map((row: any) => {
+                return {
+                    srs_code: row.srs_code || "",
+                    sds_code: row.sds_code || "",
+                    chapter: buildChapterCell(row),
+                };
+            }),
+        };
+    };
+
+    const isChangeTraceRow = (row: any) => {
+        const typeCode = String(row?.type_code || "").trim();
+        return !!typeCode && typeCode !== "1" && typeCode !== "2";
+    };
+
+    const makeTraceChangeTableTitle = (productFullVersion?: string) => {
+        const version = String(productFullVersion || "").trim();
+        return `${version || "产品"}变更需求`;
+    };
+
+    const syncTraceTableNodes = async (roots: TreeNode[], docId?: number, productFullVersion?: string): Promise<TreeNode[]> => {
+        if (!docId || !Array.isArray(roots) || roots.length === 0) return roots;
+        const hasTraceNode = (nodes: TreeNode[]): boolean => (nodes || []).some((node) =>
+            isTraceTableNode(node) || hasTraceNode((node.children || []) as TreeNode[])
+        );
+        if (!hasTraceNode(roots)) return roots;
+        try {
+            const res: any = await ApiSdsTrace.list_sds_trace({
+                doc_id: docId,
+                page_index: 0,
+                page_size: 10000,
+            });
+            if (res?.code !== ApiSdsTrace.C_OK) return roots;
+            const locationBySdsCode = buildSdsLocationMapFromTree(roots);
+            const rows = res.data?.rows || [];
+            const normalRows = rows.filter((row: any) => !isChangeTraceRow(row));
+            const changeRows = rows.filter((row: any) => isChangeTraceRow(row));
+            const table = buildTraceTableFromRows(normalRows, locationBySdsCode);
+            const changeTable = buildTraceTableFromRows(changeRows, locationBySdsCode);
+            const changeProductVersion = productFullVersion || changeRows.find((row: any) => row?.product_version)?.product_version || "";
+            const updateNodes = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
+                const children = updateNodes((node.children || []) as TreeNode[]);
+                if (!isTraceTableNode(node)) return { ...node, children };
+                const nextChildren = children.filter((child) => !hasRenderableTraceTableChild(child));
+                const traceTable = {
+                    ...(table as any),
+                    extra_tables: changeRows.length > 0
+                        ? [{ title: makeTraceChangeTableTitle(changeProductVersion), table: changeTable }]
+                        : [],
+                };
+                return {
+                    ...node,
+                    ref_type: "",
+                    table: traceTable as any,
+                    children: nextChildren,
+                };
+            });
+            return updateNodes(roots);
+        } catch (error) {
+            console.error("同步设计与需求追溯表失败:", error);
+            return roots;
+        }
+    };
+
+    const hasRenderableTraceTableChild = (node: TreeNode) => {
+        const title = String(node.title || "").trim();
+        const table = node.table as any;
+        const hasTable = !!(table && Array.isArray(table.headers) && table.headers.length > 0);
+        return hasTable && (/^导入表格\d*$/i.test(title) || /变更需求$/.test(title));
     };
 
     const renderMergedCell = (children: any, row: any) => ({
@@ -1463,12 +1870,21 @@ export default () => {
     });
 
     // 加载需求追溯表数据
-    const loadTraceListData = () => {
+    const loadTraceListData = async () => {
         const docId = params.id ? parseInt(params.id) : 0;
         if (!docId) {
             return;
         }
         dispatch({ traceListLoading: true });
+        let currentTree = (((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) || []) as TreeNode[];
+        currentTree = await syncMissingReqdNodes(currentTree, docId);
+        currentTree = await syncTraceTableNodes(
+            currentTree,
+            docId,
+            String((currentProduct as any)?.full_version || (currentProduct as any)?.version || "").trim()
+        );
+        treeStructureRef.current = currentTree;
+        dispatch({ treeStructure: currentTree });
         ApiSdsTrace.list_sds_trace({
             doc_id: docId,
             page_index: 0,
@@ -1476,6 +1892,7 @@ export default () => {
         }).then((res: any) => {
             if (res.code === ApiSdsTrace.C_OK) {
                 const rows = res.data?.rows || [];
+                const locationBySdsCode = buildSdsLocationMapFromTree(currentTree);
                 const tableData = rows.map((item: any, index: number) => ({
                     key: item.id || `trace_${index}_${Date.now()}`,
                     id: item.id,
@@ -1483,12 +1900,12 @@ export default () => {
                     srs_code: item.srs_code || "",
                     sds_code: item.sds_code || "",
                     chapter: item.chapter || "",
-                    location: item.location || "",
+                    location: item.location || locationBySdsCode.get(normalizeReqCode(item.sds_code)) || "",
                     product_name: item.product_name || "",
                     product_version: item.product_version || "",
                     doc_version: item.doc_version || "",
                 }));
-                dispatch({ traceListData: expandTraceRows(tableData), traceListLoading: false });
+                dispatch({ traceListData: expandTraceRows(tableData, locationBySdsCode), traceListLoading: false });
             } else {
                 message.error(res.msg || "加载需求追溯表数据失败");
                 dispatch({ traceListData: [], traceListLoading: false });
@@ -1502,11 +1919,12 @@ export default () => {
 
     const doSave = () => {
         editForm.validateFields().then((values) => {
+            const currentTree = (((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) || []) as TreeNode[];
             // 包含变更说明
             const submitData = {
                 ...values,
                 change_description: data.changeDescription,
-                tree_structure: data.treeStructure,
+                tree_structure: currentTree,
             };
             dispatch({ loading: true });
             const fn_request = data.isEdit ? Api.update_sds_doc : Api.add_sds_doc;
@@ -1836,9 +2254,14 @@ export default () => {
                                 ? bindTableCaptionsForPersist(normalizedRefTree)
                                 : normalizedRefTree;
                             const remappedContent = await remapRefTypeImagesByProduct(parsedContent, targetRow.product_id, targetRow.version);
-                            const ensuredContent = await hydrateSdsCodesFromTrace(
+                            const ensuredReqdContent = await syncMissingReqdNodes(
                                 ensureFrontMatterTables(remappedContent as TreeNode[]),
                                 targetRow.id || (params.id ? parseInt(params.id) : undefined)
+                            );
+                            const ensuredContent = await syncTraceTableNodes(
+                                ensuredReqdContent as TreeNode[],
+                                targetRow.id || (params.id ? parseInt(params.id) : undefined),
+                                targetRow.product_version
                             );
                             dispatch({
                                 changeDescription: targetRow.change_log || "",

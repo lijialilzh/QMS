@@ -65,7 +65,7 @@ export default () => {
     };
 
     // 当产品ID变化时，加载该产品下的SRS文档列表和RCM数据
-const handleProductChange = (productId: number) => {
+const handleProductChange = (productId?: number) => {
   // 产品变化时，清空当前版本和已加载的数据
   editForm.setFieldValue("doc_id", undefined);
         dispatch({ srsDocs: [], tableData: [], currentProductId: productId });
@@ -445,7 +445,7 @@ const handleProductChange = (productId: number) => {
                   rowKey="key"
                   pagination={false}
                   loading={data.loading}
-                  scroll={{ x: 1800 }}
+                  scroll={{ x: 1800, y: "68vh" }}
               />
 
               {/* 查看/编辑弹框 */}

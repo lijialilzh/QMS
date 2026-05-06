@@ -138,6 +138,23 @@ async def export_doc_trace(id: int = 0):
     )
 
 
+@router.get("/export_doc_trace_word", summary="导出SRS_DOC追溯Word")
+@try_log(perm=Perms.srs_doc_view)
+async def export_doc_trace_word(id: int = 0):
+    resp = await server.get_srs_doc(id)
+    doc = resp.data or SrsDocObj()
+    name = f"{doc.product_name}-{doc.product_version}-{doc.version}"
+
+    output = io.BytesIO()
+    await server.export_doc_trace_word(output, id)
+    timestamp = datetime.now().strftime("%y%m%d.%H%M")
+    filename = urllib.parse.quote(f"{ts('file_doc_trace')}-{name}-{timestamp}.docx")
+    return StreamingResponse(content=output,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
 @router.get("/compare_srs_doc", summary="对比SRS_DOC", response_model=Resp[List[CompareObj]])
 @try_log(perm=Perms.srs_doc_view)
 async def compare_srs_doc(id0: int, id1: int):

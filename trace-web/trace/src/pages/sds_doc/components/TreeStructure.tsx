@@ -16,6 +16,7 @@ interface TableData {
     headers?: Array<{ code: string; name: string }>;
     rows?: { [key: string]: string }[];
     cells?: Array<Array<{ value?: string; row_span?: number; col_span?: number; h_align?: string; v_align?: string }>>;
+    extra_tables?: Array<{ title?: string; table?: TableData }>;
 }
 
 export interface TreeNode {
@@ -396,8 +397,10 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const { t: ts } = useTranslation();
     const [fileList, setFileList] = useState<UploadFile[]>([]);
     const [uploadLoading, setUploadLoading] = useState(false);
-    // 性能优化：默认仅展开前两级，减少初始渲染压力
-    const [expanded, setExpanded] = useState(level <= 0);
+    // 有导入图片子节点时默认展开，否则程序逻辑图会被折叠在子节点里看不到。
+    const [expanded, setExpanded] = useState(() =>
+        level <= 0 || (node.children || []).some((child) => !!String(child.img_url || "").trim())
+    );
     const normalizedNodeSdsCode = String(node.sds_code ?? "").trim();
     const sdsCodeFallbackFromText = extractSdsCodeFromNodeText(node.text);
     const resolvedSdsCode = normalizedNodeSdsCode || extractCodeAfterDesignMarker(node.text) || extractSdsCodeToken(node.text) || sdsCodeFallbackFromText.code;
@@ -545,9 +548,10 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         /^\d+\.\d+\.\d+(?:\.\d+)*$/.test(effectiveChapter)
     );
 
+    const isTraceSectionTitle = /设计与需求追溯/.test(`${titleWithoutChapter || ""}${title || ""}`);
     const hasTable = hasRenderableTable(node.table);
-    const titleIsTableCaption = hasTable && isLikelyTableCaptionLine(titleWithoutChapter || title);
-    const hideImportedTablePlaceholderTitle = !readOnly && hasTable && (isSystemPlaceholderTitle(title) || titleIsTableCaption);
+    const titleIsTableCaption = hasTable && !isTraceSectionTitle && isLikelyTableCaptionLine(titleWithoutChapter || title);
+    const hideImportedTablePlaceholderTitle = !readOnly && hasTable && !isTraceSectionTitle && (isSystemPlaceholderTitle(title) || titleIsTableCaption);
     const editDisplayTitle = hideImportedTablePlaceholderTitle ? "" : node.title;
     const childCaptions = extractImageCaptions(node.text);
     const imageOnlyChildren = (node.children || []).filter((child) => isImageNodeOnly(child));
@@ -585,9 +589,6 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         : undefined;
     const embeddedImageChildIdSet = new Set<string>(
         embeddedImageChild ? [String(embeddedImageChild.id), String(embeddedImageChild.n_id || "")] : []
-    );
-    const mergedImageChildIdSet = new Set(
-        mergedImageOnlyChildren.flatMap((child) => [String(child.id), String(child.n_id || "")])
     );
     const tableChildren = (node.children || []).filter((child) => hasRenderableTable(child.table) && !child.img_url);
     const isChapter7ComplianceContext = /法规符合性需求|网络安全/.test(`${title || ""} ${node.text || ""}`);
@@ -640,7 +641,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         if (firstTableChild.n_id) childTableCaptionById.set(String(firstTableChild.n_id), cap);
     }
     const displayImageUrl = !readOnly
-        ? String(node.img_url || "")
+        ? String(imageChildrenAll.length > 0 ? "" : (node.img_url || ""))
         : suppressParentFlowImage
         ? ""
         : node.ref_type === "img_flow"
@@ -656,9 +657,6 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         : (node.img_url ? node.id : (embeddedImageChild?.id || firstImageChild?.id || node.id));
     const visibleChildren = (node.children || []).filter((child) => {
         if (!readOnly) {
-            if (!suppressParentFlowImage && (mergedImageChildIdSet.has(String(child.id)) || mergedImageChildIdSet.has(String(child.n_id || "")))) {
-                return false;
-            }
             if (inlineTableChildIdSet.has(String(child.id)) || inlineTableChildIdSet.has(String(child.n_id || ""))) {
                 return false;
             }
@@ -870,12 +868,14 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const forceHideRowForTableTitleNode = !!(
         readOnly &&
         hasTable &&
+        !isTraceSectionTitle &&
         isLikelyTableCaptionLine(titleWithoutChapter || title) &&
         !String(node.text || "").trim()
     );
     const isTableCaptionCarrierNode = !!(
         readOnly &&
         !isInterfaceSubSection &&
+        !isTraceSectionTitle &&
         (hasTable || visibleChildren.some((child) => hasTableInSubtree(child))) &&
         isLikelyTableCaptionLine(titleWithoutChapter || title) &&
         !isDatabaseHeadingNode &&
@@ -935,14 +935,18 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
             || (isLikelyTableCaptionLine(titleWithoutChapter || title) ? stripChapterPrefixForTableCaption(titleWithoutChapter || title) : "")
         )
         : "";
-    const sanitizedFinalTableCaption = isSyntheticTableCaption(finalTableCaption) ? "" : finalTableCaption;
+    const sanitizedFinalTableCaption = isTraceSectionTitle || isSyntheticTableCaption(finalTableCaption) ? "" : finalTableCaption;
     const editFinalTableCaption = !readOnly
         ? (
-            tableCaptionFromParent
-            || stripChapterPrefixForTableCaption(safeNodeLabel)
-            || (isLikelyTableCaptionLine(titleWithoutChapter || title) ? stripChapterPrefixForTableCaption(titleWithoutChapter || title) : "")
-            || pickEditableTableCaption(node.text)
-            || ""
+            /设计与需求追溯/.test(`${titleWithoutChapter || ""}${title || ""}`)
+                ? ""
+                : (
+                    tableCaptionFromParent
+                    || stripChapterPrefixForTableCaption(safeNodeLabel)
+                    || (isLikelyTableCaptionLine(titleWithoutChapter || title) ? stripChapterPrefixForTableCaption(titleWithoutChapter || title) : "")
+                    || pickEditableTableCaption(node.text)
+                    || ""
+                )
         )
         : "";
     const sanitizedEditTableCaption = isSyntheticTableCaption(editFinalTableCaption) ? "" : editFinalTableCaption;
@@ -1214,7 +1218,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         />
                     )
                   }
-                  {isDocImageRefType(node.ref_type) && !readOnly && (
+                  {isDocImageRefType(node.ref_type) && !readOnly && imageChildrenAll.length === 0 && (
                       <div className="node-file-ref node-content">
                           {node.img_url ? (
                               <a
@@ -1464,6 +1468,32 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           </Space>
                           )}
                       </div>
+                      {(node.table?.extra_tables || []).map((extra, idx) => {
+                          const extraTitle = String(extra?.title || "").trim();
+                          const extraTable = extra?.table;
+                          if (!extraTable || !hasRenderableTable(extraTable)) return null;
+                          return (
+                              <div className="node-extra-table" key={`extra-table-${node.id}-${idx}`} style={{ marginTop: 24 }}>
+                                  {!!extraTitle && (
+                                      <div className="node-content" style={{ marginBottom: 8, textAlign: "left", fontSize: 13, fontWeight: 600 }}>
+                                          {extraTitle}
+                                      </div>
+                                  )}
+                                  <div className="node-table-header">
+                                      <div className="node-table-scroll">
+                                          <Table
+                                              columns={buildTableColumns(extraTable)}
+                                              dataSource={buildTableDataSource(extraTable)}
+                                              pagination={false}
+                                              size="small"
+                                              bordered
+                                              tableLayout="fixed"
+                                          />
+                                      </div>
+                                  </div>
+                              </div>
+                          );
+                      })}
                   </div>,
                   `own-table-${node.id}`
                   )
