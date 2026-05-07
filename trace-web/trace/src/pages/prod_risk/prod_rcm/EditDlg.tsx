@@ -4,11 +4,11 @@ import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
-import { useData } from "@/common";
+import { renderOneLineWithTooltip, useData } from "@/common";
 import * as ApiRcm from "@/api/ApiRcm";
 import * as ApiProdRcm from "@/api/ApiProdRcm";
 
-const pageSizeOptions = [2000, 5000];
+const pageSizeOptions = [1000, 2000, 5000];
 
 export default ({ prod_id, isOpen, onClose }: any) => {
     const { t: ts } = useTranslation();
@@ -56,21 +56,27 @@ export default ({ prod_id, isOpen, onClose }: any) => {
         });
     };
 
+    const renderShortText = (value: any) => renderOneLineWithTooltip(value, { emptyText: "", maxChars: 20 });
+
     const columns =[{
             title: ts("rcm.code"),
             dataIndex: "code",
+            render: renderShortText,
         },
         {
             title: ts("rcm.description"),
             dataIndex: "description",
+            render: renderShortText,
         },
         {
             title: ts("rcm.proof"),
             dataIndex: "proof",
+            render: renderShortText,
         },
         {
             title: ts("rcm.note"),
             dataIndex: "note",
+            render: renderShortText,
         }];
 
     useEffect(() => {
@@ -89,7 +95,7 @@ export default ({ prod_id, isOpen, onClose }: any) => {
             onCancel={onClose}
             onOk={doAddProdRcms}
             confirmLoading={data.loadingAdd}>
-            <div className="div-v table-box">
+            <div className="div-v prod-risk-master-picker">
                 <div className="div-h searchbar">
                     <Form
                         form={queryForm}

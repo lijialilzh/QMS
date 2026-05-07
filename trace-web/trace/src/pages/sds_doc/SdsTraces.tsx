@@ -31,10 +31,6 @@ const normalizeReqTitle = (value?: string) => {
     const stripped = stripHeadingNumber(raw);
     return (stripped || raw).replace(/\s+/g, "").toLowerCase();
 };
-const isEmptyLocation = (value?: string) => {
-    const txt = String(value || "").trim();
-    return !txt || txt === "-" || txt === "—";
-};
 const collectEmptyLocationSdsCodes = (rows: any[]) => {
     const targetCodes = new Set<string>();
     (rows || []).forEach((row: any) => {

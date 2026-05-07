@@ -4,11 +4,11 @@ import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
-import { useData } from "@/common";
+import { renderOneLineWithTooltip, useData } from "@/common";
 import * as ApiCst from "@/api/ApiCst";
 import * as ApiProdCst from "@/api/ApiProdCst";
 
-const pageSizeOptions = [20, 50, 100];
+const pageSizeOptions = [1000, 2000, 5000];
 
 export default ({ prod_id, isOpen, onClose }: any) => {
     const { t: ts } = useTranslation();
@@ -56,30 +56,38 @@ export default ({ prod_id, isOpen, onClose }: any) => {
         });
     };
 
+    const renderShortText = (value: any) => renderOneLineWithTooltip(value, { emptyText: "", maxChars: 20 });
+
     const columns = [
         {
             title: ts("cst.code"),
             dataIndex: "code",
+            render: renderShortText,
         },
         {
             title: ts("cst.category"),
             dataIndex: "category",
+            render: renderShortText,
         },
         {
             title: ts("cst.module"),
             dataIndex: "module",
+            render: renderShortText,
         },
         {
             title: ts("cst.connection"),
             dataIndex: "connection",
+            render: renderShortText,
         },
         {
             title: ts("cst.description"),
             dataIndex: "description",
+            render: renderShortText,
         },
         {
             title: ts("cst.harm"),
             dataIndex: "harm",
+            render: renderShortText,
         },
     ];
 
@@ -99,7 +107,7 @@ export default ({ prod_id, isOpen, onClose }: any) => {
             onCancel={onClose}
             onOk={doAddProdCsts}
             confirmLoading={data.loadingAdd}>
-            <div className="div-v table-box">
+            <div className="div-v prod-risk-master-picker">
                 <div className="div-h searchbar">
                     <Form
                         form={queryForm}

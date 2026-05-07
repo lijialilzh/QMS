@@ -339,6 +339,9 @@ export default () => {
                     <Button type="primary" onClick={() => doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize)}>
                         刷新
                     </Button>
+                    <Button disabled={!(data.selectedRowKeys || []).length} danger onClick={doBatchDelete}>
+                        {ts("delete")}
+                    </Button>
                 </div>
             </div>
             <Table

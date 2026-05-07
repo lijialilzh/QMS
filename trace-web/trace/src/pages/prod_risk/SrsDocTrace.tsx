@@ -1,5 +1,5 @@
 import "./SrsDocTrace.less";
-import { Form, Button, Table, message, Modal, Row, Col, Select, Tooltip, Space } from "antd";
+import { Form, Button, Table, message, Modal, Row, Col, Space, Input } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -223,7 +223,7 @@ const DetailDlg = ({ data, dispatch }: any) => {
             styles={{ body: { overflowX: "hidden" } }}
             onCancel={() => dispatch({ dlgType: null })}>
             <Table
-                className="table-box"
+                className="trace-table-box"
                 loading={data.loadingTrace}
                 dataSource={expandedTraceRows}
                 rowKey={(item: any) => item.__rowKey}
@@ -237,7 +237,7 @@ const DetailDlg = ({ data, dispatch }: any) => {
                 <>
                     <div className="trace-subtitle">{`${productFullVersion || "产品"}变更追溯`}</div>
                     <Table
-                        className="table-box trace-change-table"
+                        className="trace-table-box trace-change-table"
                         loading={data.loadingTrace}
                         dataSource={expandedChangeTraceRows}
                         rowKey={(item: any) => item.__rowKey}
@@ -266,6 +266,9 @@ export default () => {
         products: [],
         traceRows: [],
         exportingSet: new Set(),
+        editingFileNoId: 0,
+        editingFileNoValue: "",
+        savingFileNoId: 0,
     });
 
     const doSearch = (params: any, pageIndex: any, pageSize: any) => {
@@ -278,6 +281,42 @@ export default () => {
                 message.error(res.msg);
             }
         });
+    };
+
+    const handleStartEditFileNo = (row: any) => {
+        dispatch({
+            editingFileNoId: row.id,
+            editingFileNoValue: row.file_no || "",
+        });
+    };
+
+    const handleSaveFileNo = async (row: any) => {
+        if (!data.editingFileNoId || data.editingFileNoId !== row.id) return;
+        if (data.savingFileNoId === row.id) return;
+        const nextFileNo = String(data.editingFileNoValue || "").trim();
+        const currentFileNo = String(row.file_no || "").trim();
+        if (nextFileNo === currentFileNo) {
+            dispatch({ editingFileNoId: 0, editingFileNoValue: "", savingFileNoId: 0 });
+            return;
+        }
+
+        dispatch({ savingFileNoId: row.id });
+        try {
+            const res: any = await Api.update_srs_doc_file_no({ id: row.id, file_no: nextFileNo });
+            if (res.code === Api.C_OK) {
+                const rows = (data.rows || []).map((item: any) => (
+                    item.id === row.id ? { ...item, file_no: nextFileNo } : item
+                ));
+                dispatch({ rows, editingFileNoId: 0, editingFileNoValue: "", savingFileNoId: 0 });
+                message.success("文件编号已保存");
+            } else {
+                dispatch({ savingFileNoId: 0 });
+                message.error(res.msg || "保存失败");
+            }
+        } catch (_err) {
+            dispatch({ savingFileNoId: 0 });
+            message.error("保存失败");
+        }
     };
 
     const doDelete = () => {
@@ -308,8 +347,40 @@ export default () => {
             dataIndex: "version",
         },
         {
+            title: ts("srs_doc.file_no"),
+            dataIndex: "file_no",
+            width: 220,
+            render: (value: string, row: any) => {
+                const isEditing = data.editingFileNoId === row.id;
+                const isSaving = data.savingFileNoId === row.id;
+                if (isEditing) {
+                    return (
+                        <Input
+                            autoFocus
+                            size="small"
+                            value={data.editingFileNoValue}
+                            disabled={isSaving}
+                            onChange={(e) => dispatch({ editingFileNoValue: e.target.value })}
+                            onBlur={() => handleSaveFileNo(row)}
+                            onPressEnter={() => handleSaveFileNo(row)}
+                            placeholder="请输入文件编号"
+                            style={{ width: 200 }}
+                        />
+                    );
+                }
+                return (
+                    <span
+                        style={{ cursor: "text", display: "inline-block", minWidth: 80 }}
+                        title="单击编辑文件编号"
+                        onClick={() => handleStartEditFileNo(row)}>
+                        {value || "-"}
+                    </span>
+                );
+            },
+        },
+        {
             title: ts("action"),
-            width: 140,
+            width: 220,
             render: (_value: any, row: any) => {
                 return (
                     <Space size={12} style={{ whiteSpace: "nowrap" }}>

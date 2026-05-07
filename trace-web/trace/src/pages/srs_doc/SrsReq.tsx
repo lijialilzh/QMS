@@ -354,10 +354,11 @@ const handleProductChange = (productId?: number) => {
         },
         {
             title: ts("action"),
-            width: 140,
+            width: 170,
             fixed: "right" as const,
+            className: "srs-manage-action-col",
             render: (_value: any, row: any) => (
-                <Space>
+                <Space size={4} className="srs-manage-action-space">
                     <Button
                         type="link"
                         icon={<EyeOutlined />}
@@ -445,7 +446,7 @@ const handleProductChange = (productId?: number) => {
                   rowKey="key"
                   pagination={false}
                   loading={data.loading}
-                  scroll={{ x: 1800, y: "68vh" }}
+                  scroll={{ x: 2400, y: "68vh" }}
               />
 
               {/* 查看/编辑弹框 */}

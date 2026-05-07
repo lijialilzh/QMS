@@ -1,24 +1,33 @@
+import { renderOneLineWithTooltip } from "@/common";
+
 export const tabColumns = (ts: any) => {
+    const renderShortText = (value: any) => renderOneLineWithTooltip(value, { emptyText: "", maxChars: 20 });
+
     return [
         {
             title: ts("haz.code"),
             dataIndex: "code",
+            render: renderShortText,
         },
         {
             title: ts("haz.source"),
             dataIndex: "source",
+            render: renderShortText,
         },
         {
             title: ts("haz.event"),
             dataIndex: "event",
+            render: renderShortText,
         },
         {
             title: ts("haz.situation"),
             dataIndex: "situation",
+            render: renderShortText,
         },
         {
             title: ts("haz.damage"),
             dataIndex: "damage",
+            render: renderShortText,
         },
         {
             title: ts("haz.init_risk"),
@@ -35,14 +44,17 @@ export const tabColumns = (ts: any) => {
         {
             title: ts("haz.deal"),
             dataIndex: "deal",
+            render: renderShortText,
         },
         {
             title: ts("haz.rcms"),
             dataIndex: "rcms",
+            render: renderShortText,
         },
         {
             title: ts("haz.evidence"),
             dataIndex: "evidence",
+            render: renderShortText,
         },
         {
             title: ts("haz.cur_risk"),
@@ -67,6 +79,7 @@ export const tabColumns = (ts: any) => {
         {
             title: ts("haz.category"),
             dataIndex: "category",
+            render: renderShortText,
         },
     ];
 };

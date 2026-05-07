@@ -129,6 +129,49 @@ function normalizeReqDisplayText(value: any): string {
     return invalid.has(txt) ? "" : txt;
 }
 
+function normalizeSrsCodeValue(value?: string): string {
+    return String(value || "").replace(/\s+/g, "").toUpperCase();
+}
+
+function extractSrsCodeFromText(value: any): string {
+    const matched = String(value || "").match(/SRS\s*-\s*[A-Z]+\s*\d+\s*-\s*\d+/i);
+    return matched ? normalizeSrsCodeValue(matched[0]) : "";
+}
+
+function extractSrsCodeFromTableRow(row: any): string {
+    const values = Object.values(row || {});
+    for (const value of values) {
+        const code = extractSrsCodeFromText(value);
+        if (code) return code;
+    }
+    return "";
+}
+
+function extractSrsCodeFromCellRow(row: any[]): string {
+    for (const cell of row || []) {
+        const code = extractSrsCodeFromText(cell?.value);
+        if (code) return code;
+    }
+    return "";
+}
+
+function extractSrsCodeFromTable(table?: TableData | null): string {
+    if (!table) return "";
+    for (const header of table.headers || []) {
+        const code = extractSrsCodeFromText(header?.name);
+        if (code) return code;
+    }
+    for (const row of table.rows || []) {
+        const code = extractSrsCodeFromTableRow(row);
+        if (code) return code;
+    }
+    for (const row of table.cells || []) {
+        const code = extractSrsCodeFromCellRow(row);
+        if (code) return code;
+    }
+    return "";
+}
+
 function isFunctionalKvTable(table?: TableData | null): boolean {
     if (!table || !Array.isArray(table.headers) || !Array.isArray(table.rows)) return false;
     if (table.headers.length !== 2 || table.rows.length < 3) return false;
@@ -389,7 +432,6 @@ const TreeNodeItem = ({
         const matched = String(title || "").trim().match(/^(\d+)/);
         return matched?.[1] || "";
     };
-    const isRootChapterTitle = (title?: string) => /^\d+\s+/.test(String(title || "").trim());
     const isImportedReqTableAnchor = (() => {
         if (isSrsReqRefNode || isSrsReqListNode) return false;
         const title = String(node.title || "").replace(/\s+/g, "");
@@ -581,7 +623,7 @@ const TreeNodeItem = ({
             return rows;
         }
 
-        const rows = table.rows.map((row, index) => ({
+        const rows: any[] = table.rows.map((row, index) => ({
             key: index,
             ...Object.fromEntries(Object.entries(row || {}).map(([k, v]) => [k, normalizeReqDisplayText(v)]))
         }));
@@ -673,7 +715,7 @@ const TreeNodeItem = ({
                                       const codes = Array.isArray(node.rcm_codes) ? node.rcm_codes.filter(Boolean) : [];
                                       const normalizedCodes = codes.map((code) => normalizeRcmCode(code));
                                       return codes
-                                          .map((code, idx) => {
+                                          .map((_code, idx) => {
                                               const codeNorm = normalizedCodes[idx];
                                               return rcmSelectOptions.find((o) => normalizeRcmCode(o.label) === codeNorm)?.value;
                                           })
@@ -1109,7 +1151,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         const digits = matched?.[1] || "";
         return digits ? String(parseInt(digits.slice(-1), 10)) : "";
     };
-    const normalizeTitleText = (value?: string) => String(value || "").replace(/\s+/g, "");
+    const normalizeTitleText = (value?: string) => normalizeReqDisplayText(value).replace(/\s+/g, "");
     const isImportedCatalogTitle = (title?: string) => /^\d+(?:\.\d+)*\s+\S.*\s+\d+$/.test(String(title || "").trim());
     const hasReqDetailContent = (detail: any) => [
         detail?.overview,
@@ -1171,9 +1213,86 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
             return title.startsWith(`${prefix}.`) && normalizeTitleText(title.replace(/^\d+(?:\.\d+)*\s*/, "")) === normalizedText;
         });
     };
+    const filterReqTableRows = (table: TableData | null | undefined, detailMap: Map<string, any>) => {
+        if (!table || !Array.isArray(table.rows)) return table;
+        if (!isReqMainTable(table) && !isReqOtherTable(table)) return table;
+        const hasReqCodes = (table.rows || []).some((row) => !!extractSrsCodeFromTableRow(row));
+        const cellBodyRows = Array.isArray(table.cells) ? table.cells.slice(1) : [];
+        const hasCellReqCodes = cellBodyRows.some((row) => !!extractSrsCodeFromCellRow(row));
+        if (!hasReqCodes && !hasCellReqCodes) return table;
+
+        const keepIndexes: number[] = [];
+        const nextRows = (table.rows || []).filter((row, index) => {
+            const rowCode = extractSrsCodeFromTableRow(row) || extractSrsCodeFromCellRow(cellBodyRows[index] || []);
+            const keep = !rowCode || detailMap.has(rowCode);
+            if (keep) keepIndexes.push(index);
+            return keep;
+        });
+        const nextCells = Array.isArray(table.cells) && table.cells.length > 1
+            ? [table.cells[0], ...keepIndexes.map((idx) => table.cells![idx + 1]).filter(Boolean)]
+            : table.cells;
+        return {
+            ...table,
+            rows: nextRows,
+            ...(nextCells ? { cells: nextCells } : {}),
+        };
+    };
+
+    const stripHeadingNumber = (value?: string) => String(value || "").trim().replace(/^\d+(?:\.\d+)*\s*/, "").trim();
+    const getHeadingDepth = (value?: string) => {
+        const matched = String(value || "").trim().match(/^(\d+(?:\.\d+)*)\s+/);
+        return matched ? matched[1].split(".").length : 0;
+    };
+    const pruneStaleAutoReqNodes = (nodeList: TreeNode[], detailMap: Map<string, any>, validReqTitleSet: Set<string>): TreeNode[] => {
+        return (nodeList || [])
+            .map((node) => {
+                const originalTable = node.table;
+                return {
+                    ...node,
+                    __originalReqTableCode: extractSrsCodeFromTable(originalTable),
+                    __originalIsReqDetailTable: isFunctionalKvTable(originalTable),
+                    table: filterReqTableRows(originalTable, detailMap),
+                    children: pruneStaleAutoReqNodes(node.children || [], detailMap, validReqTitleSet),
+                } as TreeNode & { __originalReqTableCode?: string; __originalIsReqDetailTable?: boolean };
+            })
+            .filter((node) => {
+                const label = String(node.label || "");
+                const isReqDetailTableNode = !!node.__originalIsReqDetailTable;
+                const code = normalizeSrsCode(node.srs_code || "") || (isReqDetailTableNode ? (node.__originalReqTableCode || extractSrsCodeFromTable(node.table)) : "");
+                if ((label === "__auto_req_detail" || isReqDetailTableNode) && code && !detailMap.has(code)) {
+                    return false;
+                }
+                const normalizedTitle = normalizeTitleText(stripHeadingNumber(node.title));
+                const isEmptyRequirementTitle =
+                    getHeadingDepth(node.title) >= 2 &&
+                    normalizedTitle &&
+                    !validReqTitleSet.has(normalizedTitle) &&
+                    !(node.children || []).length &&
+                    !String(node.text || "").trim() &&
+                    !String((node as any).img_url || "").trim() &&
+                    !hasRenderableTable(node.table);
+                if (isEmptyRequirementTitle) {
+                    return false;
+                }
+                const isEmptyAutoGroup =
+                    label === "__auto_req_group" &&
+                    !code &&
+                    !(node.children || []).length &&
+                    !String(node.text || "").trim() &&
+                    !hasRenderableTable(node.table);
+                return !isEmptyAutoGroup;
+            });
+    };
     const syncReqDetailsToTree = (nodeList: TreeNode[], details: any[] = []): TreeNode[] => {
         const detailMap = new Map((details || []).map((detail: any) => [normalizeSrsCode(detail?.code), detail]));
-        const cloned = (nodeList || []).map((node) => {
+        const validReqTitleSet = new Set<string>();
+        (details || []).forEach((detail: any) => {
+            [detail?.name, detail?.module, detail?.function, detail?.sub_function]
+                .map((item) => normalizeTitleText(String(item || "")))
+                .filter(Boolean)
+                .forEach((item) => validReqTitleSet.add(item));
+        });
+        const cloned = pruneStaleAutoReqNodes((nodeList || []).map((node) => {
             const isAutoReqDetailNode = node.label === "__auto_req_detail";
             const detail = detailMap.get(normalizeSrsCode(node.srs_code || ""));
             const titlePrefix = String(node.title || "").trim().match(/^(\d+\.\d+)\s+/)?.[1];
@@ -1186,7 +1305,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 table: isAutoReqDetailNode && detail && !hasRenderableTable(node.table) ? buildReqDetailTable(detail) : node.table,
                 children: syncReqDetailsToTree(node.children || [], details),
             };
-        });
+        }), detailMap, validReqTitleSet);
         const existingCodes = new Set<string>();
         const walkCodes = (items: TreeNode[]) => {
             (items || []).forEach((node) => {
@@ -1459,13 +1578,14 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
 
     // 选择章节 RCM 后，自动拼接“RCM编号 + 详细描述”写入当前节点 text
     const handleRcmSelectChange = (nodeId: number, selectedRcmIds: Array<number | string>) => {
-        const selectedOptions = (selectedRcmIds || []).map((id) => {
+        type SelectedRcmOption = { value: number | string; label: string; description: string };
+        const selectedOptions = (selectedRcmIds || []).map((id): SelectedRcmOption | undefined => {
             const matched = rcmOptions.find((o) => o.value === id);
-            if (matched) return matched;
+            if (matched) return { value: matched.value, label: matched.label, description: matched.description ?? "" };
             const code = normalizeRcmCode(String(id || ""));
             if (!code) return undefined;
             return { value: id, label: code, description: "" };
-        }).filter((o): o is { value: number | string; label: string; description?: string } => !!o);
+        }).filter((o): o is SelectedRcmOption => !!o);
 
         const nextRcmCodes = selectedOptions.map((o) => normalizeRcmCode(o.label)).filter(Boolean);
         const nextText = selectedOptions

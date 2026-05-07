@@ -1160,12 +1160,19 @@ export default () => {
         }
         return normalizeReqCode(a).localeCompare(normalizeReqCode(b));
     };
-    const normalizeReqTitle = (value?: string) => String(value || "")
+    const normalizeReqNamePart = (value?: string) => {
+        const txt = String(value || "").trim();
+        const invalid = new Set(["/", "\\", "／", "＼", "-", "--", "_", "无", "N/A", "n/a", "NA", "na", "null", "NULL", "None", "none"]);
+        return invalid.has(txt) ? "" : txt;
+    };
+    const normalizeReqTitle = (value?: string) => normalizeReqNamePart(value)
         .trim()
         .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
         .replace(/\s+/g, "")
         .toLowerCase();
-    const getReqSubFunctionTitle = (row: any) => String(row.sub_function || row.name || row.function || row.module || row.srs_code || "").trim();
+    const getReqSubFunctionTitle = (row: any) => [row.sub_function, row.name, row.function, row.module, row.srs_code]
+        .map((value) => normalizeReqNamePart(String(value || "")))
+        .find(Boolean) || "";
     const syncMissingReqdNodes = async (roots: TreeNode[], docId?: number): Promise<TreeNode[]> => {
         if (isReadOnly || !docId || !Array.isArray(roots) || roots.length === 0) return roots;
         try {
@@ -1199,9 +1206,7 @@ export default () => {
                         if (!codeByTitle.has(title)) codeByTitle.set(title, code);
                     });
             });
-            const composeReqDescription = (row: any, existingText?: string) => {
-                const currentText = String(existingText || "").trim();
-                if (currentText) return currentText;
+            const composeReqDescription = (row: any) => {
                 const overview = String(row?.overview || "").trim();
                 const funcDetail = String(row?.func_detail || "").trim();
                 const logicTxt = String(row?.logic_txt || "").trim();
@@ -1217,16 +1222,144 @@ export default () => {
                     `(6) 接口\n${interfaceText || "无"}`,
                 ].join("\n");
             };
+            const getReqHierarchyTitles = (row: any) => {
+                const titles = [row.module, row.function, row.sub_function]
+                    .map((value) => normalizeReqNamePart(String(value || "")))
+                    .filter(Boolean);
+                const uniqueTitles: string[] = [];
+                titles.forEach((title) => {
+                    if (!uniqueTitles.some((item) => normalizeReqTitle(item) === normalizeReqTitle(title))) {
+                        uniqueTitles.push(title);
+                    }
+                });
+                return uniqueTitles.length ? uniqueTitles : [getReqSubFunctionTitle(row)].filter(Boolean);
+            };
+            const validReqTitleSet = new Set<string>();
+            const validReqTitlesWithRows: Array<{ title: string; row: any; code: string }> = [];
+            const reqRootTitleSet = new Set<string>();
+            rows.forEach((row: any) => {
+                const code = toSdsCode(row.srs_code || row.req_id);
+                const hierarchyTitles = getReqHierarchyTitles(row);
+                const rootTitle = normalizeReqTitle(hierarchyTitles[0]);
+                if (rootTitle) reqRootTitleSet.add(rootTitle);
+                [row.name, row.module, row.function, row.sub_function]
+                    .map((value) => normalizeReqTitle(String(value || "")))
+                    .filter(Boolean)
+                    .forEach((title) => {
+                        validReqTitleSet.add(title);
+                    });
+                [row.name, row.function, row.sub_function]
+                    .map((value) => normalizeReqTitle(String(value || "")))
+                    .filter(Boolean)
+                    .forEach((title) => {
+                        if (code) validReqTitlesWithRows.push({ title, row, code });
+                    });
+            });
+            const stripHeadingNumber = (title?: string) => String(title || "")
+                .trim()
+                .replace(HEADING_NUM_RE, "")
+                .trim();
+            const getHeadingDepth = (title?: string) => {
+                const matched = String(title || "").trim().match(/^(\d+(?:\.\d+)*)\s+/);
+                return matched ? matched[1].split(".").length : 0;
+            };
+            const getHeadingMajor = (title?: string) => {
+                const matched = String(title || "").trim().match(/^(\d+)/);
+                return matched?.[1] || "";
+            };
+            const fixedSdsChapterTitles = new Set([
+                "总体描述",
+                "功能",
+                "性能",
+                "数据结构",
+                "接口",
+                "neoviewer",
+                "功能设计",
+                "限制条件",
+                "尚未解决的问题",
+            ].map((item) => normalizeReqTitle(item)));
+            const isFunctionStopperTitle = (title?: string) => {
+                const normalizedTitle = normalizeReqTitle(stripHeadingNumber(title));
+                return normalizedTitle.includes("限制条件") || normalizedTitle.includes("尚未解决的问题");
+            };
+            const withCurrentReqTitle = (node: TreeNode, row: any) => {
+                const heading = parseHeadingNumber(node.title);
+                const titleText = getReqSubFunctionTitle(row);
+                return heading && titleText ? `${heading} ${titleText}` : (titleText || node.title);
+            };
+            const matchRowByNodeTitle = (node: TreeNode) => {
+                const normalizedTitle = normalizeReqTitle(stripHeadingNumber(node.title));
+                if (!normalizedTitle) return undefined;
+                return validReqTitlesWithRows.find(({ title }) => title === normalizedTitle)
+                    || validReqTitlesWithRows.find(({ title }) => title && (normalizedTitle.includes(title) || title.includes(normalizedTitle)));
+            };
+            const isFunctionalReqHeading = (node: TreeNode) => {
+                const normalizedTitle = normalizeReqTitle(stripHeadingNumber(node.title));
+                return getHeadingMajor(node.title) === "6" &&
+                    getHeadingDepth(node.title) >= 2 &&
+                    !fixedSdsChapterTitles.has(normalizedTitle);
+            };
+            const pruneAndRefreshReqdNodes = (nodes: TreeNode[], parentIsFunctionStopper = false, parentHeadingDepth = 0): TreeNode[] => {
+                return (nodes || [])
+                    .map((node) => {
+                        const rawCode = normalizeReqCode((node as any).sds_code);
+                        const titleMatch = !rawCode && isFunctionalReqHeading(node) ? matchRowByNodeTitle(node) : undefined;
+                        const matchedCode = rawCode || titleMatch?.code || "";
+                        const matchedRow = matchedCode ? rowByCode.get(matchedCode) || rowBySdsCode.get(matchedCode) || titleMatch?.row : undefined;
+                        const children = pruneAndRefreshReqdNodes(
+                            (node.children || []) as TreeNode[],
+                            isFunctionStopperTitle(node.title),
+                            getHeadingDepth(node.title)
+                        );
+                        const nextNode: TreeNode = {
+                            ...node,
+                            children,
+                        };
+                        if (matchedCode && matchedRow) {
+                            nextNode.text = composeReqDescription(matchedRow);
+                            nextNode.sds_code = matchedCode;
+                            nextNode.title = withCurrentReqTitle(node, matchedRow);
+                        }
+                        return nextNode;
+                    })
+                    .filter((node) => {
+                        const code = normalizeReqCode((node as any).sds_code);
+                        if (code && !rowByCode.has(code) && !rowBySdsCode.has(code)) {
+                            return false;
+                        }
+                        const normalizedTitle = normalizeReqTitle(stripHeadingNumber(node.title));
+                        const misplacedModuleRoot =
+                            !code &&
+                            parentHeadingDepth >= 2 &&
+                            normalizedTitle &&
+                            reqRootTitleSet.has(normalizedTitle);
+                        if (misplacedModuleRoot) {
+                            return false;
+                        }
+                        if (parentIsFunctionStopper && (
+                            (code && (rowByCode.has(code) || rowBySdsCode.has(code))) ||
+                            (normalizedTitle && validReqTitleSet.has(normalizedTitle))
+                        )) {
+                            return false;
+                        }
+                        const staleReqTitle =
+                            isFunctionalReqHeading(node) &&
+                            normalizedTitle &&
+                            !validReqTitleSet.has(normalizedTitle) &&
+                            !matchRowByNodeTitle(node);
+                        return !staleReqTitle;
+                    });
+            };
             const hydrateExistingReqdNodes = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
                 const children = hydrateExistingReqdNodes((node.children || []) as TreeNode[]);
                 const currentCode = normalizeReqCode((node as any).sds_code);
-                if (currentCode || children.length > 0) {
+                if (currentCode) {
                     return { ...node, children };
                 }
                 const matchedCode = codeByTitle.get(normalizeReqTitle(node.title));
                 return matchedCode ? { ...node, sds_code: matchedCode, children } : { ...node, children };
             });
-            const rootsWithCodes = hydrateExistingReqdNodes(roots);
+            const rootsWithCodes = pruneAndRefreshReqdNodes(hydrateExistingReqdNodes(roots));
 
             const buildLeafNode = (row: any, code: string, existing?: TreeNode): TreeNode => ({
                 ...(existing || {}),
@@ -1237,7 +1370,7 @@ export default () => {
                 title: existing?.title || getReqSubFunctionTitle(row),
                 sds_code: code,
                 img_url: existing?.img_url || "",
-                text: composeReqDescription(row, existing?.text) || existing?.text || "",
+                text: composeReqDescription(row) || existing?.text || "",
                 table: existing?.table || ({} as any),
                 children: (existing?.children || []) as TreeNode[],
             });
@@ -1277,7 +1410,7 @@ export default () => {
                 });
             };
             collectAnchors(rootsWithCodes);
-            if (anchors.length === 0) return roots;
+            if (anchors.length === 0) return rootsWithCodes;
             const maxExistingMajor = Math.max(...anchors.map((anchor) => codeMajor(anchor.code) || 0));
             const shouldInsertRow = (code: string, row: any) => {
                 if (existingCodes.has(code)) return false;
@@ -1286,9 +1419,33 @@ export default () => {
                 const major = codeMajor(code) || 0;
                 return major >= maxExistingMajor;
             };
-            if (!Array.from(rowBySdsCode.entries()).some(([code, row]) => shouldInsertRow(code, row))) return roots;
+            if (!Array.from(rowBySdsCode.entries()).some(([code, row]) => shouldInsertRow(code, row))) return rootsWithCodes;
+
+            const findFunctionAreaInsertTarget = (nodes: TreeNode[], currentPath: number[] = []): { parentPath: number[]; afterIndex?: number } | undefined => {
+                for (let index = 0; index < (nodes || []).length; index += 1) {
+                    const node = nodes[index];
+                    const heading = parseHeadingNumber(node.title);
+                    const title = normalizeReqTitle(stripHeadingNumber(node.title));
+                    const isFunctionAreaRoot = heading === "6" || title.includes("功能设计");
+                    if (isFunctionAreaRoot) {
+                        const children = ((node.children || []) as TreeNode[]);
+                        const firstStopperIndex = children.findIndex((child) => isFunctionStopperTitle(child.title));
+                        return {
+                            parentPath: [...currentPath, index],
+                            afterIndex: firstStopperIndex >= 0 ? firstStopperIndex - 1 : children.length - 1,
+                        };
+                    }
+                    const childTarget = findFunctionAreaInsertTarget((node.children || []) as TreeNode[], [...currentPath, index]);
+                    if (childTarget) return childTarget;
+                }
+                return undefined;
+            };
+            const functionAreaInsertTarget = findFunctionAreaInsertTarget(rootsWithCodes);
 
             const findInsertTargetByCode = (code: string): { parentPath: number[]; afterIndex?: number } | undefined => {
+                if (functionAreaInsertTarget) {
+                    return functionAreaInsertTarget;
+                }
                 const major = codeMajor(code);
                 const sameMajor = anchors.filter((anchor) => codeMajor(anchor.code) === major);
                 if (sameMajor.length) {
@@ -1318,12 +1475,8 @@ export default () => {
                     list.push({ code, row, afterIndex: target.afterIndex });
                     insertionsByParent.set(key, list);
                 });
-            if (insertionsByParent.size === 0) return roots;
+            if (insertionsByParent.size === 0) return rootsWithCodes;
 
-            const stripHeadingNumber = (title?: string) => String(title || "")
-                .trim()
-                .replace(HEADING_NUM_RE, "")
-                .trim();
             const nextHeadingAfter = (siblings: TreeNode[], beforeIndex: number, offset: number) => {
                 for (let index = beforeIndex; index >= 0; index -= 1) {
                     const heading = parseHeadingNumber(siblings[index]?.title);
@@ -1352,18 +1505,6 @@ export default () => {
                 });
                 return { ...node, children };
             };
-            const getReqHierarchyTitles = (row: any) => {
-                const titles = [row.module, row.function, row.sub_function]
-                    .map((value) => String(value || "").trim())
-                    .filter(Boolean);
-                const uniqueTitles: string[] = [];
-                titles.forEach((title) => {
-                    if (!uniqueTitles.some((item) => normalizeReqTitle(item) === normalizeReqTitle(title))) {
-                        uniqueTitles.push(title);
-                    }
-                });
-                return uniqueTitles.length ? uniqueTitles : [getReqSubFunctionTitle(row)].filter(Boolean);
-            };
             const appendHierarchyRow = (nodes: TreeNode[], row: any, code: string) => {
                 const titles = getReqHierarchyTitles(row);
                 let levelNodes = nodes;
@@ -1386,9 +1527,9 @@ export default () => {
                         levelNodes.push(target);
                     } else if (isLeaf && !(target as any).sds_code) {
                         (target as any).sds_code = code;
-                        target.text = composeReqDescription(row, target.text) || target.text || "";
+                        target.text = composeReqDescription(row) || target.text || "";
                     } else if (isLeaf) {
-                        target.text = composeReqDescription(row, target.text) || target.text || "";
+                        target.text = composeReqDescription(row) || target.text || "";
                     }
                     levelNodes = (target.children || []) as TreeNode[];
                 });
@@ -1542,6 +1683,9 @@ export default () => {
                         targetRow.id || (params.id ? parseInt(params.id) : undefined),
                         targetRow.product_version
                     );
+                    const shouldPersistSyncedContent =
+                        !isReadOnly &&
+                        JSON.stringify(remappedContent || []) !== JSON.stringify(ensuredContent || []);
 
                     dispatch({
                         loading: false,
@@ -1555,6 +1699,22 @@ export default () => {
                     });
                     treeStructureRef.current = ensuredContent;
                     initialEditTreeRef.current = cloneTree(ensuredContent as TreeNode[]);
+                    if (shouldPersistSyncedContent) {
+                        const docId = targetRow.id || (params.id ? parseInt(params.id) : 0);
+                        const cleanedContent = (ensuredContent as TreeNode[]).map((node: any) => cleanTreeNode(node, docId, 0));
+                        Api.update_sds_doc({
+                            id: docId,
+                            product_id: targetRow.product_id,
+                            srsdoc_id: targetRow.srsdoc_id || undefined,
+                            version: targetRow.version,
+                            file_no: targetRow.file_no,
+                            change_log: targetRow.change_log || "",
+                            content: cleanedContent,
+                            n_id: targetRow.n_id || 0,
+                        }).catch((error: any) => {
+                            console.error("静默保存详细设计同步目录失败:", error);
+                        });
+                    }
                     if (needRebindSrs) {
                         message.warning("该详细设计未绑定需求规格说明版本，请先绑定该产品下需求规格说明后再进行操作。");
                         if (isReadOnly) {

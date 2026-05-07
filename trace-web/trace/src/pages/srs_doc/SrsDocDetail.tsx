@@ -88,11 +88,32 @@ export default () => {
     }, []);
 
     const productId = Form.useWatch("product_id", editForm);
-    const folderName = Form.useWatch("folder_name", editForm);
-    const fileNo = Form.useWatch("file_no", editForm);
     const displayProductId = (data.isEdit || isReadOnly) ? (data.docProductId ?? productId) : productId;
     const currentProduct = (data.products as any[]).find((p: any) => p.id === displayProductId);
     const productLabel = currentProduct ? `${currentProduct.name}-${currentProduct.full_version}` : "";
+    const normalizeSrsCodeForSync = (value?: string) => String(value || "").replace(/\s+/g, "").toUpperCase();
+    const srsSourceCodeSet = new Set([
+        ...(data.srsTableData || []).map((item: any) => normalizeSrsCodeForSync(item?.srs_code || item?.code)),
+        ...(data.srsOtherReqData || []).map((item: any) => normalizeSrsCodeForSync(item?.srs_code || item?.code)),
+        ...(data.srsChangeTables || []).flatMap((table: any) => (table.data || []).map((item: any) => normalizeSrsCodeForSync(item?.srs_code || item?.code))),
+    ].filter(Boolean));
+    const reqListDataForTree = srsSourceCodeSet.size > 0
+        ? (data.reqListData || []).filter((item: any) => srsSourceCodeSet.has(normalizeSrsCodeForSync(item?.code)))
+        : (data.reqListData || []);
+    const currentReqCodeSet = new Set((reqListDataForTree || []).map((item: any) => normalizeSrsCodeForSync(item?.code)).filter(Boolean));
+    const filterRowsByCurrentReqCodes = (rows: any[] = []) => {
+        if (currentReqCodeSet.size === 0) return rows || [];
+        return (rows || []).filter((row: any) => {
+            const code = normalizeSrsCodeForSync(row?.srs_code || row?.code);
+            return !code || currentReqCodeSet.has(code);
+        });
+    };
+    const filteredSrsTableData = filterRowsByCurrentReqCodes(data.srsTableData as any[]);
+    const filteredSrsOtherReqData = filterRowsByCurrentReqCodes(data.srsOtherReqData as any[]);
+    const filteredSrsChangeTables = (data.srsChangeTables || []).map((table: any) => ({
+        ...table,
+        data: filterRowsByCurrentReqCodes(table.data || []),
+    }));
 
     // 加载产品相关的 RCM 列表（用于章节 RCM 选择控件）
     const loadProductRcm = (productId?: number) => {
@@ -184,7 +205,7 @@ export default () => {
             .join("\n");
         const matches = textPool.match(/[A-Za-z0-9]{1,12}(?:-[A-Za-z0-9]{1,16}){3,}/g) || [];
         if (!matches.length) return "";
-        return matches.sort((a, b) => b.length - a.length)[0];
+        return matches.sort((a, b) => b.length - a.length)[0] || "";
     };
 
     const isIncompleteFileNo = (value?: string) => {
@@ -753,8 +774,6 @@ export default () => {
     const treeRoots = data.treeStructure as TreeNode[];
     const approvalRoot = treeRoots.find((node) => normalizeText(node.title).includes("需求规格说明"));
     const changeLogRoot = treeRoots.find((node) => normalizeText(node.title).includes("文件修订记录"));
-    const derivedCoverTitle = extractCoverTitleFromTree(treeRoots);
-    const derivedFileNo = extractFileNoFromTree(treeRoots);
     const approvalRoots = approvalRoot ? [approvalRoot] : treeRoots.filter((node) => subtreeMatches(node, isApprovalNode));
     const changeLogRoots = changeLogRoot ? [changeLogRoot] : treeRoots.filter((node) => subtreeMatches(node, isChangeLogNode));
     const hiddenNodeIds = Array.from(new Set([
@@ -763,10 +782,6 @@ export default () => {
             .filter((node) => subtreeMatches(node, isApprovalNode) || subtreeMatches(node, isChangeLogNode))
             .flatMap((node) => collectSubtreeIds(node)),
     ]));
-    const cnNameFromDoc = (derivedCoverTitle || approvalRoot?.title || "").trim();
-    const extractedFileName = (/[一-龥]/.test(cnNameFromDoc) ? cnNameFromDoc : (folderName || "")).trim();
-    const displayFileNo = (isIncompleteFileNo(fileNo) ? (derivedFileNo || fileNo || "") : (fileNo || "")).trim();
-
     const updateExtractedTableCell = (targetNodeId: number, rowIndex: number, colCode: string, value: string) => {
         const updateNode = (nodes: TreeNode[]): TreeNode[] => {
             return (nodes || []).map((node) => {
@@ -1124,11 +1139,11 @@ export default () => {
                             readOnly={isReadOnly}
                             rcmOptions={data.rcmOptions}
                             srsReqPreview={{
-                                main: data.srsTableData as any[],
-                                other: data.srsOtherReqData as any[],
-                                changes: data.srsChangeTables as Array<{ id: number | string; title: string; data: any[] }>,
+                                main: filteredSrsTableData as any[],
+                                other: filteredSrsOtherReqData as any[],
+                                changes: filteredSrsChangeTables as Array<{ id: number | string; title: string; data: any[] }>,
                             }}
-                            reqDetails={data.reqListData as any[]}
+                            reqDetails={reqListDataForTree as any[]}
                             srsReqLoading={data.srsTableLoading}
                             onNodesSnapshot={(nodes) => {
                                 treeStructureRef.current = (nodes || []) as TreeNode[];
@@ -1180,7 +1195,7 @@ export default () => {
                 width={1200}>
                 <div style={{ marginBottom: 12, fontWeight: 600 }}>{ts("srs_doc.srs_table") || "产品需求列表"}</div>
                 <Table
-                    dataSource={data.srsTableData}
+                    dataSource={filteredSrsTableData}
                     columns={[
                         { title: ts("srs_doc.srs_code") || "需求编号", dataIndex: "srs_code", width: 160, render: (t: string) => t || "-" },
                         { title: ts("srs_doc.module") || "模块", dataIndex: "module", width: 180, render: (t: string) => t || "-" },
@@ -1196,7 +1211,7 @@ export default () => {
 
                 <div style={{ marginTop: 20, marginBottom: 12, fontWeight: 600 }}>{ts("srs_doc.other_req_list") || "其他需求列表"}</div>
                 <Table
-                    dataSource={data.srsOtherReqData}
+                    dataSource={filteredSrsOtherReqData}
                     columns={[
                         { title: ts("srs_doc.srs_code") || "需求编号", dataIndex: "srs_code", width: 180, render: (t: string) => t || "-" },
                         { title: ts("srs_doc.module") || "需求模块", dataIndex: "module", width: 320, render: (t: string) => t || "-" },
@@ -1209,7 +1224,7 @@ export default () => {
                     scroll={{ x: 820 }}
                 />
 
-                {(data.srsChangeTables || []).map((table: any) => (
+                {(filteredSrsChangeTables || []).map((table: any) => (
                     <div key={`change_tbl_${table.id}`} style={{ marginTop: 20 }}>
                         <div style={{ marginBottom: 12, fontWeight: 600 }}>{table.title || "变更表格"}</div>
                         <Table

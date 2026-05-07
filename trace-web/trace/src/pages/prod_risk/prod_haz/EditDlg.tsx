@@ -9,7 +9,7 @@ import { tabColumns } from "./TabColumns";
 import * as ApiHaz from "@/api/ApiHaz";
 import * as ApiProdHaz from "@/api/ApiProdHaz";
 
-const pageSizeOptions = [20, 50, 100];
+const pageSizeOptions = [1000, 2000, 5000];
 
 export default ({ prod_id, isOpen, onClose }: any) => {
     const { t: ts } = useTranslation();
@@ -75,7 +75,7 @@ export default ({ prod_id, isOpen, onClose }: any) => {
             onCancel={onClose}
             onOk={doAddProdHazs}
             confirmLoading={data.loadingAdd}>
-            <div className="div-v table-box">
+            <div className="div-v prod-risk-master-picker">
                 <div className="div-h searchbar">
                     <Form
                         form={queryForm}

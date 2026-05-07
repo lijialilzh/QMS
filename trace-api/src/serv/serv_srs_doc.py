@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+from copy import deepcopy
 from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Tuple
@@ -16,7 +17,7 @@ try:
     from docx.oxml import OxmlElement
     from docx.table import Table as DocxTable
     from docx.text.paragraph import Paragraph
-    from docx.shared import Pt
+    from docx.shared import Inches, Pt
     from docx import enum as dox_enum
     from docx.oxml.ns import qn
     from docx.shared import RGBColor
@@ -25,6 +26,7 @@ except Exception:
     OxmlElement = None
     DocxTable = None
     Paragraph = None
+    Inches = None
     Pt = None
     dox_enum = None
     qn = None
@@ -518,7 +520,7 @@ class Server(object):
                         req_rcm_map.setdefault(code_upper, set()).update(rcm_codes)
         return req_rows, req_rcm_map
 
-    def __extract_srs_reqs_from_nodes(self, nodes: List[SrsNodeForm]):
+    def __extract_srs_reqs_from_nodes(self, nodes: List[SrsNodeForm], include_node_codes: bool = True):
         req_rows = []
         req_rcm_map: Dict[str, set] = {}
         # 放宽编号格式，兼容 SRS-XXX / CNXXX / 其他编码串
@@ -571,24 +573,25 @@ class Server(object):
                                 rcm_codes = {code for code in rcm_codes if code}
                                 if rcm_codes:
                                     req_rcm_map.setdefault(code_upper, set()).update(rcm_codes)
-                # 兜底：从章节节点上的 srs_code 直接生成需求，避免因表格格式变化导致 SRS 管理为空
-                node_srs_code = self.__normalize_srs_code(str(getattr(node, "srs_code", "") or ""))
-                if node_srs_code and code_pattern.match(node_srs_code):
-                    key = ("1", node_srs_code.upper())
-                    if key not in seen:
-                        seen.add(key)
-                        title_txt = clean_title(getattr(node, "title", "") or "")
-                        parent_txt = clean_title(parent_titles[-1] if parent_titles else "")
-                        req_rows.append(
-                            dict(
-                                code=node_srs_code.upper(),
-                                type_code="1",
-                                module=parent_txt or None,
-                                function=title_txt or None,
-                                sub_function=None,
-                                location=None,
+                if include_node_codes:
+                    # 兜底：从章节节点上的 srs_code 直接生成需求，避免因表格格式变化导致 SRS 管理为空
+                    node_srs_code = self.__normalize_srs_code(str(getattr(node, "srs_code", "") or ""))
+                    if node_srs_code and code_pattern.match(node_srs_code):
+                        key = ("1", node_srs_code.upper())
+                        if key not in seen:
+                            seen.add(key)
+                            title_txt = clean_title(getattr(node, "title", "") or "")
+                            parent_txt = clean_title(parent_titles[-1] if parent_titles else "")
+                            req_rows.append(
+                                dict(
+                                    code=node_srs_code.upper(),
+                                    type_code="1",
+                                    module=parent_txt or None,
+                                    function=title_txt or None,
+                                    sub_function=None,
+                                    location=None,
+                                )
                             )
-                        )
 
                 next_parents = parent_titles + [getattr(node, "title", "") or ""]
                 walk(getattr(node, "children", None) or [], next_parents)
@@ -886,19 +889,18 @@ class Server(object):
 
     def __sync_saved_doc_srs_tables_from_req_rows(self, doc_id: int):
         req_rows: List[SrsReq] = db.session.execute(
-            select(SrsReq).where(SrsReq.doc_id == doc_id, SrsReq.type_code.in_(["1", "reqd"]))
+            select(SrsReq).where(SrsReq.doc_id == doc_id)
         ).scalars().all()
         req_map = {
             self.__normalize_srs_code(row.code or ""): {
                 "module": row.module,
                 "function": row.function,
                 "sub_function": row.sub_function,
+                "location": row.location,
             }
             for row in req_rows
             if self.__normalize_srs_code(row.code or "")
         }
-        if not req_map:
-            return
 
         nodes: List[SrsNode] = db.session.execute(
             select(SrsNode).where(SrsNode.doc_id == doc_id, SrsNode.table.isnot(None))
@@ -915,16 +917,26 @@ class Server(object):
                 continue
             header_norm = [self.__normalize_header((h or {}).get("name") or "") for h in headers]
             col_idx = self.__resolve_req_columns(header_norm)
-            if "code" not in col_idx or not any(key in col_idx for key in ["module", "function", "sub_function"]):
+            if "code" not in col_idx or not any(key in col_idx for key in ["module", "function", "sub_function", "location"]):
                 continue
             header_codes = [(h or {}).get("code") or "" for h in headers]
             table_changed = False
+            cells = table.get("cells") or []
+            keep_indexes = []
+            next_rows = []
             for row_idx, table_row in enumerate(rows):
                 code = self.__normalize_srs_code(str((table_row or {}).get(header_codes[col_idx["code"]], "") or ""))
                 req_item = req_map.get(code)
                 if not req_item:
+                    if code:
+                        table_changed = True
+                        continue
+                    keep_indexes.append(row_idx)
+                    next_rows.append(table_row)
                     continue
-                for field in ["module", "function", "sub_function"]:
+                keep_indexes.append(row_idx)
+                next_rows.append(table_row)
+                for field in ["module", "function", "sub_function", "location"]:
                     if field not in col_idx:
                         continue
                     value = req_item.get(field)
@@ -934,7 +946,6 @@ class Server(object):
                     if table_row.get(col_code) != value:
                         table_row[col_code] = value
                         table_changed = True
-                    cells = table.get("cells") or []
                     cell_row_idx = row_idx + 1
                     cell_col_idx = col_idx[field]
                     if (
@@ -947,6 +958,10 @@ class Server(object):
                     ):
                         cells[cell_row_idx][cell_col_idx]["value"] = value
                         table_changed = True
+            if table_changed:
+                table["rows"] = next_rows
+                if isinstance(cells, list) and cells:
+                    table["cells"] = [cells[0], *[cells[idx + 1] for idx in keep_indexes if idx + 1 < len(cells)]]
             if table_changed:
                 node.table = json.dumps(table, ensure_ascii=False)
                 changed = True
@@ -1089,6 +1104,74 @@ class Server(object):
             else:
                 db.session.add(SrsReq(doc_id=doc_id, **item))
         db.session.commit()
+
+    def __sync_srs_reqs_from_doc_tables(self, doc_id: int, nodes: List[SrsNodeForm]):
+        req_rows, req_rcm_map = self.__extract_srs_reqs_from_nodes(nodes or [], include_node_codes=False)
+
+        def collect_managed_type_codes(items: List[SrsNodeForm]):
+            type_codes = set()
+            for node in items or []:
+                table = getattr(node, "table", None)
+                headers = getattr(table, "headers", None) if table else None
+                rows = getattr(table, "rows", None) if table else None
+                if headers is not None and rows is not None:
+                    header_names = [self.__normalize_text(getattr(h, "name", "") or "") for h in headers]
+                    header_norm = [self.__normalize_header(h) for h in header_names]
+                    col_idx = self.__resolve_req_columns(header_norm)
+                    has_product_cols = ("code" in col_idx and "module" in col_idx and "function" in col_idx)
+                    has_other_cols = ("code" in col_idx and "module" in col_idx and "location" in col_idx)
+                    if has_product_cols or has_other_cols:
+                        type_codes.add("2" if has_other_cols and "function" not in col_idx and "sub_function" not in col_idx else "1")
+                type_codes.update(collect_managed_type_codes(getattr(node, "children", None) or []))
+            return type_codes
+
+        normalized_rows = []
+        seen = set()
+        for item in req_rows:
+            type_code = str((item or {}).get("type_code") or "1")
+            code = self.__normalize_srs_code(str((item or {}).get("code") or "")).upper()
+            if not code:
+                continue
+            key = (type_code, code)
+            if key in seen:
+                continue
+            seen.add(key)
+            normalized_rows.append({
+                **item,
+                "type_code": type_code,
+                "code": code,
+            })
+
+        managed_type_codes = sorted({*collect_managed_type_codes(nodes or []), *{item["type_code"] for item in normalized_rows}})
+        if not managed_type_codes:
+            return
+
+        existing: List[SrsReq] = db.session.execute(
+            select(SrsReq).where(SrsReq.doc_id == doc_id, SrsReq.type_code.in_(managed_type_codes))
+        ).scalars().all()
+        exists_dict = {(row.type_code, row.code): row for row in existing}
+        current_keys = {(item["type_code"], item["code"]) for item in normalized_rows}
+        delete_ids = [row.id for row in existing if (row.type_code, row.code) not in current_keys]
+
+        if delete_ids:
+            db.session.execute(delete(ReqRcm).where(ReqRcm.req_id.in_(delete_ids)))
+            db.session.execute(delete(SrsReqd).where(SrsReqd.req_id.in_(delete_ids)))
+            db.session.execute(delete(SdsReqd).where(SdsReqd.req_id.in_(delete_ids)))
+            db.session.execute(delete(SdsTrace).where(SdsTrace.req_id.in_(delete_ids)))
+            db.session.execute(delete(SrsReq).where(SrsReq.id.in_(delete_ids)))
+
+        for item in normalized_rows:
+            key = (item["type_code"], item["code"])
+            row = exists_dict.get(key)
+            if row:
+                row.module = item.get("module")
+                row.function = item.get("function")
+                row.sub_function = item.get("sub_function")
+                row.location = item.get("location")
+            else:
+                db.session.add(SrsReq(doc_id=doc_id, **item))
+        db.session.commit()
+        self.__sync_imported_req_rcms(doc_id, req_rcm_map)
 
     def __sync_imported_req_rcms(self, doc_id: int, req_rcm_map: Dict[str, set]):
         if not req_rcm_map:
@@ -1573,6 +1656,7 @@ class Server(object):
             self.__reset_tree_node_ids(form.content or [])
             self.__update_nodes(row, 0, form.content)
             db.session.commit()
+            self.__sync_srs_reqs_from_doc_tables(row.id, form.content or [])
             self.__sync_srs_req_names_from_doc_nodes(row.id, form.content or [])
             self.__upsert_imported_srs_reqds(row.id, self.__extract_srs_reqds_from_nodes(form.content or []))
             self.__sync_saved_doc_srs_tables_from_req_rows(row.id)
@@ -2884,6 +2968,11 @@ class Server(object):
                 return "\n".join([str(item or "").strip() for item in values if str(item or "").strip()])
             return str(values or "").strip()
 
+        def __format_range(values):
+            if isinstance(values, list):
+                return " ~ ".join([str(item or "").strip() for item in values if str(item or "").strip()])
+            return str(values or "").strip()
+
         def __build_rows(rows: list[dict]):
             result = []
             hide_chapter_codes = {
@@ -2906,56 +2995,303 @@ class Server(object):
                 tests_unit = test_codes if test_codes else (obj.get("tests_unit") or [])
                 note_raw = str(obj.get("note") or "").strip()
                 note = "\n".join([item.strip() for item in note_raw.split("、") if item and item.strip()]) if note_raw else ""
-                result.append({
-                    "srs_code": __slash(obj.get("srs_code")),
-                    "rcm_flag": ts("yes") if obj.get("rcm_flag") else ts("no"),
-                    "sds_code": __slash(sds_code),
-                    "sis_codes": __slash(__format_list(sis_codes)),
-                    "tests_unit": __slash(__format_list(tests_unit)),
-                    "tests_integ": __slash(" ~ ".join(obj.get("tests_integ") or [])),
-                    "tests_sys": __slash(" ~ ".join(obj.get("tests_sys") or [])),
-                    "tests_user": __slash(" ~ ".join(obj.get("tests_user") or [])),
-                    "rcm_codes": __slash(__format_list(obj.get("rcm_codes") or [])),
-                    "note": __slash(note),
-                })
+                line_count = max(1, len(sis_codes))
+                for idx in range(line_count):
+                    is_first_line = idx == 0
+                    tests_unit_text = tests_unit[idx] if idx < len(tests_unit) else ""
+                    if not test_codes and is_first_line:
+                        tests_unit_text = __format_range(tests_unit)
+                    result.append({
+                        "srs_code": __slash(obj.get("srs_code")) if is_first_line else "",
+                        "rcm_flag": (ts("yes") if obj.get("rcm_flag") else ts("no")) if is_first_line else "",
+                        "sds_code": __slash(sds_code) if is_first_line else "",
+                        "sis_codes": __slash(sis_codes[idx] if idx < len(sis_codes) else ""),
+                        "tests_unit": __slash(tests_unit_text),
+                        "tests_integ": __slash(" ~ ".join(obj.get("tests_integ") or [])) if is_first_line else "",
+                        "tests_sys": __slash(" ~ ".join(obj.get("tests_sys") or [])) if is_first_line else "",
+                        "tests_user": __slash(" ~ ".join(obj.get("tests_user") or [])) if is_first_line else "",
+                        "rcm_codes": __slash(__format_list(obj.get("rcm_codes") or [])) if is_first_line else "",
+                        "note": __slash(note) if is_first_line else "",
+                        "_row_span": line_count if idx == 0 else 0,
+                    })
             return result
 
-        def __write_trace_table(docx: Document, title: str, rows: list[dict]):
-            docx_util.save_title2docx(title, docx, level=1, font_size=16.0)
-            headers = [
-                TabHeader(code="srs_code", name="需求编号"),
-                TabHeader(code="rcm_flag", name="是否为RCM"),
-                TabHeader(code="sds_code", name="软件详细设计"),
-                TabHeader(code="sis_codes", name="接口编号"),
-                TabHeader(code="tests_unit", name="单元测试记录"),
-                TabHeader(code="tests_integ", name="集成测试记录"),
-                TabHeader(code="tests_sys", name="系统测试记录"),
-                TabHeader(code="tests_user", name="用户测试记录"),
-                TabHeader(code="rcm_codes", name="RCM"),
-                TabHeader(code="note", name="备注"),
-            ]
-            docx_util.save_tab2docx(Table(headers=headers, rows=__build_rows(rows)), docx)
+        trace_word_col_widths = [0.78, 0.35, 0.70, 0.70, 1.55, 1.35, 0.98, 0.98, 1.10, 1.15, 0.98]
+
+        def __set_paragraph_text(paragraph, text: str, font_size: float = 10.5, bold: bool = False):
+            for run in list(paragraph.runs):
+                paragraph._element.remove(run._element)
+            docx_util.fonted_txt(paragraph, text, font_size=font_size, bold=bold)
+
+        def __force_paragraph_left_align(paragraph):
+            paragraph.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.LEFT
+            paragraph.paragraph_format.first_line_indent = Pt(0)
+            paragraph.paragraph_format.left_indent = Pt(0)
+            paragraph.paragraph_format.right_indent = Pt(0)
+            paragraph.paragraph_format.space_before = Pt(0)
+            paragraph.paragraph_format.space_after = Pt(0)
+            if OxmlElement is None or qn is None:
+                return
+            p_pr = paragraph._p.get_or_add_pPr()
+            for jc in list(p_pr.findall(qn("w:jc"))):
+                p_pr.remove(jc)
+            jc = OxmlElement("w:jc")
+            jc.set(qn("w:val"), "left")
+            p_pr.append(jc)
+            for ind in list(p_pr.findall(qn("w:ind"))):
+                p_pr.remove(ind)
+            ind = OxmlElement("w:ind")
+            ind.set(qn("w:left"), "0")
+            ind.set(qn("w:leftChars"), "0")
+            ind.set(qn("w:right"), "0")
+            ind.set(qn("w:rightChars"), "0")
+            ind.set(qn("w:firstLine"), "0")
+            ind.set(qn("w:firstLineChars"), "0")
+            ind.set(qn("w:hanging"), "0")
+            ind.set(qn("w:hangingChars"), "0")
+            p_pr.append(ind)
+
+        def __force_cell_left_align(cell):
+            try:
+                cell.vertical_alignment = dox_enum.table.WD_CELL_VERTICAL_ALIGNMENT.TOP
+            except Exception:
+                pass
+            if OxmlElement is not None and qn is not None:
+                tc_pr = cell._tc.get_or_add_tcPr()
+                for v_align in list(tc_pr.findall(qn("w:vAlign"))):
+                    tc_pr.remove(v_align)
+                v_align = OxmlElement("w:vAlign")
+                v_align.set(qn("w:val"), "top")
+                tc_pr.append(v_align)
+                for tc_mar in list(tc_pr.findall(qn("w:tcMar"))):
+                    tc_pr.remove(tc_mar)
+                tc_mar = OxmlElement("w:tcMar")
+                for side in ["top", "left", "bottom", "right"]:
+                    item = OxmlElement(f"w:{side}")
+                    item.set(qn("w:w"), "0")
+                    item.set(qn("w:type"), "dxa")
+                    tc_mar.append(item)
+                tc_pr.append(tc_mar)
+                for no_wrap_node in list(tc_pr.findall(qn("w:noWrap"))):
+                    tc_pr.remove(no_wrap_node)
+            for paragraph in cell.paragraphs:
+                __force_paragraph_left_align(paragraph)
+
+        def __set_cell_text(cell, text: str):
+            # 清空模板数据行的原段落，避免继承居中、缩进、前置空格等格式。
+            cell._tc.clear_content()
+            paragraph = cell.add_paragraph()
+            __force_paragraph_left_align(paragraph)
+            docx_util.fonted_txt(paragraph, str(text or ""), font_size=10.5)
+            __force_cell_left_align(cell)
+
+        def __force_cell_font_size(cell, font_size: float = 10.5):
+            if Pt is None:
+                return
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    run.font.size = Pt(font_size)
+
+        def __force_trace_table_font_size(table, font_size: float = 10.5):
+            if table is None:
+                return
+            for row in table.rows:
+                for cell in row.cells:
+                    __force_cell_font_size(cell, font_size)
+
+        def __set_table_cell_width(cell, width_inch: float):
+            if Inches is not None:
+                try:
+                    cell.width = Inches(width_inch)
+                except Exception:
+                    pass
+            if OxmlElement is None or qn is None:
+                return
+            tc_pr = cell._tc.get_or_add_tcPr()
+            for tc_w in list(tc_pr.findall(qn("w:tcW"))):
+                tc_pr.remove(tc_w)
+            tc_w = OxmlElement("w:tcW")
+            tc_w.set(qn("w:w"), str(int(width_inch * 1440)))
+            tc_w.set(qn("w:type"), "dxa")
+            tc_pr.append(tc_w)
+
+        def __fit_trace_table_width(table):
+            if table is None:
+                return
+            try:
+                table.autofit = False
+                table.allow_autofit = False
+            except Exception:
+                pass
+            if OxmlElement is not None and qn is not None:
+                tbl_pr = table._tbl.tblPr
+                layout = tbl_pr.find(qn("w:tblLayout"))
+                if layout is None:
+                    layout = OxmlElement("w:tblLayout")
+                    tbl_pr.append(layout)
+                layout.set(qn("w:type"), "fixed")
+                tbl_grid = table._tbl.tblGrid
+                if tbl_grid is not None:
+                    for idx, grid_col in enumerate(list(tbl_grid.gridCol_lst)):
+                        if idx < len(trace_word_col_widths):
+                            grid_col.set(qn("w:w"), str(int(trace_word_col_widths[idx] * 1440)))
+            for row in table.rows:
+                for idx, cell in enumerate(row.cells):
+                    if idx < len(trace_word_col_widths):
+                        __set_table_cell_width(cell, trace_word_col_widths[idx])
+
+        def __find_trace_table(docx: Document):
+            for table in docx.tables:
+                if len(table.rows) >= 2 and len(table.columns) >= 10:
+                    first_row = " ".join(cell.text for cell in table.rows[0].cells)
+                    if "软件需求规格" in first_row and "软件详细设计" in first_row:
+                        return table
+            return docx.tables[-1] if docx.tables else None
+
+        def __remove_grid_span(tc):
+            if OxmlElement is None or qn is None:
+                return 1
+            tc_pr = tc.get_or_add_tcPr()
+            spans = list(tc_pr.findall(qn("w:gridSpan")))
+            span_val = 1
+            for span in spans:
+                try:
+                    span_val = max(span_val, int(span.get(qn("w:val")) or "1"))
+                except Exception:
+                    span_val = max(span_val, 1)
+                tc_pr.remove(span)
+            return span_val
+
+        def __split_trace_table_gridspans(table):
+            if OxmlElement is None or qn is None:
+                return
+            for row in table.rows:
+                for tc in list(row._tr.tc_lst):
+                    span_val = __remove_grid_span(tc)
+                    current = tc
+                    for _idx in range(max(0, span_val - 1)):
+                        cloned = deepcopy(tc)
+                        __remove_grid_span(cloned)
+                        current.addnext(cloned)
+                        current = cloned
+
+        def __fill_template_trace_table(table, rows: list[dict]):
+            if table is None:
+                return
+            if len(table.rows) < 3:
+                return
+            __split_trace_table_gridspans(table)
+            __fit_trace_table_width(table)
+            if len(table.rows) >= 2 and len(table.rows[0].cells) >= 5 and len(table.rows[1].cells) >= 5:
+                __set_cell_text(table.rows[0].cells[2], "软件详细设计")
+                __set_cell_text(table.rows[0].cells[3], "")
+                __set_cell_text(table.rows[0].cells[4], "接口编号")
+                __set_cell_text(table.rows[1].cells[2], "《软件详细设计》")
+                __set_cell_text(table.rows[1].cells[3], "")
+                __set_cell_text(table.rows[1].cells[4], "接口编号")
+                try:
+                    table.rows[0].cells[2].merge(table.rows[0].cells[3])
+                    table.rows[1].cells[2].merge(table.rows[1].cells[3])
+                except Exception:
+                    logger.exception("merge trace word SDS header failed")
+            template_tr = deepcopy(table.rows[2]._tr)
+            for row in list(table.rows[2:]):
+                table._tbl.remove(row._tr)
+            built_rows = __build_rows(rows)
+            merge_ranges = []
+            for item in built_rows:
+                if item.get("_row_span"):
+                    start = len(table.rows)
+                    end = start + int(item.get("_row_span") or 1) - 1
+                    if end > start:
+                        merge_ranges.append((start, end))
+                table._tbl.append(deepcopy(template_tr))
+                cells = table.rows[-1].cells
+                for idx, cell in enumerate(cells):
+                    if idx < len(trace_word_col_widths):
+                        __set_table_cell_width(cell, trace_word_col_widths[idx])
+                values = [
+                    item["srs_code"],
+                    item["rcm_flag"],
+                    item["sds_code"],
+                    "",
+                    item["sis_codes"],
+                    item["tests_unit"],
+                    item["tests_integ"],
+                    item["tests_sys"],
+                    item["tests_user"],
+                    item["rcm_codes"],
+                    item["note"],
+                ]
+                for idx, value in enumerate(values):
+                    if idx < len(cells):
+                        __set_cell_text(cells[idx], value)
+                for cell in cells:
+                    __force_cell_left_align(cell)
+                try:
+                    table.rows[-1].cells[2].merge(table.rows[-1].cells[3])
+                    __force_cell_left_align(table.rows[-1].cells[2])
+                except Exception:
+                    logger.exception("merge trace word SDS row failed")
+            for start, end in merge_ranges:
+                # “接口编号”和“单元测试用例”按编号逐行展示，其它列按同一需求纵向合并。
+                for col_idx in [0, 1, 2, 3, 6, 7, 8, 9, 10]:
+                    try:
+                        table.cell(start, col_idx).merge(table.cell(end, col_idx))
+                        __force_cell_left_align(table.cell(start, col_idx))
+                    except Exception:
+                        logger.exception("merge trace word cell failed: row=%s-%s col=%s", start, end, col_idx)
+            __force_trace_table_font_size(table, 10.5)
+
+        def __append_template_trace_table(docx: Document, source_table, title: str, rows: list[dict]):
+            paragraph = docx.add_paragraph()
+            paragraph.style = docx.styles["Heading 1"]
+            __set_paragraph_text(paragraph, title, font_size=14.0, bold=True)
+            docx._body._element.append(deepcopy(source_table._tbl))
+            new_table = docx.tables[-1]
+            __fill_template_trace_table(new_table, rows)
+
+        def __update_header_file_no(docx: Document, file_no: str):
+            text = str(file_no or "").strip() or "/"
+            for section in docx.sections:
+                for header in [section.header, section.first_page_header, section.even_page_header]:
+                    for paragraph in header.paragraphs:
+                        raw = str(paragraph.text or "").strip()
+                        if not raw:
+                            continue
+                        if raw == text or raw.startswith("TX-") or raw.startswith("QMS-"):
+                            __set_paragraph_text(paragraph, text, font_size=10.5)
 
         resp = await self.list_doc_trace(id)
-        doc_resp = await self.get_srs_doc(id)
-        doc = doc_resp.data if doc_resp else None
-        product_name = str(getattr(doc, "product_name", "") or "").strip()
-        product_version = str(getattr(doc, "product_version", "") or "").strip()
-        doc_version = str(getattr(doc, "version", "") or "").strip()
+        row_srsdoc: SrsDoc = db.session.execute(select(SrsDoc).where(SrsDoc.id == id)).scalars().first()
+        row_product: Product = None
+        if row_srsdoc:
+            row_product = db.session.execute(select(Product).where(Product.id == row_srsdoc.product_id)).scalars().first()
+        product_name = str(getattr(row_product, "name", "") or "").strip()
+        product_type_code = str(getattr(row_product, "type_code", "") or "").strip()
+        product_full_version = str(getattr(row_product, "full_version", "") or "").strip()
 
         rows = resp.data or []
         normal_rows = [obj for obj in rows if not __is_change_trace_row(obj)]
         change_rows = [obj for obj in rows if __is_change_trace_row(obj)]
 
-        docx = Document()
-        title = "-".join([item for item in [product_name, product_version, doc_version] if item])
-        if title:
-            p = docx.add_paragraph()
-            p.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.CENTER
-            docx_util.fonted_txt(p, f"{title} 追溯分析", font_size=16.0, bold=True)
-        __write_trace_table(docx, "追溯分析", normal_rows)
+        temp_path = os.path.join(os.path.dirname(__file__), "temp_doc_trace_word.docx")
+        docx = Document(temp_path) if os.path.exists(temp_path) else Document()
+        __update_header_file_no(docx, getattr(row_srsdoc, "file_no", "") if row_srsdoc else "")
+        for paragraph in docx.paragraphs:
+            raw = str(paragraph.text or "").strip()
+            if raw.startswith("产品名称："):
+                __set_paragraph_text(paragraph, f"产品名称：{product_name}", font_size=10.5)
+            elif raw.startswith("产品型号："):
+                __set_paragraph_text(paragraph, f"产品型号：{product_type_code or '/'}", font_size=10.5)
+            elif raw.startswith("产品版本："):
+                __set_paragraph_text(paragraph, f"产品版本：{product_full_version or '/'}", font_size=10.5)
+            elif raw.startswith("版本号："):
+                __set_paragraph_text(paragraph, f"版本号：{product_full_version or '/'}", font_size=10.5)
+        trace_table = __find_trace_table(docx)
+        __fill_template_trace_table(trace_table, normal_rows)
         if change_rows:
-            __write_trace_table(docx, f"{product_version or '产品'}变更追溯", change_rows)
+            __append_template_trace_table(docx, trace_table, f"{product_full_version or '产品'}变更追溯", change_rows)
         docx.save(output)
         output.seek(0)
         
