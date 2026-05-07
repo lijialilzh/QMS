@@ -35,4 +35,8 @@ class SessionData(Base):
     create_time = Column(DateTime, default=datetime.now)
 
     uid = Column(Integer, index=True)
+
+
+# 2.0 独立模块：风险管理。显式导入让 Alembic autogenerate 能发现新表。
+from .risk_mgmt_doc import RiskAnalysis, RiskControl, RiskMgmtDoc  # noqa: E402,F401
     

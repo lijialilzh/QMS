@@ -91,6 +91,10 @@ class Perms(Enum):
     prod_dhf_view = PermForm(code="prod_dhf_view", name="查看", p_code=prod_dhf.code)
     prod_dhf_edit = PermForm(code="prod_dhf_edit", name="编辑", p_code=prod_dhf.code)
 
+    risk_mgmt_doc = PermForm(code="risk_mgmt_doc", name="风险管理/风险管理报告")
+    risk_mgmt_doc_view = PermForm(code="risk_mgmt_doc_view", name="查看", p_code=risk_mgmt_doc.code)
+    risk_mgmt_doc_edit = PermForm(code="risk_mgmt_doc_edit", name="编辑", p_code=risk_mgmt_doc.code)
+
 
 class RoleForm(BaseModel):
     id: Optional[int] = Field(title="角色ID")
@@ -124,6 +128,7 @@ def get_default_role_perm_codes():
         "prod_haz", "prod_haz_view", "prod_haz_edit",
         "prod_rcm", "prod_rcm_view", "prod_rcm_edit",
         "prod_cst", "prod_cst_view", "prod_cst_edit",
+        "risk_mgmt_doc", "risk_mgmt_doc_view", "risk_mgmt_doc_edit",
     }
     developer_perms = {
         "sds_doc", "sds_doc_view", "sds_doc_edit",
@@ -134,6 +139,7 @@ def get_default_role_perm_codes():
         "prod_rcm", "prod_rcm_view", "prod_rcm_edit",
         "prod_cst", "prod_cst_view", "prod_cst_edit",
         "product", "product_view",
+        "risk_mgmt_doc", "risk_mgmt_doc_view", "risk_mgmt_doc_edit",
     }
     tester_perms = {
         "prod_dhf", "prod_dhf_view", "prod_dhf_edit",
@@ -145,6 +151,7 @@ def get_default_role_perm_codes():
         "prod_rcm", "prod_rcm_view", "prod_rcm_edit",
         "prod_cst", "prod_cst_view", "prod_cst_edit",
         "product", "product_view",
+        "risk_mgmt_doc", "risk_mgmt_doc_view", "risk_mgmt_doc_edit",
     }
     return {
         Roles.root.value.code: sorted(all_perms),

@@ -18,7 +18,7 @@ from . import env
 from .api import web_auth, web_session, api_user, api_role, api_project, api_haz, api_rcm, api_cst, api_product, \
     api_srs_doc, api_sds_doc, api_test_set, api_test_case, api_doc_file_flow, api_doc_file_topo, api_doc_file_struct, \
     api_prod_haz, api_prod_rcm, api_prod_cst, api_srs_req, api_srs_reqd, api_prod_dhf, api_sds_reqd, api_sds_trace, \
-    api_srs_type, api_doc_file
+    api_srs_type, api_doc_file, api_risk_mgmt_doc
 from .utils import read_line
 from .utils.i18n import ts
 from .utils.sql_middleware import SQLAlchemyMiddleware
@@ -102,6 +102,7 @@ def create_app():
     main_router.include_router(api_prod_haz.router, prefix="/prod_haz", tags=["产品HAZ"])
     main_router.include_router(api_prod_rcm.router, prefix="/prod_rcm", tags=["产品RCM"])
     main_router.include_router(api_prod_cst.router, prefix="/prod_cst", tags=["产品CST"])
+    main_router.include_router(api_risk_mgmt_doc.router, prefix="/risk_mgmt_doc", tags=["风险管理"])
 
     app.include_router(main_router, prefix=context_path)
     app.mount(f"{context_path}/src-res", StaticFiles(directory="src-res", check_dir=False))

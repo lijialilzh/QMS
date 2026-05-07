@@ -1,0 +1,326 @@
+import { Button, Col, Form, Input, Modal, Row, Select, Space, Table, Upload, message } from "antd";
+import { SearchOutlined, UploadOutlined } from "@ant-design/icons";
+import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { sprintf } from "sprintf-js";
+import { useTranslation } from "react-i18next";
+import { useData } from "@/common";
+import ProductVersionSelect from "@/common/ProductVersionSelect";
+import * as Api from "@/api/ApiRiskMgmtDoc";
+import * as ApiProduct from "@/api/ApiProduct";
+
+const pageSizeOptions = [20, 50, 100];
+
+enum DlgTypes {
+    import = "import",
+    delete = "delete",
+}
+
+const loadProducts = (data: any, dispatch: any) => {
+    if (data.products.length > 0) return;
+    ApiProduct.list_product({ page_size: 10000 }).then((res: any) => {
+        if (res.code === Api.C_OK) {
+            dispatch({ products: res.data.rows || [] });
+        } else {
+            message.error(res.msg);
+        }
+    });
+};
+
+export default () => {
+    const { t: ts } = useTranslation();
+    const navigate = useNavigate();
+    const [queryForm] = Form.useForm();
+    const [importForm] = Form.useForm();
+    const [data, dispatch] = useData({
+        total: 0,
+        pageIndex: 1,
+        pageSize: pageSizeOptions[0],
+        rows: [],
+        targetRow: {},
+        products: [],
+        versionOptions: [] as { value: string; label: string }[],
+        importFiles: [],
+        exportingId: 0,
+    });
+
+    const productId = Form.useWatch("product_id", queryForm);
+    useEffect(() => {
+        if (!productId) {
+            queryForm.setFieldValue("version", undefined);
+            dispatch({ versionOptions: [] });
+            return;
+        }
+        Api.list_risk_mgmt_doc({ product_id: productId, page_index: 0, page_size: 10000 }).then((res: any) => {
+            if (res.code === Api.C_OK && res.data?.rows?.length) {
+                const versions = [...new Set((res.data.rows as any[]).map((row: any) => row.version).filter(Boolean))].sort();
+                dispatch({ versionOptions: versions.map((version: string) => ({ value: version, label: version })) });
+            } else {
+                dispatch({ versionOptions: [] });
+            }
+        }).catch(() => dispatch({ versionOptions: [] }));
+    }, [productId]);
+
+    const doSearch = (params: any = {}, pageIndex: any = data.pageIndex, pageSize: any = data.pageSize) => {
+        dispatch({ loading: true });
+        Api.list_risk_mgmt_doc({ ...params, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
+            if (res.code === Api.C_OK) {
+                dispatch({ loading: false, total: res.data.total, rows: res.data.rows || [], pageIndex, pageSize });
+            } else {
+                dispatch({ loading: false, rows: [], total: 0 });
+                message.error(res.msg);
+            }
+        });
+    };
+
+    useEffect(() => {
+        loadProducts(data, dispatch);
+        doSearch({}, 1, data.pageSize);
+    }, []);
+
+    const doDelete = () => {
+        dispatch({ loading: true });
+        Api.delete_risk_mgmt_doc({ id: data.targetRow.id }).then((res: any) => {
+            if (res.code === Api.C_OK) {
+                message.success(ts("save_success"));
+                dispatch({ dlgType: null, loading: false });
+                doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
+            } else {
+                dispatch({ loading: false });
+                message.error(res.msg);
+            }
+        });
+    };
+
+    const doDuplicate = (row: any) => {
+        Modal.confirm({
+            title: ts("srs_doc.copy_confirm_title") || "确认复制",
+            content: sprintf(ts("sds_doc.copy_confirm_content"), row.product_name || "", row.product_full_version || "", row.version || ""),
+            okText: ts("confirm"),
+            cancelText: ts("cancel"),
+            onOk: () => {
+                dispatch({ loading: true });
+                return Api.duplicate_risk_mgmt_doc({ id: row.id }).then((res: any) => {
+                    dispatch({ loading: false });
+                    if (res.code === Api.C_OK) {
+                        message.success("复制成功");
+                        doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
+                    } else {
+                        message.error(res.msg);
+                    }
+                }).catch(() => {
+                    dispatch({ loading: false });
+                    message.error("复制失败");
+                });
+            },
+        });
+    };
+
+    const doExport = async (row: any) => {
+        if (data.exportingId === row.id) return;
+        dispatch({ exportingId: row.id });
+        try {
+            const res: any = await Api.export_risk_mgmt_doc({ id: row.id });
+            if (res.code !== Api.C_OK) {
+                message.error(res.msg || "导出失败");
+            }
+        } catch (_err) {
+            message.error("导出失败");
+        } finally {
+            dispatch({ exportingId: 0 });
+        }
+    };
+
+    const doImport = () => {
+        importForm.validateFields().then((values) => {
+            const file = (data.importFiles || [])[0];
+            if (!file) {
+                message.warning("请选择文件");
+                return;
+            }
+            dispatch({ importing: true });
+            Api.import_risk_mgmt_doc_word({ ...values, file }).then((res: any) => {
+                dispatch({ importing: false });
+                if (res.code === Api.C_OK) {
+                    message.success("导入成功");
+                    dispatch({ dlgType: null, importFiles: [] });
+                    doSearch(queryForm.getFieldsValue(), 1, data.pageSize);
+                } else {
+                    message.error(res.msg);
+                }
+            });
+        });
+    };
+
+    const columns: any[] = [
+        { title: ts("product.name"), dataIndex: "product_name" },
+        { title: ts("product.version"), dataIndex: "product_full_version" },
+        { title: ts("risk_mgmt_doc.version"), dataIndex: "version" },
+        { title: ts("risk_mgmt_doc.file_no"), dataIndex: "file_no" },
+        { title: ts("risk_mgmt_doc.change_log"), dataIndex: "change_log", ellipsis: true },
+        { title: ts("create_time"), dataIndex: "create_time" },
+        {
+            title: ts("action"),
+            render: (_: any, row: any) => (
+                <Space>
+                    <Button type="link" size="small" onClick={() => navigate(`/risk_mgmt_docs/view/${row.id}`)}>
+                        {ts("view")}
+                    </Button>
+                    <Button type="link" size="small" onClick={() => navigate(`/risk_mgmt_docs/edit/${row.id}`)}>
+                        {ts("edit")}
+                    </Button>
+                    <Button type="link" size="small" onClick={() => doDuplicate(row)}>
+                        复制
+                    </Button>
+                    <Button type="link" size="small" loading={data.exportingId === row.id} onClick={() => doExport(row)}>
+                        导出
+                    </Button>
+                    <Button type="link" size="small" danger onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
+                        {ts("delete")}
+                    </Button>
+                </Space>
+            ),
+        },
+    ].map((col: any) => ({
+        ...col,
+        onHeaderCell: () => ({
+            style: { whiteSpace: "nowrap" },
+        }),
+    }));
+
+    return (
+        <div className="div-v page">
+            <div className="div-h searchbar list-searchbar-align">
+                <Form
+                    form={queryForm}
+                    className="expand"
+                    onFinish={(values) => doSearch(values, 1, data.pageSize)}>
+                    <Row gutter={20}>
+                        <Col>
+                            <Form.Item label={ts("srs_doc.select_product")} name="product_id">
+                                <ProductVersionSelect
+                                    products={data.products}
+                                    allowClear
+                                    namePlaceholder={ts("product.name")}
+                                    versionPlaceholder={ts("product.full_version")}
+                                    onChange={(value) => queryForm.setFieldValue("product_id", value)}
+                                />
+                            </Form.Item>
+                        </Col>
+                        <Col>
+                            <Form.Item label={ts("srs_doc.doc_version")} name="version">
+                                <Select
+                                    placeholder={ts("srs_doc.please_select_doc_version")}
+                                    allowClear
+                                    options={data.versionOptions}
+                                />
+                            </Form.Item>
+                        </Col>
+                        <Col>
+                            <Button shape="circle" icon={<SearchOutlined />} htmlType="submit" />
+                        </Col>
+                    </Row>
+                </Form>
+                <Space>
+                    <Button type="primary" onClick={() => {
+                        importForm.resetFields();
+                        dispatch({ dlgType: DlgTypes.import, importFiles: [] });
+                        loadProducts(data, dispatch);
+                    }}>
+                        导入
+                    </Button>
+                    <Button type="primary" onClick={() => navigate("/risk_mgmt_docs/add")}>
+                        {ts("add")}
+                    </Button>
+                </Space>
+            </div>
+            <Table
+                className="expand"
+                rowKey="id"
+                loading={data.loading}
+                columns={columns}
+                dataSource={data.rows}
+                pagination={{
+                    total: data.total,
+                    current: data.pageIndex,
+                    showSizeChanger: true,
+                    defaultPageSize: pageSizeOptions[0],
+                    pageSizeOptions,
+                    hideOnSinglePage: false,
+                    onShowSizeChange: (page, pageSize) => {
+                        dispatch({ pageIndex: page, pageSize });
+                    },
+                    showTotal: (total: number) => {
+                        return sprintf(ts("total_items"), { total });
+                    },
+                }}
+                onChange={(pager) => {
+                    doSearch(queryForm.getFieldsValue(), pager.current, pager.pageSize);
+                }}
+            />
+            <Modal
+                width={680}
+                centered
+                title="导入Word风险管理报告"
+                open={data.dlgType === DlgTypes.import}
+                confirmLoading={data.importing}
+                onOk={doImport}
+                maskClosable={false}
+                onCancel={() => {
+                    dispatch({ dlgType: null, importFiles: [] });
+                    importForm.resetFields();
+                }}>
+                <Form form={importForm} layout="vertical">
+                    <Form.Item
+                        label={ts("product.product")}
+                        name="product_id"
+                        rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
+                        <ProductVersionSelect
+                            products={data.products}
+                            namePlaceholder={ts("product.name")}
+                            versionPlaceholder={ts("product.full_version")}
+                            onChange={(value) => importForm.setFieldValue("product_id", value)}
+                        />
+                    </Form.Item>
+                    <Form.Item
+                        label={ts("risk_mgmt_doc.version")}
+                        name="version"
+                        rules={[{ required: true, message: sprintf(ts("msg_input"), { label: ts("risk_mgmt_doc.version") }) }]}>
+                        <Input allowClear />
+                    </Form.Item>
+                    <Form.Item label={ts("risk_mgmt_doc.file_no")} name="file_no">
+                        <Input allowClear />
+                    </Form.Item>
+                    <Form.Item label={ts("risk_mgmt_doc.change_log")} name="change_log">
+                        <Input.TextArea rows={3} allowClear />
+                    </Form.Item>
+                    <Form.Item label="Word文件" required>
+                        <Upload
+                            accept=".docx"
+                            maxCount={1}
+                            beforeUpload={(file) => {
+                                dispatch({ importFiles: [file] });
+                                return false;
+                            }}
+                            onRemove={() => {
+                                dispatch({ importFiles: [] });
+                            }}
+                            fileList={data.importFiles || []}>
+                            <Button icon={<UploadOutlined />}>{ts("select_file")}</Button>
+                        </Upload>
+                    </Form.Item>
+                </Form>
+            </Modal>
+            <Modal
+                centered
+                title={ts("action")}
+                open={data.dlgType === DlgTypes.delete}
+                maskClosable={false}
+                confirmLoading={data.loading}
+                onOk={doDelete}
+                onCancel={() => dispatch({ dlgType: null })}>
+                {ts("confirm_delete")}
+            </Modal>
+        </div>
+    );
+};

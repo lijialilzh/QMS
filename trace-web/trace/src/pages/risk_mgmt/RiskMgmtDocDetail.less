@@ -1,0 +1,51 @@
+.risk-mgmt-detail {
+    height: 100%;
+    padding: 12px;
+    gap: 12px;
+    overflow: auto;
+}
+
+.risk-mgmt-detail-toolbar {
+    gap: 8px;
+}
+
+.risk-mgmt-basic-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0 16px;
+}
+
+.risk-mgmt-body {
+    display: grid;
+    grid-template-columns: 300px minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+}
+
+.risk-mgmt-section-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    .risk-mgmt-section-item {
+        margin-bottom: 8px;
+        padding: 8px 10px;
+        border: 1px solid #e5e7eb;
+        border-radius: 4px;
+        background: #fff;
+    }
+
+    .risk-mgmt-section-item.active {
+        border-color: #1677ff;
+        color: #1677ff;
+        background: #f0f7ff;
+    }
+
+    .empty {
+        color: #999;
+        padding: 12px;
+        border: 1px dashed #d9d9d9;
+        border-radius: 4px;
+        text-align: center;
+    }
+}

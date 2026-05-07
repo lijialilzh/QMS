@@ -40,7 +40,11 @@
         "srs_doc_trace": "追溯分析",
         "prod_overview": "全局视图",
         "prod_traces": "产品关联列表",
-        "prod_comparison": "内容对比"
+        "prod_comparison": "内容对比",
+        "risk_mgmt": "风险管理",
+        "risk_mgmt_docs": "风险管理报告",
+        "risk_analysis": "风险分析矩阵",
+        "risk_controls": "风险控制措施库"
     },
     "confirm_reset_pwd": "确认要重置密码吗？",
     "reset_pwd": "重置密码",
@@ -159,6 +163,11 @@
         "srs_versions": "SRS版本",
         "sds_versions": "SDS版本",
         "version_trace": "版本映射"
+    },
+    "risk_mgmt_doc": {
+        "version": "文档版本",
+        "file_no": "文件编号",
+        "change_log": "变更说明"
     },
     "prod_comparison": {
         "comparison_name": "对比项",

@@ -270,6 +270,28 @@ export default () => {
                 ],
             },
             {
+                key: "/risk_mgmt",
+                label: ts("menu.risk_mgmt"),
+                icon: <img src="assets/icon/menu-create.svg" />,
+                children: [
+                    {
+                        key: "/risk_mgmt_docs",
+                        label: ts("menu.risk_mgmt_docs"),
+                        perm: "risk_mgmt_doc_view",
+                    },
+                    {
+                        key: "/risk_analysis",
+                        label: ts("menu.risk_analysis"),
+                        perm: "risk_mgmt_doc_view",
+                    },
+                    {
+                        key: "/risk_controls",
+                        label: ts("menu.risk_controls"),
+                        perm: "risk_mgmt_doc_view",
+                    },
+                ],
+            },
+            {
                 key: "/prod_overview",
                 label: ts("menu.prod_overview"),
                 icon: <img src="assets/icon/menu-create.svg" />,

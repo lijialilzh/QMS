@@ -40,6 +40,9 @@ import SdsTraces from "./pages/sds_doc/SdsTraces";
 import SrsDocTrace from "./pages/prod_risk/SrsDocTrace";
 import ProdTraces from "./pages/overview/ProdTraces";
 import ProdComparison from "./pages/overview/ProdComparison";
+import RiskMgmtDocs from "./pages/risk_mgmt/RiskMgmtDocs";
+import RiskMgmtDocDetail from "./pages/risk_mgmt/RiskMgmtDocDetail";
+import RiskMgmtListPage from "./pages/risk_mgmt/RiskMgmtListPage";
 
 const DEF_LANG = localStorage.getItem("lang") || I18N.DEF_LANG;
 I18N.init(DEF_LANG);
@@ -87,6 +90,13 @@ const router = createRouter([
             { path: "/prod_rcms", element: <ProdRcms /> },
             { path: "/prod_csts", element: <ProdCsts /> },
             { path: "/srs_doc_trace", element: <SrsDocTrace /> },
+
+            { path: "/risk_mgmt_docs", element: <RiskMgmtDocs /> },
+            { path: "/risk_mgmt_docs/add", element: <RiskMgmtDocDetail /> },
+            { path: "/risk_mgmt_docs/edit/:id", element: <RiskMgmtDocDetail /> },
+            { path: "/risk_mgmt_docs/view/:id", element: <RiskMgmtDocDetail /> },
+            { path: "/risk_analysis", element: <RiskMgmtListPage kind="analysis" /> },
+            { path: "/risk_controls", element: <RiskMgmtListPage kind="control" /> },
 
             {path: "/prod_traces", element: <ProdTraces /> },
             {path: "/prod_comparison", element: <ProdComparison /> },
