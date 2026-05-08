@@ -315,6 +315,30 @@ class Server(object):
         value = re.sub(r"\bSRS[-_\sA-Za-z0-9.]+\b", "", value, flags=re.I).strip()
         return value
 
+    def __clean_req_table_field(self, txt: str):
+        value = self.__normalize_text(txt or "")
+        if not value:
+            return value
+        value = re.sub(r"\s+", "", value)
+        # Word 纵向合并单元格在部分解析路径中会把锚点文本按跨行次数拼接，
+        # 例如“系统管理系统管理系统管理”应恢复为“系统管理”。
+        for size in range(1, max(1, len(value) // 2) + 1):
+            prefix = value[:size]
+            pos = 0
+            repeat_count = 0
+            while value.startswith(prefix, pos):
+                repeat_count += 1
+                pos += size
+            if repeat_count < 2:
+                continue
+            rest = value[pos:]
+            if not rest:
+                return prefix
+            # 兼容“登录登录登录登录需求”这类重复主词后跟固定后缀的情况。
+            if len(rest) <= 8 and not value.startswith(prefix, pos + len(rest)):
+                return f"{prefix}{rest}"
+        return value
+
     def __normalize_rcm_codes(self, codes):
         result = []
         for code in codes or []:
@@ -507,10 +531,10 @@ class Server(object):
                     dict(
                         code=code_upper,
                         type_code=type_code,
-                        module=(values[col_idx["module"]] if "module" in col_idx and col_idx["module"] < len(values) else None),
-                        function=(values[col_idx["function"]] if "function" in col_idx and col_idx["function"] < len(values) else None),
-                        sub_function=(values[col_idx["sub_function"]] if "sub_function" in col_idx and col_idx["sub_function"] < len(values) else None),
-                        location=(values[col_idx["location"]] if "location" in col_idx and col_idx["location"] < len(values) else None),
+                        module=(self.__clean_req_table_field(values[col_idx["module"]]) if "module" in col_idx and col_idx["module"] < len(values) else None),
+                        function=(self.__clean_req_table_field(values[col_idx["function"]]) if "function" in col_idx and col_idx["function"] < len(values) else None),
+                        sub_function=(self.__clean_req_table_field(values[col_idx["sub_function"]]) if "sub_function" in col_idx and col_idx["sub_function"] < len(values) else None),
+                        location=(self.__clean_req_table_field(values[col_idx["location"]]) if "location" in col_idx and col_idx["location"] < len(values) else None),
                     )
                 )
                 if "rcm" in col_idx and col_idx["rcm"] < len(values):
@@ -562,10 +586,10 @@ class Server(object):
                                 dict(
                                     code=code_upper,
                                     type_code=type_code,
-                                    module=(values[col_idx["module"]] if "module" in col_idx and col_idx["module"] < len(values) else None),
-                                    function=(values[col_idx["function"]] if "function" in col_idx and col_idx["function"] < len(values) else None),
-                                    sub_function=(values[col_idx["sub_function"]] if "sub_function" in col_idx and col_idx["sub_function"] < len(values) else None),
-                                    location=(values[col_idx["location"]] if "location" in col_idx and col_idx["location"] < len(values) else None),
+                                    module=(self.__clean_req_table_field(values[col_idx["module"]]) if "module" in col_idx and col_idx["module"] < len(values) else None),
+                                    function=(self.__clean_req_table_field(values[col_idx["function"]]) if "function" in col_idx and col_idx["function"] < len(values) else None),
+                                    sub_function=(self.__clean_req_table_field(values[col_idx["sub_function"]]) if "sub_function" in col_idx and col_idx["sub_function"] < len(values) else None),
+                                    location=(self.__clean_req_table_field(values[col_idx["location"]]) if "location" in col_idx and col_idx["location"] < len(values) else None),
                                 )
                             )
                             if "rcm" in col_idx and col_idx["rcm"] < len(values):
@@ -759,11 +783,11 @@ class Server(object):
             item = sync_map.setdefault(code, {})
             item["name"] = parts[-1]
             if len(parts) >= 1:
-                item["module"] = parts[0]
+                item["module"] = self.__clean_req_table_field(parts[0])
             if len(parts) >= 2:
-                item["function"] = parts[1]
+                item["function"] = self.__clean_req_table_field(parts[1])
             if len(parts) >= 3:
-                item["sub_function"] = parts[2]
+                item["sub_function"] = self.__clean_req_table_field(parts[2])
 
         def walk(items: List[SrsNodeForm], path: List[str] = None):
             path = path or []
@@ -842,11 +866,11 @@ class Server(object):
             parts = clean_titles[1:] if len(clean_titles) > 1 else clean_titles
             item = sync_map.setdefault(code, {})
             if len(parts) >= 1:
-                item["module"] = parts[0]
+                item["module"] = self.__clean_req_table_field(parts[0])
             if len(parts) >= 2:
-                item["function"] = parts[1]
+                item["function"] = self.__clean_req_table_field(parts[1])
             if len(parts) >= 3:
-                item["sub_function"] = parts[2]
+                item["sub_function"] = self.__clean_req_table_field(parts[2])
 
         def collect(items: List[SrsNodeForm], path: List[str] = None):
             path = path or []
@@ -2060,6 +2084,50 @@ class Server(object):
                 walk(node)
             return "\n".join(lines).strip()
 
+        def __clean_srs_table_for_export(table):
+            if not table:
+                return table
+            headers = getattr(table, "headers", None) or []
+            header_names = [self.__normalize_text(getattr(h, "name", "") or "") for h in headers]
+            cells = getattr(table, "cells", None) or []
+            if cells and (not header_names):
+                try:
+                    header_names = [self.__normalize_text(str(getattr(cell, "value", "") or "")) for cell in cells[0]]
+                except Exception:
+                    header_names = []
+            col_idx = self.__resolve_req_columns([self.__normalize_header(name) for name in header_names])
+            clean_cols = [col_idx[key] for key in ["module", "function", "sub_function", "location"] if key in col_idx]
+            if not clean_cols:
+                return table
+
+            rows = getattr(table, "rows", None) or []
+            header_codes = [getattr(h, "code", "") for h in headers]
+            for row in rows:
+                for col in clean_cols:
+                    if col >= len(header_codes):
+                        continue
+                    code = header_codes[col]
+                    if isinstance(row, dict) and code in row:
+                        row[code] = self.__clean_req_table_field(row.get(code))
+
+            for row_idx, cell_row in enumerate(cells or []):
+                if row_idx == 0:
+                    continue
+                for col, cell in enumerate(cell_row):
+                    if cell is None or not hasattr(cell, "value"):
+                        continue
+                    row_span = int(getattr(cell, "row_span", 1) or 1)
+                    col_span = int(getattr(cell, "col_span", 1) or 1)
+                    if row_span == 0 or col_span == 0:
+                        cell.value = ""
+                        continue
+                    if col in clean_cols:
+                        cell.value = self.__clean_req_table_field(getattr(cell, "value", ""))
+            return table
+
+        def __save_tab2docx(table, docx):
+            docx_util.save_tab2docx(__clean_srs_table_for_export(table), docx)
+
         def __write_catalog_page(docx: Document, catalog_text: str):
             __write_center_section_title(docx, "目录")
             if catalog_text:
@@ -2102,8 +2170,8 @@ class Server(object):
                 for req in reqs:
                     row = dict()
                     row["srs_code"] = req.code
-                    row["module"] = req.module
-                    row["location"] = req.location
+                    row["module"] = self.__clean_req_table_field(req.module)
+                    row["location"] = self.__clean_req_table_field(req.location)
                     rows.append(row)
                 table = Table(headers=headers, rows=rows)
                 return table
@@ -2116,9 +2184,9 @@ class Server(object):
             for req in reqs:
                 row = dict()
                 row["srs_code"] = req.code
-                row["module"] = req.module
-                row["function"] = req.function
-                row["sub_function"] = req.sub_function
+                row["module"] = self.__clean_req_table_field(req.module)
+                row["function"] = self.__clean_req_table_field(req.function)
+                row["sub_function"] = self.__clean_req_table_field(req.sub_function)
                 rows.append(row)
             table = Table(headers=headers, rows=rows)
             return table
@@ -2243,12 +2311,12 @@ class Server(object):
                             if "产品需求列表" in line and table_idx < len(imported_table_children):
                                 tab_node = imported_table_children[table_idx]
                                 table_idx += 1
-                                docx_util.save_tab2docx(tab_node.table, docx)
+                                __save_tab2docx(tab_node.table, docx)
                                 written_child_ids.add(id(tab_node))
                             elif "其他需求列表" in line and table_idx < len(imported_table_children):
                                 tab_node = imported_table_children[table_idx]
                                 table_idx += 1
-                                docx_util.save_tab2docx(tab_node.table, docx)
+                                __save_tab2docx(tab_node.table, docx)
                                 written_child_ids.add(id(tab_node))
                         # 若该文档在SRS表管理里维护了“变更需求表”，在“产品需求/其他需求”后补充导出
                         # （导入Word文档场景通常没有 ref_type=srs_reqs 节点，因此需要在此处兜底）
@@ -2258,7 +2326,7 @@ class Server(object):
                                 if extra.label:
                                     docx_util.save_txt2docx(extra.label, docx, font_def)
                                 if extra.table and extra.table.headers:
-                                    docx_util.save_tab2docx(extra.table, docx)
+                                    __save_tab2docx(extra.table, docx)
                     elif (imported_table_children and has_caption) or (imported_image_children and has_image_caption):
                         table_idx = 0
                         image_idx = 0
@@ -2270,7 +2338,7 @@ class Server(object):
                                 docx_util.save_txt2docx(line, docx, font_def)
                                 tab_node = imported_table_children[table_idx]
                                 table_idx += 1
-                                docx_util.save_tab2docx(tab_node.table, docx)
+                                __save_tab2docx(tab_node.table, docx)
                                 written_child_ids.add(id(tab_node))
                             elif __is_image_caption_line(line) and image_idx < len(imported_image_children):
                                 img_node = imported_image_children[image_idx]
@@ -2303,7 +2371,7 @@ class Server(object):
                     await __writenodes(reqds, docx, level + 1)   
                 else:
                     if node.table and node.table.headers:
-                        docx_util.save_tab2docx(node.table, docx)
+                        __save_tab2docx(node.table, docx)
 
                 if node.children:
                     next_children = [child for child in node.children if id(child) not in written_child_ids]

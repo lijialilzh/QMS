@@ -8,6 +8,7 @@ import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiRiskMgmtDoc";
 import * as ApiProduct from "@/api/ApiProduct";
+import "./RiskMgmtDocs.less";
 
 const pageSizeOptions = [20, 50, 100];
 
@@ -153,16 +154,19 @@ export default () => {
     };
 
     const columns: any[] = [
-        { title: ts("product.name"), dataIndex: "product_name" },
-        { title: ts("product.version"), dataIndex: "product_full_version" },
-        { title: ts("risk_mgmt_doc.version"), dataIndex: "version" },
-        { title: ts("risk_mgmt_doc.file_no"), dataIndex: "file_no" },
-        { title: ts("risk_mgmt_doc.change_log"), dataIndex: "change_log", ellipsis: true },
-        { title: ts("create_time"), dataIndex: "create_time" },
+        { title: ts("product.name"), dataIndex: "product_name", width: 220, ellipsis: true },
+        { title: ts("product.version"), dataIndex: "product_full_version", width: 140, ellipsis: true },
+        { title: ts("risk_mgmt_doc.version"), dataIndex: "version", width: 120, ellipsis: true },
+        { title: ts("risk_mgmt_doc.file_no"), dataIndex: "file_no", width: 160, ellipsis: true },
+        { title: ts("risk_mgmt_doc.change_log"), dataIndex: "change_log", width: 220, ellipsis: true },
+        { title: ts("create_time"), dataIndex: "create_time", width: 180 },
         {
             title: ts("action"),
+            width: 230,
+            fixed: "right",
+            className: "risk-doc-action-col",
             render: (_: any, row: any) => (
-                <Space>
+                <Space size={4} className="risk-doc-action-space">
                     <Button type="link" size="small" onClick={() => navigate(`/risk_mgmt_docs/view/${row.id}`)}>
                         {ts("view")}
                     </Button>
@@ -240,6 +244,7 @@ export default () => {
                 loading={data.loading}
                 columns={columns}
                 dataSource={data.rows}
+                scroll={{ x: 1270 }}
                 pagination={{
                     total: data.total,
                     current: data.pageIndex,

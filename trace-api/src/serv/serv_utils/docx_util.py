@@ -18,6 +18,8 @@ from docx.shared import RGBColor
 from ...obj.tobj_srs_doc import Table
 
 def __fonted_cell(cell, text, font_size=10.5):
+    # python-docx 合并单元格时会保留/拼接多个段落；写入前先清空，避免文本重复。
+    cell.text = ""
     for paragraph in cell.paragraphs:
         paragraph.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.LEFT
         paragraph.paragraph_format.first_line_indent = Pt(0)
@@ -150,11 +152,12 @@ def save_tab2docx(tab: Table,  docx: Document):
                     if rs == 0 or cs == 0:
                         continue
                     text = str(cell.value or "")
-                    __fonted_cell(tabx.cell(ri, ci), text)
                     end_r = min(row_count - 1, ri + max(1, rs) - 1)
                     end_c = min(col_count - 1, ci + max(1, cs) - 1)
+                    target_cell = tabx.cell(ri, ci)
                     if end_r > ri or end_c > ci:
-                        tabx.cell(ri, ci).merge(tabx.cell(end_r, end_c))
+                        target_cell = target_cell.merge(tabx.cell(end_r, end_c))
+                    __fonted_cell(target_cell, text)
             header_names = []
             if tab.show_header and row_count > 0:
                 try:

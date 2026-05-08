@@ -92,7 +92,7 @@ class Server(object):
         obj.content = self.__normalize_content(obj.content)
         if product:
             obj.product_name = product.name
-            obj.product_version = product.version
+            obj.product_version = product.full_version
             obj.product_full_version = product.full_version
             obj.product_type_code = product.type_code
         return obj

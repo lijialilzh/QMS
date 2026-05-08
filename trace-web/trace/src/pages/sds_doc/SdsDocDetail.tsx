@@ -239,6 +239,63 @@ export default () => {
     const productLabel = currentProduct ? `${currentProduct.name}-${currentProduct.full_version}` : "";
     const currentSrsdoc = (data.srsDocList as any[]).find((s: any) => s.id === displaySrsdocId);
     const srsdocLabel = currentSrsdoc ? (currentSrsdoc.version || currentSrsdoc.full_version || "") : "";
+    const normalizeScopeTitle = (title?: string) => String(title || "")
+        .replace(/^(\d+(?:\.\d+)*\.?)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+        .replace(/[：:\s.．]/g, "")
+        .trim();
+    const replaceScopeInText = (text: string, scope: string): string => {
+        const raw = String(text || "");
+        if (!raw.trim() || !scope) return raw;
+        const normalized = raw.replace(/\r/g, "");
+        const marker = /(适用范围\s*[：:]\s*)/;
+        const markerMatch = marker.exec(normalized);
+        if (!markerMatch || markerMatch.index < 0) return raw;
+
+        const markerStart = markerMatch.index;
+        const markerText = markerMatch[1] || "";
+        const valueStart = markerStart + markerText.length;
+        const rest = normalized.slice(valueStart);
+        // 截断到“下一个编号条目”：
+        // 支持换行、空格，或紧跟中文标点后的“4）操作人群”这类格式。
+        const nextItem = rest.match(
+            /(^|[\n\s。；;，,])((?:[0-9０-９]+|[a-zA-Z])[)）.．、](?:\s*|(?=[\u4e00-\u9fff])))/m
+        );
+        const valueEnd = (nextItem && typeof nextItem.index === "number")
+            ? (valueStart + nextItem.index + String(nextItem[1] || "").length)
+            : normalized.length;
+        const current = normalized.slice(valueStart, valueEnd).trim();
+        if (current === scope) return raw;
+        const nextText = `${normalized.slice(0, valueStart)}${scope}${normalized.slice(valueEnd)}`;
+        if (nextText === normalized) return raw;
+        return nextText;
+    };
+    const applyProductScopeToTree = (nodes: TreeNode[], product?: any): { nodes: TreeNode[]; changed: boolean } => {
+        if (!Array.isArray(nodes) || !product) return { nodes, changed: false };
+        const scope = String(product.scope ?? "").trim();
+        let changed = false;
+        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+            const title = normalizeScopeTitle(node.title);
+            const children = walk((node.children || []) as TreeNode[]);
+            const nextNode = { ...node, children };
+            const replacedText = replaceScopeInText(String(nextNode.text || ""), scope);
+            if (replacedText !== String(nextNode.text || "")) {
+                nextNode.text = replacedText;
+                changed = true;
+            } else if ((title === "范围" || title === "适用范围") && !String(nextNode.text || "").trim() && scope) {
+                nextNode.text = scope;
+                changed = true;
+            }
+            return nextNode;
+        });
+        return { nodes: walk(nodes), changed };
+    };
+    useEffect(() => {
+        const { nodes, changed } = applyProductScopeToTree(data.treeStructure as TreeNode[], currentProduct);
+        if (changed) {
+            treeStructureRef.current = nodes;
+            dispatch({ treeStructure: nodes });
+        }
+    }, [displayProductId, currentProduct?.scope]);
     const extractSdsCodeToken = (txt?: string): string => {
         const raw = String(txt || "");
         const matched = raw.match(/SDS\s*-\s*[A-Za-z0-9._-]+(?:\s*[-_]\s*[A-Za-z0-9._-]+)*/i);
@@ -1663,7 +1720,8 @@ export default () => {
                     }
 
                     // 解析树状结构数据
-                    const parsedTree = (targetRow.content || []).map((node: any) => parseTreeNode(node));
+                    const parsedTreeRaw = (targetRow.content || []).map((node: any) => parseTreeNode(node));
+                    const parsedTree = parsedTreeRaw;
                     // 严格按 Word 导入层级展示：不做前端二次“章节重排/补号/拆分”
                     const parsedTreeForView = isReadOnly
                         ? relocateReviewTablesToStandalonePage(parsedTree)
@@ -2155,7 +2213,7 @@ export default () => {
             return;
         }
 
-        const nodesWithIds = buildStandardNodesWithIds();
+        const nodesWithIds = applyProductScopeToTree(buildStandardNodesWithIds(), currentProduct).nodes;
         // dispatch({ treeStructure: [...data.treeStructure, ...nodesWithIds] });
         treeStructureRef.current = nodesWithIds;
         dispatch({ treeStructure: nodesWithIds });
