@@ -34,6 +34,22 @@ export const export_risk_mgmt_doc = async (params: any) => {
     return await httpGet("/trace-api/risk_mgmt_doc/export_risk_mgmt_doc", params);
 };
 
+export const add_risk_participant = async (params: any) => {
+    return await httpPost("/trace-api/risk_mgmt_doc/add_risk_participant", params);
+};
+
+export const update_risk_participant = async (params: any) => {
+    return await httpPost("/trace-api/risk_mgmt_doc/update_risk_participant", params);
+};
+
+export const delete_risk_participant = async (params: any) => {
+    return await httpDelete("/trace-api/risk_mgmt_doc/delete_risk_participant", params);
+};
+
+export const list_risk_participant = async (params: any) => {
+    return await httpGet("/trace-api/risk_mgmt_doc/list_risk_participant", params);
+};
+
 export const add_risk_analysis = async (params: any) => {
     return await httpPost("/trace-api/risk_mgmt_doc/add_risk_analysis", params);
 };

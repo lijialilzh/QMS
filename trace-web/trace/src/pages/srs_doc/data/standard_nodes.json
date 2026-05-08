@@ -7,22 +7,17 @@
         "text": "",
         "table": {
             "headers": [
-                { "code": "dept", "name": "编制科室" },
-                { "code": "version", "name": "文件版本" },
-                { "code": "author", "name": "编制人" },
-                { "code": "reviewer", "name": "审核人" },
-                { "code": "approver", "name": "批准人" },
-                { "code": "effective_date", "name": "生效日期" }
+                { "code": "label1", "name": "" },
+                { "code": "value1", "name": "" },
+                { "code": "label2", "name": "" },
+                { "code": "value2", "name": "" }
             ],
             "rows": [
-                {
-                    "dept": "",
-                    "version": "",
-                    "author": "",
-                    "reviewer": "",
-                    "approver": "",
-                    "effective_date": ""
-                }
+                { "label1": "编制部门", "value1": "", "label2": "文件版本", "value2": "" },
+                { "label1": "编制人", "value1": "", "label2": "日期", "value2": "" },
+                { "label1": "审核人", "value1": "", "label2": "日期", "value2": "" },
+                { "label1": "批准人", "value1": "", "label2": "日期", "value2": "" },
+                { "label1": "生效日期", "value1": "", "label2": "", "value2": "" }
             ]
         },
         "children": []

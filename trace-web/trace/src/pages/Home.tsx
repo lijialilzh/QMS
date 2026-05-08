@@ -280,13 +280,8 @@ export default () => {
                         perm: "risk_mgmt_doc_view",
                     },
                     {
-                        key: "/risk_analysis",
-                        label: ts("menu.risk_analysis"),
-                        perm: "risk_mgmt_doc_view",
-                    },
-                    {
-                        key: "/risk_controls",
-                        label: ts("menu.risk_controls"),
+                        key: "/risk_participants",
+                        label: ts("menu.risk_participants"),
                         perm: "risk_mgmt_doc_view",
                     },
                 ],

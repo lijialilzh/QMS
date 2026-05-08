@@ -14,6 +14,12 @@ class RiskMgmtDocForm(BaseModel):
     content: Optional[dict[str, Any]] = Field(title="文档内容")
 
 
+class RiskParticipantForm(BaseModel):
+    id: Optional[int] = Field(title="ID")
+    role: Optional[str] = Field(title="项目角色")
+    name: Optional[str] = Field(title="姓名")
+
+
 class RiskAnalysisForm(BaseModel):
     id: Optional[int] = Field(title="ID")
     doc_id: Optional[int] = Field(title="风险管理报告ID")

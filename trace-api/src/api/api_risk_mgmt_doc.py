@@ -9,9 +9,9 @@ from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
 
 from ..obj import Page, Resp
-from ..obj.tobj_risk_mgmt_doc import RiskAnalysisForm, RiskControlForm, RiskMgmtDocForm
+from ..obj.tobj_risk_mgmt_doc import RiskAnalysisForm, RiskControlForm, RiskMgmtDocForm, RiskParticipantForm
 from ..obj.tobj_role import Perms
-from ..obj.vobj_risk_mgmt_doc import RiskAnalysisObj, RiskControlObj, RiskMgmtDocObj
+from ..obj.vobj_risk_mgmt_doc import RiskAnalysisObj, RiskControlObj, RiskMgmtDocObj, RiskParticipantObj
 from ..serv.serv_risk_mgmt_doc import Server
 from . import try_log
 
@@ -71,6 +71,30 @@ async def list_risk_mgmt_doc(product_id: int = 0, version: str = None, page_inde
 @try_log(perm=Perms.risk_mgmt_doc_view)
 async def get_risk_mgmt_doc(id: int):
     return await server.get_risk_mgmt_doc(id)
+
+
+@router.post("/add_risk_participant", summary="添加风险分析参与人员", response_model=Resp[RiskParticipantForm])
+@try_log(perm=Perms.risk_mgmt_doc_edit)
+async def add_risk_participant(form: RiskParticipantForm):
+    return await server.add_risk_participant(form)
+
+
+@router.post("/update_risk_participant", summary="更新风险分析参与人员", response_model=Resp[Any])
+@try_log(perm=Perms.risk_mgmt_doc_edit)
+async def update_risk_participant(form: RiskParticipantForm):
+    return await server.update_risk_participant(form)
+
+
+@router.delete("/delete_risk_participant", summary="删除风险分析参与人员", response_model=Resp[Any])
+@try_log(perm=Perms.risk_mgmt_doc_edit)
+async def delete_risk_participant(id: int):
+    return await server.delete_risk_participant(id)
+
+
+@router.get("/list_risk_participant", summary="查询风险分析参与人员列表", response_model=Resp[Page[RiskParticipantObj]])
+@try_log(perm=Perms.risk_mgmt_doc_view)
+async def list_risk_participant(keyword: str = None, page_index: int = 0, page_size: int = 10):
+    return await server.list_risk_participant(keyword=keyword, page_index=page_index, page_size=page_size)
 
 
 @router.post("/add_risk_analysis", summary="添加风险分析矩阵", response_model=Resp[RiskAnalysisForm])

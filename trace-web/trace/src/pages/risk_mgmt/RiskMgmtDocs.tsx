@@ -43,6 +43,9 @@ export default () => {
         versionOptions: [] as { value: string; label: string }[],
         importFiles: [],
         exportingId: 0,
+        editingFileNoId: 0,
+        editingFileNoValue: "",
+        savingFileNoId: 0,
     });
 
     const productId = Form.useWatch("product_id", queryForm);
@@ -132,6 +135,41 @@ export default () => {
         }
     };
 
+    const handleStartEditFileNo = (row: any) => {
+        dispatch({
+            editingFileNoId: row.id,
+            editingFileNoValue: row.file_no || "",
+        });
+    };
+
+    const handleSaveFileNo = async (row: any) => {
+        if (!data.editingFileNoId || data.editingFileNoId !== row.id) return;
+        if (data.savingFileNoId === row.id) return;
+        const nextFileNo = String(data.editingFileNoValue || "").trim();
+        const currentFileNo = String(row.file_no || "").trim();
+        if (nextFileNo === currentFileNo) {
+            dispatch({ editingFileNoId: 0, editingFileNoValue: "", savingFileNoId: 0 });
+            return;
+        }
+        dispatch({ savingFileNoId: row.id });
+        try {
+            const res: any = await Api.update_risk_mgmt_doc({ id: row.id, file_no: nextFileNo });
+            if (res.code === Api.C_OK) {
+                const rows = (data.rows || []).map((item: any) => (
+                    item.id === row.id ? { ...item, file_no: nextFileNo } : item
+                ));
+                dispatch({ rows, editingFileNoId: 0, editingFileNoValue: "", savingFileNoId: 0 });
+                message.success("文件编号已保存");
+            } else {
+                dispatch({ savingFileNoId: 0 });
+                message.error(res.msg || "保存失败");
+            }
+        } catch (_err) {
+            dispatch({ savingFileNoId: 0 });
+            message.error("保存失败");
+        }
+    };
+
     const doImport = () => {
         importForm.validateFields().then((values) => {
             const file = (data.importFiles || [])[0];
@@ -154,16 +192,45 @@ export default () => {
     };
 
     const columns: any[] = [
-        { title: ts("product.name"), dataIndex: "product_name", width: 220, ellipsis: true },
-        { title: ts("product.version"), dataIndex: "product_full_version", width: 140, ellipsis: true },
-        { title: ts("risk_mgmt_doc.version"), dataIndex: "version", width: 120, ellipsis: true },
-        { title: ts("risk_mgmt_doc.file_no"), dataIndex: "file_no", width: 160, ellipsis: true },
-        { title: ts("risk_mgmt_doc.change_log"), dataIndex: "change_log", width: 220, ellipsis: true },
-        { title: ts("create_time"), dataIndex: "create_time", width: 180 },
+        { title: ts("product.name"), dataIndex: "product_name", width: "17%" },
+        { title: ts("product.version"), dataIndex: "product_full_version", width: "10%" },
+        { title: ts("risk_mgmt_doc.version"), dataIndex: "version", width: "7%" },
+        {
+            title: ts("risk_mgmt_doc.file_no"),
+            dataIndex: "file_no",
+            width: "9%",
+            render: (value: string, row: any) => {
+                const isEditing = data.editingFileNoId === row.id;
+                const isSaving = data.savingFileNoId === row.id;
+                if (isEditing) {
+                    return (
+                        <Input
+                            autoFocus
+                            size="small"
+                            value={data.editingFileNoValue}
+                            disabled={isSaving}
+                            onChange={(e) => dispatch({ editingFileNoValue: e.target.value })}
+                            onBlur={() => handleSaveFileNo(row)}
+                            onPressEnter={() => handleSaveFileNo(row)}
+                            placeholder="请输入文件编号"
+                        />
+                    );
+                }
+                return (
+                    <span
+                        className="risk-doc-file-no-cell"
+                        title="单击编辑文件编号"
+                        onClick={() => handleStartEditFileNo(row)}>
+                        {value || "-"}
+                    </span>
+                );
+            },
+        },
+        { title: ts("risk_mgmt_doc.change_log"), dataIndex: "change_log", width: "16%" },
+        { title: ts("create_time"), dataIndex: "create_time", width: "15%" },
         {
             title: ts("action"),
-            width: 230,
-            fixed: "right",
+            width: "26%",
             className: "risk-doc-action-col",
             render: (_: any, row: any) => (
                 <Space size={4} className="risk-doc-action-space">
@@ -239,12 +306,12 @@ export default () => {
                 </Space>
             </div>
             <Table
-                className="expand"
+                className="expand risk-doc-table"
                 rowKey="id"
                 loading={data.loading}
                 columns={columns}
                 dataSource={data.rows}
-                scroll={{ x: 1270 }}
+                tableLayout="fixed"
                 pagination={{
                     total: data.total,
                     current: data.pageIndex,
@@ -291,9 +358,6 @@ export default () => {
                         label={ts("risk_mgmt_doc.version")}
                         name="version"
                         rules={[{ required: true, message: sprintf(ts("msg_input"), { label: ts("risk_mgmt_doc.version") }) }]}>
-                        <Input allowClear />
-                    </Form.Item>
-                    <Form.Item label={ts("risk_mgmt_doc.file_no")} name="file_no">
                         <Input allowClear />
                     </Form.Item>
                     <Form.Item label={ts("risk_mgmt_doc.change_log")} name="change_log">

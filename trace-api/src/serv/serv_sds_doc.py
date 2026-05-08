@@ -922,6 +922,24 @@ class Server(object):
             file_name = file.filename or ""
             _, file_no = srsdoc_serv._Server__extract_file_info(file_name)
 
+            def extract_imported_catalog_text(source_docx: Document):
+                lines = []
+                in_catalog = False
+                for para in source_docx.paragraphs:
+                    txt = re.sub(r"\s+", " ", (para.text or "").strip())
+                    if not txt:
+                        continue
+                    if re.sub(r"\s+", "", txt) == "目录":
+                        in_catalog = True
+                        continue
+                    if not in_catalog:
+                        continue
+                    if re.match(r"^1(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))", txt):
+                        break
+                    if re.match(r"^\d+(?:\.\d+)*\s+\S.*(?:[.·…]{3,}|\s+)\d+\s*$", txt):
+                        lines.append(txt)
+                return "\n".join(lines).strip()
+
             def to_sds_node(node):
                 data = {}
                 for key in ["title", "label", "img_url", "text", "ref_type", "table", "sds_code"]:
@@ -936,6 +954,9 @@ class Server(object):
                 return SdsNodeForm(**data)
 
             sds_content = [to_sds_node(node) for node in (content or [])]
+            imported_catalog_text = extract_imported_catalog_text(docx)
+            if imported_catalog_text and not any(re.sub(r"\s+", "", str(getattr(node, "title", "") or "")) == "目录" for node in sds_content):
+                sds_content.insert(0, SdsNodeForm(title="目录", text=imported_catalog_text, children=[]))
             # 导入入库前，把“图X 标题”绑定到对应图片节点标题，避免编辑页只看到“导入图片X”
             self.__bind_imported_image_titles(sds_content)
             # 导入入库前，先把“正文里的表名”绑定到对应表节点，避免后续查看/编辑再做文本猜测
@@ -1952,23 +1973,24 @@ class Server(object):
             if OxmlElement is None or qn is None:
                 return
             p = docx.add_paragraph()
-
             run_begin = p.add_run()
             fld_begin = OxmlElement("w:fldChar")
             fld_begin.set(qn("w:fldCharType"), "begin")
             fld_begin.set(qn("w:dirty"), "true")
             run_begin._r.append(fld_begin)
-
-            run_instr = p.add_run()
             instr = OxmlElement("w:instrText")
             instr.set(qn("xml:space"), "preserve")
             instr.text = ' TOC \\o "1-4" \\h \\z \\u '
-            run_instr._r.append(instr)
+            run_begin._r.append(instr)
+
+            fld_separate = OxmlElement("w:fldChar")
+            fld_separate.set(qn("w:fldCharType"), "separate")
+            run_begin._r.append(fld_separate)
+            p.add_run("目录将在打开文档后自动更新")
 
             run_end = p.add_run()
             fld_end = OxmlElement("w:fldChar")
             fld_end.set(qn("w:fldCharType"), "end")
-            fld_end.set(qn("w:dirty"), "true")
             run_end._r.append(fld_end)
 
         def __write_center_section_title(docx: Document, title: str):
@@ -1976,6 +1998,13 @@ class Server(object):
             p.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.CENTER
             font_size = 22.0 if __is_design_cover(title) else 16.0
             docx_util.fonted_txt(p, title, font_size=font_size)
+
+        def __write_catalog_text(docx: Document, catalog_text: str):
+            __write_center_section_title(docx, "目录")
+            for raw in str(catalog_text or "").replace("\r", "").split("\n"):
+                line = (raw or "").strip()
+                if line:
+                    docx_util.save_txt2docx(line, docx, 10.5)
 
         def __add_blank_lines(docx: Document, line_count: int):
             for _ in range(max(0, line_count)):
@@ -2418,8 +2447,11 @@ finally:
                             __is_json_export_line(norm_title) or __is_json_value_line(norm_title),
                         )
                     elif is_catalog_root:
-                        __write_center_section_title(docx, "目录")
-                        __insert_toc_field(docx)
+                        if str(getattr(node, "text", "") or "").strip():
+                            __write_catalog_text(docx, node.text)
+                        else:
+                            __write_center_section_title(docx, "目录")
+                            __insert_toc_field(docx)
                     elif level == 0 and __is_cover_section_title(norm_title):
                         if __is_design_cover(norm_title):
                             # 与SRS导出版式一致：封面标题上方保留10行
@@ -2753,7 +2785,7 @@ finally:
                 if OxmlElement is not None and qn is not None:
                     try:
                         update_fields = OxmlElement("w:updateFields")
-                        update_fields.set(qn("w:val"), "1")
+                        update_fields.set(qn("w:val"), "true")
                         docx.settings.element.append(update_fields)
                     except Exception:
                         logger.exception("enable sds docx updateFields failed")

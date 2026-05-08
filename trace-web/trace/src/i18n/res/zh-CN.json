@@ -44,6 +44,7 @@
         "risk_mgmt": "风险管理",
         "risk_mgmt_docs": "风险管理报告",
         "risk_analysis": "风险分析矩阵",
+        "risk_participants": "风险分析参与人员",
         "risk_controls": "风险控制措施库"
     },
     "confirm_reset_pwd": "确认要重置密码吗？",

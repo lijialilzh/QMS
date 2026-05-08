@@ -778,7 +778,7 @@ export default () => {
     };
     const isApprovalTable = (node: TreeNode) => {
         const txt = getTableText(node);
-        return ["编制科室", "文件版本", "编制人", "审核人", "批准人", "生效日期"].every((k) => txt.includes(k));
+        return ["编制科室", "编制部门", "文件版本", "编制人", "审核人", "批准人", "生效日期"].filter((k) => txt.includes(k)).length >= 5;
     };
     const isChangeLogTable = (node: TreeNode) => {
         const txt = getTableText(node);
@@ -867,8 +867,79 @@ export default () => {
         dispatch({ treeStructure: updateNode(data.treeStructure as TreeNode[]) });
     };
 
+    const approvalHeaders = [
+        { code: "label1", name: "" },
+        { code: "value1", name: "" },
+        { code: "label2", name: "" },
+        { code: "value2", name: "" },
+    ];
+
+    const normalizeApprovalRows = (node: TreeNode) => {
+        const headers = node.table?.headers || [];
+        const rows = node.table?.rows || [];
+        const first = rows[0] || {};
+        if (headers.some((header: any) => header.code === "label1")) {
+            return rows;
+        }
+        const getVal = (code: string) => (first as any)[code] || "";
+        return [
+            { label1: "编制部门", value1: getVal("dept"), label2: "文件版本", value2: getVal("version") },
+            { label1: "编制人", value1: getVal("author"), label2: "日期", value2: "" },
+            { label1: "审核人", value1: getVal("reviewer"), label2: "日期", value2: "" },
+            { label1: "批准人", value1: getVal("approver"), label2: "日期", value2: "" },
+            { label1: "生效日期", value1: getVal("effective_date"), label2: "", value2: "" },
+        ];
+    };
+
+    const updateApprovalTableCell = (targetNodeId: number, rowIndex: number, colCode: string, value: string) => {
+        const updateNode = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
+            const isTarget = String(node.id) === String(targetNodeId) || String(node.n_id || "") === String(targetNodeId);
+            if (isTarget && node.table) {
+                const rows = normalizeApprovalRows(node).map((row: any) => ({ ...row }));
+                rows[rowIndex] = { ...(rows[rowIndex] || {}), [colCode]: value };
+                return { ...node, table: { ...node.table, headers: approvalHeaders, rows } };
+            }
+            return { ...node, children: updateNode(node.children || []) };
+        });
+        dispatch({ treeStructure: updateNode(data.treeStructure as TreeNode[]) });
+    };
+
+    const renderApprovalTable = (node: TreeNode, keyPrefix: string) => {
+        const columns = approvalHeaders.map((header, index) => ({
+            title: "",
+            dataIndex: header.code,
+            key: `${keyPrefix}-col-${header.code}`,
+            render: (text: string, _record: any, rowIndex: number) => {
+                const isLabel = index === 0 || index === 2;
+                if (isReadOnly || isLabel) return text || "";
+                return (
+                    <Input.TextArea
+                        value={text || ""}
+                        onChange={(e) => updateApprovalTableCell(node.id, rowIndex, header.code, e.target.value)}
+                        autoSize={{ minRows: 1, maxRows: 4 }}
+                    />
+                );
+            },
+        }));
+        const dataSource = normalizeApprovalRows(node).map((row: any, index: number) => ({ key: `${keyPrefix}-row-${index}`, ...row }));
+        return (
+            <Table
+                key={`${keyPrefix}-${node.id}`}
+                className={`srs-cover-table${!isReadOnly ? " srs-extracted-edit-table" : ""}`}
+                dataSource={dataSource}
+                columns={columns}
+                pagination={false}
+                size="small"
+                bordered
+            />
+        );
+    };
+
     const renderExtractedTable = (node: TreeNode, keyPrefix: string) => {
         if (!node.table?.headers || !node.table?.rows) return null;
+        if (isApprovalTable(node)) {
+            return renderApprovalTable(node, keyPrefix);
+        }
         const isChangeRecordTable = isChangeLogTable(node);
         const normalizedRows = [...(node.table.rows || [])];
         if (isChangeRecordTable) {

@@ -1141,14 +1141,18 @@ export default () => {
         text: "",
         table: {
             headers: [
-                { code: "dept", name: "编制科室" },
-                { code: "version", name: "文件版本" },
-                { code: "author", name: "编制人" },
-                { code: "reviewer", name: "审核人" },
-                { code: "approver", name: "批准人" },
-                { code: "effective_date", name: "生效日期" },
+                { code: "label1", name: "" },
+                { code: "value1", name: "" },
+                { code: "label2", name: "" },
+                { code: "value2", name: "" },
             ],
-            rows: [{ dept: "", version: "", author: "", reviewer: "", approver: "", effective_date: "" }],
+            rows: [
+                { label1: "编制部门", value1: "", label2: "文件版本", value2: "" },
+                { label1: "编制人", value1: "", label2: "日期", value2: "" },
+                { label1: "审核人", value1: "", label2: "日期", value2: "" },
+                { label1: "批准人", value1: "", label2: "日期", value2: "" },
+                { label1: "生效日期", value1: "", label2: "", value2: "" },
+            ],
         } as any,
         children: [],
     });
@@ -1180,7 +1184,7 @@ export default () => {
                 const title = String(node?.title || "").replace(/\s+/g, "");
                 if (title.includes("软件详细设计")) hasCover = true;
                 if (title.includes("文件修订记录")) hasChange = true;
-                if (getTableHitCount(node, ["编制科室", "文件版本", "编制人", "审核人", "批准人", "生效日期"]) >= 3) hasCover = true;
+                if (getTableHitCount(node, ["编制科室", "编制部门", "文件版本", "编制人", "审核人", "批准人", "生效日期"]) >= 3) hasCover = true;
                 if (getTableHitCount(node, ["修改日期", "版本号", "修订说明", "修订人", "批准人"]) >= 3) hasChange = true;
                 walk((node.children || []) as TreeNode[]);
             });
@@ -2522,7 +2526,7 @@ export default () => {
     const hitCount = (txt: string, keys: string[]) => keys.filter((k) => txt.includes(k)).length;
     const isCoverTable = (node: TreeNode) => {
         const txt = getTableText(node);
-        return hitCount(txt, ["编制科室", "文件版本", "编制人", "审核人", "批准人", "生效日期"]) >= 3;
+        return hitCount(txt, ["编制科室", "编制部门", "文件版本", "编制人", "审核人", "批准人", "生效日期"]) >= 3;
     };
     const isChangeLogTable = (node: TreeNode) => {
         const txt = getTableText(node);
@@ -2591,8 +2595,80 @@ export default () => {
         dispatch({ treeStructure: nextTree });
     };
 
+    const approvalHeaders = [
+        { code: "label1", name: "" },
+        { code: "value1", name: "" },
+        { code: "label2", name: "" },
+        { code: "value2", name: "" },
+    ];
+
+    const normalizeApprovalRows = (node: TreeNode) => {
+        const headers = node.table?.headers || [];
+        const rows = node.table?.rows || [];
+        const first = rows[0] || {};
+        if (headers.some((header: any) => header.code === "label1")) {
+            return rows;
+        }
+        const getVal = (code: string) => (first as any)[code] || "";
+        return [
+            { label1: "编制部门", value1: getVal("dept"), label2: "文件版本", value2: getVal("version") },
+            { label1: "编制人", value1: getVal("author"), label2: "日期", value2: "" },
+            { label1: "审核人", value1: getVal("reviewer"), label2: "日期", value2: "" },
+            { label1: "批准人", value1: getVal("approver"), label2: "日期", value2: "" },
+            { label1: "生效日期", value1: getVal("effective_date"), label2: "", value2: "" },
+        ];
+    };
+
+    const updateApprovalTableCell = (targetNodeId: number, rowIndex: number, colCode: string, value: string) => {
+        const updateNode = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
+            const isTarget = String(node.id) === String(targetNodeId) || String(node.n_id || "") === String(targetNodeId);
+            if (isTarget && node.table) {
+                const rows = normalizeApprovalRows(node).map((row: any) => ({ ...row }));
+                rows[rowIndex] = { ...(rows[rowIndex] || {}), [colCode]: value };
+                return { ...node, table: { ...node.table, headers: approvalHeaders, rows } };
+            }
+            return { ...node, children: updateNode(node.children || []) };
+        });
+        const nextTree = updateNode(data.treeStructure as TreeNode[]);
+        treeStructureRef.current = nextTree;
+        dispatch({ treeStructure: nextTree });
+    };
+
+    const renderApprovalTable = (node: TreeNode, keyPrefix: string) => {
+        const columns = approvalHeaders.map((header: any, index: number) => ({
+            title: "",
+            dataIndex: header.code,
+            key: `${keyPrefix}-col-${header.code}`,
+            render: (text: string, _record: any, rowIndex: number) => {
+                const isLabel = index === 0 || index === 2;
+                if (isReadOnly || isLabel) return text || "";
+                return (
+                    <Input.TextArea
+                        value={text || ""}
+                        onChange={(e) => updateApprovalTableCell(node.id, rowIndex, header.code, e.target.value)}
+                        autoSize={{ minRows: 1, maxRows: 4 }}
+                    />
+                );
+            },
+        }));
+        const dataSource = normalizeApprovalRows(node).map((row: any, index: number) => ({ key: `${keyPrefix}-row-${index}`, ...row }));
+        return (
+            <Table
+                key={`${keyPrefix}-${node.id}`}
+                dataSource={dataSource}
+                columns={columns}
+                pagination={false}
+                size="small"
+                bordered
+            />
+        );
+    };
+
     const renderExtractedTable = (node: TreeNode, keyPrefix: string) => {
         if (!node.table?.headers || !node.table?.rows) return null;
+        if (isCoverTable(node)) {
+            return renderApprovalTable(node, keyPrefix);
+        }
         const columns = node.table.headers.map((header: any, index: number) => ({
             title: header.name || `列${index + 1}`,
             dataIndex: header.code,

@@ -92,18 +92,35 @@ export default () => {
         });
     };
 
+    const renderCodeList = (value: any, className = "") => {
+        const list = (Array.isArray(value) ? value : String(value || "").split(/[,，\n]/g))
+            .map((item: any) => String(item || "").trim())
+            .filter(Boolean);
+        if (list.length === 0) return "";
+        return (
+            <div className={`prod-rcm-code-list ${className}`}>
+                {list.map((item: string) => (
+                    <div key={item} className="prod-rcm-code-line">{item}</div>
+                ))}
+            </div>
+        );
+    };
+
     const columns = [
         {
             title: ts("rcm.code"),
             dataIndex: "code",
+            width: 90,
         },
         {
             title: ts("rcm.description"),
             dataIndex: "description",
+            width: 260,
         },
         {
             title: ts("rcm.srs_flag"),
             dataIndex: "srs_flag",
+            width: 82,
             render: (value: any) => {
                 return value ? ts("yes") : ts("no");
             },
@@ -111,28 +128,31 @@ export default () => {
         {
             title: ts("rcm.srs_codes"),
             dataIndex: "srs_codes",
-            render: (value: any) => {
-                return value.join(", ");
-            },
+            className: "prod-rcm-wrap-cell",
+            width: 180,
+            render: renderCodeList,
         },
         {
             title: ts("rcm.test_codes"),
             dataIndex: "test_codes",
-            render: (value: any) => {
-                return value.join(", ");
-            },
+            className: "prod-rcm-wrap-cell prod-rcm-test-cell",
+            width: 280,
+            render: (value: any) => renderCodeList(value, "prod-rcm-test-list"),
         },
         {
             title: ts("rcm.proof"),
             dataIndex: "proof",
+            width: 80,
         },
         {
             title: ts("rcm.note"),
             dataIndex: "note",
+            width: 70,
         },
         {
             title: ts("create_time"),
             dataIndex: "create_time",
+            width: 90,
         },
         {
             title: ts("action"),

@@ -1,5 +1,6 @@
-import { Button, Card, Form, Input, Space, Table, message } from "antd";
-import { useEffect } from "react";
+import { Button, Card, Form, Input, Space, Upload, message } from "antd";
+import { UploadOutlined } from "@ant-design/icons";
+import { useEffect, useRef } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { sprintf } from "sprintf-js";
@@ -7,6 +8,10 @@ import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiRiskMgmtDoc";
 import * as ApiProduct from "@/api/ApiProduct";
+import * as ApiProdRcm from "@/api/ApiProdRcm";
+import * as ApiHaz from "@/api/ApiHaz";
+import * as ApiProdHaz from "@/api/ApiProdHaz";
+import { HAZDICT_DEGREES, HAZDICT_LEVELS, HAZDICT_RATES } from "@/pages/basedata/Hazs";
 import "./RiskMgmtDocDetail.less";
 
 const emptyContent = {
@@ -14,10 +19,42 @@ const emptyContent = {
     participants: [],
     riskMatrix: [],
     riskControls: [],
+    productName: "",
 };
+
+const createCoverSection = () => ({
+    title: "风险管理报告",
+    ref_type: "cover",
+    children: [],
+    tables: [[
+        ["编制部门", "", "文件版本", ""],
+        ["编制人", "", "日期", ""],
+        ["审核人", "", "日期", ""],
+        ["批准人", "", "日期", ""],
+        ["生效日期", "", "", ""],
+    ]],
+});
+
+const createRevisionSection = () => ({
+    title: "文件修订记录",
+    ref_type: "revision",
+    children: [],
+    tables: [[
+        ["修改日期", "版本号", "修订说明", "修订人", "批准人"],
+        ["", "", "", "", ""],
+    ]],
+});
+
+const createAcceptanceStandardSection = () => ({
+    title: "5.2.3 接受标准",
+    ref_type: "acceptance_standard",
+    children: [],
+});
 
 const templateContent = {
     sections: [
+        createCoverSection(),
+        createRevisionSection(),
         { title: "1 目的", children: [] },
         { title: "2 范围", children: [] },
         {
@@ -52,7 +89,7 @@ const templateContent = {
                     children: [
                         { title: "5.2.1 严重度定义", children: [] },
                         { title: "5.2.2 发生概率定义", children: [] },
-                        { title: "5.2.3 接受标准", children: [] },
+                        createAcceptanceStandardSection(),
                     ],
                 },
             ],
@@ -94,22 +131,272 @@ const templateContent = {
     participants: [],
     riskMatrix: [],
     riskControls: [],
+    productName: "",
 };
 
 const makeRowKey = () => `${Date.now()}-${Math.random()}`;
 const cloneTemplateContent = () => JSON.parse(JSON.stringify(templateContent));
 
-const SectionList = ({ sections, depth = 0 }: { sections: any[]; depth?: number }) => {
+const sectionKey = (section: any) => section?._key || section?.title || section?.ref_type || "";
+
+const normalizeTitleText = (value: any) => String(value || "").replace(/\s+/g, "");
+
+const isAppendixASection = (section: any) => {
+    const title = normalizeTitleText(section?.title);
+    return title.includes("附录A") && title.includes("安全有关特征");
+};
+
+const isAppendixBSection = (section: any) => {
+    const title = normalizeTitleText(section?.title);
+    return title.includes("附录B") && title.includes("风险分析矩阵");
+};
+
+const isRiskMgmtFilesSection = (section: any) => {
+    const title = normalizeTitleText(section?.title);
+    return title.includes("风险管理文件") && /^11/.test(title);
+};
+
+const isParticipantsSection = (section: any) => {
+    const rawTitle = String(section?.title || "");
+    const title = normalizeTitleText(rawTitle);
+    const firstTableHeader = normalizeTitleText((section?.tables?.[0]?.[0] || []).join(""));
+    return section?.ref_type === "participants"
+        || title.includes("风险分析参与人员")
+        || (title.includes("参与") && title.includes("人员"))
+        || /4[.．]2/.test(rawTitle)
+        || (firstTableHeader.includes("项目角色") && firstTableHeader.includes("姓名"));
+};
+
+const isAcceptanceStandardSection = (section: any) => {
+    const title = normalizeTitleText(section?.title);
+    return section?.ref_type === "acceptance_standard" || (title.includes("5.2.3") && title.includes("接受标准"));
+};
+
+const isCoverSection = (section: any) => {
+    const title = normalizeTitleText(section?.title);
+    return section?.ref_type === "cover" || title === "风险管理报告";
+};
+
+const isRevisionSection = (section: any) => {
+    const title = normalizeTitleText(section?.title);
+    return section?.ref_type === "revision" || title === "文件修订记录";
+};
+
+const normalizeCoverSection = (section: any) => {
+    const nextSection = JSON.parse(JSON.stringify(section || createCoverSection()));
+    const table = Array.isArray(nextSection.tables?.[0]) ? nextSection.tables[0] : [];
+    const firstRowText = normalizeTitleText((table[0] || []).join(""));
+    if (firstRowText.includes("编制部门") && firstRowText.includes("文件版本") && table.length >= 4) {
+        return nextSection;
+    }
+    if (firstRowText.includes("编制科室") || firstRowText.includes("编制部门") || firstRowText.includes("文件版本")) {
+        const headers = table[0] || [];
+        const values = table[1] || [];
+        const getValue = (label: string) => {
+            const idx = headers.findIndex((header: any) => normalizeTitleText(header).includes(label));
+            return idx >= 0 ? values[idx] || "" : "";
+        };
+        nextSection.tables = [[
+            ["编制部门", getValue("编制") || "", "文件版本", getValue("文件版本") || ""],
+            ["编制人", getValue("编制人") || "", "日期", ""],
+            ["审核人", getValue("审核人") || "", "日期", ""],
+            ["批准人", getValue("批准人") || "", "日期", ""],
+            ["生效日期", getValue("生效日期") || "", "", ""],
+        ]];
+    }
+    return nextSection;
+};
+
+const ensureFrontMatterSections = (content: any) => {
+    const nextContent = JSON.parse(JSON.stringify({ ...emptyContent, ...(content || {}) }));
+    const sections = Array.isArray(nextContent.sections) ? nextContent.sections : [];
+    const cover = normalizeCoverSection(sections.find(isCoverSection) || createCoverSection());
+    const revision = sections.find(isRevisionSection) || createRevisionSection();
+    const bodySections = sections.filter((section: any) => !isCoverSection(section) && !isRevisionSection(section));
+    nextContent.sections = [cover, revision, ...bodySections];
+    return nextContent;
+};
+
+const isAppendixATable = (table: any) => {
+    const firstRowText = normalizeTitleText((Array.isArray(table?.[0]) ? table[0] : []).join(""));
+    return firstRowText.includes("问题") && firstRowText.includes("考虑的内容") && firstRowText.includes("是否适用") && firstRowText.includes("可能的危险");
+};
+
+const isAppendixBTable = (table: any) => {
+    const firstRowText = normalizeTitleText((Array.isArray(table?.[0]) ? table[0] : []).join(""));
+    return firstRowText.includes("危害编号")
+        && firstRowText.includes("事件序列")
+        && firstRowText.includes("风险控制措施")
+        && firstRowText.includes("RCMID");
+};
+
+const removeAppendixReferenceLines = (value: any) => String(value || "")
+    .split(/\r?\n/)
+    .filter((line) => {
+        const text = normalizeTitleText(line);
+        return !(text.startsWith("附录A") || text.startsWith("附录B"));
+    })
+    .join("\n")
+    .trim();
+
+const replaceAllText = (value: any, oldText: string, newText: string) => {
+    const text = String(value || "");
+    if (!oldText || !newText || oldText === newText) return text;
+    return text.split(oldText).join(newText);
+};
+
+const collectContentText = (content: any) => {
+    const chunks: string[] = [];
+    const walk = (sections: any[] = []) => {
+        (sections || []).forEach((section) => {
+            chunks.push(String(section.text || ""), String(section.content || ""));
+            if (Array.isArray(section.tables)) {
+                section.tables.forEach((table: any[]) => {
+                    (table || []).forEach((row: any[]) => {
+                        (row || []).forEach((cell: any) => chunks.push(String(cell || "")));
+                    });
+                });
+            }
+            walk(section.children || []);
+        });
+    };
+    walk(content?.sections || []);
+    return chunks.join("\n");
+};
+
+const inferPreviousProductName = (content: any, currentName: string) => {
+    const allText = collectContentText(content);
+    const candidates = Array.from(new Set([
+        currentName.replace(/[0-9０-９]+$/, ""),
+        currentName.replace(/[A-Za-z0-9０-９._\-（）()]+$/, ""),
+    ].map((item) => item.trim()).filter((item) => item && item !== currentName && item.length >= 4)));
+    return candidates.find((candidate) => allText.includes(candidate)) || "";
+};
+
+const syncProductNameInContent = (content: any, productName?: string) => {
+    const currentName = String(productName || "").trim();
+    const nextContent = ensureFrontMatterSections(content);
+    const previousName = String(nextContent.productName || "").trim() || inferPreviousProductName(nextContent, currentName);
+    if (!currentName) return nextContent;
+    const shouldReplace = previousName && previousName !== currentName;
+
+    const syncSection = (section: any) => {
+        if (shouldReplace) {
+            if (typeof section.text !== "undefined") {
+                section.text = replaceAllText(section.text, previousName, currentName);
+            }
+            if (typeof section.content !== "undefined") {
+                section.content = replaceAllText(section.content, previousName, currentName);
+            }
+            if (Array.isArray(section.tables)) {
+                section.tables = section.tables.map((table: any[]) => (table || []).map((row: any[]) => (row || []).map((cell: any) => replaceAllText(cell, previousName, currentName))));
+            }
+        }
+        section.children = (section.children || []).map(syncSection);
+        return section;
+    };
+
+    nextContent.sections = (nextContent.sections || []).map(syncSection);
+    nextContent.productName = currentName;
+    return nextContent;
+};
+
+const relocateMisplacedRiskTables = (content: any) => {
+    const nextContent = ensureFrontMatterSections(content);
+    let riskMgmtFilesSection: any = null;
+    let appendixASection: any = null;
+    let appendixBSection: any = null;
+    const walk = (sections: any[] = []) => {
+        (sections || []).forEach((section) => {
+            if (isRiskMgmtFilesSection(section)) riskMgmtFilesSection = section;
+            if (isAppendixASection(section)) appendixASection = section;
+            if (isAppendixBSection(section)) appendixBSection = section;
+            walk(section.children || []);
+        });
+    };
+    walk(nextContent.sections || []);
+    if (!riskMgmtFilesSection) return nextContent;
+    riskMgmtFilesSection.text = removeAppendixReferenceLines(riskMgmtFilesSection.text);
+    const sourceTables = Array.isArray(riskMgmtFilesSection.tables) ? riskMgmtFilesSection.tables : [];
+    const moveTables = (targetSection: any, predicate: (table: any) => boolean) => {
+        if (!targetSection) return;
+        const misplacedTables = sourceTables.filter(predicate);
+        if (misplacedTables.length === 0) return;
+        const targetTables = Array.isArray(targetSection.tables) ? targetSection.tables : [];
+        const existedKeys = new Set(targetTables.map((table: any) => JSON.stringify(table)));
+        targetSection.tables = [
+            ...targetTables,
+            ...misplacedTables.filter((table: any) => !existedKeys.has(JSON.stringify(table))),
+        ];
+    };
+    moveTables(appendixASection, isAppendixATable);
+    moveTables(appendixBSection, isAppendixBTable);
+    riskMgmtFilesSection.tables = sourceTables.filter((table: any) => !isAppendixATable(table) && !isAppendixBTable(table));
+    return nextContent;
+};
+
+const SectionList = ({
+    sections,
+    depth = 0,
+    activeKey,
+    onSelect,
+    onTitleChange,
+    onAddSibling,
+    onAddChild,
+    onDelete,
+    readOnly,
+}: {
+    sections: any[];
+    depth?: number;
+    activeKey?: string;
+    onSelect: (section: any) => void;
+    onTitleChange: (section: any, title: string) => void;
+    onAddSibling: (section: any) => void;
+    onAddChild: (section: any) => void;
+    onDelete: (section: any) => void;
+    readOnly: boolean;
+}) => {
     return (
         <>
             {(sections || []).map((section: any) => (
-                <div key={section.title}>
+                <div key={sectionKey(section)}>
                     <div
-                        className={`risk-mgmt-section-item ${section.ref_type ? "active" : ""}`}
-                        style={{ marginLeft: depth * 14 }}>
-                        {section.title}
+                        className={`risk-mgmt-section-item ${activeKey === sectionKey(section) ? "active" : ""}`}
+                        style={{ marginLeft: depth * 14 }}
+                        onClick={() => onSelect(section)}>
+                        <div className="risk-mgmt-section-item-main">
+                            {readOnly ? (
+                                section.title
+                            ) : (
+                                <Input
+                                    value={section.title}
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onSelect(section);
+                                    }}
+                                    onChange={(e) => onTitleChange(section, e.target.value)}
+                                />
+                            )}
+                        </div>
+                        {!readOnly && (
+                            <Space size={4} className="risk-mgmt-section-actions" onClick={(e) => e.stopPropagation()}>
+                                <Button size="small" type="link" onClick={() => onAddSibling(section)}>同级</Button>
+                                <Button size="small" type="link" onClick={() => onAddChild(section)}>下级</Button>
+                                <Button size="small" type="link" danger onClick={() => onDelete(section)}>删除</Button>
+                            </Space>
+                        )}
                     </div>
-                    <SectionList sections={section.children || []} depth={depth + 1} />
+                    <SectionList
+                        sections={section.children || []}
+                        depth={depth + 1}
+                        activeKey={activeKey}
+                        onSelect={onSelect}
+                        onTitleChange={onTitleChange}
+                        onAddSibling={onAddSibling}
+                        onAddChild={onAddChild}
+                        onDelete={onDelete}
+                        readOnly={readOnly}
+                    />
                 </div>
             ))}
         </>
@@ -125,6 +412,14 @@ const loadProducts = (data: any, dispatch: any) => {
     });
 };
 
+const loadParticipantOptions = (dispatch: any) => {
+    Api.list_risk_participant({ page_index: 0, page_size: 10000 }).then((res: any) => {
+        if (res.code === Api.C_OK) {
+            dispatch({ participantOptions: res.data?.rows || [] });
+        }
+    });
+};
+
 export default () => {
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
@@ -133,20 +428,32 @@ export default () => {
     const isAdd = location.pathname.includes("/add");
     const isView = location.pathname.includes("/view/");
     const [form] = Form.useForm();
+    const contentCardRef = useRef<HTMLDivElement>(null);
     const [data, dispatch] = useData({
         loading: false,
         saving: false,
+        exporting: false,
         detail: {},
         content: emptyContent,
         participants: [],
+        participantOptions: [],
+        selectedParticipantIds: [],
+        participantsTouched: false,
         products: [],
+        activeSectionKey: "",
+        prodRcms: [],
+        prodHazs: [],
+        hazs: [],
     });
 
     useEffect(() => {
         loadProducts(data, dispatch);
+        loadParticipantOptions(dispatch);
         if (isAdd) {
             form.resetFields();
-            dispatch({ detail: {}, content: emptyContent, participants: [] });
+            const content = ensureFrontMatterSections(emptyContent);
+            const defaultSection = (content.sections || []).find((section: any) => !isCoverSection(section) && !isRevisionSection(section));
+            dispatch({ detail: {}, content, participants: [], selectedParticipantIds: [], participantsTouched: false, activeSectionKey: sectionKey(defaultSection) });
             return;
         }
         if (!params.id) return;
@@ -154,10 +461,13 @@ export default () => {
         Api.get_risk_mgmt_doc({ id: params.id }).then((res: any) => {
             if (res.code === Api.C_OK) {
                 const detail = res.data || {};
-                const content = detail.content || emptyContent;
+                const content = syncProductNameInContent(relocateMisplacedRiskTables(detail.content || emptyContent), detail.product_name);
                 const participants = (content.participants || []).map((row: any) => ({ ...row, _rowKey: makeRowKey() }));
+                const selectedParticipantIds = participants.map((row: any) => row.id).filter(Boolean);
+                const defaultSection = (content.sections || []).find((section: any) => !isCoverSection(section) && !isRevisionSection(section));
                 form.setFieldsValue(detail);
-                dispatch({ loading: false, detail, content: { ...emptyContent, ...content }, participants });
+                dispatch({ loading: false, detail, content, participants, selectedParticipantIds, participantsTouched: false, activeSectionKey: sectionKey(defaultSection) });
+                loadRiskLookupData(detail.product_id);
             } else {
                 dispatch({ loading: false });
                 message.error(res.msg);
@@ -165,17 +475,39 @@ export default () => {
         });
     }, [params.id, isAdd]);
 
-    const updateParticipant = (rowKey: string, key: string, value: string) => {
-        const participants = (data.participants || []).map((row: any) => (
-            row._rowKey === rowKey ? { ...row, [key]: value } : row
-        ));
-        dispatch({ participants });
+    const loadRiskLookupData = (productId?: any) => {
+        if (productId) {
+            ApiProdRcm.list_prod_rcm({ prod_id: productId, page_index: 0, page_size: 10000 }).then((rcmRes: any) => {
+                if (rcmRes.code === ApiProdRcm.C_OK) {
+                    dispatch({ prodRcms: rcmRes.data?.rows || [] });
+                }
+            });
+            ApiProdHaz.list_prod_haz({ prod_id: productId, page_index: 0, page_size: 10000 }).then((hazRes: any) => {
+                if (hazRes.code === ApiProdHaz.C_OK) {
+                    dispatch({ prodHazs: hazRes.data?.rows || [] });
+                }
+            });
+        } else {
+            dispatch({ prodRcms: [], prodHazs: [] });
+        }
+        if (!productId) {
+            dispatch({ hazs: [] });
+            return;
+        }
+        ApiHaz.list_haz({ page_index: 0, page_size: 10000 }).then((hazRes: any) => {
+            if (hazRes.code === ApiHaz.C_OK) {
+                dispatch({ hazs: hazRes.data?.rows || [] });
+            }
+        });
     };
 
     const doSave = () => {
         form.validateFields().then((values) => {
-            const participants = (data.participants || []).map(({ _rowKey, ...row }: any) => row);
-            const content = { ...(data.content || emptyContent), participants };
+            const participantSource = data.participantsTouched || (data.participants || []).length
+                ? (data.participants || [])
+                : (data.participantOptions || []);
+            const participants = participantSource.map(({ _rowKey, ...row }: any) => row);
+            const content = syncProductNameInContent({ ...(data.content || emptyContent), participants }, data.detail?.product_name || values.product_name);
             dispatch({ saving: true });
             const request = isAdd
                 ? Api.add_risk_mgmt_doc({ ...values, content })
@@ -192,63 +524,798 @@ export default () => {
         });
     };
 
+    const doExport = async () => {
+        if (!params.id || data.exporting) return;
+        dispatch({ exporting: true });
+        try {
+            const res: any = await Api.export_risk_mgmt_doc({ id: params.id });
+            if (res.code !== Api.C_OK) {
+                message.error(res.msg || "导出失败");
+            }
+        } catch (_err) {
+            message.error("导出失败");
+        } finally {
+            dispatch({ exporting: false });
+        }
+    };
+
+    const deleteParticipantRow = (row: any, currentRows: any[]) => {
+        const sameParticipant = (item: any) => (
+            row.id ? Number(item.id) === Number(row.id) : item.role === row.role && item.name === row.name
+        );
+        const participants = (currentRows || []).filter((item: any) => !sameParticipant(item));
+        dispatch({ participants, participantsTouched: true });
+    };
+
+    const updateParticipantCell = (rowIndex: number, field: "role" | "name", value: string, currentRows: any[]) => {
+        const participants = (currentRows || []).map((row: any, index: number) => (
+            index === rowIndex ? { ...row, [field]: value, _rowKey: row._rowKey || makeRowKey() } : row
+        ));
+        dispatch({ participants, participantsTouched: true });
+    };
+
     const initTemplate = () => {
-        dispatch({ content: cloneTemplateContent(), participants: [] });
+        const content = cloneTemplateContent();
+        const defaultSection = (content.sections || []).find((section: any) => !isCoverSection(section) && !isRevisionSection(section));
+        dispatch({ content, participants: [], selectedParticipantIds: [], participantsTouched: false, activeSectionKey: sectionKey(defaultSection) });
         message.success("初始化模版成功");
     };
 
-    const participantColumns: any[] = [
-        { title: "序号", width: 70, render: (_: any, _row: any, index: number) => index + 1 },
-        {
-            title: "姓名",
-            dataIndex: "name",
-            width: 180,
-            render: (value: string, row: any) => (
-                <Input
-                    disabled={isView}
-                    value={value}
-                    onChange={(e) => updateParticipant(row._rowKey, "name", e.target.value)}
-                />
-            ),
-        },
-        {
-            title: "部门/岗位",
-            dataIndex: "role",
-            width: 220,
-            render: (value: string, row: any) => (
-                <Input
-                    disabled={isView}
-                    value={value}
-                    onChange={(e) => updateParticipant(row._rowKey, "role", e.target.value)}
-                />
-            ),
-        },
-        {
-            title: "职责",
-            dataIndex: "responsibility",
-            render: (value: string, row: any) => (
-                <Input.TextArea
-                    disabled={isView}
-                    autoSize
-                    value={value}
-                    onChange={(e) => updateParticipant(row._rowKey, "responsibility", e.target.value)}
-                />
-            ),
-        },
-        {
-            title: ts("action"),
-            width: 90,
-            render: (_: any, row: any) => (
-                <Button
-                    size="small"
-                    danger
-                    disabled={isView}
-                    onClick={() => dispatch({ participants: data.participants.filter((item: any) => item._rowKey !== row._rowKey) })}>
-                    {ts("delete")}
-                </Button>
-            ),
-        },
-    ];
+    const findSectionByKey = (sections: any[] = [], key: string): any => {
+        for (const section of sections || []) {
+            if (sectionKey(section) === key) return section;
+            const child = findSectionByKey(section.children || [], key);
+            if (child) return child;
+        }
+        return null;
+    };
+
+    const allSections = data.content.sections || [];
+    const frontMatterSections = allSections.filter((section: any) => isCoverSection(section) || isRevisionSection(section));
+    const bodySections = allSections.filter((section: any) => !isCoverSection(section) && !isRevisionSection(section));
+    const activeSection = findSectionByKey(bodySections || [], data.activeSectionKey) || bodySections[0];
+    const shouldRenderParticipants = isParticipantsSection(activeSection);
+
+    const findSectionContext = (sections: any[] = [], key: string, parent?: any): any => {
+        for (const section of sections || []) {
+            if (sectionKey(section) === key) {
+                return { section, parent, siblings: sections };
+            }
+            const child = findSectionContext(section.children || [], key, section);
+            if (child) return child;
+        }
+        return null;
+    };
+
+    const stripSectionNumber = (value?: string) => String(value || "")
+        .replace(/^[0-9０-９]+(?:[.．][0-9０-９]+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+        .replace(/[：:]+$/, "")
+        .trim();
+
+    const extractRcmCodes = (value?: any): string[] => {
+        const text = String(value || "").toUpperCase();
+        const matches = text.match(/RCM\s*\d+/g) || [];
+        return Array.from(new Set(matches.map((item) => item.replace(/\s+/g, ""))));
+    };
+
+    const getRcmHazMatches = (rcmCode: string) => (data.hazs || []).filter((haz: any) => {
+        const relatedRcms = extractRcmCodes(`${haz?.rcms || ""}\n${haz?.deal || ""}`);
+        return relatedRcms.includes(rcmCode);
+    });
+
+    const getRcmIntroducedTableMeta = (section: any) => {
+        const rows = Array.isArray(section?.tables?.[0]) ? section.tables[0] : [];
+        const firstRow = rows[0] || [];
+        const firstText = (firstRow || []).join("");
+        const hasHeader = /RCM编号|引入的危害|风险分析|风险控制措施/.test(firstText);
+        const headers = hasHeader ? firstRow : ["RCM编号", "引入的危害", "RCM引入的风险分析", "风险控制措施"];
+        const normalize = (value: any) => String(value || "").replace(/\s+/g, "");
+        const findColumn = (keywords: string[], fallback: number) => {
+            const idx = (headers || []).findIndex((header: any) => keywords.some((keyword) => normalize(header).includes(keyword)));
+            return idx >= 0 ? idx : fallback;
+        };
+        return {
+            rows,
+            hasHeader,
+            dataStartIndex: hasHeader ? 1 : 0,
+            rcmCol: findColumn(["RCM编号", "RCM"], 0),
+            hazCol: findColumn(["引入的危害", "危害"], 1),
+            analysisCol: findColumn(["风险分析"], 2),
+            measureCol: findColumn(["风险控制措施", "控制措施"], 3),
+        };
+    };
+
+    const buildRcmIntroducedHazRows = (section: any) => {
+        const meta = getRcmIntroducedTableMeta(section);
+        const rows: any[] = [];
+        meta.rows.slice(meta.dataStartIndex).forEach((sourceRow: any[], offset: number) => {
+            const sourceRowIndex = meta.dataStartIndex + offset;
+            const rawRcmValue = String(sourceRow?.[meta.rcmCol] || "");
+            const rcmSearchText = rawRcmValue.trim() ? rawRcmValue : sourceRow?.[meta.measureCol];
+            const rcmCode = extractRcmCodes(rcmSearchText)[0] || "";
+            const measure = sourceRow?.[meta.measureCol] || sourceRow?.[meta.rcmCol] || "";
+            const matches = rcmCode ? getRcmHazMatches(rcmCode) : [];
+            if (matches.length === 0) {
+                rows.push({
+                    key: `${sourceRowIndex}-0`,
+                    sourceRowIndex,
+                    rawRcmValue,
+                    rcmCode,
+                    hazCode: rcmCode ? "未匹配到HAZ" : "",
+                    analysis: "",
+                    measure,
+                });
+                return;
+            }
+            matches.forEach((haz: any, matchIndex: number) => {
+                rows.push({
+                    key: `${sourceRowIndex}-${matchIndex}`,
+                    sourceRowIndex,
+                    rawRcmValue,
+                    rcmCode,
+                    hazCode: haz.code || "",
+                    analysis: haz.situation || haz.event || haz.source || "",
+                    measure,
+                });
+            });
+        });
+        return { ...meta, displayRows: rows };
+    };
+
+    const deriveTextFromParentSection = (section: any): string => {
+        const ctx = findSectionContext(data.content.sections || [], sectionKey(section));
+        const parentText = String(ctx?.parent?.text || "");
+        if (!ctx?.parent || !parentText.trim()) return "";
+        const currentTitle = stripSectionNumber(section.title);
+        if (!currentTitle) return "";
+        const siblingTitles = (ctx.siblings || [])
+            .filter((item: any) => sectionKey(item) !== sectionKey(section))
+            .map((item: any) => stripSectionNumber(item.title))
+            .filter(Boolean);
+        const lines = parentText.replace(/\r/g, "").split("\n").map((line) => line.trim()).filter(Boolean);
+        const startIdx = lines.findIndex((line) => line.includes(currentTitle));
+        if (startIdx < 0) return "";
+        const picked: string[] = [];
+        for (let idx = startIdx; idx < lines.length; idx += 1) {
+            const line = lines[idx];
+            if (idx > startIdx && siblingTitles.some((title: string) => line.includes(title))) {
+                break;
+            }
+            picked.push(line);
+        }
+        return picked.join("\n").trim();
+    };
+
+    const selectSection = (section: any) => {
+        dispatch({ activeSectionKey: sectionKey(section) });
+        setTimeout(() => {
+            contentCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 0);
+    };
+
+    const updateSectionText = (key: string, value: string) => {
+        const update = (sections: any[] = []): any[] => (sections || []).map((section) => {
+            if (sectionKey(section) === key) {
+                return { ...section, text: value };
+            }
+            return { ...section, children: update(section.children || []) };
+        });
+        dispatch({
+            content: {
+                ...(data.content || emptyContent),
+                sections: update(data.content.sections || []),
+            },
+        });
+    };
+
+    const updateSectionImageUrl = (key: string, imageUrl: string) => {
+        const update = (sections: any[] = []): any[] => (sections || []).map((section) => {
+            if (sectionKey(section) === key) {
+                return { ...section, image_url: imageUrl };
+            }
+            return { ...section, children: update(section.children || []) };
+        });
+        dispatch({
+            content: {
+                ...(data.content || emptyContent),
+                sections: update(data.content.sections || []),
+            },
+        });
+    };
+
+    const uploadAcceptanceImage = (section: any, file: File) => {
+        if (!file.type.startsWith("image/")) {
+            message.error("请选择图片文件");
+            return false;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+            updateSectionImageUrl(sectionKey(section), String(reader.result || ""));
+            message.success("图片已更新，请保存文档");
+        };
+        reader.onerror = () => message.error("图片读取失败");
+        reader.readAsDataURL(file);
+        return false;
+    };
+
+    const updateSectionTableCell = (key: string, tableIndex: number, rowIndex: number, cellIndex: number, value: string) => {
+        const update = (sections: any[] = []): any[] => (sections || []).map((section) => {
+            if (sectionKey(section) === key) {
+                const tables = Array.isArray(section.tables) ? section.tables.map((table: any[]) => (table || []).map((row: any[]) => [...(row || [])])) : [];
+                if (!tables[tableIndex]) {
+                    tables[tableIndex] = [["RCM编号", "引入的危害", "RCM引入的风险分析", "风险控制措施"]];
+                }
+                if (!tables[tableIndex][rowIndex]) {
+                    tables[tableIndex][rowIndex] = [];
+                }
+                tables[tableIndex][rowIndex][cellIndex] = value;
+                return { ...section, tables };
+            }
+            return { ...section, children: update(section.children || []) };
+        });
+        dispatch({
+            content: {
+                ...(data.content || emptyContent),
+                sections: update(data.content.sections || []),
+            },
+        });
+    };
+
+    const addRcmIntroducedRow = (section: any) => {
+        const key = sectionKey(section);
+        const update = (sections: any[] = []): any[] => (sections || []).map((item) => {
+            if (sectionKey(item) === key) {
+                const tables = Array.isArray(item.tables) ? item.tables.map((table: any[]) => (table || []).map((row: any[]) => [...(row || [])])) : [];
+                if (!tables[0] || tables[0].length === 0) {
+                    tables[0] = [["RCM编号", "引入的危害", "RCM引入的风险分析", "风险控制措施"]];
+                }
+                tables[0].push(["", "", "", ""]);
+                return { ...item, tables };
+            }
+            return { ...item, children: update(item.children || []) };
+        });
+        dispatch({
+            content: {
+                ...(data.content || emptyContent),
+                sections: update(data.content.sections || []),
+            },
+        });
+    };
+
+    const deleteRcmIntroducedRow = (section: any, rowIndex: number) => {
+        const key = sectionKey(section);
+        const meta = getRcmIntroducedTableMeta(section);
+        if (rowIndex < meta.dataStartIndex) return;
+        const update = (sections: any[] = []): any[] => (sections || []).map((item) => {
+            if (sectionKey(item) === key) {
+                const tables = Array.isArray(item.tables) ? item.tables.map((table: any[]) => (table || []).map((row: any[]) => [...(row || [])])) : [];
+                if (tables[0]) {
+                    tables[0] = tables[0].filter((_row: any[], index: number) => index !== rowIndex);
+                }
+                return { ...item, tables };
+            }
+            return { ...item, children: update(item.children || []) };
+        });
+        dispatch({
+            content: {
+                ...(data.content || emptyContent),
+                sections: update(data.content.sections || []),
+            },
+        });
+    };
+
+    const updateSectionTitle = (targetSection: any, title: string) => {
+        const targetKey = sectionKey(targetSection);
+        const update = (sections: any[] = []): any[] => (sections || []).map((section) => {
+            if (sectionKey(section) === targetKey) {
+                return { ...section, title };
+            }
+            return { ...section, children: update(section.children || []) };
+        });
+        const nextKey = targetSection._key || title || targetSection.ref_type || targetKey;
+        dispatch({
+            activeSectionKey: nextKey,
+            content: {
+                ...(data.content || emptyContent),
+                sections: update(data.content.sections || []),
+            },
+        });
+    };
+
+    const parseSectionNumber = (title?: string) => String(title || "").trim().match(/^([0-9０-９]+(?:[.．][0-9０-９]+)*)/)?.[1]?.replace(/．/g, ".") || "";
+
+    const makeNewSection = (title: string) => ({
+        _key: makeRowKey(),
+        title,
+        children: [],
+        text: "",
+    });
+
+    const buildNewSectionTitle = (siblings: any[] = [], parent?: any) => {
+        const parentNo = parent ? parseSectionNumber(parent.title) : "";
+        const numbers = (siblings || [])
+            .map((item) => parseSectionNumber(item?.title))
+            .filter((no) => {
+                if (parentNo) return no.startsWith(`${parentNo}.`) && no.split(".").length === parentNo.split(".").length + 1;
+                return no && no.split(".").length === 1;
+            })
+            .map((no) => Number(no.split(".").pop()))
+            .filter((num) => Number.isFinite(num));
+        const nextIndex = Math.max(0, ...numbers) + 1;
+        const nextNo = parentNo ? `${parentNo}.${nextIndex}` : `${nextIndex}`;
+        return `${nextNo} 新目录`;
+    };
+
+    const addRootSection = () => {
+        const nextSection = makeNewSection(buildNewSectionTitle(bodySections));
+        dispatch({
+            activeSectionKey: sectionKey(nextSection),
+            content: {
+                ...(data.content || emptyContent),
+                sections: [...(data.content.sections || []), nextSection],
+            },
+        });
+    };
+
+    const addSiblingSection = (targetSection: any) => {
+        const targetKey = sectionKey(targetSection);
+        let nextActiveKey = "";
+        const update = (sections: any[] = [], parent?: any): any[] => {
+            const targetIndex = (sections || []).findIndex((section) => sectionKey(section) === targetKey);
+            if (targetIndex >= 0) {
+                const nextSection = makeNewSection(buildNewSectionTitle(sections, parent));
+                nextActiveKey = sectionKey(nextSection);
+                return [...sections, nextSection];
+            }
+            return (sections || []).map((section) => ({ ...section, children: update(section.children || [], section) }));
+        };
+        const nextSections = update(data.content.sections || []);
+        dispatch({
+            activeSectionKey: nextActiveKey || data.activeSectionKey,
+            content: {
+                ...(data.content || emptyContent),
+                sections: nextSections,
+            },
+        });
+    };
+
+    const addChildSection = (targetSection: any) => {
+        const targetKey = sectionKey(targetSection);
+        let nextActiveKey = "";
+        const update = (sections: any[] = []): any[] => (sections || []).map((section) => {
+            if (sectionKey(section) === targetKey) {
+                const children = section.children || [];
+                const nextSection = makeNewSection(buildNewSectionTitle(children, section));
+                nextActiveKey = sectionKey(nextSection);
+                return { ...section, children: [...children, nextSection] };
+            }
+            return { ...section, children: update(section.children || []) };
+        });
+        const nextSections = update(data.content.sections || []);
+        dispatch({
+            activeSectionKey: nextActiveKey || data.activeSectionKey,
+            content: {
+                ...(data.content || emptyContent),
+                sections: nextSections,
+            },
+        });
+    };
+
+    const deleteSection = (targetSection: any) => {
+        const targetKey = sectionKey(targetSection);
+        const update = (sections: any[] = []): any[] => (sections || [])
+            .filter((section) => sectionKey(section) !== targetKey)
+            .map((section) => ({ ...section, children: update(section.children || []) }));
+        const nextSections = update(data.content.sections || []);
+        const nextBodySections = nextSections.filter((section: any) => !isCoverSection(section) && !isRevisionSection(section));
+        dispatch({
+            activeSectionKey: data.activeSectionKey === targetKey ? sectionKey(nextBodySections[0]) : data.activeSectionKey,
+            content: {
+                ...(data.content || emptyContent),
+                sections: nextSections,
+            },
+        });
+    };
+
+    const riskText = (row: any, type: "init" | "cur") => {
+        const rate = type === "init" ? row.init_rate : row.cur_rate;
+        const degree = type === "init" ? row.init_degree : row.cur_degree;
+        const level = type === "init" ? row.init_level : row.cur_level;
+        return {
+            rate: HAZDICT_RATES[rate] ?? rate ?? "",
+            degree: HAZDICT_DEGREES[degree] ?? degree ?? "",
+            level: HAZDICT_LEVELS[level] ?? level ?? "",
+        };
+    };
+
+    const renderProdHazMatrix = () => {
+        const rows = data.prodHazs || [];
+        if (rows.length === 0) {
+            return <div className="risk-mgmt-section-tip">当前产品暂无产品 HAZ 管理数据。</div>;
+        }
+        return (
+            <div className="risk-mgmt-matrix-wrap">
+                <table className="risk-mgmt-matrix-table">
+                    <thead>
+                        <tr>
+                            <th rowSpan={2}>危害编号</th>
+                            <th rowSpan={2}>危险（源）</th>
+                            <th rowSpan={2}>事件序列</th>
+                            <th rowSpan={2}>危险情况</th>
+                            <th rowSpan={2}>伤害</th>
+                            <th colSpan={3}>初始风险</th>
+                            <th rowSpan={2}>风险控制措施</th>
+                            <th rowSpan={2}>RCM ID</th>
+                            <th rowSpan={2}>证据，包括风险验证（详见软件测试报告）</th>
+                            <th colSpan={3}>剩余风险</th>
+                            <th rowSpan={2}>收益是否大于风险（Y/N）</th>
+                            <th rowSpan={2}>分类</th>
+                        </tr>
+                        <tr>
+                            <th>概率</th>
+                            <th>危害程度</th>
+                            <th>风险水平</th>
+                            <th>概率</th>
+                            <th>危害程度</th>
+                            <th>风险水平</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows.map((row: any) => {
+                            const initRisk = riskText(row, "init");
+                            const curRisk = riskText(row, "cur");
+                            return (
+                                <tr key={row.id || row.haz_id || row.code}>
+                                    <td>{row.code}</td>
+                                    <td>{row.source}</td>
+                                    <td>{row.event}</td>
+                                    <td>{row.situation}</td>
+                                    <td>{row.damage}</td>
+                                    <td>{initRisk.rate}</td>
+                                    <td>{initRisk.degree}</td>
+                                    <td>{initRisk.level}</td>
+                                    <td>{row.deal}</td>
+                                    <td>{row.rcms}</td>
+                                    <td>{row.evidence}</td>
+                                    <td>{curRisk.rate}</td>
+                                    <td>{curRisk.degree}</td>
+                                    <td>{curRisk.level}</td>
+                                    <td>{row.benefit_flag ? "Y" : "N"}</td>
+                                    <td>{row.category}</td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        );
+    };
+
+    const renderFrontMatterTable = (section: any, tableIndex: number, rows: any[]) => (
+        <table className="risk-mgmt-section-table risk-mgmt-front-table" key={`${sectionKey(section)}-${tableIndex}`}>
+            <tbody>
+                {(rows || []).map((row: any[], rowIndex: number) => (
+                    <tr key={`front-row-${rowIndex}`}>
+                        {(row || []).map((cell: any, cellIndex: number) => {
+                            const isCover = isCoverSection(section);
+                            const isLabelCell = isCover && (cellIndex === 0 || cellIndex === 2 || (rowIndex === 4 && cellIndex > 1));
+                            const isHeaderCell = !isCover && rowIndex === 0;
+                            const readOnlyCell = isView || isLabelCell || isHeaderCell;
+                            return (
+                            <td key={`front-cell-${cellIndex}`} className={isLabelCell || isHeaderCell ? "front-table-header-cell" : ""}>
+                                {readOnlyCell ? cell : (
+                                    <Input.TextArea
+                                        autoSize={{ minRows: 1, maxRows: 4 }}
+                                        value={cell}
+                                        onChange={(e) => updateSectionTableCell(sectionKey(section), tableIndex, rowIndex, cellIndex, e.target.value)}
+                                    />
+                                )}
+                            </td>
+                            );
+                        })}
+                    </tr>
+                ))}
+            </tbody>
+        </table>
+    );
+
+    const renderFrontMatterSections = () => {
+        const coverSection = frontMatterSections.find((section: any) => isCoverSection(section)) || createCoverSection();
+        const revisionSection = frontMatterSections.find((section: any) => isRevisionSection(section)) || createRevisionSection();
+        return (
+            <Card title="封面与文件修订记录" className="risk-mgmt-front-card">
+                <div className="risk-mgmt-front-title">标题</div>
+                <div className="risk-mgmt-front-file-name">风险管理报告</div>
+                <div className="risk-mgmt-front-title">封面信息</div>
+                {(coverSection.tables || []).map((rows: any[], tableIndex: number) => renderFrontMatterTable(coverSection, tableIndex, rows))}
+                <div className="risk-mgmt-front-title">文件修订记录</div>
+                {(revisionSection.tables || []).map((rows: any[], tableIndex: number) => renderFrontMatterTable(revisionSection, tableIndex, rows))}
+            </Card>
+        );
+    };
+
+    const renderParticipantsTable = (section: any) => {
+        const importedRows = (section?.tables?.[0] || []).slice(1).map((row: any[], index: number) => ({
+            _rowKey: `imported-${index}`,
+            role: row?.[0] || "",
+            name: row?.[1] || "",
+        })).filter((row: any) => row.role || row.name);
+        const editableRows = (data.participantOptions || []).length ? data.participantOptions : importedRows;
+        const viewRows = (data.participants || []).length ? data.participants : importedRows;
+        const displayRows = isView
+            ? viewRows
+            : (data.participantsTouched || (data.participants || []).length ? data.participants : editableRows);
+        return (
+            <div className="risk-mgmt-section-content">
+                <table className="risk-mgmt-section-table risk-mgmt-participant-static-table">
+                    <tbody>
+                        <tr>
+                            <td><strong>项目角色</strong></td>
+                            <td><strong>姓名</strong></td>
+                            {!isView && <td><strong>操作</strong></td>}
+                        </tr>
+                        {displayRows.map((row: any, index: number) => (
+                            <tr key={row.id || row._rowKey || `${row.role}-${row.name}-${index}`}>
+                                <td>
+                                    {isView ? row.role || "" : (
+                                        <input
+                                            className="risk-mgmt-participant-input"
+                                            value={row.role || ""}
+                                            onChange={(event) => updateParticipantCell(index, "role", event.target.value, displayRows)}
+                                        />
+                                    )}
+                                </td>
+                                <td>
+                                    {isView ? row.name || "" : (
+                                        <input
+                                            className="risk-mgmt-participant-input"
+                                            value={row.name || ""}
+                                            onChange={(event) => updateParticipantCell(index, "name", event.target.value, displayRows)}
+                                        />
+                                    )}
+                                </td>
+                                {!isView && (
+                                    <td>
+                                        <Button type="link" danger size="small" onClick={() => deleteParticipantRow(row, displayRows)}>
+                                            删除
+                                        </Button>
+                                    </td>
+                                )}
+                            </tr>
+                        ))}
+                        {!displayRows.length && (
+                            <tr>
+                                <td colSpan={isView ? 2 : 3}>暂无参与人员，请先到“风险分析参与人员”总表维护。</td>
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
+            </div>
+        );
+    };
+
+    const renderAcceptanceMatrix = () => {
+        const matrixRows = [
+            { rate: "经常", score: "5", cells: ["5A", "5B", "5C", "5D", "5E"], levels: ["bad", "bad", "bad", "bad", "bad"] },
+            { rate: "有时", score: "4", cells: ["4A", "4B", "4C", "4D", "4E"], levels: ["bad", "bad", "bad", "bad", "bad"] },
+            { rate: "偶然", score: "3", cells: ["3A", "3B", "3C", "3D", "3E"], levels: ["ok", "warn", "bad", "bad", "bad"] },
+            { rate: "很少", score: "2", cells: ["2A", "2B", "2C", "2D", "2E"], levels: ["ok", "warn", "warn", "bad", "bad"] },
+            { rate: "非常少", score: "1", cells: ["1A", "1B", "1C", "1D", "1E"], levels: ["ok", "ok", "warn", "warn", "warn"] },
+        ];
+
+        return (
+            <div className="risk-mgmt-acceptance-wrap">
+                <table className="risk-mgmt-acceptance-table">
+                    <tbody>
+                        <tr>
+                            <th className="acceptance-risk-title" rowSpan={2} colSpan={3}>风险值</th>
+                            <th className="acceptance-degree-title" colSpan={5}>严重度</th>
+                        </tr>
+                        <tr>
+                            {["可忽略", "轻度", "严重", "危重的", "灾难性的"].map((label, index) => (
+                                <th key={label}>
+                                    <div>{label}</div>
+                                    <div>{String.fromCharCode(65 + index)}</div>
+                                </th>
+                            ))}
+                        </tr>
+                        {matrixRows.map((row, rowIndex) => (
+                            <tr key={row.score}>
+                                {rowIndex === 0 && <th className="acceptance-rate-title" rowSpan={5}>发生概率</th>}
+                                <th>{row.rate}</th>
+                                <th>{row.score}</th>
+                                {row.cells.map((cell, cellIndex) => (
+                                    <td key={cell} className={`risk-level-${row.levels[cellIndex]}`}>{cell}</td>
+                                ))}
+                            </tr>
+                        ))}
+                        <tr>
+                            <td className="acceptance-legend-red">红色</td>
+                            <td colSpan={7}><strong>不可接受：</strong>这类风险本质上不可接受。必须寻求风险降低措施。</td>
+                        </tr>
+                        <tr>
+                            <td className="acceptance-legend-warn">橙色</td>
+                            <td colSpan={7}><strong>进一步降低的研究：</strong>这类风险必须降低到合理可行的最低限度才可视为可接受。</td>
+                        </tr>
+                        <tr>
+                            <td className="acceptance-legend-green">绿色</td>
+                            <td colSpan={7}><strong>可忽略：</strong>这类风险实际上可接受，但只可挑选一步寻求风险降低措施。</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        );
+    };
+
+    const renderAcceptanceStandard = (section: any) => {
+        const imageUrl = String(section?.image_url || section?.img_url || "").trim();
+        return (
+            <div className="risk-mgmt-section-content">
+                {!isView && (
+                    <Space className="risk-mgmt-acceptance-actions">
+                        <Upload
+                            accept="image/*"
+                            showUploadList={false}
+                            beforeUpload={(file) => uploadAcceptanceImage(section, file as File)}>
+                            <Button icon={<UploadOutlined />}>{imageUrl ? "更换图片" : "上传图片"}</Button>
+                        </Upload>
+                        {imageUrl && (
+                            <Button onClick={() => updateSectionImageUrl(sectionKey(section), "")}>
+                                使用默认表格
+                            </Button>
+                        )}
+                    </Space>
+                )}
+                {imageUrl ? (
+                    <div className="risk-mgmt-acceptance-image-box">
+                        <img src={imageUrl} alt="接受标准" />
+                    </div>
+                ) : renderAcceptanceMatrix()}
+            </div>
+        );
+    };
+
+    const renderActiveSectionContent = () => {
+        if (!activeSection) {
+            return <div className="empty">请选择左侧目录</div>;
+        }
+        if (isParticipantsSection(activeSection)) {
+            return renderParticipantsTable(activeSection);
+        }
+        if (isAcceptanceStandardSection(activeSection)) {
+            return renderAcceptanceStandard(activeSection);
+        }
+        const tables = Array.isArray(activeSection.tables) ? activeSection.tables : [];
+        const activeTitle = String(activeSection.title || "");
+        const isProductRcmSection = /RCM|风险控制措施的实施/.test(activeTitle);
+        const isRcmIntroducedHazSection = /由风险控制措施产生的风险|RCM带来的危害/.test(activeTitle);
+        const isAppendixBRiskMatrixSection = isAppendixBSection(activeSection);
+        const shouldShowProductRcms = !isRcmIntroducedHazSection && isProductRcmSection && (data.prodRcms || []).length > 0;
+        const rcmIntroducedTable = isRcmIntroducedHazSection ? buildRcmIntroducedHazRows(activeSection) : null;
+        const rcmIntroducedHazRows = rcmIntroducedTable?.displayRows || [];
+        const sectionText = activeSection.text || activeSection.content || deriveTextFromParentSection(activeSection);
+        return (
+            <div className="risk-mgmt-section-content">
+                {isView ? (
+                    sectionText ? (
+                        <div className="risk-mgmt-section-text">{sectionText}</div>
+                    ) : null
+                ) : (
+                    <Input.TextArea
+                        value={sectionText}
+                        onChange={(e) => updateSectionText(sectionKey(activeSection), e.target.value)}
+                        autoSize={{ minRows: 5, maxRows: 18 }}
+                        placeholder="请输入章节内容"
+                    />
+                )}
+                {isAppendixBRiskMatrixSection ? (
+                    renderProdHazMatrix()
+                ) : isRcmIntroducedHazSection ? (
+                    <div className="risk-mgmt-rcm-block">
+                        <div className="risk-mgmt-rcm-title">RCM带来的危害</div>
+                        {rcmIntroducedHazRows.length > 0 ? (
+                            <table className="risk-mgmt-rcm-native-table risk-mgmt-rcm-haz-table">
+                                <thead>
+                                    <tr>
+                                        <th>RCM编号</th>
+                                        <th>引入的危害</th>
+                                        <th>RCM引入的风险分析</th>
+                                        <th>风险控制措施</th>
+                                        {!isView && <th>操作</th>}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {rcmIntroducedHazRows.map((row: any) => (
+                                        <tr key={row.key}>
+                                            <td>
+                                                {isView ? row.rcmCode : (
+                                                    <Input
+                                                        size="small"
+                                                        value={row.rawRcmValue}
+                                                        placeholder="RCM编号"
+                                                        onChange={(e) => updateSectionTableCell(sectionKey(activeSection), 0, row.sourceRowIndex, rcmIntroducedTable?.rcmCol ?? 0, e.target.value)}
+                                                    />
+                                                )}
+                                            </td>
+                                            <td>{row.hazCode}</td>
+                                            <td>{row.analysis}</td>
+                                            <td>
+                                                {isView ? row.measure : (
+                                                    <Input.TextArea
+                                                        autoSize={{ minRows: 1, maxRows: 4 }}
+                                                        value={row.measure}
+                                                        placeholder="风险控制措施"
+                                                        onChange={(e) => updateSectionTableCell(sectionKey(activeSection), 0, row.sourceRowIndex, rcmIntroducedTable?.measureCol ?? 3, e.target.value)}
+                                                    />
+                                                )}
+                                            </td>
+                                            {!isView && (
+                                                <td>
+                                                    <Button
+                                                        type="link"
+                                                        size="small"
+                                                        danger
+                                                        onClick={() => deleteRcmIntroducedRow(activeSection, row.sourceRowIndex)}>
+                                                        删除
+                                                    </Button>
+                                                </td>
+                                            )}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        ) : (
+                            <div className="risk-mgmt-section-tip">当前章节没有导入 RCM 行，请先添加或编辑 RCM 编号。</div>
+                        )}
+                        {!isView && (
+                            <Button size="small" className="risk-mgmt-add-rcm-row" onClick={() => addRcmIntroducedRow(activeSection)}>
+                                添加RCM行
+                            </Button>
+                        )}
+                    </div>
+                ) : shouldShowProductRcms ? (
+                    <div className="risk-mgmt-rcm-block">
+                        <div className="risk-mgmt-rcm-title">风险控制措施列表</div>
+                        <table className="risk-mgmt-rcm-native-table">
+                            <thead>
+                                <tr>
+                                    <th>控制措施描述</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {(data.prodRcms || []).map((row: any) => (
+                                    <tr key={row.id || row.rcm_id || row.code}>
+                                        <td>{row.description}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                ) : tables.map((rows: any[], tableIndex: number) => (
+                    <table className="risk-mgmt-section-table" key={`table-${tableIndex}`}>
+                        <tbody>
+                            {(rows || []).map((row: any[], rowIndex: number) => (
+                                <tr key={`row-${rowIndex}`}>
+                                    {(row || []).map((cell: any, cellIndex: number) => (
+                                        <td key={`cell-${cellIndex}`}>
+                                            {isView ? cell : (
+                                                <Input.TextArea
+                                                    autoSize={{ minRows: 1, maxRows: 8 }}
+                                                    value={cell}
+                                                    onChange={(e) => updateSectionTableCell(sectionKey(activeSection), tableIndex, rowIndex, cellIndex, e.target.value)}
+                                                />
+                                            )}
+                                        </td>
+                                    ))}
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                ))}
+                {!sectionText && tables.length === 0 && !shouldShowProductRcms && !isRcmIntroducedHazSection && !isAppendixBRiskMatrixSection ? "当前章节暂无可展示内容" : null}
+            </div>
+        );
+    };
 
     return (
         <div className="risk-mgmt-detail div-v">
@@ -263,6 +1330,11 @@ export default () => {
                         </Button>
                     </Space>
                 )}
+                {!isAdd && (
+                    <Button loading={data.exporting} onClick={doExport}>
+                        导出
+                    </Button>
+                )}
             </div>
             <Form form={form} layout="vertical" disabled={isView}>
                 <Card title="基础信息" loading={data.loading}>
@@ -276,7 +1348,10 @@ export default () => {
                                     products={data.products}
                                     namePlaceholder={ts("product.name")}
                                     versionPlaceholder={ts("product.full_version")}
-                                    onChange={(value) => form.setFieldValue("product_id", value)}
+                                    onChange={(value) => {
+                                        form.setFieldValue("product_id", value);
+                                        loadRiskLookupData(value);
+                                    }}
                                 />
                             </Form.Item>
                         ) : (
@@ -298,49 +1373,44 @@ export default () => {
                             rules={[{ required: true, message: sprintf(ts("msg_input"), { label: ts("risk_mgmt_doc.version") }) }]}>
                             <Input />
                         </Form.Item>
-                        <Form.Item label={ts("risk_mgmt_doc.file_no")} name="file_no">
-                            <Input />
-                        </Form.Item>
                     </div>
                     <Form.Item label={ts("risk_mgmt_doc.change_log")} name="change_log">
                         <Input.TextArea autoSize />
                     </Form.Item>
                 </Card>
             </Form>
+            {renderFrontMatterSections()}
             <div className="risk-mgmt-body">
                 <Card title="目录结构">
                     <div className="risk-mgmt-section-list">
-                        {(data.content.sections || []).length ? (
-                            <SectionList sections={data.content.sections || []} />
+                        {!isView && (
+                            <Button className="risk-mgmt-add-root-section" onClick={addRootSection}>
+                                新增一级目录
+                            </Button>
+                        )}
+                        {bodySections.length ? (
+                            <SectionList
+                                sections={bodySections}
+                                activeKey={data.activeSectionKey}
+                                onSelect={selectSection}
+                                onTitleChange={updateSectionTitle}
+                                onAddSibling={addSiblingSection}
+                                onAddChild={addChildSection}
+                                onDelete={deleteSection}
+                                readOnly={isView}
+                            />
                         ) : (
                             <div className="empty">暂无目录结构，请点击初始化模版</div>
                         )}
                     </div>
                 </Card>
-                <Card
-                    title="风险管理参与人员"
-                    extra={!isView && (
-                        <Space>
-                            <Button
-                                type="primary"
-                                onClick={() => dispatch({
-                                    participants: [
-                                        ...(data.participants || []),
-                                        { _rowKey: makeRowKey(), name: "", role: "", responsibility: "" },
-                                    ],
-                                })}>
-                                新增参与人员
-                            </Button>
-                        </Space>
-                    )}>
-                    <Table
-                        rowKey="_rowKey"
-                        pagination={false}
-                        columns={participantColumns}
-                        dataSource={data.participants}
-                        scroll={{ x: 900 }}
-                    />
-                </Card>
+                <div ref={contentCardRef}>
+                    <Card
+                        title={activeSection?.title || "章节内容"}
+                        extra={null}>
+                        {shouldRenderParticipants ? renderParticipantsTable(activeSection) : renderActiveSectionContent()}
+                    </Card>
+                </div>
             </div>
         </div>
     );

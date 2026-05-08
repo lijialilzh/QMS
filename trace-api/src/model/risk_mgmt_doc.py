@@ -18,6 +18,16 @@ class RiskMgmtDoc(Model):
     )
 
 
+class RiskParticipant(Model):
+    __tablename__ = "risk_participant"
+    role = Column(String(256), nullable=False, comment="项目角色")
+    name = Column(String(256), nullable=False, comment="姓名")
+
+    __table_args__ = (
+        UniqueConstraint("role", "name"),
+    )
+
+
 class RiskAnalysis(Model):
     __tablename__ = "risk_analysis"
     doc_id = Column(Integer, nullable=False, comment="风险管理报告ID")

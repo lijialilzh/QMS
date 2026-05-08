@@ -297,7 +297,8 @@ class Server(object):
 
     @staticmethod
     def __normalize_rcm_code(code: str):
-        txt = (code or "").strip().upper()
+        txt = re.sub(r"\s+", "", (code or "")).strip().upper()
+        txt = txt.replace("＿", "_")
         txt = re.sub(r"[，。；;、,.]+$", "", txt)
         return txt
 
@@ -346,6 +347,34 @@ class Server(object):
             if c and c not in result:
                 result.append(c)
         return result
+
+    def __extract_rcm_codes_from_text(self, text: str):
+        result = []
+        for hit in re.findall(r"\bRCM[\s\-_]*[A-Z0-9]+(?:[\-_][A-Z0-9]+)*\b", str(text or ""), flags=re.I):
+            code = self.__normalize_rcm_code(hit)
+            if code and code not in result:
+                result.append(code)
+        return result
+
+    def __table_search_text(self, table):
+        payload = table
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except Exception:
+                return payload
+        if not isinstance(payload, dict):
+            return str(payload or "")
+        values = []
+        for header in payload.get("headers") or []:
+            values.append(str((header or {}).get("name") or ""))
+        for row in payload.get("rows") or []:
+            for value in (row or {}).values():
+                values.append(str(value or ""))
+        for row in payload.get("cells") or []:
+            for cell in row or []:
+                values.append(str((cell or {}).get("value") or ""))
+        return "\n".join(values)
 
     @staticmethod
     def __normalize_header(value: str):
@@ -1200,7 +1229,17 @@ class Server(object):
     def __sync_imported_req_rcms(self, doc_id: int, req_rcm_map: Dict[str, set]):
         if not req_rcm_map:
             return
-        req_codes = [code for code in req_rcm_map.keys() if code]
+        normalized_req_rcm_map = {}
+        for req_code, rcm_codes in (req_rcm_map or {}).items():
+            normalized_req_code = self.__normalize_srs_code(req_code)
+            normalized_rcm_codes = {
+                self.__normalize_rcm_code(rcm_code)
+                for rcm_code in (rcm_codes or set())
+                if self.__normalize_rcm_code(rcm_code)
+            }
+            if normalized_req_code and normalized_rcm_codes:
+                normalized_req_rcm_map.setdefault(normalized_req_code, set()).update(normalized_rcm_codes)
+        req_codes = [code for code in normalized_req_rcm_map.keys() if code]
         if not req_codes:
             return
         req_rows = db.session.execute(select(SrsReq).where(SrsReq.doc_id == doc_id, SrsReq.code.in_(req_codes))).scalars().all()
@@ -1209,15 +1248,15 @@ class Server(object):
         req_ids = [row.id for row in req_rows]
         db.session.execute(delete(ReqRcm).where(ReqRcm.req_id.in_(req_ids)))
 
-        all_rcm_codes = sorted({code for codes in req_rcm_map.values() for code in codes})
+        all_rcm_codes = sorted({code for codes in normalized_req_rcm_map.values() for code in codes})
         if not all_rcm_codes:
             db.session.commit()
             return
-        rcm_rows = db.session.execute(select(Rcm).where(Rcm.code.in_(all_rcm_codes))).scalars().all()
-        rcm_id_dict = {row.code: row.id for row in rcm_rows}
+        rcm_rows = db.session.execute(select(Rcm)).scalars().all()
+        rcm_id_dict = {self.__normalize_rcm_code(row.code): row.id for row in rcm_rows}
         insert_values = []
         for req_row in req_rows:
-            for rcm_code in sorted(req_rcm_map.get(req_row.code, set())):
+            for rcm_code in sorted(normalized_req_rcm_map.get(req_row.code, set())):
                 rcm_id = rcm_id_dict.get(rcm_code)
                 if rcm_id:
                     insert_values.append(dict(req_id=req_row.id, rcm_id=rcm_id))
@@ -1324,7 +1363,18 @@ class Server(object):
                         and not re.match(r"^\d+\.\d+", txt)
                     )
                     if is_enum_item:
-                        level = None
+                        heading_number_for_enum = self.__extract_heading_number(txt)
+                        is_next_root_heading = False
+                        if heading_number_for_enum and "." not in heading_number_for_enum:
+                            try:
+                                heading_num = int(heading_number_for_enum)
+                                # Word 中一级标题有时写成“4. 图像接收”。若序号正好承接当前一级章节，
+                                # 应保留为章节，否则才按正文枚举项处理。
+                                is_next_root_heading = heading_num == heading_counters[0] + 1
+                            except Exception:
+                                is_next_root_heading = False
+                        if not is_next_root_heading:
+                            level = None
                 # 兼容“接口章节下的无编号三级标题”：
                 # 在父级为“x.x 接口”时，将“以‘接口’结尾”的短行识别为下一层级标题（如：数据上传接口、创建处理任务接口）。
                 if txt and level is None and stack:
@@ -1472,35 +1522,105 @@ class Server(object):
 
     def __fix_rcms(self, doc: SrsDoc):
         objs_dict, tree = self.__tree(doc)
+        req_rows = db.session.execute(select(SrsReq).where(SrsReq.doc_id == doc.id)).scalars().all()
+
+        def normalize_match_text(value: str):
+            txt = self.__clean_req_title(str(value or ""))
+            return re.sub(r"[\s\u3000、，。；;：:（）()【】\[\]_\-]+", "", txt).upper()
+
+        def build_req_name_index(rows: List[SrsReq]):
+            index = {}
+            for req in rows or []:
+                names = [
+                    getattr(req, "sub_function", "") or "",
+                    getattr(req, "function", "") or "",
+                    getattr(req, "module", "") or "",
+                ]
+                for name in names:
+                    key = normalize_match_text(name)
+                    if key:
+                        codes = index.setdefault(key, [])
+                        if req.code not in codes:
+                            codes.append(req.code)
+            return index
+
+        req_name_index = build_req_name_index(req_rows)
+
+        def node_search_text(node):
+            parts = [
+                getattr(node, "title", "") or "",
+                getattr(node, "label", "") or "",
+                getattr(node, "text", "") or "",
+            ]
+            table = getattr(node, "table", None)
+            if table:
+                parts.append(self.__table_search_text(table))
+            return "\n".join(parts)
+
+        def extract_rcm_codes_from_node(node):
+            existed = self.__normalize_rcm_codes(getattr(node, "rcm_codes", None) or [])
+            picked = self.__extract_rcm_codes_from_text(node_search_text(node))
+            return self.__normalize_rcm_codes([*existed, *picked])
+
+        def extract_srs_codes_from_node(node):
+            result = []
+            for hit in re.findall(r"SRS[\s\-_]*[A-Z0-9.]+(?:\s*-\s*[A-Z0-9.]+)*", node_search_text(node), flags=re.IGNORECASE):
+                code = self.__normalize_srs_code(hit)
+                if code and code not in result:
+                    result.append(code)
+            return result
+
+        def resolve_srs_code_by_function_context(node):
+            titles = []
+            cur = node
+            safety = 0
+            while cur and safety < 50:
+                title = getattr(cur, "title", "") or ""
+                if title:
+                    titles.append(title)
+                cur = objs_dict.get(getattr(cur, "p_id", 0))
+                safety += 1
+            for title in titles:
+                key = normalize_match_text(title)
+                if key and key in req_name_index and len(req_name_index[key]) == 1:
+                    return req_name_index[key][0]
+            return ""
+
         all_reqs = []
         all_rcms = []
         all_pairs = []
         for node in iter_tree(tree):
-            rcm_codes = node.rcm_codes or []
+            rcm_codes = extract_rcm_codes_from_node(node)
             if rcm_codes:
-                srs_code = node.srs_code
+                srs_code = self.__normalize_srs_code(node.srs_code)
+                direct_srs_codes = extract_srs_codes_from_node(node)
+                if direct_srs_codes:
+                    for direct_srs_code in direct_srs_codes:
+                        all_reqs.append(direct_srs_code)
+                        all_rcms.extend(rcm_codes)
+                        all_pairs.append((direct_srs_code, rcm_codes))
+                    continue
                 if not srs_code:
                     p_node = objs_dict.get(node.p_id)
                     while p_node:
-                        srs_code = p_node.srs_code
+                        srs_code = self.__normalize_srs_code(p_node.srs_code)
                         if srs_code:
                             break
                         p_node = objs_dict.get(p_node.p_id)
+                if not srs_code:
+                    srs_code = self.__normalize_srs_code(resolve_srs_code_by_function_context(node))
                 if not srs_code:
                     continue
                 all_reqs.append(srs_code)
                 all_rcms.extend(rcm_codes)
                 all_pairs.append((srs_code, rcm_codes))
 
-        sql = select(SrsReq).where(SrsReq.doc_id == doc.id, SrsReq.code.in_(all_reqs))
-        reqs = db.session.execute(sql).scalars().all()
         reqs_dict = dict()
-        for req in reqs:
+        for req in req_rows:
             reqs_dict.setdefault(req.code, []).append(req.id)
         
-        sql = select(Rcm).where(Rcm.code.in_(all_rcms))
-        rcms = db.session.execute(sql).scalars().all()
-        rcms_dict = {rcm.code: rcm.id for rcm in rcms}
+        rcms = db.session.execute(select(Rcm)).scalars().all()
+        rcms_dict = {self.__normalize_rcm_code(rcm.code): rcm.id for rcm in rcms}
         
         delete_values = []
         insert_values = []
@@ -2526,12 +2646,7 @@ class Server(object):
                     str(getattr(row, "exception", "") or ""),
                     str(getattr(row, "constraint", "") or ""),
                 ])
-                picked = []
-                for hit in re.findall(r"RCM[\s\-_]*\d{2,4}", merged_text, flags=re.IGNORECASE):
-                    code_norm = re.sub(r"[\s\-_]", "", self.__normalize_rcm_code(hit))
-                    if code_norm.startswith("RCM") and code_norm[3:].isdigit():
-                        picked.append(code_norm)
-                dedup = list(dict.fromkeys(picked))
+                dedup = self.__extract_rcm_codes_from_text(merged_text)
                 if dedup:
                     result[int(row.req_id)] = dedup
             return result
@@ -2584,16 +2699,11 @@ class Server(object):
                     str(title or ""),
                     str(label or ""),
                     str(text or ""),
-                    json.dumps(table, ensure_ascii=False) if table is not None else "",
+                    self.__table_search_text(table) if table is not None else "",
                 ])
                 parts = [str(item or "").strip() for item in re.split(r"[,，;；\s]+", str(raw_codes or "")) if str(item or "").strip()]
                 if not parts:
-                    picked = []
-                    for hit in re.findall(r"RCM[\s\-_]*\d{2,4}", merged_text, flags=re.IGNORECASE):
-                        code_norm = re.sub(r"[\s\-_]", "", self.__normalize_rcm_code(hit))
-                        if code_norm.startswith("RCM") and code_norm[3:].isdigit():
-                            picked.append(code_norm)
-                    parts = list(dict.fromkeys(picked))
+                    parts = self.__extract_rcm_codes_from_text(merged_text)
                 if not parts:
                     continue
                 # 兜底：节点正文中显式出现了 SRS 编号时，直接按“编号->RCM”关联

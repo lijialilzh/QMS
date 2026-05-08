@@ -24,4 +24,40 @@
         overflow: hidden;
         text-overflow: ellipsis;
     }
+
+    .ant-table-tbody > tr > td.prod-rcm-wrap-cell {
+        white-space: normal !important;
+        overflow: visible;
+        text-overflow: clip;
+        vertical-align: middle;
+    }
+
+    .prod-rcm-code-list {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        line-height: 1.5;
+        white-space: normal;
+        word-break: break-all;
+    }
+
+    .prod-rcm-code-line {
+        white-space: normal;
+        word-break: break-all;
+    }
+
+    .ant-table-tbody > tr > td.prod-rcm-test-cell {
+        white-space: nowrap !important;
+        overflow: visible;
+    }
+
+    .prod-rcm-test-list {
+        white-space: nowrap;
+        word-break: normal;
+    }
+
+    .prod-rcm-test-list .prod-rcm-code-line {
+        white-space: nowrap;
+        word-break: normal;
+    }
 }
