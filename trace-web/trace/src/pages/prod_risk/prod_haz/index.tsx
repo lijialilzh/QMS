@@ -330,7 +330,7 @@ export default () => {
         {
             title: ts("haz.rcms"),
             dataIndex: "rcms",
-            width: 240,
+            width: 120,
             className: "wrap-cell",
             render: (value: any, row: any) => {
                 if (data.targetEdit.id !== row.id) {
@@ -377,15 +377,17 @@ export default () => {
         {
             title: ts("haz.evidence"),
             dataIndex: "evidence",
-            width: 200,
-            className: "wrap-cell",
+            width: 320,
+            className: "wrap-cell evidence-cell",
+            onHeaderCell: () => ({ style: { minWidth: 320 } }),
+            onCell: () => ({ style: { minWidth: 320 } }),
             render: (value: any, row: any) => {
                 if (data.targetEdit.id !== row.id) {
                     const evidences = buildEvidenceLines(value);
                     return (
                         <div className="wrap-list-cell" title={value || ""}>
                             {evidences.map((item, idx) => (
-                                <div key={`${item}-${idx}`} className="wrap-list-item">
+                                <div key={`${item}-${idx}`} className="wrap-list-item evidence-list-item">
                                     {item}
                                 </div>
                             ))}

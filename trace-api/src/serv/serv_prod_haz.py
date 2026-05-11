@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from typing import List, Tuple
 from sqlalchemy import select, delete, func, or_
 from sqlalchemy.sql import desc
@@ -15,12 +16,32 @@ from ..utils.sql_ctx import db
 from ..utils.i18n import ts
 from ..obj import Page, Resp
 from .serv_haz import export_columns
+from .serv_prod_rcm import Server as ProdRcmServer
 from . import msg_err_db
 
 logger = logging.getLogger(__name__)
 
 
 class Server(object):
+
+    def __split_rcm_codes(self, value: str) -> List[str]:
+        text = str(value or "")
+        matches = re.findall(r"\bRCM[\s\-_]*[A-Z0-9]+(?:[\-_][A-Z0-9]+)*\b", text, flags=re.I)
+        return [code.upper().replace("_", "-") for code in dict.fromkeys(matches)]
+
+    async def __query_prod_rcm_values(self, op_user: UserObj, prod_ids: List[int]) -> dict:
+        results = {}
+        server = ProdRcmServer()
+        for prod_id in dict.fromkeys([item for item in prod_ids if item]):
+            resp = await server.list_prod_rcm(op_user, export=True, prod_id=prod_id, page_index=0, page_size=100000)
+            for row in (getattr(getattr(resp, "data", None), "rows", None) or []):
+                code = str(getattr(row, "code", "") or "").strip().upper()
+                if code:
+                    results[(prod_id, code)] = {
+                        "description": getattr(row, "description", None) or "",
+                        "test_codes": getattr(row, "test_codes", None) or [],
+                    }
+        return results
 
     async def add_prod_hazs(self, form: ProdHazsForm):
         try:
@@ -69,6 +90,7 @@ class Server(object):
         sql = sql.order_by(Haz.code)
         rows: List[Tuple[ProdHaz, Product, Haz]] = db.session.execute(sql).all()
         objs = []
+        prod_rcm_dict = await self.__query_prod_rcm_values(op_user, [row_prd.id for _, row_prd, _ in rows if row_prd])
         for row, row_prd, row_haz in rows:
             obj = ProdHazObj(**row.dict())
             if row_haz:
@@ -88,9 +110,22 @@ class Server(object):
 
                 obj.rcms = row.rcms or row_haz.rcms
                 obj.evidence = row.evidence or row_haz.evidence
+                if row_prd:
+                    deal_items = []
+                    evidence_items = []
+                    for rcm_code in self.__split_rcm_codes(obj.rcms):
+                        rcm_data = prod_rcm_dict.get((row_prd.id, rcm_code)) or {}
+                        description = str(rcm_data.get("description") or "").strip()
+                        if description:
+                            deal_items.append(description)
+                        evidence_items.extend(rcm_data.get("test_codes") or [])
+                    if deal_items:
+                        obj.deal = "\n".join(dict.fromkeys(deal_items))
+                    if evidence_items:
+                        obj.evidence = "\n".join(dict.fromkeys(evidence_items))
                 obj.situation = row.situation or row_haz.situation
                 obj.damage = row.damage or row_haz.damage
-                obj.deal = row.deal or row_haz.deal
+                obj.deal = obj.deal or row.deal or row_haz.deal
             if row_prd:
                 obj.product_name = row_prd.name
                 obj.product_version = row_prd.full_version

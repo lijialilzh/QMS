@@ -218,6 +218,160 @@ class Server(object):
         return None
 
     @staticmethod
+    def __paragraph_num_info(para):
+        """读取段落的 Word 自动编号 numId/ilvl，用于还原正文列表编号。"""
+        def _num_info_from_ppr(p_pr):
+            if p_pr is None:
+                return None
+            try:
+                num_pr = Server.__xml_child(p_pr, "numPr")
+                if num_pr is None:
+                    num_pr = getattr(p_pr, "numPr", None)
+                if num_pr is None:
+                    return None
+                num_id_el = Server.__xml_child(num_pr, "numId")
+                if num_id_el is None:
+                    num_id_el = getattr(num_pr, "numId", None)
+                ilvl_el = Server.__xml_child(num_pr, "ilvl")
+                if ilvl_el is None:
+                    ilvl_el = getattr(num_pr, "ilvl", None)
+                num_id = Server.__xml_attr(num_id_el, "val") or (getattr(num_id_el, "val", None) if num_id_el is not None else None)
+                ilvl = Server.__xml_attr(ilvl_el, "val") or (getattr(ilvl_el, "val", None) if ilvl_el is not None else 0)
+                if num_id is None:
+                    return None
+                return str(num_id), int(str(ilvl or 0))
+            except Exception:
+                return None
+
+        try:
+            p_pr = getattr(getattr(para, "_element", None), "pPr", None)
+            info = _num_info_from_ppr(p_pr)
+            if info is not None:
+                return info
+            style = getattr(para, "style", None)
+            hops = 0
+            while style is not None and hops < 8:
+                style_ppr = getattr(getattr(style, "_element", None), "pPr", None)
+                info = _num_info_from_ppr(style_ppr)
+                if info is not None:
+                    return info
+                style = getattr(style, "base_style", None)
+                hops += 1
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def __xml_child(el, local_name: str):
+        try:
+            for child in el:
+                if str(getattr(child, "tag", "")).endswith(f"}}{local_name}"):
+                    return child
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def __xml_attr(el, local_name: str):
+        if el is None or qn is None:
+            return None
+        try:
+            return el.get(qn(f"w:{local_name}"))
+        except Exception:
+            return None
+
+    def __build_numbering_definitions(self, docx: Document):
+        """解析 numbering.xml，建立 numId 到列表格式的映射。"""
+        result = {}
+        try:
+            numbering_part = getattr(getattr(docx, "part", None), "numbering_part", None)
+            numbering = getattr(numbering_part, "element", None)
+            if numbering is None:
+                return result
+
+            abstract_levels = {}
+            for abstract in numbering.xpath("./*[local-name()='abstractNum']"):
+                abstract_id = self.__xml_attr(abstract, "abstractNumId")
+                if abstract_id is None:
+                    continue
+                levels = {}
+                for lvl in abstract.xpath("./*[local-name()='lvl']"):
+                    ilvl = self.__xml_attr(lvl, "ilvl")
+                    if ilvl is None:
+                        continue
+                    start_el = self.__xml_child(lvl, "start")
+                    num_fmt_el = self.__xml_child(lvl, "numFmt")
+                    lvl_text_el = self.__xml_child(lvl, "lvlText")
+                    try:
+                        start = int(str(self.__xml_attr(start_el, "val") or "1"))
+                    except Exception:
+                        start = 1
+                    levels[int(str(ilvl))] = {
+                        "start": start,
+                        "num_fmt": self.__xml_attr(num_fmt_el, "val") or "decimal",
+                        "lvl_text": self.__xml_attr(lvl_text_el, "val") or f"%{int(str(ilvl)) + 1}.",
+                    }
+                abstract_levels[str(abstract_id)] = levels
+
+            for num in numbering.xpath("./*[local-name()='num']"):
+                num_id = self.__xml_attr(num, "numId")
+                abstract_id_el = self.__xml_child(num, "abstractNumId")
+                abstract_id = self.__xml_attr(abstract_id_el, "val")
+                if num_id is None or abstract_id is None:
+                    continue
+                levels = deepcopy(abstract_levels.get(str(abstract_id), {}))
+                for override in num.xpath("./*[local-name()='lvlOverride']"):
+                    ilvl = self.__xml_attr(override, "ilvl")
+                    start_el = self.__xml_child(override, "startOverride")
+                    if ilvl is None or start_el is None:
+                        continue
+                    try:
+                        levels.setdefault(int(str(ilvl)), {})["start"] = int(str(self.__xml_attr(start_el, "val") or "1"))
+                    except Exception:
+                        pass
+                result[str(num_id)] = levels
+        except Exception:
+            logger.exception("parse word numbering failed")
+        return result
+
+    def __build_body_numbering_prefix(self, para, numbering_defs: Dict[str, dict], counters: Dict[str, dict]):
+        num_info = self.__paragraph_num_info(para)
+        if not num_info:
+            return None
+        num_id, ilvl = num_info
+        levels = numbering_defs.get(str(num_id)) or {}
+        level_def = levels.get(int(ilvl)) or {}
+        num_fmt = str(level_def.get("num_fmt") or "decimal").lower()
+        if num_fmt == "bullet":
+            return None
+
+        item_counters = counters.setdefault(str(num_id), {})
+        for key in list(item_counters.keys()):
+            if int(key) > int(ilvl):
+                item_counters.pop(key, None)
+        start = int(level_def.get("start") or 1)
+        item_counters[int(ilvl)] = int(item_counters.get(int(ilvl), start - 1)) + 1
+
+        lvl_text = str(level_def.get("lvl_text") or f"%{int(ilvl) + 1}.")
+        prefix = lvl_text
+        for idx in range(9):
+            value = item_counters.get(idx)
+            if value is None:
+                value = item_counters.get(int(ilvl), start)
+            prefix = prefix.replace(f"%{idx + 1}", str(value))
+        return prefix.strip()
+
+    def __paragraph_text_with_numbering(self, para, numbering_defs: Dict[str, dict], counters: Dict[str, dict]):
+        txt = self.__normalize_text(getattr(para, "text", "") or "")
+        if not txt:
+            return ""
+        numbering_prefix = self.__build_body_numbering_prefix(para, numbering_defs or {}, counters)
+        if numbering_prefix and not re.match(r"^\s*(?:\d+(?:\.\d+)*|[一二三四五六七八九十]+)[）).、．]\s*", txt):
+            spacer = "" if re.search(r"[）)]$", numbering_prefix) else " "
+            txt = f"{numbering_prefix}{spacer}{txt}".strip()
+        return txt
+
+    @staticmethod
     def __is_bold_paragraph(para):
         # 优先按 run 判断；若 run 未显式设置，再回退到样式链 bold。
         if any(run.bold for run in para.runs if (run.text or "").strip()):
@@ -267,8 +421,9 @@ class Server(object):
                     return None
                 if re.search(r"[，,。；;：:！？!?]", tail):
                     return None
-            # 句末为分号/冒号/句号等更像正文项，不识别为标题。
-            if re.search(r"[;；:：,，。！？!?]$", tail):
+            # 句末为分号/句号等更像正文项，不识别为标题。
+            # 多级章节标题在 Word 中常写成“2.3.1 图像接收：”，这类冒号结尾仍应按章节处理。
+            if re.search(r"[;；,，。！？!?]$", tail) or (chapter_no.count(".") < 2 and re.search(r"[:：]$", tail)):
                 return None
             # 非粗体的两级编号（如 7.1 xxx）误识别概率高，增加约束：
             # 仅当尾部很短且无正文标点时才作为标题。
@@ -294,6 +449,26 @@ class Server(object):
     @staticmethod
     def __normalize_text(value):
         return (value or "").replace("\xa0", " ").strip()
+
+    @staticmethod
+    def __is_toc_paragraph(para):
+        txt = (para.text or "").replace("\xa0", " ").strip()
+        if not txt:
+            return False
+        try:
+            style_name = str(getattr(getattr(para, "style", None), "name", "") or "").lower()
+            if "toc" in style_name or "目录" in style_name:
+                return True
+        except Exception:
+            pass
+        try:
+            instr_text = " ".join([str(item.text or "") for item in para._element.xpath(".//*[local-name()='instrText']")])
+            if re.search(r"\bTOC\b", instr_text, re.I):
+                return True
+        except Exception:
+            pass
+        # 目录项常见形态：“4. 图像接收 12”，最后一段数字是页码，不能当作正文标题导入。
+        return bool(re.match(r"^\d+(?:\.\d+){0,4}[\s、.．]+.{1,80}\s+\d{1,4}$", txt))
 
     @staticmethod
     def __normalize_rcm_code(code: str):
@@ -510,6 +685,21 @@ class Server(object):
                 col_idx["rcm"] = idx
         return col_idx
 
+    def __fill_req_table_merged_values(self, values: List[str], col_idx: Dict[str, int], last_values: Dict[str, str]):
+        """Word 纵向合并单元格在续行常为空，需求表字段需要继承上一条非空值。"""
+        next_values = list(values or [])
+        for field in ["module", "function", "sub_function", "location"]:
+            idx = col_idx.get(field)
+            if idx is None or idx >= len(next_values):
+                continue
+            current = self.__normalize_text(next_values[idx])
+            if current:
+                last_values[field] = current
+                next_values[idx] = current
+            elif last_values.get(field):
+                next_values[idx] = last_values[field]
+        return next_values
+
     def __extract_srs_reqs_from_tables(self, docx: Document):
         req_rows = []
         req_rcm_map: Dict[str, set] = {}
@@ -529,7 +719,12 @@ class Server(object):
             tab = DocxTable(child, docx._body)
             if not tab.rows:
                 continue
-            headers = [self.__normalize_text(cell.text) for cell in tab.rows[0].cells]
+            parsed_table = self.__parse_docx_table(tab, self.__build_numbering_definitions(docx))
+            headers = [self.__normalize_text(getattr(h, "name", "") or "") for h in (getattr(parsed_table, "headers", None) or [])]
+            raw_rows = getattr(parsed_table, "rows", None) or []
+            header_codes = [getattr(h, "code", "") for h in (getattr(parsed_table, "headers", None) or [])]
+            if not headers:
+                headers = [self.__normalize_text(cell.text) for cell in tab.rows[0].cells]
             headers_norm = [self.__normalize_header(item) for item in headers]
             if not headers_norm:
                 continue
@@ -549,12 +744,18 @@ class Server(object):
             has_function_col = "function" in col_idx
             has_sub_function_col = "sub_function" in col_idx
             type_code = "2" if has_location_col and not has_function_col and not has_sub_function_col else "1"
-            for row in tab.rows[1:]:
-                values = [self.__normalize_text(cell.text) for cell in row.cells]
+            last_values: Dict[str, str] = {}
+            source_rows = raw_rows if raw_rows else tab.rows[1:]
+            for row in source_rows:
+                if isinstance(row, dict):
+                    values = [self.__normalize_text(str((row or {}).get(code, "") or "")) for code in header_codes]
+                else:
+                    values = [self.__normalize_text(cell.text) for cell in row.cells]
                 code = values[col_idx["code"]] if col_idx["code"] < len(values) else ""
                 code = self.__normalize_srs_code(code)
                 if not code_pattern.match(code or ""):
                     continue
+                values = self.__fill_req_table_merged_values(values, col_idx, last_values)
                 code_upper = code.upper()
                 req_rows.append(
                     dict(
@@ -600,12 +801,14 @@ class Server(object):
                     if has_product_cols or has_other_cols:
                         type_code = "2" if has_other_cols and "function" not in col_idx and "sub_function" not in col_idx else "1"
                         col_codes = [getattr(h, "code", "") for h in headers]
+                        last_values: Dict[str, str] = {}
                         for row in rows or []:
                             values = [self.__normalize_text(str((row or {}).get(code, "") or "")) for code in col_codes]
                             code = values[col_idx["code"]] if col_idx["code"] < len(values) else ""
                             code = self.__normalize_srs_code(code)
                             if not code_pattern.match(code or ""):
                                 continue
+                            values = self.__fill_req_table_merged_values(values, col_idx, last_values)
                             code_upper = code.upper()
                             key = (type_code, code_upper)
                             if key in seen:
@@ -629,7 +832,7 @@ class Server(object):
                 if include_node_codes:
                     # 兜底：从章节节点上的 srs_code 直接生成需求，避免因表格格式变化导致 SRS 管理为空
                     node_srs_code = self.__normalize_srs_code(str(getattr(node, "srs_code", "") or ""))
-                    if node_srs_code and code_pattern.match(node_srs_code):
+                    if node_srs_code and code_pattern.match(node_srs_code) and not re.match(r"^SRS-RCN300-\d+$", node_srs_code, re.I):
                         key = ("1", node_srs_code.upper())
                         if key not in seen:
                             seen.add(key)
@@ -1021,7 +1224,7 @@ class Server(object):
         if changed:
             db.session.commit()
 
-    def __parse_docx_table(self, tab):
+    def __parse_docx_table(self, tab, numbering_defs: Dict[str, dict] = None):
         # Parse table content and merged-cell structure from Word XML.
         tr_list = list(tab._tbl.tr_lst)  # type: ignore[attr-defined]
         if not tr_list:
@@ -1075,6 +1278,19 @@ class Server(object):
             except Exception:
                 return "top"
 
+        def cell_text(tc):
+            counters: Dict[str, dict] = {}
+            lines = []
+            for p in getattr(tc, "p_lst", []) or []:  # type: ignore[attr-defined]
+                try:
+                    para = Paragraph(p, getattr(tab, "_parent", None))
+                    txt = self.__paragraph_text_with_numbering(para, numbering_defs or {}, counters)
+                except Exception:
+                    txt = self.__normalize_text(getattr(p, "text", "") or "")
+                if txt:
+                    lines.append(txt)
+            return self.__normalize_text("\n".join(lines))
+
         col_count = 0
         for tr in tr_list:
             count = 0
@@ -1095,7 +1311,7 @@ class Server(object):
                 if c_idx >= col_count:
                     break
                 span = max(1, grid_span(tc))
-                text = self.__normalize_text("\n".join([self.__normalize_text(p.text) for p in tc.p_lst]))  # type: ignore[attr-defined]
+                text = cell_text(tc)
                 cell_h_align = h_align(tc)
                 cell_v_align = v_align(tc)
                 vm = v_merge(tc)
@@ -1275,6 +1491,8 @@ class Server(object):
         img_idx = 0
         table_idx = 0
         heading_counters = [0, 0, 0, 0, 0]
+        numbering_defs = self.__build_numbering_definitions(docx)
+        body_numbering_counters: Dict[str, dict] = {}
 
         def ensure_text_holder():
             nonlocal current
@@ -1354,6 +1572,8 @@ class Server(object):
             if tag.endswith("}p"):
                 para = Paragraph(child, docx._body)
                 txt = self.__normalize_text(para.text)
+                if txt and self.__is_toc_paragraph(para):
+                    continue
                 numpr_level = self.__guess_numpr_level(para) if txt else None
                 level = self.__guess_heading_level(para) if txt else None
                 # 在已进入任一章节（1/2/3...级）后，"1. xxx / 2. xxx" 这类枚举项按正文处理，不识别为标题。
@@ -1410,14 +1630,15 @@ class Server(object):
                         node.srs_code = srs_hit.group(0).upper()
                     attach_node(level, node)
                 elif txt:
+                    body_txt = self.__paragraph_text_with_numbering(para, numbering_defs, body_numbering_counters)
                     holder = ensure_text_holder()
-                    holder.text = f"{holder.text}\n{txt}".strip() if holder.text else txt
-                    rcm_codes = {self.__normalize_rcm_code(item) for item in rcm_pattern.findall(txt)}
+                    holder.text = f"{holder.text}\n{body_txt}".strip() if holder.text else body_txt
+                    rcm_codes = {self.__normalize_rcm_code(item) for item in rcm_pattern.findall(body_txt)}
                     rcm_codes = {code for code in rcm_codes if code}
                     if rcm_codes:
                         existed = set(self.__normalize_rcm_codes(holder.rcm_codes or []))
                         holder.rcm_codes = sorted(existed.union(rcm_codes))
-                    srs_hit = srs_pattern.search(txt)
+                    srs_hit = srs_pattern.search(body_txt)
                     if srs_hit and not holder.srs_code:
                         holder.srs_code = srs_hit.group(0).upper()
 
@@ -1426,7 +1647,7 @@ class Server(object):
                     attach_to_current(SrsNodeForm(title=f"导入图片{img_idx}", img_url=img_url, children=[]))
             elif tag.endswith("}tbl"):
                 tab = DocxTable(child, docx._body)
-                table = self.__parse_docx_table(tab)
+                table = self.__parse_docx_table(tab, numbering_defs)
                 if table is None or not table.headers:
                     continue
                 table_idx += 1
@@ -1451,13 +1672,30 @@ class Server(object):
             srs_req_rows_docx, req_rcm_map_docx = self.__extract_srs_reqs_from_tables(docx)
             srs_reqd_rows_nodes = self.__extract_srs_reqds_from_nodes(content)
             srs_req_rows = []
-            seen_req_keys = set()
+            req_row_dict = {}
+
+            def req_row_score(item: dict):
+                return sum(
+                    1
+                    for field in ["module", "function", "sub_function", "location"]
+                    if self.__normalize_text(str((item or {}).get(field) or "")).strip() not in ["", "/", "\\", "／", "＼"]
+                )
+
             for item in [*(srs_req_rows_nodes or []), *(srs_req_rows_docx or [])]:
                 key = ((item or {}).get("type_code") or "1", (item or {}).get("code") or "")
-                if not key[1] or key in seen_req_keys:
+                if not key[1]:
                     continue
-                seen_req_keys.add(key)
-                srs_req_rows.append(item)
+                existed = req_row_dict.get(key)
+                if not existed:
+                    req_row_dict[key] = dict(item)
+                    continue
+                if req_row_score(item) > req_row_score(existed):
+                    req_row_dict[key] = {**existed, **item}
+                else:
+                    for field in ["module", "function", "sub_function", "location"]:
+                        if not self.__normalize_text(str(existed.get(field) or "")) and self.__normalize_text(str((item or {}).get(field) or "")):
+                            existed[field] = item.get(field)
+            srs_req_rows = list(req_row_dict.values())
             req_rcm_map = {}
             for req_map in [req_rcm_map_nodes or {}, req_rcm_map_docx or {}]:
                 for req_code, rcm_set in req_map.items():
@@ -1475,6 +1713,7 @@ class Server(object):
             resp = await self.add_srs_doc(form)
             if resp.code == 200 and resp.data and resp.data.id:
                 self.__upsert_imported_srs_reqs(resp.data.id, srs_req_rows)
+                self.__sync_saved_doc_srs_tables_from_req_rows(resp.data.id)
                 self.__sync_imported_req_rcms(resp.data.id, req_rcm_map)
                 self.__upsert_imported_srs_reqds(resp.data.id, srs_reqd_rows_nodes)
                 # 新增能力：根据导入文档中的章节图片，自动回填产品图表文件库（保留手动上传能力）

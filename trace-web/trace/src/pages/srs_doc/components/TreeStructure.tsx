@@ -1215,7 +1215,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
     };
     const filterReqTableRows = (table: TableData | null | undefined, detailMap: Map<string, any>) => {
         if (!table || !Array.isArray(table.rows)) return table;
-        if (!isReqMainTable(table) && !isReqOtherTable(table)) return table;
+        if (isReqMainTable(table) || isReqOtherTable(table)) return table;
         const hasReqCodes = (table.rows || []).some((row) => !!extractSrsCodeFromTableRow(row));
         const cellBodyRows = Array.isArray(table.cells) ? table.cells.slice(1) : [];
         const hasCellReqCodes = cellBodyRows.some((row) => !!extractSrsCodeFromCellRow(row));

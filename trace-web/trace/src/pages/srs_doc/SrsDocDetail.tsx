@@ -147,19 +147,11 @@ export default () => {
     const reqListDataForTree = srsSourceCodeSet.size > 0
         ? (data.reqListData || []).filter((item: any) => srsSourceCodeSet.has(normalizeSrsCodeForSync(item?.code)))
         : (data.reqListData || []);
-    const currentReqCodeSet = new Set((reqListDataForTree || []).map((item: any) => normalizeSrsCodeForSync(item?.code)).filter(Boolean));
-    const filterRowsByCurrentReqCodes = (rows: any[] = []) => {
-        if (currentReqCodeSet.size === 0) return rows || [];
-        return (rows || []).filter((row: any) => {
-            const code = normalizeSrsCodeForSync(row?.srs_code || row?.code);
-            return !code || currentReqCodeSet.has(code);
-        });
-    };
-    const filteredSrsTableData = filterRowsByCurrentReqCodes(data.srsTableData as any[]);
-    const filteredSrsOtherReqData = filterRowsByCurrentReqCodes(data.srsOtherReqData as any[]);
+    const filteredSrsTableData = data.srsTableData as any[];
+    const filteredSrsOtherReqData = data.srsOtherReqData as any[];
     const filteredSrsChangeTables = (data.srsChangeTables || []).map((table: any) => ({
         ...table,
-        data: filterRowsByCurrentReqCodes(table.data || []),
+        data: table.data || [],
     }));
 
     // 加载产品相关的 RCM 列表（用于章节 RCM 选择控件）
@@ -268,12 +260,109 @@ export default () => {
         return !v || v.length < 8 || !v.includes("-");
     };
 
+    const buildSrsTableState = (reqRes: any, typeRes: any) => {
+        if (reqRes.code !== Api.C_OK) {
+            throw new Error(reqRes.msg || "加载SRS表数据失败");
+        }
+        const rows = reqRes.data?.rows || [];
+        const mainData = rows
+            .filter((item: any) => item.type_code === "1")
+            .map((item: any, index: number) => ({
+                key: item.id || `main_${index}_${Date.now()}`,
+                id: item.id,
+                doc_id: item.doc_id,
+                srs_code: item.code || "",
+                module: normalizeReqText(item.module),
+                function: normalizeReqText(item.function),
+                sub_function: normalizeReqText(item.sub_function),
+                location: item.location || "",
+                type_code: item.type_code || "1",
+            }));
+        const otherData = rows
+            .filter((item: any) => item.type_code === "2")
+            .map((item: any, index: number) => ({
+                key: item.id || `other_${index}_${Date.now()}`,
+                id: item.id,
+                doc_id: item.doc_id,
+                srs_code: item.code || "",
+                module: item.module || "",
+                location: item.location || "",
+                type_code: item.type_code || "2",
+            }));
+
+        const typeRows = typeRes.code === ApiSrsType.C_OK ? (typeRes.data?.rows || []) : [];
+        const isBaseReq = (r: any) => r?.type_code === "1" || r?.type_code === "2";
+        const toChangeRow = (reqItem: any, keyPrefix: string, reqIndex: number) => ({
+            key: reqItem.id || `${keyPrefix}_${reqIndex}_${Date.now()}`,
+            id: reqItem.id,
+            doc_id: reqItem.doc_id,
+            srs_code: reqItem.code || "",
+            module: normalizeReqText(reqItem.module),
+            function: normalizeReqText(reqItem.function),
+            sub_function: normalizeReqText(reqItem.sub_function),
+            location: reqItem.location || "",
+            type_code: reqItem.type_code || "",
+        });
+        const allChangeRows = rows.filter((reqItem: any) => !isBaseReq(reqItem));
+        const typeNameMap = new Map<string, { id: number | string; title: string }>();
+        typeRows.forEach((item: any, index: number) => {
+            const code = String(item.type_code || "");
+            if (!code) return;
+            typeNameMap.set(code, {
+                id: item.id || `type_${index}`,
+                title: item.type_name || `变更表${index + 1}`,
+            });
+        });
+        const groupedByType = new Map<string, any[]>();
+        allChangeRows.forEach((reqItem: any) => {
+            const code = String(reqItem.type_code || "");
+            if (!code) return;
+            const list = groupedByType.get(code) || [];
+            list.push(reqItem);
+            groupedByType.set(code, list);
+        });
+        const typeCodes = Array.from(new Set([
+            ...Array.from(typeNameMap.keys()),
+            ...Array.from(groupedByType.keys()),
+        ]));
+        const changeTablesData = typeCodes.map((code, index) => {
+            const meta = typeNameMap.get(code);
+            const tableRows = (groupedByType.get(code) || []).map((reqItem: any, reqIndex: number) =>
+                toChangeRow(reqItem, `change_${code || index}`, reqIndex)
+            );
+            return {
+                id: meta?.id || `change_${code || index}`,
+                title: meta?.title || "变更需求",
+                type_code: code,
+                data: tableRows,
+            };
+        });
+
+        return { srsTableData: mainData, srsOtherReqData: otherData, srsChangeTables: changeTablesData };
+    };
+
+    const fetchSrsTableState = async (docId: number) => {
+        const [reqRes, typeRes]: any[] = await Promise.all([
+            ApiSrsReq.list_srs_req({
+                doc_id: docId,
+                page_index: 0,
+                page_size: 10000,
+            }),
+            ApiSrsType.list_srs_type({
+                doc_id: docId,
+                page_index: 0,
+                page_size: 10000,
+            }),
+        ]);
+        return buildSrsTableState(reqRes, typeRes);
+    };
+
     useEffect(() => {
         const id = params.id;
         if (id) {
             // 编辑模式
             dispatch({ loading: true, isEdit: true });
-            Api.get_srs_doc({ id }).then((res: any) => {
+            Promise.all([Api.get_srs_doc({ id }), fetchSrsTableState(parseInt(id))]).then(([res, srsTableState]: any[]) => {
                 if (res.code === Api.C_OK) {
                     const targetRow = res.data;
                     
@@ -298,16 +387,24 @@ export default () => {
                         treeStructure: parsedContent,
                         docProductId: targetRow.product_id,
                         docVersion: targetRow.version ?? "",
+                        srsTableData: srsTableState.srsTableData,
+                        srsOtherReqData: srsTableState.srsOtherReqData,
+                        srsChangeTables: srsTableState.srsChangeTables,
+                        srsTableLoading: false,
                     });
                     treeStructureRef.current = parsedContent;
                     initialEditTreeRef.current = cloneTree(parsedContent);
-                    loadSrsTableData();
                     loadReqListData();
                 } else {
                     message.error(res.msg);
                     dispatch({ loading: false });
                     navigate("/srs_docs");
                 }
+            }).catch((error: any) => {
+                console.error("加载SRS文档失败:", error);
+                message.error(error?.message || "加载SRS文档失败");
+                dispatch({ loading: false, srsTableLoading: false });
+                navigate("/srs_docs");
             });
         } else {
             // 新增模式
@@ -533,101 +630,11 @@ export default () => {
             return;
         }
         dispatch({ srsTableLoading: true });
-        Promise.all([
-            ApiSrsReq.list_srs_req({
-                doc_id: docId,
-                page_index: 0,
-                page_size: 10000,
-            }),
-            ApiSrsType.list_srs_type({
-                doc_id: docId,
-                page_index: 0,
-                page_size: 10000,
-            }),
-        ]).then(([reqRes, typeRes]: any[]) => {
-            if (reqRes.code !== Api.C_OK) {
-                message.error(reqRes.msg || "加载SRS表数据失败");
-                dispatch({ srsTableData: [], srsOtherReqData: [], srsChangeTables: [], srsTableLoading: false });
-                return;
-            }
-            const rows = reqRes.data?.rows || [];
-            const mainData = rows
-                .filter((item: any) => item.type_code === "1")
-                .map((item: any, index: number) => ({
-                    key: item.id || `main_${index}_${Date.now()}`,
-                    id: item.id,
-                    doc_id: item.doc_id,
-                    srs_code: item.code || "",
-                    module: normalizeReqText(item.module),
-                    function: normalizeReqText(item.function),
-                    sub_function: normalizeReqText(item.sub_function),
-                    location: item.location || "",
-                    type_code: item.type_code || "1",
-                }));
-            const otherData = rows
-                .filter((item: any) => item.type_code === "2")
-                .map((item: any, index: number) => ({
-                    key: item.id || `other_${index}_${Date.now()}`,
-                    id: item.id,
-                    doc_id: item.doc_id,
-                    srs_code: item.code || "",
-                    module: item.module || "",
-                    location: item.location || "",
-                    type_code: item.type_code || "2",
-                }));
-
-            const typeRows = typeRes.code === ApiSrsType.C_OK ? (typeRes.data?.rows || []) : [];
-            const isBaseReq = (r: any) => r?.type_code === "1" || r?.type_code === "2";
-            const toChangeRow = (reqItem: any, keyPrefix: string, reqIndex: number) => ({
-                key: reqItem.id || `${keyPrefix}_${reqIndex}_${Date.now()}`,
-                id: reqItem.id,
-                doc_id: reqItem.doc_id,
-                srs_code: reqItem.code || "",
-                module: normalizeReqText(reqItem.module),
-                function: normalizeReqText(reqItem.function),
-                sub_function: normalizeReqText(reqItem.sub_function),
-                location: reqItem.location || "",
-                type_code: reqItem.type_code || "",
-            });
-            const allChangeRows = rows.filter((reqItem: any) => !isBaseReq(reqItem));
-            const typeNameMap = new Map<string, { id: number | string; title: string }>();
-            typeRows.forEach((item: any, index: number) => {
-                const code = String(item.type_code || "");
-                if (!code) return;
-                typeNameMap.set(code, {
-                    id: item.id || `type_${index}`,
-                    title: item.type_name || `变更表${index + 1}`,
-                });
-            });
-            const groupedByType = new Map<string, any[]>();
-            allChangeRows.forEach((reqItem: any) => {
-                const code = String(reqItem.type_code || "");
-                if (!code) return;
-                const list = groupedByType.get(code) || [];
-                list.push(reqItem);
-                groupedByType.set(code, list);
-            });
-            const typeCodes = Array.from(new Set([
-                ...Array.from(typeNameMap.keys()),
-                ...Array.from(groupedByType.keys()),
-            ]));
-            const changeTablesData = typeCodes.map((code, index) => {
-                const meta = typeNameMap.get(code);
-                const tableRows = (groupedByType.get(code) || []).map((reqItem: any, reqIndex: number) =>
-                    toChangeRow(reqItem, `change_${code || index}`, reqIndex)
-                );
-                return {
-                    id: meta?.id || `change_${code || index}`,
-                    title: meta?.title || "变更需求",
-                    type_code: code,
-                    data: tableRows,
-                };
-            });
-
+        fetchSrsTableState(docId).then((srsTableState) => {
             dispatch({
-                srsTableData: mainData,
-                srsOtherReqData: otherData,
-                srsChangeTables: changeTablesData,
+                srsTableData: srsTableState.srsTableData,
+                srsOtherReqData: srsTableState.srsOtherReqData,
+                srsChangeTables: srsTableState.srsChangeTables,
                 srsTableLoading: false,
             });
         }).catch((error: any) => {
@@ -790,11 +797,11 @@ export default () => {
     const isImportedCatalogNode = (node: TreeNode) => {
         const title = String(node.title || "").trim();
         const text = String(node.text || "");
-        if (/^导入正文$/.test(title) && /目录/.test(text) && /\d+(?:\.\d+)*\s+.+\s+\d+/.test(text)) {
+        if (/^导入正文$/.test(title) && /目录/.test(text) && /\d+(?:\.\d+)*\.?\s+.+\s+\d+/.test(text)) {
             return true;
         }
         // Word 目录项会带页码，如“1 介绍 1”“2.2 物理拓扑图 6”，正文标题不会带最后的页码。
-        if (/^\d+(?:\.\d+)*\s+\S.*\s+\d+$/.test(title)) {
+        if (/^\d+(?:\.\d+)*\.?\s+\S.*\s+\d+$/.test(title)) {
             return true;
         }
         return false;

@@ -56,8 +56,8 @@ const matchModuleCodes = (moduleName: string, items: Array<{ code: string; name:
         if (moduleName === "基础数据") return name.startsWith("基础数据/") || ["haz", "rcm", "cst"].some((k) => code.startsWith(k));
         if (moduleName === "产品版本管理") return name.startsWith("产品版本/产品管理") || code.startsWith("product");
         if (moduleName === "产品文件管理") return name.startsWith("产品版本/产品DHF管理") || code.startsWith("prod_dhf");
-        if (moduleName === "需求管理") return name.includes("需求") || code.startsWith("srs_doc");
-        if (moduleName === "设计管理") return name.includes("设计") || code.startsWith("sds_doc");
+        if (moduleName === "需求管理") return code === "srs_doc" || code.startsWith("srs_doc_");
+        if (moduleName === "设计管理") return code === "sds_doc" || code.startsWith("sds_doc_");
         if (moduleName === "图表文件管理") return name.startsWith("图表文件/") || code.startsWith("doc_file_");
         if (moduleName === "风险追溯管理") return ["prod_haz", "prod_rcm", "prod_cst", "test_set", "test_case"].some((k) => code.startsWith(k));
         if (moduleName === "全局视图") return code.startsWith("overview") || name.includes("全局视图");
@@ -168,7 +168,7 @@ const RoleDlg = ({ data, dispatch, onSaved }: any) => {
                         </Checkbox>
                         <div className="perm_scope_grid">
                             {moduleRows.map((item) => {
-                                const checked = item.codes.length > 0 && item.codes.every((code) => (data.targetRow.role_perms || []).includes(code));
+                                const checked = item.codes.length > 0 && item.codes.some((code) => (data.targetRow.role_perms || []).includes(code));
                                 const disabled = data.targetRow.code === ROOT || item.codes.length === 0;
                                 return (
                                     <div key={item.moduleName} className="perm_scope_card">
