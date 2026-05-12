@@ -19,6 +19,7 @@ export interface TableHeaderItem {
 
 // 表格数据结构（包含表头和数据）
 export interface TableDataWithHeaders {
+  tableName?: string;
   headers: TableHeaderItem[];
   data: string[][];
 }
@@ -39,6 +40,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
   // 1. 状态管理：行列数、表格数据、表单实例
   const [rowCount, setRowCount] = useState<number>(0); // 行数
   const [colCount, setColCount] = useState<number>(0); // 列数
+  const [tableName, setTableName] = useState<string>(''); // 表名
   const [headerInput, setHeaderInput] = useState<string>(''); // 表头输入（逗号分隔，仅存储name）
   const [tableData, setTableData] = useState<TableRowData[]>([]); // 表格核心数据
   const [customHeaders, setCustomHeaders] = useState<TableHeaderItem[]>([]); // 自定义表头数组（新结构）
@@ -124,6 +126,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       
       setColCount(headers.length);
       setRowCount(data.length);
+      setTableName(initialData.tableName || '');
       setHeaderInput(headers.map(h => h.name).join(',')); // 输入框只显示name
       setCustomHeaders(headers);
       
@@ -140,6 +143,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       form.setFieldsValue({
         rowCount: data.length,
         colCount: headers.length,
+        tableName: initialData.tableName || '',
         headerInput: headers.map(h => h.name).join(',')
       });
     } else if (open && !initialData) {
@@ -147,6 +151,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       form.resetFields();
       setRowCount(0);
       setColCount(0);
+      setTableName('');
       setHeaderInput('');
       setTableData([]);
       setCustomHeaders([]);
@@ -158,6 +163,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
     form.resetFields();
     setRowCount(0);
     setColCount(0);
+    setTableName('');
     setHeaderInput('');
     setTableData([]);
     setCustomHeaders([]);
@@ -332,6 +338,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
     });
 
     const result: TableDataWithHeaders = {
+      tableName: tableName.trim(),
       headers,
       data
     };
@@ -358,6 +365,17 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
         layout="vertical"
         style={{ marginBottom: '20px' }}
       >
+        <Form.Item
+          name="tableName"
+          label="表名"
+        >
+          <Input
+            value={tableName}
+            onChange={(e) => setTableName(e.target.value)}
+            placeholder="请输入表名"
+          />
+        </Form.Item>
+
         <div style={{ display: 'flex', gap: '16px' }}>
           <Form.Item
             name="rowCount"

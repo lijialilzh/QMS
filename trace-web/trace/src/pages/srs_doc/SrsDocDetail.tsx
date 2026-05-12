@@ -48,6 +48,8 @@ export default () => {
         changeReqEditInitialData: undefined as TableDataWithHeaders | undefined,
         changeReqEditTarget: undefined as { id: number | string; title: string; type_code?: string; data: any[] } | undefined,
         savingChangeReq: false,
+        showAddChangeTableModal: false,
+        newChangeTableName: "",
         showSrsTableModal: false, // SRS表弹框
         // 需求列表相关（改为弹框展示）
         reqListExpanded: false,
@@ -644,6 +646,49 @@ export default () => {
         });
     };
 
+    const openAddChangeTableModal = () => {
+        dispatch({
+            showAddChangeTableModal: true,
+            newChangeTableName: `变更需求${(data.srsChangeTables || []).length + 1}`,
+        });
+    };
+
+    const handleAddChangeTableInCurrentPage = async () => {
+        const docId = params.id ? parseInt(params.id) : 0;
+        if (!docId) {
+            message.warning("缺少文档信息");
+            return;
+        }
+        const typeName = String(data.newChangeTableName || "").trim();
+        if (!typeName) {
+            message.warning("请输入表名");
+            return;
+        }
+        try {
+            dispatch({ srsTableLoading: true });
+            const res: any = await ApiSrsType.add_srs_type({
+                doc_id: docId,
+                type_name: typeName,
+            });
+            if (res.code !== ApiSrsType.C_OK) {
+                throw new Error(res.msg || "新增变更表格失败");
+            }
+            const srsTableState = await fetchSrsTableState(docId);
+            dispatch({
+                srsTableData: srsTableState.srsTableData,
+                srsOtherReqData: srsTableState.srsOtherReqData,
+                srsChangeTables: srsTableState.srsChangeTables,
+                srsTableLoading: false,
+                showAddChangeTableModal: false,
+                newChangeTableName: "",
+            });
+            message.success("变更表格已新增");
+        } catch (error: any) {
+            dispatch({ srsTableLoading: false });
+            message.error(error?.message || "新增变更表格失败");
+        }
+    };
+
     const openChangeReqEditModal = (table: { id: number | string; title: string; type_code?: string; data: any[] }) => {
         const headers = [
             { code: "srs_code", name: ts("srs_doc.srs_code") || "需求编号" },
@@ -652,6 +697,7 @@ export default () => {
             { code: "sub_function", name: ts("srs_doc.sub_function") || "子功能" },
         ];
         const initialData: TableDataWithHeaders = {
+            tableName: table.title || "",
             headers,
             data: (table.data || []).map((row: any) => [
                 row?.srs_code || "",
@@ -687,6 +733,19 @@ export default () => {
 
         try {
             dispatch({ savingChangeReq: true });
+            const nextTableName = String(tableData?.tableName || "").trim();
+            const targetId = Number(target?.id);
+            if (nextTableName && nextTableName !== String(target?.title || "").trim() && targetId) {
+                const typeRes: any = await ApiSrsType.update_srs_type({
+                    id: targetId,
+                    doc_id: docId,
+                    type_name: nextTableName,
+                    type_code: typeCode,
+                });
+                if (typeRes.code !== ApiSrsType.C_OK) {
+                    throw new Error(typeRes.msg || "表名保存失败");
+                }
+            }
             const oldRows = (target?.data || []).filter((r: any) => !!r?.id);
             const usedOldIds = new Set<number | string>();
             for (const [index, row] of rows.entries()) {
@@ -1358,6 +1417,19 @@ export default () => {
                     scroll={{ x: 820 }}
                 />
 
+                {!isReadOnly && (
+                    <div style={{ marginTop: 20, textAlign: "right" }}>
+                        <Button
+                            type="primary"
+                            icon={<PlusOutlined />}
+                            loading={data.srsTableLoading}
+                            onClick={openAddChangeTableModal}
+                        >
+                            {ts("srs_doc.add_change_table") || "新增变更表格"}
+                        </Button>
+                    </div>
+                )}
+
                 {(filteredSrsChangeTables || []).map((table: any) => (
                     <div key={`change_tbl_${table.id}`} style={{ marginTop: 20 }}>
                         <div style={{ marginBottom: 12, fontWeight: 600 }}>{table.title || "变更表格"}</div>
@@ -1377,6 +1449,27 @@ export default () => {
                         />
                     </div>
                 ))}
+            </Modal>
+
+            <Modal
+                title="新增变更表格"
+                open={data.showAddChangeTableModal}
+                onOk={handleAddChangeTableInCurrentPage}
+                onCancel={() => dispatch({ showAddChangeTableModal: false, newChangeTableName: "" })}
+                confirmLoading={data.srsTableLoading}
+                okText={ts("confirm") || "确定"}
+                cancelText={ts("cancel") || "取消"}
+            >
+                <Form layout="vertical">
+                    <Form.Item label="表名" required>
+                        <Input
+                            value={data.newChangeTableName}
+                            placeholder="请输入表名，例如：变更列表"
+                            onChange={(event) => dispatch({ newChangeTableName: event.target.value })}
+                            onPressEnter={handleAddChangeTableInCurrentPage}
+                        />
+                    </Form.Item>
+                </Form>
             </Modal>
 
             {/* 需求列表弹框 */}

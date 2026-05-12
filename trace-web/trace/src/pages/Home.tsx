@@ -186,16 +186,6 @@ export default () => {
                         label: ts("menu.srs_docs"),
                         perm: "srs_doc_view",
                     },
-                    {
-                        key: "/srs_manage",
-                        label: ts("menu.srs_manage"),
-                        perm: "srs_doc_view",
-                    },
-                    {
-                        key: "/srs_req",
-                        label: ts("menu.srs_req"),
-                        perm: "srs_doc_view",
-                    },
                 ],
             },
             {
@@ -206,16 +196,6 @@ export default () => {
                     {
                         key: "/sds_docs",
                         label: ts("menu.sds_docs"),
-                        perm: "sds_doc_view",
-                    },
-                    {
-                        key: "/sds_traces",
-                        label: ts("menu.sds_traces"),
-                        perm: "sds_doc_view",
-                    },
-                    {
-                        key: "/sds_reqds",
-                        label: ts("menu.sds_reqds"),
                         perm: "sds_doc_view",
                     },
                 ],

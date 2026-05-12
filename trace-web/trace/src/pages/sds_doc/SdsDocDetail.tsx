@@ -1456,9 +1456,6 @@ export default () => {
                 });
             };
             collectExistingNodes(rootsWithCodes);
-            // 不在编辑页自动补/移动需求章节。SRS 编号变更只应刷新编号与追溯展示，原 SDS 章节位置必须保持不变。
-            return rootsWithCodes;
-
             const codeNumbers = (code?: string) => normalizeReqCode(code).match(/\d+/g)?.map(Number) || [];
             const codeMajor = (code?: string) => codeNumbers(code)[0];
             const codeDistance = (a?: string, b?: string) => {

@@ -397,10 +397,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const { t: ts } = useTranslation();
     const [fileList, setFileList] = useState<UploadFile[]>([]);
     const [uploadLoading, setUploadLoading] = useState(false);
-    // 有导入图片子节点时默认展开，否则程序逻辑图会被折叠在子节点里看不到。
-    const [expanded, setExpanded] = useState(() =>
-        level <= 0 || (node.children || []).some((child) => !!String(child.img_url || "").trim())
-    );
+    // 文档内容仍全量加载，仅默认收起目录节点，避免进入编辑页时铺开过多内容。
+    const [expanded, setExpanded] = useState(false);
     const normalizedNodeSdsCode = String(node.sds_code ?? "").trim();
     const sdsCodeFallbackFromText = extractSdsCodeFromNodeText(node.text);
     const resolvedSdsCode = normalizedNodeSdsCode || extractCodeAfterDesignMarker(node.text) || extractSdsCodeToken(node.text) || sdsCodeFallbackFromText.code;

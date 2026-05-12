@@ -27,16 +27,12 @@ import SrsDocs from "./pages/srs_doc/SrsDocs";
 import SdsDocs from "./pages/sds_doc/SdsDocs";
 import SrsDocDetail from "./pages/srs_doc/SrsDocDetail";
 import SdsDocDetail from "./pages/sds_doc/SdsDocDetail";
-import SdsReqds from "./pages/sds_doc/SdsReqds";
-import SrsManage from "./pages/srs_doc/SrsManage";
-import SrsReq from "./pages/srs_doc/SrsReq";
 import TestSets from "./pages/test_set/TestSets";
 import DocFiles from "./pages/doc_file/DocFiles";
 import ProdHazs from "./pages/prod_risk/prod_haz";
 import ProdRcms from "./pages/prod_risk/prod_rcm";
 import ProdCsts from "./pages/prod_risk/prod_cst";
 import ProdDhfs from "./pages/prod_risk/ProdDhfs";
-import SdsTraces from "./pages/sds_doc/SdsTraces";
 import SrsDocTrace from "./pages/prod_risk/SrsDocTrace";
 import ProdTraces from "./pages/overview/ProdTraces";
 import ProdComparison from "./pages/overview/ProdComparison";
@@ -70,15 +66,11 @@ const router = createRouter([
             { path: "/srs_docs/add", element: <SrsDocDetail /> },
             { path: "/srs_docs/edit/:id", element: <SrsDocDetail /> },
             { path: "/srs_docs/view/:id", element: <SrsDocDetail /> },
-            { path: "/srs_manage", element: <SrsManage /> },
-            { path: "/srs_req", element: <SrsReq /> },
 
             { path: "/sds_docs", element: <SdsDocs /> },
             { path: "/sds_docs/add", element: <SdsDocDetail /> },
             { path: "/sds_docs/edit/:id", element: <SdsDocDetail /> },
             { path: "/sds_docs/view/:id", element: <SdsDocDetail /> },
-            { path: "/sds_reqds", element: <SdsReqds /> },
-            { path: "/sds_traces", element: <SdsTraces /> },
 
             { path: "/test_sets", element: <TestSets /> },
 

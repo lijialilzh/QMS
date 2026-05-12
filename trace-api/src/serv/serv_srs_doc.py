@@ -2,6 +2,7 @@ import logging
 import base64
 import io
 import json
+import hashlib
 import os
 import re
 import sys
@@ -774,6 +775,20 @@ class Server(object):
                         req_rcm_map.setdefault(code_upper, set()).update(rcm_codes)
         return req_rows, req_rcm_map
 
+    def __normalize_change_req_type_name(self, value: str):
+        name = self.__normalize_text(str(value or "")).replace("：", ":").rstrip(":").strip()
+        return name or "变更需求"
+
+    def __resolve_doc_table_req_type(self, node: SrsNodeForm, has_other_cols: bool, has_function_col: bool, has_sub_function_col: bool):
+        table = getattr(node, "table", None)
+        table_name = self.__normalize_change_req_type_name(getattr(table, "name", "") or getattr(node, "title", ""))
+        if "变更" in table_name:
+            digest = hashlib.md5(table_name.encode("utf-8")).hexdigest()[:12]
+            return f"change_{digest}", table_name
+        if has_other_cols and not has_function_col and not has_sub_function_col:
+            return "2", None
+        return "1", None
+
     def __extract_srs_reqs_from_nodes(self, nodes: List[SrsNodeForm], include_node_codes: bool = True):
         req_rows = []
         req_rcm_map: Dict[str, set] = {}
@@ -799,7 +814,12 @@ class Server(object):
                     has_product_cols = ("code" in col_idx and "module" in col_idx and "function" in col_idx)
                     has_other_cols = ("code" in col_idx and "module" in col_idx and "location" in col_idx)
                     if has_product_cols or has_other_cols:
-                        type_code = "2" if has_other_cols and "function" not in col_idx and "sub_function" not in col_idx else "1"
+                        type_code, type_name = self.__resolve_doc_table_req_type(
+                            node,
+                            has_other_cols,
+                            "function" in col_idx,
+                            "sub_function" in col_idx,
+                        )
                         col_codes = [getattr(h, "code", "") for h in headers]
                         last_values: Dict[str, str] = {}
                         for row in rows or []:
@@ -818,6 +838,7 @@ class Server(object):
                                 dict(
                                     code=code_upper,
                                     type_code=type_code,
+                                    type_name=type_name,
                                     module=(self.__clean_req_table_field(values[col_idx["module"]]) if "module" in col_idx and col_idx["module"] < len(values) else None),
                                     function=(self.__clean_req_table_field(values[col_idx["function"]]) if "function" in col_idx and col_idx["function"] < len(values) else None),
                                     sub_function=(self.__clean_req_table_field(values[col_idx["sub_function"]]) if "sub_function" in col_idx and col_idx["sub_function"] < len(values) else None),
@@ -1180,9 +1201,6 @@ class Server(object):
                 code = self.__normalize_srs_code(str((table_row or {}).get(header_codes[col_idx["code"]], "") or ""))
                 req_item = req_map.get(code)
                 if not req_item:
-                    if code:
-                        table_changed = True
-                        continue
                     keep_indexes.append(row_idx)
                     next_rows.append(table_row)
                     continue
@@ -1354,6 +1372,20 @@ class Server(object):
         exists = db.session.execute(sql).scalars().all()
         exists_dict = {(row.type_code, row.code): row for row in exists}
 
+        change_type_names = {
+            item.get("type_code"): self.__normalize_change_req_type_name(item.get("type_name") or "变更需求")
+            for item in req_rows
+            if item.get("type_code") not in ["1", "2", "", None] and item.get("type_name")
+        }
+        for type_code, type_name in change_type_names.items():
+            type_row = db.session.execute(
+                select(SrsType).where(SrsType.doc_id == doc_id, SrsType.type_code == type_code)
+            ).scalars().first()
+            if type_row:
+                type_row.type_name = type_name
+            else:
+                db.session.add(SrsType(doc_id=doc_id, type_code=type_code, type_name=type_name))
+
         seen = set()
         for item in req_rows:
             key = (item.get("type_code") or "1", item.get("code") or "")
@@ -1371,7 +1403,8 @@ class Server(object):
                     for trace_row in db.session.execute(select(SdsTrace).where(SdsTrace.req_id == row.id)).scalars().all():
                         trace_row.chapter = chapter
             else:
-                db.session.add(SrsReq(doc_id=doc_id, **item))
+                row_data = {key: value for key, value in item.items() if key != "type_name"}
+                db.session.add(SrsReq(doc_id=doc_id, **row_data))
         db.session.commit()
 
     def __sync_srs_reqs_from_doc_tables(self, doc_id: int, nodes: List[SrsNodeForm]):
@@ -1390,7 +1423,13 @@ class Server(object):
                     has_product_cols = ("code" in col_idx and "module" in col_idx and "function" in col_idx)
                     has_other_cols = ("code" in col_idx and "module" in col_idx and "location" in col_idx)
                     if has_product_cols or has_other_cols:
-                        type_codes.add("2" if has_other_cols and "function" not in col_idx and "sub_function" not in col_idx else "1")
+                        type_code, _ = self.__resolve_doc_table_req_type(
+                            node,
+                            has_other_cols,
+                            "function" in col_idx,
+                            "sub_function" in col_idx,
+                        )
+                        type_codes.add(type_code)
                 type_codes.update(collect_managed_type_codes(getattr(node, "children", None) or []))
             return type_codes
 
@@ -1414,6 +1453,23 @@ class Server(object):
         managed_type_codes = sorted({*collect_managed_type_codes(nodes or []), *{item["type_code"] for item in normalized_rows}})
         if not managed_type_codes:
             return
+
+        change_type_names = {
+            item["type_code"]: self.__normalize_change_req_type_name(item.get("type_name") or "变更需求")
+            for item in normalized_rows
+            if item["type_code"] not in ["1", "2", ""] and item.get("type_name")
+        }
+        for type_code, type_name in change_type_names.items():
+            type_row = db.session.execute(
+                select(SrsType).where(SrsType.doc_id == doc_id, SrsType.type_code == type_code)
+            ).scalars().first()
+            if type_row:
+                type_row.type_name = type_name
+            else:
+                db.session.add(SrsType(doc_id=doc_id, type_code=type_code, type_name=type_name))
+        if change_type_names:
+            # 兼容已被旧逻辑误保存为标准需求(type_code=1)的变更表行，保留原 req_id 和追溯关系。
+            managed_type_codes = sorted({*managed_type_codes, "1"})
 
         existing: List[SrsReq] = db.session.execute(
             select(SrsReq).where(SrsReq.doc_id == doc_id, SrsReq.type_code.in_(managed_type_codes))
@@ -1471,6 +1527,26 @@ class Server(object):
             key = (item["type_code"], item["code"])
             if key in exists_dict:
                 continue
+            same_code_candidates = [
+                row for row in existing
+                if row.id not in used_renamed_ids
+                and row.code == item["code"]
+                and row.type_code != item["type_code"]
+                and (row.type_code, row.code) not in current_keys
+            ]
+            if len(same_code_candidates) == 1:
+                row = same_code_candidates[0]
+                old_key = (row.type_code, row.code)
+                row.type_code = item["type_code"]
+                row.module = item.get("module")
+                row.function = item.get("function")
+                row.sub_function = item.get("sub_function")
+                row.location = item.get("location")
+                exists_dict.pop(old_key, None)
+                exists_dict[key] = row
+                used_renamed_ids.add(row.id)
+                sync_sds_trace_and_nodes(row)
+                continue
             candidates = logical_candidates.get(logical_key(item)) or []
             candidates = [
                 row for row in candidates
@@ -1510,7 +1586,8 @@ class Server(object):
                 if row.type_code != "2":
                     sync_sds_trace_and_nodes(row)
             else:
-                db.session.add(SrsReq(doc_id=doc_id, **item))
+                row_data = {key: value for key, value in item.items() if key != "type_name"}
+                db.session.add(SrsReq(doc_id=doc_id, **row_data))
         db.session.commit()
         self.__sync_imported_req_rcms(doc_id, req_rcm_map)
 
@@ -1565,6 +1642,7 @@ class Server(object):
         heading_counters = [0, 0, 0, 0, 0]
         numbering_defs = self.__build_numbering_definitions(docx)
         body_numbering_counters: Dict[str, dict] = {}
+        pending_table_title = ""
 
         def ensure_text_holder():
             nonlocal current
@@ -1639,6 +1717,36 @@ class Server(object):
                 heading_counters[idx] = 0
             return ".".join(str(v) for v in heading_counters[:depth] if v > 0)
 
+        def is_table_title_text(text: str):
+            clean = self.__normalize_text(text).replace("：", ":").rstrip(":").strip()
+            if not clean:
+                return False
+            compact = re.sub(r"\s+", "", clean)
+            return bool(
+                re.search(r"(产品需求|标准需求|其他需求|变更需求|变更列表)", compact)
+                or re.match(r"^表\s*\d+", clean)
+            )
+
+        def extract_table_titles_from_text(text: str):
+            titles = []
+            for line in str(text or "").replace("\r", "").split("\n"):
+                clean = self.__normalize_text(line).replace("：", ":").rstrip(":").strip()
+                if clean and is_table_title_text(clean):
+                    titles.append(clean)
+            return titles
+
+        def apply_table_titles_from_parent_text(nodes: List[SrsNodeForm]):
+            for node in nodes or []:
+                children = getattr(node, "children", None) or []
+                table_children = [
+                    child for child in children
+                    if getattr(child, "table", None) is not None and re.match(r"^导入表格\d*$", getattr(child, "title", "") or "")
+                ]
+                titles = extract_table_titles_from_text(getattr(node, "text", "") or "")
+                for child, title in zip(table_children, titles):
+                    child.table.name = title
+                apply_table_titles_from_parent_text(children)
+
         for child in docx.element.body.iterchildren():
             tag = str(child.tag).lower()
             if tag.endswith("}p"):
@@ -1703,16 +1811,20 @@ class Server(object):
                     attach_node(level, node)
                 elif txt:
                     body_txt = self.__paragraph_text_with_numbering(para, numbering_defs, body_numbering_counters)
-                    holder = ensure_text_holder()
-                    holder.text = f"{holder.text}\n{body_txt}".strip() if holder.text else body_txt
-                    rcm_codes = {self.__normalize_rcm_code(item) for item in rcm_pattern.findall(body_txt)}
-                    rcm_codes = {code for code in rcm_codes if code}
-                    if rcm_codes:
-                        existed = set(self.__normalize_rcm_codes(holder.rcm_codes or []))
-                        holder.rcm_codes = sorted(existed.union(rcm_codes))
-                    srs_hit = srs_pattern.search(body_txt)
-                    if srs_hit and not holder.srs_code:
-                        holder.srs_code = srs_hit.group(0).upper()
+                    if is_table_title_text(body_txt):
+                        pending_table_title = body_txt
+                    else:
+                        pending_table_title = ""
+                        holder = ensure_text_holder()
+                        holder.text = f"{holder.text}\n{body_txt}".strip() if holder.text else body_txt
+                        rcm_codes = {self.__normalize_rcm_code(item) for item in rcm_pattern.findall(body_txt)}
+                        rcm_codes = {code for code in rcm_codes if code}
+                        if rcm_codes:
+                            existed = set(self.__normalize_rcm_codes(holder.rcm_codes or []))
+                            holder.rcm_codes = sorted(existed.union(rcm_codes))
+                        srs_hit = srs_pattern.search(body_txt)
+                        if srs_hit and not holder.srs_code:
+                            holder.srs_code = srs_hit.group(0).upper()
 
                 for img_url in extract_images_from_para(para):
                     img_idx += 1
@@ -1723,7 +1835,11 @@ class Server(object):
                 if table is None or not table.headers:
                     continue
                 table_idx += 1
+                table_title = pending_table_title or f"导入表格{table_idx}"
+                pending_table_title = ""
+                table.name = table_title if not re.match(r"^导入表格\d*$", table_title or "") else None
                 attach_to_current(SrsNodeForm(title=f"导入表格{table_idx}", table=table, children=[]))
+        apply_table_titles_from_parent_text(roots)
         return roots, heading_rows
 
     async def import_srs_doc_word(self, product_id: int, version: str, change_log: str, file):
@@ -1805,7 +1921,7 @@ class Server(object):
             row = db.session.execute(sql).scalars().first() if sql is not None else None
             if not row:
                 doc.n_id += 1
-                table = node.table.json() if node.table else None
+                table = json.loads(node.table.json()) if node.table else None
                 row = SrsNode(doc_id=doc.id, n_id=doc.n_id, p_id=p_id, priority=idx, title=node.title, label=node.label, img_url=node.img_url, text=node.text, ref_type=node.ref_type,
                             table=table, srs_code=node.srs_code)
                 row.rcm_codes = ",".join(node.rcm_codes) if node.rcm_codes is not None else None
@@ -2070,7 +2186,7 @@ class Server(object):
             return Resp.resp_err(msg=ts("msg_obj_null"))
         _, doc = result
         doc.n_id += 1
-        table = node.table.json() if node.table else None
+        table = json.loads(node.table.json()) if node.table else None
         row = SrsNode(doc_id=doc.id, n_id=doc.n_id, p_id=node.p_id, priority=doc.n_id, 
                             title=node.title, text=node.text, table=table)
         row.rcm_codes = ",".join(node.rcm_codes) if node.rcm_codes is not None else None
@@ -2113,7 +2229,6 @@ class Server(object):
             self.__sync_srs_reqs_from_doc_tables(row.id, form.content or [])
             self.__sync_srs_req_names_from_doc_nodes(row.id, form.content or [])
             self.__upsert_imported_srs_reqds(row.id, self.__extract_srs_reqds_from_nodes(form.content or []))
-            self.__sync_saved_doc_srs_tables_from_req_rows(row.id)
             self.__fix_rcms(row)
             return Resp.resp_ok()
         except Exception:

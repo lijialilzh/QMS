@@ -1633,7 +1633,37 @@ export default () => {
 </div>
 </div>
 
-                {/* 变更表格 - 支持多个表格，显示在其他需求列表上面 */}
+                {/* 其他需求列表 */}
+                <div className="doc-section">
+                    <div className="doc-section-header">
+                        <div className="srs-table-title">
+                            {ts("srs_doc.other_req_list") || "其他需求列表"}
+                        </div>
+                        <Space>
+                            <Button 
+                                type="primary" 
+                                icon={<PlusOutlined />}
+                                onClick={handleAddOtherRow}
+                                disabled={!!data.targetEditOther.key || !!data.targetEdit.key || !editForm.getFieldValue("doc_id")}>
+                                {ts("srs_doc.add_row") || "添加行"}
+                            </Button>
+                        </Space>
+                    </div>
+                    <div>
+                        <Table 
+                            dataSource={data.otherReqData} 
+                            columns={otherColumns}
+                            tableLayout="fixed"
+                            rowKey="key"
+                            bordered
+                            pagination={false}
+                            loading={data.loading}
+                            scroll={getTableScroll(data.otherReqData)}
+                        />
+                    </div>
+                </div>
+
+                {/* 变更表格 - 支持多个表格，显示在其他需求列表下面 */}
                 {data.changeTables.map((table: any) => {
                     const isEditing = data.editingTableId === table.id;
                     return (
@@ -1709,35 +1739,6 @@ export default () => {
                     );
                 })}
 
-                {/* 其他需求列表 */}
-                <div className="doc-section">
-                    <div className="doc-section-header">
-                        <div className="srs-table-title">
-                            {ts("srs_doc.other_req_list") || "其他需求列表"}
-                        </div>
-                        <Space>
-                            <Button 
-                                type="primary" 
-                                icon={<PlusOutlined />}
-                                onClick={handleAddOtherRow}
-                                disabled={!!data.targetEditOther.key || !!data.targetEdit.key || !editForm.getFieldValue("doc_id")}>
-                                {ts("srs_doc.add_row") || "添加行"}
-                            </Button>
-                        </Space>
-                    </div>
-                    <div>
-                        <Table 
-                            dataSource={data.otherReqData} 
-                            columns={otherColumns}
-                            tableLayout="fixed"
-                            rowKey="key"
-                            bordered
-                            pagination={false}
-                            loading={data.loading}
-                            scroll={getTableScroll(data.otherReqData)}
-                        />
-                    </div>
-                </div>
 </div>
 </div>
     );
