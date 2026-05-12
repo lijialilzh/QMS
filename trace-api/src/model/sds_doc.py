@@ -30,7 +30,7 @@ class SdsNode(Model):
 
     title = Column(String(256), comment="节点标题")
     label = Column(TEXT, comment="节点标签")
-    img_url = Column(String(256), comment="图片URL")
+    img_url = Column(TEXT, comment="图片URL")
     text = Column(TEXT, comment="节点文本")
     table = Column(JSON, comment="表格")
     

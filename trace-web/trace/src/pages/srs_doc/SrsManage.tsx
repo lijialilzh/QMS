@@ -19,21 +19,6 @@ const getTableScroll = (rows: any[]) => {
     return (rows || []).length > tableScrollThreshold ? { y: tableScrollY } : undefined;
 };
 
-const compareSrsCode = (a?: string, b?: string) => {
-    const parse = (value?: string) => {
-        const txt = String(value || "").replace(/\s+/g, "").toUpperCase();
-        const matched = txt.match(/^SRS-[A-Z]+(\d+)-(\d+)$/);
-        return matched
-            ? { group: Number(matched[1]), seq: Number(matched[2]), raw: txt }
-            : { group: Number.MAX_SAFE_INTEGER, seq: Number.MAX_SAFE_INTEGER, raw: txt };
-    };
-    const left = parse(a);
-    const right = parse(b);
-    if (left.group !== right.group) return left.group - right.group;
-    if (left.seq !== right.seq) return left.seq - right.seq;
-    return left.raw.localeCompare(right.raw);
-};
-
 export default () => {
     const { t: ts } = useTranslation();
     const location = useLocation();
@@ -200,8 +185,7 @@ export default () => {
                         type_code: item.type_code || "1",
                         rcm_codes: item.rcm_codes || [],
                         rcm_ids: item.rcm_ids || [],
-                    }))
-                    .sort((a: any, b: any) => compareSrsCode(a.srs_code, b.srs_code));
+                    }));
                 console.log("转换后的主表格数据:", mainData);
                 
                 // type_code 为 2 的数据显示在其他需求列表
@@ -215,8 +199,7 @@ export default () => {
                         location: item.location || "",
                         rcm_codes: item.rcm_codes || [],
                         rcm_ids: item.rcm_ids || [],
-                    }))
-                    .sort((a: any, b: any) => compareSrsCode(a.srs_code, b.srs_code));
+                    }));
                 
                 dispatch({ mainTableData: mainData, otherReqData: otherData });
             } else {

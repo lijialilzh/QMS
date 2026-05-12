@@ -1,8 +1,9 @@
 import logging
 import re
 import sys
-from typing import List, Tuple, Union
-from sqlalchemy import select, func, or_, and_
+import json
+from typing import Dict, List, Tuple, Union
+from sqlalchemy import select, or_, and_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import desc
 from ..obj.vobj_user import UserObj
@@ -11,7 +12,7 @@ from ..obj.tobj_sds_doc import SdsNodeForm
 from ..model.srs_type import SrsType
 from ..model.sds_doc import SdsDoc, SdsNode
 from ..model.product import Product, UserProd
-from ..model.srs_doc import SrsDoc
+from ..model.srs_doc import SrsDoc, SrsNode
 from ..model.srs_req import SrsReq
 from ..model.sds_trace import SdsTrace
 from ..obj.tobj_sds_trace import SdsTraceForm
@@ -176,16 +177,78 @@ class Server(object):
                 results[row_req.id] = row_type.type_name
         return results
     
+    @staticmethod
+    def __normalize_req_code(value: str):
+        return re.sub(r"\s+", "", str(value or "").strip().upper())
+
+    def __query_srs_doc_req_order(self, doc_ids: List[int]) -> Dict[Tuple[int, str], int]:
+        if not doc_ids:
+            return {}
+        nodes: List[SrsNode] = db.session.execute(
+            select(SrsNode)
+            .where(SrsNode.doc_id.in_(doc_ids), SrsNode.table.isnot(None))
+            .order_by(SrsNode.doc_id, SrsNode.priority, SrsNode.n_id)
+        ).scalars().all()
+        order_map: Dict[Tuple[int, str], int] = {}
+        seq_by_doc: Dict[int, int] = {}
+        for node in nodes:
+            table = node.table
+            if isinstance(table, str):
+                try:
+                    table = json.loads(table)
+                except Exception:
+                    table = None
+                if isinstance(table, str):
+                    try:
+                        table = json.loads(table)
+                    except Exception:
+                        table = None
+            if not isinstance(table, dict):
+                continue
+            rows = table.get("rows") or []
+            if not isinstance(rows, list):
+                continue
+            for item in rows:
+                if not isinstance(item, dict):
+                    continue
+                code = ""
+                for value in item.values():
+                    txt = self.__normalize_req_code(value)
+                    if re.match(r"^SRS-[A-Z]+\d+-\d+$", txt):
+                        code = txt
+                        break
+                if not code:
+                    continue
+                key = (node.doc_id, code)
+                if key in order_map:
+                    continue
+                seq_by_doc[node.doc_id] = seq_by_doc.get(node.doc_id, 0) + 1
+                order_map[key] = seq_by_doc[node.doc_id]
+        return order_map
+
     def __resort_rows(self, rows: List[Tuple[SdsTrace, SrsReq, SrsType, SdsDoc, SrsDoc, Product]]):
+        order_map = self.__query_srs_doc_req_order(list({row_srsdoc.id for _, _, _, _, row_srsdoc, _ in rows if row_srsdoc}))
         sorted_rows = []
         for row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product in rows:
             type_id = row_type.id if row_type else sys.maxsize
             type_id = -1 if row_req.type_code == "1" else type_id
             type_id = 0 if row_req.type_code == "2" else type_id
-            key = (-row_sdsdoc.id, type_id, row_req.code)
+            doc_order = order_map.get((row_srsdoc.id if row_srsdoc else 0, self.__normalize_req_code(row_req.code)), sys.maxsize)
+            key = (-row_sdsdoc.id, type_id, doc_order, self.__srs_code_sort_key(row_req.code))
             sorted_rows.append((key, (row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product)))
         sorted_rows.sort(key=lambda x: x[0])
         return [x[1] for x in sorted_rows]
+
+    @staticmethod
+    def __srs_code_sort_key(value: str):
+        txt = str(value or "").replace(" ", "").upper()
+        matched = re.match(r"^SRS-[A-Z]+(\d+)-(\d+)$", txt)
+        if matched:
+            return (int(matched.group(1)), int(matched.group(2)), txt)
+        return (sys.maxsize, sys.maxsize, txt)
+
+    def __sort_objs_by_srs_manage_order(self, objs: List[SdsTraceObj]):
+        return objs or []
     
 
     def __find_path(self, level: int, sdscode: str, nodes: List[SdsNodeForm], paths: List[str] = None):
@@ -481,6 +544,13 @@ class Server(object):
         return result
 
     def __resolve_sds_locations(self, row_reqd: SdsTrace, doc_id: int, doc_sds_locations, virtual_sds_locations):
+        saved_locations = [
+            item.strip()
+            for item in re.split(r"[\r\n]+", getattr(row_reqd, "location", "") or "")
+            if item.strip() and not self.__is_empty_location(item)
+        ]
+        if saved_locations:
+            return "\n".join(saved_locations)
         locations = []
         has_code = False
         for token in self.__extract_code_tokens(getattr(row_reqd, "sds_code", "") or ""):
@@ -609,12 +679,11 @@ class Server(object):
             subquery = select(UserProd.product_id).where(UserProd.user_id == op_user.id).scalar_subquery()
             sql = sql.where(Product.id.in_(subquery))
 
-        sql_count = select(func.count()).select_from(sql)
-        total = db.session.execute(sql_count).scalars().first()
-
-        sql = sql.offset(page_size * page_index).limit(page_size).order_by(desc(Product.id), desc(SdsDoc.id), SrsReq.code)
+        sql = sql.order_by(desc(Product.id), desc(SdsDoc.id), SrsReq.code)
         rows: List[Tuple[SdsTrace, SrsReq, SrsType, SdsDoc, SrsDoc, Product]] = db.session.execute(sql).all()
         rows = self.__resort_rows(rows)
+        total = len(rows)
+        rows = rows[page_size * page_index: page_size * (page_index + 1)]
         req_ids = [row_req.id for row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product in rows]
         type_names = self.__query_srs_types(req_ids)
         doc_ids = list(set([row_sdsdoc.id for row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product in rows]))
@@ -699,6 +768,7 @@ class Server(object):
             if not sds_location:
                 obj.location = self.__extract_chapter_code(obj.location) or None
             objs.append(obj)
+        objs = self.__sort_objs_by_srs_manage_order(objs)
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
         
     async def get_sds_trace(self, id: int):

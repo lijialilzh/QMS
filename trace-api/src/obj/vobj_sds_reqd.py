@@ -10,6 +10,7 @@ from .tobj_sds_reqd import LogicForm, SdsReqdForm
 class SdsReqdObj(SdsReqdForm):
     doc_id: Optional[int] = Field(title="SDS文档ID")
     srs_code: Optional[str] = Field(title="需求编号")
+    sds_code: Optional[str] = Field(title="设计编号")
     name: Optional[str] = Field(title="需求名称")
 
     module: Optional[str] = Field(title="模块")

@@ -214,7 +214,7 @@ const expandTraceRows = (rows: any[], locationBySdsCode?: Map<string, string>) =
             key: `${row.id || row.key || rowIndex}_${index}`,
             sds_code: sdsCodes[index] ?? "",
             chapter: chapters[index] ?? "",
-            location: locationBySdsCode?.get(normalizeSdsCode(sdsCodes[index])) || (locations[index] ?? ""),
+            location: (locations[index] ?? "") || locationBySdsCode?.get(normalizeSdsCode(sdsCodes[index])) || "",
             _sourceRow: row,
             _splitIndex: index,
             _rowSpan: index === 0 ? count : 0,

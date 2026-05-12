@@ -1247,9 +1247,10 @@ export default () => {
             const rows = res?.data?.rows || [];
             if (!rows.length) return roots;
 
+            const getDesignCode = (row: any) => normalizeReqCode(row?.sds_code) || toSdsCode(row?.srs_code || row?.req_id);
             const rowBySdsCode = new Map<string, any>();
             rows.forEach((row: any) => {
-                const code = toSdsCode(row.srs_code || row.req_id);
+                const code = getDesignCode(row);
                 if (code) rowBySdsCode.set(code, row);
             });
             if (rowBySdsCode.size === 0) return roots;
@@ -1257,7 +1258,7 @@ export default () => {
             const codeByTitle = new Map<string, string>();
             const rowByCode = new Map<string, any>();
             rows.forEach((row: any) => {
-                const code = toSdsCode(row.srs_code || row.req_id);
+                const code = getDesignCode(row);
                 if (!code) return;
                 rowByCode.set(code, row);
                 [row.sub_function, row.name]
@@ -1299,7 +1300,7 @@ export default () => {
             const validReqTitlesWithRows: Array<{ title: string; row: any; code: string }> = [];
             const reqRootTitleSet = new Set<string>();
             rows.forEach((row: any) => {
-                const code = toSdsCode(row.srs_code || row.req_id);
+                const code = getDesignCode(row);
                 const hierarchyTitles = getReqHierarchyTitles(row);
                 const rootTitle = normalizeReqTitle(hierarchyTitles[0]);
                 if (rootTitle) reqRootTitleSet.add(rootTitle);
@@ -1364,8 +1365,12 @@ export default () => {
                 return (nodes || [])
                     .map((node) => {
                         const rawCode = normalizeReqCode((node as any).sds_code);
-                        const titleMatch = !rawCode && isFunctionalReqHeading(node) ? matchRowByNodeTitle(node) : undefined;
-                        const matchedCode = rawCode || titleMatch?.code || "";
+                        const hasReqChild = ((node.children || []) as TreeNode[]).some((child) =>
+                            normalizeReqCode((child as any).sds_code) || isFunctionalReqHeading(child)
+                        );
+                        const rawCodeStillValid = rawCode && (rowByCode.has(rawCode) || rowBySdsCode.has(rawCode));
+                        const titleMatch = !hasReqChild && isFunctionalReqHeading(node) && (!rawCode || !rawCodeStillValid) ? matchRowByNodeTitle(node) : undefined;
+                        const matchedCode = hasReqChild ? "" : (rawCodeStillValid ? rawCode : (titleMatch?.code || rawCode || ""));
                         const matchedRow = matchedCode ? rowByCode.get(matchedCode) || rowBySdsCode.get(matchedCode) || titleMatch?.row : undefined;
                         const children = pruneAndRefreshReqdNodes(
                             (node.children || []) as TreeNode[],
@@ -1376,8 +1381,11 @@ export default () => {
                             ...node,
                             children,
                         };
+                        if (hasReqChild && rawCode) {
+                            delete (nextNode as any).sds_code;
+                        }
                         if (matchedCode && matchedRow) {
-                            nextNode.text = composeReqDescription(matchedRow);
+                            nextNode.text = nextNode.text || composeReqDescription(matchedRow);
                             nextNode.sds_code = matchedCode;
                             nextNode.title = withCurrentReqTitle(node, matchedRow);
                         }
@@ -1448,6 +1456,8 @@ export default () => {
                 });
             };
             collectExistingNodes(rootsWithCodes);
+            // 不在编辑页自动补/移动需求章节。SRS 编号变更只应刷新编号与追溯展示，原 SDS 章节位置必须保持不变。
+            return rootsWithCodes;
 
             const codeNumbers = (code?: string) => normalizeReqCode(code).match(/\d+/g)?.map(Number) || [];
             const codeMajor = (code?: string) => codeNumbers(code)[0];
@@ -1990,7 +2000,6 @@ export default () => {
     };
 
     const buildTraceTableFromRows = (rows: any[], locationBySdsCode?: Map<string, string>) => {
-        const sortedRows = [...(rows || [])].sort((a: any, b: any) => compareReqCode(a?.srs_code, b?.srs_code));
         const buildChapterCell = (row: any) => {
             const sdsCodes = splitTraceLines(row.sds_code);
             const chapters = splitTraceLines(row.chapter);
@@ -2013,7 +2022,7 @@ export default () => {
                 { code: "sds_code", name: "设计编号" },
                 { code: "chapter", name: "需求/代码" },
             ],
-            rows: sortedRows.map((row: any) => {
+            rows: (rows || []).map((row: any) => {
                 return {
                     srs_code: row.srs_code || "",
                     sds_code: row.sds_code || "",

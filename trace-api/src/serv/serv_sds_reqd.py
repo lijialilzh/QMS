@@ -1,8 +1,8 @@
 import logging
 import sys
 import re
-from typing import Any, List, Tuple
-from sqlalchemy import select, func, delete, or_
+from typing import Any, Dict, List, Tuple
+from sqlalchemy import select, delete, or_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import desc
 from ..obj.vobj_user import UserObj
@@ -13,6 +13,7 @@ from ..model.srs_doc import SrsDoc
 from ..model.product import Product, UserProd
 from ..model.srs_req import SrsReq
 from ..model.sds_reqd import SdsReqd, Logic
+from ..model.sds_trace import SdsTrace
 from ..obj.tobj_sds_reqd import SdsReqdForm, LogicForm
 from ..obj.vobj_sds_reqd import SdsReqdObj
 from ..obj.tobj_sds_doc import SdsNodeForm
@@ -640,23 +641,74 @@ class Server(object):
         return Resp.resp_ok()
     
     def __resort_rows(self, rows: List[Tuple[SdsReqd, SrsReq, SrsReqd, SrsType, SdsDoc, SrsDoc, Product]]):
+        def parse_heading(value: str):
+            matched = re.match(r"^\s*(\d+(?:\.\d+)*)", str(value or "").strip())
+            return matched.group(1) if matched else ""
+
+        def heading_sort_key(value: str):
+            heading = parse_heading(value)
+            if not heading:
+                return (sys.maxsize,)
+            return tuple(int(part) for part in heading.split("."))
+
+        doc_ids = list({row_sdsdoc.id for _, _, _, _, row_sdsdoc, _, _ in rows if row_sdsdoc})
+        req_ids = list({row_req.id for _, row_req, _, _, _, _, _ in rows if row_req})
+        position_by_sds_code: Dict[Tuple[int, str], Tuple[int, ...]] = {}
+        if doc_ids:
+            node_rows = db.session.execute(
+                select(SdsNode.doc_id, SdsNode.sds_code, SdsNode.title)
+                .where(SdsNode.doc_id.in_(doc_ids), SdsNode.sds_code.isnot(None))
+            ).all()
+            for node_doc_id, sds_code, title in node_rows:
+                code = self.__normalize_code(sds_code)
+                pos_key = heading_sort_key(title)
+                if not code or pos_key == (sys.maxsize,):
+                    continue
+                key = (node_doc_id, code)
+                if key not in position_by_sds_code or pos_key < position_by_sds_code[key]:
+                    position_by_sds_code[key] = pos_key
+
+        position_by_req: Dict[Tuple[int, int], Tuple[int, ...]] = {}
+        if doc_ids and req_ids:
+            trace_rows = db.session.execute(
+                select(SdsTrace.doc_id, SdsTrace.req_id, SdsTrace.location, SdsTrace.sds_code)
+                .where(SdsTrace.doc_id.in_(doc_ids), SdsTrace.req_id.in_(req_ids))
+            ).all()
+            for trace_doc_id, trace_req_id, location, sds_code in trace_rows:
+                pos_key = heading_sort_key(location)
+                if pos_key == (sys.maxsize,):
+                    for code in str(sds_code or "").replace("\r", "").split("\n"):
+                        pos_key = position_by_sds_code.get((trace_doc_id, self.__normalize_code(code))) or (sys.maxsize,)
+                        if pos_key != (sys.maxsize,):
+                            break
+                if pos_key == (sys.maxsize,):
+                    continue
+                key = (trace_doc_id, trace_req_id)
+                if key not in position_by_req or pos_key < position_by_req[key]:
+                    position_by_req[key] = pos_key
+
         sorted_rows = []
         for row_reqd, row_req, row_srsreqd, row_type, row_sdsdoc, row_srsdoc, row_product in rows:
             type_id = row_type.id if row_type else sys.maxsize
             type_id = 0 if row_req.type_code == "1" else type_id
-            key = (-row_sdsdoc.id, type_id, row_req.code)
+            position_key = (
+                position_by_req.get((row_sdsdoc.id, row_req.id))
+                or position_by_sds_code.get((row_sdsdoc.id, self.__to_sds_code(row_req.code)))
+                or (sys.maxsize,)
+            )
+            key = (-row_sdsdoc.id, position_key, type_id, row_req.code)
             sorted_rows.append((key, (row_reqd, row_req, row_srsreqd, row_type, row_sdsdoc, row_srsdoc, row_product)))
         sorted_rows.sort(key=lambda x: x[0])
 
         exist_codes = set()
         filtered_rows = []
         for row in sorted_rows:
-            ucode = f"{row[0][0]}_{row[0][2]}"
+            row_reqd, row_req, *_ = row[1]
+            ucode = f"{getattr(row_reqd, 'doc_id', '')}_{getattr(row_req, 'id', '')}"
             if ucode not in exist_codes:
                 exist_codes.add(ucode)
                 filtered_rows.append(row[1])
 
-        filtered_rows.sort(key=lambda x: (-x[4].id, x[1].code))
         return filtered_rows
 
     def __ensure_sds_reqd_rows(self, prod_id: int = None, doc_id: int = None):
@@ -704,13 +756,13 @@ class Server(object):
             subquery = select(UserProd.product_id).where(UserProd.user_id == op_user.id).scalar_subquery()
             sql = sql.where(Product.id.in_(subquery))
 
-        sql_count = select(func.count()).select_from(sql)
-        total = db.session.execute(sql_count).scalars().first()
-
-        sql = sql.offset(page_size * page_index).limit(page_size).order_by(desc(SdsDoc.id), SrsReq.code)
+        sql = sql.order_by(desc(SdsDoc.id), SrsReq.code)
         rows: List[Tuple[SdsReqd, SrsReq, SrsReqd, SrsType, SdsDoc, SrsDoc, Product]] = db.session.execute(sql).all()
         rows = self.__resort_rows(rows)
+        total = len(rows)
+        rows = rows[page_size * page_index: page_size * (page_index + 1)]
         doc_ids = list(set([row_sdsdoc.id for _, _, _, _, row_sdsdoc, _, _ in rows]))
+        req_ids = list(set([row_req.id for _, row_req, _, _, _, _, _ in rows if row_req]))
         doc_trees = self.__query_doc_tree(doc_ids)
         doc_has_effective_content = {doc_id: self.__has_effective_sds_content(tree) for doc_id, tree in doc_trees.items()}
         srs_doc_ids = list(set([row_srsdoc.id for _, _, _, _, _, row_srsdoc, _ in rows if row_srsdoc]))
@@ -737,6 +789,16 @@ class Server(object):
                 logic_img = self.__normalize_img_url(getattr(logic_row, "img_url", "") or "")
                 if logic_img:
                     logic_img_by_reqd_id[reqd_id] = logic_img
+        sds_code_by_req: Dict[Tuple[int, int], str] = {}
+        if doc_ids and req_ids:
+            trace_rows = db.session.execute(
+                select(SdsTrace.doc_id, SdsTrace.req_id, SdsTrace.sds_code)
+                .where(SdsTrace.doc_id.in_(doc_ids), SdsTrace.req_id.in_(req_ids))
+            ).all()
+            for trace_doc_id, trace_req_id, trace_sds_code in trace_rows:
+                code = self.__normalize_code(trace_sds_code or "")
+                if code:
+                    sds_code_by_req[(trace_doc_id, trace_req_id)] = code
         objs = []
         for row_reqd, row_req, row_srsreqd, row_type, row_sdsdoc, row_srsdoc, row_product in rows:
             doc_tree = doc_trees.get(row_sdsdoc.id)
@@ -756,6 +818,7 @@ class Server(object):
 
             obj = SdsReqdObj(**row_reqd.dict())
             obj.srs_code = row_req.code
+            obj.sds_code = sds_code_by_req.get((row_sdsdoc.id, row_req.id)) or self.__to_sds_code(row_req.code)
             srs_flow_text = self.__compose_srs_func_detail(row_srsreqd_source)
             srs_overview = (getattr(row_srsreqd_source, "overview", None) or "").strip() if row_srsreqd_source else ""
             obj.name = self.__pick_req_name(row_req, getattr(row_srsreqd_source, "name", None))

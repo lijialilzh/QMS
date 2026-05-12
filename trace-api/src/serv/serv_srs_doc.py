@@ -1048,12 +1048,8 @@ class Server(object):
         reqd_map = {row.req_id: row for row in reqd_rows}
         for row in rows:
             item = sync_map.get(row.code) or {}
-            if item.get("module"):
-                row.module = item.get("module")
-            if item.get("function"):
-                row.function = item.get("function")
-            if item.get("sub_function"):
-                row.sub_function = item.get("sub_function")
+            # 标准 SRS 表是模块/功能/子功能的权威来源；详情章节标题只用于补充需求名称，
+            # 不能反向覆盖用户在标准表中编辑的功能名。
             if item.get("name"):
                 reqd_row = reqd_map.get(row.id)
                 if not reqd_row:
@@ -1370,6 +1366,10 @@ class Server(object):
                 row.function = item.get("function")
                 row.sub_function = item.get("sub_function")
                 row.location = item.get("location")
+                if row.type_code != "2":
+                    chapter = row.sub_function or row.function or row.module or "/"
+                    for trace_row in db.session.execute(select(SdsTrace).where(SdsTrace.req_id == row.id)).scalars().all():
+                        trace_row.chapter = chapter
             else:
                 db.session.add(SrsReq(doc_id=doc_id, **item))
         db.session.commit()
@@ -1420,6 +1420,76 @@ class Server(object):
         ).scalars().all()
         exists_dict = {(row.type_code, row.code): row for row in existing}
         current_keys = {(item["type_code"], item["code"]) for item in normalized_rows}
+
+        def logical_key(obj):
+            if isinstance(obj, dict):
+                type_code = str(obj.get("type_code") or "1")
+                values = [obj.get("module"), obj.get("function"), obj.get("sub_function")]
+                if type_code == "2":
+                    values.append(obj.get("location"))
+            else:
+                type_code = str(getattr(obj, "type_code", "") or "1")
+                values = [getattr(obj, "module", None), getattr(obj, "function", None), getattr(obj, "sub_function", None)]
+                if type_code == "2":
+                    values.append(getattr(obj, "location", None))
+            normalized = tuple(self.__normalize_text(str(value or "")) for value in values)
+            return (type_code, *normalized)
+
+        # 编号变更不代表需求换位置：相同模块/功能/子功能的行视为同一需求，保留 req_id 及 SDS 追溯关系。
+        logical_candidates: Dict[tuple, List[SrsReq]] = {}
+        for row in existing:
+            logical_candidates.setdefault(logical_key(row), []).append(row)
+
+        def sync_sds_trace_and_nodes(req_row: SrsReq, old_sds_code: str = None):
+            desired_sds_code = (req_row.code or "").replace("SRS", "SDS")
+            chapter = req_row.sub_function or req_row.function or req_row.module or "/"
+            old_sds_code = (old_sds_code or "").strip()
+            for trace_row in db.session.execute(select(SdsTrace).where(SdsTrace.req_id == req_row.id)).scalars().all():
+                previous_code = str(trace_row.sds_code or "").strip()
+                if desired_sds_code:
+                    trace_row.sds_code = desired_sds_code
+                trace_row.chapter = chapter
+                match_codes = {
+                    re.sub(r"\s+", "", old_sds_code.upper()),
+                    re.sub(r"\s+", "", previous_code.upper()),
+                    re.sub(r"\s+", "", desired_sds_code.upper()),
+                }
+                match_codes = {code for code in match_codes if code}
+                nodes = db.session.execute(
+                    select(SdsNode).where(SdsNode.doc_id == trace_row.doc_id, SdsNode.sds_code.isnot(None))
+                ).scalars().all()
+                for node in nodes:
+                    node_code = re.sub(r"\s+", "", str(getattr(node, "sds_code", "") or "").strip().upper())
+                    if node_code not in match_codes:
+                        continue
+                    node.sds_code = desired_sds_code
+                    if trace_row.location and chapter:
+                        node.title = f"{trace_row.location} {chapter}"
+
+        used_renamed_ids = set()
+        for item in normalized_rows:
+            key = (item["type_code"], item["code"])
+            if key in exists_dict:
+                continue
+            candidates = logical_candidates.get(logical_key(item)) or []
+            candidates = [
+                row for row in candidates
+                if row.id not in used_renamed_ids and (row.type_code, row.code) not in current_keys
+            ]
+            if len(candidates) != 1:
+                continue
+            row = candidates[0]
+            old_sds_code = (row.code or "").replace("SRS", "SDS")
+            new_sds_code = (item["code"] or "").replace("SRS", "SDS")
+            row.code = item["code"]
+            row.module = item.get("module")
+            row.function = item.get("function")
+            row.sub_function = item.get("sub_function")
+            row.location = item.get("location")
+            exists_dict[key] = row
+            used_renamed_ids.add(row.id)
+            sync_sds_trace_and_nodes(row, old_sds_code=old_sds_code)
+
         delete_ids = [row.id for row in existing if (row.type_code, row.code) not in current_keys]
 
         if delete_ids:
@@ -1437,6 +1507,8 @@ class Server(object):
                 row.function = item.get("function")
                 row.sub_function = item.get("sub_function")
                 row.location = item.get("location")
+                if row.type_code != "2":
+                    sync_sds_trace_and_nodes(row)
             else:
                 db.session.add(SrsReq(doc_id=doc_id, **item))
         db.session.commit()
@@ -2035,7 +2107,6 @@ class Server(object):
                 setattr(row, key, value)
             row.n_id = 0
             db.session.execute(delete(SrsNode).where(SrsNode.doc_id == row.id))
-            self.__sync_doc_srs_tables_from_doc_nodes(form.content or [])
             self.__reset_tree_node_ids(form.content or [])
             self.__update_nodes(row, 0, form.content)
             db.session.commit()

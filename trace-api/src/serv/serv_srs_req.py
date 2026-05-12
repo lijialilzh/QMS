@@ -1,7 +1,8 @@
 import logging
 import re
 import json
-from typing import List
+import sys
+from typing import Dict, List, Tuple
 from sqlalchemy import select, delete, func
 from sqlalchemy.sql import desc
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -10,7 +11,7 @@ from ..obj.vobj_srs_doc import SrsDocObj
 from ..obj.tobj_srs_doc import SrsNodeForm
 from ..obj.vobj_srs_req import SrsReqObj
 from ..model.rcm import Rcm
-from ..model.sds_doc import SdsDoc
+from ..model.sds_doc import SdsDoc, SdsNode
 from ..model.sds_reqd import SdsReqd
 from ..model.sds_trace import SdsTrace
 from ..model.srs_req import ReqRcm, SrsReq
@@ -48,6 +49,19 @@ class Server(object):
         txt = re.sub(r"\s+", "", txt)
         txt = re.sub(r"[，。；;、,.]+$", "", txt)
         return txt
+
+    @staticmethod
+    def __srs_code_sort_key(value: str):
+        txt = re.sub(r"\s+", "", str(value or "").strip().upper())
+        matched = re.match(r"^SRS-[A-Z]+(\d+)-(\d+)$", txt)
+        if matched:
+            return (int(matched.group(1)), int(matched.group(2)), txt)
+        return (sys.maxsize, sys.maxsize, txt)
+
+    @staticmethod
+    def __to_sds_code(value: str):
+        txt = re.sub(r"\s+", "", str(value or "").strip().upper())
+        return txt.replace("SRS-", "SDS-", 1) if txt.startswith("SRS-") else txt
 
     @staticmethod
     def __clean_title_text(value: str):
@@ -248,6 +262,32 @@ class Server(object):
             return
         cell["value"] = value or ""
 
+    def __move_table_row_by_code(self, table: dict, row_index: int, code_col: str):
+        rows = table.get("rows") or []
+        if row_index < 0 or row_index >= len(rows):
+            return False
+        row = rows.pop(row_index)
+        row_code = self.__normalize_req_code(str(row.get(code_col, "") or ""))
+        row_key = self.__srs_code_sort_key(row_code)
+        cells = table.get("cells") or []
+        body_cells = None
+        if isinstance(cells, list) and len(cells) == len(rows) + 2:
+            body_cells = list(cells[1:])
+            moved_cells = body_cells.pop(row_index)
+        insert_index = len(rows)
+        for idx, item in enumerate(rows):
+            if not isinstance(item, dict):
+                continue
+            item_code = self.__normalize_req_code(str(item.get(code_col, "") or ""))
+            if row_key < self.__srs_code_sort_key(item_code):
+                insert_index = idx
+                break
+        rows.insert(insert_index, row)
+        if body_cells is not None:
+            body_cells.insert(insert_index, moved_cells)
+            table["cells"] = [cells[0]] + body_cells
+        return insert_index != row_index
+
     def __replace_title_name(self, title: str, name: str):
         title = str(title or "").strip()
         name = self.__normalize_name_part(name)
@@ -282,11 +322,15 @@ class Server(object):
                 return self.__normalize_req_code(str(row.get(right_code, "") or ""))
         return ""
 
-    def __sync_req_to_node_titles(self, req_row: SrsReq):
+    def __sync_req_to_node_titles(self, req_row: SrsReq, old_code: str = None):
         code = self.__normalize_req_code(req_row.code or "")
         name_value = self.__pick_req_name(req_row)
         if not code or not name_value:
             return
+        match_codes = {code}
+        old_code = self.__normalize_req_code(old_code or "")
+        if old_code:
+            match_codes.add(old_code)
 
         nodes: List[SrsNode] = db.session.execute(
             select(SrsNode).where(SrsNode.doc_id == req_row.doc_id)
@@ -297,8 +341,10 @@ class Server(object):
         target_nodes = []
         for node in nodes:
             node_code = self.__normalize_req_code(getattr(node, "srs_code", "") or "")
-            if node_code == code:
+            if node_code in match_codes:
                 target_nodes.append(node)
+                if node_code != code:
+                    node.srs_code = code
 
             table = node.table
             if isinstance(table, str):
@@ -311,7 +357,7 @@ class Server(object):
             if not isinstance(table, dict):
                 continue
             table_code = self.__extract_detail_table_req_code(table)
-            if table_code == code:
+            if table_code in match_codes:
                 target_nodes.append(node_map.get(node.p_id) or node)
 
         seen = set()
@@ -323,10 +369,19 @@ class Server(object):
             if new_title and new_title != node.title:
                 node.title = new_title
 
-    def __sync_req_to_node_tables(self, req_row: SrsReq):
+    def __sync_req_to_node_tables(self, req_row: SrsReq, old_code: str = None, old_module: str = None):
         code = self.__normalize_req_code(req_row.code or "")
         if not code:
             return
+        match_codes = {code}
+        old_code = self.__normalize_req_code(old_code or "")
+        if old_code:
+            match_codes.add(old_code)
+        should_reposition = (
+            bool(old_code)
+            and old_code != code
+            and self.__normalize_name_part(old_module) != self.__normalize_name_part(req_row.module)
+        )
 
         rows = db.session.execute(
             select(SrsNode).where(SrsNode.doc_id == req_row.doc_id, SrsNode.table.isnot(None))
@@ -363,12 +418,18 @@ class Server(object):
 
             code_col = header_map.get("code")
             if code_col:
+                matched_row_index = -1
                 for row_idx, row in enumerate(body_rows):
                     if not isinstance(row, dict):
                         continue
                     row_code = self.__normalize_req_code(str(row.get(code_col, "") or ""))
-                    if row_code != code:
+                    if row_code not in match_codes:
                         continue
+                    matched_row_index = row_idx
+                    if row.get(code_col) != code:
+                        row[code_col] = code
+                        self.__set_table_cell_value(table, row_idx, code_col, code)
+                        changed = True
                     if header_map.get("module"):
                         row[header_map["module"]] = module_value
                         self.__set_table_cell_value(table, row_idx, header_map["module"], module_value)
@@ -382,6 +443,8 @@ class Server(object):
                         row[header_map["location"]] = req_row.location or ""
                         self.__set_table_cell_value(table, row_idx, header_map["location"], req_row.location or "")
                     changed = True
+                if should_reposition and matched_row_index >= 0:
+                    changed = self.__move_table_row_by_code(table, matched_row_index, code_col) or changed
 
             if len(headers) >= 2 and isinstance(headers[0], dict) and isinstance(headers[1], dict):
                 left_code = headers[0].get("code")
@@ -390,7 +453,7 @@ class Server(object):
                     # 兼容两种详情表：
                     # 1) 第二列表头就是 SRS 编号
                     # 2) 第二列表头不是编号，但“需求编号”行里存放了当前编号
-                    matched = self.__normalize_req_code(headers[1].get("name") or "") == code
+                    matched = self.__normalize_req_code(headers[1].get("name") or "") in match_codes
                     if not matched:
                         for row in body_rows:
                             if not isinstance(row, dict):
@@ -402,11 +465,26 @@ class Server(object):
                             if field != "code":
                                 continue
                             row_code = self.__normalize_req_code(str(row.get(right_code, "") or ""))
-                            if row_code == code:
+                            if row_code in match_codes:
                                 matched = True
                                 break
 
                     if matched:
+                        if self.__normalize_req_code(headers[1].get("name") or "") in match_codes and headers[1].get("name") != code:
+                            headers[1]["name"] = code
+                            changed = True
+                        cells = table.get("cells") or []
+                        if (
+                            isinstance(cells, list) and
+                            cells and
+                            isinstance(cells[0], list) and
+                            len(cells[0]) > 1 and
+                            isinstance(cells[0][1], dict) and
+                            self.__normalize_req_code(cells[0][1].get("value") or "") in match_codes and
+                            cells[0][1].get("value") != code
+                        ):
+                            cells[0][1]["value"] = code
+                            changed = True
                         for row_idx, row in enumerate(body_rows):
                             if not isinstance(row, dict):
                                 continue
@@ -427,6 +505,10 @@ class Server(object):
                                 row[right_code] = name_value
                                 self.__set_table_cell_value(table, row_idx, right_code, name_value)
                                 changed = True
+                            elif field == "code":
+                                row[right_code] = code
+                                self.__set_table_cell_value(table, row_idx, right_code, code)
+                                changed = True
                             elif field == "module":
                                 row[right_code] = module_value
                                 self.__set_table_cell_value(table, row_idx, right_code, module_value)
@@ -446,6 +528,49 @@ class Server(object):
 
             if changed:
                 node.table = table
+
+    def __sync_sds_codes_from_req_code(self, req_row: SrsReq, old_code: str = None):
+        new_sds_code = self.__to_sds_code(req_row.code)
+        old_sds_code = self.__to_sds_code(old_code)
+        if not new_sds_code or new_sds_code == old_sds_code:
+            return
+        display_name = self.__pick_req_name(req_row)
+        traces: List[SdsTrace] = db.session.execute(
+            select(SdsTrace).where(SdsTrace.req_id == req_row.id)
+        ).scalars().all()
+        for trace in traces:
+            previous_code = str(trace.sds_code or "").strip()
+            previous_norm = self.__to_sds_code(previous_code)
+            if not previous_code:
+                trace.sds_code = new_sds_code
+            elif old_sds_code and old_sds_code in previous_norm:
+                trace.sds_code = re.sub(re.escape(old_sds_code), new_sds_code, previous_code, flags=re.I)
+            elif "\n" not in previous_code and "," not in previous_code and "，" not in previous_code:
+                trace.sds_code = new_sds_code
+            else:
+                continue
+
+            old_node_codes = {code for code in [previous_norm, old_sds_code] if code}
+            nodes: List[SdsNode] = db.session.execute(
+                select(SdsNode).where(SdsNode.doc_id == trace.doc_id, SdsNode.sds_code.isnot(None))
+            ).scalars().all()
+            matched = False
+            for node in nodes:
+                node_code = self.__to_sds_code(getattr(node, "sds_code", "") or "")
+                if node_code not in old_node_codes and node_code != new_sds_code:
+                    continue
+                node.sds_code = new_sds_code
+                if display_name and getattr(trace, "location", None):
+                    node.title = f"{trace.location} {display_name}"
+                matched = True
+            if not matched and getattr(trace, "location", None):
+                heading = str(trace.location or "").strip()
+                for node in nodes:
+                    title = str(getattr(node, "title", "") or "").strip()
+                    if re.match(rf"^{re.escape(heading)}(?:\s|$)", title):
+                        node.sds_code = new_sds_code
+                        if display_name:
+                            node.title = f"{heading} {display_name}"
 
     async def add_srs_req(self, form: SrsReqForm):
         try:
@@ -494,6 +619,8 @@ class Server(object):
             row:SrsReq = db.session.execute(sql).scalars().first()
             if not row:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
+            old_code = row.code
+            old_module = row.module
             
             rcm_ids = form.rcm_ids
             form.rcm_ids = None
@@ -506,8 +633,9 @@ class Server(object):
                 if key == "id" or value is None:
                     continue
                 setattr(row, key, value)
-            self.__sync_req_to_node_tables(row)
-            self.__sync_req_to_node_titles(row)
+            self.__sync_sds_codes_from_req_code(row, old_code=old_code)
+            self.__sync_req_to_node_tables(row, old_code=old_code, old_module=old_module)
+            self.__sync_req_to_node_titles(row, old_code=old_code)
             db.session.commit()
             return Resp.resp_ok()
         except Exception:
@@ -566,6 +694,72 @@ class Server(object):
                 p_obj.children.append(obj)
         return tree
 
+    def __query_doc_req_order(self, doc_ids: List[int]) -> Dict[Tuple[int, str], int]:
+        if not doc_ids:
+            return {}
+        nodes: List[SrsNode] = db.session.execute(
+            select(SrsNode)
+            .where(SrsNode.doc_id.in_(doc_ids), SrsNode.table.isnot(None))
+            .order_by(SrsNode.doc_id, SrsNode.priority, SrsNode.n_id)
+        ).scalars().all()
+        order_map: Dict[Tuple[int, str], int] = {}
+        seq_by_doc: Dict[int, int] = {}
+        for node in nodes:
+            table = node.table
+            if isinstance(table, str):
+                try:
+                    table = json.loads(table)
+                except Exception:
+                    table = None
+            elif isinstance(table, (dict, list)):
+                table = json.loads(json.dumps(table, ensure_ascii=False))
+            if not isinstance(table, dict):
+                continue
+            headers = table.get("headers") or []
+            rows = table.get("rows") or []
+            if not isinstance(headers, list) or not isinstance(rows, list) or not headers or not rows:
+                continue
+            header_norm = [
+                self.__normalize_header((h or {}).get("name") or "")
+                for h in headers
+                if isinstance(h, dict)
+            ]
+            col_codes = [
+                (h or {}).get("code") or ""
+                for h in headers
+                if isinstance(h, dict)
+            ]
+            col_idx = {}
+            for idx, h in enumerate(header_norm):
+                if ("需求编号" in h or h in ["srscode", "code"]) and "code" not in col_idx:
+                    col_idx["code"] = idx
+                if ("模块" in h or h == "module") and "module" not in col_idx:
+                    col_idx["module"] = idx
+                if ("子功能" in h or "subfunction" in h) and "sub_function" not in col_idx:
+                    col_idx["sub_function"] = idx
+                if ("功能" in h or h == "function") and "function" not in col_idx:
+                    col_idx["function"] = idx
+                if ("章节" in h or "位置" in h or h == "location") and "location" not in col_idx:
+                    col_idx["location"] = idx
+            # 只使用标准需求表/其他需求表的行顺序；详情表是“属性-值”结构，不参与列表排序。
+            if "code" not in col_idx or not any(key in col_idx for key in ["module", "function", "sub_function", "location"]):
+                continue
+            code_col = col_codes[col_idx["code"]] if col_idx["code"] < len(col_codes) else ""
+            if not code_col:
+                continue
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                code = self.__normalize_req_code(str(row.get(code_col, "") or ""))
+                if not code:
+                    continue
+                key = (node.doc_id, code)
+                if key in order_map:
+                    continue
+                seq_by_doc[node.doc_id] = seq_by_doc.get(node.doc_id, 0) + 1
+                order_map[key] = seq_by_doc[node.doc_id]
+        return order_map
+
     async def list_srs_req(self, doc_id: int = None, type_code: str = None, page_index: int = 0, page_size: int = 10):
         def __find_path(level: int, srscode: str, nodes: List[SrsNodeForm], paths: List[str] = None):
             for node in nodes or []:
@@ -598,11 +792,16 @@ class Server(object):
         if type_code:
             sql = sql.where(SrsReq.type_code == type_code)
 
-        sql_count = select(func.count()).select_from(sql)
-        total = db.session.execute(sql_count).scalars().first()
-
-        sql = sql.offset(page_size * page_index).limit(page_size).order_by(desc(SrsReq.doc_id), SrsReq.code)
+        sql = sql.order_by(desc(SrsReq.doc_id), SrsReq.code)
         rows: List[SrsReq] = db.session.execute(sql).scalars().all()
+        order_map = self.__query_doc_req_order(list({row.doc_id for row in rows}))
+        rows.sort(key=lambda row: (
+            -int(row.doc_id or 0),
+            order_map.get((row.doc_id, self.__normalize_req_code(row.code or "")), sys.maxsize),
+            row.code or "",
+        ))
+        total = len(rows)
+        rows = rows[page_size * page_index: page_size * (page_index + 1)]
         rcms_dict = self.__query_rcms([row_req.id for row_req in rows])
         objs = []
         tree = self.__query_doc_tree(doc_id) if doc_id else []

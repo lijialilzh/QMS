@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 from sqlalchemy import select, delete, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import desc
@@ -61,6 +61,21 @@ from ..obj import Page, Resp
 from . import msg_err_db, save_file
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_sds_img_url(url: Optional[str]) -> Optional[str]:
+    """前端会为图片追加 ?_v= 缓存参数，多次保存会叠加超长；内部静态路径去掉 query 即可。"""
+    if not url:
+        return url
+    s = str(url).strip()
+    if "?" not in s:
+        return s
+    path, _ = s.split("?", 1)
+    if path.startswith("/data.trace/"):
+        return path
+    return s
+
+
 srsdoc_serv = ServSrsDoc()
 sdstrace_serv = ServSdsTrace()
 sdstreqd_serv = ServSdsReqd()
@@ -999,7 +1014,7 @@ class Server(object):
             if not row:
                 doc.n_id += 1
                 table = node.table.json() if node.table else None
-                row = SdsNode(doc_id=doc.id, n_id=doc.n_id, p_id=p_id, priority=idx, title=node.title, label=node.label, img_url=node.img_url, text=node.text, ref_type=node.ref_type,
+                row = SdsNode(doc_id=doc.id, n_id=doc.n_id, p_id=p_id, priority=idx, title=node.title, label=node.label, img_url=_normalize_sds_img_url(node.img_url), text=node.text, ref_type=node.ref_type,
                             table=table, sds_code=node.sds_code)
                 db.session.add(row)
                 logger.info("add_node: %s, %s, %s", p_id, doc.n_id, node.title)
@@ -1009,6 +1024,8 @@ class Server(object):
                         continue
                     if key == "table":
                         value = json.dumps(value) if value else None
+                    if key == "img_url":
+                        value = _normalize_sds_img_url(value)
                     setattr(row, key, value)
                 row.priority = idx
                 logger.info("alt_node: %s, %s, %s", p_id, doc.n_id, node.title)
@@ -1061,6 +1078,11 @@ class Server(object):
             db.session.add(row)
             db.session.flush()
             if form.content:
+                form.content = await self.__ensure_trace_nodes_from_saved_locations(row.id, form.content)
+                form.content = await self.__refresh_trace_table_nodes(row.id, form.content)
+                form.content = self.__normalize_heading_hierarchy(form.content)
+                form.content = self.__dedupe_requirement_nodes(form.content)
+                form.content = self.__clear_node_ids(form.content)
                 self.__update_nodes(row, 0, form.content)
             srs_reqs: List[SrsReq] = db.session.execute(select(SrsReq).where(SrsReq.doc_id == form.srsdoc_id)).scalars().all()
     
@@ -1101,7 +1123,7 @@ class Server(object):
         doc.n_id += 1
         table = node.table.json() if node.table else None
         row = SdsNode(doc_id=doc.id, n_id=doc.n_id, p_id=node.p_id, priority=doc.n_id, 
-                            title=node.title, img_url=node.img_url, text=node.text, table=table)
+                            title=node.title, img_url=_normalize_sds_img_url(node.img_url), text=node.text, table=table)
         db.session.add(row)
         db.session.commit()
         return Resp.resp_ok(data=SdsNodeForm(doc_id=row.doc_id, n_id=row.n_id, p_id=row.p_id, priority=row.priority,
@@ -1127,6 +1149,11 @@ class Server(object):
                     continue
                 setattr(row, key, value)
             if form.content:
+                form.content = await self.__ensure_trace_nodes_from_saved_locations(row.id, form.content)
+                form.content = await self.__refresh_trace_table_nodes(row.id, form.content)
+                form.content = self.__normalize_heading_hierarchy(form.content)
+                form.content = self.__dedupe_requirement_nodes(form.content)
+                form.content = self.__clear_node_ids(form.content)
                 row.n_id = 0
                 db.session.execute(delete(SdsNode).where(SdsNode.doc_id == row.id))
                 self.__update_nodes(row, 0, form.content)
@@ -1157,6 +1184,311 @@ class Server(object):
         sql = select(DocFile).join(subquery, DocFile.id == subquery.c.max_id)
         rows: List[DocFile] = db.session.execute(sql).scalars().all()
         return {row.category: row.file_url for row in rows}
+
+    async def __refresh_trace_table_nodes(self, doc_id: int, roots: List[SdsNodeForm]):
+        def normalize_code(value: str):
+            return re.sub(r"\s+", "", str(value or "").strip().upper())
+
+        def split_lines(value: str):
+            lines = [line.strip() for line in str(value or "").replace("\r", "").split("\n")]
+            while len(lines) > 1 and not lines[-1]:
+                lines.pop()
+            return lines or [""]
+
+        def parse_heading(value: str):
+            matched = re.match(r"^\s*(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))", str(value or "").strip())
+            return matched.group(1) if matched else ""
+
+        def is_trace_node(node: SdsNodeForm):
+            title = str(getattr(node, "title", "") or "")
+            ref_type = str(getattr(node, "ref_type", "") or "")
+            return ref_type == RefTypes.sds_traces.value or "设计与需求追溯表" in title or "设计与需求追溯列表" in title
+
+        def has_trace_node(nodes: List[SdsNodeForm]):
+            for node in nodes or []:
+                if is_trace_node(node) or has_trace_node(getattr(node, "children", None) or []):
+                    return True
+            return False
+
+        if not doc_id or not roots or not has_trace_node(roots):
+            return roots
+
+        location_by_code = {}
+        def collect_locations(nodes: List[SdsNodeForm]):
+            for node in nodes or []:
+                code = normalize_code(getattr(node, "sds_code", "") or "")
+                heading = parse_heading(getattr(node, "title", "") or "")
+                if code and heading and code not in location_by_code:
+                    location_by_code[code] = heading
+                collect_locations(getattr(node, "children", None) or [])
+        collect_locations(roots)
+
+        resp = await sdstrace_serv.list_sds_trace(None, doc_id=doc_id, page_size=10000)
+        rows: List[SdsTraceObj] = resp.data.rows or []
+        normal_rows = [
+            row for row in rows
+            if str(getattr(row, "type_code", "") or "").strip() in ["", "1", "2"]
+        ]
+
+        def build_chapter_cell(row: SdsTraceObj):
+            sds_codes = split_lines(getattr(row, "sds_code", "") or "")
+            chapters = split_lines(getattr(row, "chapter", "") or "")
+            locations = split_lines(getattr(row, "location", "") or "")
+            count = max(1, len(sds_codes), len(chapters), len(locations))
+            values = []
+            for idx in range(count):
+                chapter = chapters[idx].strip() if idx < len(chapters) else ""
+                sds_code = normalize_code(sds_codes[idx] if idx < len(sds_codes) else "")
+                location = locations[idx].strip() if idx < len(locations) else ""
+                if not location and sds_code:
+                    location = location_by_code.get(sds_code, "")
+                values.append(f"{chapter}{f'（章节 {location}）' if location else ''}")
+            return "\n".join(values)
+
+        table = Table(
+            headers=[
+                TabHeader(code="srs_code", name="需求编号"),
+                TabHeader(code="sds_code", name="设计编号"),
+                TabHeader(code="chapter", name="需求/代码"),
+            ],
+            rows=[
+                {
+                    "srs_code": getattr(row, "srs_code", "") or "",
+                    "sds_code": getattr(row, "sds_code", "") or "",
+                    "chapter": build_chapter_cell(row),
+                }
+                for row in normal_rows
+            ],
+        )
+
+        def apply(nodes: List[SdsNodeForm]):
+            for node in nodes or []:
+                if is_trace_node(node):
+                    node.ref_type = ""
+                    node.table = table
+                apply(getattr(node, "children", None) or [])
+        apply(roots)
+        return roots
+
+    async def __ensure_trace_nodes_from_saved_locations(self, doc_id: int, roots: List[SdsNodeForm]):
+        def normalize_code(value: str):
+            return re.sub(r"\s+", "", str(value or "").strip().upper())
+
+        def parse_heading(value: str):
+            matched = re.match(r"^\s*(\d+(?:\.\d+)*)", str(value or "").strip())
+            return matched.group(1) if matched else ""
+
+        def strip_heading(value: str):
+            return re.sub(r"^\s*\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))?", "", str(value or "")).strip()
+
+        def clean_name(value: str):
+            text = strip_heading(value)
+            return "" if text in ("/", "\\") else text
+
+        def heading_sort_key(value: str):
+            heading = parse_heading(value)
+            if not heading:
+                return (9999,)
+            return tuple(int(part) for part in heading.split("."))
+
+        def walk(nodes: List[SdsNodeForm]):
+            for node in nodes or []:
+                yield node
+                yield from walk(getattr(node, "children", None) or [])
+
+        def find_by_heading(nodes: List[SdsNodeForm], heading: str):
+            for node in walk(nodes):
+                if parse_heading(getattr(node, "title", "") or "") == heading:
+                    return node
+            return None
+
+        existing_codes = {
+            normalize_code(getattr(node, "sds_code", "") or "")
+            for node in walk(roots or [])
+            if normalize_code(getattr(node, "sds_code", "") or "")
+        }
+        nodes_by_code = {}
+        parent_lists = {}
+
+        def collect_parent_lists(nodes: List[SdsNodeForm], parent_list: List[SdsNodeForm]):
+            for node in nodes or []:
+                parent_lists[id(node)] = parent_list
+                collect_parent_lists(getattr(node, "children", None) or [], getattr(node, "children", None) or [])
+
+        collect_parent_lists(roots or [], roots or [])
+        for node in walk(roots or []):
+            code = normalize_code(getattr(node, "sds_code", "") or "")
+            if code:
+                nodes_by_code.setdefault(code, []).append(node)
+        rows = db.session.execute(
+            select(SdsTrace, SrsReq, SdsReqd, SrsReqd)
+            .join(SrsReq, SrsReq.id == SdsTrace.req_id)
+            .outerjoin(SdsReqd, (SdsReqd.req_id == SrsReq.id) & (SdsReqd.doc_id == SdsTrace.doc_id))
+            .outerjoin(SrsReqd, SrsReqd.req_id == SrsReq.id)
+            .where(SdsTrace.doc_id == doc_id, SdsTrace.location.isnot(None))
+        ).all()
+
+        changed = False
+        for trace, req, sds_reqd, srs_reqd in rows:
+            sds_code = normalize_code(getattr(trace, "sds_code", "") or "")
+            location = str(getattr(trace, "location", "") or "").strip()
+            if not sds_code or not re.match(r"^\d+(?:\.\d+)+$", location):
+                continue
+            matched_nodes = nodes_by_code.get(sds_code) or []
+            if any(parse_heading(getattr(node, "title", "") or "") == location for node in matched_nodes):
+                existing_codes.add(sds_code)
+                continue
+            for node in matched_nodes:
+                node.sds_code = None
+                changed = True
+            existing_codes.discard(sds_code)
+            parent_heading = ".".join(location.split(".")[:-1])
+            parent_node = find_by_heading(roots, parent_heading)
+            if parent_node is None:
+                grand_heading = ".".join(parent_heading.split(".")[:-1])
+                grand_node = find_by_heading(roots, grand_heading) if grand_heading else None
+                parent_title = f"{parent_heading} {clean_name(getattr(req, 'module', '') or '') or clean_name(getattr(req, 'function', '') or '') or parent_heading}"
+                parent_node = SdsNodeForm(title=parent_title, children=[])
+                if grand_node is not None:
+                    grand_node.children = list(getattr(grand_node, "children", None) or [])
+                    grand_node.children.append(parent_node)
+                    grand_node.children.sort(key=lambda item: heading_sort_key(getattr(item, "title", "") or ""))
+                else:
+                    roots.append(parent_node)
+                    roots.sort(key=lambda item: heading_sort_key(getattr(item, "title", "") or ""))
+                changed = True
+            leaf_title_text = (
+                clean_name(getattr(req, "sub_function", "") or "")
+                or clean_name(getattr(req, "function", "") or "")
+                or clean_name(getattr(req, "module", "") or "")
+                or sds_code
+            )
+            parent_node.children = list(getattr(parent_node, "children", None) or [])
+            move_node = matched_nodes[0] if matched_nodes else None
+            if move_node:
+                old_parent_list = parent_lists.get(id(move_node))
+                if old_parent_list is not None and move_node in old_parent_list:
+                    old_parent_list.remove(move_node)
+                move_node.title = f"{location} {leaf_title_text}"
+                move_node.sds_code = sds_code
+                if move_node not in parent_node.children:
+                    parent_node.children.append(move_node)
+                parent_lists[id(move_node)] = parent_node.children
+            else:
+                parent_node.children.append(SdsNodeForm(
+                    title=f"{location} {leaf_title_text}",
+                    sds_code=sds_code,
+                    text="",
+                    children=[],
+                ))
+            parent_node.children.sort(key=lambda item: heading_sort_key(getattr(item, "title", "") or ""))
+            existing_codes.add(sds_code)
+            changed = True
+        return roots if changed else roots
+
+    def __clear_node_ids(self, nodes: List[SdsNodeForm]):
+        for node in nodes or []:
+            node.n_id = 0
+            self.__clear_node_ids(getattr(node, "children", None) or [])
+        return nodes
+
+    def __dedupe_requirement_nodes(self, nodes: List[SdsNodeForm]):
+        def normalize_code(value: str):
+            return re.sub(r"\s+", "", str(value or "").strip().upper())
+
+        def parse_heading(value: str):
+            matched = re.match(r"^\s*(\d+(?:\.\d+)*)", str(value or "").strip())
+            return matched.group(1) if matched else ""
+
+        def score(node: SdsNodeForm):
+            text_len = len(str(getattr(node, "text", "") or ""))
+            img_len = len(str(getattr(node, "img_url", "") or ""))
+            children_len = len(getattr(node, "children", None) or [])
+            table_score = 1 if getattr(node, "table", None) else 0
+            return (text_len, img_len, children_len, table_score)
+
+        def merge_node(keeper: SdsNodeForm, duplicate: SdsNodeForm):
+            if not (getattr(keeper, "text", "") or "").strip() and (getattr(duplicate, "text", "") or "").strip():
+                keeper.text = duplicate.text
+            if not (getattr(keeper, "img_url", "") or "").strip() and (getattr(duplicate, "img_url", "") or "").strip():
+                keeper.img_url = duplicate.img_url
+            if not getattr(keeper, "table", None) and getattr(duplicate, "table", None):
+                keeper.table = duplicate.table
+            keeper.children = list(getattr(keeper, "children", None) or [])
+            for child in getattr(duplicate, "children", None) or []:
+                if child not in keeper.children:
+                    keeper.children.append(child)
+
+        def walk(items: List[SdsNodeForm]):
+            grouped = {}
+            result = []
+            for node in items or []:
+                node.children = walk(getattr(node, "children", None) or [])
+                heading = parse_heading(getattr(node, "title", "") or "")
+                code = normalize_code(getattr(node, "sds_code", "") or "")
+                key = (heading, code) if heading and code else None
+                if not key:
+                    result.append(node)
+                    continue
+                keeper = grouped.get(key)
+                if not keeper:
+                    grouped[key] = node
+                    result.append(node)
+                    continue
+                if score(node) > score(keeper):
+                    merge_node(node, keeper)
+                    idx = result.index(keeper)
+                    result[idx] = node
+                    grouped[key] = node
+                else:
+                    merge_node(keeper, node)
+            return result
+
+        return walk(nodes or [])
+
+    def __normalize_heading_hierarchy(self, roots: List[SdsNodeForm]):
+        def parse_heading(value: str):
+            matched = re.match(r"^\s*(\d+(?:\.\d+)*)", str(value or "").strip())
+            return matched.group(1) if matched else ""
+
+        def heading_sort_key(value: str):
+            heading = parse_heading(value)
+            if not heading:
+                return (9999,)
+            return tuple(int(part) for part in heading.split("."))
+
+        parent_lists = {}
+        by_heading = {}
+
+        def collect(nodes: List[SdsNodeForm], parent_list: List[SdsNodeForm]):
+            for node in nodes or []:
+                heading = parse_heading(getattr(node, "title", "") or "")
+                if heading:
+                    by_heading[heading] = node
+                    parent_lists[id(node)] = parent_list
+                collect(getattr(node, "children", None) or [], getattr(node, "children", None) or [])
+
+        collect(roots, roots)
+        headings = sorted(by_heading.keys(), key=lambda value: len(value.split(".")))
+        for heading in headings:
+            if "." not in heading:
+                continue
+            node = by_heading.get(heading)
+            parent_heading = ".".join(heading.split(".")[:-1])
+            parent_node = by_heading.get(parent_heading)
+            if not node or not parent_node:
+                continue
+            current_parent_list = parent_lists.get(id(node))
+            if current_parent_list is getattr(parent_node, "children", None):
+                continue
+            if current_parent_list is not None and node in current_parent_list:
+                current_parent_list.remove(node)
+            parent_node.children = list(getattr(parent_node, "children", None) or [])
+            if node not in parent_node.children:
+                parent_node.children.append(node)
+            parent_node.children.sort(key=lambda item: heading_sort_key(getattr(item, "title", "") or ""))
+            parent_lists[id(node)] = parent_node.children
+        return roots
 
     async def get_sds_doc(self, id:str, with_tree: bool = False):
         sql = select(SdsDoc, SrsDoc, Product).outerjoin(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id).outerjoin(Product, SrsDoc.product_id == Product.id).where(SdsDoc.id == id)
@@ -1190,6 +1522,7 @@ class Server(object):
                         logger.warning("ignoreNode:: %s %s %s", obj.doc_id, obj.p_id, obj.n_id)
                         continue
                     p_obj.children.append(obj)
+            tree = await self.__refresh_trace_table_nodes(row.id, tree)
         data = row.dict()
         data["srsdoc_id"] = 0 if is_srs_deleted else row.srsdoc_id
         data["product_id"] = row_prd.id if row_prd else (row_srs.product_id if row_srs else 0)
@@ -1498,11 +1831,8 @@ class Server(object):
                     values.append(f"{chapter}{f'（章节 {location}）' if location else ''}")
                 return "\n".join(values)
 
-            sorted_rows = sorted(rows or [], key=functools.cmp_to_key(
-                lambda left, right: __compare_req_code(getattr(left, "srs_code", "") or "", getattr(right, "srs_code", "") or "")
-            ))
             table_rows = []
-            for row in sorted_rows:
+            for row in rows or []:
                 table_rows.append({
                     "srs_code": getattr(row, "srs_code", "") or "",
                     "sds_code": getattr(row, "sds_code", "") or "",
