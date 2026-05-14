@@ -1429,7 +1429,8 @@ class Server(object):
                             "function" in col_idx,
                             "sub_function" in col_idx,
                         )
-                        type_codes.add(type_code)
+                        if type_code in ["1", "2"]:
+                            type_codes.add(type_code)
                 type_codes.update(collect_managed_type_codes(getattr(node, "children", None) or []))
             return type_codes
 
@@ -1437,6 +1438,9 @@ class Server(object):
         seen = set()
         for item in req_rows:
             type_code = str((item or {}).get("type_code") or "1")
+            # 变更需求以 srs_req 表编辑入口为准，文档树里的展示表不能反向覆盖已入库数据。
+            if type_code not in ["1", "2"]:
+                continue
             code = self.__normalize_srs_code(str((item or {}).get("code") or "")).upper()
             if not code:
                 continue
@@ -1947,6 +1951,82 @@ class Server(object):
             if node.children:
                 self.__reset_tree_node_ids(node.children)
 
+    def __sync_change_req_tables_from_db(self, doc_id: int, nodes: List[SrsNodeForm]):
+        """全局保存前，以 srs_req 最新数据覆盖文档树中的变更需求表。"""
+        req_rows: List[SrsReq] = db.session.execute(
+            select(SrsReq).where(
+                SrsReq.doc_id == doc_id,
+                SrsReq.type_code.isnot(None),
+                SrsReq.type_code.notin_(["1", "2"]),
+            ).order_by(SrsReq.id)
+        ).scalars().all()
+        if not req_rows:
+            return
+
+        type_rows: List[SrsType] = db.session.execute(
+            select(SrsType).where(SrsType.doc_id == doc_id)
+        ).scalars().all()
+        type_name_by_code = {row.type_code: row.type_name for row in type_rows if row.type_code}
+        reqs_by_type: Dict[str, List[SrsReq]] = {}
+        for row in req_rows:
+            reqs_by_type.setdefault(row.type_code or "", []).append(row)
+
+        def norm_text(value):
+            return re.sub(r"\s+", "", str(value or "")).strip()
+
+        def map_field(value):
+            txt = norm_text(value).lower()
+            if "需求编号" in txt or txt in ["srscode", "code"]:
+                return "code"
+            if "子功能" in txt:
+                return "sub_function"
+            if "功能" in txt:
+                return "function"
+            if "模块" in txt:
+                return "module"
+            return ""
+
+        def sync_node(node: SrsNodeForm):
+            table = getattr(node, "table", None)
+            headers = getattr(table, "headers", None) if table else None
+            if table and headers:
+                header_map = {}
+                for header in headers or []:
+                    field = map_field(getattr(header, "name", "") or "")
+                    if field:
+                        header_map[field] = getattr(header, "code", "")
+                table_name = getattr(table, "name", None) or getattr(node, "title", "") or ""
+                is_change_table = "变更" in str(table_name or "")
+                if is_change_table and "code" in header_map and ("module" in header_map or "function" in header_map):
+                    matched_type = None
+                    table_title = norm_text(table_name)
+                    for type_code, type_name in type_name_by_code.items():
+                        if norm_text(type_name) == table_title:
+                            matched_type = type_code
+                            break
+                    if matched_type is None and len(reqs_by_type) == 1:
+                        matched_type = next(iter(reqs_by_type.keys()))
+                    if matched_type in reqs_by_type:
+                        rows = []
+                        for req in reqs_by_type[matched_type]:
+                            row = {}
+                            if header_map.get("code"):
+                                row[header_map["code"]] = req.code or ""
+                            if header_map.get("module"):
+                                row[header_map["module"]] = req.module or ""
+                            if header_map.get("function"):
+                                row[header_map["function"]] = req.function or ""
+                            if header_map.get("sub_function"):
+                                row[header_map["sub_function"]] = req.sub_function or ""
+                            rows.append(row)
+                        table.rows = rows
+                        table.cells = None
+            for child in getattr(node, "children", None) or []:
+                sync_node(child)
+
+        for node in nodes or []:
+            sync_node(node)
+
     def __fix_rcms(self, doc: SrsDoc):
         objs_dict, tree = self.__tree(doc)
         req_rows = db.session.execute(select(SrsReq).where(SrsReq.doc_id == doc.id)).scalars().all()
@@ -2223,6 +2303,7 @@ class Server(object):
                 setattr(row, key, value)
             row.n_id = 0
             db.session.execute(delete(SrsNode).where(SrsNode.doc_id == row.id))
+            self.__sync_change_req_tables_from_db(row.id, form.content or [])
             self.__reset_tree_node_ids(form.content or [])
             self.__update_nodes(row, 0, form.content)
             db.session.commit()
@@ -2647,13 +2728,59 @@ class Server(object):
 
             rows = getattr(table, "rows", None) or []
             header_codes = [getattr(h, "code", "") for h in headers]
+            field_codes = {
+                field: header_codes[col_idx[field]]
+                for field in ["module", "function", "sub_function", "location"]
+                if field in col_idx and col_idx[field] < len(header_codes)
+            }
+            last_values = {}
             for row in rows:
-                for col in clean_cols:
-                    if col >= len(header_codes):
-                        continue
-                    code = header_codes[col]
-                    if isinstance(row, dict) and code in row:
-                        row[code] = self.__clean_req_table_field(row.get(code))
+                if not isinstance(row, dict):
+                    continue
+                current_values = {}
+                for field, code in field_codes.items():
+                    if code in row:
+                        current_values[field] = self.__clean_req_table_field(row.get(code))
+                        row[code] = current_values[field]
+
+                module_changed = bool(current_values.get("module"))
+                function_changed = bool(current_values.get("function"))
+                sub_function_changed = bool(current_values.get("sub_function"))
+
+                if "module" in field_codes:
+                    code = field_codes["module"]
+                    if current_values.get("module"):
+                        last_values["module"] = current_values["module"]
+                        last_values.pop("function", None)
+                        last_values.pop("sub_function", None)
+                    elif last_values.get("module"):
+                        row[code] = last_values["module"]
+
+                if "function" in field_codes:
+                    code = field_codes["function"]
+                    if current_values.get("function"):
+                        last_values["function"] = current_values["function"]
+                        last_values.pop("sub_function", None)
+                    elif not module_changed and last_values.get("function"):
+                        row[code] = last_values["function"]
+
+                if "sub_function" in field_codes:
+                    code = field_codes["sub_function"]
+                    if current_values.get("sub_function"):
+                        last_values["sub_function"] = current_values["sub_function"]
+                    elif not (module_changed or function_changed) and last_values.get("sub_function"):
+                        row[code] = last_values["sub_function"]
+
+                if "location" in field_codes:
+                    code = field_codes["location"]
+                    if current_values.get("location"):
+                        last_values["location"] = current_values["location"]
+                    elif last_values.get("location"):
+                        row[code] = last_values["location"]
+
+            # SRS需求表导出优先使用补齐后的 rows，避免旧 cells 合并结构中续行空值导致模块/功能丢失。
+            table.cells = None
+            cells = []
 
             for row_idx, cell_row in enumerate(cells or []):
                 if row_idx == 0:
@@ -2670,7 +2797,10 @@ class Server(object):
                         cell.value = self.__clean_req_table_field(getattr(cell, "value", ""))
             return table
 
-        def __save_tab2docx(table, docx):
+        def __save_tab2docx(table, docx, show_name: bool = True):
+            table_name = (getattr(table, "name", "") or "").strip() if table else ""
+            if show_name and table_name and not re.match(r"^导入表格\d*$", table_name):
+                docx_util.save_txt2docx(table_name, docx, 10.5)
             docx_util.save_tab2docx(__clean_srs_table_for_export(table), docx)
 
         def __write_catalog_page(docx: Document, catalog_text: str):
@@ -2820,7 +2950,8 @@ class Server(object):
                     # 目录页由TOC域生成，不再输出旧的目录文本和子节点
                     continue
 
-                if node.srs_code:
+                is_auto_req_node = str(getattr(node, "label", "") or "") in ["__auto_req_group", "__auto_req_detail"]
+                if node.srs_code and not is_auto_req_node:
                     # 若正文文本已包含同一需求编号，避免重复导出“需求编号”行
                     text_norm = (node.text or "").replace("：", ":")
                     code_norm = (node.srs_code or "").strip()
@@ -2828,7 +2959,9 @@ class Server(object):
                     if not has_code_in_text:
                         docx_util.save_txt2docx("需求编号：" + node.srs_code, docx, font_def)
                 if node.label:
-                    if __is_image_caption_line(node.label) and node.img_url:
+                    if is_auto_req_node:
+                        pass
+                    elif __is_image_caption_line(node.label) and node.img_url:
                         node_image_caption = node_image_caption or node.label
                     else:
                         docx_util.save_txt2docx(node.label, docx, font_def)
@@ -2856,12 +2989,12 @@ class Server(object):
                             if "产品需求列表" in line and table_idx < len(imported_table_children):
                                 tab_node = imported_table_children[table_idx]
                                 table_idx += 1
-                                __save_tab2docx(tab_node.table, docx)
+                                __save_tab2docx(tab_node.table, docx, show_name=False)
                                 written_child_ids.add(id(tab_node))
                             elif "其他需求列表" in line and table_idx < len(imported_table_children):
                                 tab_node = imported_table_children[table_idx]
                                 table_idx += 1
-                                __save_tab2docx(tab_node.table, docx)
+                                __save_tab2docx(tab_node.table, docx, show_name=False)
                                 written_child_ids.add(id(tab_node))
                         # 若该文档在SRS表管理里维护了“变更需求表”，在“产品需求/其他需求”后补充导出
                         # （导入Word文档场景通常没有 ref_type=srs_reqs 节点，因此需要在此处兜底）
@@ -2871,7 +3004,7 @@ class Server(object):
                                 if extra.label:
                                     docx_util.save_txt2docx(extra.label, docx, font_def)
                                 if extra.table and extra.table.headers:
-                                    __save_tab2docx(extra.table, docx)
+                                    __save_tab2docx(extra.table, docx, show_name=False)
                     elif (imported_table_children and has_caption) or (imported_image_children and has_image_caption):
                         table_idx = 0
                         image_idx = 0
@@ -2883,7 +3016,7 @@ class Server(object):
                                 docx_util.save_txt2docx(line, docx, font_def)
                                 tab_node = imported_table_children[table_idx]
                                 table_idx += 1
-                                __save_tab2docx(tab_node.table, docx)
+                                __save_tab2docx(tab_node.table, docx, show_name=False)
                                 written_child_ids.add(id(tab_node))
                             elif __is_image_caption_line(line) and image_idx < len(imported_image_children):
                                 img_node = imported_image_children[image_idx]

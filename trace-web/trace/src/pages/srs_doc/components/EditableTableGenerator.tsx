@@ -1,9 +1,10 @@
 import './EditableTableGenerator.less';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Form, InputNumber, Button, Table, Input, Space, message, Modal, Select } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuidv4 } from 'uuid';
+import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 
 // 表格行数据类型
 interface TableRowData {
@@ -29,12 +30,13 @@ interface EditableTableGeneratorProps {
   open?: boolean;
   initialData?: TableDataWithHeaders; // 初始数据，用于编辑模式
   rcmOptions?: Array<{ value: number; label: string; description?: string }>;
-  onConfirm?: (tableData: TableDataWithHeaders) => void;
+  lockedRowLabels?: string[];
+  onConfirm?: (tableData: TableDataWithHeaders) => void | Promise<void>;
   onCancel?: () => void;
 }
 
 // 可编辑表格组件
-const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = false, initialData, rcmOptions = [], onConfirm, onCancel }) => {
+const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = false, initialData, rcmOptions = [], lockedRowLabels = [], onConfirm, onCancel }) => {
   const { t: ts } = useTranslation();
   
   // 1. 状态管理：行列数、表格数据、表单实例
@@ -44,7 +46,9 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
   const [headerInput, setHeaderInput] = useState<string>(''); // 表头输入（逗号分隔，仅存储name）
   const [tableData, setTableData] = useState<TableRowData[]>([]); // 表格核心数据
   const [customHeaders, setCustomHeaders] = useState<TableHeaderItem[]>([]); // 自定义表头数组（新结构）
+  const [submitting, setSubmitting] = useState<boolean>(false);
   const [form] = Form.useForm(); // 表单实例，用于收集和重置行列数
+  const tableDataRef = useRef<TableRowData[]>([]);
 
   const normalizeRcmCode = (value: string | undefined): string => {
     return String(value || "")
@@ -106,6 +110,25 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
     return targetLabels.has(leftTxt) || /\bRCM[-_A-Za-z0-9]+\b/i.test(rightTxt);
   };
 
+  const normalizeLockLabel = (value: string | undefined): string => String(value || "").replace(/[\s:：]/g, "");
+  const lockedLabelSet = new Set(
+    ["需求编号", "需求名称", ...(lockedRowLabels || [])]
+      .map((item) => normalizeLockLabel(item))
+      .filter(Boolean)
+  );
+  const isReqDetailTwoColumnTable = colCount === 2 && ["需求编号", "需求名称"].every((label, index) => (
+    normalizeLockLabel(tableData[index]?.col_0) === normalizeLockLabel(label)
+  ));
+  const isLockedRow = (record: TableRowData) => {
+    const rowIndex = tableData.findIndex((item) => item.key === record.key);
+    const label = normalizeLockLabel(record?.col_0);
+    return lockedLabelSet.has(label) || (isReqDetailTwoColumnTable && (rowIndex === 0 || rowIndex === 1));
+  };
+  const isLockedHeaderRow = colCount === 2 && (
+    lockedLabelSet.has(normalizeLockLabel(customHeaders[0]?.name)) ||
+    /^SRS-/i.test(String(customHeaders[1]?.name || "").trim())
+  );
+
   const getSelectedRcmIdsByText = (text: string): number[] => {
     const codes = extractRcmCodesFromText(text);
     const ids = codes
@@ -138,6 +161,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
         });
         return rowData;
       });
+      tableDataRef.current = initTableData;
       setTableData(initTableData);
       
       form.setFieldsValue({
@@ -153,21 +177,27 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       setColCount(0);
       setTableName('');
       setHeaderInput('');
+      tableDataRef.current = [];
       setTableData([]);
       setCustomHeaders([]);
     }
   }, [open, initialData, form]);
 
   // 当 Modal 关闭时重置状态
-  const handleCancel = () => {
+  const resetAndCancel = () => {
     form.resetFields();
     setRowCount(0);
     setColCount(0);
     setTableName('');
     setHeaderInput('');
+    tableDataRef.current = [];
     setTableData([]);
     setCustomHeaders([]);
     onCancel?.();
+  };
+  const handleCancel = () => {
+    if (submitting) return;
+    resetAndCancel();
   };
 
   // 2. 生成表格：点击确认后，根据行列数初始化表格数据和列配置
@@ -221,6 +251,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
     });
 
     // 更新表格数据状态
+    tableDataRef.current = initTableData;
     setTableData(initTableData);
   };
 
@@ -238,21 +269,33 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
   const buildTableColumns = (): ColumnsType<TableRowData> => {
     if (colCount < 1) return []; // 列数为0时，返回空列配置
 
-    return Array.from({ length: colCount }, (_, colIndex) => ({
-      title: (
-        <Input
-          value={customHeaders[colIndex]?.name || `${ts('srs_doc.column')} ${colIndex + 1}`}
-          onChange={(e) => handleHeaderEdit(colIndex, e.target.value)}
-          placeholder={ts('srs_doc.please_input_content')}
-          size="small"
-          style={{ width: '100%' }}
-        />
-      ),
+    const editableColumns: ColumnsType<TableRowData> = Array.from({ length: colCount }, (_, colIndex) => ({
+      title: isLockedHeaderRow ? (
+        <div className="editable-table-locked-cell">
+          {customHeaders[colIndex]?.name || `${ts('srs_doc.column')} ${colIndex + 1}`}
+        </div>
+      ) : (
+          <Input
+            value={customHeaders[colIndex]?.name || `${ts('srs_doc.column')} ${colIndex + 1}`}
+            onChange={(e) => handleHeaderEdit(colIndex, e.target.value)}
+            placeholder={ts('srs_doc.please_input_content')}
+            size="small"
+            style={{ width: '100%' }}
+          />
+        ),
       dataIndex: `col_${colIndex}`, // 对应 tableData 中的字段名（与初始化数据一致）
       key: `column_${colIndex}`, // 列唯一标识
       // 5. 渲染可编辑单元格：使用 Input.TextArea 支持换行输入
-      render: (text: string, record: TableRowData) => (
-        isRcmAssistRow(record, colIndex) ? (
+      render: (text: string, record: TableRowData) => {
+        const locked = isLockedRow(record);
+        if (locked) {
+          return (
+            <div className="editable-table-locked-cell">
+              {text || "-"}
+            </div>
+          );
+        }
+        return isRcmAssistRow(record, colIndex) ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <Select
               mode="multiple"
@@ -266,7 +309,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
                 const nextText = mergeRcmContent(text ?? "", (vals || []) as number[]);
                 handleCellEdit(record.key, colIndex, nextText);
               }}
-              disabled={!rcmOptions.length}
+              disabled={locked || !rcmOptions.length}
               style={{ width: "100%" }}
               size="small"
             />
@@ -276,6 +319,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
               placeholder={ts('srs_doc.please_input_content')}
               autoSize={{ minRows: 2, maxRows: 8 }}
               style={{ resize: 'none' }}
+              disabled={locked}
             />
           </div>
         ) : (
@@ -285,10 +329,38 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
             placeholder={ts('srs_doc.please_input_content')}
             autoSize={{ minRows: 1, maxRows: 6 }}
             style={{ resize: 'none' }}
+            disabled={locked}
           />
-        )
-      ),
+        );
+      },
     }));
+    return [
+      ...editableColumns,
+      {
+        title: "操作",
+        key: "operation",
+        width: 96,
+        fixed: "right",
+        render: (_: unknown, record: TableRowData) => (
+          <Space size={4} className="editable-table-row-actions">
+            <Button
+              type="text"
+              size="small"
+              icon={<PlusOutlined />}
+              onClick={() => handleAddRowAfter(record.key)}
+            />
+            <Button
+              type="text"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              disabled={tableData.length <= 1 || isLockedRow(record)}
+              onClick={() => handleDeleteRow(record.key)}
+            />
+          </Space>
+        ),
+      },
+    ];
   };
 
   // 5. 处理单元格编辑：更新对应位置的表格数据
@@ -301,8 +373,40 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       // 更新对应列的字段值
       targetRow[`col_${colIndex}`] = value;
       // 重新设置表格数据状态，触发组件重渲染
+      tableDataRef.current = newTableData;
       setTableData(newTableData);
     }
+  };
+
+  const createEmptyRow = (): TableRowData => {
+    const rowData: TableRowData = { key: Date.now() + Math.floor(Math.random() * 1000) };
+    for (let colIndex = 0; colIndex < colCount; colIndex++) {
+      rowData[`col_${colIndex}`] = '';
+    }
+    return rowData;
+  };
+
+  const syncRowCount = (nextData: TableRowData[]) => {
+    tableDataRef.current = nextData;
+    setTableData(nextData);
+    setRowCount(nextData.length);
+    form.setFieldsValue({ rowCount: nextData.length });
+  };
+
+  const handleAddRowAfter = (rowKey: number) => {
+    const currentIndex = tableData.findIndex((item) => item.key === rowKey);
+    const insertIndex = currentIndex >= 0 ? currentIndex + 1 : tableData.length;
+    const nextData = [...tableData];
+    nextData.splice(insertIndex, 0, createEmptyRow());
+    syncRowCount(nextData);
+  };
+
+  const handleDeleteRow = (rowKey: number) => {
+    if (tableData.length <= 1) {
+      message.warning("至少保留一行");
+      return;
+    }
+    syncRowCount(tableData.filter((item) => item.key !== rowKey));
   };
 
   // 6. 重置表格：清空所有状态和表单
@@ -318,7 +422,8 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
 
   // 7. 确认按钮：将表格数据转换为包含表头的结构返回
   const handleConfirm = () => {
-    if (tableData.length === 0) {
+    const latestTableData = tableDataRef.current.length ? tableDataRef.current : tableData;
+    if (latestTableData.length === 0) {
       message.warning(ts('srs_doc.please_generate_table_first'));
       return;
     }
@@ -333,7 +438,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
     });
 
     // 转换为二维数组格式（表格内容）
-    const data: string[][] = tableData.map(row => {
+    const data: string[][] = latestTableData.map(row => {
       return Array.from({ length: colCount }, (_, colIndex) => row[`col_${colIndex}`] || '');
     });
 
@@ -343,10 +448,15 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       data
     };
 
-    onConfirm?.(result);
-    
-    // 确认后重置状态并关闭
-    handleCancel();
+    setSubmitting(true);
+    Promise.resolve(onConfirm?.(result))
+      .then(() => {
+        // 确认后重置状态并关闭
+        resetAndCancel();
+      })
+      .finally(() => {
+        setSubmitting(false);
+      });
   };
 
   return (
@@ -422,7 +532,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
 
         <Form.Item>
           <Space>
-            <Button type="primary" onClick={generateTable}>
+            <Button type="primary" onClick={generateTable} disabled={submitting}>
               {ts('srs_doc.generate_table_preview')}
             </Button>
             {/* <Button onClick={resetTable} danger>
@@ -448,10 +558,10 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
           {/* 第三步：操作按钮 */}
           <div style={{ marginTop: '20px', textAlign: 'right' }}>
             <Space>
-              <Button onClick={onCancel}>
+              <Button onClick={handleCancel} disabled={submitting}>
                 {ts('cancel')}
               </Button>
-              <Button type="primary" onClick={handleConfirm}>
+              <Button type="primary" onClick={handleConfirm} loading={submitting}>
                 {ts('srs_doc.save_table')}
               </Button>
             </Space>

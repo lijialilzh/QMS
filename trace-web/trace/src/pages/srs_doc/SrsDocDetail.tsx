@@ -155,6 +155,50 @@ export default () => {
         ...table,
         data: table.data || [],
     }));
+    const normalizeTableTitle = (value?: string) => normalizeReqText(value).replace(/\s+/g, "");
+    const normalizeHeaderText = (value?: string) => String(value || "").replace(/\s+/g, "").toLowerCase();
+    const isReqMainTable = (table?: any): boolean => {
+        if (!table?.headers?.length) return false;
+        const hs = table.headers.map((header: any) => normalizeHeaderText(header?.name));
+        return hs.some((h: string) => h.includes("需求编号")) && hs.some((h: string) => h.includes("功能"));
+    };
+    const syncChangeReqTablesToTree = (tree: TreeNode[], changeTables: any[] = []): TreeNode[] => {
+        if (!Array.isArray(tree) || !changeTables.length) return tree || [];
+        const findColumn = (headers: any[], matcher: (text: string) => boolean) => (
+            (headers || []).find((header: any) => matcher(normalizeHeaderText(header?.name)))?.code || ""
+        );
+        return (tree || []).map((node: any) => {
+            const table = node.table;
+            let nextTable = table;
+            if (isReqMainTable(table) && /变更/.test(String(table?.name || node.title || ""))) {
+                const currentTitle = normalizeTableTitle(table?.name || node.title || "");
+                const matched = (changeTables || []).find((item: any) => normalizeTableTitle(item?.title) === currentTitle) ||
+                    ((changeTables || []).length === 1 ? changeTables[0] : undefined);
+                if (matched) {
+                    const headers = table?.headers || [];
+                    const codeCol = findColumn(headers, (text) => text.includes("需求编号") || text.includes("srscode") || text === "code");
+                    const moduleCol = findColumn(headers, (text) => text.includes("模块"));
+                    const functionCol = findColumn(headers, (text) => text.includes("功能") && !text.includes("子功能"));
+                    const subFunctionCol = findColumn(headers, (text) => text.includes("子功能"));
+                    nextTable = {
+                        ...table,
+                        rows: (matched.data || []).map((row: any) => ({
+                            ...(codeCol ? { [codeCol]: row?.srs_code || row?.code || "" } : {}),
+                            ...(moduleCol ? { [moduleCol]: row?.module || "" } : {}),
+                            ...(functionCol ? { [functionCol]: row?.function || "" } : {}),
+                            ...(subFunctionCol ? { [subFunctionCol]: row?.sub_function || "" } : {}),
+                        })),
+                        cells: undefined,
+                    };
+                }
+            }
+            return {
+                ...node,
+                table: nextTable,
+                children: syncChangeReqTablesToTree(node.children || [], changeTables),
+            };
+        });
+    };
 
     // 加载产品相关的 RCM 列表（用于章节 RCM 选择控件）
     const loadProductRcm = (productId?: number) => {
@@ -478,7 +522,11 @@ export default () => {
         }
         editForm.validateFields().then(() => {
             const docId = parseInt(params.id as string);
-            const currentTree = (((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) || []) as any[];
+            const currentTree = syncChangeReqTablesToTree(
+                (((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) || []) as TreeNode[],
+                data.srsChangeTables || []
+            );
+            treeStructureRef.current = currentTree;
             const cleanedContent = currentTree.map((node: any) => cleanTreeNode(node, docId, 0));
             if (!cleanedContent.length) {
                 message.error("保存失败：当前文档结构为空，请刷新后重试");
@@ -777,9 +825,24 @@ export default () => {
             for (const item of deletedRows) {
                 await ApiSrsReq.delete_srs_req({ id: item.id });
             }
-            dispatch({ savingChangeReq: false, showChangeReqEditModal: false, changeReqEditInitialData: undefined, changeReqEditTarget: undefined });
-            await loadSrsTableData();
-            await loadReqListData();
+            const srsTableState = await fetchSrsTableState(docId);
+            const syncedTree = syncChangeReqTablesToTree(
+                ((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) as TreeNode[],
+                srsTableState.srsChangeTables
+            );
+            treeStructureRef.current = syncedTree;
+            dispatch({
+                srsTableData: srsTableState.srsTableData,
+                srsOtherReqData: srsTableState.srsOtherReqData,
+                srsChangeTables: srsTableState.srsChangeTables,
+                treeStructure: syncedTree,
+                srsTableLoading: false,
+                savingChangeReq: false,
+                showChangeReqEditModal: false,
+                changeReqEditInitialData: undefined,
+                changeReqEditTarget: undefined,
+            });
+            loadReqListData();
             message.success("变更需求已保存");
         } catch (error: any) {
             dispatch({ savingChangeReq: false });
@@ -832,6 +895,96 @@ export default () => {
             message.error("加载需求列表数据失败");
             dispatch({ reqListData: [], reqListLoading: false });
         });
+    };
+
+    const handleSaveReqDetailTable = async (detail: any) => {
+        const code = normalizeSrsCodeForSync(detail?.code);
+        if (!code) {
+            throw new Error("功能描述保存失败：缺少需求编号");
+        }
+        const toReqListTableData = (rows: any[]) => rows.map((item: any, index: number) => ({
+            key: item.req_id || `req_${index}_${Date.now()}`,
+            req_id: item.req_id,
+            doc_id: item.doc_id,
+            doc_version: item.doc_version || "",
+            code: item.code || "",
+            name: item.name || "",
+            module: item.module || "",
+            function: item.function || "",
+            sub_function: item.sub_function || "",
+            overview: item.overview || "",
+            participant: item.participant || "",
+            pre_condition: item.pre_condition || "",
+            trigger: item.trigger || "",
+            work_flow: item.work_flow || "",
+            post_condition: item.post_condition || "",
+            exception: item.exception || "",
+            constraint: item.constraint || "",
+            rcm_codes: item.rcm_codes || [],
+            type_code: item.type_code || "",
+        }));
+        let existed = (data.reqListData || []).find((item: any) => normalizeSrsCodeForSync(item?.code) === code);
+        if (!existed?.req_id) {
+            const changeReq = (data.srsChangeTables || [])
+                .flatMap((table: any) => table.data || [])
+                .find((item: any) => normalizeSrsCodeForSync(item?.srs_code || item?.code) === code);
+            if (changeReq?.id) {
+                existed = {
+                    ...changeReq,
+                    req_id: changeReq.id,
+                    code: changeReq.srs_code || changeReq.code,
+                };
+            }
+        }
+        if (!existed?.req_id) {
+            const docId = params.id ? parseInt(params.id) : 0;
+            const latestRes: any = await ApiSrsReqd.list_srs_reqd({
+                doc_id: docId,
+                page_index: 0,
+                page_size: 10000,
+            });
+            if (latestRes.code === ApiSrsReqd.C_OK) {
+                const latestRows = latestRes.data?.rows || [];
+                existed = latestRows.find((item: any) => normalizeSrsCodeForSync(item?.code) === code);
+                dispatch({ reqListData: toReqListTableData(latestRows) });
+            }
+        }
+        if (!existed?.req_id) {
+            throw new Error(`功能描述保存失败：未找到需求 ${detail.code}`);
+        }
+        const payload = {
+            req_id: existed.req_id,
+            overview: detail.overview ?? "",
+            participant: detail.participant ?? "",
+            pre_condition: detail.pre_condition ?? "",
+            trigger: detail.trigger ?? "",
+            work_flow: detail.work_flow ?? "",
+            post_condition: detail.post_condition ?? "",
+            exception: detail.exception ?? "",
+            constraint: detail.constraint ?? "",
+        };
+        const res: any = await ApiSrsReqd.update_srs_reqd(payload);
+        if (res.code !== ApiSrsReqd.C_OK) {
+            throw new Error(res.msg || "功能描述保存失败");
+        }
+        const docId = params.id ? parseInt(params.id) : 0;
+        const latestAfterSave: any = await ApiSrsReqd.list_srs_reqd({
+            doc_id: docId,
+            page_index: 0,
+            page_size: 10000,
+        });
+        if (latestAfterSave.code === ApiSrsReqd.C_OK) {
+            dispatch({ reqListData: toReqListTableData(latestAfterSave.data?.rows || []) });
+        } else {
+            const hasExistingReqListItem = (data.reqListData || []).some((item: any) => item.req_id === existed.req_id);
+            const nextReqListData = hasExistingReqListItem
+                ? (data.reqListData || []).map((item: any) => (
+                    item.req_id === existed.req_id ? { ...item, ...payload } : item
+                ))
+                : [...(data.reqListData || []), { ...existed, ...payload, code: detail.code }];
+            dispatch({ reqListData: nextReqListData });
+        }
+        message.success(res.msg || "功能描述已保存");
     };
 
     const normalizeText = (value?: string) => (value || "").replace(/\s+/g, "");
@@ -1068,7 +1221,11 @@ export default () => {
         const docId = params.id ? parseInt(params.id) : 0;
 
         // 清理树状结构数据，传入文档ID和根节点的父ID（0表示无父节点）
-        const currentTree = (((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) || []) as any[];
+        const currentTree = syncChangeReqTablesToTree(
+            (((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) || []) as TreeNode[],
+            data.srsChangeTables || []
+        );
+        treeStructureRef.current = currentTree;
         const cleanedContent = currentTree.map((node: any) => 
             cleanTreeNode(node, docId, 0)
         );
@@ -1351,6 +1508,7 @@ export default () => {
                                 dispatch({ showReqListModal: true });
                             }}
                             onEditSrsChangeTable={openChangeReqEditModal}
+                            onSaveReqDetailTable={handleSaveReqDetailTable}
                         />
                     </div>
             </div>
