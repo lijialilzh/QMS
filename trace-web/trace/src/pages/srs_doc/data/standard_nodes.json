@@ -329,18 +329,6 @@
                 "text": "",
                 "table": [],
                 "children": []
-            },
-             {
-                "doc_id": 0,
-                "n_id": 0,
-                "p_id": 0,
-                "title": "7.2 需求列表",
-                "ref_type": "srs_reqds",
-                "srs_code": "",
-                "rcm_codes": [],
-                "text": "",
-                "table": [],
-                "children": []
             }
         ]
     },

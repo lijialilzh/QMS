@@ -79,6 +79,38 @@ export default () => {
     };
 
     const cloneTree = (nodes: TreeNode[]): TreeNode[] => JSON.parse(JSON.stringify(nodes || []));
+    const normalizeTemplateTitle = (title?: string) => String(title || "").replace(/\s+/g, "").trim();
+    const ensureStandardTemplateChildren = (nodes: TreeNode[]): { nodes: TreeNode[]; changed: boolean } => {
+        const templateNodes = buildStandardNodesWithIds();
+        let changed = false;
+        const mergeChildren = (currentItems: TreeNode[], templateItems: TreeNode[]): TreeNode[] => {
+            return (currentItems || []).map((current) => {
+                const matchedTemplate = (templateItems || []).find((tpl: any) => (
+                    normalizeTemplateTitle(tpl.title) === normalizeTemplateTitle(current.title)
+                ));
+                if (!matchedTemplate) {
+                    return {
+                        ...current,
+                        children: mergeChildren(current.children || [], []),
+                    };
+                }
+                const currentChildren = current.children || [];
+                const currentChildKeys = new Set(currentChildren.map((child) => normalizeTemplateTitle(child.title)));
+                const missingChildren = (matchedTemplate.children || []).filter((tplChild: any) => {
+                    const key = normalizeTemplateTitle(tplChild.title);
+                    return key && !currentChildKeys.has(key);
+                });
+                if (missingChildren.length > 0) {
+                    changed = true;
+                }
+                return {
+                    ...current,
+                    children: mergeChildren([...currentChildren, ...missingChildren], matchedTemplate.children || []),
+                };
+            });
+        };
+        return { nodes: mergeChildren(nodes || [], templateNodes), changed };
+    };
 
     // 加载产品列表
     useEffect(() => {
@@ -241,6 +273,15 @@ export default () => {
             dispatch({ treeStructure: nodes });
         }
     }, [displayProductId, currentProduct?.scope]);
+
+    useEffect(() => {
+        if (params.id || data.loading || !(data.treeStructure as TreeNode[] || []).length) return;
+        const { nodes, changed } = ensureStandardTemplateChildren(data.treeStructure as TreeNode[]);
+        if (changed) {
+            treeStructureRef.current = nodes;
+            dispatch({ treeStructure: nodes });
+        }
+    }, [params.id, data.loading, data.treeStructure]);
 
     // 将后端数据转换为前端格式
     const parseTreeNode = (node: any): TreeNode => {

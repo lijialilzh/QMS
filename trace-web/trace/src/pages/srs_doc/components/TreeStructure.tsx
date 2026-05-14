@@ -339,8 +339,8 @@ const TreeNodeItem = ({
     const { t: ts } = useTranslation();
     const [fileList, setFileList] = useState<UploadFile[]>([]);
     const [uploadLoading, setUploadLoading] = useState(false);
-    // 文档内容仍全量加载，仅默认收起目录节点，避免进入编辑页时铺开过多内容。
-    const [expanded, setExpanded] = useState(false);
+    // 新增模板需要直接展示二级/三级结构，避免空模板看起来只剩一级菜单。
+    const [expanded, setExpanded] = useState(() => level < 2);
     const embeddedImageNode = (node.children || []).find((child) => isEmbeddedImageNode(child));
     const displayImageUrl = node.img_url || embeddedImageNode?.img_url || "";
     const imageTargetId = embeddedImageNode?.id || node.id;
@@ -436,7 +436,8 @@ const TreeNodeItem = ({
         !isEmbeddedImageNode(child) &&
         !isImportedTableNode(child) &&
         child.ref_type !== "srs_reqs" &&
-        child.ref_type !== "srs_reqs_2"
+        child.ref_type !== "srs_reqs_2" &&
+        child.ref_type !== "srs_reqds"
     ));
     const hasVisibleChildren = visibleChildren.length > 0;
     const isAutoReqNode = node.label === "__auto_req_group" || node.label === "__auto_req_detail";
@@ -1314,14 +1315,6 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
             normalizeTitleText(stripHeadingNumber(node.title)) === normalizedText
         ));
     };
-    const hasReqDetailListAnchor = (node: TreeNode): boolean => (
-        node.ref_type === "srs_reqds" ||
-        normalizeTitleText(stripHeadingNumber(node.title)) === normalizeTitleText("需求列表") ||
-        (node.children || []).some((child) => hasReqDetailListAnchor(child))
-    );
-    const findRootByReqDetailListAnchor = (items: TreeNode[]): TreeNode | undefined => (
-        (items || []).find((node) => getHeadingDepth(node.title) === 1 && hasReqDetailListAnchor(node))
-    );
     const filterReqTableRows = (table: TableData | null | undefined, detailMap: Map<string, any>) => {
         if (!table || !Array.isArray(table.rows)) return table;
         if (isReqMainTable(table) || isReqOtherTable(table)) return table;
@@ -1511,19 +1504,6 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                     return false;
                 }
                 if ((label === "__auto_req_detail" || isReqDetailTableNode) && code && !detailMap.has(code)) {
-                    return false;
-                }
-                const normalizedTitle = normalizeTitleText(stripHeadingNumber(node.title));
-                const isEmptyRequirementTitle =
-                    getHeadingDepth(node.title) >= 2 &&
-                    !node.ref_type &&
-                    normalizedTitle &&
-                    !validReqTitleSet.has(normalizedTitle) &&
-                    !(node.children || []).length &&
-                    !String(node.text || "").trim() &&
-                    !String((node as any).img_url || "").trim() &&
-                    !hasRenderableTable(node.table);
-                if (isEmptyRequirementTitle) {
                     return false;
                 }
                 const isEmptyAutoGroup =
@@ -1728,7 +1708,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
             }
             if (!moduleNode) {
                 parent = mode === "standard"
-                    ? (findRootByTitleText(cloned, moduleText) || findRootByReqDetailListAnchor(cloned) || findRootByTitleText(cloned, "图像显示") || findRootByCodeFamily(cloned, code))
+                    ? (findRootByTitleText(cloned, moduleText) || findRootByTitleText(cloned, "图像显示") || findRootByCodeFamily(cloned, code))
                     : (findRootByCodeFamily(cloned, code) || findRootByNearestPreviousCode(cloned, code));
                 if (!parent) return;
                 const rootPrefix = String(parent.title || "").trim().match(/^(\d+)/)?.[1] || "";
@@ -2365,7 +2345,11 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
     const hiddenSet = new Set(hiddenNodeIds.map((id) => String(id)));
     const getVisibleNodes = (list: TreeNode[]): TreeNode[] => {
         return list
-            .filter((node) => !hiddenSet.has(String(node.id)) && !hiddenSet.has(String(node.n_id || "")))
+            .filter((node) => {
+                const nodeIdHidden = hiddenSet.has(String(node.id));
+                const persistedIdHidden = !!node.n_id && hiddenSet.has(String(node.n_id));
+                return !nodeIdHidden && !persistedIdHidden;
+            })
             .map((node) => ({
                 ...node,
                 children: getVisibleNodes(node.children || []),
