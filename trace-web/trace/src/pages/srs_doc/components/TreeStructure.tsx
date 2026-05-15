@@ -2970,7 +2970,8 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 const childDetail = children
                     .map((child) => pickMatchedDetail(child, [...ancestors, node]))
                     .find(Boolean);
-                const detail = pickMatchedDetail(node, ancestors) || childDetail;
+                const ownDetail = pickMatchedDetail(node, ancestors);
+                const detail = ownDetail || childDetail;
                 if (!detail) {
                     return { ...node, children };
                 }
@@ -2984,8 +2985,9 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 return {
                     ...node,
                     ...(shouldUpdateTitle ? { title: `${titlePrefix}${nextName}` } : {}),
-                    ...(normalizeSrsCode(detail?.code) ? { srs_code: normalizeSrsCode(detail?.code) } : {}),
-                    table: isFunctionalKvTable(node.table) ? updateReqIdentityInFunctionalTable(node.table, detail) : node.table,
+                    ...(ownDetail && normalizeSrsCode(detail?.code) ? { srs_code: normalizeSrsCode(detail?.code) } : {}),
+                    ...(!ownDetail && !isFunctionalKvTable(node.table) ? { srs_code: null } : {}),
+                    table: ownDetail && isFunctionalKvTable(node.table) ? updateReqIdentityInFunctionalTable(node.table, detail) : node.table,
                     children,
                 };
             });
