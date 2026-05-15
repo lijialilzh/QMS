@@ -54,6 +54,7 @@ export default function ProductVersionSelect({
                 value: p.id,
             }));
     }, [selectedName, products]);
+    const displayVersionValue = versionOptions.some((option) => option.value === value) ? value : undefined;
 
     return (
         <div className="product-version-select" style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
@@ -84,7 +85,7 @@ export default function ProductVersionSelect({
                 optionFilterProp="label"
                 placeholder={versionPlaceholder}
                 disabled={disabled || !selectedName}
-                value={value}
+                value={displayVersionValue}
                 options={versionOptions}
                 onChange={(v) => onChange?.(v)}
             />

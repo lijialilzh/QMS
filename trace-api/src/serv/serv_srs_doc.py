@@ -2151,7 +2151,8 @@ class Server(object):
             sql = select(func.count(SrsDoc.id)).where(SrsDoc.product_id == form.product_id, SrsDoc.version == form.version)
             count = db.session.execute(sql).scalar()
             if count > 0:
-                return Resp.resp_err(msg=ts("msg_obj_exist"))
+                version = (form.version or "").strip()
+                return Resp.resp_err(msg=f"该产品下已经有{version}版本文档存在" if version else ts("msg_obj_exist"))
             
             row = SrsDoc(
                 product_id=form.product_id,
@@ -2285,7 +2286,8 @@ class Server(object):
             sql = select(func.count(SrsDoc.id)).where(SrsDoc.product_id == form.product_id, SrsDoc.version == form.version, SrsDoc.id != form.id)
             count = db.session.execute(sql).scalar()
             if count > 0:
-                return Resp.resp_err(msg=ts("msg_obj_exist"))
+                version = (form.version or "").strip()
+                return Resp.resp_err(msg=f"该产品下已经有{version}版本文档存在" if version else ts("msg_obj_exist"))
             sql = select(SrsDoc).where(SrsDoc.id == form.id)
             row:SrsDoc = db.session.execute(sql).scalars().first()
             if not row:

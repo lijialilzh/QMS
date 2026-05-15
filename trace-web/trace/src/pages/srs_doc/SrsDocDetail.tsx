@@ -123,7 +123,7 @@ export default () => {
     }, []);
 
     const productId = Form.useWatch("product_id", editForm);
-    const displayProductId = (data.isEdit || isReadOnly) ? (data.docProductId ?? productId) : productId;
+    const displayProductId = isReadOnly ? (data.docProductId ?? productId) : productId;
     const currentProduct = (data.products as any[]).find((p: any) => p.id === displayProductId);
     const productLabel = currentProduct ? `${currentProduct.name}-${currentProduct.full_version}` : "";
     const normalizeScopeTitle = (title?: string) => String(title || "")
@@ -530,8 +530,34 @@ export default () => {
         dispatch({ showChangeDescModal: false });
     };
 
+    const buildDuplicateVersionMessage = (version?: string) => {
+        const displayVersion = String(version || "").trim();
+        return displayVersion ? `该产品下已经有${displayVersion}版本文档存在` : ts("msg_obj_exist");
+    };
+
+    const validateSrsDocVersionUnique = async (productId?: number, version?: string, currentDocId: number = 0) => {
+        const normalizedVersion = String(version || "").trim();
+        if (!productId || !normalizedVersion) return "";
+        try {
+            const res: any = await Api.list_srs_doc({
+                product_id: productId,
+                version: normalizedVersion,
+                page_index: 0,
+                page_size: 1000,
+            });
+            if (res.code !== Api.C_OK) return "";
+            const duplicated = (res.data?.rows || []).some((row: any) => {
+                return Number(row.id) !== Number(currentDocId) && String(row.version || "").trim() === normalizedVersion;
+            });
+            return duplicated ? buildDuplicateVersionMessage(normalizedVersion) : "";
+        } catch (error) {
+            console.error("校验SRS文档版本失败:", error);
+            return "";
+        }
+    };
+
     const doSave = () => {
-        editForm.validateFields().then((values) => {
+        editForm.validateFields().then(async (values) => {
             // 包含变更说明和所有表单字段（包括 product_id 和 version）
             const submitData = {
                 ...values,
@@ -542,6 +568,11 @@ export default () => {
             if (!submitData.version && editForm.getFieldValue("version")) {
                 submitData.version = editForm.getFieldValue("version");
             }
+            const duplicateMsg = await validateSrsDocVersionUnique(submitData.product_id, submitData.version, params.id ? Number(params.id) : 0);
+            if (duplicateMsg) {
+                message.error(duplicateMsg);
+                return;
+            }
             dispatch({ loading: true });
             const fn_request = data.isEdit ? Api.update_srs_doc : Api.add_srs_doc;
             fn_request(submitData).then((res: any) => {
@@ -551,7 +582,7 @@ export default () => {
                     navigate("/srs_docs");
                 } else {
                     dispatch({ loading: false });
-                    message.error(res.msg);
+                    message.error(res.msg === "数据已存在！" ? buildDuplicateVersionMessage(submitData.version) : res.msg);
                 }
             });
         });
@@ -1474,11 +1505,16 @@ export default () => {
         doSaveTreeStructure();
     };
 
-    const doSaveTreeStructure = () => {
+    const doSaveTreeStructure = async () => {
         const productId = editForm.getFieldValue("product_id");
         const version = editForm.getFieldValue("version");
-        dispatch({ saving: true });
         const docId = params.id ? parseInt(params.id) : 0;
+        const duplicateMsg = await validateSrsDocVersionUnique(productId, version, docId);
+        if (duplicateMsg) {
+            message.error(duplicateMsg);
+            return;
+        }
+        dispatch({ saving: true });
 
         // 清理树状结构数据，传入文档ID和根节点的父ID（0表示无父节点）
         const currentTree = syncChangeReqTablesToTree(
@@ -1549,7 +1585,7 @@ export default () => {
                     });
                 }
             } else {
-                message.error(res.msg || ts("save_failed"));
+                message.error(res.msg === "数据已存在！" ? buildDuplicateVersionMessage(version) : (res.msg || ts("save_failed")));
             }
         }).catch((error) => {
             dispatch({ saving: false });
@@ -1606,8 +1642,25 @@ export default () => {
                     {(data.isEdit || isReadOnly) ? (
                         <Row gutter={24} className="form-display-row">
                             <Col span={8}>
-                                <span className="form-display-label">{ts("srs_doc.current_product")}：</span>
-                                <span className="form-display-value">{productLabel || "-"}</span>
+                                {isReadOnly ? (
+                                    <>
+                                        <span className="form-display-label">{ts("srs_doc.current_product")}：</span>
+                                        <span className="form-display-value">{productLabel || "-"}</span>
+                                    </>
+                                ) : (
+                                    <Form.Item
+                                        label={ts("srs_doc.current_product")}
+                                        name="product_id"
+                                        rules={[{ required: true, message: "" }]}>
+                                        <ProductVersionSelect
+                                            products={data.products}
+                                            allowClear
+                                            namePlaceholder={ts("product.name")}
+                                            versionPlaceholder={ts("product.full_version")}
+                                            onChange={(value) => editForm.setFieldValue("product_id", value)}
+                                        />
+                                    </Form.Item>
+                                )}
                             </Col>
                             <Col span={8}>
                                 <Form.Item
