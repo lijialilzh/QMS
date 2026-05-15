@@ -1050,14 +1050,40 @@ export default () => {
                 usedReqCodes.add(rowCode);
                 const matchedByCode = oldRows.find((item: any) => normalizeReqCode(item.srs_code || item.code) === rowCode && !usedOldIds.has(item.id));
                 const matchedOldRow =
-                    (oldRows[index] && !usedOldIds.has(oldRows[index].id) ? oldRows[index] : undefined) ||
-                    matchedByCode;
+                    matchedByCode ||
+                    (oldRows[index] && !usedOldIds.has(oldRows[index].id) ? oldRows[index] : undefined);
                 if (matchedOldRow?.id) {
                     usedOldIds.add(matchedOldRow.id);
                 }
                 assignments.push({ row, oldRow: matchedOldRow, code: rowCode });
             });
 
+            const normalizeSavedValue = (value: any) => normalizeReqText(value);
+            const isChangedAssignment = (assignment: { row: any; oldRow?: any; code: string }) => {
+                const { row, oldRow, code } = assignment;
+                if (!oldRow?.id) return true;
+                return normalizeReqCode(oldRow.srs_code || oldRow.code) !== code ||
+                    normalizeSavedValue(oldRow.module) !== row.module ||
+                    normalizeSavedValue(oldRow.function) !== row.function ||
+                    normalizeSavedValue(oldRow.sub_function) !== row.sub_function;
+            };
+            const changedAssignments = assignments.filter(isChangedAssignment);
+            if (changedAssignments.length === 0) {
+                dispatch({
+                    srsTableData: latestBeforeSave.srsTableData,
+                    srsOtherReqData: latestBeforeSave.srsOtherReqData,
+                    srsChangeTables: latestBeforeSave.srsChangeTables,
+                    srsTableLoading: false,
+                });
+                return latestBeforeSave.srsTableData;
+            }
+
+            const changedOldIds = new Set(
+                changedAssignments
+                    .map((assignment) => assignment.oldRow?.id)
+                    .filter((id): id is number | string => !!id)
+            );
+            const changedReqCodes = new Set(changedAssignments.map((assignment) => assignment.code));
             const buildSaveData = (item: any, code: string, id = 0) => ({
                 id,
                 doc_id: docId,
@@ -1065,9 +1091,9 @@ export default () => {
                 module: item.module,
                 function: item.function,
                 sub_function: item.sub_function,
-                location: "",
+                location: item.location || "",
                 type_code: "1",
-                rcm_ids: [],
+                rcm_ids: item.rcm_ids || [],
             });
             const updateReq = async (payload: any) => {
                 const saveRes = payload.id
@@ -1078,8 +1104,8 @@ export default () => {
                 }
             };
 
-            // 先把本次要保留的旧行移到临时编号，避免 A/B 两行互换编号时触发唯一约束。
-            for (const assignment of assignments) {
+            // 只释放发生编号变更的旧行，避免保存整张表时做无效更新。
+            for (const assignment of changedAssignments) {
                 const oldRow = assignment.oldRow;
                 if (!oldRow?.id) continue;
                 const oldCode = normalizeReqCode(oldRow.srs_code || oldRow.code);
@@ -1089,22 +1115,26 @@ export default () => {
                     module: oldRow.module || "",
                     function: oldRow.function || "",
                     sub_function: oldRow.sub_function || "",
+                    location: oldRow.location || "",
+                    rcm_ids: oldRow.rcm_ids || [],
                 }, tempCode, oldRow.id));
             }
-            // 当前表格复用了某个未分配旧行的编号时，也先释放该编号，随后按当前表格删除旧行。
+            // 新增/改号行复用了未参与本次变更的旧编号时，先释放该编号，避免唯一约束冲突。
             for (const oldRow of oldRows) {
-                if (usedOldIds.has(oldRow.id)) continue;
+                if (usedOldIds.has(oldRow.id) || changedOldIds.has(oldRow.id)) continue;
                 const oldCode = normalizeReqCode(oldRow.srs_code || oldRow.code);
-                if (!usedReqCodes.has(oldCode)) continue;
+                if (!changedReqCodes.has(oldCode)) continue;
                 const tempCode = `TMP-SRS-${docId}-${oldRow.id}-${Date.now()}`;
                 await updateReq(buildSaveData({
                     module: oldRow.module || "",
                     function: oldRow.function || "",
                     sub_function: oldRow.sub_function || "",
+                    location: oldRow.location || "",
+                    rcm_ids: oldRow.rcm_ids || [],
                 }, tempCode, oldRow.id));
             }
 
-            for (const assignment of assignments) {
+            for (const assignment of changedAssignments) {
                 const { row, oldRow, code } = assignment;
                 const saveData = {
                     id: oldRow?.id || 0,
@@ -1113,17 +1143,11 @@ export default () => {
                     module: row.module,
                     function: row.function,
                     sub_function: row.sub_function,
-                    location: "",
+                    location: oldRow?.location || "",
                     type_code: "1",
-                    rcm_ids: [],
+                    rcm_ids: oldRow?.rcm_ids || [],
                 };
                 await updateReq(saveData);
-            }
-            const staleStandardRows = oldRows.filter((item: any) => {
-                return !usedOldIds.has(item.id);
-            });
-            for (const item of staleStandardRows) {
-                await ApiSrsReq.delete_srs_req({ id: item.id });
             }
             const srsTableState = await fetchSrsTableState(docId);
             dispatch({
