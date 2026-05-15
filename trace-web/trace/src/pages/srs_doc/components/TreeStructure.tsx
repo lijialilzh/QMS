@@ -3419,12 +3419,13 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
             return prune(items);
         };
         void syncSrsReqDetailsByKey;
+        const isSavingReqDetailTable = !!reqDetailPayload;
         const nextNodes = isSavingStandardSrsTable
             ? sortExistingReqDetailsBySrsCode(dedupeReqDetailsByKey(appendMissingStandardReqDetails(
                 syncExistingReqIdentity(newNodes, standardDetailsForIdentitySync),
                 standardDetailsForIdentitySync
             ), standardDetailsForIdentitySync))
-            : syncReqDetailsToTree(newNodes, reqDetails || [], true);
+            : (isSavingReqDetailTable ? newNodes : syncReqDetailsToTree(newNodes, reqDetails || [], true));
         updateNodes(nextNodes);
         setTableCellsBackup(undefined);
     };
