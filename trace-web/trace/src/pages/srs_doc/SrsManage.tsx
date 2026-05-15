@@ -1369,6 +1369,20 @@ export default () => {
         }).then((res: any) => {
             if (res.code === ApiSrsType.C_OK) {
                 message.success(res.msg || "添加成功");
+                const created = res.data || {};
+                if (created.type_code) {
+                    dispatch({
+                        changeTables: [
+                            ...data.changeTables,
+                            {
+                                id: created.id || `change_${created.type_code}`,
+                                title: created.type_name || typeName,
+                                type_code: created.type_code,
+                                data: [],
+                            },
+                        ],
+                    });
+                }
                 // 重新加载数据以获取后端返回的 id
                 handleDocIdChange(docId);
             } else {

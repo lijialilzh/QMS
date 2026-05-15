@@ -377,11 +377,8 @@ class Server(object):
         old_code = self.__normalize_req_code(old_code or "")
         if old_code:
             match_codes.add(old_code)
-        should_reposition = (
-            bool(old_code)
-            and old_code != code
-            and self.__normalize_name_part(old_module) != self.__normalize_name_part(req_row.module)
-        )
+        # SRS 表的行顺序必须保持 Word/用户编辑时的原始顺序；需求编号只用于功能描述章节排序，不能反向重排 SRS 表。
+        should_reposition = False
 
         rows = db.session.execute(
             select(SrsNode).where(SrsNode.doc_id == req_row.doc_id, SrsNode.table.isnot(None))

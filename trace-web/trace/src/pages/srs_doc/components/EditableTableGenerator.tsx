@@ -141,11 +141,24 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
   useEffect(() => {
     if (open && initialData) {
       // 编辑模式：加载已有数据（适配新的表头结构）
-      const headers = initialData.headers.map(header => ({
+      let headers = initialData.headers.map(header => ({
         code: header.code || uuidv4(), // 确保有UUID，无则自动生成
         name: header.name.trim()
       }));
-      const data = initialData.data;
+      let data = initialData.data;
+      const firstHeaderName = normalizeLockLabel(headers[0]?.name);
+      const secondHeaderName = String(headers[1]?.name || "").trim();
+      if (
+        headers.length === 2 &&
+        firstHeaderName === normalizeLockLabel("需求编号") &&
+        /^SRS-/i.test(secondHeaderName)
+      ) {
+        data = [[headers[0].name, headers[1].name], ...data];
+        headers = [
+          { ...headers[0], name: "字段" },
+          { ...headers[1], name: "内容" },
+        ];
+      }
       
       setColCount(headers.length);
       setRowCount(data.length);

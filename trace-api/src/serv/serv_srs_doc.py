@@ -2638,6 +2638,9 @@ class Server(object):
             p.paragraph_format.space_after = Pt(0)
             docx_util.fonted_txt(p, txt, font_size)
 
+        def __strip_heading_no(value: str):
+            return re.sub(r"^\s*\d+(?:\.\d+)*\s*", "", value or "").strip()
+
         def __insert_toc_field(docx: Document):
             # 使用Word目录域，支持点线+页码+可点击跳转（需Word更新域）
             p = docx.add_paragraph()
@@ -2909,6 +2912,8 @@ class Server(object):
             __fix_chapter(p_title, p_nodes)
             return p_nodes
 
+        image_caption_no = {"value": 0}
+
         async def __writenodes(nodes: List[SrsNodeForm], docx: Document, level: int = 0):
             font_def = 10.5
             font_size = font_def
@@ -3031,6 +3036,11 @@ class Server(object):
 
                 if node.img_url:
                     docx_util.save_img2docx(node.img_url, docx, mw=500, mh=500)
+                    if not node_image_caption:
+                        default_caption_name = __strip_heading_no(node_title_for_export)
+                        if default_caption_name and not __is_imported_placeholder_title(default_caption_name):
+                            image_caption_no["value"] += 1
+                            node_image_caption = f"图{image_caption_no['value']} {default_caption_name}"
                     if node_image_caption:
                         __save_image_caption_txt(docx, node_image_caption, font_def)
 

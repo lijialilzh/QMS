@@ -25,6 +25,7 @@ export default () => {
     const [editForm] = Form.useForm();
     const treeStructureRef = useRef<TreeNode[]>([]);
     const initialEditTreeRef = useRef<TreeNode[]>([]);
+    const srsTableRefreshAtRef = useRef(0);
     const [data, dispatch] = useData({
         loading: false,
         isEdit: false,
@@ -353,7 +354,7 @@ export default () => {
         }
         const rows = reqRes.data?.rows || [];
         const mainData = rows
-            .filter((item: any) => item.type_code === "1")
+            .filter((item: any) => item.type_code === "1" && !String(item.code || "").startsWith("TMP-SRS-"))
             .map((item: any, index: number) => ({
                 key: item.id || `main_${index}_${Date.now()}`,
                 id: item.id,
@@ -715,25 +716,47 @@ export default () => {
     };
 
     // 加载SRS表数据
-    const loadSrsTableData = () => {
+    const loadSrsTableData = (silent = false) => {
         const docId = params.id ? parseInt(params.id) : 0;
         if (!docId) {
             return;
         }
-        dispatch({ srsTableLoading: true });
+        if (!silent) {
+            dispatch({ srsTableLoading: true });
+        }
         fetchSrsTableState(docId).then((srsTableState) => {
             dispatch({
                 srsTableData: srsTableState.srsTableData,
                 srsOtherReqData: srsTableState.srsOtherReqData,
                 srsChangeTables: srsTableState.srsChangeTables,
-                srsTableLoading: false,
+                ...(silent ? {} : { srsTableLoading: false }),
             });
         }).catch((error: any) => {
             console.error("加载SRS表数据失败:", error);
-            message.error("加载SRS表数据失败");
-            dispatch({ srsTableData: [], srsOtherReqData: [], srsChangeTables: [], srsTableLoading: false });
+            if (!silent) {
+                message.error("加载SRS表数据失败");
+                dispatch({ srsTableData: [], srsOtherReqData: [], srsChangeTables: [], srsTableLoading: false });
+            }
         });
     };
+
+    useEffect(() => {
+        const docId = params.id ? parseInt(params.id) : 0;
+        if (!docId) return;
+        const refreshLatestSrsTables = () => {
+            if (document.hidden) return;
+            const now = Date.now();
+            if (now - srsTableRefreshAtRef.current < 1500) return;
+            srsTableRefreshAtRef.current = now;
+            loadSrsTableData(true);
+        };
+        window.addEventListener("focus", refreshLatestSrsTables);
+        document.addEventListener("visibilitychange", refreshLatestSrsTables);
+        return () => {
+            window.removeEventListener("focus", refreshLatestSrsTables);
+            document.removeEventListener("visibilitychange", refreshLatestSrsTables);
+        };
+    }, [params.id]);
 
     const openAddChangeTableModal = () => {
         dispatch({
@@ -762,11 +785,23 @@ export default () => {
             if (res.code !== ApiSrsType.C_OK) {
                 throw new Error(res.msg || "新增变更表格失败");
             }
+            const created = res.data || {};
             const srsTableState = await fetchSrsTableState(docId);
+            const hasCreatedTable = created.type_code && (srsTableState.srsChangeTables || []).some((table: any) => table.type_code === created.type_code);
             dispatch({
                 srsTableData: srsTableState.srsTableData,
                 srsOtherReqData: srsTableState.srsOtherReqData,
-                srsChangeTables: srsTableState.srsChangeTables,
+                srsChangeTables: hasCreatedTable
+                    ? srsTableState.srsChangeTables
+                    : [
+                        ...(srsTableState.srsChangeTables || []),
+                        ...(created.type_code ? [{
+                            id: created.id || `change_${created.type_code}`,
+                            title: created.type_name || typeName,
+                            type_code: created.type_code,
+                            data: [],
+                        }] : []),
+                    ],
                 srsTableLoading: false,
                 showAddChangeTableModal: false,
                 newChangeTableName: "",
@@ -805,8 +840,8 @@ export default () => {
     const handleSaveChangeReqInCurrentPage = async (tableData: TableDataWithHeaders) => {
         const docId = params.id ? parseInt(params.id) : 0;
         const target = data.changeReqEditTarget as any;
-        const typeCode = String(target?.type_code || "");
-        if (!docId || !typeCode) {
+        let typeCode = String(target?.type_code || "");
+        if (!docId) {
             message.error("变更需求保存失败：缺少文档信息");
             return;
         }
@@ -823,8 +858,42 @@ export default () => {
         try {
             dispatch({ savingChangeReq: true });
             const nextTableName = String(tableData?.tableName || "").trim();
-            const targetId = Number(target?.id);
-            if (nextTableName && nextTableName !== String(target?.title || "").trim() && targetId) {
+            let resolvedTarget = target;
+            if (!typeCode) {
+                const latestState = await fetchSrsTableState(docId);
+                const rowCodes = new Set(rows.map((row) => normalizeSrsCodeForSync(row.code)).filter(Boolean));
+                const normalizeTitle = (value?: string) => normalizeReqText(value).replace(/\s+/g, "");
+                const matchedTable = (latestState.srsChangeTables || []).find((table: any) =>
+                    normalizeTitle(table?.title) === normalizeTitle(nextTableName || target?.title)
+                ) || (rowCodes.size ? (latestState.srsChangeTables || []).find((table: any) =>
+                    (table.data || []).some((row: any) => rowCodes.has(normalizeSrsCodeForSync(row?.srs_code || row?.code)))
+                ) : undefined);
+                if (matchedTable?.type_code) {
+                    resolvedTarget = matchedTable;
+                    typeCode = String(matchedTable.type_code || "");
+                } else {
+                    const typeRes: any = await ApiSrsType.add_srs_type({
+                        doc_id: docId,
+                        type_name: nextTableName || String(target?.title || "").trim() || "变更需求",
+                    });
+                    if (typeRes.code !== ApiSrsType.C_OK || !typeRes.data?.type_code) {
+                        throw new Error(typeRes.msg || "变更表格创建失败");
+                    }
+                    resolvedTarget = {
+                        ...target,
+                        id: typeRes.data.id,
+                        title: typeRes.data.type_name || nextTableName || target?.title || "变更需求",
+                        type_code: typeRes.data.type_code,
+                        data: [],
+                    };
+                    typeCode = String(typeRes.data.type_code || "");
+                }
+            }
+            if (!typeCode) {
+                throw new Error("变更需求保存失败：缺少变更表类型");
+            }
+            const targetId = Number(resolvedTarget?.id);
+            if (nextTableName && nextTableName !== String(resolvedTarget?.title || "").trim() && Number.isFinite(targetId) && targetId > 0) {
                 const typeRes: any = await ApiSrsType.update_srs_type({
                     id: targetId,
                     doc_id: docId,
@@ -835,7 +904,7 @@ export default () => {
                     throw new Error(typeRes.msg || "表名保存失败");
                 }
             }
-            const oldRows = (target?.data || []).filter((r: any) => !!r?.id);
+            const oldRows = (resolvedTarget?.data || []).filter((r: any) => !!r?.id);
             const usedOldIds = new Set<number | string>();
             for (const [index, row] of rows.entries()) {
                 const matchedOldRow =
@@ -862,10 +931,6 @@ export default () => {
                     throw new Error(saveRes.msg || "保存失败");
                 }
             }
-            const deletedRows = oldRows.filter((item: any) => !usedOldIds.has(item.id));
-            for (const item of deletedRows) {
-                await ApiSrsReq.delete_srs_req({ id: item.id });
-            }
             const srsTableState = await fetchSrsTableState(docId);
             const syncedTree = syncChangeReqTablesToTree(
                 ((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) as TreeNode[],
@@ -888,6 +953,160 @@ export default () => {
         } catch (error: any) {
             dispatch({ savingChangeReq: false });
             message.error(error?.message || "变更需求保存失败");
+        }
+    };
+
+    const handleSaveSrsReqTableInCurrentPage = async (table: any) => {
+        const docId = params.id ? parseInt(params.id) : 0;
+        if (!docId) {
+            message.error("SRS表保存失败：缺少文档信息");
+            return;
+        }
+        const headers = table?.headers || [];
+        const normalizeHeader = (value?: string) => String(value || "")
+            .replace(/[\s↩\r\n\t]+/g, "")
+            .replace(/[：:，,。.;；、]/g, "")
+            .toLowerCase();
+        const pickColumn = (matcher: (text: string) => boolean) => (
+            headers.find((header: any) => matcher(normalizeHeader(header?.name)))?.code || ""
+        );
+        const codeCol = pickColumn((text) => text.includes("需求编号") || text.includes("srscode") || text === "code");
+        const moduleCol = pickColumn((text) => text.includes("模块"));
+        const functionCol = pickColumn((text) => text.includes("功能") && !text.includes("子功能"));
+        const subFunctionCol = pickColumn((text) => text.includes("子功能"));
+        if (!codeCol || !moduleCol || !functionCol) {
+            return;
+        }
+        const normalizeReqCode = (value?: string) => String(value || "").replace(/\s+/g, "").toUpperCase();
+        const lastValues: Record<string, string> = {};
+        const rows = (table?.rows || [])
+            .map((row: any) => {
+                const code = normalizeReqCode(row?.[codeCol]);
+                const rawModule = normalizeReqText(row?.[moduleCol]);
+                const rawFunction = normalizeReqText(row?.[functionCol]);
+                const rawSubFunction = normalizeReqText(row?.[subFunctionCol]);
+                if (rawModule) {
+                    lastValues.module = rawModule;
+                    lastValues.function = "";
+                    lastValues.sub_function = "";
+                }
+                if (rawFunction) {
+                    lastValues.function = rawFunction;
+                    lastValues.sub_function = "";
+                }
+                if (rawSubFunction) {
+                    lastValues.sub_function = rawSubFunction;
+                }
+                return {
+                    code,
+                    module: rawModule || lastValues.module || "",
+                    function: rawFunction || lastValues.function || "",
+                    sub_function: rawSubFunction || lastValues.sub_function || "",
+                };
+            })
+            .filter((row: any) => row.code);
+
+        try {
+            dispatch({ srsTableLoading: true });
+            const latestBeforeSave = await fetchSrsTableState(docId);
+            const oldRows = (latestBeforeSave.srsTableData || []).filter((row: any) => !!row?.id);
+            const usedOldIds = new Set<number | string>();
+            const usedReqCodes = new Set<string>();
+            const assignments: Array<{ row: any; oldRow?: any; code: string }> = [];
+            rows.forEach((row: any, index: number) => {
+                const rowCode = normalizeReqCode(row.code);
+                if (!rowCode || usedReqCodes.has(rowCode)) return;
+                usedReqCodes.add(rowCode);
+                const matchedByCode = oldRows.find((item: any) => normalizeReqCode(item.srs_code || item.code) === rowCode && !usedOldIds.has(item.id));
+                const matchedOldRow =
+                    (oldRows[index] && !usedOldIds.has(oldRows[index].id) ? oldRows[index] : undefined) ||
+                    matchedByCode;
+                if (matchedOldRow?.id) {
+                    usedOldIds.add(matchedOldRow.id);
+                }
+                assignments.push({ row, oldRow: matchedOldRow, code: rowCode });
+            });
+
+            const buildSaveData = (item: any, code: string, id = 0) => ({
+                id,
+                doc_id: docId,
+                code,
+                module: item.module,
+                function: item.function,
+                sub_function: item.sub_function,
+                location: "",
+                type_code: "1",
+                rcm_ids: [],
+            });
+            const updateReq = async (payload: any) => {
+                const saveRes = payload.id
+                    ? await ApiSrsReq.update_srs_req(payload)
+                    : await ApiSrsReq.add_srs_req(payload);
+                if (saveRes.code !== ApiSrsReq.C_OK) {
+                    throw new Error(saveRes.msg || "SRS表保存失败");
+                }
+            };
+
+            // 先把本次要保留的旧行移到临时编号，避免 A/B 两行互换编号时触发唯一约束。
+            for (const assignment of assignments) {
+                const oldRow = assignment.oldRow;
+                if (!oldRow?.id) continue;
+                const oldCode = normalizeReqCode(oldRow.srs_code || oldRow.code);
+                if (oldCode === assignment.code) continue;
+                const tempCode = `TMP-SRS-${docId}-${oldRow.id}-${Date.now()}`;
+                await updateReq(buildSaveData({
+                    module: oldRow.module || "",
+                    function: oldRow.function || "",
+                    sub_function: oldRow.sub_function || "",
+                }, tempCode, oldRow.id));
+            }
+            // 当前表格复用了某个未分配旧行的编号时，也先释放该编号，随后按当前表格删除旧行。
+            for (const oldRow of oldRows) {
+                if (usedOldIds.has(oldRow.id)) continue;
+                const oldCode = normalizeReqCode(oldRow.srs_code || oldRow.code);
+                if (!usedReqCodes.has(oldCode)) continue;
+                const tempCode = `TMP-SRS-${docId}-${oldRow.id}-${Date.now()}`;
+                await updateReq(buildSaveData({
+                    module: oldRow.module || "",
+                    function: oldRow.function || "",
+                    sub_function: oldRow.sub_function || "",
+                }, tempCode, oldRow.id));
+            }
+
+            for (const assignment of assignments) {
+                const { row, oldRow, code } = assignment;
+                const saveData = {
+                    id: oldRow?.id || 0,
+                    doc_id: docId,
+                    code,
+                    module: row.module,
+                    function: row.function,
+                    sub_function: row.sub_function,
+                    location: "",
+                    type_code: "1",
+                    rcm_ids: [],
+                };
+                await updateReq(saveData);
+            }
+            const staleStandardRows = oldRows.filter((item: any) => {
+                return !usedOldIds.has(item.id);
+            });
+            for (const item of staleStandardRows) {
+                await ApiSrsReq.delete_srs_req({ id: item.id });
+            }
+            const srsTableState = await fetchSrsTableState(docId);
+            dispatch({
+                srsTableData: srsTableState.srsTableData,
+                srsOtherReqData: srsTableState.srsOtherReqData,
+                srsChangeTables: srsTableState.srsChangeTables,
+                srsTableLoading: false,
+            });
+            loadReqListData();
+            return srsTableState.srsTableData;
+        } catch (error: any) {
+            dispatch({ srsTableLoading: false });
+            message.error(error?.message || "SRS表保存失败");
+            throw error;
         }
     };
 
@@ -1534,6 +1753,7 @@ export default () => {
                                 other: filteredSrsOtherReqData as any[],
                                 changes: filteredSrsChangeTables as Array<{ id: number | string; title: string; data: any[] }>,
                             }}
+                            enableStandardReqAutoSync={!params.id}
                             reqDetails={reqListDataForTree as any[]}
                             srsReqLoading={data.srsTableLoading}
                             onNodesSnapshot={(nodes) => {
@@ -1550,6 +1770,7 @@ export default () => {
                             }}
                             onEditSrsChangeTable={openChangeReqEditModal}
                             onSaveReqDetailTable={handleSaveReqDetailTable}
+                            onSaveSrsReqTable={handleSaveSrsReqTableInCurrentPage}
                         />
                     </div>
             </div>
