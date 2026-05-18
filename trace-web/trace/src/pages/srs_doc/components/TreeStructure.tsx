@@ -95,13 +95,13 @@ function isEmbeddedTableNode(node: TreeNode): boolean {
 function isReqMainTable(table?: TableData | null): boolean {
     if (!table?.headers?.length) return false;
     const hs = table.headers.map((h) => normalizeCellText(h?.name));
-    return hs.some((h) => h.includes("需求编号")) && hs.some((h) => h.includes("功能"));
+    return hs.some((h) => isReqCodeHeaderText(h)) && hs.some((h) => h.includes("功能"));
 }
 
 function isReqOtherTable(table?: TableData | null): boolean {
     if (!table?.headers?.length) return false;
     const hs = table.headers.map((h) => normalizeCellText(h?.name));
-    return hs.some((h) => h.includes("需求编号")) && hs.some((h) => h.includes("章节"));
+    return hs.some((h) => isReqCodeHeaderText(h)) && hs.some((h) => h.includes("章节"));
 }
 
 function normalizeRcmCode(code: string | undefined): string {
@@ -139,6 +139,10 @@ function normalizeCellText(value: string | undefined): string {
         .replace(/[\s↩\r\n\t]+/g, "")
         .replace(/[：:，,。.;；、]/g, "")
         .toLowerCase();
+}
+
+function isReqCodeHeaderText(text: string): boolean {
+    return text.includes("需求编号") || text.includes("需求列表") || text.includes("srscode") || text === "code";
 }
 
 function normalizeReqDisplayText(value: any): string {
@@ -248,7 +252,7 @@ function hasRenderableTable(table?: TableData | null): boolean {
 function isSrsCodeColumn(header?: { code: string; name: string }): boolean {
     const hName = normalizeCellText(header?.name);
     const hCode = normalizeCellText(header?.code);
-    return hName.includes("需求编号") || hCode.includes("srscode") || hCode.includes("srs");
+    return isReqCodeHeaderText(hName) || hCode.includes("srscode") || hCode.includes("srs");
 }
 
 function splitTextByTables(rawText: string | undefined, tableCount: number): { intro: string; tableHeaders: Array<{ section: string; tableTitle: string }> } {
@@ -568,7 +572,7 @@ const TreeNodeItem = ({
         const pickColumn = (matcher: (text: string) => boolean) => (
             headers.find((header) => matcher(normalizeCellText(header?.name)))?.code || ""
         );
-        const codeCol = pickColumn((text) => text.includes("需求编号") || text.includes("srscode") || text === "code");
+        const codeCol = pickColumn((text) => isReqCodeHeaderText(text));
         const moduleCol = pickColumn((text) => text.includes("模块"));
         const functionCol = pickColumn((text) => text.includes("功能") && !text.includes("子功能"));
         const subFunctionCol = pickColumn((text) => text.includes("子功能"));
@@ -682,7 +686,7 @@ const TreeNodeItem = ({
         const getColumnIndex = (matcher: (text: string) => boolean) => (
             headers.findIndex((header) => matcher(normalizeCellText(header?.name)))
         );
-        const codeColIndex = getColumnIndex((text) => text.includes("需求编号") || text.includes("srscode") || text === "code");
+        const codeColIndex = getColumnIndex((text) => isReqCodeHeaderText(text));
         const moduleColIndex = getColumnIndex((text) => text.includes("模块"));
         const functionColIndex = getColumnIndex((text) => text.includes("功能") && !text.includes("子功能"));
         const subFunctionColIndex = getColumnIndex((text) => text.includes("子功能"));
@@ -1131,9 +1135,19 @@ const TreeNodeItem = ({
                                     size="small"
                                     icon={<EditOutlined />}
                                     onClick={() => {
-                                        const isChangeReqTable = isReqMainTable(tbl.table) && /变更/.test(String(tbl.table?.name || tbl.title || ""));
+                                        const matchedChangeTable = findChangeTableForRenderedTable(tbl.table, tbl.title);
+                                        const renderedChangeCodes = new Set(
+                                            buildChangeRowsFromRenderedTable(tbl.table)
+                                                .map((row) => normalizeSrsCode(row.srs_code))
+                                                .filter(Boolean)
+                                        );
+                                        const hasMatchedChangeCode = !!matchedChangeTable && renderedChangeCodes.size > 0 &&
+                                            (matchedChangeTable.data || []).some((row: any) => renderedChangeCodes.has(normalizeSrsCode(row?.srs_code || row?.code)));
+                                        const isChangeReqTable = isReqMainTable(tbl.table) && (
+                                            /变更/.test(String(tbl.table?.name || tbl.title || getNormalTableDisplayTitle(tbl) || "")) ||
+                                            hasMatchedChangeCode
+                                        );
                                         if (isChangeReqTable) {
-                                            const matchedChangeTable = findChangeTableForRenderedTable(tbl.table, tbl.title);
                                             if (onEditSrsChangeTable) {
                                                 onEditSrsChangeTable((matchedChangeTable || {
                                                     id: `node_${tbl.ownerNodeId}`,
@@ -1350,6 +1364,7 @@ interface TreeStructureProps {
     onEditSrsChangeTable?: (table: { id: number | string; title: string; data: any[]; type_code?: string }) => void;
     onSaveReqDetailTable?: (detail: any) => Promise<void>;
     onSaveSrsReqTable?: (table: TableData) => Promise<any[] | void>;
+    onSaveSrsChangeReqTable?: (tableData: TableDataWithHeaders) => Promise<any>;
     srsReqPreview?: {
         main: any[];
         other: any[];
@@ -1361,7 +1376,7 @@ interface TreeStructureProps {
     enableStandardReqAutoSync?: boolean;
 }
 
-export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcmOptions, onNodeDelete, onOpenSrsTable, onOpenReqList, onEditSrsChangeTable, onSaveReqDetailTable, onSaveSrsReqTable, srsReqPreview, reqDetails, srsReqLoading, onNodesSnapshot, enableStandardReqAutoSync = false }: TreeStructureProps) => {
+export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcmOptions, onNodeDelete, onOpenSrsTable, onOpenReqList, onEditSrsChangeTable, onSaveReqDetailTable, onSaveSrsReqTable, onSaveSrsChangeReqTable, srsReqPreview, reqDetails, srsReqLoading, onNodesSnapshot, enableStandardReqAutoSync = false }: TreeStructureProps) => {
     const { t: ts } = useTranslation();
     const [nodes, setNodes] = useState<TreeNode[]>(value);
     const [tableModalVisible, setTableModalVisible] = useState(false);
@@ -1812,7 +1827,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 const table = node.table;
                 if (isReqMainTable(table) && Array.isArray(table?.headers) && Array.isArray(table?.rows)) {
                     const headers = table.headers || [];
-                    const codeCol = pickColumn(headers, (text) => text.includes("需求编号") || text.includes("srscode") || text === "code");
+                    const codeCol = pickColumn(headers, (text) => isReqCodeHeaderText(text));
                     const moduleCol = pickColumn(headers, (text) => text.includes("模块"));
                     const functionCol = pickColumn(headers, (text) => text.includes("功能") && !text.includes("子功能"));
                     const subFunctionCol = pickColumn(headers, (text) => text.includes("子功能"));
@@ -1853,7 +1868,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 }
                 if (isReqOtherTable(table) && Array.isArray(table?.headers) && Array.isArray(table?.rows)) {
                     const headers = table.headers || [];
-                    const codeCol = pickColumn(headers, (text) => text.includes("需求编号") || text.includes("srscode") || text === "code");
+                    const codeCol = pickColumn(headers, (text) => isReqCodeHeaderText(text));
                     const moduleCol = pickColumn(headers, (text) => text.includes("需求模块") || text.includes("模块"));
                     const locationCol = pickColumn(headers, (text) => text.includes("章节") || text.includes("位置"));
                     (table.rows || []).forEach((row) => {
@@ -1988,7 +2003,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                     (previewTables.length === 1 ? previewTables[0] : undefined);
                 if (matchedPreview) {
                     const headers = table?.headers || [];
-                    const codeCol = getColumnCode(headers, (text) => text.includes("需求编号") || text.includes("srscode") || text === "code");
+                    const codeCol = getColumnCode(headers, (text) => isReqCodeHeaderText(text));
                     const moduleCol = getColumnCode(headers, (text) => text.includes("模块"));
                     const functionCol = getColumnCode(headers, (text) => text.includes("功能") && !text.includes("子功能"));
                     const subFunctionCol = getColumnCode(headers, (text) => text.includes("子功能"));
@@ -2663,7 +2678,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         const pickColumnCode = (matcher: (text: string) => boolean) => (
             headers.find((header) => matcher(normalizeCellText(header?.name)))?.code || ""
         );
-        const codeCol = pickColumnCode((text) => text.includes("需求编号") || text.includes("srscode") || text === "code");
+        const codeCol = pickColumnCode((text) => isReqCodeHeaderText(text));
         const moduleCol = pickColumnCode((text) => text.includes("模块"));
         const functionCol = pickColumnCode((text) => text.includes("功能") && !text.includes("子功能"));
         const subFunctionCol = pickColumnCode((text) => text.includes("子功能"));
@@ -2731,7 +2746,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
             const getColumnIndex = (matcher: (text: string) => boolean) => (
                 tableData.headers.findIndex((header) => matcher(normalizeCellText(header?.name)))
             );
-            const codeColIndex = getColumnIndex((text) => text.includes("需求编号") || text.includes("srscode") || text === "code");
+            const codeColIndex = getColumnIndex((text) => isReqCodeHeaderText(text));
             const moduleColIndex = getColumnIndex((text) => text.includes("模块"));
             const functionColIndex = getColumnIndex((text) => text.includes("功能") && !text.includes("子功能"));
             const subFunctionColIndex = getColumnIndex((text) => text.includes("子功能"));
@@ -2931,6 +2946,12 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         const reqDetailPayload = buildReqDetailPayload();
         if (reqDetailPayload && onSaveReqDetailTable) {
             await onSaveReqDetailTable(reqDetailPayload);
+        }
+        const isSavingChangeReqTable = !!(tableFormat && isReqMainTable(tableFormat) && /变更/.test(String(tableFormat.name || tableData.tableName || "")));
+        if (isSavingChangeReqTable && onSaveSrsChangeReqTable) {
+            await onSaveSrsChangeReqTable(tableData);
+            setTableCellsBackup(undefined);
+            return;
         }
         const isSavingStandardSrsTable = !!(tableFormat && isReqMainTable(tableFormat) && !/变更/.test(String(tableFormat.name || "")));
         const allStandardDetailsForIdentitySync = isSavingStandardSrsTable
