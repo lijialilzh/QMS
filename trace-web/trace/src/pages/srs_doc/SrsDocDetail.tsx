@@ -291,6 +291,21 @@ export default () => {
         };
         const codeSet = new Set<string>();
         const detailNodeByKey = new Map<string, TreeNode>();
+        const removeDetailNodeByKey = (items: TreeNode[], key: string): TreeNode | undefined => {
+            for (let index = 0; index < (items || []).length; index += 1) {
+                const node: any = items[index];
+                const nodeCode = normalizeSrsCodeForSync(node.srs_code || extractSrsCodeFromTable(node.table));
+                const nodeKey = normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table) || (nodeCode ? `legacy_reqd_${nodeCode}` : ""));
+                const isReqDetailNode = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
+                if (isReqDetailNode && nodeKey === key) {
+                    items.splice(index, 1);
+                    return node;
+                }
+                const found = removeDetailNodeByKey(node.children || [], key);
+                if (found) return found;
+            }
+            return undefined;
+        };
         const collectExistingReqDetails = (items: TreeNode[]) => {
             (items || []).forEach((node: any) => {
                 const isReqDetailNode = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
@@ -362,7 +377,13 @@ export default () => {
         };
         const findDirectChildByTitle = (items: TreeNode[], title: string): TreeNode | undefined => {
             const key = normalizeTitle(title);
-            return (items || []).find((node) => getDepth(node.title) > 0 && normalizeTitle(stripHeadingNo(node.title)) === key);
+            return (items || []).find((node) => {
+                const isReqGeneratedNode = node.label === "__auto_req_group" ||
+                    node.label === "__auto_req_detail" ||
+                    isFunctionalKvTable(node.table) ||
+                    (node.children || []).some((child) => child.label === "__auto_req_detail" || isFunctionalKvTable(child.table));
+                return isReqGeneratedNode && getDepth(node.title) > 0 && normalizeTitle(stripHeadingNo(node.title)) === key;
+            });
         };
         const reqRoot = findReqDetailRoot(cloned);
         if (!reqRoot) return cloned;
@@ -376,13 +397,7 @@ export default () => {
             const moduleText = normalizeReqText(detail?.module || detail?.name || detail?.function || detail?.code) || code;
             const functionText = normalizeReqText(detail?.function);
             const subFunctionText = normalizeReqText(detail?.sub_function);
-            if (existingByKey) {
-                existingByKey.srs_code = code;
-                existingByKey.req_detail_key = detailKey;
-                existingByKey.table = updateDetailTableIdentity(existingByKey.table, detail);
-                codeSet.add(code);
-                return;
-            }
+            const existingNodeToMove = detailKey ? removeDetailNodeByKey(cloned, detailKey) : undefined;
             let moduleNode = findDirectChildByTitle(reqRoot.children || [], moduleText);
             if (!moduleNode) {
                 moduleNode = makeNode(`${rootPrefix}.${nextChildNo(reqRoot.children || [], rootPrefix)} ${moduleText}`, reqRoot);
@@ -407,9 +422,25 @@ export default () => {
                 }
                 target = subNode;
             }
-            target.srs_code = code;
-            target.label = "__auto_req_detail";
-            target.table = buildDetailTable(detail);
+            if (existingNodeToMove) {
+                target.children = target.children || [];
+                const targetPrefix = getPrefix(target.title);
+                const detailTitle = String(detail?.name || detail?.sub_function || detail?.function || detail?.module || code).trim();
+                const movedNode = {
+                    ...existingNodeToMove,
+                    title: `${targetPrefix}.${nextChildNo(target.children || [], targetPrefix)} ${detailTitle}`,
+                    srs_code: code,
+                    req_detail_key: detailKey,
+                    label: "__auto_req_detail",
+                    table: updateDetailTableIdentity(existingNodeToMove.table, detail),
+                    children: [],
+                };
+                target.children = [...target.children, movedNode];
+            } else {
+                target.srs_code = code;
+                target.label = "__auto_req_detail";
+                target.table = buildDetailTable(detail);
+            }
             codeSet.add(code);
         });
         return cloned;
@@ -1054,6 +1085,35 @@ export default () => {
             changeReqEditInitialData: initialData,
             showChangeReqEditModal: true,
         });
+    };
+
+    const handleDeleteChangeReqTableInCurrentPage = async (table: { id: number | string; title: string; type_code?: string; data: any[] }) => {
+        const docId = params.id ? parseInt(params.id) : 0;
+        const typeId = Number(table?.id);
+        if (!Number.isFinite(typeId) || typeId <= 0) {
+            dispatch({
+                srsChangeTables: (data.srsChangeTables || []).filter((item: any) => item.id !== table?.id),
+            });
+            return;
+        }
+        try {
+            dispatch({ srsTableLoading: true });
+            const res: any = await ApiSrsType.delete_srs_type({ id: typeId });
+            if (res.code !== ApiSrsType.C_OK) {
+                throw new Error(res.msg || "删除变更表格失败");
+            }
+            const srsTableState = docId ? await fetchSrsTableState(docId) : { srsTableData: [], srsOtherReqData: [], srsChangeTables: [] };
+            dispatch({
+                srsTableData: srsTableState.srsTableData,
+                srsOtherReqData: srsTableState.srsOtherReqData,
+                srsChangeTables: srsTableState.srsChangeTables,
+                srsTableLoading: false,
+            });
+            message.success(res.msg || "删除成功");
+        } catch (error: any) {
+            dispatch({ srsTableLoading: false });
+            message.error(error?.message || "删除变更表格失败");
+        }
     };
 
     const handleSaveChangeReqInCurrentPage = async (tableData: TableDataWithHeaders) => {
@@ -2146,6 +2206,7 @@ export default () => {
                                 dispatch({ showReqListModal: true });
                             }}
                             onEditSrsChangeTable={openChangeReqEditModal}
+                            onDeleteSrsChangeTable={handleDeleteChangeReqTableInCurrentPage}
                             onSaveReqDetailTable={handleSaveReqDetailTable}
                             onSaveSrsReqTable={handleSaveSrsReqTableInCurrentPage}
                             onSaveSrsChangeReqTable={handleSaveChangeReqInCurrentPage}

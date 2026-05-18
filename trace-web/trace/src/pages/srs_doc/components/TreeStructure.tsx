@@ -339,6 +339,7 @@ interface TreeNodeItemProps {
     onOpenSrsTable?: () => void;  // 打开 SRS 表弹框
     onOpenReqList?: () => void;   // 打开需求列表弹框
     onEditSrsChangeTable?: (table: { id: number | string; title: string; data: any[]; type_code?: string }) => void;
+    onDeleteSrsChangeTable?: (table: { id: number | string; title: string; data: any[]; type_code?: string }) => void;
     onSaveReqDetailTable?: (detail: any) => Promise<void>;
     srsReqPreview?: {
         main: any[];
@@ -372,6 +373,7 @@ const TreeNodeItem = ({
     onOpenSrsTable,
     onOpenReqList,
     onEditSrsChangeTable,
+    onDeleteSrsChangeTable,
     srsReqPreview,
     reqDetails,
     srsReqLoading,
@@ -1135,19 +1137,9 @@ const TreeNodeItem = ({
                                     size="small"
                                     icon={<EditOutlined />}
                                     onClick={() => {
-                                        const matchedChangeTable = findChangeTableForRenderedTable(tbl.table, tbl.title);
-                                        const renderedChangeCodes = new Set(
-                                            buildChangeRowsFromRenderedTable(tbl.table)
-                                                .map((row) => normalizeSrsCode(row.srs_code))
-                                                .filter(Boolean)
-                                        );
-                                        const hasMatchedChangeCode = !!matchedChangeTable && renderedChangeCodes.size > 0 &&
-                                            (matchedChangeTable.data || []).some((row: any) => renderedChangeCodes.has(normalizeSrsCode(row?.srs_code || row?.code)));
-                                        const isChangeReqTable = isReqMainTable(tbl.table) && (
-                                            /变更/.test(String(tbl.table?.name || tbl.title || getNormalTableDisplayTitle(tbl) || "")) ||
-                                            hasMatchedChangeCode
-                                        );
+                                        const isChangeReqTable = isReqMainTable(tbl.table) && /变更/.test(String(tbl.table?.name || tbl.title || getNormalTableDisplayTitle(tbl) || ""));
                                         if (isChangeReqTable) {
+                                            const matchedChangeTable = findChangeTableForRenderedTable(tbl.table, tbl.title);
                                             if (onEditSrsChangeTable) {
                                                 onEditSrsChangeTable((matchedChangeTable || {
                                                     id: `node_${tbl.ownerNodeId}`,
@@ -1208,14 +1200,28 @@ const TreeNodeItem = ({
                       <div style={{ marginBottom: 8, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                           <span>{renderChangeTableTitle(table.title)}</span>
                           {!readOnly && (
-                              <Button
-                                  size="small"
-                                  type="default"
-                                  icon={<EditOutlined />}
-                                  onClick={() => onEditSrsChangeTable?.(table as any)}
-                              >
-                                  {ts("edit")}
-                              </Button>
+                              <Space size={8}>
+                                  <Button
+                                      size="small"
+                                      type="default"
+                                      icon={<EditOutlined />}
+                                      onClick={() => onEditSrsChangeTable?.(table as any)}
+                                  >
+                                      {ts("edit")}
+                                  </Button>
+                                  {!!onDeleteSrsChangeTable && (
+                                      <Popconfirm
+                                          title={ts("srs_doc.confirm_delete_table")}
+                                          onConfirm={() => onDeleteSrsChangeTable(table as any)}
+                                          okText={ts("confirm")}
+                                          cancelText={ts("cancel")}
+                                      >
+                                          <Button size="small" danger icon={<DeleteOutlined />}>
+                                              {ts("delete")}
+                                          </Button>
+                                      </Popconfirm>
+                                  )}
+                              </Space>
                           )}
                       </div>
                       <div className="node-table-header">
@@ -1288,14 +1294,28 @@ const TreeNodeItem = ({
                               <div style={{ marginBottom: 8, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                                   <span>{renderChangeTableTitle(table.title)}</span>
                                   {!readOnly && (
-                                      <Button
-                                          size="small"
-                                          type="default"
-                                          icon={<EditOutlined />}
-                                          onClick={() => onEditSrsChangeTable?.(table as any)}
-                                      >
-                                          {ts("edit")}
-                                      </Button>
+                                      <Space size={8}>
+                                          <Button
+                                              size="small"
+                                              type="default"
+                                              icon={<EditOutlined />}
+                                              onClick={() => onEditSrsChangeTable?.(table as any)}
+                                          >
+                                              {ts("edit")}
+                                          </Button>
+                                          {!!onDeleteSrsChangeTable && (
+                                              <Popconfirm
+                                                  title={ts("srs_doc.confirm_delete_table")}
+                                                  onConfirm={() => onDeleteSrsChangeTable(table as any)}
+                                                  okText={ts("confirm")}
+                                                  cancelText={ts("cancel")}
+                                              >
+                                                  <Button size="small" danger icon={<DeleteOutlined />}>
+                                                      {ts("delete")}
+                                                  </Button>
+                                              </Popconfirm>
+                                          )}
+                                      </Space>
                                   )}
                               </div>
                               <Table
@@ -1342,6 +1362,7 @@ const TreeNodeItem = ({
                     onOpenSrsTable={onOpenSrsTable}
                     onOpenReqList={onOpenReqList}
                     onEditSrsChangeTable={onEditSrsChangeTable}
+                    onDeleteSrsChangeTable={onDeleteSrsChangeTable}
                     srsReqPreview={srsReqPreview}
                     reqDetails={reqDetails}
                     srsReqLoading={srsReqLoading}
@@ -1362,6 +1383,7 @@ interface TreeStructureProps {
     onOpenSrsTable?: () => void;  // 打开 SRS 表弹框
     onOpenReqList?: () => void;  // 打开需求列表弹框
     onEditSrsChangeTable?: (table: { id: number | string; title: string; data: any[]; type_code?: string }) => void;
+    onDeleteSrsChangeTable?: (table: { id: number | string; title: string; data: any[]; type_code?: string }) => void;
     onSaveReqDetailTable?: (detail: any) => Promise<void>;
     onSaveSrsReqTable?: (table: TableData) => Promise<any[] | void>;
     onSaveSrsChangeReqTable?: (tableData: TableDataWithHeaders) => Promise<any>;
@@ -1376,7 +1398,7 @@ interface TreeStructureProps {
     enableStandardReqAutoSync?: boolean;
 }
 
-export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcmOptions, onNodeDelete, onOpenSrsTable, onOpenReqList, onEditSrsChangeTable, onSaveReqDetailTable, onSaveSrsReqTable, onSaveSrsChangeReqTable, srsReqPreview, reqDetails, srsReqLoading, onNodesSnapshot, enableStandardReqAutoSync = false }: TreeStructureProps) => {
+export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcmOptions, onNodeDelete, onOpenSrsTable, onOpenReqList, onEditSrsChangeTable, onDeleteSrsChangeTable, onSaveReqDetailTable, onSaveSrsReqTable, onSaveSrsChangeReqTable, srsReqPreview, reqDetails, srsReqLoading, onNodesSnapshot, enableStandardReqAutoSync = false }: TreeStructureProps) => {
     const { t: ts } = useTranslation();
     const [nodes, setNodes] = useState<TreeNode[]>(value);
     const [tableModalVisible, setTableModalVisible] = useState(false);
@@ -3626,7 +3648,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         const syncSrsReqDetailsByKey = (items: TreeNode[], details: any[]): TreeNode[] => {
             if (!details.length) return items;
             const cloned: TreeNode[] = JSON.parse(JSON.stringify(items || []));
-            type PreservedDetail = { node: TreeNode; table?: TableData | null; score: number };
+            type PreservedDetail = { node: TreeNode; table?: TableData | null; score: number; name: string };
             const scoreFunctionalTable = (table?: TableData | null) => {
                 const normalized = normalizeFunctionalHeaderToRow(table);
                 if (!normalized || !isFunctionalKvTable(normalized)) return 0;
@@ -3641,6 +3663,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 }, 0);
             };
             const preservedByKey = new Map<string, PreservedDetail>();
+            const preservedByCode = new Map<string, PreservedDetail>();
             const headingMap = new Map<string, TreeNode>();
             const walkExisting = (list: TreeNode[], ancestors: TreeNode[] = []) => {
                 (list || []).forEach((node) => {
@@ -3656,9 +3679,14 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                         const stableKey = normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(normalizedTable) || getLegacyReqDetailKeyByCode(code));
                         const key = stableKey || getExistingReqDetailKey({ ...node, table: normalizedTable }, ancestors);
                         const score = scoreFunctionalTable(normalizedTable);
+                        const preservedName = normalizeTitleText(extractReqNameFromFunctionalTable(normalizedTable));
                         const current = preservedByKey.get(key);
                         if (key.replace(/\|/g, "") && (!current || score > current.score)) {
-                            preservedByKey.set(key, { node, table: normalizedTable, score });
+                            preservedByKey.set(key, { node, table: normalizedTable, score, name: preservedName });
+                        }
+                        const currentByCode = code ? preservedByCode.get(code) : undefined;
+                        if (code && (!currentByCode || score > currentByCode.score)) {
+                            preservedByCode.set(code, { node, table: normalizedTable, score, name: preservedName });
                         }
                     }
                     walkExisting(node.children || [], [...ancestors, node]);
@@ -3667,7 +3695,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
             walkExisting(cloned);
             const reqRoot = findReqDetailRoot(cloned) || cloned.find((node) => getHeadingDepth(node.title) === 1) || cloned[0];
             if (!reqRoot) return cloned;
-            const rootPrefix = String(reqRoot.title || "").trim().match(/^(\d+(?:\.\d+)*)\s+/)?.[1] || "1";
+            const rootPrefix = String(reqRoot.title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "1";
             const usedNodeIds = new Set<number>();
             const makeNode = (title: string, parent: TreeNode, key?: string, extra: Partial<TreeNode> = {}): TreeNode => {
                 const reused = key ? headingMap.get(key) : undefined;
@@ -3683,7 +3711,11 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 };
             };
             const makeDetailNode = (title: string, parent: TreeNode, detail: any, key: string): TreeNode => {
-                const preserved = preservedByKey.get(key);
+                const detailCode = normalizeSrsCode(detail?.code);
+                const detailName = normalizeTitleText(detail?.name || detail?.sub_function || detail?.function || detail?.module);
+                const preservedByCodeCandidate = preservedByCode.get(detailCode);
+                const preserved = preservedByKey.get(key) ||
+                    (preservedByCodeCandidate?.name && preservedByCodeCandidate.name === detailName ? preservedByCodeCandidate : undefined);
                 const base = preserved?.node || buildAutoNode(title, parent);
                 if (preserved?.node?.id) usedNodeIds.add(preserved.node.id);
                 return {
@@ -3704,6 +3736,41 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
             const moduleMap = new Map<string, TreeNode>();
             const functionMap = new Map<string, TreeNode>();
             const rebuiltChildren: TreeNode[] = [];
+            const standardDetailKeys = new Set((details || []).map((detail: any) => getReqStableKey(detail) || getReqDetailKey(detail)).filter(Boolean));
+            const containsStandardDetail = (node: TreeNode): boolean => {
+                const isStandardDetailCarrier = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
+                const code = isStandardDetailCarrier
+                    ? normalizeSrsCode(node.srs_code || (isFunctionalKvTable(node.table) ? extractSrsCodeFromTable(node.table) : ""))
+                    : "";
+                const key = normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table) || getLegacyReqDetailKeyByCode(code));
+                return (isStandardDetailCarrier && !!key && standardDetailKeys.has(key)) || (node.children || []).some((child) => containsStandardDetail(child));
+            };
+            const preservedNonStandardChildren = (reqRoot.children || []).filter((child) => !containsStandardDetail(child));
+            const getDirectChildNo = (node: TreeNode): number => {
+                const prefix = String(node.title || "").trim().match(/^(\d+(?:\.\d+)*)(?:\s+|(?=\D|$))/)?.[1] || "";
+                const parts = prefix.split(".");
+                if (parts.length !== 2 || parts[0] !== rootPrefix) return Number.POSITIVE_INFINITY;
+                const childNo = Number(parts[1]);
+                return Number.isFinite(childNo) ? childNo : Number.POSITIVE_INFINITY;
+            };
+            const reservedChildNos = new Set(
+                preservedNonStandardChildren
+                    .map(getDirectChildNo)
+                    .filter((childNo) => Number.isFinite(childNo))
+            );
+            // 7.1 is the imported "要求" introduction section; functional requirements start at 7.2.
+            reservedChildNos.add(1);
+            const usedRebuiltChildNos = new Set<number>();
+            let nextRebuiltChildNo = 2;
+            const allocateRebuiltChildNo = (): number => {
+                while (reservedChildNos.has(nextRebuiltChildNo) || usedRebuiltChildNos.has(nextRebuiltChildNo)) {
+                    nextRebuiltChildNo += 1;
+                }
+                const childNo = nextRebuiltChildNo;
+                usedRebuiltChildNos.add(childNo);
+                nextRebuiltChildNo += 1;
+                return childNo;
+            };
             const sortedDetails = [...details].sort((left, right) => compareSrsCodes(left?.code, right?.code));
             sortedDetails.forEach((detail) => {
                 const moduleText = normalizeReqDisplayText(detail?.module || detail?.name || detail?.function || detail?.code);
@@ -3720,7 +3787,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 const moduleKey = normalizeTitleText(moduleText);
                 let moduleNode = moduleMap.get(moduleKey);
                 if (!moduleNode) {
-                    const moduleNo = rebuiltChildren.length + 1;
+                    const moduleNo = allocateRebuiltChildNo();
                     const title = `${rootPrefix}.${moduleNo} ${moduleText}`;
                     moduleNode = makeNode(title, reqRoot!, moduleKey);
                     moduleMap.set(moduleKey, moduleNode);
@@ -3773,7 +3840,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 const title = `${functionPrefix}.${subNo} ${subFunctionText}`;
                 functionNode.children.push(makeDetailNode(title, functionNode, detail, detailKey));
             });
-            reqRoot.children = rebuiltChildren;
+            reqRoot.children = [...preservedNonStandardChildren, ...rebuiltChildren].sort((left, right) => getDirectChildNo(left) - getDirectChildNo(right));
             return cloned;
         };
         const dedupeReqDetailsByKey = (items: TreeNode[], details: any[]): TreeNode[] => {
@@ -4016,6 +4083,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                             onOpenSrsTable={onOpenSrsTable}
                             onOpenReqList={onOpenReqList}
                             onEditSrsChangeTable={onEditSrsChangeTable}
+                            onDeleteSrsChangeTable={onDeleteSrsChangeTable}
                             srsReqPreview={srsReqPreview}
                             reqDetails={reqDetails}
                             srsReqLoading={srsReqLoading}
