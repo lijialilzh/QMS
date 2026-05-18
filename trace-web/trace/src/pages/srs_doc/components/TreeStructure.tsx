@@ -167,6 +167,17 @@ function getTableReqDetailKey(table?: TableData | null): string {
     return "";
 }
 
+function getSrsCodeOrderKey(code?: string): string {
+    const matched = normalizeSrsCodeValue(code).match(/^SRS-[A-Z]+?(\d+)-(\d+)$/);
+    return matched ? `${parseInt(matched[1], 10)}-${parseInt(matched[2], 10)}` : "";
+}
+
+function getLegacyReqDetailKeyByCode(code?: string): string {
+    const normalizedCode = normalizeSrsCodeValue(code);
+    const orderKey = getSrsCodeOrderKey(normalizedCode);
+    return orderKey ? `legacy_reqd_${orderKey}` : (normalizedCode ? `legacy_reqd_${normalizedCode}` : "");
+}
+
 function normalizeSrsCodeValue(value?: string): string {
     return String(value || "").replace(/\s+/g, "").toUpperCase();
 }
@@ -1806,7 +1817,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                     const functionCol = pickColumn(headers, (text) => text.includes("功能") && !text.includes("子功能"));
                     const subFunctionCol = pickColumn(headers, (text) => text.includes("子功能"));
                     const lastValues: Record<string, string> = {};
-                    (table.rows || []).forEach((row) => {
+                    (table.rows || []).forEach((row, rowIndex) => {
                         const code = normalizeSrsCode(String(row?.[codeCol] || extractSrsCodeFromTableRow(row) || ""));
                         if (!code || !/^SRS-/i.test(code)) return;
                         const rawModule = normalizeReqDisplayText(row?.[moduleCol]);
@@ -1836,6 +1847,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                             req_detail_key: getRowReqDetailKey(row),
                             type_code: /变更/.test(String(table.name || node.title || "")) ? "__change_table" : "1",
                             __fromTable: true,
+                            __row_index: rowIndex,
                         });
                     });
                 }
@@ -2613,6 +2625,71 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
 
         const rows = targetNode.table.rows || [];
         if (headers.length === 0) return;
+        const existingReqDetailKeyByCode = new Map<string, string>();
+        const existingReqDetailKeyByCodeOrder = new Map<string, string>();
+        const existingReqDetailKeyByComposite = new Map<string, string>();
+        const getExistingDetailCompositeKey = (node: TreeNode, ancestors: TreeNode[]) => {
+            const headingNames = [...ancestors, node]
+                .filter((item) => getHeadingDepth(item.title) > 0)
+                .map((item) => normalizeTitleText(stripHeadingNumber(item.title)))
+                .filter(Boolean);
+            const reqName = extractReqNameFromFunctionalTable(node.table);
+            const moduleName = headingNames.length >= 3 ? headingNames[headingNames.length - 3] : (headingNames[0] || "");
+            const functionName = headingNames.length >= 3 ? headingNames[headingNames.length - 2] : (headingNames[1] || "");
+            const subFunction = headingNames.length >= 3 ? (reqName || headingNames[headingNames.length - 1] || "") : "";
+            return [moduleName, functionName, subFunction].join("|");
+        };
+        const collectExistingReqDetailKeys = (nodeList: TreeNode[], ancestors: TreeNode[] = []) => {
+            (nodeList || []).forEach((node) => {
+                if (isFunctionalKvTable(node.table)) {
+                    const code = normalizeSrsCode(extractSrsCodeFromTable(node.table));
+                    const key = normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table) || getLegacyReqDetailKeyByCode(code));
+                    if (code && key && !existingReqDetailKeyByCode.has(code)) {
+                        existingReqDetailKeyByCode.set(code, key);
+                    }
+                    const orderKey = getSrsCodeOrderKey(code);
+                    if (orderKey && key && !existingReqDetailKeyByCodeOrder.has(orderKey)) {
+                        existingReqDetailKeyByCodeOrder.set(orderKey, key);
+                    }
+                    const composite = getExistingDetailCompositeKey(node, ancestors);
+                    if (composite.replace(/\|/g, "") && key && !existingReqDetailKeyByComposite.has(composite)) {
+                        existingReqDetailKeyByComposite.set(composite, key);
+                    }
+                }
+                collectExistingReqDetailKeys(node.children || [], [...ancestors, node]);
+            });
+        };
+        collectExistingReqDetailKeys(nodes || []);
+        const pickColumnCode = (matcher: (text: string) => boolean) => (
+            headers.find((header) => matcher(normalizeCellText(header?.name)))?.code || ""
+        );
+        const codeCol = pickColumnCode((text) => text.includes("需求编号") || text.includes("srscode") || text === "code");
+        const moduleCol = pickColumnCode((text) => text.includes("模块"));
+        const functionCol = pickColumnCode((text) => text.includes("功能") && !text.includes("子功能"));
+        const subFunctionCol = pickColumnCode((text) => text.includes("子功能"));
+        const lastValues: Record<string, string> = {};
+        const rowCompositeKeys = rows.map((row) => {
+            const rawModule = normalizeReqDisplayText(row?.[moduleCol]);
+            const rawFunction = normalizeReqDisplayText(row?.[functionCol]);
+            const rawSubFunction = normalizeReqDisplayText(row?.[subFunctionCol]);
+            if (rawModule) {
+                lastValues.module = rawModule;
+                lastValues.function = "";
+                lastValues.sub_function = "";
+            }
+            if (rawFunction) {
+                lastValues.function = rawFunction;
+                lastValues.sub_function = "";
+            }
+            if (rawSubFunction) {
+                lastValues.sub_function = rawSubFunction;
+            }
+            return [
+                normalizeTitleText(rawModule || lastValues.module || ""),
+                normalizeTitleText(rawFunction || lastValues.function || ""),
+                normalizeTitleText(rawSubFunction || lastValues.sub_function || ""),
+            ].join("|");
+        });
 
         const tableData: TableDataWithHeaders = {
             tableName: targetNode.table.name || "",
@@ -2620,8 +2697,12 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
             data: rows.map(row =>
                 headers.map(header => row[header.code] || '')
             ),
-            rowMeta: rows.map((row) => ({
-                req_detail_key: getRowReqDetailKey(row),
+            rowMeta: rows.map((row, index) => ({
+                req_detail_key: getRowReqDetailKey(row) ||
+                    existingReqDetailKeyByCode.get(normalizeSrsCode(String(row?.[codeCol] || extractSrsCodeFromTableRow(row)))) ||
+                    existingReqDetailKeyByCodeOrder.get(getSrsCodeOrderKey(String(row?.[codeCol] || extractSrsCodeFromTableRow(row)))) ||
+                    existingReqDetailKeyByComposite.get(rowCompositeKeys[index]) ||
+                    "",
             })),
         };
 
@@ -2940,31 +3021,47 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
             return keys;
         };
         const previousStandardDetails = isSavingStandardSrsTable ? collectDetailsFromEditableTableData(initialTableData) : [];
+        const getReqStableKey = (detail: any) => normalizeReqDetailKey(detail?.req_detail_key || detail?.[REQ_DETAIL_KEY_FIELD]);
         const previousKeySet = new Set(
             previousStandardDetails
                 .map((detail: any) => getReqDetailKey(detail))
                 .filter((key: string) => key.replace(/\|/g, ""))
         );
         const previousKeyByCode = new Map<string, string>();
-        previousStandardDetails.forEach((detail: any) => {
+        const previousStableKeyByIndex = new Map<number, string>();
+        const previousKeyByIndex = new Map<number, string>();
+        const getReqRowIndex = (detail: any, fallback: number) => {
+            const rowIndex = Number(detail?.__row_index);
+            return Number.isFinite(rowIndex) ? rowIndex : fallback;
+        };
+        previousStandardDetails.forEach((detail: any, index: number) => {
+            const rowIndex = getReqRowIndex(detail, index);
             const code = normalizeSrsCode(detail?.code);
             const key = getReqDetailKey(detail);
             if (code && key.replace(/\|/g, "")) {
                 previousKeyByCode.set(code, key);
+            }
+            const stableKey = getReqStableKey(detail);
+            if (stableKey) {
+                previousStableKeyByIndex.set(rowIndex, stableKey);
+            }
+            if (key.replace(/\|/g, "")) {
+                previousKeyByIndex.set(rowIndex, key);
             }
         });
         const existingReqDetailKeys = previousKeySet.size > 0
             ? new Set(previousKeySet)
             : collectExistingReqDetailKeys(nodes || []);
         const renamedDetailByPreviousKey = new Map<string, any>();
-        const getReqStableKey = (detail: any) => normalizeReqDetailKey(detail?.req_detail_key || detail?.[REQ_DETAIL_KEY_FIELD]);
         const collectExistingReqDetailBindings = (list: TreeNode[]) => {
             const keyByComposite = new Map<string, string>();
             const keyByCode = new Map<string, string>();
+            const keyByCodeOrder = new Map<string, string>();
             const usedKeys = new Set<string>();
             const compositeSet = new Set<string>();
             const ensureKey = (node: TreeNode) => {
-                const existing = normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table));
+                const existingCode = normalizeSrsCode(node.srs_code || (isFunctionalKvTable(node.table) ? extractSrsCodeFromTable(node.table) : ""));
+                const existing = normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table) || getLegacyReqDetailKeyByCode(existingCode));
                 const key = existing || `reqd_${uuidv4()}`;
                 usedKeys.add(key);
                 return key;
@@ -2982,12 +3079,14 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                             });
                         const code = normalizeSrsCode(node.srs_code || (isFunctionalKvTable(node.table) ? extractSrsCodeFromTable(node.table) : ""));
                         if (code && !keyByCode.has(code)) keyByCode.set(code, key);
+                        const orderKey = getSrsCodeOrderKey(code);
+                        if (orderKey && !keyByCodeOrder.has(orderKey)) keyByCodeOrder.set(orderKey, key);
                     }
                     walk(node.children || [], [...ancestors, node]);
                 });
             };
             walk(list || []);
-            return { keyByComposite, keyByCode, usedKeys, compositeSet };
+            return { keyByComposite, keyByCode, keyByCodeOrder, usedKeys, compositeSet };
         };
         const initialReqDetailCompositeSet = collectExistingReqDetailBindings(nodes || []).compositeSet;
         const previousDetailKeys = new Set(previousStandardDetails.map((detail: any) => getReqDetailKey(detail)).filter((key: string) => key.replace(/\|/g, "")));
@@ -3011,10 +3110,14 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 .filter((key: string) => key.replace(/\|/g, ""))
         );
         if (previousKeySet.size > 0) {
-            standardDetailsForIdentitySync.forEach((detail: any) => {
+            standardDetailsForIdentitySync.forEach((detail: any, index: number) => {
+                const rowIndex = getReqRowIndex(detail, index);
                 const code = normalizeSrsCode(detail?.code);
                 const key = getReqDetailKey(detail);
                 const previousKey = code ? previousKeyByCode.get(code) : "";
+                const previousKeyAtSameIndex = rowIndex < previousStandardDetails.length
+                    ? previousKeyByIndex.get(rowIndex)
+                    : "";
                 if (key.replace(/\|/g, "") && previousKeySet.has(key)) {
                     existingReqDetailKeys.add(key);
                 }
@@ -3028,6 +3131,16 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                     existingReqDetailKeys.add(key);
                     renamedDetailByPreviousKey.set(previousKey, detail);
                 }
+                // 同一旧行同时修改 SRS 编号和功能名称，也应视为旧需求改名/改号；新增行没有旧行号，不复用。
+                if (
+                    previousKeyAtSameIndex &&
+                    key.replace(/\|/g, "") &&
+                    !currentKeySet.has(previousKeyAtSameIndex) &&
+                    !previousKeySet.has(key)
+                ) {
+                    existingReqDetailKeys.add(key);
+                    renamedDetailByPreviousKey.set(previousKeyAtSameIndex, detail);
+                }
             });
         }
         const ensureStableReqDetailKeys = (details: any[], table?: TableData | null) => {
@@ -3035,21 +3148,34 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
             const bindings = collectExistingReqDetailBindings(nodes || []);
             const previousKeyByComposite = new Map<string, string>();
             const previousKeyByCodeStrict = new Map<string, string>();
-            previousStandardDetails.forEach((detail: any) => {
+            previousStandardDetails.forEach((detail: any, index: number) => {
+                const rowIndex = getReqRowIndex(detail, index);
                 const key = getReqStableKey(detail);
                 const composite = getReqDetailKey(detail);
                 if (key && composite.replace(/\|/g, "")) previousKeyByComposite.set(composite, key);
                 const code = normalizeSrsCode(detail?.code);
                 if (key && code) previousKeyByCodeStrict.set(code, key);
+                const fallbackKey = key ||
+                    (composite.replace(/\|/g, "") ? bindings.keyByComposite.get(composite) : "") ||
+                    (code ? bindings.keyByCode.get(code) : "") ||
+                    (code ? bindings.keyByCodeOrder.get(getSrsCodeOrderKey(code)) : "") ||
+                    "";
+                if (fallbackKey) {
+                    previousStableKeyByIndex.set(rowIndex, fallbackKey);
+                }
             });
             const usedKeys = new Set<string>(bindings.usedKeys);
-            details.forEach((detail: any) => {
+            details.forEach((detail: any, index: number) => {
+                const rowIndex = getReqRowIndex(detail, index);
+                const canReuseByRowIndex = rowIndex < previousStandardDetails.length;
                 const composite = getReqDetailKey(detail);
                 const code = normalizeSrsCode(detail?.code);
                 let stableKey = getReqStableKey(detail) ||
                     previousKeyByComposite.get(composite) ||
                     (previousKeySet.has(composite) ? bindings.keyByComposite.get(composite) : "") ||
                     (previousKeySet.has(composite) && code ? previousKeyByCodeStrict.get(code) : "") ||
+                    (previousKeySet.has(composite) && code ? bindings.keyByCodeOrder.get(getSrsCodeOrderKey(code)) : "") ||
+                    (canReuseByRowIndex ? previousStableKeyByIndex.get(rowIndex) : "") ||
                     "";
                 if (!stableKey) {
                     do {
@@ -3125,7 +3251,10 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 const stableKey = getReqStableKey(detail);
                 if (stableKey) detailByStableKey.set(stableKey, detail);
             });
-            const getNodeStableKey = (node: TreeNode) => normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table));
+            const getNodeStableKey = (node: TreeNode) => {
+                const code = normalizeSrsCode(node.srs_code || (isFunctionalKvTable(node.table) ? extractSrsCodeFromTable(node.table) : ""));
+                return normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table) || getLegacyReqDetailKeyByCode(code));
+            };
             const pickMatchedDetail = (node: TreeNode, ancestors: TreeNode[]): { detail: any; matchedKey: string } | undefined => {
                 const keyCandidates = getExistingReqDetailKeyCandidates(node, ancestors);
                 const stableKey = getNodeStableKey(node);
@@ -3136,6 +3265,9 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 const matchedKey = keyCandidates.find((key) => existingReqDetailKeys.has(key) && detailByKey.has(key));
                 const matchedByKey = matchedKey ? detailByKey.get(matchedKey) : undefined;
                 if (matchedByKey && matchedKey) return { detail: matchedByKey, matchedKey };
+                const renamedKey = keyCandidates.find((key) => renamedDetailByPreviousKey.has(key));
+                const renamedDetail = renamedKey ? renamedDetailByPreviousKey.get(renamedKey) : undefined;
+                if (renamedDetail && renamedKey) return { detail: renamedDetail, matchedKey: renamedKey };
                 return undefined;
             };
             const getNextTitleName = (node: TreeNode, detail: any, matchedKey: string, isOwnDetail: boolean) => {
@@ -3198,8 +3330,15 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                     const isReqDetailNode = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table) || (node.children || []).some((child) => isFunctionalKvTable(child.table));
                     if (isReqDetailNode) {
                         getExistingReqDetailKeyCandidates(node, ancestors)
-                            .filter((key) => existingReqDetailKeys.has(key) && detailByKey.has(key))
-                            .forEach((key) => existingDetailKeys.add(key));
+                            .filter((key) => (existingReqDetailKeys.has(key) && detailByKey.has(key)) || renamedDetailByPreviousKey.has(key))
+                            .forEach((key) => {
+                                existingDetailKeys.add(key);
+                                const renamedDetail = renamedDetailByPreviousKey.get(key);
+                                const renamedDetailKey = renamedDetail ? getReqDetailKey(renamedDetail) : "";
+                                if (renamedDetailKey.replace(/\|/g, "")) {
+                                    existingDetailKeys.add(renamedDetailKey);
+                                }
+                            });
                         const matchedByCode = code ? detailByCode.get(code) : undefined;
                         const matchedKey = matchedByCode ? getReqDetailKey(matchedByCode) : "";
                         if (matchedKey.replace(/\|/g, "") && existingReqDetailKeys.has(matchedKey)) {
@@ -3594,10 +3733,17 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         const dedupeReqDetailsByKey = (items: TreeNode[], details: any[]): TreeNode[] => {
             if (!details.length) return items;
             const detailByKey = new Map<string, any>();
+            const detailByStableKey = new Map<string, any>();
             details.forEach((detail: any) => {
                 const key = getReqDetailKey(detail);
                 if (key.replace(/\|/g, "")) detailByKey.set(key, detail);
+                const stableKey = getReqStableKey(detail);
+                if (stableKey) detailByStableKey.set(stableKey, detail);
             });
+            const getNodeStableKey = (node: TreeNode) => {
+                const code = normalizeSrsCode(node.srs_code || (isFunctionalKvTable(node.table) ? extractSrsCodeFromTable(node.table) : ""));
+                return normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table) || getLegacyReqDetailKeyByCode(code));
+            };
             const scoreNode = (node: TreeNode) => {
                 const table = normalizeFunctionalHeaderToRow(node.table);
                 if (!table || !isFunctionalKvTable(table)) return 0;
@@ -3618,14 +3764,16 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                     const isReqDetailNode = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
                     if (isReqDetailNode) {
                         const key = getExistingReqDetailKey(node, ancestors);
-                        if (detailByKey.has(key)) {
+                        const stableKey = getNodeStableKey(node);
+                        if (detailByKey.has(key) || (stableKey && detailByStableKey.has(stableKey))) {
                             const score = scoreNode(node);
-                            const current = bestByKey.get(key);
-                            const isExistingKey = existingReqDetailKeys.has(key);
+                            const bestKey = stableKey && detailByStableKey.has(stableKey) ? `stable:${stableKey}` : key;
+                            const current = bestByKey.get(bestKey);
+                            const isExistingKey = existingReqDetailKeys.has(key) || !!(stableKey && detailByStableKey.has(stableKey));
                             const shouldReplace = !current ||
                                 (isExistingKey ? score > current.score : score < current.score);
                             if (shouldReplace) {
-                                bestByKey.set(key, { id: node.id, score });
+                                bestByKey.set(bestKey, { id: node.id, score });
                             }
                         }
                     }
@@ -3638,20 +3786,23 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                     const isReqDetailNode = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
                     if (!isReqDetailNode) return true;
                     const key = getExistingReqDetailKey(node, ancestors);
-                    const best = bestByKey.get(key);
+                    const stableKey = getNodeStableKey(node);
+                    const best = (stableKey && bestByKey.get(`stable:${stableKey}`)) || bestByKey.get(key);
                     return !best || best.id === node.id;
                 })
                 .map((node) => {
                     const children = prune(node.children || [], [...ancestors, node]);
                     const key = getExistingReqDetailKey(node, ancestors);
-                    const detail = detailByKey.get(key);
+                    const stableKey = getNodeStableKey(node);
+                    const detail = (stableKey ? detailByStableKey.get(stableKey) : undefined) || detailByKey.get(key);
                     const shouldUpdate = detail && (node.label === "__auto_req_detail" || isFunctionalKvTable(node.table));
-                    const isExistingKey = existingReqDetailKeys.has(key);
+                    const isExistingKey = existingReqDetailKeys.has(key) || !!(stableKey && detailByStableKey.has(stableKey));
                     const nextName = String(detail?.name || detail?.sub_function || detail?.function || detail?.module || "").trim();
                     const titlePrefix = String(node.title || "").trim().match(/^(\d+(?:\.\d+)*\s+)/)?.[1] || "";
                     return {
                         ...node,
                         ...(shouldUpdate && normalizeSrsCode(detail?.code) ? { srs_code: normalizeSrsCode(detail.code) } : {}),
+                        ...(shouldUpdate && getReqStableKey(detail) ? { req_detail_key: getReqStableKey(detail) } : {}),
                         ...(shouldUpdate && nextName && titlePrefix ? { title: `${titlePrefix}${nextName}` } : {}),
                         table: shouldUpdate
                             ? (isExistingKey && isFunctionalKvTable(node.table)

@@ -842,6 +842,7 @@ export default () => {
             ...(node.img_url !== undefined && { img_url: node.img_url ?? "" }),
             // label 不展示，但需一并提交给后端
             ...(node.label !== undefined && { label: node.label ?? "" }),
+            ...(node.req_detail_key !== undefined && { req_detail_key: node.req_detail_key ?? "" }),
             table: tableValue,
             children: [] // 初始化为空数组，下面会填充
         };
