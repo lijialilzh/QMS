@@ -3115,7 +3115,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 const code = normalizeSrsCode(detail?.code);
                 const key = getReqDetailKey(detail);
                 const previousKey = code ? previousKeyByCode.get(code) : "";
-                const previousKeyAtSameIndex = rowIndex < previousStandardDetails.length
+                const previousKeyAtSameIndex = !getReqStableKey(detail) && previousStandardDetails.length === allStandardDetailsForIdentitySync.length
                     ? previousKeyByIndex.get(rowIndex)
                     : "";
                 if (key.replace(/\|/g, "") && previousKeySet.has(key)) {
@@ -3165,9 +3165,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 }
             });
             const usedKeys = new Set<string>(bindings.usedKeys);
-            details.forEach((detail: any, index: number) => {
-                const rowIndex = getReqRowIndex(detail, index);
-                const canReuseByRowIndex = rowIndex < previousStandardDetails.length;
+            details.forEach((detail: any) => {
                 const composite = getReqDetailKey(detail);
                 const code = normalizeSrsCode(detail?.code);
                 let stableKey = getReqStableKey(detail) ||
@@ -3175,7 +3173,6 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                     (previousKeySet.has(composite) ? bindings.keyByComposite.get(composite) : "") ||
                     (previousKeySet.has(composite) && code ? previousKeyByCodeStrict.get(code) : "") ||
                     (previousKeySet.has(composite) && code ? bindings.keyByCodeOrder.get(getSrsCodeOrderKey(code)) : "") ||
-                    (canReuseByRowIndex ? previousStableKeyByIndex.get(rowIndex) : "") ||
                     "";
                 if (!stableKey) {
                     do {
@@ -3205,7 +3202,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 }
             });
         };
-        ensureStableReqDetailKeys(standardDetailsForIdentitySync, tableFormat);
+        ensureStableReqDetailKeys(allStandardDetailsForIdentitySync, tableFormat);
         const newNodes = findNodeAndUpdate(nodes, currentNodeId, (node) => {
             const isAddingTable = !initialTableData;
             const hasExistingTableInNode = hasRenderableTable(node.table);
@@ -3281,6 +3278,20 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 }
                 return "";
             };
+            const hasFunctionalReqDetailDescendant = (node: TreeNode): boolean => (
+                isFunctionalKvTable(node.table) ||
+                node.label === "__auto_req_detail" ||
+                (node.children || []).some((child) => hasFunctionalReqDetailDescendant(child))
+            );
+            const findDescendantMatch = (list: TreeNode[], ancestors: TreeNode[] = []): { detail: any; matchedKey: string } | undefined => {
+                for (const child of list || []) {
+                    const matched = pickMatchedDetail(child, ancestors);
+                    if (matched) return matched;
+                    const childMatched = findDescendantMatch(child.children || [], [...ancestors, child]);
+                    if (childMatched) return childMatched;
+                }
+                return undefined;
+            };
             const walk = (list: TreeNode[], ancestors: TreeNode[] = []): TreeNode[] => (list || []).map((node) => {
                 const headingDepth = getHeadingDepth(node.title);
                 const childMatch = headingDepth > 1 ? (node.children || [])
@@ -3288,7 +3299,10 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                     .find(Boolean) : undefined;
                 const children = walk(node.children || [], [...ancestors, node]);
                 const ownMatch = pickMatchedDetail(node, ancestors);
-                const match = ownMatch || childMatch;
+                const descendantMatch = headingDepth > 1 && !ownMatch && !childMatch
+                    ? findDescendantMatch(node.children || [], [...ancestors, node])
+                    : undefined;
+                const match = ownMatch || childMatch || descendantMatch;
                 if (!match?.detail) {
                     return { ...node, children };
                 }
@@ -3298,7 +3312,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 const shouldUpdateTitle = !!nextName && !!titlePrefix && (
                     (headingDepth > 1 && isFunctionalKvTable(node.table)) ||
                     (headingDepth > 1 && node.label === "__auto_req_detail") ||
-                    (headingDepth > 1 && (node.children || []).some((child) => isFunctionalKvTable(child.table)))
+                    (headingDepth > 1 && hasFunctionalReqDetailDescendant({ ...node, children }))
                 );
                 return {
                     ...node,
@@ -3607,7 +3621,6 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
             };
             const preservedByKey = new Map<string, PreservedDetail>();
             const headingMap = new Map<string, TreeNode>();
-            let reqRoot: TreeNode | undefined;
             const walkExisting = (list: TreeNode[], ancestors: TreeNode[] = []) => {
                 (list || []).forEach((node) => {
                     const headingPath = [...ancestors, node]
@@ -3618,22 +3631,20 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                     if (headingPath) headingMap.set(headingPath, node);
                     const normalizedTable = normalizeFunctionalHeaderToRow(node.table);
                     if (normalizedTable && isFunctionalKvTable(normalizedTable)) {
-                        const key = getExistingReqDetailKey({ ...node, table: normalizedTable }, ancestors);
+                        const code = normalizeSrsCode(node.srs_code || extractSrsCodeFromTable(normalizedTable));
+                        const stableKey = normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(normalizedTable) || getLegacyReqDetailKeyByCode(code));
+                        const key = stableKey || getExistingReqDetailKey({ ...node, table: normalizedTable }, ancestors);
                         const score = scoreFunctionalTable(normalizedTable);
                         const current = preservedByKey.get(key);
                         if (key.replace(/\|/g, "") && (!current || score > current.score)) {
                             preservedByKey.set(key, { node, table: normalizedTable, score });
                         }
-                        const rootAncestor = ancestors.find((item) => getHeadingDepth(item.title) === 1);
-                        if (!reqRoot && rootAncestor) reqRoot = rootAncestor;
                     }
                     walkExisting(node.children || [], [...ancestors, node]);
                 });
             };
             walkExisting(cloned);
-            if (!reqRoot) {
-                reqRoot = cloned.find((node) => getHeadingDepth(node.title) === 1) || cloned[0];
-            }
+            const reqRoot = findReqDetailRoot(cloned) || cloned.find((node) => getHeadingDepth(node.title) === 1) || cloned[0];
             if (!reqRoot) return cloned;
             const rootPrefix = String(reqRoot.title || "").trim().match(/^(\d+(?:\.\d+)*)\s+/)?.[1] || "1";
             const usedNodeIds = new Set<number>();
@@ -3678,6 +3689,13 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 const functionText = normalizeReqDisplayText(detail?.function);
                 const subFunctionText = normalizeReqDisplayText(detail?.sub_function);
                 if (!moduleText) return;
+                const detailKey = getReqStableKey(detail) || getReqDetailKey(detail);
+                if (!functionText && !subFunctionText) {
+                    const preserved = preservedByKey.get(detailKey);
+                    if (!preserved || preserved.score <= 0) {
+                        return;
+                    }
+                }
                 const moduleKey = normalizeTitleText(moduleText);
                 let moduleNode = moduleMap.get(moduleKey);
                 if (!moduleNode) {
@@ -3687,8 +3705,15 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                     moduleMap.set(moduleKey, moduleNode);
                     rebuiltChildren.push(moduleNode);
                 }
-                const detailKey = getReqDetailKey(detail);
                 if (!functionText) {
+                    if (subFunctionText) {
+                        moduleNode.children = moduleNode.children || [];
+                        const modulePrefix = String(moduleNode.title || "").trim().match(/^(\d+(?:\.\d+)*)\s+/)?.[1] || `${rootPrefix}.${rebuiltChildren.length}`;
+                        const detailNo = moduleNode.children.length + 1;
+                        const title = `${modulePrefix}.${detailNo} ${subFunctionText}`;
+                        moduleNode.children.push(makeDetailNode(title, moduleNode, detail, detailKey));
+                        return;
+                    }
                     const title = String(moduleNode.title || "");
                     const detailNode = makeDetailNode(title, reqRoot!, detail, detailKey);
                     Object.assign(moduleNode, {
@@ -3818,12 +3843,105 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         void findRootByNearestPreviousCode;
         void sortExistingReqDetailsBySrsCode;
         void syncSrsReqDetailsByKey;
+        const pruneDeletedStandardReqDetails = (items: TreeNode[]): TreeNode[] => {
+            if (!isSavingStandardSrsTable || !previousStandardDetails.length) return items;
+            const previousStableKeys = new Set<string>();
+            previousStandardDetails.forEach((detail: any, index: number) => {
+                const rowIndex = getReqRowIndex(detail, index);
+                const stableKey = getReqStableKey(detail) || previousStableKeyByIndex.get(rowIndex);
+                if (stableKey) previousStableKeys.add(stableKey);
+            });
+            const currentStableKeys = new Set<string>();
+            allStandardDetailsForIdentitySync.forEach((detail: any, index: number) => {
+                const rowIndex = getReqRowIndex(detail, index);
+                const stableKey = getReqStableKey(detail) || (rowIndex < previousStandardDetails.length ? previousStableKeyByIndex.get(rowIndex) : "");
+                if (stableKey) currentStableKeys.add(stableKey);
+            });
+            const deletedStableKeys = new Set(Array.from(previousStableKeys).filter((key) => !currentStableKeys.has(key)));
+            if (!deletedStableKeys.size) return items;
+            const getNodeStableKey = (node: TreeNode) => {
+                const code = normalizeSrsCode(node.srs_code || (isFunctionalKvTable(node.table) ? extractSrsCodeFromTable(node.table) : ""));
+                return normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table) || getLegacyReqDetailKeyByCode(code));
+            };
+            const isEmptyAutoGroup = (node: TreeNode) => (
+                node.label === "__auto_req_group" &&
+                !(node.children || []).length &&
+                !String(node.text || "").trim() &&
+                !hasRenderableTable(node.table)
+            );
+            const walk = (list: TreeNode[]): TreeNode[] => (list || [])
+                .map((node) => {
+                    const children = walk(node.children || []);
+                    return { ...node, children };
+                })
+                .filter((node) => {
+                    const stableKey = getNodeStableKey(node);
+                    const isReqDetailNode = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
+                    if (stableKey && deletedStableKeys.has(stableKey) && isReqDetailNode) return false;
+                    if (isEmptyAutoGroup(node)) return false;
+                    return true;
+                });
+            return walk(items);
+        };
+        const syncChangedModuleTitles = (items: TreeNode[]): TreeNode[] => {
+            if (!isSavingStandardSrsTable || !previousStandardDetails.length || !allStandardDetailsForIdentitySync.length) return items;
+            const moduleRenameGroups = new Map<string, { oldModuleKey: string; nextModule: string; stableKeys: Set<string> }>();
+            allStandardDetailsForIdentitySync.forEach((detail: any, index: number) => {
+                const rowIndex = getReqRowIndex(detail, index);
+                const previousDetail = previousStandardDetails[rowIndex];
+                if (!previousDetail) return;
+                const oldModuleKey = normalizeTitleText(previousDetail?.module);
+                const nextModule = normalizeReqDisplayText(detail?.module);
+                const stableKey = getReqStableKey(detail) ||
+                    previousStableKeyByIndex.get(rowIndex) ||
+                    getReqStableKey(previousDetail);
+                if (stableKey && oldModuleKey && nextModule && oldModuleKey !== normalizeTitleText(nextModule)) {
+                    const groupKey = `${oldModuleKey}|${normalizeTitleText(nextModule)}`;
+                    const group = moduleRenameGroups.get(groupKey) || { oldModuleKey, nextModule, stableKeys: new Set<string>() };
+                    group.stableKeys.add(stableKey);
+                    moduleRenameGroups.set(groupKey, group);
+                }
+            });
+            if (!moduleRenameGroups.size) return items;
+            const getNodeStableKey = (node: TreeNode) => {
+                const code = normalizeSrsCode(node.srs_code || (isFunctionalKvTable(node.table) ? extractSrsCodeFromTable(node.table) : ""));
+                return normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table) || getLegacyReqDetailKeyByCode(code));
+            };
+            const containsAnyStableKey = (node: TreeNode, stableKeys: Set<string>): boolean => (
+                stableKeys.has(getNodeStableKey(node)) ||
+                (node.children || []).some((child) => containsAnyStableKey(child, stableKeys))
+            );
+            const walk = (list: TreeNode[]): TreeNode[] => (list || []).map((node) => {
+                const children = walk(node.children || []);
+                const titlePrefix = String(node.title || "").trim().match(/^(\d+(?:\.\d+)*\s+)/)?.[1] || "";
+                const titleText = normalizeTitleText(stripHeadingNumber(node.title));
+                const currentNode = { ...node, children };
+                const matchedRename = Array.from(moduleRenameGroups.values()).find((group) => (
+                    group.oldModuleKey === titleText &&
+                    containsAnyStableKey(currentNode, group.stableKeys)
+                ));
+                const nextModule = matchedRename?.nextModule;
+                const shouldRename = !!titlePrefix &&
+                    !!nextModule &&
+                    getHeadingDepth(node.title) > 1;
+                return {
+                    ...node,
+                    ...(shouldRename ? { title: `${titlePrefix} ${nextModule}` } : {}),
+                    children,
+                };
+            });
+            return walk(items);
+        };
+        void syncExistingReqIdentity;
+        void appendMissingStandardReqDetails;
+        void sortReqDetailSiblingsBySrsCode;
+        void stripIgnoredReqDetailTables;
+        void dedupeReqDetailsByKey;
+        void pruneDeletedStandardReqDetails;
+        void syncChangedModuleTitles;
         const isSavingReqDetailTable = !!reqDetailPayload;
         const nextNodes = isSavingStandardSrsTable
-            ? stripIgnoredReqDetailTables(sortReqDetailSiblingsBySrsCode(dedupeReqDetailsByKey(appendMissingStandardReqDetails(
-                syncExistingReqIdentity(newNodes, standardDetailsForIdentitySync),
-                standardDetailsForIdentitySync
-            ), standardDetailsForIdentitySync)))
+            ? syncSrsReqDetailsByKey(newNodes, allStandardDetailsForIdentitySync)
             : (isSavingReqDetailTable ? newNodes : syncReqDetailsToTree(newNodes, reqDetails || [], true));
         updateNodes(nextNodes);
         setTableCellsBackup(undefined);
