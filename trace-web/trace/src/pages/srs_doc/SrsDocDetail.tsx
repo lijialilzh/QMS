@@ -232,6 +232,115 @@ export default () => {
             };
         });
     };
+    const appendChangeReqDetailsToTree = (tree: TreeNode[], details: any[] = []): TreeNode[] => {
+        if (!Array.isArray(tree) || !details.length) return tree || [];
+        const cloned: TreeNode[] = JSON.parse(JSON.stringify(tree || []));
+        const normalizeTitle = (value?: string) => normalizeReqText(value).replace(/\s+/g, "");
+        const stripHeadingNo = (value?: string) => String(value || "").trim().replace(/^\d+(?:\.\d+)*\s*/, "");
+        const getDepth = (value?: string) => {
+            const matched = String(value || "").trim().match(/^(\d+(?:\.\d+)*)\s+/);
+            return matched ? matched[1].split(".").length : 0;
+        };
+        const getPrefix = (value?: string) => String(value || "").trim().match(/^(\d+(?:\.\d+)*)\s+/)?.[1] || "";
+        const nextChildNo = (children: TreeNode[], prefix: string) => {
+            const escaped = prefix.replace(/\./g, "\\.");
+            return (children || []).reduce((max, child) => {
+                const matched = String(child.title || "").trim().match(new RegExp(`^${escaped}\\.(\\d+)\\s+`));
+                return matched ? Math.max(max, parseInt(matched[1], 10)) : max;
+            }, 0) + 1;
+        };
+        const codeSet = new Set<string>();
+        const collectCodes = (items: TreeNode[]) => {
+            (items || []).forEach((node: any) => {
+                const code = normalizeSrsCodeForSync(node.srs_code || "");
+                if (code) codeSet.add(code);
+                const rows = node.table?.rows || [];
+                rows.forEach((row: any) => {
+                    Object.values(row || {}).forEach((value: any) => {
+                        const matched = String(value || "").match(/SRS-[A-Za-z0-9]+-\d+/);
+                        if (matched?.[0]) codeSet.add(normalizeSrsCodeForSync(matched[0]));
+                    });
+                });
+                collectCodes(node.children || []);
+            });
+        };
+        collectCodes(cloned);
+        const buildDetailTable = (detail: any) => ({
+            show_header: 1,
+            headers: [
+                { code: "field", name: "字段" },
+                { code: "value", name: "内容" },
+            ],
+            rows: [
+                { field: "需求编号", value: detail.code || "" },
+                { field: "需求名称", value: detail.name || detail.sub_function || detail.function || detail.module || "" },
+                { field: "需求概述", value: "" },
+                { field: "主参加者", value: "" },
+                { field: "前置条件", value: "" },
+                { field: "触发器", value: "" },
+                { field: "事件流", value: "" },
+                { field: "后置条件", value: "" },
+                { field: "异常情况", value: "" },
+                { field: "约束", value: "" },
+            ],
+        });
+        const makeNode = (title: string, parent?: TreeNode): TreeNode => ({
+            id: Date.now() + Math.floor(Math.random() * 100000),
+            doc_id: params.id ? parseInt(params.id) : 0,
+            n_id: 0,
+            p_id: parent?.n_id || 0,
+            title,
+            text: "",
+            table: null,
+            children: [],
+        });
+        const findNodeByTitle = (items: TreeNode[], title: string): TreeNode | undefined => {
+            const key = normalizeTitle(title);
+            for (const node of items || []) {
+                if (getDepth(node.title) > 0 && normalizeTitle(stripHeadingNo(node.title)) === key) return node;
+                const found = findNodeByTitle(node.children || [], title);
+                if (found) return found;
+            }
+            return undefined;
+        };
+        details.forEach((detail) => {
+            const code = normalizeSrsCodeForSync(detail?.code);
+            if (!code || codeSet.has(code)) return;
+            const moduleText = normalizeReqText(detail?.module || detail?.name || detail?.function || detail?.code) || code;
+            const functionText = normalizeReqText(detail?.function);
+            const subFunctionText = normalizeReqText(detail?.sub_function);
+            let moduleNode = findNodeByTitle(cloned, moduleText);
+            if (!moduleNode) {
+                const rootNo = Math.max(0, ...cloned.map((node) => parseInt(String(node.title || "").match(/^(\d+)/)?.[1] || "0", 10)).filter(Number.isFinite)) + 1;
+                moduleNode = makeNode(`${rootNo} ${moduleText}`);
+                cloned.push(moduleNode);
+            }
+            let target = moduleNode;
+            if (functionText) {
+                const modulePrefix = getPrefix(moduleNode.title);
+                let functionNode = (moduleNode.children || []).find((child) => normalizeTitle(stripHeadingNo(child.title)) === normalizeTitle(functionText));
+                if (!functionNode) {
+                    functionNode = makeNode(`${modulePrefix}.${nextChildNo(moduleNode.children || [], modulePrefix)} ${functionText}`, moduleNode);
+                    moduleNode.children = [...(moduleNode.children || []), functionNode];
+                }
+                target = functionNode;
+            }
+            if (subFunctionText) {
+                const functionPrefix = getPrefix(target.title);
+                let subNode = (target.children || []).find((child) => normalizeTitle(stripHeadingNo(child.title)) === normalizeTitle(subFunctionText));
+                if (!subNode) {
+                    subNode = makeNode(`${functionPrefix}.${nextChildNo(target.children || [], functionPrefix)} ${subFunctionText}`, target);
+                    target.children = [...(target.children || []), subNode];
+                }
+                target = subNode;
+            }
+            target.srs_code = code;
+            target.label = "__auto_req_detail";
+            target.table = buildDetailTable(detail);
+            codeSet.add(code);
+        });
+        return cloned;
+    };
 
     // 加载产品相关的 RCM 列表（用于章节 RCM 选择控件）
     const loadProductRcm = (productId?: number) => {
@@ -300,6 +409,7 @@ export default () => {
             ...(node.img_url !== undefined && { img_url: node.img_url ?? "" }),
             // label 不展示，但需保留以便上传时传给后端
             ...(node.label !== undefined && { label: node.label ?? "" }),
+            ...(node.req_detail_key !== undefined && { req_detail_key: node.req_detail_key ?? "" }),
             // 处理 table：如果是 { headers: null, rows: null } 或无效数据，设置为空对象
             table: (node.table && 
                    node.table.headers !== null && 
@@ -877,12 +987,23 @@ export default () => {
             return;
         }
 
+        const headers = tableData?.headers || [];
+        const getHeaderIndex = (matcher: (text: string) => boolean) => headers.findIndex((header: any) => matcher(normalizeHeaderText(header?.name || header?.code)));
+        const codeIndex = getHeaderIndex((text) => text.includes("需求编号") || text.includes("srscode") || text === "code");
+        const moduleIndex = getHeaderIndex((text) => text.includes("模块"));
+        const functionIndex = getHeaderIndex((text) => text.includes("功能") && !text.includes("子功能"));
+        const subFunctionIndex = getHeaderIndex((text) => text.includes("子功能"));
+        const readCell = (row: any, index: number, fallbackCode: string) => {
+            if (Array.isArray(row)) return String(row?.[index] || "").trim();
+            const headerCode = headers[index]?.code;
+            return String(row?.[headerCode] || row?.[fallbackCode] || "").trim();
+        };
         const rows = (tableData?.data || [])
-            .map((row) => ({
-                code: String(row?.[0] || "").trim(),
-                module: String(row?.[1] || "").trim(),
-                function: String(row?.[2] || "").trim(),
-                sub_function: String(row?.[3] || "").trim(),
+            .map((row: any) => ({
+                code: readCell(row, codeIndex >= 0 ? codeIndex : 0, "srs_code"),
+                module: readCell(row, moduleIndex >= 0 ? moduleIndex : 1, "module"),
+                function: readCell(row, functionIndex >= 0 ? functionIndex : 2, "function"),
+                sub_function: readCell(row, subFunctionIndex >= 0 ? subFunctionIndex : 3, "sub_function"),
             }))
             .filter((row) => row.code || row.module || row.function || row.sub_function);
 
@@ -963,10 +1084,23 @@ export default () => {
                 }
             }
             const srsTableState = await fetchSrsTableState(docId);
-            const syncedTree = syncChangeReqTablesToTree(
+            const treeAfterChangeTableSync = syncChangeReqTablesToTree(
                 ((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) as TreeNode[],
                 srsTableState.srsChangeTables
             );
+            const changeDetails = (srsTableState.srsChangeTables || [])
+                .flatMap((table: any) => (table.data || []).map((item: any) => ({
+                    code: normalizeSrsCodeForSync(item?.srs_code || item?.code || ""),
+                    name: normalizeReqText(item?.sub_function || item?.function || item?.module),
+                    module: normalizeReqText(item?.module),
+                    function: normalizeReqText(item?.function),
+                    sub_function: normalizeReqText(item?.sub_function),
+                    type_code: item?.type_code || table?.type_code,
+                })))
+                .filter((item: any) => item.code);
+            const syncedTree = changeDetails.length
+                ? appendChangeReqDetailsToTree(treeAfterChangeTableSync as TreeNode[], changeDetails)
+                : treeAfterChangeTableSync;
             treeStructureRef.current = syncedTree;
             dispatch({
                 srsTableData: srsTableState.srsTableData,
@@ -1246,7 +1380,6 @@ export default () => {
             if (changeReq?.id) {
                 existed = {
                     ...changeReq,
-                    req_id: changeReq.id,
                     code: changeReq.srs_code || changeReq.code,
                 };
             }
@@ -1265,10 +1398,18 @@ export default () => {
             }
         }
         if (!existed?.req_id) {
-            throw new Error(`功能描述保存失败：未找到需求 ${detail.code}`);
+            const sourceReq = (data.srsTableData || []).find((item: any) => normalizeSrsCodeForSync(item?.srs_code || item?.code) === code) ||
+                (data.srsOtherReqData || []).find((item: any) => normalizeSrsCodeForSync(item?.srs_code || item?.code) === code) ||
+                (data.srsChangeTables || [])
+                    .flatMap((table: any) => table.data || [])
+                    .find((item: any) => normalizeSrsCodeForSync(item?.srs_code || item?.code) === code);
+            existed = {
+                ...(sourceReq || {}),
+                code: sourceReq?.srs_code || sourceReq?.code || detail.code,
+                name: detail.name || sourceReq?.sub_function || sourceReq?.function || sourceReq?.module || "",
+            };
         }
-        const payload = {
-            req_id: existed.req_id,
+        const detailFields = {
             overview: detail.overview ?? "",
             participant: detail.participant ?? "",
             pre_condition: detail.pre_condition ?? "",
@@ -1278,11 +1419,61 @@ export default () => {
             exception: detail.exception ?? "",
             constraint: detail.constraint ?? "",
         };
-        const res: any = await ApiSrsReqd.update_srs_reqd(payload);
+        const docId = params.id ? parseInt(params.id) : 0;
+        if (!existed.req_id) {
+            const latestBeforeSave: any = await ApiSrsReqd.list_srs_reqd({
+                doc_id: docId,
+                page_index: 0,
+                page_size: 10000,
+            });
+            if (latestBeforeSave.code === ApiSrsReqd.C_OK) {
+                const latestRows = latestBeforeSave.data?.rows || [];
+                const latestExisted = latestRows.find((item: any) => normalizeSrsCodeForSync(item?.code) === code);
+                if (latestExisted?.req_id) {
+                    existed = latestExisted;
+                    dispatch({ reqListData: toReqListTableData(latestRows) });
+                }
+            }
+        }
+        const payload = existed.req_id
+            ? {
+                req_id: existed.req_id,
+                ...detailFields,
+            }
+            : {
+                doc_id: docId,
+                code: existed.code || detail.code || "",
+                name: detail.name || existed.name || existed.sub_function || existed.function || existed.module || "",
+                ...detailFields,
+            };
+        let res: any = existed.req_id
+            ? await ApiSrsReqd.update_srs_reqd(payload)
+            : await ApiSrsReqd.add_srs_reqd(payload);
+        if (res.code !== ApiSrsReqd.C_OK && !existed.req_id && /已存在/.test(String(res.msg || ""))) {
+            const latestWhenDuplicated: any = await ApiSrsReqd.list_srs_reqd({
+                doc_id: docId,
+                page_index: 0,
+                page_size: 10000,
+            });
+            if (latestWhenDuplicated.code === ApiSrsReqd.C_OK) {
+                const latestRows = latestWhenDuplicated.data?.rows || [];
+                const latestExisted = latestRows.find((item: any) => normalizeSrsCodeForSync(item?.code) === code);
+                if (latestExisted?.req_id) {
+                    existed = latestExisted;
+                    dispatch({ reqListData: toReqListTableData(latestRows) });
+                    res = await ApiSrsReqd.update_srs_reqd({
+                        req_id: latestExisted.req_id,
+                        ...detailFields,
+                    });
+                }
+            }
+            if (res.code !== ApiSrsReqd.C_OK) {
+                res = { code: ApiSrsReqd.C_OK, msg: "功能描述已存在，已刷新" };
+            }
+        }
         if (res.code !== ApiSrsReqd.C_OK) {
             throw new Error(res.msg || "功能描述保存失败");
         }
-        const docId = params.id ? parseInt(params.id) : 0;
         const latestAfterSave: any = await ApiSrsReqd.list_srs_reqd({
             doc_id: docId,
             page_index: 0,
@@ -1294,9 +1485,9 @@ export default () => {
             const hasExistingReqListItem = (data.reqListData || []).some((item: any) => item.req_id === existed.req_id);
             const nextReqListData = hasExistingReqListItem
                 ? (data.reqListData || []).map((item: any) => (
-                    item.req_id === existed.req_id ? { ...item, ...payload } : item
+                    item.req_id === existed.req_id ? { ...item, ...detailFields } : item
                 ))
-                : [...(data.reqListData || []), { ...existed, ...payload, code: detail.code }];
+                : [...(data.reqListData || []), { ...existed, ...detailFields, code: detail.code }];
             dispatch({ reqListData: nextReqListData });
         }
         message.success(res.msg || "功能描述已保存");

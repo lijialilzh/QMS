@@ -23,6 +23,7 @@ export interface TableDataWithHeaders {
   tableName?: string;
   headers: TableHeaderItem[];
   data: string[][];
+  rowMeta?: Array<Record<string, any>>;
 }
 
 // 组件 Props 类型
@@ -172,6 +173,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
         headers.forEach((_header, colIndex) => {
           rowData[`col_${colIndex}`] = row[colIndex] || '';
         });
+        rowData.__rowMeta = { ...(initialData.rowMeta?.[rowIndex] || {}) };
         return rowData;
       });
       tableDataRef.current = initTableData;
@@ -255,7 +257,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
 
     // 初始化表格数据：生成 rowCount 条数据，每条数据包含 colCount 个可编辑字段（col_0, col_1...）
     const initTableData: TableRowData[] = Array.from({ length: rowCount }, (_, rowIndex) => {
-      const rowData: TableRowData = { key: rowIndex }; // key 是 antd Table 必需的唯一标识
+      const rowData: TableRowData = { key: rowIndex, __rowMeta: {} }; // key 是 antd Table 必需的唯一标识
       // 为每一列初始化空值，用于编辑
       for (let colIndex = 0; colIndex < colCount; colIndex++) {
         rowData[`col_${colIndex}`] = '';
@@ -392,7 +394,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
   };
 
   const createEmptyRow = (): TableRowData => {
-    const rowData: TableRowData = { key: Date.now() + Math.floor(Math.random() * 1000) };
+    const rowData: TableRowData = { key: Date.now() + Math.floor(Math.random() * 1000), __rowMeta: {} };
     for (let colIndex = 0; colIndex < colCount; colIndex++) {
       rowData[`col_${colIndex}`] = '';
     }
@@ -458,7 +460,8 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
     const result: TableDataWithHeaders = {
       tableName: tableName.trim(),
       headers,
-      data
+      data,
+      rowMeta: latestTableData.map((row) => ({ ...(row.__rowMeta || {}) })),
     };
 
     setSubmitting(true);
@@ -466,6 +469,9 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       .then(() => {
         // 确认后重置状态并关闭
         resetAndCancel();
+      })
+      .catch((error: any) => {
+        message.error(error?.message || '保存失败');
       })
       .finally(() => {
         setSubmitting(false);
