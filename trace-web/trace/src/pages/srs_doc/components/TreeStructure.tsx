@@ -152,6 +152,27 @@ function normalizeReqDisplayText(value: any): string {
     return invalid.has(txt) ? "" : txt;
 }
 
+const NUMBERED_REQ_DETAIL_FIELDS = new Set(["事件流", "工作流", "工作流程", "前置条件", "触发器", "后置条件", "异常情况", "约束"]);
+
+function normalizeReqDetailNumberedText(value: any, fieldLabel?: string): string {
+    const text = normalizeReqDisplayText(value);
+    if (!text) return "";
+    const label = normalizeCellText(fieldLabel || "");
+    if (!Array.from(NUMBERED_REQ_DETAIL_FIELDS).some((field) => label.includes(normalizeCellText(field)))) {
+        return text;
+    }
+    let nextNo = 1;
+    const numberedLine = /^(\s*)(\d{1,4})([）)、．]|[.](?!\d))\s*(.*)$/;
+    return text.split(/\r?\n/).map((line) => {
+        const matched = String(line || "").match(numberedLine);
+        if (!matched) return line;
+        const prefix = matched[1] || "";
+        const sep = matched[3] === "．" ? "." : matched[3];
+        const rest = matched[4] || "";
+        return `${prefix}${nextNo++}${sep} ${rest}`.trimEnd();
+    }).join("\n");
+}
+
 function normalizeReqDetailKey(value: any): string {
     return String(value || "").trim();
 }
@@ -548,7 +569,7 @@ const TreeNodeItem = ({
         { field: ts("srs_doc.postcondition") || "后置条件", value: detail?.post_condition },
         { field: ts("srs_doc.exception") || "异常情况", value: detail?.exception },
         { field: ts("srs_doc.constraint") || "约束", value: detail?.constraint },
-    ].filter((row) => String(row.value || "").trim()));
+    ].map((row) => ({ ...row, value: normalizeReqDetailNumberedText(row.value, row.field) })).filter((row) => String(row.value || "").trim()));
     const renderReqDetailTable = (detail: any, key: string) => (
         <div className="node-table" key={key}>
             <Table
@@ -831,7 +852,11 @@ const TreeNodeItem = ({
             const rows = bodyCells.map((row, rowIndex) => {
                 const rowObj: any = { key: rowIndex };
                 table!.headers!.forEach((header, colIdx) => {
-                    rowObj[header.code] = normalizeReqDisplayText(row?.[colIdx]?.value || "");
+                    const fieldLabel = isFunctionalKvTable(table) && colIdx === 1
+                        ? row?.[0]?.value
+                        : "";
+                    const cellValue = normalizeReqDisplayText(row?.[colIdx]?.value || "");
+                    rowObj[header.code] = fieldLabel ? normalizeReqDetailNumberedText(cellValue, fieldLabel) : cellValue;
                 });
                 return rowObj;
             });
@@ -851,10 +876,18 @@ const TreeNodeItem = ({
             return rows;
         }
 
-        const rows: any[] = table.rows.map((row, index) => ({
-            key: index,
-            ...Object.fromEntries(Object.entries(row || {}).map(([k, v]) => [k, normalizeReqDisplayText(v)]))
-        }));
+        const functionalLeftCode = isFunctionalKvTable(table) ? headers[0]?.code : "";
+        const functionalRightCode = isFunctionalKvTable(table) ? headers[1]?.code : "";
+        const rows: any[] = table.rows.map((row, index) => {
+            const fieldLabel = functionalLeftCode ? row?.[functionalLeftCode] : "";
+            return {
+                key: index,
+                ...Object.fromEntries(Object.entries(row || {}).map(([k, v]) => {
+                    const value = normalizeReqDisplayText(v);
+                    return [k, functionalRightCode && k === functionalRightCode ? normalizeReqDetailNumberedText(value, fieldLabel) : value];
+                }))
+            };
+        });
         if (shouldPrependHeaderAsFirstRow) {
             const firstHeaderRow: any = { key: `kv_header_row` };
             firstHeaderRow[headers[0].code] = headers[0].name || "";
@@ -1438,14 +1471,14 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         const rows = [
             { [leftCode]: "需求编号", [rightCode]: detail?.code || "" },
             { [leftCode]: "需求名称", [rightCode]: detail?.name || detail?.module || detail?.function || detail?.sub_function || "" },
-            { [leftCode]: "需求概述", [rightCode]: detail?.overview || "" },
+            { [leftCode]: "需求概述", [rightCode]: normalizeReqDetailNumberedText(detail?.overview || "", "需求概述") },
             { [leftCode]: "主参加者", [rightCode]: detail?.participant || "" },
-            { [leftCode]: "前置条件", [rightCode]: detail?.pre_condition || "" },
-            { [leftCode]: "触发器", [rightCode]: detail?.trigger || "" },
-            { [leftCode]: "事件流", [rightCode]: detail?.work_flow || "" },
-            { [leftCode]: "后置条件", [rightCode]: detail?.post_condition || "" },
-            { [leftCode]: "异常情况", [rightCode]: detail?.exception || "" },
-            { [leftCode]: "约束", [rightCode]: detail?.constraint || "" },
+            { [leftCode]: "前置条件", [rightCode]: normalizeReqDetailNumberedText(detail?.pre_condition || "", "前置条件") },
+            { [leftCode]: "触发器", [rightCode]: normalizeReqDetailNumberedText(detail?.trigger || "", "触发器") },
+            { [leftCode]: "事件流", [rightCode]: normalizeReqDetailNumberedText(detail?.work_flow || "", "事件流") },
+            { [leftCode]: "后置条件", [rightCode]: normalizeReqDetailNumberedText(detail?.post_condition || "", "后置条件") },
+            { [leftCode]: "异常情况", [rightCode]: normalizeReqDetailNumberedText(detail?.exception || "", "异常情况") },
+            { [leftCode]: "约束", [rightCode]: normalizeReqDetailNumberedText(detail?.constraint || "", "约束") },
         ];
         const keyedRows = reqDetailKey
             ? rows.map((row) => ({ ...row, [REQ_DETAIL_KEY_FIELD]: reqDetailKey }))
@@ -2950,7 +2983,8 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
             const payload: any = {};
             (rows || []).forEach((row) => {
                 const label = normalizeLabel(String(row[leftCode] || ""));
-                const value = String(row[rightCode] || "");
+                const rawValue = String(row[rightCode] || "");
+                const value = normalizeReqDetailNumberedText(rawValue, String(row[leftCode] || ""));
                 if (label.includes("需求编号")) payload.code = value.trim();
                 else if (label.includes("需求名称")) payload.name = value.trim();
                 else if (label.includes("需求概述")) payload.overview = value;
