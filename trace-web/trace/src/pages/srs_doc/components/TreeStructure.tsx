@@ -1985,26 +1985,27 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         .filter((item: any) => item.code && item.module);
     const syncOtherReqCodesToChapters = (items: TreeNode[], otherDetails: any[] = []): TreeNode[] => {
         if (!otherDetails.length) return items || [];
-        const byModule = new Map<string, string>();
-        const byLocation = new Map<string, string>();
+        const byLocation = new Map<string, any>();
         otherDetails.forEach((detail: any) => {
             const code = normalizeSrsCode(detail?.code);
             if (!code) return;
-            const moduleKey = normalizeTitleText(detail?.module);
-            if (moduleKey) byModule.set(moduleKey, code);
-            const locationKey = String(detail?.location || "").trim().match(/^(\d+)/)?.[1] || "";
-            if (locationKey) byLocation.set(locationKey, code);
+            const locationMatches = String(detail?.location || "").match(/\d+(?:\.\d+)*/g) || [];
+            locationMatches.forEach((locationKey) => {
+                if (locationKey) byLocation.set(locationKey, detail);
+            });
         });
         return (items || []).map((node) => {
-            const headingDepth = getHeadingDepth(node.title);
-            const titleKey = normalizeTitleText(stripHeadingNumber(node.title));
-            const headingNo = String(node.title || "").trim().match(/^(\d+)/)?.[1] || "";
-            const matchedCode = headingDepth === 1
-                ? (byModule.get(titleKey) || byLocation.get(headingNo) || "")
-                : "";
+            const headingNo = String(node.title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
+            const matchedDetail = headingNo ? byLocation.get(headingNo) : undefined;
+            const nextModule = normalizeReqDisplayText(matchedDetail?.module);
+            const nextCode = normalizeSrsCode(matchedDetail?.code);
+            const nextTitle = matchedDetail && headingNo && nextModule
+                ? `${headingNo} ${nextModule}`
+                : node.title;
             return {
                 ...node,
-                ...(matchedCode ? { srs_code: matchedCode } : {}),
+                title: nextTitle,
+                ...(nextCode ? { srs_code: nextCode } : {}),
                 children: syncOtherReqCodesToChapters(node.children || [], otherDetails),
             };
         });
@@ -2055,9 +2056,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         const previewOtherDetails = enableStandardReqAutoSync ? buildPreviewOtherDetails() : [];
         const previewSyncedNodeList = syncChangeReqTablesFromPreview(nodeList || []);
         const initialTableDetails = collectReqRowsFromTreeTables(previewSyncedNodeList || []);
-        const tableOtherDetails = enableStandardReqAutoSync
-            ? initialTableDetails.filter((detail: any) => String(detail?.type_code || "") === "2")
-            : [];
+        const tableOtherDetails = initialTableDetails.filter((detail: any) => String(detail?.type_code || "") === "2");
         const syncedNodeList = syncOtherReqCodesToChapters(previewSyncedNodeList, [...tableOtherDetails, ...previewOtherDetails]);
         const tableDetails = collectReqRowsFromTreeTables(syncedNodeList || []);
         const changeTableDetails = tableDetails
@@ -2975,6 +2974,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
             setTableCellsBackup(undefined);
             return;
         }
+        const isSavingOtherReqTable = !!(tableFormat && isReqOtherTable(tableFormat));
         const isSavingStandardSrsTable = !!(tableFormat && isReqMainTable(tableFormat) && !/变更/.test(String(tableFormat.name || "")));
         const allStandardDetailsForIdentitySync = isSavingStandardSrsTable
             ? collectReqRowsFromTreeTables([{
@@ -3278,6 +3278,18 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 table: tableFormat,
             };
         });
+        if (isSavingOtherReqTable) {
+            const otherDetailsForSync = collectReqRowsFromTreeTables([{
+                id: -3,
+                title: tableFormat?.name || "",
+                table: tableFormat,
+                children: [],
+            } as TreeNode]).filter((item: any) => String(item?.type_code || "") === "2" && normalizeSrsCode(item?.code));
+            const nextNodes = syncOtherReqCodesToChapters(newNodes, otherDetailsForSync);
+            updateNodes(nextNodes);
+            setTableCellsBackup(undefined);
+            return;
+        }
         const syncExistingReqIdentity = (items: TreeNode[], details: any[]): TreeNode[] => {
             if (!details.length) return items;
             const detailByKey = new Map<string, any>();
