@@ -2182,7 +2182,6 @@ export default () => {
                 ((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) as TreeNode[],
                 srsTableState,
             );
-            );
             treeStructureRef.current = syncedTree;
             dispatch({
                 srsTableData: srsTableState.srsTableData,
