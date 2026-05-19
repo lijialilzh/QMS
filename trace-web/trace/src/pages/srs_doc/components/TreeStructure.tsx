@@ -1479,6 +1479,69 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
 
     const normalizeSrsCode = (value?: string) => String(value || "").replace(/\s+/g, "").toUpperCase();
     const normalizeTitleText = (value?: string) => normalizeReqDisplayText(value).replace(/\s+/g, "");
+    const FIXED_TEMPLATE_SECTIONS: Record<string, string> = {
+        "2.1": "软件总体描述",
+        "2.2": "物理拓扑图",
+        "2.3": "系统结构图",
+        "2.4": "运行环境",
+        "2.5": "数据库要求",
+        "2.6": "算法和数据要求",
+        "2.7": "性能要求",
+    };
+    const getHeadingNumber = (title?: string) => String(title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
+    const getFixedTemplateTitle = (headingNo?: string) => (headingNo ? FIXED_TEMPLATE_SECTIONS[headingNo] : undefined);
+    const isCodeCompatibleWithFixedSection = (code?: string, headingNo?: string) => {
+        const normalized = normalizeSrsCode(code);
+        if (!normalized || !headingNo) return false;
+        const chapterMajor = headingNo.split(".")[0];
+        if (chapterMajor === "2") {
+            return /^SRS-RCN30[02]-/i.test(normalized);
+        }
+        return true;
+    };
+    const parseOtherReqLocation = (location?: string) => {
+        const raw = String(location || "").trim();
+        return raw.match(/^(\d+(?:\.\d+)*)$/)?.[1] || raw.match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
+    };
+    const extractSrsCodeFromNodeText = (text?: string) => {
+        const matched = String(text || "").match(/SRS-[A-Z]+\d+-\d+/i);
+        return matched?.[0] || "";
+    };
+    const resolveFixedSectionSrsCode = (node: TreeNode, headingNo: string, otherReqCode?: string) => {
+        const candidates = [otherReqCode, node.srs_code ?? undefined, extractSrsCodeFromNodeText(node.text)]
+            .map((value) => normalizeSrsCode(value))
+            .filter(Boolean);
+        return candidates.find((code) => isCodeCompatibleWithFixedSection(code, headingNo)) || "";
+    };
+    const buildOtherReqCodeByLocation = (otherDetails: any[] = []) => {
+        const byLocation = new Map<string, string>();
+        (otherDetails || []).forEach((detail: any) => {
+            const code = normalizeSrsCode(detail?.code);
+            if (!code || String(detail?.type_code || "2") !== "2") return;
+            const locationKey = parseOtherReqLocation(detail?.location);
+            if (locationKey) byLocation.set(locationKey, code);
+        });
+        return byLocation;
+    };
+    const applyFixedChapterProtection = (items: TreeNode[], otherDetails: any[] = []): TreeNode[] => {
+        const otherReqByLocation = buildOtherReqCodeByLocation(otherDetails);
+        const walk = (list: TreeNode[]): TreeNode[] => (list || []).map((node) => {
+            const headingNo = getHeadingNumber(node.title);
+            const fixedName = getFixedTemplateTitle(headingNo);
+            const children = walk(node.children || []);
+            if (!fixedName) return { ...node, children };
+            return {
+                ...node,
+                title: `${headingNo} ${fixedName}`,
+                srs_code: resolveFixedSectionSrsCode(node, headingNo, otherReqByLocation.get(headingNo)),
+                children,
+            };
+        });
+        return walk(items);
+    };
+    const restoreFixedTemplateSections = (items: TreeNode[], otherDetails: any[] = []) => (
+        applyFixedChapterProtection(items, otherDetails)
+    );
     const isImportedCatalogTitle = (title?: string) => /^\d+(?:\.\d+)*\s+\S.*\s+\d+$/.test(String(title || "").trim());
     const getReqCodeFamily = (code?: string) => {
         const matched = normalizeSrsCode(code).match(/^(SRS-[A-Z]+\d+)-/);
@@ -2044,31 +2107,36 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         }))
         .filter((item: any) => item.code && item.module);
     const syncOtherReqCodesToChapters = (items: TreeNode[], otherDetails: any[] = []): TreeNode[] => {
-        if (!otherDetails.length) return items || [];
-        const byLocation = new Map<string, any>();
-        otherDetails.forEach((detail: any) => {
-            const code = normalizeSrsCode(detail?.code);
-            if (!code) return;
-            const locationMatches = String(detail?.location || "").match(/\d+(?:\.\d+)*/g) || [];
-            locationMatches.forEach((locationKey) => {
-                if (locationKey) byLocation.set(locationKey, detail);
-            });
-        });
-        return (items || []).map((node) => {
-            const headingNo = String(node.title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
-            const matchedDetail = headingNo ? byLocation.get(headingNo) : undefined;
-            const nextModule = normalizeReqDisplayText(matchedDetail?.module);
-            const nextCode = normalizeSrsCode(matchedDetail?.code);
-            const nextTitle = matchedDetail && headingNo && nextModule
+        if (!otherDetails.length) return restoreFixedTemplateSections(items || []);
+        const byLocation = buildOtherReqCodeByLocation(otherDetails);
+        const synced = (items || []).map((node) => {
+            const headingNo = getHeadingNumber(node.title);
+            const fixedName = getFixedTemplateTitle(headingNo);
+            const matchedCode = headingNo ? byLocation.get(headingNo) : undefined;
+            const nextModule = normalizeReqDisplayText(
+                otherDetails.find((detail: any) => normalizeSrsCode(detail?.code) === matchedCode)?.module
+            );
+            const nextCode = matchedCode || "";
+            const children = syncOtherReqCodesToChapters(node.children || [], otherDetails);
+            if (fixedName) {
+                return {
+                    ...node,
+                    title: `${headingNo} ${fixedName}`,
+                    srs_code: resolveFixedSectionSrsCode(node, headingNo, matchedCode),
+                    children,
+                };
+            }
+            const nextTitle = matchedCode && headingNo && nextModule
                 ? `${headingNo} ${nextModule}`
                 : node.title;
             return {
                 ...node,
                 title: nextTitle,
-                ...(nextCode ? { srs_code: nextCode } : {}),
-                children: syncOtherReqCodesToChapters(node.children || [], otherDetails),
+                ...(nextCode && isCodeCompatibleWithFixedSection(nextCode, headingNo) ? { srs_code: nextCode } : {}),
+                children,
             };
         });
+        return restoreFixedTemplateSections(synced, otherDetails);
     };
     const syncChangeReqTablesFromPreview = (items: TreeNode[]): TreeNode[] => {
         const previewTables = srsReqPreview?.changes || [];
@@ -3780,9 +3848,9 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                     walkExisting(node.children || [], [...ancestors, node]);
                 });
             };
-            walkExisting(cloned);
-            const reqRoot = findReqDetailRoot(cloned) || cloned.find((node) => getHeadingDepth(node.title) === 1) || cloned[0];
-            if (!reqRoot) return cloned;
+            const reqRoot = findReqDetailRoot(cloned);
+            if (!reqRoot) return restoreFixedTemplateSections(cloned, buildPreviewOtherDetails());
+            walkExisting(reqRoot.children || [], [reqRoot]);
             const rootPrefix = String(reqRoot.title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "1";
             const usedNodeIds = new Set<number>();
             const makeNode = (title: string, parent: TreeNode, key?: string, extra: Partial<TreeNode> = {}): TreeNode => {
@@ -4000,7 +4068,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
             );
             reqRoot.children = pruneStaleStandardReqNodes(reqRoot.children || []);
             sortTreeChildrenBySrsCode([reqRoot]);
-            return cloned;
+            return restoreFixedTemplateSections(cloned, buildPreviewOtherDetails());
         };
         const dedupeReqDetailsByKey = (items: TreeNode[], details: any[]): TreeNode[] => {
             if (!details.length) return items;

@@ -1043,7 +1043,10 @@ export default () => {
                     if (isStandardDetail) return true;
                     const isChangeDetail = key.startsWith("change_reqd_") || changeDetailKeys.has(key);
                     const isLegacyCurrentChangeDetail = !key && !!code && changeDetailCodes.has(code) && node.label === "__auto_req_detail";
-                    return !(isChangeDetail || isLegacyCurrentChangeDetail);
+                    if (isChangeDetail || isLegacyCurrentChangeDetail) {
+                        return !!(code && incomingCodes.has(code));
+                    }
+                    return true;
                 })
                 .filter((node: any) => {
                     if (node.label !== "__auto_req_group") return true;
@@ -1146,9 +1149,13 @@ export default () => {
             }
             return (items || []).find((node) => getDepth(node.title) === 1 && /需求|功能/.test(stripHeadingNo(node.title)));
         };
-        const findDirectChildByTitle = (items: TreeNode[], title: string): TreeNode | undefined => {
+        const findDirectChildByTitle = (items: TreeNode[], title: string, rootPrefix: string): TreeNode | undefined => {
             const key = normalizeTitle(title);
             return (items || []).find((node) => {
+                const prefix = getPrefix(node.title);
+                if (prefix.startsWith(`${rootPrefix}.`) && prefix.split(".").length === 2 && normalizeTitle(stripHeadingNo(node.title)) === key) {
+                    return true;
+                }
                 const isReqGeneratedNode = node.label === "__auto_req_group" ||
                     node.label === "__auto_req_detail" ||
                     isFunctionalKvTable(node.table) ||
@@ -1274,7 +1281,7 @@ export default () => {
             const functionText = normalizeReqText(detail?.function);
             const subFunctionText = normalizeReqText(detail?.sub_function);
             const existingNodeToMove = removeStaleSameChangeDetail(cloned);
-            let moduleNode = findDirectChildByTitle(reqRoot.children || [], moduleText);
+            let moduleNode = findDirectChildByTitle(reqRoot.children || [], moduleText, rootPrefix);
             if (!moduleNode) {
                 moduleNode = makeNode(`${rootPrefix}.${nextChildNo(reqRoot.children || [], rootPrefix)} ${moduleText}`, reqRoot);
                 reqRoot.children = [...(reqRoot.children || []), moduleNode];
@@ -1313,9 +1320,25 @@ export default () => {
                 };
                 target.children = [...target.children, movedNode];
             } else {
-            target.srs_code = code;
-            target.label = "__auto_req_detail";
-            target.table = buildDetailTable(detail);
+                const detailTitle = String(detail?.name || detail?.sub_function || detail?.function || detail?.module || code).trim();
+                if (functionText || subFunctionText) {
+                    target.children = target.children || [];
+                    const targetPrefix = getPrefix(target.title);
+                    const detailNode = {
+                        ...makeNode(`${targetPrefix}.${nextChildNo(target.children || [], targetPrefix)} ${detailTitle}`, target),
+                        srs_code: code,
+                        req_detail_key: detailKey,
+                        label: "__auto_req_detail",
+                        table: buildDetailTable(detail),
+                        children: [],
+                    };
+                    target.children = [...target.children, detailNode];
+                } else {
+                    target.srs_code = code;
+                    target.req_detail_key = detailKey;
+                    target.label = "__auto_req_detail";
+                    target.table = buildDetailTable(detail);
+                }
             }
             activeCodeSet.add(code);
         });
@@ -1616,16 +1639,78 @@ export default () => {
         ].filter((item: any) => item.code);
     };
 
+    const FIXED_TEMPLATE_SECTIONS: Record<string, string> = {
+        "2.1": "软件总体描述",
+        "2.2": "物理拓扑图",
+        "2.3": "系统结构图",
+        "2.4": "运行环境",
+        "2.5": "数据库要求",
+        "2.6": "算法和数据要求",
+        "2.7": "性能要求",
+    };
+    const getFixedSectionHeadingNo = (title?: string) => String(title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
+    const parseOtherReqLocation = (location?: string) => {
+        const raw = String(location || "").trim();
+        return raw.match(/^(\d+(?:\.\d+)*)$/)?.[1] || raw.match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
+    };
+    const buildOtherReqCodeByLocation = (otherRows: any[] = []) => {
+        const byLocation = new Map<string, string>();
+        (otherRows || []).forEach((item: any) => {
+            const code = normalizeSrsCodeForSync(item?.srs_code || item?.code || "");
+            if (!code || String(item?.type_code || "2") !== "2") return;
+            const locationKey = parseOtherReqLocation(item?.location);
+            if (locationKey) byLocation.set(locationKey, code);
+        });
+        return byLocation;
+    };
+    const extractSrsCodeFromNodeText = (text?: string) => {
+        const matched = String(text || "").match(/SRS-[A-Z]+\d+-\d+/i);
+        return matched?.[0] || "";
+    };
+    const isFixedSectionCompatibleCode = (code?: string, headingNo?: string) => {
+        const normalized = normalizeSrsCodeForSync(code);
+        if (!normalized || !headingNo) return false;
+        if (headingNo.split(".")[0] === "2") {
+            return /^SRS-RCN30[02]-/i.test(normalized);
+        }
+        return true;
+    };
+    const resolveFixedSectionSrsCode = (node: TreeNode, headingNo: string, otherReqCode?: string) => {
+        const candidates = [otherReqCode, node.srs_code ?? undefined, extractSrsCodeFromNodeText(node.text)]
+            .map((value) => normalizeSrsCodeForSync(value))
+            .filter(Boolean);
+        return candidates.find((code) => isFixedSectionCompatibleCode(code, headingNo)) || "";
+    };
+    const applyFixedChapterProtection = (tree: TreeNode[], otherRows: any[] = []): TreeNode[] => {
+        const otherReqByLocation = buildOtherReqCodeByLocation(otherRows);
+        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+            const headingNo = getFixedSectionHeadingNo(node.title);
+            const fixedName = headingNo ? FIXED_TEMPLATE_SECTIONS[headingNo] : undefined;
+            const children = walk(node.children || []);
+            if (!fixedName) return { ...node, children };
+            return {
+                ...node,
+                title: `${headingNo} ${fixedName}`,
+                srs_code: resolveFixedSectionSrsCode(node, headingNo, otherReqByLocation.get(headingNo)),
+                children,
+            };
+        });
+        return walk(tree);
+    };
+
     const syncTreeWithSrsTableState = (
         tree: TreeNode[],
-        srsTableState: { srsTableData: any[]; srsChangeTables: any[] },
+        srsTableState: { srsTableData: any[]; srsOtherReqData: any[]; srsChangeTables: any[] },
     ): TreeNode[] => {
         const treeAfterChangeTableSync = syncChangeReqTablesToTree(tree, srsTableState.srsChangeTables);
         const detailsForSync = buildReqDetailsForTreeSync(srsTableState);
         const synced = detailsForSync.length
             ? appendChangeReqDetailsToTree(treeAfterChangeTableSync, detailsForSync)
             : treeAfterChangeTableSync;
-        return pruneEmptyReqChapterShells(synced);
+        return applyFixedChapterProtection(
+            pruneEmptyReqChapterShells(synced),
+            srsTableState.srsOtherReqData || [],
+        );
     };
 
     useEffect(() => {
@@ -2250,70 +2335,7 @@ export default () => {
                 ((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) as TreeNode[],
                 srsTableState.srsChangeTables
             );
-            const getReqIdentityKey = (item: any) => [
-                normalizeSrsCodeForSync(item?.srs_code || item?.code || ""),
-                normalizeReqText(item?.module),
-                normalizeReqText(item?.function),
-                normalizeReqText(item?.sub_function),
-            ].join("|");
-            const standardReqKeyByIdentity = new Map<string, string>();
-            (srsTableState.srsTableData || []).forEach((item: any) => {
-                const key = getReqIdentityKey(item);
-                if (key.replace(/\|/g, "") && item?.id) {
-                    standardReqKeyByIdentity.set(key, `reqd_${item.id}`);
-                }
-            });
-            const changeDetailsByIdentity = new Map<string, any>();
-            const changeDetails = (srsTableState.srsChangeTables || [])
-                .flatMap((table: any) => (table.data || []).map((item: any) => {
-                    const identityKey = getReqIdentityKey(item);
-                    const savedRow = savedRowsByIdentity.get(identityKey);
-                    const reqId = item?.id || savedRow?.id || 0;
-                    return {
-                    code: normalizeSrsCodeForSync(item?.srs_code || item?.code || ""),
-                    name: normalizeReqText(item?.sub_function || item?.function || item?.module),
-                    module: normalizeReqText(item?.module),
-                    function: normalizeReqText(item?.function),
-                    sub_function: normalizeReqText(item?.sub_function),
-                    type_code: item?.type_code || table?.type_code,
-                        req_detail_key: standardReqKeyByIdentity.get(identityKey) || (reqId ? `change_reqd_${reqId}` : ""),
-                    };
-                }))
-                .filter((item: any) => item.code);
-            changeDetails.forEach((item: any) => {
-                changeDetailsByIdentity.set(getReqIdentityKey(item), item);
-            });
-            savedRowsByIdentity.forEach((savedRow: any, identityKey: string) => {
-                if (changeDetailsByIdentity.has(identityKey)) return;
-                const fallbackKey = `change_reqd_${typeCode}_${normalizeSrsCodeForSync(savedRow.code)}`;
-                changeDetailsByIdentity.set(identityKey, {
-                    code: normalizeSrsCodeForSync(savedRow.code),
-                    name: normalizeReqText(savedRow.sub_function || savedRow.function || savedRow.module),
-                    module: normalizeReqText(savedRow.module),
-                    function: normalizeReqText(savedRow.function),
-                    sub_function: normalizeReqText(savedRow.sub_function),
-                    type_code: savedRow.type_code || typeCode,
-                    req_detail_key: savedRow.id ? `change_reqd_${savedRow.id}` : fallbackKey,
-                });
-            });
-            const effectiveChangeDetails = Array.from(changeDetailsByIdentity.values()).filter((item: any) => item.code);
-            const mergedDetailsForSync = [
-                ...(srsTableState.srsTableData || []).map((item: any) => ({
-                    code: normalizeSrsCodeForSync(item?.srs_code || item?.code || ""),
-                    name: normalizeReqText(item?.sub_function || item?.function || item?.module),
-                    module: normalizeReqText(item?.module),
-                    function: normalizeReqText(item?.function),
-                    sub_function: normalizeReqText(item?.sub_function),
-                    type_code: "1",
-                    req_detail_key: item?.id ? `reqd_${item.id}` : "",
-                })),
-                ...effectiveChangeDetails,
-            ]
-                .filter((item: any) => item.code)
-                .sort((left: any, right: any) => normalizeSrsCodeForSync(left.code).localeCompare(normalizeSrsCodeForSync(right.code), undefined, { numeric: true }));
-            const syncedTree = mergedDetailsForSync.length
-                ? appendChangeReqDetailsToTree(treeAfterChangeTableSync as TreeNode[], mergedDetailsForSync)
-                : treeAfterChangeTableSync;
+            const syncedTree = syncTreeWithSrsTableState(treeAfterChangeTableSync, srsTableState);
             treeStructureRef.current = syncedTree;
             dispatch({
                 srsTableData: srsTableState.srsTableData,
