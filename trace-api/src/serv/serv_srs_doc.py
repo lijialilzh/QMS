@@ -2556,7 +2556,7 @@ class Server(object):
         ]
         return Resp.resp_ok(data=results)
 
-    async def export_srs_doc(self, output, doc_id, *args, **kwargs):
+    async def export_srs_doc(self, output, doc_id, snapshot: SrsDocForm = None, *args, **kwargs):
         if Document is None or Pt is None or dox_enum is None:
             return
         from .serv_utils import docx_util
@@ -2783,7 +2783,11 @@ class Server(object):
                     elif last_values.get("location"):
                         row[code] = last_values["location"]
 
-            # SRS需求表导出优先使用补齐后的 rows，避免旧 cells 合并结构中续行空值导致模块/功能丢失。
+            # 快照导出会携带与编辑页一致的 cells 合并结构，导出时要保留。
+            if getattr(table, "cells", None):
+                return table
+
+            # 无 cells 时优先使用补齐后的 rows，避免旧合并结构中续行空值导致模块/功能丢失。
             table.cells = None
             cells = []
 
@@ -2842,6 +2846,90 @@ class Server(object):
         async def __query_srs_reqs(type_code):
             resp = await srsreq_serv.list_srs_req(doc_id=doc_id, type_code=type_code, page_size=5000)
             reqs: List[SrsReq] = resp.data.rows or []
+            def build_cells(table: Table):
+                headers = getattr(table, "headers", None) or []
+                rows = getattr(table, "rows", None) or []
+                if not headers or not rows:
+                    return None
+                cells = [
+                    [TableCell(value=getattr(header, "name", "") or "", row_span=1, col_span=1) for header in headers],
+                    *[
+                        [TableCell(value=str(row.get(getattr(header, "code", ""), "") or ""), row_span=1, col_span=1) for header in headers]
+                        for row in rows
+                    ],
+                ]
+                def header_index(match):
+                    for idx, header in enumerate(headers):
+                        name = self.__normalize_header(getattr(header, "name", "") or "")
+                        if match(name):
+                            return idx
+                    return -1
+                code_idx = header_index(lambda name: "需求编号" in name or name in ["srscode", "code"])
+                module_idx = header_index(lambda name: "模块" in name)
+                function_idx = header_index(lambda name: "功能" in name and "子功能" not in name)
+                sub_function_idx = header_index(lambda name: "子功能" in name)
+                if code_idx < 0 or module_idx < 0:
+                    return cells
+                def group_of(row):
+                    code = self.__normalize_srs_code(str(row.get(getattr(headers[code_idx], "code", ""), "") or ""))
+                    matched = re.match(r"^(SRS-[A-Z]+\d+)-\d+$", code)
+                    return matched.group(1) if matched else code
+                effective = []
+                for idx, row in enumerate(rows):
+                    prev = effective[idx - 1] if idx > 0 else {}
+                    group = group_of(row)
+                    same_group = bool(group and group == prev.get("group"))
+                    def row_value(col_idx, field):
+                        if col_idx < 0:
+                            return ""
+                        value = self.__clean_req_table_field(row.get(getattr(headers[col_idx], "code", "")))
+                        return value or (prev.get(field, "") if same_group else "")
+                    item = {
+                        "group": group,
+                        "module": row_value(module_idx, "module"),
+                        "function": row_value(function_idx, "function"),
+                        "sub_function": row_value(sub_function_idx, "sub_function"),
+                    }
+                    effective.append(item)
+                def value_at(row_idx, col_idx):
+                    if col_idx == module_idx:
+                        return effective[row_idx].get("module") or ""
+                    if col_idx == function_idx:
+                        return effective[row_idx].get("function") or ""
+                    if col_idx == sub_function_idx:
+                        return effective[row_idx].get("sub_function") or ""
+                    return self.__clean_req_table_field(rows[row_idx].get(getattr(headers[col_idx], "code", "")))
+                def merge_column(col_idx, parent_indexes):
+                    if col_idx < 0:
+                        return
+                    start = 0
+                    while start < len(rows):
+                        start_value = value_at(start, col_idx)
+                        if not start_value:
+                            start += 1
+                            continue
+                        end = start + 1
+                        while end < len(rows):
+                            if not effective[start].get("group") or effective[start].get("group") != effective[end].get("group"):
+                                break
+                            if value_at(end, col_idx) != start_value:
+                                break
+                            same_parent = all(parent_idx < 0 or value_at(end, parent_idx) == value_at(start, parent_idx) for parent_idx in parent_indexes)
+                            if not same_parent:
+                                break
+                            end += 1
+                        span = end - start
+                        if span > 1:
+                            cells[start + 1][col_idx].value = start_value
+                            cells[start + 1][col_idx].row_span = span
+                            for row_idx in range(start + 1, end):
+                                cells[row_idx + 1][col_idx].value = ""
+                                cells[row_idx + 1][col_idx].row_span = 0
+                        start = end
+                merge_column(module_idx, [])
+                merge_column(function_idx, [module_idx])
+                merge_column(sub_function_idx, [module_idx, function_idx])
+                return cells
             if type_code == "2":
                 headers = [TabHeader(code="srs_code", name="需求编号"), 
                         TabHeader(code="module", name="模块"), 
@@ -2854,6 +2942,7 @@ class Server(object):
                     row["location"] = self.__clean_req_table_field(req.location)
                     rows.append(row)
                 table = Table(headers=headers, rows=rows)
+                table.cells = build_cells(table)
                 return table
 
             headers = [TabHeader(code="srs_code", name="需求编号"), 
@@ -2869,14 +2958,31 @@ class Server(object):
                 row["sub_function"] = self.__clean_req_table_field(req.sub_function)
                 rows.append(row)
             table = Table(headers=headers, rows=rows)
+            table.cells = build_cells(table)
             return table
         
         async def __query_srs_reqs_x():
             srs_types: List[SrsType] = db.session.execute(select(SrsType).where(SrsType.doc_id == doc_id).order_by(SrsType.id)).scalars().all()
+            change_req_rows: List[SrsReq] = db.session.execute(
+                select(SrsReq).where(
+                    SrsReq.doc_id == doc_id,
+                    SrsReq.type_code.isnot(None),
+                    SrsReq.type_code.notin_(["1", "2"]),
+                ).order_by(SrsReq.id)
+            ).scalars().all()
+            type_names = {row.type_code: row.type_name for row in srs_types if row.type_code}
+            type_codes = []
+            for row in srs_types:
+                if row.type_code and row.type_code not in type_codes:
+                    type_codes.append(row.type_code)
+            for row in change_req_rows:
+                if row.type_code and row.type_code not in type_codes:
+                    type_codes.append(row.type_code)
             results = []
-            for srs_type in srs_types:
-                table = await __query_srs_reqs(srs_type.type_code)
-                results.append(SrsNodeForm(label=srs_type.type_name, table=table))
+            for type_code in type_codes:
+                table = await __query_srs_reqs(type_code)
+                if table and getattr(table, "rows", None):
+                    results.append(SrsNodeForm(label=type_names.get(type_code) or "变更需求", table=table))
             return results
         
         def __fix_chapter(p_title: str, nodes: List[SrsNodeForm]):
@@ -2915,6 +3021,8 @@ class Server(object):
             return p_nodes
 
         image_caption_no = {"value": 0}
+
+        use_snapshot_content = snapshot is not None
 
         async def __writenodes(nodes: List[SrsNodeForm], docx: Document, level: int = 0):
             font_def = 10.5
@@ -2972,6 +3080,16 @@ class Server(object):
                         node_image_caption = node_image_caption or node.label
                     else:
                         docx_util.save_txt2docx(node.label, docx, font_def)
+                if (
+                    node.table and
+                    node.table.headers and
+                    "变更需求" in str(getattr(node.table, "name", "") or "")
+                ):
+                    table_name = str(getattr(node.table, "name", "") or "").strip()
+                    if table_name:
+                        docx_util.save_txt2docx(table_name, docx, font_def)
+                    __save_tab2docx(node.table, docx, show_name=False)
+                    continue
                 node_text_for_export = __strip_imported_catalog_lines(node.text)
                 if node_text_for_export:
                     imported_table_children = [
@@ -2985,33 +3103,73 @@ class Server(object):
                     lines = (node_text_for_export or "").splitlines()
                     has_caption = any(__is_table_caption_line(line) for line in lines)
                     has_image_caption = any(__is_image_caption_line(line) for line in lines)
-                    has_req_list_pair = ("产品需求列表" in node_text_for_export and "其他需求列表" in node_text_for_export)
-                    if imported_table_children and has_req_list_pair:
-                        table_idx = 0
-                        for raw_line in lines:
-                            line = (raw_line or "").strip()
-                            if not line:
-                                continue
-                            docx_util.save_txt2docx(line, docx, font_def)
-                            if "产品需求列表" in line and table_idx < len(imported_table_children):
-                                tab_node = imported_table_children[table_idx]
-                                table_idx += 1
+                    has_change_req_marker = "变更需求" in node_text_for_export or "变更需求" in node_title_for_export
+                    has_req_list_pair = (
+                        ("产品需求列表" in node_text_for_export or "产品需求" in node_text_for_export)
+                        and ("其他需求列表" in node_text_for_export or "其他需求" in node_text_for_export)
+                    )
+                    if has_change_req_marker:
+                        if node_text_for_export:
+                            docx_util.save_txt2docx(node_text_for_export, docx, font_def)
+                        for extra in await __query_srs_reqs_x():
+                            if extra.label:
+                                docx_util.save_txt2docx(extra.label, docx, font_def)
+                            if extra.table and extra.table.headers:
+                                __save_tab2docx(extra.table, docx, show_name=False)
+                        if use_snapshot_content:
+                            for child in node.children or []:
+                                label_text = str(getattr(child, "label", "") or getattr(child, "title", "") or getattr(getattr(child, "table", None), "name", "") or "")
+                                if "变更" not in label_text:
+                                    continue
+                                if getattr(child, "label", None):
+                                    docx_util.save_txt2docx(child.label, docx, font_def)
+                                if child.table and child.table.headers:
+                                    __save_tab2docx(child.table, docx, show_name=False)
+                                    written_child_ids.add(id(child))
+                    elif has_req_list_pair:
+                        if imported_table_children:
+                            table_idx = 0
+                            for raw_line in lines:
+                                line = (raw_line or "").strip()
+                                if not line:
+                                    continue
+                                docx_util.save_txt2docx(line, docx, font_def)
+                                if ("产品需求列表" in line or "产品需求" in line or "其他需求列表" in line or "其他需求" in line) and table_idx < len(imported_table_children):
+                                    tab_node = imported_table_children[table_idx]
+                                    table_idx += 1
+                                    __save_tab2docx(tab_node.table, docx, show_name=False)
+                                    written_child_ids.add(id(tab_node))
+                            for tab_node in imported_table_children[table_idx:]:
+                                table_name = str(getattr(tab_node.table, "name", "") or getattr(tab_node, "label", "") or getattr(tab_node, "title", "") or "")
+                                if table_name and not re.match(r"^导入表格\d*$", table_name):
+                                    docx_util.save_txt2docx(table_name, docx, font_def)
                                 __save_tab2docx(tab_node.table, docx, show_name=False)
                                 written_child_ids.add(id(tab_node))
-                            elif "其他需求列表" in line and table_idx < len(imported_table_children):
-                                tab_node = imported_table_children[table_idx]
-                                table_idx += 1
-                                __save_tab2docx(tab_node.table, docx, show_name=False)
-                                written_child_ids.add(id(tab_node))
-                        # 若该文档在SRS表管理里维护了“变更需求表”，在“产品需求/其他需求”后补充导出
-                        # （导入Word文档场景通常没有 ref_type=srs_reqs 节点，因此需要在此处兜底）
-                        if node.ref_type != RefTypes.srs_reqs.value:
-                            extra_tables = await __query_srs_reqs_x()
-                            for extra in extra_tables or []:
+                        else:
+                            for raw_line in lines:
+                                line = (raw_line or "").strip()
+                                if not line:
+                                    continue
+                                docx_util.save_txt2docx(line, docx, font_def)
+                                if "产品需求列表" in line or "产品需求" in line:
+                                    __save_tab2docx(await __query_srs_reqs("1"), docx, show_name=False)
+                                elif "其他需求列表" in line or "其他需求" in line:
+                                    __save_tab2docx(await __query_srs_reqs("2"), docx, show_name=False)
+                            for extra in await __query_srs_reqs_x():
                                 if extra.label:
                                     docx_util.save_txt2docx(extra.label, docx, font_def)
                                 if extra.table and extra.table.headers:
                                     __save_tab2docx(extra.table, docx, show_name=False)
+                        if use_snapshot_content:
+                            for child in node.children or []:
+                                label_text = str(getattr(child, "label", "") or getattr(child, "title", "") or getattr(getattr(child, "table", None), "name", "") or "")
+                                if "变更" not in label_text:
+                                    continue
+                                if getattr(child, "label", None):
+                                    docx_util.save_txt2docx(child.label, docx, font_def)
+                                if child.table and child.table.headers:
+                                    __save_tab2docx(child.table, docx, show_name=False)
+                                    written_child_ids.add(id(child))
                     elif (imported_table_children and has_caption) or (imported_image_children and has_image_caption):
                         table_idx = 0
                         image_idx = 0
@@ -3070,6 +3228,11 @@ class Server(object):
         resp = await self.get_srs_doc(doc_id, with_tree=True)
         srs_doc: SrsDocObj = resp.data
         if srs_doc:
+            if snapshot is not None:
+                for attr in ["product_id", "version", "folder_name", "file_no", "change_log", "content"]:
+                    value = getattr(snapshot, attr, None)
+                    if value is not None:
+                        setattr(srs_doc, attr, value)
             docx = Document()
             # 打开Word时提示/自动更新目录域，保证目录内容与页码是最新
             if OxmlElement is not None:

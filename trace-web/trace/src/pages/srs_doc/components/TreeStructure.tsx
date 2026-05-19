@@ -1733,7 +1733,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                     : child
                 );
             }
-            const titleMatched = orderMatched || childMatched;
+            const titleMatched = effectiveMatched || orderMatched || childMatched;
             const nextCode = normalizeSrsCode(effectiveMatched?.code || "");
             const nextName = String(titleMatched?.name || titleMatched?.sub_function || titleMatched?.function || titleMatched?.module || "").trim();
             const titlePrefix = String(node.title || "").trim().match(/^(\d+(?:\.\d+)*\s+)/)?.[1] || "";
@@ -3772,6 +3772,28 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 return childNo;
             };
             const sortedDetails = [...details].sort((left, right) => compareSrsCodes(left?.code, right?.code));
+            const otherReqCodeSet = new Set(
+                (reqDetails || [])
+                    .filter((item: any) => String(item?.type_code || "") === "2")
+                    .map((item: any) => normalizeSrsCode(item?.code))
+                    .filter(Boolean)
+            );
+            const isAlgorithmReqDetail = (detail: any) => {
+                const text = normalizeTitleText([
+                    detail?.module,
+                    detail?.name,
+                    detail?.function,
+                    detail?.sub_function,
+                    detail?.location,
+                ].filter(Boolean).join(""));
+                return text.includes("算法和数据要求") || text.includes("算法需求");
+            };
+            const isFunctionalReqCodeForDetail = (detail: any) => {
+                if (isAlgorithmReqDetail(detail)) return false;
+                const code = detail?.code;
+                const normalizedCode = normalizeSrsCode(code);
+                return !!normalizedCode && !otherReqCodeSet.has(normalizedCode);
+            };
             sortedDetails.forEach((detail) => {
                 const moduleText = normalizeReqDisplayText(detail?.module || detail?.name || detail?.function || detail?.code);
                 const functionText = normalizeReqDisplayText(detail?.function);
@@ -3780,7 +3802,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 const detailKey = getReqStableKey(detail) || getReqDetailKey(detail);
                 if (!functionText && !subFunctionText) {
                     const preserved = preservedByKey.get(detailKey);
-                    if (!preserved || preserved.score <= 0) {
+                    if ((!preserved || preserved.score <= 0) && !isFunctionalReqCodeForDetail(detail)) {
                         return;
                     }
                 }
@@ -3841,6 +3863,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 functionNode.children.push(makeDetailNode(title, functionNode, detail, detailKey));
             });
             reqRoot.children = [...preservedNonStandardChildren, ...rebuiltChildren].sort((left, right) => getDirectChildNo(left) - getDirectChildNo(right));
+            sortTreeChildrenBySrsCode([reqRoot]);
             return cloned;
         };
         const dedupeReqDetailsByKey = (items: TreeNode[], details: any[]): TreeNode[] => {

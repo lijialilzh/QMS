@@ -104,6 +104,26 @@ async def export_srs_doc(id: int = 0):
     )
 
 
+@router.post("/export_srs_doc_snapshot", summary="按当前编辑快照导出SRS_DOC")
+@try_log(perm=Perms.srs_doc_view)
+async def export_srs_doc_snapshot(form: SrsDocForm):
+    output = io.BytesIO()
+    await server.export_srs_doc(output, form.id or 0, snapshot=form)
+    output.seek(0)
+    timestamp = datetime.now().strftime("%y%m%d.%H%M%S")
+    suffix = uuid4().hex[:8]
+    raw_name = f"srs_doc_{timestamp}_{suffix}.docx"
+    filename = urllib.parse.quote(raw_name)
+    return StreamingResponse(content=output,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}; filename*=UTF-8''{filename}",
+            "Cache-Control": "no-store",
+            "Pragma": "no-cache",
+        }
+    )
+
+
 @router.get("/list_doc_trace", summary="SRS_DOC追溯", response_model=Resp[List[Any]])
 @try_log(perm=Perms.srs_doc_view)
 async def list_doc_trace(id: int = 0):
