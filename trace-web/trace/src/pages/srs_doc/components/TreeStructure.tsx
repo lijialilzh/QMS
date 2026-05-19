@@ -92,6 +92,33 @@ function isEmbeddedTableNode(node: TreeNode): boolean {
     return isImportedTableNode(node);
 }
 
+function isImportedTableCarrierTitle(title?: string): boolean {
+    return /^导入表格\d*$/.test(String(title || "").trim());
+}
+
+function stripTableTitleFromText(text: string | undefined, tableTitle?: string): string {
+    if (!tableTitle?.trim()) return String(text || "");
+    const title = tableTitle.trim();
+    const normalizedTitle = title.replace(/[：:]/g, "").trim();
+    const lines = String(text || "").replace(/\r/g, "").split("\n");
+    const filtered = lines.filter((line) => {
+        const normalized = line.trim().replace(/[：:]/g, "").trim();
+        return normalized !== normalizedTitle && line.trim() !== title;
+    });
+    return filtered.join("\n").trim();
+}
+
+function resolveDeletedTableTitle(parent: TreeNode | undefined, target: TreeNode): string {
+    const fromTable = String(target.table?.name || "").trim();
+    if (fromTable) return fromTable;
+    if (!parent) return "";
+    const tableChildren = (parent.children || []).filter((child) => isImportedTableCarrierTitle(child.title));
+    const idx = tableChildren.findIndex((child) => child.id === target.id);
+    if (idx < 0) return "";
+    const { tableHeaders } = splitTextByTables(parent.text, tableChildren.length);
+    return tableHeaders[idx]?.tableTitle || "";
+}
+
 function isReqMainTable(table?: TableData | null): boolean {
     if (!table?.headers?.length) return false;
     const hs = table.headers.map((h) => normalizeCellText(h?.name));
@@ -2877,7 +2904,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         setTableModalVisible(true);
     };
 
-    const handleDeleteTable = (id: number) => {
+    const handleDeleteTable = async (id: number) => {
         const findNode = (nodeList: TreeNode[], targetId: number): TreeNode | undefined => {
             for (const node of nodeList) {
                 if (node.id === targetId) return node;
@@ -2888,14 +2915,47 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
             }
             return undefined;
         };
+        const findParentNode = (nodeList: TreeNode[], targetId: number): TreeNode | undefined => {
+            for (const node of nodeList) {
+                if ((node.children || []).some((child) => child.id === targetId)) {
+                    return node;
+                }
+                const found = findParentNode(node.children || [], targetId);
+                if (found) return found;
+            }
+            return undefined;
+        };
         const targetNode = findNode(nodes, id);
         if (isReqDetailProtectedTable(targetNode?.table)) {
             message.error("功能描述表格不允许删除");
             return;
         }
+        const parentNode = findParentNode(nodes, id);
+        const tableTitle = targetNode
+            ? resolveDeletedTableTitle(parentNode, targetNode)
+            : "";
+
+        // Word 导入的“导入表格N”承载节点：删除表格时应整节点移除，避免留下空壳四级菜单
+        if (isImportedTableCarrierTitle(targetNode?.title)) {
+            if (targetNode?.n_id && docId && onNodeDelete) {
+                const success = await onNodeDelete(docId, targetNode.n_id);
+                if (!success) return;
+            }
+            let newNodes = deleteNode(nodes, id);
+            if (parentNode && tableTitle) {
+                newNodes = findNodeAndUpdate(newNodes, parentNode.id, (node) => ({
+                    ...node,
+                    text: stripTableTitleFromText(node.text, tableTitle),
+                }));
+            }
+            updateNodes(newNodes);
+            return;
+        }
+
         const newNodes = findNodeAndUpdate(nodes, id, (node) => ({
             ...node,
-            table: {}
+            text: tableTitle ? stripTableTitleFromText(node.text, tableTitle) : node.text,
+            table: {},
         }));
         updateNodes(newNodes);
     };
