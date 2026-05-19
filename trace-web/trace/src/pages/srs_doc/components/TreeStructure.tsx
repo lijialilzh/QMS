@@ -260,6 +260,24 @@ function isFunctionalKvTable(table?: TableData | null): boolean {
     return KV_FIELD_LABELS.has(h1) && !!h2;
 }
 
+function isReqDetailProtectedTable(table?: TableData | null): boolean {
+    if (!table || isReqMainTable(table) || isReqOtherTable(table)) return false;
+    if (isFunctionalKvTable(table)) return true;
+    if (extractSrsCodeFromTable(table)) return true;
+
+    const textValues = [
+        ...(table.headers || []).flatMap((header) => [header?.name, header?.code]),
+        ...(table.rows || []).flatMap((row) => Object.values(row || {})),
+        ...(table.cells || []).flatMap((row) => (row || []).map((cell) => cell?.value)),
+    ].map((value) => normalizeCellText(String(value || ""))).filter(Boolean);
+    const hasSrsCode = !!extractSrsCodeFromTable(table);
+    const hitCount = textValues.filter((text) => Array.from(KV_FIELD_LABELS).some((label) => {
+        const normalizedLabel = normalizeCellText(label);
+        return text === normalizedLabel || text.includes(normalizedLabel);
+    })).length;
+    return hasSrsCode && hitCount >= 2;
+}
+
 function hasRenderableTable(table?: TableData | null): boolean {
     return !!(
         table &&
@@ -1188,18 +1206,20 @@ const TreeNodeItem = ({
                                     }}>
                                     {ts('edit')}
                                 </Button>
-                                <Popconfirm
-                                    title={ts('srs_doc.confirm_delete_table')}
-                                    onConfirm={() => onDeleteTable(tbl.ownerNodeId)}
-                                    okText={ts('confirm')}
-                                    cancelText={ts('cancel')}>
-                                    <Button
-                                        size="small"
-                                        danger
-                                        icon={<DeleteOutlined />}>
-                                        {ts('delete')}
-                                    </Button>
-                                </Popconfirm>
+                                {!isReqDetailProtectedTable(tbl.table) && (
+                                    <Popconfirm
+                                        title={ts('srs_doc.confirm_delete_table')}
+                                        onConfirm={() => onDeleteTable(tbl.ownerNodeId)}
+                                        okText={ts('confirm')}
+                                        cancelText={ts('cancel')}>
+                                        <Button
+                                            size="small"
+                                            danger
+                                            icon={<DeleteOutlined />}>
+                                            {ts('delete')}
+                                        </Button>
+                                    </Popconfirm>
+                                )}
                             </Space>
                             )}
                         </div>
@@ -1842,10 +1862,10 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
     };
     const replaceHeadingPrefix = (node: TreeNode, oldPrefix: string, newPrefix: string) => {
         const title = String(node.title || "").trim();
-        const matched = title.match(/^(\d+(?:\.\d+)*)\s+(.*)$/);
+        const matched = title.match(/^(\d+(?:\.\d+)*)(?:\s+|(?=\D|$))(.*)$/);
         if (matched && (matched[1] === oldPrefix || matched[1].startsWith(`${oldPrefix}.`))) {
             const suffix = matched[1] === oldPrefix ? "" : matched[1].slice(oldPrefix.length);
-            node.title = `${newPrefix}${suffix} ${matched[2]}`;
+            node.title = `${newPrefix}${suffix} ${matched[2]}`.trim();
         }
         (node.children || []).forEach((child) => replaceHeadingPrefix(child, oldPrefix, newPrefix));
     };
@@ -1853,7 +1873,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         const childDepth = parentPrefix.split(".").length + 1;
         let nextNo = 1;
         (children || []).forEach((child) => {
-            const matched = String(child.title || "").trim().match(/^(\d+(?:\.\d+)*)\s+/);
+            const matched = String(child.title || "").trim().match(/^(\d+(?:\.\d+)*)(?:\s+|(?=\D|$))/);
             if (!matched || matched[1].split(".").length !== childDepth) return;
             const nextPrefix = `${parentPrefix}.${nextNo}`;
             if (matched[1] !== nextPrefix) {
@@ -2790,6 +2810,21 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
     };
 
     const handleDeleteTable = (id: number) => {
+        const findNode = (nodeList: TreeNode[], targetId: number): TreeNode | undefined => {
+            for (const node of nodeList) {
+                if (node.id === targetId) return node;
+                if (node.children?.length) {
+                    const found = findNode(node.children, targetId);
+                    if (found) return found;
+                }
+            }
+            return undefined;
+        };
+        const targetNode = findNode(nodes, id);
+        if (isReqDetailProtectedTable(targetNode?.table)) {
+            message.error("功能描述表格不允许删除");
+            return;
+        }
         const newNodes = findNodeAndUpdate(nodes, id, (node) => ({
             ...node,
             table: {}
@@ -3799,7 +3834,10 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                     ? normalizeSrsCode(node.srs_code || (isFunctionalKvTable(node.table) ? extractSrsCodeFromTable(node.table) : ""))
                     : "";
                 const key = normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table) || getLegacyReqDetailKeyByCode(code));
-                return (isStandardDetailCarrier && !!key && standardDetailKeys.has(key)) || (node.children || []).some((child) => containsStandardDetail(child));
+                return (isStandardDetailCarrier && (
+                    (!!key && standardDetailKeys.has(key)) ||
+                    (!!code && standardDetailCodes.has(code))
+                )) || (node.children || []).some((child) => containsStandardDetail(child));
             };
             const pruneStaleManagedDetails = (items: TreeNode[]): TreeNode[] => (items || [])
                 .map((node) => ({
@@ -3936,6 +3974,31 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 functionNode.children.push(makeDetailNode(title, functionNode, detail, detailKey));
             });
             reqRoot.children = [...preservedNonStandardChildren, ...rebuiltChildren].sort((left, right) => getDirectChildNo(left) - getDirectChildNo(right));
+            const pruneStaleStandardReqNodes = (items: TreeNode[]): TreeNode[] => (
+                (items || [])
+                    .map((node) => ({ ...node, children: pruneStaleStandardReqNodes(node.children || []) }))
+                    .filter((node) => {
+                        const isReqDetailNode = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
+                        if (isReqDetailNode) {
+                            const code = normalizeSrsCode(node.srs_code || (isFunctionalKvTable(node.table) ? extractSrsCodeFromTable(node.table) : ""));
+                            const key = normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table) || getLegacyReqDetailKeyByCode(code));
+                            if (key.startsWith("change_reqd_")) return true;
+                            if (code && standardDetailCodes.has(code)) return true;
+                            if (key && standardDetailKeys.has(key)) return true;
+                            return false;
+                        }
+                        const hasChildren = (node.children || []).length > 0;
+                        const hasText = !!String(node.text || "").trim();
+                        const hasFunctionalTable = isFunctionalKvTable(node.table);
+                        const hasTable = hasRenderableTable(node.table);
+                        if (hasChildren || hasText || hasFunctionalTable || hasTable) return true;
+                        const prefix = String(node.title || "").trim().match(/^(\d+(?:\.\d+)*)(?:\s+|(?=\D|$))/)?.[1] || "";
+                        if (prefix.startsWith(`${rootPrefix}.`) && prefix.split(".").length >= 2) return false;
+                        if (node.label === "__auto_req_group") return false;
+                        return true;
+                    })
+            );
+            reqRoot.children = pruneStaleStandardReqNodes(reqRoot.children || []);
             sortTreeChildrenBySrsCode([reqRoot]);
             return cloned;
         };
@@ -4121,11 +4184,12 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         void sortReqDetailSiblingsBySrsCode;
         void stripIgnoredReqDetailTables;
         void dedupeReqDetailsByKey;
-        void pruneDeletedStandardReqDetails;
         void syncChangedModuleTitles;
         const isSavingReqDetailTable = !!reqDetailPayload;
         const nextNodes = isSavingStandardSrsTable
-            ? syncSrsReqDetailsByKey(newNodes, allStandardDetailsForIdentitySync)
+            ? pruneDeletedStandardReqDetails(
+                syncSrsReqDetailsByKey(newNodes, allStandardDetailsForIdentitySync)
+            )
             : (isSavingReqDetailTable ? newNodes : syncReqDetailsToTree(newNodes, reqDetails || [], true));
         updateNodes(nextNodes);
         setTableCellsBackup(undefined);

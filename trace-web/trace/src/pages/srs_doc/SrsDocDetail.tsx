@@ -898,8 +898,52 @@ export default () => {
             };
         });
     };
+    const pruneEmptyReqChapterShells = (tree: TreeNode[]): TreeNode[] => {
+        const cloned: TreeNode[] = JSON.parse(JSON.stringify(tree || []));
+        const stripHeadingNo = (value?: string) => String(value || "").trim().replace(/^\d+(?:\.\d+)*\s*/, "");
+        const getHeadingDepth = (value?: string) => {
+            const matched = String(value || "").trim().match(/^(\d+(?:\.\d+)*)\s+/);
+            return matched ? matched[1].split(".").length : 0;
+        };
+        const hasRenderableTableContent = (table?: any) => !!(
+            table &&
+            Array.isArray(table.headers) &&
+            table.headers.length > 0 &&
+            Array.isArray(table.rows) &&
+            table.rows.length > 0
+        );
+        const findReqRoot = (items: TreeNode[]): TreeNode | undefined => {
+            for (const node of items || []) {
+                const heading = String(node.title || "").trim().match(/^(\d+(?:\.\d+)*)\s+/)?.[1] || "";
+                if (heading === "7") return node;
+            }
+            return (items || []).find((node) => getHeadingDepth(node.title) === 1 && /需求|功能/.test(stripHeadingNo(node.title)));
+        };
+        const pruneUnder = (items: TreeNode[], rootPrefix: string): TreeNode[] => (
+            (items || [])
+                .map((node) => ({ ...node, children: pruneUnder(node.children || [], rootPrefix) }))
+                .filter((node) => {
+                    const hasChildren = (node.children || []).length > 0;
+                    const hasText = !!String(node.text || "").trim();
+                    const hasFunctionalTable = isFunctionalKvTable(node.table);
+                    const hasRenderableTable = hasRenderableTableContent(node.table);
+                    if (hasChildren || hasText || hasFunctionalTable || hasRenderableTable) return true;
+                    const prefix = String(node.title || "").trim().match(/^(\d+(?:\.\d+)*)\s+/)?.[1] || "";
+                    if (prefix.startsWith(`${rootPrefix}.`) && prefix.split(".").length >= 2) return false;
+                    if (node.label === "__auto_req_group") return false;
+                    return true;
+                })
+        );
+        const reqRoot = findReqRoot(cloned);
+        if (reqRoot) {
+            const rootPrefix = String(reqRoot.title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "7";
+            reqRoot.children = pruneUnder(reqRoot.children || [], rootPrefix);
+        }
+        return cloned;
+    };
     const appendChangeReqDetailsToTree = (tree: TreeNode[], details: any[] = []): TreeNode[] => {
-        if (!Array.isArray(tree) || !details.length) return tree || [];
+        if (!Array.isArray(tree)) return tree || [];
+        if (!details.length) return pruneEmptyReqChapterShells(tree || []);
         const cloned: TreeNode[] = JSON.parse(JSON.stringify(tree || []));
         const normalizeTitle = (value?: string) => normalizeReqText(value).replace(/\s+/g, "");
         const stripHeadingNo = (value?: string) => String(value || "").trim().replace(/^\d+(?:\.\d+)*\s*/, "");
@@ -922,14 +966,18 @@ export default () => {
         const effectiveDetails = (details || []).filter((detail: any) => !isAlgorithmReqDetail(detail));
         if (!effectiveDetails.length && !excludedAlgorithmCodes.size) return cloned;
         const getDepth = (value?: string) => {
-            const matched = String(value || "").trim().match(/^(\d+(?:\.\d+)*)\s+/);
+            const matched = String(value || "").trim().match(/^(\d+(?:\.\d+)*)(?:\s+|(?=\D|$))/);
             return matched ? matched[1].split(".").length : 0;
         };
-        const getPrefix = (value?: string) => String(value || "").trim().match(/^(\d+(?:\.\d+)*)\s+/)?.[1] || "";
+        const getPrefix = (value?: string) => String(value || "").trim().match(/^(\d+(?:\.\d+)*)(?:\s+|(?=\D|$))/)?.[1] || "";
+        const isFixedReqIntroSection = (node: TreeNode) => {
+            const name = normalizeReqText(stripHeadingNo(node.title)).replace(/\s+/g, "");
+            return name === "要求" || name.endsWith("要求");
+        };
         const nextChildNo = (children: TreeNode[], prefix: string) => {
             const escaped = prefix.replace(/\./g, "\\.");
             return (children || []).reduce((max, child) => {
-                const matched = String(child.title || "").trim().match(new RegExp(`^${escaped}\\.(\\d+)\\s+`));
+                const matched = String(child.title || "").trim().match(new RegExp(`^${escaped}\\.(\\d+)(?:\\s+|(?=\\D|$))`));
                 return matched ? Math.max(max, parseInt(matched[1], 10)) : max;
             }, 0) + 1;
         };
@@ -966,7 +1014,18 @@ export default () => {
         };
         collectExistingReqDetails(cloned);
         const incomingCodes = new Set(effectiveDetails.map((detail: any) => normalizeSrsCodeForSync(detail?.code)).filter(Boolean));
-        const incomingKeys = new Set(effectiveDetails.map((detail: any) => normalizeReqDetailKey(detail?.req_detail_key)).filter(Boolean));
+        const changeDetailKeys = new Set(
+            effectiveDetails
+                .filter((detail: any) => !!String(detail?.type_code || "") && !["1", "2"].includes(String(detail?.type_code || "")))
+                .map((detail: any) => normalizeReqDetailKey(detail?.req_detail_key))
+                .filter(Boolean)
+        );
+        const changeDetailCodes = new Set(
+            effectiveDetails
+                .filter((detail: any) => !!String(detail?.type_code || "") && !["1", "2"].includes(String(detail?.type_code || "")))
+                .map((detail: any) => normalizeSrsCodeForSync(detail?.code))
+                .filter(Boolean)
+        );
         const prunePreviousChangeDetails = (items: TreeNode[]): TreeNode[] => {
             return (items || [])
                 .map((node: any) => ({
@@ -979,8 +1038,11 @@ export default () => {
                     const code = normalizeSrsCodeForSync(node.srs_code || extractSrsCodeFromTable(node.table));
                     const key = normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table));
                     if (code && excludedAlgorithmCodes.has(code)) return false;
-                    const isChangeDetail = key.startsWith("change_reqd_") || incomingKeys.has(key);
-                    const isLegacyCurrentChangeDetail = !key && !!code && incomingCodes.has(code) && node.label === "__auto_req_detail";
+                    if (code && !incomingCodes.has(code)) return false;
+                    const isStandardDetail = key.startsWith("reqd_") || (!key.startsWith("change_reqd_") && !!code && !changeDetailCodes.has(code) && incomingCodes.has(code));
+                    if (isStandardDetail) return true;
+                    const isChangeDetail = key.startsWith("change_reqd_") || changeDetailKeys.has(key);
+                    const isLegacyCurrentChangeDetail = !key && !!code && changeDetailCodes.has(code) && node.label === "__auto_req_detail";
                     return !(isChangeDetail || isLegacyCurrentChangeDetail);
                 })
                 .filter((node: any) => {
@@ -1009,7 +1071,7 @@ export default () => {
         );
         const reqRootForPrune = (() => {
             for (const node of cloned || []) {
-                const heading = String(node.title || "").trim().match(/^(\d+(?:\.\d+)*)\s+/)?.[1] || "";
+                const heading = String(node.title || "").trim().match(/^(\d+(?:\.\d+)*)(?:\s+|(?=\D|$))/)?.[1] || "";
                 if (heading === "7") return node;
             }
             return (cloned || []).find((node) => getDepth(node.title) === 1 && /需求|功能/.test(stripHeadingNo(node.title)));
@@ -1079,7 +1141,7 @@ export default () => {
         };
         const findReqDetailRoot = (items: TreeNode[]): TreeNode | undefined => {
             for (const node of items || []) {
-                const heading = String(node.title || "").trim().match(/^(\d+(?:\.\d+)*)\s+/)?.[1] || "";
+                const heading = String(node.title || "").trim().match(/^(\d+(?:\.\d+)*)(?:\s+|(?=\D|$))/)?.[1] || "";
                 if (heading === "7") return node;
             }
             return (items || []).find((node) => getDepth(node.title) === 1 && /需求|功能/.test(stripHeadingNo(node.title)));
@@ -1119,18 +1181,31 @@ export default () => {
             const fixedChildren: TreeNode[] = [];
             const sortableChildren: TreeNode[] = [];
             (root.children || []).forEach((child) => {
+                if (isFixedReqIntroSection(child)) {
+                    fixedChildren.push(child);
+                    return;
+                }
                 const code = minSrsCodeInNode(child);
                 if (code) sortableChildren.push(child);
                 else fixedChildren.push(child);
             });
             sortableChildren.sort((left, right) => minSrsCodeInNode(left).localeCompare(minSrsCodeInNode(right), undefined, { numeric: true }));
             const usedChildNos = new Set<number>();
-            fixedChildren.forEach((child) => {
+            const normalizedFixedChildren = fixedChildren.map((child) => {
+                if (rootPrefixValue === "7" && isFixedReqIntroSection(child)) {
+                    usedChildNos.add(1);
+                    const name = stripHeadingNo(child.title) || "要求";
+                    return { ...child, title: renumberTitle(name, `${rootPrefixValue}.1`) };
+                }
                 const prefix = getPrefix(child.title);
                 const matched = prefix.match(new RegExp(`^${rootPrefixValue.replace(/\./g, "\\.")}\\.(\\d+)$`));
                 if (matched) usedChildNos.add(parseInt(matched[1], 10));
+                return child;
             });
-            let nextNo = 1;
+            if (rootPrefixValue === "7") {
+                usedChildNos.add(1);
+            }
+            let nextNo = rootPrefixValue === "7" ? 2 : 1;
             const allocate = () => {
                 while (usedChildNos.has(nextNo)) nextNo += 1;
                 usedChildNos.add(nextNo);
@@ -1163,7 +1238,7 @@ export default () => {
                 renumberChildren(nextChild, prefix);
                 return nextChild;
             });
-            root.children = [...fixedChildren, ...renumberedSortable].sort((left, right) => {
+            root.children = [...normalizedFixedChildren, ...renumberedSortable].sort((left, right) => {
                 const leftPrefix = getPrefix(left.title);
                 const rightPrefix = getPrefix(right.title);
                 const leftNo = parseInt(leftPrefix.split(".").pop() || "0", 10);
@@ -1179,8 +1254,7 @@ export default () => {
             if (!code) return;
             const detailKey = normalizeReqDetailKey(detail?.req_detail_key);
             const isChangeIncoming = !!String(detail?.type_code || "") && !["1", "2"].includes(String(detail?.type_code || ""));
-            const existingByKey = detailKey ? detailNodeByKey.get(detailKey) : undefined;
-            if (!isChangeIncoming && !existingByKey && activeCodeSet.has(code)) return;
+            if (!isChangeIncoming) return;
             const removeStaleSameChangeDetail = (items: TreeNode[]): TreeNode | undefined => {
                 for (let index = 0; index < (items || []).length; index += 1) {
                     const node: any = items[index];
@@ -1199,9 +1273,7 @@ export default () => {
             const moduleText = normalizeReqText(detail?.module || detail?.name || detail?.function || detail?.code) || code;
             const functionText = normalizeReqText(detail?.function);
             const subFunctionText = normalizeReqText(detail?.sub_function);
-            const existingNodeToMove = isChangeIncoming
-                ? removeStaleSameChangeDetail(cloned)
-                : (detailKey ? removeDetailNodeByKey(cloned, detailKey) : undefined);
+            const existingNodeToMove = removeStaleSameChangeDetail(cloned);
             let moduleNode = findDirectChildByTitle(reqRoot.children || [], moduleText);
             if (!moduleNode) {
                 moduleNode = makeNode(`${rootPrefix}.${nextChildNo(reqRoot.children || [], rootPrefix)} ${moduleText}`, reqRoot);
@@ -1248,7 +1320,7 @@ export default () => {
             activeCodeSet.add(code);
         });
         sortAndRenumberReqRoot(reqRoot);
-        return cloned;
+        return pruneEmptyReqChapterShells(cloned);
     };
     const pruneDeletedChangeReqChapters = (tree: TreeNode[], deletedRows: any[], allowedCodes: Set<string>): TreeNode[] => {
         const deletedCodes = new Set((deletedRows || []).map((row: any) => normalizeSrsCodeForSync(row?.srs_code || row?.code)).filter(Boolean));
@@ -1504,6 +1576,58 @@ export default () => {
         return buildSrsTableState(reqRes, typeRes);
     };
 
+    const buildReqDetailsForTreeSync = (srsTableState: { srsTableData: any[]; srsChangeTables: any[] }) => {
+        const getReqIdentityKey = (item: any) => [
+            normalizeSrsCodeForSync(item?.srs_code || item?.code || ""),
+            normalizeReqText(item?.module),
+            normalizeReqText(item?.function),
+            normalizeReqText(item?.sub_function),
+        ].join("|");
+        const standardReqKeyByIdentity = new Map<string, string>();
+        (srsTableState.srsTableData || []).forEach((item: any) => {
+            const key = getReqIdentityKey(item);
+            if (key.replace(/\|/g, "") && item?.id) {
+                standardReqKeyByIdentity.set(key, `reqd_${item.id}`);
+            }
+        });
+        return [
+            ...(srsTableState.srsTableData || []).map((item: any) => ({
+                code: normalizeSrsCodeForSync(item?.srs_code || item?.code || ""),
+                name: normalizeReqText(item?.sub_function || item?.function || item?.module),
+                module: normalizeReqText(item?.module),
+                function: normalizeReqText(item?.function),
+                sub_function: normalizeReqText(item?.sub_function),
+                type_code: "1",
+                req_detail_key: item?.id ? `reqd_${item.id}` : "",
+            })),
+            ...(srsTableState.srsChangeTables || []).flatMap((changeTable: any) => (changeTable.data || []).map((item: any) => {
+                const identityKey = getReqIdentityKey(item);
+                const reqId = item?.id || 0;
+                return {
+                    code: normalizeSrsCodeForSync(item?.srs_code || item?.code || ""),
+                    name: normalizeReqText(item?.sub_function || item?.function || item?.module),
+                    module: normalizeReqText(item?.module),
+                    function: normalizeReqText(item?.function),
+                    sub_function: normalizeReqText(item?.sub_function),
+                    type_code: item?.type_code || changeTable?.type_code,
+                    req_detail_key: standardReqKeyByIdentity.get(identityKey) || (reqId ? `change_reqd_${reqId}` : ""),
+                };
+            })),
+        ].filter((item: any) => item.code);
+    };
+
+    const syncTreeWithSrsTableState = (
+        tree: TreeNode[],
+        srsTableState: { srsTableData: any[]; srsChangeTables: any[] },
+    ): TreeNode[] => {
+        const treeAfterChangeTableSync = syncChangeReqTablesToTree(tree, srsTableState.srsChangeTables);
+        const detailsForSync = buildReqDetailsForTreeSync(srsTableState);
+        const synced = detailsForSync.length
+            ? appendChangeReqDetailsToTree(treeAfterChangeTableSync, detailsForSync)
+            : treeAfterChangeTableSync;
+        return pruneEmptyReqChapterShells(synced);
+    };
+
     useEffect(() => {
         const id = params.id;
         if (id) {
@@ -1514,7 +1638,7 @@ export default () => {
                     const targetRow = res.data;
                     
                     const parsedContentRaw = (targetRow.content || []).map((node: any) => parseTreeNode(node));
-                    const parsedContent = parsedContentRaw;
+                    const parsedContent = syncTreeWithSrsTableState(parsedContentRaw, srsTableState);
                     const derivedCoverTitle = extractCoverTitleFromTree(parsedContent);
                     const derivedFileNo = extractFileNoFromTree(parsedContent);
 
@@ -1969,49 +2093,10 @@ export default () => {
                 throw new Error(res.msg || "删除变更表格失败");
             }
             const srsTableState = docId ? await fetchSrsTableState(docId) : { srsTableData: [], srsOtherReqData: [], srsChangeTables: [] };
-            const mergedDetailsForSync = [
-                ...(srsTableState.srsTableData || []).map((item: any) => ({
-                    code: normalizeSrsCodeForSync(item?.srs_code || item?.code || ""),
-                    name: normalizeReqText(item?.sub_function || item?.function || item?.module),
-                    module: normalizeReqText(item?.module),
-                    function: normalizeReqText(item?.function),
-                    sub_function: normalizeReqText(item?.sub_function),
-                    type_code: "1",
-                    req_detail_key: item?.id ? `reqd_${item.id}` : "",
-                })),
-                ...(srsTableState.srsChangeTables || []).flatMap((changeTable: any) => (changeTable.data || []).map((item: any) => ({
-                    code: normalizeSrsCodeForSync(item?.srs_code || item?.code || ""),
-                    name: normalizeReqText(item?.sub_function || item?.function || item?.module),
-                    module: normalizeReqText(item?.module),
-                    function: normalizeReqText(item?.function),
-                    sub_function: normalizeReqText(item?.sub_function),
-                    type_code: item?.type_code || changeTable?.type_code,
-                    req_detail_key: item?.id ? `change_reqd_${item.id}` : "",
-                }))),
-            ].filter((item: any) => item.code);
-            const treeAfterChangeTableSync = syncChangeReqTablesToTree(
+            const syncedTree = syncTreeWithSrsTableState(
                 ((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) as TreeNode[],
-                srsTableState.srsChangeTables
+                srsTableState,
             );
-            const treeStandardRows = collectReqRowsFromTree(treeAfterChangeTableSync).mainRows.filter((row: any) => !/变更/.test(String(row?.table_name || "")));
-            const standardRowsForSync = treeStandardRows.length ? treeStandardRows : ((srsTableState.srsTableData || []) as any[]);
-            const detailsForSync = [
-                ...standardRowsForSync.map((item: any) => ({
-                    code: normalizeSrsCodeForSync(item?.srs_code || item?.code || ""),
-                    name: normalizeReqText(item?.sub_function || item?.function || item?.module),
-                    module: normalizeReqText(item?.module),
-                    function: normalizeReqText(item?.function),
-                    sub_function: normalizeReqText(item?.sub_function),
-                    type_code: "1",
-                    req_detail_key: item?.id ? `reqd_${item.id}` : "",
-                })),
-                ...mergedDetailsForSync.filter((item: any) => String(item?.type_code || "") !== "1"),
-            ].filter((item: any) => item.code);
-            const allowedCodes = new Set(detailsForSync.map((item: any) => normalizeSrsCodeForSync(item.code)).filter(Boolean));
-            const syncedTree = pruneDeletedChangeReqChapters(
-                treeAfterChangeTableSync,
-                table?.data || [],
-                allowedCodes
             );
             treeStructureRef.current = syncedTree;
             dispatch({
@@ -2153,8 +2238,8 @@ export default () => {
                     type_code: typeCode,
                 });
             }
-            for (const oldRow of oldRows) {
-                if (!oldRow?.id || usedOldIds.has(oldRow.id)) continue;
+            const deletedOldRows = oldRows.filter((oldRow: any) => oldRow?.id && !usedOldIds.has(oldRow.id));
+            for (const oldRow of deletedOldRows) {
                 const deleteRes: any = await ApiSrsReq.delete_srs_req({ id: oldRow.id });
                 if (deleteRes.code !== ApiSrsReq.C_OK) {
                     throw new Error(deleteRes.msg || "删除变更需求失败");
@@ -2415,14 +2500,20 @@ export default () => {
             for (const oldRow of deletedOldRows) {
                 const deleteRes: any = await ApiSrsReq.delete_srs_req({ id: oldRow.id });
                 if (deleteRes.code !== ApiSrsReq.C_OK) {
-                    throw new Error(deleteRes.msg || "标准需求删除失败");
+                    throw new Error(deleteRes.msg || "删除标准需求失败");
                 }
             }
             const srsTableState = await fetchSrsTableState(docId);
+            const syncedTree = syncTreeWithSrsTableState(
+                ((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) as TreeNode[],
+                srsTableState,
+            );
+            treeStructureRef.current = syncedTree;
             dispatch({
                 srsTableData: srsTableState.srsTableData,
                 srsOtherReqData: srsTableState.srsOtherReqData,
                 srsChangeTables: srsTableState.srsChangeTables,
+                treeStructure: syncedTree,
                 srsTableLoading: false,
             });
             loadReqListData();
