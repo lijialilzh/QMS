@@ -1728,6 +1728,10 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
     const hasDirectFunctionalTable = (items: TreeNode[] = []) => (
         (items || []).some((child) => isFunctionalKvTable(child.table))
     );
+    const isAlgorithmReqTitle = (value?: string) => {
+        const text = normalizeTitleText(stripHeadingNumber(value));
+        return text.includes("算法和数据要求") || text.includes("算法需求");
+    };
     const syncImportedReqDetailCodes = (items: TreeNode[], standardDetails: any[] = [], ancestors: TreeNode[] = []): TreeNode[] => {
         if (!standardDetails.length) return items || [];
         const parentTitle = normalizeTitleText(stripHeadingNumber(ancestors[ancestors.length - 1]?.title));
@@ -1737,6 +1741,9 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         let functionalSiblingIndex = 0;
         const syncedItems: Array<TreeNode | null> = (items || []).map((node): TreeNode | null => {
             let children = syncImportedReqDetailCodes(node.children || [], standardDetails, [...ancestors, node]);
+            if (isAlgorithmReqTitle(node.title) || ancestors.some((item) => isAlgorithmReqTitle(item.title))) {
+                return { ...node, children };
+            }
             const matched = node.label !== "__auto_req_detail" && isFunctionalKvTable(node.table)
                 ? (matchReqDetailByCurrentCode(node, standardDetails) || matchReqDetailByTableName(node, ancestors, standardDetails) || matchReqDetailByHierarchy(node, ancestors, standardDetails))
                 : undefined;
@@ -3783,6 +3790,9 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
             const functionMap = new Map<string, TreeNode>();
             const rebuiltChildren: TreeNode[] = [];
             const standardDetailKeys = new Set((details || []).map((detail: any) => getReqStableKey(detail) || getReqDetailKey(detail)).filter(Boolean));
+            const standardDetailCodes = new Set((details || []).map((detail: any) => normalizeSrsCode(detail?.code)).filter(Boolean));
+            const changeDetailCodes = new Set(buildPreviewChangeDetails().map((detail: any) => normalizeSrsCode(detail?.code)).filter(Boolean));
+            const activeManagedCodes = new Set([...standardDetailCodes, ...changeDetailCodes]);
             const containsStandardDetail = (node: TreeNode): boolean => {
                 const isStandardDetailCarrier = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
                 const code = isStandardDetailCarrier
@@ -3791,7 +3801,24 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 const key = normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table) || getLegacyReqDetailKeyByCode(code));
                 return (isStandardDetailCarrier && !!key && standardDetailKeys.has(key)) || (node.children || []).some((child) => containsStandardDetail(child));
             };
-            const preservedNonStandardChildren = (reqRoot.children || []).filter((child) => !containsStandardDetail(child));
+            const pruneStaleManagedDetails = (items: TreeNode[]): TreeNode[] => (items || [])
+                .map((node) => ({
+                    ...node,
+                    children: pruneStaleManagedDetails(node.children || []),
+                }))
+                .filter((node) => {
+                    const isReqDetailCarrier = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
+                    const code = normalizeSrsCode(node.srs_code || (isFunctionalKvTable(node.table) ? extractSrsCodeFromTable(node.table) : ""));
+                    if (isReqDetailCarrier && code && !activeManagedCodes.has(code)) {
+                        return false;
+                    }
+                    const isEmptyAutoGroup = node.label === "__auto_req_group" &&
+                        !(node.children || []).length &&
+                        !String(node.text || "").trim() &&
+                        !hasRenderableTable(node.table);
+                    return !isEmptyAutoGroup;
+                });
+            const preservedNonStandardChildren = pruneStaleManagedDetails(reqRoot.children || []).filter((child) => !containsStandardDetail(child));
             const getDirectChildNo = (node: TreeNode): number => {
                 const prefix = String(node.title || "").trim().match(/^(\d+(?:\.\d+)*)(?:\s+|(?=\D|$))/)?.[1] || "";
                 const parts = prefix.split(".");
