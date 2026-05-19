@@ -13,7 +13,10 @@ import * as ApiProdRcm from "@/api/ApiProdRcm";
 import * as ApiSrsReq from "@/api/ApiSrsReq";
 import * as ApiSrsReqd from "@/api/ApiSrsReqd";
 import * as ApiSrsType from "@/api/ApiSrsType";
-import TreeStructure, { TreeNode } from "./components/TreeStructure";
+import TreeStructure, {
+    TreeNode,
+    syncTreeWithOtherReqState,
+} from "./components/TreeStructure";
 import EditableTableGenerator, { TableDataWithHeaders } from "./components/EditableTableGenerator";
 
 export default () => {
@@ -1648,21 +1651,6 @@ export default () => {
         "2.6": "算法和数据要求",
         "2.7": "性能要求",
     };
-    const getFixedSectionHeadingNo = (title?: string) => String(title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
-    const parseOtherReqLocation = (location?: string) => {
-        const raw = String(location || "").trim();
-        return raw.match(/^(\d+(?:\.\d+)*)$/)?.[1] || raw.match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
-    };
-    const buildOtherReqCodeByLocation = (otherRows: any[] = []) => {
-        const byLocation = new Map<string, string>();
-        (otherRows || []).forEach((item: any) => {
-            const code = normalizeSrsCodeForSync(item?.srs_code || item?.code || "");
-            if (!code || String(item?.type_code || "2") !== "2") return;
-            const locationKey = parseOtherReqLocation(item?.location);
-            if (locationKey) byLocation.set(locationKey, code);
-        });
-        return byLocation;
-    };
     const extractSrsCodeFromNodeText = (text?: string) => {
         const matched = String(text || "").match(/SRS-[A-Z]+\d+-\d+/i);
         return matched?.[0] || "";
@@ -1681,21 +1669,12 @@ export default () => {
             .filter(Boolean);
         return candidates.find((code) => isFixedSectionCompatibleCode(code, headingNo)) || "";
     };
-    const applyFixedChapterProtection = (tree: TreeNode[], otherRows: any[] = []): TreeNode[] => {
-        const otherReqByLocation = buildOtherReqCodeByLocation(otherRows);
-        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
-            const headingNo = getFixedSectionHeadingNo(node.title);
-            const fixedName = headingNo ? FIXED_TEMPLATE_SECTIONS[headingNo] : undefined;
-            const children = walk(node.children || []);
-            if (!fixedName) return { ...node, children };
-            return {
-                ...node,
-                title: `${headingNo} ${fixedName}`,
-                srs_code: resolveFixedSectionSrsCode(node, headingNo, otherReqByLocation.get(headingNo)),
-                children,
-            };
-        });
-        return walk(tree);
+    const otherReqSyncOptions = {
+        fixedTemplateSections: FIXED_TEMPLATE_SECTIONS,
+        resolveSrsCode: (node: TreeNode, headingNo: string, otherReqCode?: string) => (
+            resolveFixedSectionSrsCode(node, headingNo, otherReqCode)
+        ),
+        isCodeCompatible: (code: string, headingNo: string) => isFixedSectionCompatibleCode(code, headingNo),
     };
 
     const syncTreeWithSrsTableState = (
@@ -1707,9 +1686,10 @@ export default () => {
         const synced = detailsForSync.length
             ? appendChangeReqDetailsToTree(treeAfterChangeTableSync, detailsForSync)
             : treeAfterChangeTableSync;
-        return applyFixedChapterProtection(
+        return syncTreeWithOtherReqState(
             pruneEmptyReqChapterShells(synced),
             srsTableState.srsOtherReqData || [],
+            otherReqSyncOptions,
         );
     };
 
@@ -2024,10 +2004,18 @@ export default () => {
             dispatch({ srsTableLoading: true });
         }
         fetchSrsTableState(docId).then((srsTableState) => {
+            const baseTree = (treeStructureRef.current?.length ? treeStructureRef.current : data.treeStructure) as TreeNode[];
+            const syncedTree = baseTree?.length
+                ? syncTreeWithOtherReqState(baseTree, srsTableState.srsOtherReqData || [], otherReqSyncOptions)
+                : baseTree;
+            if (syncedTree?.length) {
+                treeStructureRef.current = syncedTree;
+            }
             dispatch({
                 srsTableData: srsTableState.srsTableData,
                 srsOtherReqData: srsTableState.srsOtherReqData,
                 srsChangeTables: srsTableState.srsChangeTables,
+                ...(syncedTree?.length ? { treeStructure: syncedTree } : {}),
                 ...(silent ? {} : { srsTableLoading: false }),
             });
         }).catch((error: any) => {
@@ -2038,6 +2026,16 @@ export default () => {
             }
         });
     };
+
+    useEffect(() => {
+        const docId = params.id ? parseInt(params.id) : 0;
+        if (!docId || isReadOnly) return;
+        const baseTree = (treeStructureRef.current?.length ? treeStructureRef.current : data.treeStructure) as TreeNode[];
+        if (!baseTree?.length || !(data.srsOtherReqData || []).length) return;
+        const synced = syncTreeWithOtherReqState(baseTree, data.srsOtherReqData || [], otherReqSyncOptions);
+        treeStructureRef.current = synced;
+        dispatch({ treeStructure: synced });
+    }, [data.srsOtherReqData]);
 
     useEffect(() => {
         const docId = params.id ? parseInt(params.id) : 0;
@@ -2542,6 +2540,179 @@ export default () => {
         } catch (error: any) {
             dispatch({ srsTableLoading: false });
             message.error(error?.message || "SRS表保存失败");
+            throw error;
+        }
+    };
+
+    const handleSaveOtherReqTableInCurrentPage = async (table: any) => {
+        const docId = params.id ? parseInt(params.id) : 0;
+        if (!docId) {
+            message.error("其他需求表保存失败：缺少文档信息");
+            return;
+        }
+        const headers = table?.headers || [];
+        const normalizeHeader = (value?: string) => String(value || "")
+            .replace(/[\s↩\r\n\t]+/g, "")
+            .replace(/[：:，,。.;；、]/g, "")
+            .toLowerCase();
+        const pickColumn = (matcher: (text: string) => boolean) => (
+            headers.find((header: any) => matcher(normalizeHeader(header?.name)))?.code || ""
+        );
+        const codeCol = pickColumn((text) => isReqCodeHeaderText(text));
+        const moduleCol = pickColumn((text) => text.includes("需求模块") || text.includes("模块"));
+        const locationCol = pickColumn((text) => text.includes("章节") || text.includes("位置"));
+        if (!codeCol || !moduleCol) {
+            return;
+        }
+        const normalizeReqCode = (value?: string) => String(value || "").replace(/\s+/g, "").toUpperCase();
+        const parseOtherReqLocation = (location?: string) => {
+            const raw = String(location || "").trim();
+            return raw.match(/^(\d+(?:\.\d+)*)$/)?.[1] || raw.match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
+        };
+        const rows = (table?.rows || [])
+            .map((row: any) => ({
+                code: normalizeReqCode(row?.[codeCol]),
+                module: normalizeReqText(row?.[moduleCol]),
+                location: normalizeReqText(row?.[locationCol]),
+            }))
+            .filter((row: any) => row.code);
+
+        try {
+            dispatch({ srsTableLoading: true });
+            const latestBeforeSave = await fetchSrsTableState(docId);
+            const oldRows = (latestBeforeSave.srsOtherReqData || []).filter((row: any) => !!row?.id);
+            const usedOldIds = new Set<number | string>();
+            const usedReqCodes = new Set<string>();
+            const assignments: Array<{ row: any; oldRow?: any; code: string }> = [];
+            rows.forEach((row: any, index: number) => {
+                const rowCode = normalizeReqCode(row.code);
+                if (!rowCode || usedReqCodes.has(rowCode)) return;
+                usedReqCodes.add(rowCode);
+                const rowLocation = parseOtherReqLocation(row.location);
+                const matchedByCode = oldRows.find((item: any) => (
+                    normalizeReqCode(item.srs_code || item.code) === rowCode && !usedOldIds.has(item.id)
+                ));
+                const matchedByLocation = rowLocation
+                    ? oldRows.find((item: any) => (
+                        parseOtherReqLocation(item.location) === rowLocation && !usedOldIds.has(item.id)
+                    ))
+                    : undefined;
+                const matchedOldRow =
+                    matchedByCode ||
+                    matchedByLocation ||
+                    (oldRows[index] && !usedOldIds.has(oldRows[index].id) ? oldRows[index] : undefined);
+                if (matchedOldRow?.id) {
+                    usedOldIds.add(matchedOldRow.id);
+                }
+                assignments.push({ row, oldRow: matchedOldRow, code: rowCode });
+            });
+
+            const isChangedAssignment = (assignment: { row: any; oldRow?: any; code: string }) => {
+                const { row, oldRow, code } = assignment;
+                if (!oldRow?.id) return true;
+                return normalizeReqCode(oldRow.srs_code || oldRow.code) !== code ||
+                    normalizeReqText(oldRow.module) !== row.module ||
+                    normalizeReqText(oldRow.location) !== row.location;
+            };
+            const changedAssignments = assignments.filter(isChangedAssignment);
+            const deletedOldRows = oldRows.filter((oldRow: any) => oldRow?.id && !usedOldIds.has(oldRow.id));
+            if (changedAssignments.length === 0 && deletedOldRows.length === 0) {
+                dispatch({
+                    srsTableData: latestBeforeSave.srsTableData,
+                    srsOtherReqData: latestBeforeSave.srsOtherReqData,
+                    srsChangeTables: latestBeforeSave.srsChangeTables,
+                    srsTableLoading: false,
+                });
+                return latestBeforeSave.srsOtherReqData;
+            }
+
+            const changedOldIds = new Set(
+                changedAssignments
+                    .map((assignment) => assignment.oldRow?.id)
+                    .filter((id): id is number | string => !!id)
+            );
+            const changedReqCodes = new Set(changedAssignments.map((assignment) => assignment.code));
+            const buildSaveData = (item: any, code: string, id = 0) => ({
+                id,
+                doc_id: docId,
+                code,
+                module: item.module || "",
+                function: "",
+                sub_function: "",
+                location: item.location || "",
+                type_code: "2",
+                rcm_ids: item.rcm_ids || [],
+            });
+            const updateReq = async (payload: any) => {
+                const saveRes = payload.id
+                    ? await ApiSrsReq.update_srs_req(payload)
+                    : await ApiSrsReq.add_srs_req(payload);
+                if (saveRes.code !== ApiSrsReq.C_OK) {
+                    throw new Error(saveRes.msg || "其他需求表保存失败");
+                }
+            };
+
+            for (const assignment of changedAssignments) {
+                const oldRow = assignment.oldRow;
+                if (!oldRow?.id) continue;
+                const oldCode = normalizeReqCode(oldRow.srs_code || oldRow.code);
+                if (oldCode === assignment.code) continue;
+                const tempCode = `TMP-SRS-${docId}-${oldRow.id}-${Date.now()}`;
+                await updateReq(buildSaveData({
+                    module: oldRow.module || "",
+                    location: oldRow.location || "",
+                    rcm_ids: oldRow.rcm_ids || [],
+                }, tempCode, oldRow.id));
+            }
+            for (const oldRow of oldRows) {
+                if (usedOldIds.has(oldRow.id) || changedOldIds.has(oldRow.id)) continue;
+                const oldCode = normalizeReqCode(oldRow.srs_code || oldRow.code);
+                if (!changedReqCodes.has(oldCode)) continue;
+                const tempCode = `TMP-SRS-${docId}-${oldRow.id}-${Date.now()}`;
+                await updateReq(buildSaveData({
+                    module: oldRow.module || "",
+                    location: oldRow.location || "",
+                    rcm_ids: oldRow.rcm_ids || [],
+                }, tempCode, oldRow.id));
+            }
+
+            for (const assignment of changedAssignments) {
+                const { row, oldRow, code } = assignment;
+                await updateReq({
+                    id: oldRow?.id || 0,
+                    doc_id: docId,
+                    code,
+                    module: row.module,
+                    function: "",
+                    sub_function: "",
+                    location: row.location || oldRow?.location || "",
+                    type_code: "2",
+                    rcm_ids: oldRow?.rcm_ids || [],
+                });
+            }
+            for (const oldRow of deletedOldRows) {
+                const deleteRes: any = await ApiSrsReq.delete_srs_req({ id: oldRow.id });
+                if (deleteRes.code !== ApiSrsReq.C_OK) {
+                    throw new Error(deleteRes.msg || "删除其他需求失败");
+                }
+            }
+            const srsTableState = await fetchSrsTableState(docId);
+            const syncedTree = syncTreeWithSrsTableState(
+                ((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) as TreeNode[],
+                srsTableState,
+            );
+            treeStructureRef.current = syncedTree;
+            dispatch({
+                srsTableData: srsTableState.srsTableData,
+                srsOtherReqData: srsTableState.srsOtherReqData,
+                srsChangeTables: srsTableState.srsChangeTables,
+                treeStructure: syncedTree,
+                srsTableLoading: false,
+            });
+            return srsTableState.srsOtherReqData;
+        } catch (error: any) {
+            dispatch({ srsTableLoading: false });
+            message.error(error?.message || "其他需求表保存失败");
             throw error;
         }
     };
@@ -3294,6 +3465,7 @@ export default () => {
                             onDeleteSrsChangeTable={handleDeleteChangeReqTableInCurrentPage}
                             onSaveReqDetailTable={handleSaveReqDetailTable}
                             onSaveSrsReqTable={handleSaveSrsReqTableInCurrentPage}
+                            onSaveOtherReqTable={handleSaveOtherReqTableInCurrentPage}
                             onSaveSrsChangeReqTable={handleSaveChangeReqInCurrentPage}
                         />
                     </div>

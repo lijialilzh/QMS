@@ -130,6 +130,21 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
     /^SRS-/i.test(String(customHeaders[1]?.name || "").trim())
   );
 
+  const CHANGE_REQ_TABLE_NAME = "变更需求";
+  const CHANGE_REQ_TABLE_HEADERS = "需求编号,模块,功能,子功能";
+
+  const handleTableNameChange = (value: string) => {
+    setTableName(value);
+    if (String(value || "").trim() === CHANGE_REQ_TABLE_NAME) {
+      setHeaderInput(CHANGE_REQ_TABLE_HEADERS);
+      setColCount(4);
+      form.setFieldsValue({
+        headerInput: CHANGE_REQ_TABLE_HEADERS,
+        colCount: 4,
+      });
+    }
+  };
+
   const getSelectedRcmIdsByText = (text: string): number[] => {
     const codes = extractRcmCodesFromText(text);
     const ids = codes
@@ -500,7 +515,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
         >
           <Input
             value={tableName}
-            onChange={(e) => setTableName(e.target.value)}
+            onChange={(e) => handleTableNameChange(e.target.value)}
             placeholder="请输入表名"
           />
         </Form.Item>
