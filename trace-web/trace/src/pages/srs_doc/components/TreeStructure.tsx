@@ -10,6 +10,7 @@ import type { UploadFile, UploadProps } from "antd/es/upload/interface";
 import { v4 as uuidv4 } from 'uuid';
 import * as XLSX from "xlsx";
 import * as Api from "@/api/ApiSrsDoc";
+import * as ApiDocFile from "@/api/ApiDocFile";
 
 // 表格数据结构（匹配后端接口，允许空对象表示无表格数据）
 interface TableData {
@@ -50,6 +51,9 @@ function getRefTypeLabel(refType: string | undefined, ts: (key: string) => strin
 }
 
 const IMG_REF_TYPES = ['img_struct', 'img_flow', 'img_topo'];
+const PRODUCT_BOUND_DOC_IMAGE_REF_TYPES = ['img_topo', 'img_struct'] as const;
+type ProductBoundDocImageRefType = typeof PRODUCT_BOUND_DOC_IMAGE_REF_TYPES[number];
+
 function isImgRefType(refType: string | undefined): boolean {
     return !!refType && IMG_REF_TYPES.includes(refType);
 }
@@ -60,7 +64,7 @@ function isDataUrl(url: string | undefined): boolean {
 
 function resolveFileUrl(url: string | undefined): string {
     if (!url) return "";
-    if (isDataUrl(url) || url.startsWith("http")) return url;
+    if (isDataUrl(url) || url.startsWith("http") || url.startsWith("blob:")) return url;
     return `${window.location.origin}/${url.replace(/^\//, "")}`;
 }
 
@@ -258,6 +262,181 @@ function getHeadingNumberFromTitle(title?: string): string {
     return String(title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
 }
 
+const FIXED_TEMPLATE_SECTION_HEADINGS = new Set([
+    "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7",
+]);
+
+function isFixedTemplateSectionChapter(node: TreeNode): boolean {
+    return FIXED_TEMPLATE_SECTION_HEADINGS.has(getHeadingNumberFromTitle(node.title));
+}
+
+function isChapterMetaLockedNode(node: TreeNode, otherRows: any[] = []): boolean {
+    return isFixedTemplateSectionChapter(node) || isOtherReqManagedChapterNode(node, otherRows);
+}
+
+export function resolveProductBoundDocImageRefType(
+    node: Pick<TreeNode, "ref_type" | "title">,
+): ProductBoundDocImageRefType | undefined {
+    const refType = String(node.ref_type || "").trim();
+    if (refType === "img_topo" || refType === "img_struct") return refType;
+    const headingNo = getHeadingNumberFromTitle(node.title);
+    if (headingNo === "2.2") return "img_topo";
+    if (headingNo === "2.3") return "img_struct";
+    return undefined;
+}
+
+function withProductImageCacheBuster(url?: string, token?: string): string {
+    const raw = String(url || "").trim();
+    if (!raw) return "";
+    if (isDataUrl(raw) || /^https?:\/\//i.test(raw)) return raw;
+    const sep = raw.includes("?") ? "&" : "?";
+    return `${raw}${sep}t=${encodeURIComponent(token || String(Date.now()))}`;
+}
+
+function sortDocFileRowsByLatest(rows: any[] = []): any[] {
+    return [...rows].sort((a: any, b: any) => {
+        const ta = new Date(a?.update_time || a?.create_time || 0).getTime();
+        const tb = new Date(b?.update_time || b?.create_time || 0).getTime();
+        if (ta !== tb) return tb - ta;
+        return Number(b?.id || 0) - Number(a?.id || 0);
+    });
+}
+
+function sanitizeDocImageToken(value?: string): string {
+    return String(value || "").trim().replace(/[^\w.\-]+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function buildDocImageFilePrefix(productVersion?: string, docVersion?: string): string {
+    const productToken = sanitizeDocImageToken(productVersion);
+    const docToken = sanitizeDocImageToken(docVersion);
+    if (productToken && docToken) return `${productToken}_${docToken}`;
+    return docToken || productToken || "doc";
+}
+
+function matchesProductBoundDocFileRow(row: any, docVersion?: string, productVersion?: string, fileType?: ProductBoundDocImageRefType): boolean {
+    const docVer = String(row?.doc_version || "").trim();
+    const fileName = String(row?.file_name || "").trim();
+    const normalizedDocVersion = String(docVersion || "").trim();
+    const prefix = buildDocImageFilePrefix(productVersion, normalizedDocVersion);
+    if (fileType && prefix) {
+        if (fileName.startsWith(`${prefix}_${fileType}`)) return true;
+    }
+    if (normalizedDocVersion && docVer === normalizedDocVersion) return true;
+    if (normalizedDocVersion && fileName.startsWith(`${normalizedDocVersion}_`)) return true;
+    if (productVersion && normalizedDocVersion && fileName.startsWith(`${buildDocImageFilePrefix(productVersion, normalizedDocVersion)}_`)) {
+        return true;
+    }
+    return false;
+}
+
+function pickProductBoundDocFileRow(rows: any[] = [], docVersion?: string, productVersion?: string, fileType?: ProductBoundDocImageRefType): any | undefined {
+    if (!rows.length) return undefined;
+    const normalizedVersion = String(docVersion || "").trim();
+    if (normalizedVersion) {
+        const matched = rows.find((row) => matchesProductBoundDocFileRow(row, docVersion, productVersion, fileType));
+        if (matched) return matched;
+        return undefined;
+    }
+    return sortDocFileRowsByLatest(rows)[0];
+}
+
+async function listProductBoundDocFileRows(
+    fileType: ProductBoundDocImageRefType,
+    productId: number,
+    docVersion?: string,
+    productVersion?: string,
+): Promise<any[]> {
+    const res: any = await ApiDocFile.list_doc_file(fileType, {
+        product_id: productId,
+        doc_version: docVersion,
+        product_version: productVersion,
+        page_index: 0,
+        page_size: 1000,
+    });
+    if (res?.code !== ApiDocFile.C_OK) return [];
+    const allRows = res?.data?.rows || [];
+    const normalizedVersion = String(docVersion || "").trim();
+    if (!normalizedVersion) return allRows;
+    return allRows.filter((row: any) => matchesProductBoundDocFileRow(row, docVersion, productVersion, fileType));
+}
+
+async function findProductBoundDocFileRow(
+    fileType: ProductBoundDocImageRefType,
+    productId: number,
+    docVersion?: string,
+    productVersion?: string,
+): Promise<any | undefined> {
+    const rows = await listProductBoundDocFileRows(fileType, productId, docVersion, productVersion);
+    return pickProductBoundDocFileRow(rows, docVersion, productVersion, fileType);
+}
+
+function buildProductBoundDocFileUrl(row?: any): string {
+    if (!row?.file_url) return "";
+    return withProductImageCacheBuster(
+        row.file_url,
+        `${row?.id || ""}_${row?.file_size || ""}_${row?.file_name || ""}`,
+    );
+}
+
+async function findProductBoundDocFileRowForUpdate(
+    fileType: ProductBoundDocImageRefType,
+    productId: number,
+    docVersion?: string,
+    productVersion?: string,
+): Promise<any | undefined> {
+    const res: any = await ApiDocFile.list_doc_file(fileType, {
+        product_id: productId,
+        doc_version: docVersion,
+        product_version: productVersion,
+        page_index: 0,
+        page_size: 1000,
+    });
+    if (res?.code !== ApiDocFile.C_OK) return undefined;
+    return pickProductBoundDocFileRow(res?.data?.rows || [], docVersion, productVersion, fileType);
+}
+
+export async function fetchProductBoundDocImageMap(
+    productId?: number,
+    docVersion?: string,
+    productVersion?: string,
+): Promise<Map<string, string>> {
+    const fileMaps = new Map<string, string>();
+    if (!productId) return fileMaps;
+    await Promise.all(
+        PRODUCT_BOUND_DOC_IMAGE_REF_TYPES.map(async (fileType) => {
+            try {
+                const row = await findProductBoundDocFileRow(fileType, productId, docVersion, productVersion);
+                const fileUrl = buildProductBoundDocFileUrl(row);
+                if (fileUrl) fileMaps.set(fileType, fileUrl);
+            } catch (error) {
+                console.error("加载产品绑定图片失败:", fileType, error);
+            }
+        }),
+    );
+    return fileMaps;
+}
+
+export async function remapProductBoundDocImages(
+    treeNodes: TreeNode[],
+    productId?: number,
+    docVersion?: string,
+    productVersion?: string,
+): Promise<TreeNode[]> {
+    if (!productId || !Array.isArray(treeNodes) || treeNodes.length === 0) return treeNodes;
+    const fileMaps = await fetchProductBoundDocImageMap(productId, docVersion, productVersion);
+    const walk = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
+        const boundType = resolveProductBoundDocImageRefType(node);
+        const mappedUrl = boundType ? fileMaps.get(boundType) : undefined;
+        return {
+            ...node,
+            ...(boundType && !node.ref_type ? { ref_type: boundType } : {}),
+            img_url: boundType ? (mappedUrl || "") : (node.img_url || ""),
+            children: walk(node.children || []),
+        };
+    });
+    return walk(treeNodes);
+}
+
 function parseOtherReqLocationTokens(location?: string): string[] {
     const raw = String(location || "").trim();
     if (!raw) return [];
@@ -272,6 +451,17 @@ function parseOtherReqLocationTokens(location?: string): string[] {
         .filter(Boolean);
 }
 
+/** 其他需求同步只作用于主章节号：单章节直接用该号，多章节仅第一个 */
+function getOtherReqSyncLocationToken(location?: string): string {
+    return parseOtherReqLocationTokens(location)[0] || "";
+}
+
+function isOtherReqSyncLocationForHeading(location?: string, headingNo?: string): boolean {
+    if (!headingNo) return false;
+    const syncToken = getOtherReqSyncLocationToken(location);
+    return !!syncToken && syncToken === headingNo;
+}
+
 function isOtherReqManagedChapterNode(node: TreeNode, otherRows: any[] = []): boolean {
     if (!otherRows.length) return false;
     const headingNo = getHeadingNumberFromTitle(node.title);
@@ -280,7 +470,8 @@ function isOtherReqManagedChapterNode(node: TreeNode, otherRows: any[] = []): bo
     const codeSet = new Set<string>();
     otherRows.forEach((row) => {
         const code = normalizeSrsCodeValue(row?.srs_code || row?.code || "");
-        parseOtherReqLocationTokens(row?.location).forEach((location) => locationSet.add(location));
+        const syncLocation = getOtherReqSyncLocationToken(row?.location);
+        if (syncLocation) locationSet.add(syncLocation);
         if (code) codeSet.add(code);
     });
     if (headingNo && locationSet.has(headingNo)) return true;
@@ -299,6 +490,62 @@ function normalizeOtherReqSyncRow(row: any) {
     };
 }
 
+function isOtherReqRowMatchedToHeading(
+    row: ReturnType<typeof normalizeOtherReqSyncRow>,
+    headingNo?: string,
+): boolean {
+    if (!headingNo) return true;
+    const locations = parseOtherReqLocationTokens(row.location);
+    if (locations.length === 0) return true;
+    return isOtherReqSyncLocationForHeading(row.location, headingNo);
+}
+
+function getMisboundOtherReqRow(
+    node: TreeNode,
+    headingNo: string | undefined,
+    rows: ReturnType<typeof normalizeOtherReqSyncRow>[],
+) {
+    if (!headingNo) return undefined;
+    const nodeCode = normalizeSrsCodeValue(node.srs_code || extractSrsCodeFromText(node.text) || "");
+    if (!nodeCode) return undefined;
+    const row = rows.find((item) => item.code === nodeCode);
+    if (!row) return undefined;
+    return isOtherReqSyncLocationForHeading(row.location, headingNo) ? undefined : row;
+}
+
+function stripOtherReqCodeLineFromText(text?: string): string {
+    return String(text || "")
+        .replace(/^\s*需求编号\s*[：:]\s*SRS[^\n]*\n?/im, "")
+        .replace(/^\s*SRS\s*-\s*[A-Z0-9]+\s*-\s*\d+\s*\n?/im, "")
+        .replace(/^\s+/, "");
+}
+
+function restoreMisboundOtherReqChapter(
+    node: TreeNode,
+    headingNo: string,
+    fixedName: string | undefined,
+    children: TreeNode[] = [],
+): TreeNode {
+    const cleared = clearMisboundOtherReqFromNode(node, children);
+    if (fixedName && headingNo) {
+        return {
+            ...cleared,
+            title: `${headingNo} ${fixedName}`,
+        };
+    }
+    return cleared;
+}
+
+function clearMisboundOtherReqFromNode(node: TreeNode, children: TreeNode[] = []): TreeNode {
+    const nextText = stripOtherReqCodeLineFromText(node.text);
+    return {
+        ...node,
+        srs_code: undefined,
+        text: nextText,
+        children,
+    };
+}
+
 export function findOtherReqRowForChapter(
     otherRows: any[] = [],
     headingNo?: string,
@@ -309,19 +556,25 @@ export function findOtherReqRowForChapter(
         .map(normalizeOtherReqSyncRow)
         .filter((row) => row.code && row.type_code === "2");
     if (headingNo) {
-        const byLocation = rows.find((row) => parseOtherReqLocationTokens(row.location).includes(headingNo));
-        if (byLocation) return byLocation;
+        const bySyncLocation = rows.find((row) => isOtherReqSyncLocationForHeading(row.location, headingNo));
+        if (bySyncLocation) return bySyncLocation;
     }
     if (headingNo && chapterTitle) {
         const titleName = normalizeReqDisplayText(chapterTitle.replace(/^\d+(?:\.\d+)*\s*/, ""));
         if (titleName) {
-            const byTitleModule = rows.find((row) => normalizeReqDisplayText(row.module) === titleName);
+            const byTitleModule = rows.find((row) => (
+                normalizeReqDisplayText(row.module) === titleName &&
+                isOtherReqRowMatchedToHeading(row, headingNo)
+            ));
             if (byTitleModule) return byTitleModule;
         }
     }
     const normalizedNodeCode = normalizeSrsCodeValue(nodeSrsCode || "");
     if (normalizedNodeCode) {
-        return rows.find((row) => row.code === normalizedNodeCode);
+        const byCode = rows.find((row) => row.code === normalizedNodeCode);
+        if (byCode && isOtherReqRowMatchedToHeading(byCode, headingNo)) {
+            return byCode;
+        }
     }
     return undefined;
 }
@@ -506,9 +759,8 @@ export function syncOtherReqCodesToChaptersFromRows(
         const byLocation = new Map<string, string>();
         (otherRows || []).forEach((row) => {
             const code = normalizeSrsCodeValue(row?.code || row?.srs_code || "");
-            parseOtherReqLocationTokens(row?.location).forEach((location) => {
-                if (code && location) byLocation.set(location, code);
-            });
+            const syncLocation = getOtherReqSyncLocationToken(row?.location);
+            if (code && syncLocation) byLocation.set(syncLocation, code);
         });
         const walk = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
             const headingNo = getHeadingNumberFromTitle(node.title);
@@ -529,12 +781,14 @@ export function syncOtherReqCodesToChaptersFromRows(
         return walk(list);
     };
     if (!otherRows.length) return applyFixedProtection(items || []);
+    const normalizedOtherRows = (otherRows || [])
+        .map(normalizeOtherReqSyncRow)
+        .filter((row) => row.code && row.type_code === "2");
     const byLocation = new Map<string, string>();
     (otherRows || []).forEach((row) => {
         const code = normalizeSrsCodeValue(row?.code || row?.srs_code || "");
-        parseOtherReqLocationTokens(row?.location).forEach((location) => {
-            if (code && location) byLocation.set(location, code);
-        });
+        const syncLocation = getOtherReqSyncLocationToken(row?.location);
+        if (code && syncLocation) byLocation.set(syncLocation, code);
     });
     const synced = (items || []).map((node) => {
         const headingNo = getHeadingNumberFromTitle(node.title);
@@ -544,6 +798,9 @@ export function syncOtherReqCodesToChaptersFromRows(
         const matchedCode = matchedRow?.code || (headingNo ? byLocation.get(headingNo) : undefined) || "";
         const children = syncOtherReqCodesToChaptersFromRows(node.children || [], otherRows, options);
         if (!matchedRow && !matchedCode) {
+            if (getMisboundOtherReqRow(node, headingNo, normalizedOtherRows)) {
+                return restoreMisboundOtherReqChapter(node, headingNo || "", fixedName, children);
+            }
             return { ...node, children };
         }
         return buildOtherReqSyncedNode(
@@ -768,6 +1025,9 @@ interface TreeNodeItemProps {
     node: TreeNode;
     level: number;
     docId?: number;
+    productId?: number;
+    docVersion?: string;
+    productVersion?: string;
     readOnly?: boolean;
     rcmOptions: Array<{ value: number; label: string; description?: string }>;
     onRcmSelectChange: (nodeId: number, selectedRcmIds: Array<number | string>) => void;
@@ -777,7 +1037,7 @@ interface TreeNodeItemProps {
     onTitleChange: (id: number, title: string) => void;
     onSrsCodeChange: (id: number, value: string) => void;
     onImageChange: (id: number, imgUrl: string) => void;
-    onContentChange: (id: number, content: string) => void;
+    onContentChange: (id: number, content: string, preserveOtherReqCode?: boolean) => void;
     onAddTable: (id: number) => void;
     onImportTable: (id: number, file: File) => Promise<void>;
     onEditTable: (id: number) => void;
@@ -802,6 +1062,9 @@ const TreeNodeItem = ({
     node,
     level,
     docId,
+    productId,
+    docVersion,
+    productVersion,
     readOnly,
     rcmOptions,
     onRcmSelectChange,
@@ -832,8 +1095,14 @@ const TreeNodeItem = ({
     // 新增模板需要直接展示二级/三级结构，避免空模板看起来只剩一级菜单。
     const [expanded, setExpanded] = useState(() => level < 2);
     const embeddedImageNode = (node.children || []).find((child) => isEmbeddedImageNode(child));
-    const displayImageUrl = node.img_url || embeddedImageNode?.img_url || "";
-    const imageTargetId = embeddedImageNode?.id || node.id;
+    const productBoundImageRefType = resolveProductBoundDocImageRefType(node);
+    const isProductBoundDocImageNode = !!productBoundImageRefType;
+    const isGenericImgRefNode = isImgRefType(node.ref_type) && !isProductBoundDocImageNode;
+    const displayImageUrl = isProductBoundDocImageNode
+        ? String(node.img_url || embeddedImageNode?.img_url || "")
+        : (node.img_url || embeddedImageNode?.img_url || "");
+    const imageTargetId = isProductBoundDocImageNode ? node.id : (embeddedImageNode?.id || node.id);
+    const hasDisplayImage = !!String(displayImageUrl || "").trim();
 
     useEffect(() => {
         if (displayImageUrl) {
@@ -847,6 +1116,58 @@ const TreeNodeItem = ({
             setFileList([]);
         }
     }, [displayImageUrl]);
+
+    const buildNamedProductImageFile = (file: File, fileType: ProductBoundDocImageRefType) => {
+        const ext = file.name.match(/(\.[^.]+)$/)?.[1] || ".png";
+        const prefix = buildDocImageFilePrefix(productVersion, docVersion);
+        return new File([file], `${prefix}_${fileType}${ext}`, { type: file.type });
+    };
+
+    const uploadProductBoundDocImage = async (file: File) => {
+        if (!productId) {
+            message.error("请先选择产品");
+            return;
+        }
+        if (!productBoundImageRefType) return;
+        const namedFile = buildNamedProductImageFile(file, productBoundImageRefType);
+        const localPreview = URL.createObjectURL(namedFile);
+        onImageChange(imageTargetId, localPreview);
+        try {
+            let matchedRow = await findProductBoundDocFileRowForUpdate(productBoundImageRefType, productId, docVersion, productVersion);
+            const payload: Record<string, any> = {
+                product_id: productId,
+                file: namedFile,
+            };
+            const saveRes: any = matchedRow?.id
+                ? await ApiDocFile.update_doc_file(productBoundImageRefType, { ...payload, id: matchedRow.id })
+                : await ApiDocFile.add_doc_file(productBoundImageRefType, payload);
+            if (saveRes?.code !== ApiDocFile.C_OK) {
+                throw new Error(saveRes?.msg || ts("upload_failed"));
+            }
+            if (matchedRow?.id) {
+                const detailRes: any = await ApiDocFile.get_doc_file(productBoundImageRefType, { id: matchedRow.id });
+                if (detailRes?.code === ApiDocFile.C_OK) {
+                    matchedRow = detailRes.data;
+                }
+            } else {
+                matchedRow = await findProductBoundDocFileRowForUpdate(productBoundImageRefType, productId, docVersion, productVersion);
+            }
+            const imgUrl = buildProductBoundDocFileUrl(matchedRow);
+            if (!imgUrl) {
+                throw new Error(ts("upload_failed"));
+            }
+            onImageChange(imageTargetId, imgUrl);
+            setFileList([{
+                uid: `${Date.now()}`,
+                name: namedFile.name,
+                status: "done",
+                url: resolveFileUrl(imgUrl),
+            }]);
+            message.success(ts("upload_success"));
+        } finally {
+            URL.revokeObjectURL(localPreview);
+        }
+    };
 
     const uploadProps: UploadProps = {
         maxCount: 1,
@@ -887,6 +1208,26 @@ const TreeNodeItem = ({
         },
         accept: "image/*",
         showUploadList: false,
+    };
+
+    const productBoundUploadProps: UploadProps = {
+        maxCount: 1,
+        fileList,
+        disabled: uploadLoading,
+        accept: "image/*",
+        showUploadList: false,
+        beforeUpload: async (file) => {
+            try {
+                setUploadLoading(true);
+                await uploadProductBoundDocImage(file);
+            } catch (error: any) {
+                console.error("产品绑定图片上传失败:", error);
+                message.error(error?.message || ts("upload_failed"));
+            } finally {
+                setUploadLoading(false);
+            }
+            return false;
+        },
     };
 
     const rcmSelectOptions = (() => {
@@ -944,7 +1285,12 @@ const TreeNodeItem = ({
         (node.children || []).some((child) => isFunctionalKvTable(child.table))
     );
     const isLockedOtherReqChapter = !readOnly && isOtherReqManagedChapterNode(node, srsReqPreview?.other || []);
+    const isLockedChapterMeta = !readOnly && isChapterMetaLockedNode(node, srsReqPreview?.other || []);
     const canEditNodeContent = !readOnly && (!isLockedReqHierarchyNode || isLockedOtherReqChapter);
+    const lockedChapterSrsCode = isLockedChapterMeta
+        ? normalizeSrsCodeValue(node.srs_code || extractSrsCodeFromText(node.text) || "")
+        : "";
+    const editableNodeText = isLockedOtherReqChapter ? stripOtherReqCodeLineFromText(node.text) : (node.text || "");
     const hasRcm = Array.isArray(node.rcm_codes);
     const hasRcmText = readOnly && /RCM\d+/i.test(String(node.text || ""));
     const isSrsReqRefNode = node.ref_type === "srs_reqs" || node.ref_type === "srs_reqs_2";
@@ -1338,7 +1684,7 @@ const TreeNodeItem = ({
                   {!readOnly && !hideLevelPrefix && (
                       <span className="node-title-prefix">{numberToChinese(level + 1)}{ts('level_menu')}</span>
                   )}
-                  {readOnly || isLockedReqHierarchyNode || isLockedOtherReqChapter ? (
+                  {readOnly || isLockedReqHierarchyNode || isLockedChapterMeta ? (
                       <div className={`node-title${hasRcm ? " with-rcm" : ""}${hasRcmText ? " with-rcm-text" : ""}`}>{node.title || "-"}</div>
                   ) : (
                       <Input
@@ -1350,17 +1696,27 @@ const TreeNodeItem = ({
                       />
                   )}
                   {
-                    !isAutoReqNode && !isLockedReqDetailCodeNode && ('srs_code' in node) && node.srs_code !== null && (
-                        readOnly || isLockedReqDetailCodeNode || isLockedOtherReqChapter ? (
-                            <div className="node-srs-code">{node.srs_code || "-"}</div>
+                    !isAutoReqNode && (
+                        isLockedChapterMeta ? (
+                            lockedChapterSrsCode ? (
+                                <div className="node-srs-code node-srs-code-readonly" title={ts('srs_doc.other_req_code_readonly_hint') || '请在其他需求列表中修改章节名称和需求编号'}>
+                                    {`${ts("srs_doc.srs_code") || "需求编号"}：${lockedChapterSrsCode}`}
+                                </div>
+                            ) : null
                         ) : (
-                            <Input
-                                className="node-srs-code"
-                                value={node.srs_code ?? ''}
-                                onChange={(e) => onSrsCodeChange(node.id, e.target.value)}
-                                placeholder={ts('please_input_srs_code')}
-                                disabled={readOnly}
-                            />
+                            !isLockedReqDetailCodeNode && ('srs_code' in node) && node.srs_code !== null && (
+                                readOnly || isLockedReqDetailCodeNode ? (
+                                    <div className="node-srs-code">{node.srs_code || "-"}</div>
+                                ) : (
+                                    <Input
+                                        className="node-srs-code"
+                                        value={node.srs_code ?? ''}
+                                        onChange={(e) => onSrsCodeChange(node.id, e.target.value)}
+                                        placeholder={ts('please_input_srs_code')}
+                                        disabled={readOnly}
+                                    />
+                                )
+                            )
                         )
                     )
                   }
@@ -1415,8 +1771,8 @@ const TreeNodeItem = ({
                       canEditNodeContent ? (
                           <Input.TextArea
                               className="node-content node-text-area"
-                              value={node.text}
-                              onChange={(e) => onContentChange(node.id, e.target.value)}
+                              value={editableNodeText}
+                              onChange={(e) => onContentChange(node.id, e.target.value, isLockedOtherReqChapter)}
                               placeholder={ts('srs_doc.please_input_content')}
                               size="small"
                               rows={1}
@@ -1425,11 +1781,13 @@ const TreeNodeItem = ({
                           />
                       ) : (
                           <div className="node-content node-text-area">
-                              {shouldSplitTextForTables ? removeOtherReqMarker(splitText.intro || "") : displayNodeText}
+                              {shouldSplitTextForTables
+                                  ? removeOtherReqMarker(splitText.intro || "")
+                                  : (isLockedOtherReqChapter ? editableNodeText : displayNodeText)}
                           </div>
                       )
                   )}
-                  {isImgRefType(node.ref_type) && (
+                  {isImgRefType(node.ref_type) && !isProductBoundDocImageNode && (
                       <div className="node-file-ref node-content">
                           {displayImageUrl ? (
                               <a
@@ -1458,6 +1816,7 @@ const TreeNodeItem = ({
                           )}
                           <div className="node-pic node-pic-readonly">
                               <Image
+                                  key={displayImageUrl}
                                   src={resolveFileUrl(displayImageUrl)}
                                   alt={node.title || "image"}
                                   preview={true}
@@ -1465,7 +1824,14 @@ const TreeNodeItem = ({
                           </div>
                       </div>
                   )}
-                  {isImgRefType(node.ref_type) && !readOnly && (
+                  {isProductBoundDocImageNode && !readOnly && (
+                      <Upload {...productBoundUploadProps} className="node-pic">
+                          <Button size="small" icon={<UploadOutlined />}>
+                              {hasDisplayImage ? "重新上传" : ts("select_file")}
+                          </Button>
+                      </Upload>
+                  )}
+                  {isGenericImgRefNode && !readOnly && (
                       <Upload {...uploadProps} className="node-pic">
                           <Button size="small" icon={<UploadOutlined />}>
                               {displayImageUrl ? "重新上传" : ts("select_file")}
@@ -1502,7 +1868,7 @@ const TreeNodeItem = ({
                           {ts('add')}{numberToChinese(level + 2)}{ts('level_menu')}
                         </Button>)
                       }
-                      {!(node.ref_type && (isImgRefType(node.ref_type) || node.ref_type === 'srs_reqs' || node.ref_type === 'srs_reqs_2')) && (
+                      {!(isProductBoundDocImageNode || (node.ref_type && (isImgRefType(node.ref_type) || node.ref_type === 'srs_reqs' || node.ref_type === 'srs_reqs_2'))) && (
                       <Button
                           size="small"
                           icon={<TableOutlined />}
@@ -1510,7 +1876,7 @@ const TreeNodeItem = ({
                           {ts('srs_doc.table')}
                       </Button>
                       )}
-                      {!(node.ref_type && (isImgRefType(node.ref_type) || node.ref_type === 'srs_reqs' || node.ref_type === 'srs_reqs_2')) && (
+                      {!(isProductBoundDocImageNode || (node.ref_type && (isImgRefType(node.ref_type) || node.ref_type === 'srs_reqs' || node.ref_type === 'srs_reqs_2'))) && (
                       <Upload {...tableImportProps}>
                           <Button
                               size="small"
@@ -1536,7 +1902,7 @@ const TreeNodeItem = ({
               </div>
 
               {/* 显示普通章节表格：按节点内 + 导入子表顺序展示 */}
-              {!(node.ref_type && (isImgRefType(node.ref_type) || node.ref_type === 'srs_reqs' || node.ref_type === 'srs_reqs_2')) &&
+              {!(isProductBoundDocImageNode || (node.ref_type && (isImgRefType(node.ref_type) || node.ref_type === 'srs_reqs' || node.ref_type === 'srs_reqs_2'))) &&
                 orderedNormalTables.map((tbl, idx) => (
                     <div className="node-table" key={tbl.key}>
                         {shouldMoveOtherReqMarker && idx === otherReqTableIndex && (
@@ -1785,6 +2151,9 @@ const TreeNodeItem = ({
                     node={child}
                     level={level + 1}
                     docId={docId}
+                    productId={productId}
+                    docVersion={docVersion}
+                    productVersion={productVersion}
                     readOnly={readOnly}
                     rcmOptions={rcmOptions}
                     onRcmSelectChange={onRcmSelectChange}
@@ -1816,6 +2185,9 @@ interface TreeStructureProps {
     value?: TreeNode[];
     onChange?: (value: TreeNode[]) => void;
     docId?: number;
+    productId?: number;
+    docVersion?: string;
+    productVersion?: string;
     hiddenNodeIds?: number[];
     readOnly?: boolean;
     rcmOptions: Array<{ value: number; label: string; description?: string }>;
@@ -1839,7 +2211,7 @@ interface TreeStructureProps {
     enableStandardReqAutoSync?: boolean;
 }
 
-export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcmOptions, onNodeDelete, onOpenSrsTable, onOpenReqList, onEditSrsChangeTable, onDeleteSrsChangeTable, onSaveReqDetailTable, onSaveSrsReqTable, onSaveOtherReqTable, onSaveSrsChangeReqTable, srsReqPreview, reqDetails, srsReqLoading, onNodesSnapshot, enableStandardReqAutoSync = false }: TreeStructureProps) => {
+export default ({ value = [], onChange, docId, productId, docVersion, productVersion, hiddenNodeIds = [], readOnly, rcmOptions, onNodeDelete, onOpenSrsTable, onOpenReqList, onEditSrsChangeTable, onDeleteSrsChangeTable, onSaveReqDetailTable, onSaveSrsReqTable, onSaveOtherReqTable, onSaveSrsChangeReqTable, srsReqPreview, reqDetails, srsReqLoading, onNodesSnapshot, enableStandardReqAutoSync = false }: TreeStructureProps) => {
     const { t: ts } = useTranslation();
     const [nodes, setNodes] = useState<TreeNode[]>(value);
     const [tableModalVisible, setTableModalVisible] = useState(false);
@@ -3104,7 +3476,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
 
     const handleTitleChange = (id: number, title: string) => {
         const targetNode = findNodeById(nodes, id);
-        if (targetNode && isOtherReqManagedChapterNode(targetNode, srsReqPreview?.other || [])) {
+        if (targetNode && isChapterMetaLockedNode(targetNode, srsReqPreview?.other || [])) {
             return;
         }
         const newNodes = findNodeAndUpdate(nodes, id, (node) => ({
@@ -3116,7 +3488,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
 
     const handleSrsCodeChange = (id: number, srs_code: string) => {
         const targetNode = findNodeById(nodes, id);
-        if (targetNode && isOtherReqManagedChapterNode(targetNode, srsReqPreview?.other || [])) {
+        if (targetNode && isChapterMetaLockedNode(targetNode, srsReqPreview?.other || [])) {
             return;
         }
         const newNodes = findNodeAndUpdate(nodes, id, (node) => ({
@@ -3126,20 +3498,27 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         updateNodes(newNodes);
     };
 
-    const handleContentChange = (id: number, text: string) => {
+    const handleContentChange = (id: number, text: string, preserveOtherReqCode = false) => {
+        const targetNode = findNodeById(nodes, id);
+        const nextText = preserveOtherReqCode && targetNode
+            ? replaceOtherReqCodeInNodeText(
+                text,
+                normalizeSrsCodeValue(targetNode.srs_code || extractSrsCodeFromText(targetNode.text) || ""),
+            )
+            : text;
         const newNodes = findNodeAndUpdate(nodes, id, (node) => {
             if (!Array.isArray(node.rcm_codes)) {
                 return {
                     ...node,
-                    text,
+                    text: nextText,
                 };
             }
-            const extracted = extractRcmCodesFromText(text);
+            const extracted = extractRcmCodesFromText(nextText);
             const current = (node.rcm_codes || []).map((c) => normalizeRcmCode(c));
             const merged = Array.from(new Set([...current, ...extracted])).filter(Boolean);
             return {
                 ...node,
-                text,
+                text: nextText,
                 rcm_codes: merged,
             };
         });
@@ -3147,11 +3526,24 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
     };
 
     const handleImageChange = (id: number, img_url: string) => {
+        const clearEmbeddedImages = (children: TreeNode[] = []): TreeNode[] => (
+            children.map((child) => (
+                isEmbeddedImageNode(child)
+                    ? { ...child, img_url: "" }
+                    : { ...child, children: clearEmbeddedImages(child.children || []) }
+            ))
+        );
         const updateImageById = (nodeList: TreeNode[]): TreeNode[] => {
             return nodeList.map((node) => {
                 const sameNode = String(node.id) === String(id) || String(node.n_id ?? "") === String(id);
                 if (sameNode) {
-                    return { ...node, img_url };
+                    const boundType = resolveProductBoundDocImageRefType(node);
+                    return {
+                        ...node,
+                        img_url,
+                        ...(boundType && !node.ref_type ? { ref_type: boundType } : {}),
+                        ...(boundType ? { children: clearEmbeddedImages(node.children || []) } : {}),
+                    };
                 }
                 if (node.children && node.children.length > 0) {
                     return { ...node, children: updateImageById(node.children) };
@@ -4895,6 +5287,9 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                             node={node}
                             level={0}
                             docId={docId}
+                            productId={productId}
+                            docVersion={docVersion}
+                    productVersion={productVersion}
                             readOnly={readOnly}
                             rcmOptions={rcmOptions}
                             onRcmSelectChange={handleRcmSelectChange}

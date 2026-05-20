@@ -16,6 +16,8 @@ import * as ApiSrsType from "@/api/ApiSrsType";
 import TreeStructure, {
     TreeNode,
     syncTreeWithOtherReqState,
+    remapProductBoundDocImages,
+    resolveProductBoundDocImageRefType,
 } from "./components/TreeStructure";
 import EditableTableGenerator, { TableDataWithHeaders } from "./components/EditableTableGenerator";
 
@@ -173,9 +175,12 @@ export default () => {
     }, []);
 
     const productId = Form.useWatch("product_id", editForm);
+    const docVersion = Form.useWatch("version", editForm);
     const displayProductId = isReadOnly ? (data.docProductId ?? productId) : productId;
+    const displayDocVersion = isReadOnly ? (data.docVersion ?? docVersion) : docVersion;
     const currentProduct = (data.products as any[]).find((p: any) => p.id === displayProductId);
     const productLabel = currentProduct ? `${currentProduct.name}-${currentProduct.full_version}` : "";
+    const displayProductVersion = currentProduct?.full_version ?? "";
     const normalizeScopeTitle = (title?: string) => String(title || "")
         .replace(/^(\d+(?:\.\d+)*\.?)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
         .replace(/[：:\s.．]/g, "")
@@ -2057,12 +2062,19 @@ export default () => {
         if (id) {
             // 编辑模式
             dispatch({ loading: true, isEdit: true });
-            Promise.all([Api.get_srs_doc({ id }), fetchSrsTableState(parseInt(id))]).then(([res, srsTableState]: any[]) => {
+            Promise.all([Api.get_srs_doc({ id }), fetchSrsTableState(parseInt(id))]).then(async ([res, srsTableState]: any[]) => {
                 if (res.code === Api.C_OK) {
                     const targetRow = res.data;
                     
                     const parsedContentRaw = (targetRow.content || []).map((node: any) => parseTreeNode(node));
-                    const parsedContent = syncTreeWithSrsTableState(parsedContentRaw, srsTableState);
+                    const loadProduct = (data.products as any[]).find((p: any) => p.id === targetRow.product_id);
+                    const remappedContent = await remapProductBoundDocImages(
+                        parsedContentRaw,
+                        targetRow.product_id,
+                        targetRow.version,
+                        loadProduct?.full_version,
+                    );
+                    const parsedContent = syncTreeWithSrsTableState(remappedContent, srsTableState);
                     const derivedCoverTitle = extractCoverTitleFromTree(parsedContent);
                     const derivedFileNo = extractFileNoFromTree(parsedContent);
 
@@ -2337,6 +2349,7 @@ export default () => {
             }
         }
 
+        const isProductBoundImageNode = !!resolveProductBoundDocImageRefType(node);
         const cleaned: any = {
             doc_id: node.doc_id || docId || 0,
             n_id: (typeof node.id === 'string' || !node.n_id) ? 0 : node.n_id, // 新节点的n_id为0，让后端生成
@@ -2348,7 +2361,8 @@ export default () => {
             ...(node.rcm_codes !== undefined && { rcm_codes: node.rcm_codes }),
             text: node.text || "",
             ...(node.ref_type !== undefined && { ref_type: node.ref_type }),
-            ...(node.img_url !== undefined && { img_url: node.img_url ?? "" }),
+            // 物理拓扑图/系统结构图以图表文件库为准，不在节点上持久化 img_url
+            ...(node.img_url !== undefined && { img_url: isProductBoundImageNode ? "" : (node.img_url ?? "") }),
             // label 不展示，但需一并提交给后端
             ...(node.label !== undefined && { label: node.label ?? "" }),
             ...(node.req_detail_key !== undefined && { req_detail_key: node.req_detail_key ?? "" }),
@@ -3676,11 +3690,18 @@ export default () => {
                     navigate(`/srs_docs/edit/${res.data.id}`, { replace: true });
                 } else if (params.id) {
                     // 如果是编辑，重新加载数据以获取后端生成的新 n_id
-                    Api.get_srs_doc({ id: params.id }).then((reloadRes: any) => {
+                    Api.get_srs_doc({ id: params.id }).then(async (reloadRes: any) => {
                         if (reloadRes.code === Api.C_OK) {
                             const targetRow = reloadRes.data;
                             
-                            const parsedContent = (targetRow.content || []).map((node: any) => parseTreeNode(node));
+                            const parsedContentRaw = (targetRow.content || []).map((node: any) => parseTreeNode(node));
+                            const reloadProduct = (data.products as any[]).find((p: any) => p.id === targetRow.product_id);
+                            const parsedContent = await remapProductBoundDocImages(
+                                parsedContentRaw,
+                                targetRow.product_id,
+                                targetRow.version,
+                                reloadProduct?.full_version,
+                            );
                             const derivedCoverTitle = extractCoverTitleFromTree(parsedContent);
                             const derivedFileNo = extractFileNoFromTree(parsedContent);
 
@@ -3922,6 +3943,9 @@ export default () => {
                                 dispatch({ treeStructure: value });
                             }}
                             docId={params.id ? parseInt(params.id) : undefined}
+                            productId={displayProductId}
+                            docVersion={displayDocVersion}
+                            productVersion={displayProductVersion}
                             hiddenNodeIds={hiddenNodeIds}
                             onNodeDelete={isReadOnly ? undefined : handleNodeDelete}
                             readOnly={isReadOnly}

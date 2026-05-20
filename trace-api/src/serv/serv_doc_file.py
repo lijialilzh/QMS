@@ -4,7 +4,7 @@ import os
 import re
 from typing import Any
 from typing import List, Tuple
-from sqlalchemy import select, delete, func
+from sqlalchemy import select, delete, func, or_
 from sqlalchemy.sql import desc
 from ..obj.vobj_user import UserObj
 from ..model.srs_doc import SrsDoc, SrsNode
@@ -19,6 +19,49 @@ from ..obj import Page, Resp
 from . import msg_err_db, save_file
 
 logger = logging.getLogger(__name__)
+
+
+def sanitize_doc_image_token(value: str) -> str:
+    token = re.sub(r"[^\w.\-]+", "_", str(value or "").strip())
+    return token.strip("_") or ""
+
+
+def build_doc_image_file_prefix(product_version: str = "", doc_version: str = "") -> str:
+    product_token = sanitize_doc_image_token(product_version)
+    doc_token = sanitize_doc_image_token(doc_version)
+    if product_token and doc_token:
+        return f"{product_token}_{doc_token}"
+    return doc_token or product_token or "doc"
+
+
+def build_doc_image_file_name(product_version: str, doc_version: str, category: str, ext: str) -> str:
+    normalized_ext = ext if str(ext or "").startswith(".") else f".{ext or 'png'}"
+    return f"{build_doc_image_file_prefix(product_version, doc_version)}_{category}{normalized_ext}"
+
+
+def pick_doc_image_file_row(
+    product_id: int,
+    category: str,
+    doc_version: str = "",
+    product_version: str = "",
+):
+    if not product_id or not category:
+        return None
+    base_sql = select(DocFile).where(DocFile.product_id == product_id, DocFile.category == category)
+    doc_token = sanitize_doc_image_token(doc_version)
+    product_token = sanitize_doc_image_token(product_version)
+    candidates = []
+    if product_token and doc_token:
+        candidates.append(f"{product_token}_{doc_token}_{category}%")
+    if doc_token:
+        candidates.append(f"{doc_token}_{category}%")
+    for pattern in candidates:
+        row = db.session.execute(
+            base_sql.where(DocFile.file_name.like(pattern)).order_by(desc(DocFile.id)).limit(1)
+        ).scalars().first()
+        if row:
+            return row
+    return db.session.execute(base_sql.order_by(desc(DocFile.id)).limit(1)).scalars().first()
 
 
 class Server(object):
@@ -55,7 +98,13 @@ class Server(object):
         matched = re.match(rf"^(.+?)_{cat_re}(?:\.[A-Za-z0-9]+)?$", name)
         if not matched:
             return ""
-        return str(matched.group(1) or "").strip()
+        prefix = str(matched.group(1) or "").strip()
+        if not prefix:
+            return ""
+        parts = prefix.split("_")
+        if len(parts) >= 2:
+            return parts[-1]
+        return prefix
 
     @staticmethod
     def __extract_data_url_blob(data_url: str):
@@ -223,16 +272,20 @@ class Server(object):
                 best_img = img_url
         return best_img
 
-    def __backfill_doc_file_from_srs(self, product_id: int, category: str, doc_version: str = None):
+    def __backfill_doc_file_from_srs(self, product_id: int, category: str, doc_version: str = None, product_version: str = None):
         if not product_id or category not in self.DOC_IMG_KEYWORDS:
             return
         normalized_doc_version = self.__normalize_doc_version(doc_version)
-        exists_sql = select(DocFile.id).where(DocFile.product_id == product_id, DocFile.category == category)
-        if normalized_doc_version:
-            exists_sql = exists_sql.where(DocFile.file_name.like(f"{normalized_doc_version}_%"))
-        exists = db.session.execute(exists_sql.limit(1)).scalar()
-        if exists:
-            return
+        normalized_product_version = sanitize_doc_image_token(product_version or "")
+        if not normalized_product_version:
+            product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+            normalized_product_version = sanitize_doc_image_token(getattr(product, "full_version", "") or getattr(product, "name", "") or "")
+        row = pick_doc_image_file_row(
+            product_id,
+            category,
+            normalized_doc_version,
+            normalized_product_version,
+        )
 
         sql_doc = select(SrsDoc).where(SrsDoc.product_id == product_id)
         if normalized_doc_version:
@@ -248,14 +301,29 @@ class Server(object):
             return
         node_map = {row.n_id: row for row in nodes}
         keywords = self.DOC_IMG_KEYWORDS.get(category) or []
+        heading_category_map = {
+            "2.2": "img_topo",
+            "2.3": "img_struct",
+        }
         matched_data_url = None
-        for row in nodes:
-            img_url = getattr(row, "img_url", None)
-            if not img_url or not str(img_url).startswith("data:"):
+        heading_match = None
+        for node in nodes:
+            img_url = getattr(node, "img_url", None)
+            if not img_url:
                 continue
-            ctx_text = self.__node_context_text(row, node_map)
+            img_str = str(img_url).strip()
+            if not img_str.startswith("data:") and not os.path.exists(img_str):
+                continue
+            title = self.__normalize_text(getattr(node, "title", "") or "")
+            heading_no = re.match(r"^(\d+(?:\.\d+)*)", title)
+            heading_no = heading_no.group(1) if heading_no else ""
+            if heading_category_map.get(heading_no) == category or getattr(node, "ref_type", None) == category:
+                heading_match = img_url
+                continue
+            ctx_text = self.__node_context_text(node, node_map)
             if any(word in ctx_text for word in keywords):
                 matched_data_url = img_url
+        matched_data_url = heading_match or matched_data_url
 
         if not matched_data_url:
             return
@@ -264,18 +332,23 @@ class Server(object):
         if not blob:
             return
 
-        new_row = DocFile(product_id=product_id, category=category)
-        db.session.add(new_row)
-        db.session.flush()
-        path = os.path.join("data.trace", category, f"{new_row.id}{ext}")
+        if not row:
+            row = DocFile(product_id=product_id, category=category)
+            db.session.add(row)
+            db.session.flush()
+        path = os.path.join("data.trace", category, f"{row.id}{ext}")
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as fs:
             fs.write(blob)
         latest_doc_version = self.__normalize_doc_version(getattr(latest_doc, "version", "") or "")
-        file_name_prefix = latest_doc_version or category
-        new_row.file_name = f"{file_name_prefix}_{category}{ext}"
-        new_row.file_size = len(blob)
-        new_row.file_url = path
+        row.file_name = build_doc_image_file_name(
+            normalized_product_version,
+            latest_doc_version,
+            category,
+            ext,
+        )
+        row.file_size = len(blob)
+        row.file_url = path
         db.session.commit()
 
     def __backfill_doc_file_from_sds(self, product_id: int, category: str, doc_version: str = None):
@@ -417,7 +490,12 @@ class Server(object):
             if category == "img_flow":
                 self.__backfill_doc_file_from_sds(product_id, category, normalized_doc_version)
             else:
-                self.__backfill_doc_file_from_srs(product_id, category, normalized_doc_version)
+                self.__backfill_doc_file_from_srs(
+                    product_id,
+                    category,
+                    normalized_doc_version,
+                    product_version,
+                )
     
         sql = select(DocFile, Product).outerjoin(Product, DocFile.product_id == Product.id)
         if category:
@@ -431,7 +509,15 @@ class Server(object):
         if file_name:
             sql = sql.where(DocFile.file_name.like(f"%{file_name}%"))
         if normalized_doc_version:
-            sql = sql.where(DocFile.file_name.like(f"{normalized_doc_version}_%"))
+            doc_token = sanitize_doc_image_token(normalized_doc_version)
+            product_token = sanitize_doc_image_token(product_version or "")
+            patterns = []
+            if product_token and doc_token and category:
+                patterns.append(f"{product_token}_{doc_token}_{category}%")
+            if doc_token and category:
+                patterns.append(f"{doc_token}_{category}%")
+            if patterns:
+                sql = sql.where(or_(*[DocFile.file_name.like(pattern) for pattern in patterns]))
         # 三类图表页面默认显示所有产品（未选择产品时不按用户产品关系限制）
         if category not in self.DOC_IMG_KEYWORDS and not product_id and op_user and op_user.id != 1:
             subquery = select(UserProd.product_id).where(UserProd.user_id == op_user.id).scalar_subquery()

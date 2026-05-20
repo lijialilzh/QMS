@@ -6,6 +6,7 @@ import hashlib
 import os
 import re
 import sys
+import zipfile
 from copy import deepcopy
 from datetime import datetime
 from enum import Enum
@@ -60,6 +61,7 @@ from .serv_srs_reqd import Server as ServSrsReqd
 from .serv_sds_trace import NAME_DICT
 from .serv_utils import new_version
 from .serv_utils.tree_util import find_parent, iter_tree
+from .serv_doc_file import build_doc_image_file_name, pick_doc_image_file_row, sanitize_doc_image_token
 from . import msg_err_db, save_file
 
 logger = logging.getLogger(__name__)
@@ -132,33 +134,341 @@ class Server(object):
             return None, None
         return blob, ext
 
+    @staticmethod
+    def __extract_image_blob_and_ext(img_url: str):
+        if not img_url:
+            return None, None
+        img_url = str(img_url).strip()
+        if img_url.startswith("data:"):
+            return Server.__extract_data_url_blob(img_url)
+        path = img_url
+        if not os.path.exists(path):
+            return None, None
+        ext = os.path.splitext(path)[1] or ".png"
+        try:
+            with open(path, "rb") as fs:
+                blob = fs.read()
+            return blob, ext
+        except Exception:
+            return None, None
+
+    @staticmethod
+    def __heading_no_from_title(title: str):
+        matched = re.match(r"^(\d+(?:\.\d+)*)", str(title or "").strip())
+        return matched.group(1) if matched else ""
+
+    @staticmethod
+    def __blob_to_data_url(blob: bytes, ext_hint: str = ".png") -> str:
+        ext = (ext_hint or ".png").lower()
+        if not ext.startswith("."):
+            ext = f".{ext}"
+        mime_map = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".gif": "image/gif",
+            ".bmp": "image/bmp",
+            ".webp": "image/webp",
+            ".tif": "image/tiff",
+            ".tiff": "image/tiff",
+            ".emf": "image/emf",
+            ".wmf": "image/wmf",
+        }
+        mime = mime_map.get(ext, "image/png")
+        b64 = base64.b64encode(blob).decode("ascii")
+        return f"data:{mime};base64,{b64}"
+
+    @staticmethod
+    def __extract_images_from_ooxml_element(part, element):
+        urls = []
+        if element is None or part is None:
+            return urls
+        used_rids = set()
+        rel_embed = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed"
+        rel_link = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}link"
+        rel_id = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+
+        def read_rid(rid):
+            if not rid or rid in used_rids:
+                return
+            used_rids.add(rid)
+            try:
+                rel = part.rels[rid]
+            except Exception:
+                return
+            target = getattr(rel, "target_ref", "")
+            ext = (target.rsplit(".", 1)[-1].lower() if "." in target else "png")
+            blob = getattr(rel.target_part, "blob", None)
+            if blob:
+                urls.append(Server.__blob_to_data_url(blob, f".{ext}"))
+
+        for blip in element.xpath(".//*[local-name()='blip']"):
+            read_rid(blip.get(rel_embed) or blip.get(rel_link))
+        for imagedata in element.xpath(".//*[local-name()='imagedata']"):
+            read_rid(imagedata.get(rel_id) or imagedata.get(rel_embed) or imagedata.get(rel_link))
+        return urls
+
+    def __pick_doc_images_from_docx_zip(self, docx_bytes: bytes, docx: Document = None):
+        picked = {}
+        if not docx_bytes:
+            return picked
+        try:
+            with zipfile.ZipFile(io.BytesIO(docx_bytes)) as zf:
+                if "word/document.xml" not in zf.namelist():
+                    return picked
+                doc_xml = zf.read("word/document.xml").decode("utf-8", errors="ignore")
+                rid_to_media = {}
+                rels_name = "word/_rels/document.xml.rels"
+                if rels_name in zf.namelist():
+                    rels_xml = zf.read(rels_name).decode("utf-8", errors="ignore")
+                    for matched in re.finditer(r'Id="([^"]+)"[^>]*Target="([^"]+)"', rels_xml):
+                        rid, target = matched.group(1), matched.group(2)
+                        if "media/" in target.replace("\\", "/"):
+                            normalized = target.replace("\\", "/").lstrip("/")
+                            rid_to_media[rid] = normalized if normalized.startswith("word/") else f"word/{normalized}"
+                text_only = re.sub(r"<[^>]+>", "", doc_xml)
+                pos_22_candidates = [p for p in (text_only.find("2.2"), text_only.find("物理拓扑")) if p >= 0]
+                pos_23_candidates = [p for p in (text_only.find("2.3"), text_only.find("系统结构")) if p >= 0]
+                pos_22 = min(pos_22_candidates) if pos_22_candidates else -1
+                pos_23 = min(pos_23_candidates) if pos_23_candidates else -1
+                heading_category_map = {
+                    "2.2": RefTypes.img_topo.value,
+                    "2.3": RefTypes.img_struct.value,
+                }
+                embeds = []
+                for matched in re.finditer(r'r:embed="([^"]+)"', doc_xml):
+                    rid = matched.group(1)
+                    media_path = rid_to_media.get(rid)
+                    if media_path and media_path in zf.namelist():
+                        embeds.append((matched.start(), media_path))
+                embeds.sort(key=lambda item: item[0])
+                for pos, media_path in embeds:
+                    section = None
+                    if pos_22 >= 0 and pos >= pos_22 and (pos_23 < 0 or pos < pos_23):
+                        section = "2.2"
+                    elif pos_23 >= 0 and pos >= pos_23:
+                        section = "2.3"
+                    if not section:
+                        continue
+                    blob = zf.read(media_path)
+                    ext = os.path.splitext(media_path)[1] or ".png"
+                    picked[heading_category_map[section]] = self.__blob_to_data_url(blob, ext)
+        except Exception:
+            logger.exception("pick doc images from docx zip failed")
+        return picked
+
+    def __pick_doc_images_from_doc_nodes(self, doc_id: int):
+        picked = {}
+        if not doc_id:
+            return picked
+        heading_category_map = {
+            "2.2": RefTypes.img_topo.value,
+            "2.3": RefTypes.img_struct.value,
+        }
+        nodes = db.session.execute(
+            select(SrsNode).where(SrsNode.doc_id == doc_id).order_by(SrsNode.priority, SrsNode.n_id)
+        ).scalars().all()
+        if not nodes:
+            return picked
+        node_map = {row.n_id: row for row in nodes}
+
+        def node_context_text(node: SrsNode) -> str:
+            texts = []
+            cur = node
+            safety = 0
+            while cur and safety < 100:
+                for value in [cur.title, cur.label, cur.text]:
+                    if value:
+                        texts.append(self.__normalize_text(value))
+                p_id = cur.p_id or 0
+                if p_id == 0:
+                    break
+                cur = node_map.get(p_id)
+                safety += 1
+            texts.reverse()
+            return " ".join(texts)
+
+        for node in nodes:
+            img_url = getattr(node, "img_url", None)
+            if not img_url:
+                continue
+            img_str = str(img_url).strip()
+            if not img_str.startswith("data:") and not os.path.exists(img_str):
+                continue
+            heading_no = self.__heading_no_from_title(node.title or "")
+            if heading_no in heading_category_map:
+                picked[heading_category_map[heading_no]] = img_str
+                continue
+            ref_type = getattr(node, "ref_type", None)
+            if ref_type in heading_category_map.values():
+                picked[ref_type] = img_str
+                continue
+            ctx_text = node_context_text(node)
+            for category, keywords in self.DOC_IMG_KEYWORDS.items():
+                if category not in heading_category_map.values():
+                    continue
+                if any(word in ctx_text for word in keywords):
+                    picked[category] = img_str
+        return picked
+
+    def __pick_doc_images_from_docx(self, docx: Document):
+        if docx is None:
+            return {}
+        picked = {}
+        heading_category_map = {
+            "2.2": RefTypes.img_topo.value,
+            "2.3": RefTypes.img_struct.value,
+        }
+        active_target = None
+        context_titles: List[str] = []
+
+        def update_active_target(heading_no: str):
+            nonlocal active_target
+            if not heading_no:
+                return
+            if heading_no == "2.2" or heading_no.startswith("2.2."):
+                active_target = "2.2"
+                return
+            if heading_no == "2.3" or heading_no.startswith("2.3."):
+                active_target = "2.3"
+                return
+            if heading_no in ("2.4", "2.5", "2.6", "2.7") or not heading_no.startswith("2."):
+                if active_target in heading_category_map:
+                    active_target = None
+
+        def assign_image(img_url: str):
+            if not img_url:
+                return
+            if active_target in heading_category_map:
+                picked[heading_category_map[active_target]] = img_url
+                return
+            ctx_text = " ".join(context_titles[-12:])
+            for category, keywords in self.DOC_IMG_KEYWORDS.items():
+                if category not in (RefTypes.img_topo.value, RefTypes.img_struct.value):
+                    continue
+                if any(word in ctx_text for word in keywords):
+                    picked[category] = img_url
+
+        for child in docx.element.body.iterchildren():
+            tag = str(child.tag).lower()
+            if tag.endswith("}p"):
+                para = Paragraph(child, docx._body)
+                if self.__is_toc_paragraph(para):
+                    continue
+                txt = self.__normalize_text(para.text)
+                if txt:
+                    level = self.__guess_heading_level(para)
+                    heading_no = self.__extract_heading_number(txt) or self.__heading_no_from_title(txt)
+                    if level is not None:
+                        context_titles.append(txt)
+                        update_active_target(heading_no)
+                    elif heading_no in heading_category_map:
+                        context_titles.append(txt)
+                        update_active_target(heading_no)
+                    elif "物理拓扑图" in txt or ("拓扑图" in txt and "物理" in txt):
+                        context_titles.append(txt)
+                        active_target = "2.2"
+                    elif "系统结构图" in txt or ("结构图" in txt and "系统" in txt):
+                        context_titles.append(txt)
+                        active_target = "2.3"
+                    elif level is None and heading_no:
+                        update_active_target(heading_no)
+                for img_url in self.__extract_images_from_ooxml_element(para.part, child):
+                    assign_image(img_url)
+            elif tag.endswith("}tbl"):
+                tab = DocxTable(child, docx._body)
+                for row in tab.rows:
+                    for cell in row.cells:
+                        cell_text = self.__normalize_text(cell.text)
+                        if cell_text:
+                            heading_no = self.__extract_heading_number(cell_text) or self.__heading_no_from_title(cell_text)
+                            if heading_no:
+                                context_titles.append(cell_text)
+                                update_active_target(heading_no)
+                        for img_url in self.__extract_images_from_ooxml_element(docx.part, cell._tc):
+                            assign_image(img_url)
+                for img_url in self.__extract_images_from_ooxml_element(docx.part, child):
+                    assign_image(img_url)
+        return picked
+
     def __pick_doc_images_from_tree(self, nodes: List[SrsNodeForm]):
         picked = {}
+        heading_category_map = {
+            "2.2": RefTypes.img_topo.value,
+            "2.3": RefTypes.img_struct.value,
+        }
 
-        def walk(items: List[SrsNodeForm], ctx_titles: List[str]):
+        def collect_image_url(node: SrsNodeForm):
+            img_url = getattr(node, "img_url", None)
+            if not img_url:
+                return None
+            img_str = str(img_url).strip()
+            if img_str.startswith("data:") or os.path.exists(img_str):
+                return img_str
+            return None
+
+        def assign_by_heading(heading_no: str, img_url: str):
+            category = heading_category_map.get(heading_no)
+            if category and img_url:
+                picked[category] = img_url
+
+        def walk(items: List[SrsNodeForm], ctx_titles: List[str], active_heading: str = ""):
             for node in items or []:
                 title = self.__normalize_text(getattr(node, "title", "") or "")
+                heading_no = self.__heading_no_from_title(title)
+                section_heading = heading_no if heading_no in heading_category_map else active_heading
                 next_ctx = [*ctx_titles]
                 if title:
                     next_ctx.append(title)
-                img_url = getattr(node, "img_url", None)
-                if img_url and str(img_url).startswith("data:"):
-                    ctx_text = " ".join(next_ctx)
-                    for category, keywords in self.DOC_IMG_KEYWORDS.items():
-                        if any(k in ctx_text for k in keywords):
-                            # 后出现的图覆盖前面的图，确保取到章节里的最终图
-                            picked[category] = img_url
-                walk(getattr(node, "children", None) or [], next_ctx)
+
+                img_url = collect_image_url(node)
+                if img_url:
+                    if section_heading in heading_category_map:
+                        assign_by_heading(section_heading, img_url)
+                    else:
+                        ctx_text = " ".join(next_ctx)
+                        for category, keywords in self.DOC_IMG_KEYWORDS.items():
+                            if category in picked:
+                                continue
+                            if any(k in ctx_text for k in keywords):
+                                picked[category] = img_url
+
+                for child in getattr(node, "children", None) or []:
+                    child_img = collect_image_url(child)
+                    child_title = self.__normalize_text(getattr(child, "title", "") or "")
+                    child_heading = heading_no if heading_no in heading_category_map else section_heading
+                    if child_img and child_heading in heading_category_map:
+                        assign_by_heading(child_heading, child_img)
+
+                walk(getattr(node, "children", None) or [], next_ctx, section_heading)
 
         walk(nodes or [], [])
         return picked
 
-    def __upsert_product_doc_image(self, product_id: int, category: str, data_url: str):
-        blob, ext = self.__extract_data_url_blob(data_url)
+    def __upsert_product_doc_image(
+        self,
+        product_id: int,
+        category: str,
+        img_url: str,
+        doc_version: str = None,
+        product_version: str = None,
+    ):
+        blob, ext = self.__extract_image_blob_and_ext(img_url)
         if not blob:
             return
-        sql = select(DocFile).where(DocFile.product_id == product_id, DocFile.category == category).order_by(desc(DocFile.id))
-        row = db.session.execute(sql).scalars().first()
+        normalized_doc_version = sanitize_doc_image_token(doc_version or "")
+        normalized_product_version = sanitize_doc_image_token(product_version or "")
+        if not normalized_product_version:
+            product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+            normalized_product_version = sanitize_doc_image_token(
+                getattr(product, "full_version", "") or getattr(product, "name", "") or ""
+            )
+        row = pick_doc_image_file_row(
+            product_id,
+            category,
+            normalized_doc_version,
+            normalized_product_version,
+        )
         if not row:
             row = DocFile(product_id=product_id, category=category)
             db.session.add(row)
@@ -167,15 +477,69 @@ class Server(object):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as fs:
             fs.write(blob)
-        row.file_name = f"{category}{ext}"
+        row.file_name = build_doc_image_file_name(
+            normalized_product_version,
+            normalized_doc_version,
+            category,
+            ext,
+        )
         row.file_size = len(blob)
         row.file_url = path
         db.session.commit()
+        logger.info(
+            "sync product doc image: product_id=%s category=%s file=%s size=%s",
+            product_id,
+            category,
+            row.file_name,
+            row.file_size,
+        )
 
-    def __auto_sync_product_doc_images(self, product_id: int, nodes: List[SrsNodeForm]):
-        picked = self.__pick_doc_images_from_tree(nodes)
-        for category, data_url in picked.items():
-            self.__upsert_product_doc_image(product_id, category, data_url)
+    def __auto_sync_product_doc_images(
+        self,
+        product_id: int,
+        nodes: List[SrsNodeForm],
+        doc_version: str = None,
+        docx: Document = None,
+        product_version: str = None,
+        docx_bytes: bytes = None,
+        doc_id: int = None,
+    ):
+        picked = {}
+        if docx_bytes:
+            picked.update(self.__pick_doc_images_from_docx_zip(docx_bytes, docx))
+        if docx is not None:
+            for category, img_url in self.__pick_doc_images_from_docx(docx).items():
+                if img_url:
+                    picked[category] = img_url
+        for category, img_url in self.__pick_doc_images_from_tree(nodes).items():
+            if category not in picked and img_url:
+                picked[category] = img_url
+        if doc_id:
+            for category, img_url in self.__pick_doc_images_from_doc_nodes(doc_id).items():
+                if category not in picked and img_url:
+                    picked[category] = img_url
+        if not picked:
+            logger.warning(
+                "word import picked no doc images: product_id=%s doc_version=%s doc_id=%s",
+                product_id,
+                doc_version,
+                doc_id,
+            )
+        else:
+            logger.info(
+                "word import picked doc images: product_id=%s doc_version=%s categories=%s",
+                product_id,
+                doc_version,
+                list(picked.keys()),
+            )
+        for category, img_url in picked.items():
+            self.__upsert_product_doc_image(
+                product_id,
+                category,
+                img_url,
+                doc_version,
+                product_version,
+            )
 
     @staticmethod
     def __guess_numpr_level(para):
@@ -1661,6 +2025,15 @@ class Server(object):
             if current:
                 current.children = current.children or []
                 current.children.append(node)
+                img_url = getattr(node, "img_url", None)
+                if img_url and current:
+                    heading_no = self.__heading_no_from_title(getattr(current, "title", "") or "")
+                    if heading_no == "2.2":
+                        current.ref_type = RefTypes.img_topo.value
+                        current.img_url = img_url
+                    elif heading_no == "2.3":
+                        current.ref_type = RefTypes.img_struct.value
+                        current.img_url = img_url
             else:
                 roots.append(node)
 
@@ -1678,24 +2051,7 @@ class Server(object):
             current = node
 
         def extract_images_from_para(para: Paragraph):
-            urls = []
-            used_rids = set()
-            blips = para._element.xpath(".//*[local-name()='blip']")
-            for blip in blips:
-                rid = blip.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed")
-                if not rid or rid in used_rids:
-                    continue
-                used_rids.add(rid)
-                try:
-                    rel = para.part.rels[rid]
-                except Exception:
-                    continue
-                target = getattr(rel, "target_ref", "")
-                ext = (target.rsplit(".", 1)[-1].lower() if "." in target else "png")
-                mime = mime_map.get(ext, "image/png")
-                b64 = base64.b64encode(rel.target_part.blob).decode("ascii")
-                urls.append(f"data:{mime};base64,{b64}")
-            return urls
+            return self.__extract_images_from_ooxml_element(para.part, para._element)
 
         def sync_counters_with_number(number_text: str):
             try:
@@ -1809,6 +2165,10 @@ class Server(object):
                             title_with_number = f"{generated_number} {txt}".strip()
                     node = SrsNodeForm(title=title_with_number, text="", children=[])
                     heading_rows.append(dict(level=level, title=title_with_number, number=heading_number))
+                    if heading_number == "2.2":
+                        node.ref_type = RefTypes.img_topo.value
+                    elif heading_number == "2.3":
+                        node.ref_type = RefTypes.img_struct.value
                     srs_hit = srs_pattern.search(txt)
                     if srs_hit:
                         node.srs_code = srs_hit.group(0).upper()
@@ -1835,6 +2195,11 @@ class Server(object):
                     attach_to_current(SrsNodeForm(title=f"导入图片{img_idx}", img_url=img_url, children=[]))
             elif tag.endswith("}tbl"):
                 tab = DocxTable(child, docx._body)
+                for row in tab.rows:
+                    for cell in row.cells:
+                        for img_url in self.__extract_images_from_ooxml_element(docx.part, cell._tc):
+                            img_idx += 1
+                            attach_to_current(SrsNodeForm(title=f"导入图片{img_idx}", img_url=img_url, children=[]))
                 table = self.__parse_docx_table(tab, numbering_defs)
                 if table is None or not table.headers:
                     continue
@@ -1908,8 +2273,18 @@ class Server(object):
                 self.__sync_saved_doc_srs_tables_from_req_rows(resp.data.id)
                 self.__sync_imported_req_rcms(resp.data.id, req_rcm_map)
                 self.__upsert_imported_srs_reqds(resp.data.id, srs_reqd_rows_nodes)
-                # 新增能力：根据导入文档中的章节图片，自动回填产品图表文件库（保留手动上传能力）
-                self.__auto_sync_product_doc_images(product_id, content)
+                # 根据导入 Word 中的 2.2/2.3 图片，按产品完整版本+文档版本覆盖图表文件库
+                product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+                product_version = getattr(product, "full_version", "") or getattr(product, "name", "") or ""
+                self.__auto_sync_product_doc_images(
+                    product_id,
+                    content,
+                    version,
+                    docx,
+                    product_version,
+                    bys,
+                    resp.data.id,
+                )
                 row = db.session.execute(select(SrsDoc).where(SrsDoc.id == resp.data.id)).scalars().first()
                 if row:
                     self.__fix_rcms(row)
@@ -2348,12 +2723,18 @@ class Server(object):
         txts = __gather_nodes([], content)
         return Resp.resp_ok(data=txts)
    
-    def __query_imgs(self, product_id: int):
-        subquery = select(DocFile.category, func.max(DocFile.id).label("max_id"))
-        subquery = subquery.where(DocFile.product_id == product_id).group_by(DocFile.category).subquery()
-        sql = select(DocFile).join(subquery, DocFile.id == subquery.c.max_id)
-        rows: List[DocFile] = db.session.execute(sql).scalars().all()
-        return {row.category: row.file_url for row in rows}
+    def __pick_doc_file_row(self, product_id: int, category: str, doc_version: str = None, product_version: str = None):
+        return pick_doc_image_file_row(product_id, category, doc_version or "", product_version or "")
+
+    def __query_imgs(self, product_id: int, doc_version: str = None, product_version: str = None):
+        if not product_id:
+            return {}
+        result = {}
+        for category in (RefTypes.img_topo.value, RefTypes.img_struct.value, RefTypes.img_flow.value):
+            row = self.__pick_doc_file_row(product_id, category, doc_version, product_version)
+            if row and row.file_url:
+                result[category] = row.file_url
+        return result
 
     def __tree(self, doc: SrsDoc):
         tree = []
@@ -2361,7 +2742,9 @@ class Server(object):
         nodes: List[SrsNode] = db.session.execute(sql).scalars().all()
         objs_dict = dict()
         objs = []
-        prod_imgs = self.__query_imgs(doc.product_id)
+        product = db.session.execute(select(Product).where(Product.id == doc.product_id)).scalars().first()
+        product_version = getattr(product, "full_version", "") or getattr(product, "name", "") or ""
+        prod_imgs = self.__query_imgs(doc.product_id, doc.version, product_version)
         for node in nodes:
             table = None
             if node.table:
