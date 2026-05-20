@@ -923,6 +923,7 @@ const TreeNodeItem = ({
         (node.children || []).some((child) => isFunctionalKvTable(child.table))
     );
     const isLockedOtherReqChapter = !readOnly && isOtherReqManagedChapterNode(node, srsReqPreview?.other || []);
+    const canEditNodeContent = !readOnly && (!isLockedReqHierarchyNode || isLockedOtherReqChapter);
     const hasRcm = Array.isArray(node.rcm_codes);
     const hasRcmText = readOnly && /RCM\d+/i.test(String(node.text || ""));
     const isSrsReqRefNode = node.ref_type === "srs_reqs" || node.ref_type === "srs_reqs_2";
@@ -1390,11 +1391,7 @@ const TreeNodeItem = ({
                       </div>
                   )}
                   {!isSrsReqRefNode && (
-                      readOnly || isLockedReqHierarchyNode || isLockedOtherReqChapter ? (
-                          <div className="node-content node-text-area">
-                              {shouldSplitTextForTables ? removeOtherReqMarker(splitText.intro || "") : displayNodeText}
-                          </div>
-                      ) : (
+                      canEditNodeContent ? (
                           <Input.TextArea
                               className="node-content node-text-area"
                               value={node.text}
@@ -1405,6 +1402,10 @@ const TreeNodeItem = ({
                               autoSize={{ minRows: 1, maxRows: 6 }}
                               disabled={readOnly}
                           />
+                      ) : (
+                          <div className="node-content node-text-area">
+                              {shouldSplitTextForTables ? removeOtherReqMarker(splitText.intro || "") : displayNodeText}
+                          </div>
                       )
                   )}
                   {isImgRefType(node.ref_type) && (
@@ -3105,10 +3106,6 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
     };
 
     const handleContentChange = (id: number, text: string) => {
-        const targetNode = findNodeById(nodes, id);
-        if (targetNode && isOtherReqManagedChapterNode(targetNode, srsReqPreview?.other || [])) {
-            return;
-        }
         const newNodes = findNodeAndUpdate(nodes, id, (node) => {
             if (!Array.isArray(node.rcm_codes)) {
                 return {
