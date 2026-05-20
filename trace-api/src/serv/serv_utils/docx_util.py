@@ -377,7 +377,7 @@ def insert_toc_field(docx: Document, outline_levels: str = "1-4"):
     fld_separate = OxmlElement("w:fldChar")
     fld_separate.set(qn("w:fldCharType"), "separate")
     run_begin._r.append(fld_separate)
-    p.add_run("目录将在打开文档后自动更新")
+    p.add_run("请打开文档后右键目录，选择「更新域」以生成页码")
     run_end = p.add_run()
     fld_end = OxmlElement("w:fldChar")
     fld_end.set(qn("w:fldCharType"), "end")

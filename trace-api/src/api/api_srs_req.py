@@ -6,7 +6,7 @@
 from typing import Any
 from fastapi import APIRouter
 from ..obj.vobj_srs_req import SrsReqObj
-from ..obj.tobj_srs_req import SrsReqForm
+from ..obj.tobj_srs_req import SrsReqForm, SrsReqBatchSaveForm
 from ..obj.tobj_role import Perms
 from ..obj import Resp, Page
 from ..serv.serv_srs_req import Server
@@ -26,6 +26,12 @@ async def add_srs_req(form: SrsReqForm):
 @try_log(perm=Perms.srs_doc_edit)
 async def update_srs_req(form: SrsReqForm):
     return await server.update_srs_req(form) 
+
+
+@router.post("/batch_save_srs_req", summary="批量保存SRS需求", response_model=Resp[Any])
+@try_log(perm=Perms.srs_doc_edit)
+async def batch_save_srs_req(form: SrsReqBatchSaveForm):
+    return await server.batch_save_srs_req(form)
 
 
 @router.delete("/delete_srs_req", summary="删除SRS需求", response_model=Resp[Any])

@@ -3,6 +3,7 @@
 # @author: ZengLei
 
 
+from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, Field
 
@@ -12,4 +13,5 @@ class SrsTypeForm(BaseModel):
     doc_id: Optional[int] = Field(title="需求文档ID")
     type_code: Optional[str] = Field(title="类型编号")
     type_name: Optional[str] = Field(title="类型名称")
+    create_time: Optional[datetime] = Field(title="创建时间")
     

@@ -19,4 +19,11 @@ class SrsReqForm(BaseModel):
     type_code: Optional[str] = Field(title="需求类型")
 
     rcm_ids: Optional[List[int]] = Field(title="RCM")
-    
+
+
+class SrsReqBatchSaveForm(BaseModel):
+    doc_id: int = Field(title="需求文档ID")
+    type_code: Optional[str] = Field(default="1", title="需求类型")
+    temp_updates: Optional[List[SrsReqForm]] = Field(default_factory=list, title="改号前临时释放")
+    upserts: Optional[List[SrsReqForm]] = Field(default_factory=list, title="新增或更新")
+    delete_ids: Optional[List[int]] = Field(default_factory=list, title="删除ID列表")

@@ -3726,7 +3726,6 @@ class Server(object):
 
             docx.save(output)
             output.seek(0)
-            docx_util.refresh_docx_toc_with_libreoffice(output)
 
     async def add_doc_file(self, doc_id: int, file):
         size, path = await save_file("srs_node_img", doc_id, file)

@@ -234,7 +234,29 @@ export default () => {
         : (data.reqListData || []);
     const filteredSrsTableData = data.srsTableData as any[];
     const filteredSrsOtherReqData = data.srsOtherReqData as any[];
-    const filteredSrsChangeTables = (data.srsChangeTables || []).map((table: any) => ({
+    const isBaseChangeTypeCode = (typeCode?: string) => ["1", "2", ""].includes(String(typeCode || ""));
+    const getChangeTableSortKey = (table: any) => {
+        const createTime = table?.create_time ? new Date(table.create_time).getTime() : 0;
+        if (Number.isFinite(createTime) && createTime > 0) return createTime;
+        return Number(table?.id || 0);
+    };
+    const sortSrsChangeTables = (tables: any[] = []) => (
+        [...(tables || [])]
+            .filter((table) => !isBaseChangeTypeCode(table?.type_code))
+            .sort((left, right) => getChangeTableSortKey(left) - getChangeTableSortKey(right))
+    );
+    const moveChangeTableToEnd = (tables: any[] = [], typeCode?: string) => {
+        const code = String(typeCode || "");
+        if (!code) return sortSrsChangeTables(tables);
+        const sorted = sortSrsChangeTables(tables);
+        const targetIndex = sorted.findIndex((table) => String(table?.type_code || "") === code);
+        if (targetIndex < 0) return sorted;
+        const next = [...sorted];
+        const [target] = next.splice(targetIndex, 1);
+        next.push(target);
+        return next;
+    };
+    const filteredSrsChangeTables = sortSrsChangeTables(data.srsChangeTables || []).map((table: any) => ({
         ...table,
         data: table.data || [],
     }));
@@ -1525,7 +1547,6 @@ export default () => {
                     const isReqDetailNode = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
                     if (isReqDetailNode && (
                         (detailKey && nodeKey === detailKey) ||
-                        (!!code && nodeCode === code && nodeKey.startsWith("change_reqd_")) ||
                         detailMatchesNodePath(node, ancestors, nodeCode)
                     )) {
                         return items.splice(index, 1)[0];
@@ -1859,15 +1880,6 @@ export default () => {
             type_code: reqItem.type_code || "",
         });
         const allChangeRows = rows.filter((reqItem: any) => !isBaseReq(reqItem));
-        const typeNameMap = new Map<string, { id: number | string; title: string }>();
-        typeRows.forEach((item: any, index: number) => {
-            const code = String(item.type_code || "");
-            if (!code) return;
-            typeNameMap.set(code, {
-                id: item.id || `type_${index}`,
-                title: item.type_name || `变更表${index + 1}`,
-            });
-        });
         const groupedByType = new Map<string, any[]>();
         allChangeRows.forEach((reqItem: any) => {
             const code = String(reqItem.type_code || "");
@@ -1876,24 +1888,55 @@ export default () => {
             list.push(reqItem);
             groupedByType.set(code, list);
         });
-        const typeCodes = Array.from(new Set([
-            ...Array.from(typeNameMap.keys()),
-            ...Array.from(groupedByType.keys()),
-        ]));
-        const changeTablesData = typeCodes.map((code, index) => {
-            const meta = typeNameMap.get(code);
+        const getTypeSortKey = (item: any) => {
+            const createTime = item?.create_time ? new Date(item.create_time).getTime() : 0;
+            if (Number.isFinite(createTime) && createTime > 0) return createTime;
+            return Number(item?.id || 0);
+        };
+        const sortedTypeRows = typeRows
+            .filter((item: any) => !isBaseChangeTypeCode(item?.type_code))
+            .sort((left: any, right: any) => getTypeSortKey(left) - getTypeSortKey(right));
+        const seenTypeCodes = new Set<string>();
+        const changeTablesData = sortedTypeRows.reduce((result: any[], item: any, index: number) => {
+            const code = String(item.type_code || "");
+            if (!code || seenTypeCodes.has(code)) return result;
+            seenTypeCodes.add(code);
             const tableRows = (groupedByType.get(code) || []).map((reqItem: any, reqIndex: number) =>
                 toChangeRow(reqItem, `change_${code || index}`, reqIndex)
             );
-            return {
-                id: meta?.id || `change_${code || index}`,
-                title: meta?.title || "变更需求",
+            result.push({
+                id: item.id || `change_${code || index}`,
+                title: item.type_name || `变更表${index + 1}`,
+                type_code: code,
+                create_time: item.create_time,
+                data: tableRows,
+            });
+            return result;
+        }, []);
+        const orphanTypeCodes = [...groupedByType.keys()]
+            .filter((code) => !seenTypeCodes.has(code))
+            .sort((left, right) => {
+                const minReqIdForType = (code: string) => {
+                    const ids = (groupedByType.get(code) || []).map((item: any) => Number(item?.id || 0)).filter((id) => id > 0);
+                    return ids.length ? Math.min(...ids) : Number.MAX_SAFE_INTEGER;
+                };
+                return minReqIdForType(left) - minReqIdForType(right);
+            });
+        orphanTypeCodes.forEach((code) => {
+            seenTypeCodes.add(code);
+            const reqItems = groupedByType.get(code) || [];
+            const tableRows = reqItems.map((reqItem: any, reqIndex: number) =>
+                toChangeRow(reqItem, `change_${code}`, reqIndex)
+            );
+            changeTablesData.push({
+                id: `change_${code}`,
+                title: "变更需求",
                 type_code: code,
                 data: tableRows,
-            };
+            });
         });
 
-        return { srsTableData: mainData, srsOtherReqData: otherData, srsChangeTables: changeTablesData };
+        return { srsTableData: mainData, srsOtherReqData: otherData, srsChangeTables: sortSrsChangeTables(changeTablesData) };
     };
 
     const fetchSrsTableState = async (docId: number) => {
@@ -2343,7 +2386,7 @@ export default () => {
             dispatch({
                 srsTableData: srsTableState.srsTableData,
                 srsOtherReqData: srsTableState.srsOtherReqData,
-                srsChangeTables: srsTableState.srsChangeTables,
+                srsChangeTables: sortSrsChangeTables(srsTableState.srsChangeTables),
                 ...(syncedTree?.length ? { treeStructure: syncedTree } : {}),
                 ...(silent ? {} : { srsTableLoading: false }),
             });
@@ -2413,25 +2456,46 @@ export default () => {
             }
             const created = res.data || {};
             const srsTableState = await fetchSrsTableState(docId);
-            const hasCreatedTable = created.type_code && (srsTableState.srsChangeTables || []).some((table: any) => table.type_code === created.type_code);
+            const createdTable = created.type_code
+                ? {
+                    id: created.id || `change_${created.type_code}`,
+                    title: created.type_name || typeName,
+                    type_code: created.type_code,
+                    create_time: created.create_time,
+                    data: [],
+                }
+                : undefined;
+            const nextChangeTables = created.type_code
+                ? moveChangeTableToEnd(srsTableState.srsChangeTables, created.type_code)
+                : sortSrsChangeTables(srsTableState.srsChangeTables);
             dispatch({
                 srsTableData: srsTableState.srsTableData,
                 srsOtherReqData: srsTableState.srsOtherReqData,
-                srsChangeTables: hasCreatedTable
-                    ? srsTableState.srsChangeTables
-                    : [
-                        ...(srsTableState.srsChangeTables || []),
-                        ...(created.type_code ? [{
-                            id: created.id || `change_${created.type_code}`,
-                            title: created.type_name || typeName,
-                            type_code: created.type_code,
-                            data: [],
-                        }] : []),
-                    ],
+                srsChangeTables: nextChangeTables,
                 srsTableLoading: false,
                 showAddChangeTableModal: false,
                 newChangeTableName: "",
             });
+            if (createdTable) {
+                const headers = [
+                    { code: "srs_code", name: ts("srs_doc.srs_code") || "需求编号" },
+                    { code: "module", name: ts("srs_doc.module") || "模块" },
+                    { code: "function", name: ts("srs_doc.function") || "功能" },
+                    { code: "sub_function", name: ts("srs_doc.sub_function") || "子功能" },
+                ];
+                dispatch({
+                    changeReqEditTarget: createdTable,
+                    changeReqEditInitialData: {
+                        tableName: createdTable.title || "",
+                        type_code: createdTable.type_code,
+                        tableId: createdTable.id,
+                        headers,
+                        data: [],
+                        rowMeta: [],
+                    },
+                    showChangeReqEditModal: true,
+                });
+            }
             message.success("变更表格已新增");
         } catch (error: any) {
             dispatch({ srsTableLoading: false });
@@ -2448,6 +2512,8 @@ export default () => {
         ];
         const initialData: TableDataWithHeaders = {
             tableName: table.title || "",
+            type_code: table.type_code,
+            tableId: table.id,
             headers,
             data: (table.data || []).map((row: any) => [
                 row?.srs_code || "",
@@ -2534,7 +2600,7 @@ export default () => {
     const handleSaveChangeReqInCurrentPage = async (tableData: TableDataWithHeaders) => {
         const docId = params.id ? parseInt(params.id) : 0;
         const target = data.changeReqEditTarget as any;
-        let typeCode = String(target?.type_code || "");
+        const targetTableId = target?.id ?? tableData?.tableId;
         if (!docId) {
             message.error("变更需求保存失败：缺少文档信息");
             return;
@@ -2564,39 +2630,48 @@ export default () => {
 
         try {
             dispatch({ savingChangeReq: true });
-            let resolvedTarget = target;
-            if (!typeCode) {
-                const latestState = await fetchSrsTableState(docId);
-                const rowCodes = new Set(rows.map((row) => normalizeSrsCodeForSync(row.code)).filter(Boolean));
-                const normalizeTitle = (value?: string) => normalizeReqText(value).replace(/\s+/g, "");
-                const matchedTable = (latestState.srsChangeTables || []).find((table: any) =>
+            const latestState = await fetchSrsTableState(docId);
+            const normalizeTitle = (value?: string) => normalizeReqText(value).replace(/\s+/g, "");
+            let typeCode = String(tableData?.type_code || target?.type_code || "");
+            let resolvedTarget = typeCode
+                ? (latestState.srsChangeTables || []).find((table: any) => String(table.type_code || "") === typeCode)
+                : undefined;
+            if (!resolvedTarget && targetTableId) {
+                resolvedTarget = (latestState.srsChangeTables || []).find((table: any) => String(table.id) === String(targetTableId));
+                typeCode = String(resolvedTarget?.type_code || typeCode || "");
+            }
+            if (!resolvedTarget && (nextTableName || target?.title)) {
+                resolvedTarget = (latestState.srsChangeTables || []).find((table: any) =>
                     normalizeTitle(table?.title) === normalizeTitle(nextTableName || target?.title)
-                ) || (rowCodes.size ? (latestState.srsChangeTables || []).find((table: any) =>
-                    (table.data || []).some((row: any) => rowCodes.has(normalizeSrsCodeForSync(row?.srs_code || row?.code)))
-                ) : undefined);
-                if (matchedTable?.type_code) {
-                    resolvedTarget = matchedTable;
-                    typeCode = String(matchedTable.type_code || "");
-                } else {
-                    const typeRes: any = await ApiSrsType.add_srs_type({
-                        doc_id: docId,
-                        type_name: nextTableName || String(target?.title || "").trim() || "变更需求",
-                    });
-                    if (typeRes.code !== ApiSrsType.C_OK || !typeRes.data?.type_code) {
-                        throw new Error(typeRes.msg || "变更表格创建失败");
-                    }
-                    resolvedTarget = {
-                        ...target,
-                        id: typeRes.data.id,
-                        title: typeRes.data.type_name || nextTableName || target?.title || "变更需求",
-                        type_code: typeRes.data.type_code,
-                        data: [],
-                    };
-                    typeCode = String(typeRes.data.type_code || "");
+                );
+                typeCode = String(resolvedTarget?.type_code || typeCode || "");
+            }
+            if (!typeCode) {
+                const typeRes: any = await ApiSrsType.add_srs_type({
+                    doc_id: docId,
+                    type_name: nextTableName || String(target?.title || "").trim() || "变更需求",
+                });
+                if (typeRes.code !== ApiSrsType.C_OK || !typeRes.data?.type_code) {
+                    throw new Error(typeRes.msg || "变更表格创建失败");
                 }
+                resolvedTarget = {
+                    id: typeRes.data.id,
+                    title: typeRes.data.type_name || nextTableName || target?.title || "变更需求",
+                    type_code: typeRes.data.type_code,
+                    data: [],
+                };
+                typeCode = String(typeRes.data.type_code || "");
             }
             if (!typeCode) {
                 throw new Error("变更需求保存失败：缺少变更表类型");
+            }
+            if (!resolvedTarget) {
+                resolvedTarget = (latestState.srsChangeTables || []).find((table: any) => String(table.type_code || "") === typeCode) || {
+                    id: targetTableId || typeCode,
+                    title: nextTableName || target?.title || "变更需求",
+                    type_code: typeCode,
+                    data: [],
+                };
             }
             const targetId = Number(resolvedTarget?.id);
             if (nextTableName && nextTableName !== String(resolvedTarget?.title || "").trim() && Number.isFinite(targetId) && targetId > 0) {
@@ -2611,57 +2686,87 @@ export default () => {
                 }
             }
             const oldRows = (resolvedTarget?.data || []).filter((r: any) => !!r?.id);
+            const oldRowIdSet = new Set(oldRows.map((row: any) => row.id));
             const usedOldIds = new Set<number | string>();
-            const savedRowsByIdentity = new Map<string, any>();
             const getChangeReqIdentity = (item: any) => [
                 normalizeSrsCodeForSync(item?.srs_code || item?.code || ""),
                 normalizeReqText(item?.module),
                 normalizeReqText(item?.function),
                 normalizeReqText(item?.sub_function),
             ].join("|");
-            const currentIdentitySet = new Set(rows.map((row: any) => getChangeReqIdentity(row)).filter((key: string) => key.replace(/\|/g, "")));
+            const normalizeReqCode = (value?: string) => String(value || "").replace(/\s+/g, "").toUpperCase();
+            const assignments: Array<{ row: any; oldRow?: any; code: string; rowIdentity: string }> = [];
             for (const row of rows) {
                 const rowIdentity = getChangeReqIdentity(row);
                 const matchedOldRow =
                     oldRows.find((item: any) => getChangeReqIdentity(item) === rowIdentity && !usedOldIds.has(item.id)) ||
-                    (row.req_id ? oldRows.find((item: any) => {
-                        if (usedOldIds.has(item.id) || item.id !== row.req_id) return false;
-                        const oldIdentity = getChangeReqIdentity(item);
-                        // 若旧身份仍在当前表格其他行中，说明当前行只是新增/改填，不能占用旧 id。
-                        return oldIdentity === rowIdentity || !currentIdentitySet.has(oldIdentity);
-                    }) : undefined);
-                const saveData = {
-                    id: matchedOldRow?.id || 0,
-                    doc_id: docId,
-                    code: row.code,
-                    module: row.module,
-                    function: row.function,
-                    sub_function: row.sub_function,
-                    location: "",
-                    type_code: typeCode,
-                    rcm_ids: [],
-                };
+                    (row.req_id && oldRowIdSet.has(row.req_id)
+                        ? oldRows.find((item: any) => item.id === row.req_id && !usedOldIds.has(item.id))
+                        : undefined);
                 if (matchedOldRow?.id) {
                     usedOldIds.add(matchedOldRow.id);
                 }
-                const saveRes = saveData.id
-                    ? await ApiSrsReq.update_srs_req(saveData)
-                    : await ApiSrsReq.add_srs_req(saveData);
-                if (saveRes.code !== ApiSrsReq.C_OK) {
-                    throw new Error(saveRes.msg || "保存失败");
-                }
-                savedRowsByIdentity.set(rowIdentity, {
-                    ...row,
-                    id: saveData.id || saveRes.data?.id || saveRes.data?.req_id || 0,
-                    type_code: typeCode,
+                assignments.push({
+                    row,
+                    oldRow: matchedOldRow,
+                    code: normalizeReqCode(row.code),
+                    rowIdentity,
                 });
             }
             const deletedOldRows = oldRows.filter((oldRow: any) => oldRow?.id && !usedOldIds.has(oldRow.id));
-            for (const oldRow of deletedOldRows) {
-                const deleteRes: any = await ApiSrsReq.delete_srs_req({ id: oldRow.id });
-                if (deleteRes.code !== ApiSrsReq.C_OK) {
-                    throw new Error(deleteRes.msg || "删除变更需求失败");
-                }
+            const normalizeSavedValue = (value: any) => normalizeReqText(value);
+            const changedAssignments = assignments.filter(({ row, oldRow, code }) => {
+                if (!oldRow?.id) return true;
+                return normalizeReqCode(oldRow.srs_code || oldRow.code) !== code ||
+                    normalizeSavedValue(oldRow.module) !== row.module ||
+                    normalizeSavedValue(oldRow.function) !== row.function ||
+                    normalizeSavedValue(oldRow.sub_function) !== row.sub_function;
+            });
+            if (changedAssignments.length === 0 && deletedOldRows.length === 0) {
+                dispatch({ savingChangeReq: false });
+                message.success("变更需求已保存");
+                return ((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) as TreeNode[];
+            }
+            const changedOldIds = new Set(
+                changedAssignments.map((assignment) => assignment.oldRow?.id).filter((id): id is number | string => !!id)
+            );
+            const changedReqCodes = new Set(changedAssignments.map((assignment) => assignment.code));
+            const buildSaveData = (item: any, code: string, id = 0) => ({
+                id,
+                doc_id: docId,
+                code,
+                module: item.module || "",
+                function: item.function || "",
+                sub_function: item.sub_function || "",
+                location: item.location || "",
+                type_code: typeCode,
+                rcm_ids: item.rcm_ids || [],
+            });
+            const tempUpdates: any[] = [];
+            for (const assignment of changedAssignments) {
+                const oldRow = assignment.oldRow;
+                if (!oldRow?.id) continue;
+                const oldCode = normalizeReqCode(oldRow.srs_code || (oldRow as any).code);
+                if (oldCode === assignment.code) continue;
+                tempUpdates.push(buildSaveData(oldRow, `TMP-SRS-${docId}-${oldRow.id}-${Date.now()}`, oldRow.id));
+            }
+            for (const oldRow of oldRows) {
+                if (usedOldIds.has(oldRow.id) || changedOldIds.has(oldRow.id)) continue;
+                const oldCode = normalizeReqCode(oldRow.srs_code || (oldRow as any).code);
+                if (!changedReqCodes.has(oldCode)) continue;
+                tempUpdates.push(buildSaveData(oldRow, `TMP-SRS-${docId}-${oldRow.id}-${Date.now()}`, oldRow.id));
+            }
+            const upserts = changedAssignments.map(({ row, oldRow, code }) => buildSaveData(row, code, oldRow?.id || 0));
+            const deleteIds = deletedOldRows.map((oldRow: any) => oldRow.id).filter(Boolean);
+            const batchRes: any = await ApiSrsReq.batch_save_srs_req({
+                doc_id: docId,
+                type_code: typeCode,
+                temp_updates: tempUpdates,
+                upserts,
+                delete_ids: deleteIds,
+            });
+            if (batchRes.code !== ApiSrsReq.C_OK) {
+                throw new Error(batchRes.msg || "保存失败");
             }
             const srsTableState = await fetchSrsTableState(docId);
             const codeSets = buildActiveReqDetailCodeSets(srsTableState);
@@ -2680,7 +2785,7 @@ export default () => {
             dispatch({
                 srsTableData: srsTableState.srsTableData,
                 srsOtherReqData: srsTableState.srsOtherReqData,
-                srsChangeTables: srsTableState.srsChangeTables,
+                srsChangeTables: sortSrsChangeTables(srsTableState.srsChangeTables),
                 treeStructure: syncedTree,
                 srsTableLoading: false,
                 savingChangeReq: false,
@@ -2762,7 +2867,14 @@ export default () => {
 
         try {
             dispatch({ srsTableLoading: true });
-            const latestBeforeSave = await fetchSrsTableState(docId);
+            const localTableState = {
+                srsTableData: data.srsTableData || [],
+                srsOtherReqData: data.srsOtherReqData || [],
+                srsChangeTables: data.srsChangeTables || [],
+            };
+            const latestBeforeSave = localTableState.srsTableData.length
+                ? localTableState
+                : await fetchSrsTableState(docId);
             const oldRows = (latestBeforeSave.srsTableData || []).filter((row: any) => !!row?.id);
             const usedOldIds = new Set<number | string>();
             const usedReqCodes = new Set<string>();
@@ -2819,23 +2931,15 @@ export default () => {
                 type_code: "1",
                 rcm_ids: item.rcm_ids || [],
             });
-            const updateReq = async (payload: any) => {
-                const saveRes = payload.id
-                    ? await ApiSrsReq.update_srs_req(payload)
-                    : await ApiSrsReq.add_srs_req(payload);
-                if (saveRes.code !== ApiSrsReq.C_OK) {
-                    throw new Error(saveRes.msg || "SRS表保存失败");
-                }
-            };
 
-            // 只释放发生编号变更的旧行，避免保存整张表时做无效更新。
+            const tempUpdates: any[] = [];
             for (const assignment of changedAssignments) {
                 const oldRow = assignment.oldRow;
                 if (!oldRow?.id) continue;
-                const oldCode = normalizeReqCode(oldRow.srs_code || oldRow.code);
+                const oldCode = normalizeReqCode(oldRow.srs_code || (oldRow as any).code);
                 if (oldCode === assignment.code) continue;
                 const tempCode = `TMP-SRS-${docId}-${oldRow.id}-${Date.now()}`;
-                await updateReq(buildSaveData({
+                tempUpdates.push(buildSaveData({
                     module: oldRow.module || "",
                     function: oldRow.function || "",
                     sub_function: oldRow.sub_function || "",
@@ -2843,13 +2947,12 @@ export default () => {
                     rcm_ids: oldRow.rcm_ids || [],
                 }, tempCode, oldRow.id));
             }
-            // 新增/改号行复用了未参与本次变更的旧编号时，先释放该编号，避免唯一约束冲突。
             for (const oldRow of oldRows) {
                 if (usedOldIds.has(oldRow.id) || changedOldIds.has(oldRow.id)) continue;
-                const oldCode = normalizeReqCode(oldRow.srs_code || oldRow.code);
+                const oldCode = normalizeReqCode(oldRow.srs_code || (oldRow as any).code);
                 if (!changedReqCodes.has(oldCode)) continue;
                 const tempCode = `TMP-SRS-${docId}-${oldRow.id}-${Date.now()}`;
-                await updateReq(buildSaveData({
+                tempUpdates.push(buildSaveData({
                     module: oldRow.module || "",
                     function: oldRow.function || "",
                     sub_function: oldRow.sub_function || "",
@@ -2858,27 +2961,40 @@ export default () => {
                 }, tempCode, oldRow.id));
             }
 
-            for (const assignment of changedAssignments) {
-                const { row, oldRow, code } = assignment;
-                const saveData = {
-                    id: oldRow?.id || 0,
-                    doc_id: docId,
-                    code,
-                    module: row.module,
-                    function: row.function,
-                    sub_function: row.sub_function,
-                    location: oldRow?.location || "",
-                    type_code: "1",
-                    rcm_ids: oldRow?.rcm_ids || [],
-                };
-                await updateReq(saveData);
+            const upserts = changedAssignments.map(({ row, oldRow, code }) => ({
+                id: oldRow?.id || 0,
+                doc_id: docId,
+                code,
+                module: row.module,
+                function: row.function,
+                sub_function: row.sub_function,
+                location: oldRow?.location || "",
+                type_code: "1",
+                rcm_ids: oldRow?.rcm_ids || [],
+            }));
+            const deleteIds = deletedOldRows.map((oldRow: any) => oldRow.id).filter(Boolean);
+
+            const batchRes: any = await ApiSrsReq.batch_save_srs_req({
+                doc_id: docId,
+                type_code: "1",
+                temp_updates: tempUpdates,
+                upserts,
+                delete_ids: deleteIds,
+            });
+            if (batchRes.code !== ApiSrsReq.C_OK) {
+                throw new Error(batchRes.msg || "SRS表保存失败");
             }
-            for (const oldRow of deletedOldRows) {
-                const deleteRes: any = await ApiSrsReq.delete_srs_req({ id: oldRow.id });
-                if (deleteRes.code !== ApiSrsReq.C_OK) {
-                    throw new Error(deleteRes.msg || "删除标准需求失败");
-                }
-            }
+
+            const needsReqListRefresh = deleteIds.length > 0 ||
+                changedAssignments.some(({ row, oldRow, code }) => {
+                    if (!oldRow?.id) return true;
+                    const oldCode = normalizeReqCode(oldRow.srs_code || (oldRow as any).code);
+                    return oldCode !== code ||
+                        normalizeSavedValue(oldRow.module) !== row.module ||
+                        normalizeSavedValue(oldRow.function) !== row.function ||
+                        normalizeSavedValue(oldRow.sub_function) !== row.sub_function;
+                });
+
             const srsTableState = await fetchSrsTableState(docId);
             const syncedTree = syncTreeWithSrsTableState(
                 ((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) as TreeNode[],
@@ -2892,7 +3008,9 @@ export default () => {
                 treeStructure: syncedTree,
                 srsTableLoading: false,
             });
-            loadReqListData();
+            if (needsReqListRefresh) {
+                loadReqListData();
+            }
             return srsTableState.srsTableData;
         } catch (error: any) {
             dispatch({ srsTableLoading: false });
@@ -3018,7 +3136,7 @@ export default () => {
             for (const assignment of changedAssignments) {
                 const oldRow = assignment.oldRow;
                 if (!oldRow?.id) continue;
-                const oldCode = normalizeReqCode(oldRow.srs_code || oldRow.code);
+                const oldCode = normalizeReqCode(oldRow.srs_code || (oldRow as any).code);
                 if (oldCode === assignment.code) continue;
                 const tempCode = `TMP-SRS-${docId}-${oldRow.id}-${Date.now()}`;
                 await updateReq(buildSaveData({
@@ -3029,7 +3147,7 @@ export default () => {
             }
             for (const oldRow of oldRows) {
                 if (usedOldIds.has(oldRow.id) || changedOldIds.has(oldRow.id)) continue;
-                const oldCode = normalizeReqCode(oldRow.srs_code || oldRow.code);
+                const oldCode = normalizeReqCode(oldRow.srs_code || (oldRow as any).code);
                 if (!changedReqCodes.has(oldCode)) continue;
                 const tempCode = `TMP-SRS-${docId}-${oldRow.id}-${Date.now()}`;
                 await updateReq(buildSaveData({

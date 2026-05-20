@@ -21,6 +21,8 @@ export interface TableHeaderItem {
 // 表格数据结构（包含表头和数据）
 export interface TableDataWithHeaders {
   tableName?: string;
+  type_code?: string;
+  tableId?: number | string;
   headers: TableHeaderItem[];
   data: string[][];
   rowMeta?: Array<Record<string, any>>;
@@ -50,6 +52,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [form] = Form.useForm(); // 表单实例，用于收集和重置行列数
   const tableDataRef = useRef<TableRowData[]>([]);
+  const tableMetaRef = useRef<{ type_code?: string; tableId?: number | string }>({});
 
   const normalizeRcmCode = (value: string | undefined): string => {
     return String(value || "")
@@ -130,18 +133,31 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
     /^SRS-/i.test(String(customHeaders[1]?.name || "").trim())
   );
 
-  const CHANGE_REQ_TABLE_NAME = "变更需求";
   const CHANGE_REQ_TABLE_HEADERS = "需求编号,模块,功能,子功能";
+  const isChangeReqTableName = (value?: string) => /变更/.test(String(value || "").trim());
 
-  const handleTableNameChange = (value: string) => {
-    setTableName(value);
-    if (String(value || "").trim() === CHANGE_REQ_TABLE_NAME) {
-      setHeaderInput(CHANGE_REQ_TABLE_HEADERS);
-      setColCount(4);
-      form.setFieldsValue({
-        headerInput: CHANGE_REQ_TABLE_HEADERS,
-        colCount: 4,
-      });
+  const applyChangeReqTablePreset = () => {
+    setHeaderInput(CHANGE_REQ_TABLE_HEADERS);
+    setColCount(4);
+    form.setFieldsValue({ colCount: 4 });
+  };
+
+  const watchedTableName = Form.useWatch("tableName", form);
+
+  useEffect(() => {
+    if (!open || initialData || !isChangeReqTableName(watchedTableName)) return;
+    applyChangeReqTablePreset();
+  }, [watchedTableName, open, initialData]);
+
+  const handleFormValuesChange = (changedValues: Record<string, unknown>) => {
+    if ("tableName" in changedValues) {
+      setTableName(String(changedValues.tableName || ""));
+    }
+    if ("rowCount" in changedValues) {
+      setRowCount(Number(changedValues.rowCount || 0));
+    }
+    if ("colCount" in changedValues) {
+      setColCount(Number(changedValues.colCount || 0));
     }
   };
 
@@ -179,6 +195,10 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       setColCount(headers.length);
       setRowCount(data.length);
       setTableName(initialData.tableName || '');
+      tableMetaRef.current = {
+        type_code: initialData.type_code,
+        tableId: initialData.tableId,
+      };
       setHeaderInput(headers.map(h => h.name).join(',')); // 输入框只显示name
       setCustomHeaders(headers);
       
@@ -210,6 +230,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       tableDataRef.current = [];
       setTableData([]);
       setCustomHeaders([]);
+      tableMetaRef.current = {};
     }
   }, [open, initialData, form]);
 
@@ -232,17 +253,34 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
 
   // 2. 生成表格：点击确认后，根据行列数初始化表格数据和列配置
   const generateTable = () => {
+    const formValues = form.getFieldsValue();
+    const nextTableName = String(formValues.tableName || tableName || "");
+    let nextHeaderInput = String(headerInput || formValues.headerInput || "");
+    let nextColCount = Number(formValues.colCount || colCount || 0);
+    let nextRowCount = Number(formValues.rowCount || rowCount || 0);
+
+    if (isChangeReqTableName(nextTableName) && !nextHeaderInput.trim()) {
+      nextHeaderInput = CHANGE_REQ_TABLE_HEADERS;
+      nextColCount = 4;
+      setHeaderInput(nextHeaderInput);
+      setColCount(nextColCount);
+      form.setFieldsValue({
+        headerInput: nextHeaderInput,
+        colCount: nextColCount,
+      });
+    }
+
     // 校验行列数合法性（大于0，避免无效表格）
-    if (!rowCount || !colCount || rowCount < 1 || colCount < 1) {
+    if (!nextRowCount || !nextColCount || nextRowCount < 1 || nextColCount < 1) {
       message.warning(ts('srs_doc.please_input_valid_row_col'));
       return;
     }
 
     // 处理自定义表头（转换为带UUID的对象数组）
     let headers: TableHeaderItem[] = [];
-    if (headerInput.trim()) {
+    if (nextHeaderInput.trim()) {
       // 如果输入了表头，使用逗号分隔（支持中文逗号和英文逗号）
-      const headerNames = headerInput.split(/[,，]/).map(h => h.trim()).filter(h => h);
+      const headerNames = nextHeaderInput.split(/[,，]/).map(h => h.trim()).filter(h => h);
       
       // 生成带UUID的表头对象
       headers = headerNames.map(name => ({
@@ -251,7 +289,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       }));
       
       // 如果表头数量不足，用默认名称补齐
-      while (headers.length < colCount) {
+      while (headers.length < nextColCount) {
         const defaultName = `${ts('srs_doc.column')} ${headers.length + 1}`;
         headers.push({
           code: uuidv4(),
@@ -259,22 +297,22 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
         });
       }
       
-      // 如果表头数量过多，截取前 colCount 个
-      headers = headers.slice(0, colCount);
+      // 如果表头数量过多，截取前 nextColCount 个
+      headers = headers.slice(0, nextColCount);
     } else {
       // 如果没有输入表头，使用默认名称生成带UUID的表头
-      headers = Array.from({ length: colCount }, (_, index) => ({
+      headers = Array.from({ length: nextColCount }, (_, index) => ({
         code: uuidv4(),
         name: `${ts('srs_doc.column')} ${index + 1}`
       }));
     }
     setCustomHeaders(headers);
 
-    // 初始化表格数据：生成 rowCount 条数据，每条数据包含 colCount 个可编辑字段（col_0, col_1...）
-    const initTableData: TableRowData[] = Array.from({ length: rowCount }, (_, rowIndex) => {
+    // 初始化表格数据：生成 nextRowCount 条数据，每条数据包含 nextColCount 个可编辑字段（col_0, col_1...）
+    const initTableData: TableRowData[] = Array.from({ length: nextRowCount }, (_, rowIndex) => {
       const rowData: TableRowData = { key: rowIndex, __rowMeta: {} }; // key 是 antd Table 必需的唯一标识
       // 为每一列初始化空值，用于编辑
-      for (let colIndex = 0; colIndex < colCount; colIndex++) {
+      for (let colIndex = 0; colIndex < nextColCount; colIndex++) {
         rowData[`col_${colIndex}`] = '';
       }
       return rowData;
@@ -283,6 +321,8 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
     // 更新表格数据状态
     tableDataRef.current = initTableData;
     setTableData(initTableData);
+    setRowCount(nextRowCount);
+    setColCount(nextColCount);
   };
 
   // 3. 处理表头编辑（仅修改name，保持code不变）
@@ -474,6 +514,8 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
 
     const result: TableDataWithHeaders = {
       tableName: tableName.trim(),
+      type_code: tableMetaRef.current.type_code,
+      tableId: tableMetaRef.current.tableId,
       headers,
       data,
       rowMeta: latestTableData.map((row) => ({ ...(row.__rowMeta || {}) })),
@@ -508,16 +550,13 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
         form={form}
         layout="vertical"
         style={{ marginBottom: '20px' }}
+        onValuesChange={handleFormValuesChange}
       >
         <Form.Item
           name="tableName"
           label="表名"
         >
-          <Input
-            value={tableName}
-            onChange={(e) => handleTableNameChange(e.target.value)}
-            placeholder="请输入表名"
-          />
+          <Input placeholder="请输入表名" />
         </Form.Item>
 
         <div style={{ display: 'flex', gap: '16px' }}>
@@ -529,8 +568,6 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
             <InputNumber
               min={1}
               max={50} // 限制最大行数，避免性能问题
-              value={rowCount}
-              onChange={(value) => setRowCount(value || 0)}
               style={{ width: '120px' }}
             />
           </Form.Item>
@@ -543,25 +580,20 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
             <InputNumber
               min={1}
               max={20} // 限制最大列数，避免表格过宽
-              value={colCount}
-              onChange={(value) => setColCount(value || 0)}
               style={{ width: '120px' }}
             />
           </Form.Item>
         </div>
 
         <Form.Item
-          name="headerInput"
           label={ts('srs_doc.table_header')}
+          extra={<span style={{ color: '#999', fontSize: '12px' }}>{ts('srs_doc.table_header_hint')}</span>}
         >
           <Input
             value={headerInput}
             onChange={(e) => setHeaderInput(e.target.value)}
             placeholder={ts('srs_doc.table_header_placeholder')}
           />
-          <div style={{ marginBottom: '16px', color: '#999', fontSize: '12px' }}>
-            {ts('srs_doc.table_header_hint')}
-          </div>
         </Form.Item>
 
         <Form.Item>

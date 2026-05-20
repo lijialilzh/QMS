@@ -16,7 +16,7 @@ from ..model.sds_reqd import SdsReqd
 from ..model.sds_trace import SdsTrace
 from ..model.srs_req import ReqRcm, SrsReq
 from ..model.srs_reqd import SrsReqd
-from ..obj.tobj_srs_req import SrsReqForm
+from ..obj.tobj_srs_req import SrsReqForm, SrsReqBatchSaveForm
 from ..utils.sql_ctx import db
 from ..utils.i18n import ts
 from ..obj import Page, Resp
@@ -322,7 +322,7 @@ class Server(object):
                 return self.__normalize_req_code(str(row.get(right_code, "") or ""))
         return ""
 
-    def __sync_req_to_node_titles(self, req_row: SrsReq, old_code: str = None):
+    def __sync_req_to_node_titles(self, req_row: SrsReq, old_code: str = None, all_nodes: List[SrsNode] = None):
         code = self.__normalize_req_code(req_row.code or "")
         name_value = self.__pick_req_name(req_row)
         if not code or not name_value:
@@ -332,7 +332,7 @@ class Server(object):
         if old_code:
             match_codes.add(old_code)
 
-        nodes: List[SrsNode] = db.session.execute(
+        nodes: List[SrsNode] = all_nodes if all_nodes is not None else db.session.execute(
             select(SrsNode).where(SrsNode.doc_id == req_row.doc_id)
         ).scalars().all()
         if not nodes:
@@ -369,7 +369,7 @@ class Server(object):
             if new_title and new_title != node.title:
                 node.title = new_title
 
-    def __sync_req_to_node_tables(self, req_row: SrsReq, old_code: str = None, old_module: str = None):
+    def __sync_req_to_node_tables(self, req_row: SrsReq, old_code: str = None, old_module: str = None, table_nodes: List[SrsNode] = None):
         code = self.__normalize_req_code(req_row.code or "")
         if not code:
             return
@@ -380,7 +380,7 @@ class Server(object):
         # SRS 表的行顺序必须保持 Word/用户编辑时的原始顺序；需求编号只用于功能描述章节排序，不能反向重排 SRS 表。
         should_reposition = False
 
-        rows = db.session.execute(
+        rows = table_nodes if table_nodes is not None else db.session.execute(
             select(SrsNode).where(SrsNode.doc_id == req_row.doc_id, SrsNode.table.isnot(None))
         ).scalars().all()
         name_value = self.__pick_req_name(req_row)
@@ -647,6 +647,125 @@ class Server(object):
         db.session.execute(delete(SrsReqd).where(SrsReqd.req_id == id))
         db.session.commit()
         return Resp.resp_ok()
+
+    def __apply_update_req(self, form: SrsReqForm):
+        sql = select(func.count(SrsReq.id)).where(
+            SrsReq.doc_id == form.doc_id,
+            SrsReq.type_code == form.type_code,
+            SrsReq.code == form.code,
+            SrsReq.id != form.id,
+        )
+        count = db.session.execute(sql).scalar()
+        if count > 0:
+            raise ValueError(ts("msg_obj_exist"))
+        sql = select(SrsReq).where(SrsReq.id == form.id)
+        row: SrsReq = db.session.execute(sql).scalars().first()
+        if not row:
+            raise ValueError(ts("msg_obj_null"))
+        old_code = row.code
+        old_module = row.module
+
+        rcm_ids = form.rcm_ids
+        form.rcm_ids = None
+        if rcm_ids is not None:
+            db.session.execute(delete(ReqRcm).where(ReqRcm.req_id == row.id))
+            for rcm_id in rcm_ids:
+                db.session.add(ReqRcm(req_id=row.id, rcm_id=rcm_id))
+
+        for key, value in form.dict().items():
+            if key == "id" or value is None:
+                continue
+            setattr(row, key, value)
+        return row, old_code, old_module
+
+    def __apply_add_req(self, form: SrsReqForm):
+        sql = select(func.count(SrsReq.id)).where(
+            SrsReq.doc_id == form.doc_id,
+            SrsReq.type_code == form.type_code,
+            SrsReq.code == form.code,
+        )
+        count = db.session.execute(sql).scalar()
+        if count > 0:
+            raise ValueError(ts("msg_obj_exist"))
+        rcm_ids = form.rcm_ids
+        form.rcm_ids = None
+        row = SrsReq(**form.dict(exclude_none=True))
+        row.id = None
+        db.session.add(row)
+        db.session.flush()
+
+        if rcm_ids is not None:
+            db.session.execute(delete(ReqRcm).where(ReqRcm.req_id == row.id))
+            for rcm_id in rcm_ids:
+                db.session.add(ReqRcm(req_id=row.id, rcm_id=rcm_id))
+
+        sds_docs = db.session.execute(select(SdsDoc).where(SdsDoc.srsdoc_id == row.doc_id)).scalars().all()
+        if sds_docs:
+            if row.type_code != "2":
+                sds_values = [dict(doc_id=sds_doc.id, req_id=row.id) for sds_doc in sds_docs]
+                db.session.execute(pg_insert(SdsReqd).values(sds_values).on_conflict_do_nothing())
+            if row.type_code != "reqd":
+                sds_code = form.code.replace("SRS", "SDS")
+                chapter = form.sub_function or form.function or form.module
+                sds_values = [dict(doc_id=sds_doc.id, req_id=row.id, sds_code=sds_code, chapter=chapter) for sds_doc in sds_docs]
+                db.session.execute(pg_insert(SdsTrace).values(sds_values).on_conflict_do_nothing())
+        return row
+
+    def __apply_delete_req(self, req_id: int):
+        db.session.execute(delete(SdsReqd).where(SdsReqd.req_id == req_id))
+        db.session.execute(delete(SdsTrace).where(SdsTrace.req_id == req_id))
+        db.session.execute(delete(SrsReq).where(SrsReq.id == req_id))
+        db.session.execute(delete(SrsReqd).where(SrsReqd.req_id == req_id))
+
+    async def batch_save_srs_req(self, form: SrsReqBatchSaveForm):
+        try:
+            doc_id = form.doc_id
+            type_code = form.type_code or tc_standard
+            table_nodes = db.session.execute(
+                select(SrsNode).where(SrsNode.doc_id == doc_id, SrsNode.table.isnot(None))
+            ).scalars().all()
+            all_nodes = db.session.execute(
+                select(SrsNode).where(SrsNode.doc_id == doc_id)
+            ).scalars().all()
+            sync_items: List[Tuple[SrsReq, str, str]] = []
+
+            for item in form.temp_updates or []:
+                payload = SrsReqForm(**{**item.dict(), "doc_id": doc_id, "type_code": type_code})
+                self.__apply_update_req(payload)
+
+            for item in form.upserts or []:
+                payload = SrsReqForm(**{**item.dict(), "doc_id": doc_id, "type_code": type_code})
+                if payload.id:
+                    row, old_code, old_module = self.__apply_update_req(payload)
+                    sync_items.append((row, old_code or "", old_module or ""))
+                else:
+                    row = self.__apply_add_req(payload)
+                    sync_items.append((row, "", ""))
+
+            for req_id in form.delete_ids or []:
+                if req_id:
+                    self.__apply_delete_req(req_id)
+
+            for row, old_code, old_module in sync_items:
+                self.__sync_sds_codes_from_req_code(row, old_code=old_code)
+                self.__sync_req_to_node_tables(
+                    row,
+                    old_code=old_code,
+                    old_module=old_module,
+                    table_nodes=table_nodes,
+                )
+            for row, old_code, _old_module in sync_items:
+                self.__sync_req_to_node_titles(row, old_code=old_code, all_nodes=all_nodes)
+
+            db.session.commit()
+            return Resp.resp_ok()
+        except ValueError as exc:
+            db.session.rollback()
+            return Resp.resp_err(msg=str(exc))
+        except Exception:
+            logger.exception("")
+            db.session.rollback()
+        return Resp.resp_err(msg=ts(msg_err_db))
     
     def __query_rcms(self, req_ids: List[int]) -> List[str]:
         sql = select(ReqRcm, Rcm).join(Rcm, ReqRcm.rcm_id == Rcm.id).where(ReqRcm.req_id.in_(req_ids)).order_by(ReqRcm.req_id, ReqRcm.id)

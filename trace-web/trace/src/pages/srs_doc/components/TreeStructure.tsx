@@ -168,6 +168,26 @@ function normalizeCellText(value: string | undefined): string {
         .toLowerCase();
 }
 
+function renderChangeTableTitle(title?: string) {
+    const txt = String(title || "").trim();
+    return !txt || /^表格\d+$/.test(txt) ? "变更需求" : txt;
+}
+
+function findChangeTableForPreview(
+    changeTables: Array<{ id: number | string; title: string; data: any[]; type_code?: string }> = [],
+    table?: TableData | null,
+    title?: string,
+    options?: { allowSingleFallback?: boolean },
+) {
+    const currentTitle = normalizeCellText(renderChangeTableTitle(table?.name || title));
+    const titleMatched = changeTables.find((item) =>
+        normalizeCellText(renderChangeTableTitle(item?.title)) === currentTitle
+    );
+    if (titleMatched) return titleMatched;
+    if (options?.allowSingleFallback !== false && changeTables.length === 1) return changeTables[0];
+    return undefined;
+}
+
 function isReqCodeHeaderText(text: string): boolean {
     return text.includes("需求编号") || text.includes("需求列表") || text.includes("srscode") || text === "code";
 }
@@ -970,10 +990,6 @@ const TreeNodeItem = ({
             />
         </div>
     );
-    const renderChangeTableTitle = (title?: string) => {
-        const txt = String(title || "").trim();
-        return !txt || /^表格\d+$/.test(txt) ? "变更需求" : txt;
-    };
     const buildChangeRowsFromRenderedTable = (table?: TableData | null) => {
         if (!table?.headers?.length || !Array.isArray(table.rows)) return [];
         const headers = table.headers;
@@ -994,26 +1010,8 @@ const TreeNodeItem = ({
             }))
             .filter((row) => row.srs_code || row.module || row.function || row.sub_function);
     };
-    const findChangeTableForRenderedTable = (table?: TableData | null, title?: string) => {
-        const changeTables = srsReqPreview?.changes || [];
-        const currentTitle = normalizeCellText(renderChangeTableTitle(table?.name || title));
-        const titleMatched = changeTables.find((item: any) =>
-            normalizeCellText(renderChangeTableTitle(item?.title)) === currentTitle
-        );
-        if (titleMatched) return titleMatched;
-        const renderedCodes = new Set(
-            buildChangeRowsFromRenderedTable(table)
-                .map((row) => normalizeSrsCode(row.srs_code))
-                .filter(Boolean)
-        );
-        if (renderedCodes.size) {
-            const codeMatched = changeTables.find((item: any) =>
-                (item?.data || []).some((row: any) => renderedCodes.has(normalizeSrsCode(row?.srs_code || row?.code)))
-            );
-            if (codeMatched) return codeMatched;
-        }
-        return changeTables.length === 1 ? changeTables[0] : undefined;
-    };
+    const findChangeTableForRenderedTable = (table?: TableData | null, title?: string) =>
+        findChangeTableForPreview(srsReqPreview?.changes || [], table, title);
     const isRenderableTable = hasRenderableTable;
     const isImportedPlaceholderTitle = (title?: string) => /^导入表格\d*$/.test(String(title || "").trim());
     const getNormalTableDisplayTitle = (item: { table?: TableData | null; title?: string; text?: string; index: number; isCurrentNodeTable?: boolean }) => {
@@ -1073,7 +1071,7 @@ const TreeNodeItem = ({
     const shouldShowChangeReqTables = !!(
         (isSrsReqListNode || (isImportedReqTableAnchor && hasNormalOtherReqTable)) &&
         !hasNormalChangeReqTable &&
-        (srsReqPreview?.changes || []).some((table) => (table.data || []).length > 0)
+        (srsReqPreview?.changes || []).length > 0
     );
     const shouldMoveOtherReqMarker = readOnly && hasOtherReqMarker && otherReqTableIndex >= 0;
     const imageCaptionData = extractImageCaptionAndBody(node.text);
@@ -1615,7 +1613,7 @@ const TreeNodeItem = ({
                       </div>
                   </div>
               ))}
-              {shouldShowChangeReqTables && (srsReqPreview?.changes || []).filter((table) => (table.data || []).length > 0).map((table) => (
+              {shouldShowChangeReqTables && (srsReqPreview?.changes || []).map((table) => (
                   <div className="node-table" key={`srs_change_${table.id}`}>
                       <div style={{ marginBottom: 8, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                           <span>{renderChangeTableTitle(table.title)}</span>
@@ -2419,6 +2417,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
             function: normalizeReqDisplayText(item?.function),
             sub_function: normalizeReqDisplayText(item?.sub_function),
             type_code: item?.type_code || table?.type_code || "__change_table",
+            req_detail_key: item?.id ? `change_reqd_${item.id}` : "",
             __fromChangeTable: true,
         })))
         .filter((item: any) => item.code);
@@ -3668,7 +3667,16 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         }
         const isSavingChangeReqTable = !!(tableFormat && isReqMainTable(tableFormat) && /变更/.test(String(tableFormat.name || tableData.tableName || "")));
         if (isSavingChangeReqTable && onSaveSrsChangeReqTable) {
-            const syncedTree = await onSaveSrsChangeReqTable(tableData);
+            const explicitTypeCode = String(tableData?.type_code || "").trim();
+            const explicitTableId = tableData?.tableId;
+            const matchedChangeTable = (!explicitTypeCode && explicitTableId == null)
+                ? findChangeTableForPreview(srsReqPreview?.changes || [], tableFormat, tableData.tableName, { allowSingleFallback: false })
+                : undefined;
+            const syncedTree = await onSaveSrsChangeReqTable({
+                ...tableData,
+                type_code: explicitTypeCode || matchedChangeTable?.type_code,
+                tableId: explicitTableId ?? matchedChangeTable?.id ?? tableData.tableId,
+            });
             if (syncedTree?.length) {
                 updateNodes(syncedTree);
             }

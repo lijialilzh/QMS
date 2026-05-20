@@ -14,6 +14,10 @@ export const update_srs_req = async (params: any) => {
     return await httpPost("/trace-api/srs_req/update_srs_req", params);
 };
 
+export const batch_save_srs_req = async (params: any) => {
+    return await httpPost("/trace-api/srs_req/batch_save_srs_req", params);
+};
+
 export const list_srs_req = async (params: any) => {
     return await httpGet("/trace-api/srs_req/list_srs_req", params);
 };

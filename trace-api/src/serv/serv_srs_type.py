@@ -63,7 +63,7 @@ class Server(object):
             sql = sql.where(SrsType.doc_id == doc_id)
         sql_count = select(func.count()).select_from(sql)
         total = db.session.execute(sql_count).scalars().first()
-        sql = sql.offset(page_size * page_index).limit(page_size).order_by(SrsType.id)
+        sql = sql.order_by(SrsType.id).offset(page_size * page_index).limit(page_size)
         rows: list[SrsType] = db.session.execute(sql).scalars().all()
         objs = []
         for row in rows:
