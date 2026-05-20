@@ -1,8 +1,12 @@
 
+import logging
 import os
 import re
 import io
 import base64
+import shutil
+import subprocess
+import tempfile
 from urllib.parse import unquote, urlparse
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -147,8 +151,8 @@ def save_tab2docx(tab: Table,  docx: Document):
                 for ci, cell in enumerate(row):
                     if cell is None:
                         continue
-                    rs = int(cell.row_span or 1)
-                    cs = int(cell.col_span or 1)
+                    rs = 1 if cell.row_span is None else int(cell.row_span)
+                    cs = 1 if cell.col_span is None else int(cell.col_span)
                     if rs == 0 or cs == 0:
                         continue
                     text = str(cell.value or "")
@@ -353,3 +357,167 @@ def fonted_txt(node_para, text, font_size=10.5, bold=False):
         font_name="宋体" if re.match(r'[\u4e00-\u9fa5]', part) else "Times New Roman"
         run.font.name = font_name
         run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
+
+logger = logging.getLogger(__name__)
+
+def insert_toc_field(docx: Document, outline_levels: str = "1-4"):
+    """插入 Word 目录域，打开文档后自动更新标题与页码。"""
+    if OxmlElement is None or qn is None:
+        return
+    p = docx.add_paragraph()
+    run_begin = p.add_run()
+    fld_begin = OxmlElement("w:fldChar")
+    fld_begin.set(qn("w:fldCharType"), "begin")
+    fld_begin.set(qn("w:dirty"), "true")
+    run_begin._r.append(fld_begin)
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
+    instr.text = f' TOC \\o "{outline_levels}" \\h \\u '
+    run_begin._r.append(instr)
+    fld_separate = OxmlElement("w:fldChar")
+    fld_separate.set(qn("w:fldCharType"), "separate")
+    run_begin._r.append(fld_separate)
+    p.add_run("目录将在打开文档后自动更新")
+    run_end = p.add_run()
+    fld_end = OxmlElement("w:fldChar")
+    fld_end.set(qn("w:fldCharType"), "end")
+    run_end._r.append(fld_end)
+
+
+def enable_update_fields_on_open(docx: Document):
+    if OxmlElement is None or qn is None:
+        return
+    update_fields = OxmlElement("w:updateFields")
+    update_fields.set(qn("w:val"), "true")
+    docx.settings.element.append(update_fields)
+
+
+def refresh_docx_toc_with_libreoffice(output_stream) -> bool:
+    """用 LibreOffice 刷新目录域，导出文件即可带正确页码。"""
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if not soffice:
+        logger.warning("LibreOffice not found, skip docx TOC refresh")
+        return False
+    try:
+        output_stream.seek(0)
+        source_bytes = output_stream.read()
+        with tempfile.TemporaryDirectory(prefix="docx_toc_refresh_") as tmpdir:
+            input_path = os.path.join(tmpdir, "input.docx")
+            output_path = os.path.join(tmpdir, "output.docx")
+            profile_dir = os.path.join(tmpdir, "lo_profile")
+            script_path = os.path.join(tmpdir, "refresh_toc.py")
+            with open(input_path, "wb") as f:
+                f.write(source_bytes)
+            script = r'''
+import sys
+import time
+import uno
+from com.sun.star.beans import PropertyValue
+
+input_path = sys.argv[1]
+output_path = sys.argv[2]
+
+def prop(name, value):
+    item = PropertyValue()
+    item.Name = name
+    item.Value = value
+    return item
+
+local_ctx = uno.getComponentContext()
+resolver = local_ctx.ServiceManager.createInstanceWithContext(
+    "com.sun.star.bridge.UnoUrlResolver",
+    local_ctx,
+)
+ctx = None
+last_error = None
+for _ in range(60):
+    try:
+        ctx = resolver.resolve("uno:socket,host=127.0.0.1,port=2002;urp;StarOffice.ComponentContext")
+        break
+    except Exception as exc:
+        last_error = exc
+        time.sleep(0.5)
+if ctx is None:
+    raise RuntimeError(f"connect libreoffice failed: {last_error}")
+
+desktop = ctx.ServiceManager.createInstanceWithContext("com.sun.star.frame.Desktop", ctx)
+doc = desktop.loadComponentFromURL(
+    uno.systemPathToFileUrl(input_path),
+    "_blank",
+    0,
+    (
+        prop("Hidden", True),
+        prop("ReadOnly", False),
+        prop("UpdateDocMode", 3),
+    ),
+)
+if doc is None:
+    raise RuntimeError("load docx failed")
+try:
+    indexes = doc.getDocumentIndexes()
+    for idx in range(indexes.getCount()):
+        indexes.getByIndex(idx).update()
+    fields = doc.getTextFields()
+    enum = fields.createEnumeration()
+    while enum.hasMoreElements():
+        field = enum.nextElement()
+        try:
+            field.update()
+        except Exception:
+            pass
+    doc.storeAsURL(
+        uno.systemPathToFileUrl(output_path),
+        (
+            prop("FilterName", "Office Open XML Text"),
+            prop("Overwrite", True),
+        ),
+    )
+finally:
+    doc.close(True)
+'''
+            with open(script_path, "w", encoding="utf-8") as f:
+                f.write(script)
+            server = subprocess.Popen(
+                [
+                    soffice,
+                    "--headless",
+                    "--nologo",
+                    "--nodefault",
+                    "--nofirststartwizard",
+                    "--nolockcheck",
+                    f"-env:UserInstallation=file://{profile_dir}",
+                    "--accept=socket,host=127.0.0.1,port=2002;urp;StarOffice.ServiceManager",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            try:
+                env = os.environ.copy()
+                dist_pkg = "/usr/lib/python3/dist-packages"
+                env["PYTHONPATH"] = f"{dist_pkg}:{env.get('PYTHONPATH', '')}"
+                subprocess.run(
+                    ["python3", script_path, input_path, output_path],
+                    check=True,
+                    timeout=120,
+                    env=env,
+                )
+            finally:
+                server.terminate()
+                try:
+                    server.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    server.kill()
+            if not os.path.exists(output_path) or os.path.getsize(output_path) <= 0:
+                output_stream.seek(0)
+                return False
+            with open(output_path, "rb") as f:
+                refreshed = f.read()
+            output_stream.seek(0)
+            output_stream.truncate(0)
+            output_stream.write(refreshed)
+            output_stream.seek(0)
+            return True
+    except Exception:
+        logger.exception("refresh docx TOC with LibreOffice failed")
+        output_stream.seek(0)
+        return False

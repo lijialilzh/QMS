@@ -736,9 +736,18 @@ export default () => {
                 return normalized;
             });
         };
-        const lastValues: Record<string, string> = {};
+        const getSrsExportGroup = (code: string) => {
+            const normalized = normalizeSrsCodeForSync(code);
+            return normalized.match(/^(SRS-[A-Z]+\d+)-\d+$/)?.[1] || normalized;
+        };
+        let lastValues: Record<string, string> = {};
         const flatRows = readRows().map((row: any) => {
             const code = normalizeSrsCodeForSync(row?.[codeCol] || extractSrsCodeFromTableRow(row));
+            const group = getSrsExportGroup(code);
+            const sameGroup = !!group && group === lastValues.group;
+            if (!sameGroup) {
+                lastValues = { group };
+            }
             const rawModule = normalizeReqText(row?.[moduleCol]);
             const rawFunction = normalizeReqText(row?.[functionCol]);
             const rawSubFunction = normalizeReqText(row?.[subFunctionCol]);
@@ -756,10 +765,10 @@ export default () => {
             if (rawLocation) lastValues.location = rawLocation;
             return {
                 ...(codeCol ? { [codeCol]: code || row?.[codeCol] || "" } : {}),
-                ...(moduleCol ? { [moduleCol]: rawModule || lastValues.module || "" } : {}),
-                ...(functionCol ? { [functionCol]: rawFunction || lastValues.function || "" } : {}),
-                ...(subFunctionCol ? { [subFunctionCol]: rawSubFunction || lastValues.sub_function || "" } : {}),
-                ...(locationCol ? { [locationCol]: rawLocation || lastValues.location || "" } : {}),
+                ...(moduleCol ? { [moduleCol]: rawModule || (sameGroup ? lastValues.module || "" : "") } : {}),
+                ...(functionCol ? { [functionCol]: rawFunction || (sameGroup ? lastValues.function || "" : "") } : {}),
+                ...(subFunctionCol ? { [subFunctionCol]: rawSubFunction || (sameGroup ? lastValues.sub_function || "" : "") } : {}),
+                ...(locationCol ? { [locationCol]: rawLocation || (sameGroup ? lastValues.location || "" : "") } : {}),
             };
         }).filter((row: any) => Object.values(row).some((value) => normalizeReqText(value)));
         return {
@@ -797,20 +806,18 @@ export default () => {
         state: { srsTableData: any[]; srsOtherReqData: any[]; srsChangeTables: any[] },
         sourceTree: TreeNode[] = tree,
     ): TreeNode[] => {
-        const { mainRows, otherRows, changeRowsByTitle } = buildExportReqRowState(state, sourceTree);
+        const { changeRowsByTitle } = buildExportReqRowState(state, sourceTree);
         const walk = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node: any) => {
             const text = String(node.text || "");
             const hasOtherMarker = text.includes("其他需求");
             let nextTable = node.table;
-            if (isReqOtherTable(node.table) && otherRows.length) {
-                nextTable = applyExportRowsToTable(node.table, otherRows);
+            if (isReqOtherTable(node.table)) {
+                nextTable = flattenExportReqTable(node.table);
             } else if (isReqMainTable(node.table)) {
                 const tableName = String(node.table?.name || node.title || node.label || "");
                 if (/变更/.test(tableName)) {
                     const changeRows = changeRowsByTitle.get(normalizeTableTitle(tableName)) || changeRowsByTitle.get(normalizeTableTitle("变更需求")) || [];
                     nextTable = changeRows.length ? applyExportRowsToTable(node.table, changeRows) : flattenExportReqTable(node.table);
-                } else if (mainRows.length) {
-                    nextTable = applyExportRowsToTable(node.table, mainRows);
                 } else {
                     nextTable = flattenExportReqTable(node.table);
                 }
@@ -824,8 +831,8 @@ export default () => {
             const nextChildren = walkedChildren.map((child: any, index: number) => {
                 const importOrder = importedIndexes.indexOf(index);
                 if (importOrder < 0) {
-                    if (isReqOtherTable(child.table) && otherRows.length) {
-                        return { ...child, table: applyExportRowsToTable(child.table, otherRows) };
+                    if (isReqOtherTable(child.table)) {
+                        return { ...child, table: flattenExportReqTable(child.table) };
                     }
                     if (isReqMainTable(child.table)) {
                         const tableName = String(child.table?.name || child.title || child.label || "");
@@ -834,19 +841,17 @@ export default () => {
                             if (changeRows.length) {
                                 return { ...child, table: applyExportRowsToTable(child.table, changeRows) };
                             }
-                        } else if (mainRows.length) {
-                            return { ...child, table: applyExportRowsToTable(child.table, mainRows) };
+                        } else {
+                            return { ...child, table: flattenExportReqTable(child.table) };
                         }
                     }
                     return child;
                 }
                 if (isReqOtherTable(child.table) || (hasOtherMarker && importOrder === 1)) {
-                    return otherRows.length
-                        ? { ...child, table: applyExportRowsToTable(child.table, otherRows) }
-                        : { ...child, table: flattenExportReqTable(child.table) };
+                    return { ...child, table: flattenExportReqTable(child.table) };
                 }
-                if (mainRows.length) {
-                    return { ...child, table: applyExportRowsToTable(child.table, mainRows) };
+                if (isReqMainTable(child.table) && !/变更/.test(String(child.table?.name || child.title || ""))) {
+                    return { ...child, table: flattenExportReqTable(child.table) };
                 }
                 return { ...child, table: flattenExportReqTable(child.table) };
             });
@@ -2715,10 +2720,22 @@ export default () => {
             return;
         }
         const normalizeReqCode = (value?: string) => String(value || "").replace(/\s+/g, "").toUpperCase();
+        const getSrsExportGroup = (code: string) => {
+            const normalized = normalizeReqCode(code);
+            return normalized.match(/^(SRS-[A-Z]+\d+)-\d+$/)?.[1] || normalized;
+        };
         const lastValues: Record<string, string> = {};
         const rows = (table?.rows || [])
             .map((row: any) => {
                 const code = normalizeReqCode(row?.[codeCol]);
+                const group = getSrsExportGroup(code);
+                const sameGroup = !!group && group === lastValues.group;
+                if (!sameGroup) {
+                    lastValues.group = group;
+                    lastValues.module = "";
+                    lastValues.function = "";
+                    lastValues.sub_function = "";
+                }
                 const rawModule = normalizeReqText(row?.[moduleCol]);
                 const rawFunction = normalizeReqText(row?.[functionCol]);
                 const rawSubFunction = normalizeReqText(row?.[subFunctionCol]);
@@ -2736,9 +2753,9 @@ export default () => {
                 }
                 return {
                     code,
-                    module: rawModule || lastValues.module || "",
-                    function: rawFunction || lastValues.function || "",
-                    sub_function: rawSubFunction || lastValues.sub_function || "",
+                    module: rawModule || (sameGroup ? lastValues.module || "" : ""),
+                    function: rawFunction || (sameGroup ? lastValues.function || "" : ""),
+                    sub_function: rawSubFunction || (sameGroup ? lastValues.sub_function || "" : ""),
                 };
             })
             .filter((row: any) => row.code);
