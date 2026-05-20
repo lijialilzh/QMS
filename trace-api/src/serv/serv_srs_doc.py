@@ -3166,9 +3166,6 @@ class Server(object):
             extras = await __query_srs_change_req_exports_only()
             if not extras:
                 return False
-            if not title_already_written and "变更需求" not in exported_req_labels:
-                docx_util.save_txt2docx("变更需求", docx, font_def)
-                exported_req_labels.add("变更需求")
             wrote_any = False
             for extra in extras:
                 table = extra.table
@@ -3184,6 +3181,7 @@ class Server(object):
                 dedupe_key = (norm_label, tuple(codes), len(rows))
                 if dedupe_key in exported_req_tables:
                     continue
+                __write_change_req_title_if_needed(label, docx, font_def)
                 exported_req_tables.add(dedupe_key)
                 __save_tab2docx(table, docx, show_name=False)
                 wrote_any = True
@@ -3209,7 +3207,16 @@ class Server(object):
                 await __export_change_req_from_db(docx, font_def, "变更需求" in exported_req_labels)
 
         def __is_change_req_line(line: str):
-            return "变更需求" in __norm_title(line)
+            return "变更" in __norm_title(line)
+
+        def __write_change_req_title_if_needed(title: str, docx, font_def):
+            label = str(title or "变更需求").strip()
+            norm_label = __norm_title(label)
+            if not norm_label or norm_label in exported_req_labels:
+                return False
+            docx_util.save_txt2docx(label, docx, font_def)
+            exported_req_labels.add(norm_label)
+            return True
 
         def __is_req_list_export_slot(node_text: str, node_label: str, imported_table_children):
             text_blob = f"{node_text or ''}\n{node_label or ''}"
@@ -3302,7 +3309,6 @@ class Server(object):
                         imported_table_children,
                     )
                     if has_req_list_pair:
-                        node_change_title_written = False
                         if imported_table_children:
                             table_idx = 0
                             for raw_line in lines:
@@ -3310,10 +3316,9 @@ class Server(object):
                                 if not line:
                                     continue
                                 if __is_change_req_line(line):
-                                    if node_change_title_written:
+                                    if __norm_title(line) in exported_req_labels:
                                         continue
-                                    node_change_title_written = True
-                                    exported_req_labels.add("变更需求")
+                                    exported_req_labels.add(__norm_title(line))
                                     docx_util.save_txt2docx(line, docx, font_def)
                                     continue
                                 docx_util.save_txt2docx(line, docx, font_def)
@@ -3334,17 +3339,16 @@ class Server(object):
                                 __save_tab2docx(tab_node.table, docx, show_name=False)
                                 written_child_ids.add(id(tab_node))
                             if not change_req_export_done["value"]:
-                                await __export_change_req_from_db(docx, font_def, node_change_title_written)
+                                await __export_change_req_from_db(docx, font_def)
                         else:
                             for raw_line in lines:
                                 line = (raw_line or "").strip()
                                 if not line:
                                     continue
                                 if __is_change_req_line(line):
-                                    if node_change_title_written:
+                                    if __norm_title(line) in exported_req_labels:
                                         continue
-                                    node_change_title_written = True
-                                    exported_req_labels.add("变更需求")
+                                    exported_req_labels.add(__norm_title(line))
                                     docx_util.save_txt2docx(line, docx, font_def)
                                     continue
                                 docx_util.save_txt2docx(line, docx, font_def)
@@ -3353,22 +3357,20 @@ class Server(object):
                                 elif "其他需求列表" in line or "其他需求" in line:
                                     await __save_tab_and_export_change_if_other(await __query_srs_reqs("2"), docx, font_def, show_name=False)
                             if not change_req_export_done["value"]:
-                                await __export_change_req_from_db(docx, font_def, node_change_title_written)
+                                await __export_change_req_from_db(docx, font_def)
                         for child in (node.children or []):
                             if __is_snapshot_change_req_child(child):
                                 written_child_ids.add(id(child))
                     elif has_change_req_marker:
-                        node_change_title_written = False
                         if node_text_for_export:
                             for raw_line in lines:
                                 line = (raw_line or "").strip()
                                 if not line:
                                     continue
                                 if __is_change_req_line(line):
-                                    if node_change_title_written:
+                                    if __norm_title(line) in exported_req_labels:
                                         continue
-                                    node_change_title_written = True
-                                    exported_req_labels.add("变更需求")
+                                    exported_req_labels.add(__norm_title(line))
                                 docx_util.save_txt2docx(line, docx, font_def)
                         for child in (node.children or []):
                             if __is_snapshot_change_req_child(child):
@@ -3402,8 +3404,10 @@ class Server(object):
                                 if not line:
                                     continue
                                 docx_util.save_txt2docx(line, docx, font_def)
-                                if "变更需求" in line:
-                                    exported_req_labels.add(__norm_title("变更需求"))
+                                if __is_change_req_line(line):
+                                    exported_req_labels.add(__norm_title(line))
+                                elif "变更" in line:
+                                    exported_req_labels.add(__norm_title(line))
                                 if table_idx < len(imported_table_children) and (
                                     "产品需求列表" in line or "产品需求" in line or
                                     "其他需求列表" in line or "其他需求" in line or
@@ -3430,7 +3434,7 @@ class Server(object):
                             __is_other_req_export_table(getattr(child, "table", None))
                             for child in imported_table_children
                         ):
-                            await __export_change_req_from_db(docx, font_def, "变更需求" in exported_req_labels)
+                            await __export_change_req_from_db(docx, font_def)
 
                 if node.img_url:
                     docx_util.save_img2docx(node.img_url, docx, mw=500, mh=500)

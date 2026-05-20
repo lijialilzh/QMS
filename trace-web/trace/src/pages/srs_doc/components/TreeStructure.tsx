@@ -246,7 +246,7 @@ function parseOtherReqLocationValue(location?: string): string {
 function isOtherReqManagedChapterNode(node: TreeNode, otherRows: any[] = []): boolean {
     if (!otherRows.length) return false;
     const headingNo = getHeadingNumberFromTitle(node.title);
-    const nodeCode = normalizeSrsCodeValue(node.srs_code || "");
+    const nodeCode = normalizeSrsCodeValue(node.srs_code || extractSrsCodeFromText(node.text) || "");
     const locationSet = new Set<string>();
     const codeSet = new Set<string>();
     otherRows.forEach((row) => {
@@ -257,6 +257,7 @@ function isOtherReqManagedChapterNode(node: TreeNode, otherRows: any[] = []): bo
     });
     if (headingNo && locationSet.has(headingNo)) return true;
     if (nodeCode && codeSet.has(nodeCode)) return true;
+    if (findOtherReqRowForChapter(otherRows, headingNo, nodeCode, node.title)) return true;
     return false;
 }
 
@@ -270,13 +271,25 @@ function normalizeOtherReqSyncRow(row: any) {
     };
 }
 
-export function findOtherReqRowForChapter(otherRows: any[] = [], headingNo?: string, nodeSrsCode?: string | null) {
+export function findOtherReqRowForChapter(
+    otherRows: any[] = [],
+    headingNo?: string,
+    nodeSrsCode?: string | null,
+    chapterTitle?: string,
+) {
     const rows = (otherRows || [])
         .map(normalizeOtherReqSyncRow)
         .filter((row) => row.code && row.type_code === "2");
     if (headingNo) {
         const byLocation = rows.find((row) => row.location === headingNo);
         if (byLocation) return byLocation;
+    }
+    if (headingNo && chapterTitle) {
+        const titleName = normalizeReqDisplayText(chapterTitle.replace(/^\d+(?:\.\d+)*\s*/, ""));
+        if (titleName) {
+            const byTitleModule = rows.find((row) => normalizeReqDisplayText(row.module) === titleName);
+            if (byTitleModule) return byTitleModule;
+        }
     }
     const normalizedNodeCode = normalizeSrsCodeValue(nodeSrsCode || "");
     if (normalizedNodeCode) {
@@ -321,20 +334,20 @@ export function mergeOtherReqDetailsForSync(previewRows: any[] = [], tableRows: 
         return normalizedTable.map(toOutput);
     }
 
-    const tableByCode = new Map(normalizedTable.map((row) => [row.code, row]));
-    const tableByLocation = new Map<string, ReturnType<typeof normalizeOtherReqSyncRow>>();
-    normalizedTable.forEach((row) => {
-        if (row.location) tableByLocation.set(row.location, row);
+    const previewByCode = new Map(normalizedPreview.map((row) => [row.code, row]));
+    const previewByLocation = new Map<string, ReturnType<typeof normalizeOtherReqSyncRow>>();
+    normalizedPreview.forEach((row) => {
+        if (row.location) previewByLocation.set(row.location, row);
     });
 
-    const previewKept = normalizedPreview.filter((row) => {
-        if (tableByCode.has(row.code)) return false;
-        // 同一章节改了 SRS 编号时，应视为编辑而非新增
-        if (row.location && tableByLocation.has(row.location)) return false;
+    // 以外部/预览状态为准；树内嵌旧表仅补充 preview 未覆盖的行
+    const tableKept = normalizedTable.filter((row) => {
+        if (previewByCode.has(row.code)) return false;
+        if (row.location && previewByLocation.has(row.location)) return false;
         return true;
     });
 
-    return [...previewKept, ...normalizedTable].map(toOutput);
+    return [...normalizedPreview, ...tableKept].map(toOutput);
 }
 
 function pickOtherReqTableColumnCode(headers: Array<{ code: string; name: string }>, matcher: (text: string) => boolean) {
@@ -382,8 +395,21 @@ export function syncTreeWithOtherReqState(
     options?: Parameters<typeof syncOtherReqCodesToChaptersFromRows>[2],
 ): TreeNode[] {
     const withEmbeddedTable = syncEmbeddedOtherReqTableInTree(items || [], otherRows);
+    const normalizedOtherRows = (otherRows || [])
+        .map(normalizeOtherReqSyncRow)
+        .filter((row) => row.code)
+        .map((row) => ({
+            code: row.code,
+            srs_code: row.code,
+            module: row.module,
+            location: row.location,
+            type_code: row.type_code,
+            id: row.id,
+        }));
     const tableRows = collectOtherReqRowsFromTree(withEmbeddedTable);
-    const mergedOtherRows = mergeOtherReqDetailsForSync(otherRows, tableRows);
+    const mergedOtherRows = normalizedOtherRows.length
+        ? normalizedOtherRows
+        : mergeOtherReqDetailsForSync([], tableRows);
     return syncOtherReqCodesToChaptersFromRows(withEmbeddedTable, mergedOtherRows, options);
 }
 
@@ -443,10 +469,10 @@ export function syncOtherReqCodesToChaptersFromRows(
         return true;
     });
     const resolveSrsCode = options?.resolveSrsCode || ((node, headingNo, otherReqCode) => {
-        const candidates = [otherReqCode, node.srs_code ?? undefined]
-            .map((value) => normalizeSrsCodeValue(value || ""))
-            .filter(Boolean);
-        return candidates.find((code) => isCodeCompatible(code, headingNo)) || "";
+        const normalizedOther = normalizeSrsCodeValue(otherReqCode || "");
+        if (normalizedOther) return normalizedOther;
+        const normalizedNode = normalizeSrsCodeValue(node.srs_code || "");
+        return normalizedNode && isCodeCompatible(normalizedNode, headingNo) ? normalizedNode : "";
     });
     const applyFixedProtection = (list: TreeNode[]): TreeNode[] => {
         const byLocation = new Map<string, string>();
@@ -460,13 +486,16 @@ export function syncOtherReqCodesToChaptersFromRows(
             const fixedName = headingNo ? fixedSections[headingNo] : undefined;
             const children = walk(node.children || []);
             if (!fixedName) return { ...node, children };
-            const matchedRow = findOtherReqRowForChapter(otherRows, headingNo, node.srs_code);
-            return {
-                ...node,
-                title: buildOtherReqChapterTitle(headingNo, matchedRow, fixedName, node.title),
-                srs_code: resolveSrsCode(node, headingNo, byLocation.get(headingNo) || matchedRow?.code),
+            const nodeCode = normalizeSrsCodeValue(node.srs_code || extractSrsCodeFromText(node.text) || "");
+            const matchedRow = findOtherReqRowForChapter(otherRows, headingNo, nodeCode, node.title);
+            return buildOtherReqSyncedNode(
+                node,
+                headingNo,
+                matchedRow,
+                byLocation.get(headingNo) || matchedRow?.code || "",
+                { fixedName, resolveSrsCode },
                 children,
-            };
+            );
         });
         return walk(list);
     };
@@ -480,23 +509,21 @@ export function syncOtherReqCodesToChaptersFromRows(
     const synced = (items || []).map((node) => {
         const headingNo = getHeadingNumberFromTitle(node.title);
         const fixedName = headingNo ? fixedSections[headingNo] : undefined;
-        const matchedRow = findOtherReqRowForChapter(otherRows, headingNo, node.srs_code);
+        const nodeCode = normalizeSrsCodeValue(node.srs_code || extractSrsCodeFromText(node.text) || "");
+        const matchedRow = findOtherReqRowForChapter(otherRows, headingNo, nodeCode, node.title);
         const matchedCode = matchedRow?.code || (headingNo ? byLocation.get(headingNo) : undefined) || "";
         const children = syncOtherReqCodesToChaptersFromRows(node.children || [], otherRows, options);
-        if (fixedName) {
-            return {
-                ...node,
-                title: buildOtherReqChapterTitle(headingNo, matchedRow, fixedName, node.title),
-                srs_code: resolveSrsCode(node, headingNo, matchedCode || undefined),
-                children,
-            };
+        if (!matchedRow && !matchedCode) {
+            return { ...node, children };
         }
-        return {
-            ...node,
-            title: buildOtherReqChapterTitle(headingNo, matchedRow, undefined, node.title),
-            ...(matchedCode && isCodeCompatible(matchedCode, headingNo) ? { srs_code: matchedCode } : {}),
+        return buildOtherReqSyncedNode(
+            node,
+            headingNo,
+            matchedRow,
+            matchedCode,
+            { fixedName, resolveSrsCode },
             children,
-        };
+        );
     });
     return applyFixedProtection(synced);
 }
@@ -504,6 +531,51 @@ export function syncOtherReqCodesToChaptersFromRows(
 function extractSrsCodeFromText(value: any): string {
     const matched = String(value || "").match(/SRS\s*-\s*[A-Z]+\s*\d+\s*-\s*\d+/i);
     return matched ? normalizeSrsCodeValue(matched[0]) : "";
+}
+
+function replaceOtherReqCodeInNodeText(text: string | undefined, nextCode: string): string {
+    const raw = String(text || "");
+    if (!nextCode || !raw.trim()) return raw;
+    if (/需求编号\s*[：:]/i.test(raw)) {
+        return raw.replace(
+            /(需求编号\s*[：:]\s*)SRS\s*-\s*[A-Z]+\s*\d+\s*-\s*\d+/i,
+            `$1${nextCode}`,
+        );
+    }
+    if (/SRS\s*-\s*[A-Z]+\s*\d+\s*-\s*\d+/i.test(raw)) {
+        return raw.replace(/SRS\s*-\s*[A-Z]+\s*\d+\s*-\s*\d+/i, nextCode);
+    }
+    return raw;
+}
+
+function buildOtherReqSyncedNode(
+    node: TreeNode,
+    headingNo: string,
+    matchedRow: ReturnType<typeof findOtherReqRowForChapter>,
+    matchedCode: string,
+    options: {
+        fixedName?: string;
+        resolveSrsCode: (node: TreeNode, headingNo: string, otherReqCode?: string) => string;
+    },
+    children: TreeNode[],
+): TreeNode {
+    const nextCode = matchedCode
+        ? options.resolveSrsCode(node, headingNo, matchedCode)
+        : options.resolveSrsCode(node, headingNo, undefined);
+    const nextTitle = buildOtherReqChapterTitle(
+        headingNo,
+        matchedRow,
+        options.fixedName,
+        node.title,
+    );
+    const nextText = nextCode ? replaceOtherReqCodeInNodeText(node.text, nextCode) : node.text;
+    return {
+        ...node,
+        title: nextTitle,
+        ...(nextCode ? { srs_code: nextCode } : {}),
+        ...(nextText !== node.text ? { text: nextText } : {}),
+        children,
+    };
 }
 
 function extractSrsCodeFromTableRow(row: any): string {
@@ -1320,7 +1392,7 @@ const TreeNodeItem = ({
                       </div>
                   )}
                   {!isSrsReqRefNode && (
-                      readOnly || isLockedReqHierarchyNode ? (
+                      readOnly || isLockedReqHierarchyNode || isLockedOtherReqChapter ? (
                           <div className="node-content node-text-area">
                               {shouldSplitTextForTables ? removeOtherReqMarker(splitText.intro || "") : displayNodeText}
                           </div>
@@ -1734,7 +1806,7 @@ interface TreeStructureProps {
     onDeleteSrsChangeTable?: (table: { id: number | string; title: string; data: any[]; type_code?: string }) => void;
     onSaveReqDetailTable?: (detail: any) => Promise<void>;
     onSaveSrsReqTable?: (table: TableData) => Promise<any[] | void>;
-    onSaveOtherReqTable?: (table: TableData) => Promise<any[] | void>;
+    onSaveOtherReqTable?: (table: TableData) => Promise<TreeNode[] | any[] | void>;
     onSaveSrsChangeReqTable?: (tableData: TableDataWithHeaders) => Promise<TreeNode[] | undefined>;
     srsReqPreview?: {
         main: any[];
@@ -1798,7 +1870,9 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         return matched?.[0] || "";
     };
     const resolveFixedSectionSrsCode = (node: TreeNode, headingNo: string, otherReqCode?: string) => {
-        const candidates = [otherReqCode, node.srs_code ?? undefined, extractSrsCodeFromNodeText(node.text)]
+        const normalizedOther = normalizeSrsCode(otherReqCode || "");
+        if (normalizedOther) return normalizedOther;
+        const candidates = [node.srs_code ?? undefined, extractSrsCodeFromNodeText(node.text)]
             .map((value) => normalizeSrsCode(value))
             .filter(Boolean);
         return candidates.find((code) => isCodeCompatibleWithFixedSection(code, headingNo)) || "";
@@ -2363,7 +2437,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         .map((item: any) => ({
             code: normalizeSrsCode(item?.srs_code || item?.code || ""),
             module: normalizeReqDisplayText(item?.module),
-            location: normalizeReqDisplayText(item?.location),
+            location: parseOtherReqLocationValue(item?.location),
             type_code: item?.type_code || "2",
         }))
         .filter((item: any) => item.code && item.module);
@@ -2455,9 +2529,33 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         const changeCodes = new Set(
             buildPreviewChangeDetails().map((item) => normalizeSrsCode(item?.code)).filter(Boolean),
         );
+        const standardKeyByCode = new Map<string, string>();
+        (srsReqPreview?.main || []).forEach((item: any) => {
+            const code = normalizeSrsCode(item?.srs_code || item?.code || "");
+            if (code && item?.id) {
+                standardKeyByCode.set(code, `reqd_${item.id}`);
+            }
+        });
         const standardCodes = new Set(
             buildPreviewStandardDetails().map((item) => normalizeSrsCode(item?.code)).filter(Boolean),
         );
+        const rebindNodeReqDetailKey = (node: TreeNode, nextKey: string): TreeNode => {
+            if (!nextKey) return node;
+            const table = node.table;
+            let nextTable = table;
+            if (isFunctionalKvTable(table) && table?.headers?.length) {
+                nextTable = {
+                    ...table,
+                    req_detail_key: nextKey,
+                    rows: (table.rows || []).map((row: any) => ({
+                        ...row,
+                        [REQ_DETAIL_KEY_FIELD]: nextKey,
+                        req_detail_key: nextKey,
+                    })),
+                };
+            }
+            return { ...node, req_detail_key: nextKey, table: nextTable };
+        };
         const getRootNo = (value?: string) => String(value || "").trim().match(/^(\d+)/)?.[1] || "";
         const getDepth = (value?: string) => {
             const matched = String(value || "").trim().match(/^(\d+(?:\.\d+)*)\s+/);
@@ -2476,10 +2574,21 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         const walk = (items: TreeNode[], insideReqRoot = false): TreeNode[] => (items || [])
             .map((node) => {
                 const nextInsideReqRoot = insideReqRoot || getRootNo(node?.title) === "7";
-                return {
+                let nextNode: TreeNode = {
                     ...node,
                     children: walk(node.children || [], nextInsideReqRoot),
                 };
+                if (!nextInsideReqRoot) return nextNode;
+                const isReqDetailNode = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
+                const code = normalizeSrsCode(node.srs_code || (isFunctionalKvTable(node.table) ? extractSrsCodeFromTable(node.table) : ""));
+                const key = normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table));
+                if (isReqDetailNode && code && standardCodes.has(code) && key.startsWith("change_reqd_")) {
+                    const standardKey = standardKeyByCode.get(code);
+                    if (standardKey) {
+                        nextNode = rebindNodeReqDetailKey(nextNode, standardKey);
+                    }
+                }
+                return nextNode;
             })
             .filter((node) => {
                 const nextInsideReqRoot = insideReqRoot || getRootNo(node?.title) === "7";
@@ -2487,7 +2596,9 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 const isReqDetailNode = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
                 const code = normalizeSrsCode(node.srs_code || (isFunctionalKvTable(node.table) ? extractSrsCodeFromTable(node.table) : ""));
                 const key = normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table));
-                if (isReqDetailNode && key.startsWith("change_reqd_") && code && !changeCodes.has(code)) return false;
+                if (isReqDetailNode && key.startsWith("change_reqd_") && code && !changeCodes.has(code)) {
+                    return standardCodes.has(code);
+                }
                 if (isReqDetailNode && node.label === "__auto_req_detail" && code && !changeCodes.has(code) && !standardCodes.has(code)) {
                     return false;
                 }
@@ -2801,7 +2912,9 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         const previewOtherDetails = buildPreviewOtherDetails();
         const tableOtherDetails = collectReqRowsFromTreeTables(withRcm)
             .filter((item: any) => String(item?.type_code || "") === "2" && normalizeSrsCode(item?.code));
-        const otherDetails = mergeOtherReqDetailsForSync(previewOtherDetails, tableOtherDetails);
+        const otherDetails = previewOtherDetails.length
+            ? previewOtherDetails
+            : mergeOtherReqDetailsForSync(previewOtherDetails, tableOtherDetails);
         const withEmbeddedTable = otherDetails.length
             ? syncEmbeddedOtherReqTableInTree(withRcm, otherDetails)
             : withRcm;
@@ -2993,6 +3106,10 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
     };
 
     const handleContentChange = (id: number, text: string) => {
+        const targetNode = findNodeById(nodes, id);
+        if (targetNode && isOtherReqManagedChapterNode(targetNode, srsReqPreview?.other || [])) {
+            return;
+        }
         const newNodes = findNodeAndUpdate(nodes, id, (node) => {
             if (!Array.isArray(node.rcm_codes)) {
                 return {
@@ -3870,7 +3987,17 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
                 children: [],
             } as TreeNode]).filter((item: any) => String(item?.type_code || "") === "2" && normalizeSrsCode(item?.code));
             if (onSaveOtherReqTable) {
-                await onSaveOtherReqTable(tableFormat);
+                const saveResult = await onSaveOtherReqTable(tableFormat);
+                if (Array.isArray(saveResult) && saveResult.length && "children" in (saveResult[0] || {})) {
+                    updateNodes(saveResult as TreeNode[]);
+                } else {
+                    const nextNodes = syncTreeWithOtherReqState(newNodes, otherDetailsForSync, {
+                        fixedTemplateSections: FIXED_TEMPLATE_SECTIONS,
+                        resolveSrsCode: (node, headingNo, otherReqCode) => resolveFixedSectionSrsCode(node, headingNo, otherReqCode),
+                        isCodeCompatible: (code, headingNo) => isCodeCompatibleWithFixedSection(code, headingNo),
+                    });
+                    updateNodes(nextNodes);
+                }
             } else {
                 const nextNodes = syncTreeWithOtherReqState(newNodes, otherDetailsForSync, {
                     fixedTemplateSections: FIXED_TEMPLATE_SECTIONS,

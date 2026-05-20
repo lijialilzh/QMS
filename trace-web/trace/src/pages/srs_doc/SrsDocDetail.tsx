@@ -1483,25 +1483,54 @@ export default () => {
             const detailKey = normalizeReqDetailKey(detail?.req_detail_key);
             const isChangeIncoming = !!String(detail?.type_code || "") && !["1", "2"].includes(String(detail?.type_code || ""));
             if (!isChangeIncoming) return;
-            const removeStaleSameChangeDetail = (items: TreeNode[]): TreeNode | undefined => {
+            const moduleText = normalizeReqText(detail?.module || detail?.name || detail?.function || detail?.code) || code;
+            const functionText = normalizeReqText(detail?.function);
+            const subFunctionText = normalizeReqText(detail?.sub_function);
+            const detailMatchesNodePath = (
+                node: TreeNode,
+                ancestors: TreeNode[],
+                nodeCode: string,
+            ) => {
+                if (normalizeSrsCodeForSync(nodeCode) !== code) return false;
+                const pathNames = new Set(
+                    [...ancestors, node]
+                        .map((item) => normalizeTitle(stripHeadingNo(item.title)))
+                        .filter(Boolean),
+                );
+                if (!pathNames.has(normalizeTitle(moduleText))) return false;
+                if (functionText && !pathNames.has(normalizeTitle(functionText))) return false;
+                if (subFunctionText && !pathNames.has(normalizeTitle(subFunctionText))) return false;
+                return true;
+            };
+            const hasFilledFunctionalDetail = (table: any) => {
+                if (!isFunctionalKvTable(table)) return false;
+                const leftCode = table.headers?.[0]?.code;
+                const rightCode = table.headers?.[1]?.code;
+                return (table.rows || []).some((row: any) => {
+                    const label = normalizeCellText(row?.[leftCode]);
+                    const value = normalizeReqText(row?.[rightCode]);
+                    return !!value && !label.includes("需求编号") && !label.includes("需求名称");
+                });
+            };
+            const removeExistingReqDetailForReuse = (items: TreeNode[], ancestors: TreeNode[] = []): TreeNode | undefined => {
                 for (let index = 0; index < (items || []).length; index += 1) {
                     const node: any = items[index];
                     const nodeCode = normalizeSrsCodeForSync(node.srs_code || extractSrsCodeFromTable(node.table));
                     const nodeKey = normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table));
                     const isReqDetailNode = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
-                    if (isReqDetailNode && ((detailKey && nodeKey === detailKey) || (!!code && nodeCode === code && nodeKey.startsWith("change_reqd_")))) {
-                        const removed = items.splice(index, 1)[0];
-                        return removed;
+                    if (isReqDetailNode && (
+                        (detailKey && nodeKey === detailKey) ||
+                        (!!code && nodeCode === code && nodeKey.startsWith("change_reqd_")) ||
+                        detailMatchesNodePath(node, ancestors, nodeCode)
+                    )) {
+                        return items.splice(index, 1)[0];
                     }
-                    const found = removeStaleSameChangeDetail(node.children || []);
-                if (found) return found;
-            }
-            return undefined;
-        };
-            const moduleText = normalizeReqText(detail?.module || detail?.name || detail?.function || detail?.code) || code;
-            const functionText = normalizeReqText(detail?.function);
-            const subFunctionText = normalizeReqText(detail?.sub_function);
-            const existingNodeToMove = removeStaleSameChangeDetail(cloned);
+                    const found = removeExistingReqDetailForReuse(node.children || [], [...ancestors, node]);
+                    if (found) return found;
+                }
+                return undefined;
+            };
+            const existingNodeToMove = removeExistingReqDetailForReuse(cloned);
             let moduleNode = findDirectChildByTitle(reqRoot.children || [], moduleText, rootPrefix);
             if (!moduleNode) {
                 moduleNode = makeNode(`${rootPrefix}.${nextChildNo(reqRoot.children || [], rootPrefix)} ${moduleText}`, reqRoot);
@@ -1527,14 +1556,20 @@ export default () => {
                 target = subNode;
             }
             const attachReqDetailToTarget = (existingNode?: TreeNode) => {
+                const targetCode = normalizeSrsCodeForSync(target.srs_code || extractSrsCodeFromTable(target.table));
+                const preserveTargetTable = !existingNode &&
+                    isFunctionalKvTable(target.table) &&
+                    targetCode === code &&
+                    hasFilledFunctionalDetail(target.table);
+                const tableSource = existingNode?.table || (preserveTargetTable ? target.table : undefined);
                 Object.assign(target, {
                     ...(existingNode ? { id: existingNode.id, n_id: existingNode.n_id } : {}),
                     srs_code: code,
                     req_detail_key: detailKey,
                     label: "__auto_req_detail",
-                    text: "",
-                    table: existingNode
-                        ? updateDetailTableIdentity(existingNode.table, detail)
+                    text: existingNode?.text || (preserveTargetTable ? target.text : "") || "",
+                    table: tableSource
+                        ? updateDetailTableIdentity(tableSource, detail)
                         : buildDetailTable(detail),
                     children: (target.children || []).filter((child: any) => child.id !== existingNode?.id),
                 });
@@ -1550,6 +1585,13 @@ export default () => {
         return pruneEmptyReqChapterShells(cloned);
     };
     const buildActiveReqDetailCodeSets = (srsTableState: { srsTableData?: any[]; srsChangeTables?: any[] }) => {
+        const standardKeyByCode = new Map<string, string>();
+        (srsTableState.srsTableData || []).forEach((item: any) => {
+            const code = normalizeSrsCodeForSync(item?.srs_code || item?.code || "");
+            if (code && item?.id) {
+                standardKeyByCode.set(code, `reqd_${item.id}`);
+            }
+        });
         const standardCodes = new Set(
             (srsTableState.srsTableData || [])
                 .map((item: any) => normalizeSrsCodeForSync(item?.srs_code || item?.code || ""))
@@ -1564,12 +1606,35 @@ export default () => {
             standardCodes,
             changeCodes,
             allCodes: new Set([...standardCodes, ...changeCodes]),
+            standardKeyByCode,
         };
+    };
+    const rebindNodeReqDetailKey = (node: any, nextKey: string) => {
+        if (!nextKey) return node;
+        const table = node.table;
+        let nextTable = table;
+        if (isFunctionalKvTable(table)) {
+            nextTable = {
+                ...table,
+                req_detail_key: nextKey,
+                rows: (table.rows || []).map((row: any) => ({
+                    ...row,
+                    [REQ_DETAIL_KEY_FIELD]: nextKey,
+                    req_detail_key: nextKey,
+                })),
+            };
+        }
+        return { ...node, req_detail_key: nextKey, table: nextTable };
     };
     const pruneDeletedChangeReqChapters = (
         tree: TreeNode[],
         deletedRows: any[],
-        codeSets: { standardCodes: Set<string>; changeCodes: Set<string>; allCodes: Set<string> },
+        codeSets: {
+            standardCodes: Set<string>;
+            changeCodes: Set<string>;
+            allCodes: Set<string>;
+            standardKeyByCode: Map<string, string>;
+        },
     ): TreeNode[] => {
         const deletedCodes = new Set((deletedRows || []).map((row: any) => normalizeSrsCodeForSync(row?.srs_code || row?.code)).filter(Boolean));
         const deletedKeys = new Set((deletedRows || []).map((row: any) => row?.id ? `change_reqd_${row.id}` : "").filter(Boolean));
@@ -1590,10 +1655,21 @@ export default () => {
         const walk = (items: TreeNode[], insideReqRoot = false): TreeNode[] => (items || [])
             .map((node: any) => {
                 const nextInsideReqRoot = insideReqRoot || getRootNo(node?.title) === "7";
-                return {
+                let nextNode = {
                     ...node,
                     children: walk(node.children || [], nextInsideReqRoot),
                 };
+                if (!nextInsideReqRoot) return nextNode;
+                const isReqDetailNode = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
+                const code = normalizeSrsCodeForSync(node.srs_code || (isFunctionalKvTable(node.table) ? extractSrsCodeFromTable(node.table) : ""));
+                const key = normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table));
+                if (isReqDetailNode && code && codeSets.standardCodes.has(code) && key.startsWith("change_reqd_")) {
+                    const standardKey = codeSets.standardKeyByCode.get(code);
+                    if (standardKey) {
+                        nextNode = rebindNodeReqDetailKey(nextNode, standardKey);
+                    }
+                }
+                return nextNode;
             })
             .filter((node: any) => {
                 const nextInsideReqRoot = insideReqRoot || getRootNo(node?.title) === "7";
@@ -1601,8 +1677,13 @@ export default () => {
                 const isReqDetailNode = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
                 const code = normalizeSrsCodeForSync(node.srs_code || (isFunctionalKvTable(node.table) ? extractSrsCodeFromTable(node.table) : ""));
                 const key = normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table));
+                if (isReqDetailNode && key && deletedKeys.has(key) && code && codeSets.standardCodes.has(code)) {
+                    return true;
+                }
                 if (isReqDetailNode && key && deletedKeys.has(key)) return false;
-                if (isReqDetailNode && key.startsWith("change_reqd_") && code && !codeSets.changeCodes.has(code)) return false;
+                if (isReqDetailNode && key.startsWith("change_reqd_") && code && !codeSets.changeCodes.has(code)) {
+                    return codeSets.standardCodes.has(code);
+                }
                 if (isReqDetailNode && node.label === "__auto_req_detail" && code && !codeSets.changeCodes.has(code) && !codeSets.standardCodes.has(code)) {
                     return false;
                 }
@@ -1892,7 +1973,9 @@ export default () => {
         return true;
     };
     const resolveFixedSectionSrsCode = (node: TreeNode, headingNo: string, otherReqCode?: string) => {
-        const candidates = [otherReqCode, node.srs_code ?? undefined, extractSrsCodeFromNodeText(node.text)]
+        const normalizedOther = normalizeSrsCodeForSync(otherReqCode || "");
+        if (normalizedOther) return normalizedOther;
+        const candidates = [node.srs_code ?? undefined, extractSrsCodeFromNodeText(node.text)]
             .map((value) => normalizeSrsCodeForSync(value))
             .filter(Boolean);
         return candidates.find((code) => isFixedSectionCompatibleCode(code, headingNo)) || "";
@@ -2874,13 +2957,19 @@ export default () => {
             const changedAssignments = assignments.filter(isChangedAssignment);
             const deletedOldRows = oldRows.filter((oldRow: any) => oldRow?.id && !usedOldIds.has(oldRow.id));
             if (changedAssignments.length === 0 && deletedOldRows.length === 0) {
+                const syncedTree = syncTreeWithSrsTableState(
+                    ((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) as TreeNode[],
+                    latestBeforeSave,
+                );
+                treeStructureRef.current = syncedTree;
                 dispatch({
                     srsTableData: latestBeforeSave.srsTableData,
                     srsOtherReqData: latestBeforeSave.srsOtherReqData,
                     srsChangeTables: latestBeforeSave.srsChangeTables,
+                    treeStructure: syncedTree,
                     srsTableLoading: false,
                 });
-                return latestBeforeSave.srsOtherReqData;
+                return syncedTree;
             }
 
             const changedOldIds = new Set(
@@ -2966,7 +3055,7 @@ export default () => {
                 treeStructure: syncedTree,
                 srsTableLoading: false,
             });
-            return srsTableState.srsOtherReqData;
+            return syncedTree;
         } catch (error: any) {
             dispatch({ srsTableLoading: false });
             message.error(error?.message || "其他需求表保存失败");
