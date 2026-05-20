@@ -258,9 +258,18 @@ function getHeadingNumberFromTitle(title?: string): string {
     return String(title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
 }
 
-function parseOtherReqLocationValue(location?: string): string {
+function parseOtherReqLocationTokens(location?: string): string[] {
     const raw = String(location || "").trim();
-    return raw.match(/^(\d+(?:\.\d+)*)$/)?.[1] || raw.match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
+    if (!raw) return [];
+    return raw
+        .split(/[,，、;；]+/)
+        .map((part) => {
+            const trimmed = part.trim();
+            return trimmed.match(/^(\d+(?:\.\d+)*)$/)?.[1]
+                || trimmed.match(/^(\d+(?:\.\d+)*)/)?.[1]
+                || "";
+        })
+        .filter(Boolean);
 }
 
 function isOtherReqManagedChapterNode(node: TreeNode, otherRows: any[] = []): boolean {
@@ -270,9 +279,8 @@ function isOtherReqManagedChapterNode(node: TreeNode, otherRows: any[] = []): bo
     const locationSet = new Set<string>();
     const codeSet = new Set<string>();
     otherRows.forEach((row) => {
-        const location = parseOtherReqLocationValue(row?.location);
         const code = normalizeSrsCodeValue(row?.srs_code || row?.code || "");
-        if (location) locationSet.add(location);
+        parseOtherReqLocationTokens(row?.location).forEach((location) => locationSet.add(location));
         if (code) codeSet.add(code);
     });
     if (headingNo && locationSet.has(headingNo)) return true;
@@ -285,7 +293,7 @@ function normalizeOtherReqSyncRow(row: any) {
     return {
         code: normalizeSrsCodeValue(row?.code || row?.srs_code || ""),
         module: normalizeReqDisplayText(row?.module),
-        location: parseOtherReqLocationValue(row?.location),
+        location: normalizeReqDisplayText(row?.location),
         type_code: String(row?.type_code || "2"),
         id: row?.id,
     };
@@ -301,7 +309,7 @@ export function findOtherReqRowForChapter(
         .map(normalizeOtherReqSyncRow)
         .filter((row) => row.code && row.type_code === "2");
     if (headingNo) {
-        const byLocation = rows.find((row) => row.location === headingNo);
+        const byLocation = rows.find((row) => parseOtherReqLocationTokens(row.location).includes(headingNo));
         if (byLocation) return byLocation;
     }
     if (headingNo && chapterTitle) {
@@ -498,8 +506,9 @@ export function syncOtherReqCodesToChaptersFromRows(
         const byLocation = new Map<string, string>();
         (otherRows || []).forEach((row) => {
             const code = normalizeSrsCodeValue(row?.code || row?.srs_code || "");
-            const location = parseOtherReqLocationValue(row?.location);
-            if (code && location) byLocation.set(location, code);
+            parseOtherReqLocationTokens(row?.location).forEach((location) => {
+                if (code && location) byLocation.set(location, code);
+            });
         });
         const walk = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
             const headingNo = getHeadingNumberFromTitle(node.title);
@@ -523,8 +532,9 @@ export function syncOtherReqCodesToChaptersFromRows(
     const byLocation = new Map<string, string>();
     (otherRows || []).forEach((row) => {
         const code = normalizeSrsCodeValue(row?.code || row?.srs_code || "");
-        const location = parseOtherReqLocationValue(row?.location);
-        if (code && location) byLocation.set(location, code);
+        parseOtherReqLocationTokens(row?.location).forEach((location) => {
+            if (code && location) byLocation.set(location, code);
+        });
     });
     const synced = (items || []).map((node) => {
         const headingNo = getHeadingNumberFromTitle(node.title);
@@ -554,18 +564,29 @@ function extractSrsCodeFromText(value: any): string {
 }
 
 function replaceOtherReqCodeInNodeText(text: string | undefined, nextCode: string): string {
+    const normalizedNext = normalizeSrsCodeValue(nextCode);
+    if (!normalizedNext) return String(text || "");
     const raw = String(text || "");
-    if (!nextCode || !raw.trim()) return raw;
+    const srsInTextPattern = /SRS\s*-\s*[A-Z0-9]+\s*-\s*\d+/i;
+
+    if (!raw.trim()) {
+        return `需求编号：${normalizedNext}`;
+    }
+
     if (/需求编号\s*[：:]/i.test(raw)) {
-        return raw.replace(
-            /(需求编号\s*[：:]\s*)SRS\s*-\s*[A-Z]+\s*\d+\s*-\s*\d+/i,
-            `$1${nextCode}`,
+        const replaced = raw.replace(
+            /(需求编号\s*[：:]\s*)(?:SRS\s*-\s*[A-Z0-9]+\s*-\s*\d+)/i,
+            `$1${normalizedNext}`,
         );
+        if (replaced !== raw) return replaced;
+        return raw.replace(/(需求编号\s*[：:]\s*).*(?=\r?\n|$)/i, `$1${normalizedNext}`);
     }
-    if (/SRS\s*-\s*[A-Z]+\s*\d+\s*-\s*\d+/i.test(raw)) {
-        return raw.replace(/SRS\s*-\s*[A-Z]+\s*\d+\s*-\s*\d+/i, nextCode);
+
+    if (srsInTextPattern.test(raw)) {
+        return raw.replace(srsInTextPattern, normalizedNext);
     }
-    return raw;
+
+    return `需求编号：${normalizedNext}\n${raw}`;
 }
 
 function buildOtherReqSyncedNode(
@@ -2437,7 +2458,7 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         .map((item: any) => ({
             code: normalizeSrsCode(item?.srs_code || item?.code || ""),
             module: normalizeReqDisplayText(item?.module),
-            location: parseOtherReqLocationValue(item?.location),
+            location: normalizeReqDisplayText(item?.location),
             type_code: item?.type_code || "2",
         }))
         .filter((item: any) => item.code && item.module);
