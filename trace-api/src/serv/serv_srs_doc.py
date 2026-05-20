@@ -2729,10 +2729,36 @@ class Server(object):
             col_idx = self.__resolve_req_columns([self.__normalize_header(name) for name in header_names])
             clean_cols = [col_idx[key] for key in ["module", "function", "sub_function", "location"] if key in col_idx]
             if not clean_cols:
+                if cells:
+                    table.cells = None
                 return table
 
             rows = getattr(table, "rows", None) or []
             header_codes = [getattr(h, "code", "") for h in headers]
+            if (not rows) and cells and len(cells) > 1:
+                rows = []
+                active_spans = {}
+                for cell_row in cells[1:]:
+                    row = {}
+                    for col_index, header in enumerate(headers):
+                        code = getattr(header, "code", "") or (header_codes[col_index] if col_index < len(header_codes) else "")
+                        active = active_spans.get(col_index)
+                        cell = cell_row[col_index] if col_index < len(cell_row) else None
+                        row_span = int(getattr(cell, "row_span", 1) or 1) if cell is not None else 1
+                        col_span = int(getattr(cell, "col_span", 1) or 1) if cell is not None else 1
+                        if row_span == 0 or col_span == 0:
+                            row[code] = active.get("value", "") if active else ""
+                            if active:
+                                active["remaining"] -= 1
+                                if active["remaining"] <= 0:
+                                    active_spans.pop(col_index, None)
+                            continue
+                        value = self.__clean_req_table_field(getattr(cell, "value", "") if cell is not None else "")
+                        row[code] = value
+                        if row_span > 1:
+                            active_spans[col_index] = {"value": value, "remaining": row_span - 1}
+                    rows.append(row)
+                table.rows = rows
             field_codes = {
                 field: header_codes[col_idx[field]]
                 for field in ["module", "function", "sub_function", "location"]
@@ -2783,27 +2809,8 @@ class Server(object):
                     elif last_values.get("location"):
                         row[code] = last_values["location"]
 
-            # 快照导出会携带与编辑页一致的 cells 合并结构，导出时要保留。
-            if getattr(table, "cells", None):
-                return table
-
-            # 无 cells 时优先使用补齐后的 rows，避免旧合并结构中续行空值导致模块/功能丢失。
+            # 导出统一按铺平行输出，不使用 Word 合并 cells
             table.cells = None
-            cells = []
-
-            for row_idx, cell_row in enumerate(cells or []):
-                if row_idx == 0:
-                    continue
-                for col, cell in enumerate(cell_row):
-                    if cell is None or not hasattr(cell, "value"):
-                        continue
-                    row_span = int(getattr(cell, "row_span", 1) or 1)
-                    col_span = int(getattr(cell, "col_span", 1) or 1)
-                    if row_span == 0 or col_span == 0:
-                        cell.value = ""
-                        continue
-                    if col in clean_cols:
-                        cell.value = self.__clean_req_table_field(getattr(cell, "value", ""))
             return table
 
         def __save_tab2docx(table, docx, show_name: bool = True):
@@ -2985,6 +2992,31 @@ class Server(object):
                     results.append(SrsNodeForm(label=type_names.get(type_code) or "变更需求", table=table))
             return results
         
+        async def __query_srs_change_req_exports_only():
+            change_type_codes: List[str] = []
+            type_names: Dict[str, str] = {}
+            srs_types: List[SrsType] = db.session.execute(
+                select(SrsType).where(SrsType.doc_id == doc_id).order_by(SrsType.id)
+            ).scalars().all()
+            for row in srs_types:
+                code = str(row.type_code or "")
+                if code and code not in ["1", "2"] and code not in change_type_codes:
+                    change_type_codes.append(code)
+                    type_names[code] = row.type_name or "变更需求"
+            resp = await srsreq_serv.list_srs_req(doc_id=doc_id, page_size=5000)
+            all_reqs: List[SrsReq] = resp.data.rows or []
+            for req in all_reqs:
+                code = str(getattr(req, "type_code", "") or "")
+                if code and code not in ["1", "2"] and code not in change_type_codes:
+                    change_type_codes.append(code)
+            results = []
+            for type_code in change_type_codes:
+                table = await __query_srs_reqs(type_code)
+                rows = getattr(table, "rows", None) or []
+                if table and rows:
+                    results.append(SrsNodeForm(label=type_names.get(type_code) or "变更需求", table=table))
+            return results
+        
         def __fix_chapter(p_title: str, nodes: List[SrsNodeForm]):
             chapter =re.search(r'(\d(\.\d)*)', p_title or "")
             chapter = chapter.group() if chapter else None
@@ -3023,6 +3055,169 @@ class Server(object):
         image_caption_no = {"value": 0}
 
         use_snapshot_content = snapshot is not None
+        exported_req_labels = set()
+        exported_req_tables = set()
+        change_req_export_done = {"value": False}
+
+        def __child_label_text(child):
+            return str(getattr(child, "label", "") or getattr(child, "title", "") or getattr(getattr(child, "table", None), "name", "") or "")
+
+        def __is_snapshot_product_req_child(child):
+            label = __child_label_text(child)
+            return ("产品需求列表" in label or "产品需求" in label) and "其他需求" not in label
+
+        def __is_snapshot_other_req_child(child):
+            label = __child_label_text(child)
+            return "其他需求列表" in label or label.strip() == "其他需求" or label.startswith("其他需求")
+
+        def __is_snapshot_change_req_child(child):
+            if "变更" in __child_label_text(child):
+                return True
+            return "变更" in str(getattr(getattr(child, "table", None), "name", "") or "")
+
+        def __find_snapshot_req_child(node, matcher):
+            for child in node.children or []:
+                if matcher(child) and child.table and child.table.headers:
+                    return child
+            return None
+
+        def __find_snapshot_change_req_children(node):
+            results = []
+            for child in node.children or []:
+                if __is_snapshot_change_req_child(child) and child.table and child.table.headers:
+                    results.append(child)
+            return results
+
+        def __write_snapshot_req_tables_after_text(node, docx, font_def, written_child_ids):
+            if not use_snapshot_content:
+                return
+            for child in node.children or []:
+                if id(child) in written_child_ids:
+                    continue
+                if not (
+                    __is_snapshot_product_req_child(child) or
+                    __is_snapshot_other_req_child(child) or
+                    __is_snapshot_change_req_child(child)
+                ):
+                    continue
+                __write_snapshot_req_child(child, docx, font_def, written_child_ids)
+
+        def __write_snapshot_req_child(child, docx, font_def, written_child_ids, skip_label: bool = False):
+            label = getattr(child, "label", None) or ""
+            table_name = str(getattr(getattr(child, "table", None), "name", "") or "")
+            norm_label = __norm_title(label) or __norm_title(table_name)
+            if label and not skip_label and norm_label not in exported_req_labels:
+                exported_req_labels.add(norm_label)
+                docx_util.save_txt2docx(label, docx, font_def)
+            elif label and not skip_label:
+                exported_req_labels.add(norm_label)
+            if child.table and child.table.headers:
+                rows = getattr(child.table, "rows", None) or []
+                codes = []
+                for row in rows[:5]:
+                    if isinstance(row, dict):
+                        codes.append(str(row.get("srs_code") or row.get("code") or ""))
+                dedupe_key = (norm_label, tuple(codes), len(rows))
+                if dedupe_key in exported_req_tables:
+                    written_child_ids.add(id(child))
+                    return
+                exported_req_tables.add(dedupe_key)
+                __save_tab2docx(child.table, docx, show_name=False)
+            written_child_ids.add(id(child))
+
+        def __change_req_table_dedupe_key(child):
+            label = getattr(child, "label", None) or ""
+            table_name = str(getattr(getattr(child, "table", None), "name", "") or "")
+            norm_label = __norm_title(label) or __norm_title(table_name)
+            rows = getattr(getattr(child, "table", None), "rows", None) or []
+            codes = []
+            for row in rows[:5]:
+                if isinstance(row, dict):
+                    codes.append(str(row.get("srs_code") or row.get("code") or ""))
+            return (norm_label, tuple(codes), len(rows))
+
+        def __is_change_req_table_exported(child):
+            return __change_req_table_dedupe_key(child) in exported_req_tables
+
+        def __write_change_req_table_node(table, docx, table_name: str = ""):
+            if not table or not getattr(table, "headers", None):
+                return False
+            name = str(table_name or getattr(table, "name", "") or "变更需求").strip()
+            norm_name = __norm_title(name)
+            rows = getattr(table, "rows", None) or []
+            codes = []
+            for row in rows[:5]:
+                if isinstance(row, dict):
+                    codes.append(str(row.get("srs_code") or row.get("code") or ""))
+            dedupe_key = (norm_name, tuple(codes), len(rows))
+            if dedupe_key in exported_req_tables:
+                return False
+            exported_req_tables.add(dedupe_key)
+            __save_tab2docx(table, docx, show_name=False)
+            return True
+
+        def __has_change_req_tables_exported():
+            return any("变更" in str((key or [""])[0] or "") for key in exported_req_tables)
+
+        async def __export_change_req_from_db(docx, font_def, title_already_written: bool = False):
+            """变更需求表统一从数据库读取，在需求列表节点指定位置导出。"""
+            if change_req_export_done["value"]:
+                return False
+            extras = await __query_srs_change_req_exports_only()
+            if not extras:
+                return False
+            if not title_already_written and "变更需求" not in exported_req_labels:
+                docx_util.save_txt2docx("变更需求", docx, font_def)
+                exported_req_labels.add("变更需求")
+            wrote_any = False
+            for extra in extras:
+                table = extra.table
+                rows = getattr(table, "rows", None) or []
+                if not table or not getattr(table, "headers", None) or not rows:
+                    continue
+                label = extra.label or "变更需求"
+                norm_label = __norm_title(label)
+                codes = []
+                for row in rows[:5]:
+                    if isinstance(row, dict):
+                        codes.append(str(row.get("srs_code") or row.get("code") or ""))
+                dedupe_key = (norm_label, tuple(codes), len(rows))
+                if dedupe_key in exported_req_tables:
+                    continue
+                exported_req_tables.add(dedupe_key)
+                __save_tab2docx(table, docx, show_name=False)
+                wrote_any = True
+            if wrote_any:
+                change_req_export_done["value"] = True
+            return wrote_any
+
+        def __is_other_req_export_table(table):
+            if not table or not getattr(table, "headers", None):
+                return False
+            header_names = [
+                self.__normalize_header(getattr(header, "name", "") or "")
+                for header in (table.headers or [])
+            ]
+            has_code = any("需求编号" in name or name in ["srscode", "code"] for name in header_names)
+            has_location = any("章节" in name or "位置" in name or name == "location" for name in header_names)
+            has_function = any("功能" in name and "子功能" not in name for name in header_names)
+            return has_code and has_location and not has_function
+
+        async def __save_tab_and_export_change_if_other(table, docx, font_def, show_name: bool = False):
+            __save_tab2docx(table, docx, show_name=show_name)
+            if __is_other_req_export_table(table) and not change_req_export_done["value"]:
+                await __export_change_req_from_db(docx, font_def, "变更需求" in exported_req_labels)
+
+        def __is_change_req_line(line: str):
+            return "变更需求" in __norm_title(line)
+
+        def __is_req_list_export_slot(node_text: str, node_label: str, imported_table_children):
+            text_blob = f"{node_text or ''}\n{node_label or ''}"
+            has_product = "产品需求" in text_blob or "产品功能" in text_blob
+            has_other = "其他需求" in text_blob
+            has_pair = has_product and has_other
+            has_imported_pair = len(imported_table_children or []) >= 2 and has_other
+            return has_pair or has_imported_pair
 
         async def __writenodes(nodes: List[SrsNodeForm], docx: Document, level: int = 0):
             font_def = 10.5
@@ -3083,19 +3278,16 @@ class Server(object):
                 if (
                     node.table and
                     node.table.headers and
-                    "变更需求" in str(getattr(node.table, "name", "") or "")
+                    "变更" in str(getattr(node.table, "name", "") or "")
                 ):
-                    table_name = str(getattr(node.table, "name", "") or "").strip()
-                    if table_name:
-                        docx_util.save_txt2docx(table_name, docx, font_def)
-                    __save_tab2docx(node.table, docx, show_name=False)
+                    # 变更需求表仅从数据库导出，跳过快照中的独立变更表节点
                     continue
                 node_text_for_export = __strip_imported_catalog_lines(node.text)
-                if node_text_for_export:
-                    imported_table_children = [
-                        child for child in (node.children or [])
-                        if __is_imported_table_title(child.title) and child.table and child.table.headers
-                    ]
+                imported_table_children = [
+                    child for child in (node.children or [])
+                    if __is_imported_table_title(child.title) and child.table and child.table.headers
+                ]
+                if node_text_for_export or imported_table_children:
                     imported_image_children = [
                         child for child in (node.children or [])
                         if (child.img_url and re.match(r"^导入图片\d*$", (child.title or "").strip()))
@@ -3104,72 +3296,83 @@ class Server(object):
                     has_caption = any(__is_table_caption_line(line) for line in lines)
                     has_image_caption = any(__is_image_caption_line(line) for line in lines)
                     has_change_req_marker = "变更需求" in node_text_for_export or "变更需求" in node_title_for_export
-                    has_req_list_pair = (
-                        ("产品需求列表" in node_text_for_export or "产品需求" in node_text_for_export)
-                        and ("其他需求列表" in node_text_for_export or "其他需求" in node_text_for_export)
+                    has_req_list_pair = __is_req_list_export_slot(
+                        node_text_for_export,
+                        getattr(node, "label", "") or "",
+                        imported_table_children,
                     )
-                    if has_change_req_marker:
-                        if node_text_for_export:
-                            docx_util.save_txt2docx(node_text_for_export, docx, font_def)
-                        for extra in await __query_srs_reqs_x():
-                            if extra.label:
-                                docx_util.save_txt2docx(extra.label, docx, font_def)
-                            if extra.table and extra.table.headers:
-                                __save_tab2docx(extra.table, docx, show_name=False)
-                        if use_snapshot_content:
-                            for child in node.children or []:
-                                label_text = str(getattr(child, "label", "") or getattr(child, "title", "") or getattr(getattr(child, "table", None), "name", "") or "")
-                                if "变更" not in label_text:
-                                    continue
-                                if getattr(child, "label", None):
-                                    docx_util.save_txt2docx(child.label, docx, font_def)
-                                if child.table and child.table.headers:
-                                    __save_tab2docx(child.table, docx, show_name=False)
-                                    written_child_ids.add(id(child))
-                    elif has_req_list_pair:
+                    if has_req_list_pair:
+                        node_change_title_written = False
                         if imported_table_children:
                             table_idx = 0
                             for raw_line in lines:
                                 line = (raw_line or "").strip()
                                 if not line:
                                     continue
+                                if __is_change_req_line(line):
+                                    if node_change_title_written:
+                                        continue
+                                    node_change_title_written = True
+                                    exported_req_labels.add("变更需求")
+                                    docx_util.save_txt2docx(line, docx, font_def)
+                                    continue
                                 docx_util.save_txt2docx(line, docx, font_def)
                                 if ("产品需求列表" in line or "产品需求" in line or "其他需求列表" in line or "其他需求" in line) and table_idx < len(imported_table_children):
                                     tab_node = imported_table_children[table_idx]
                                     table_idx += 1
-                                    __save_tab2docx(tab_node.table, docx, show_name=False)
+                                    if __is_other_req_export_table(tab_node.table):
+                                        await __save_tab_and_export_change_if_other(tab_node.table, docx, font_def, show_name=False)
+                                    else:
+                                        __save_tab2docx(tab_node.table, docx, show_name=False)
                                     written_child_ids.add(id(tab_node))
                             for tab_node in imported_table_children[table_idx:]:
                                 table_name = str(getattr(tab_node.table, "name", "") or getattr(tab_node, "label", "") or getattr(tab_node, "title", "") or "")
+                                if "变更" in table_name:
+                                    continue
                                 if table_name and not re.match(r"^导入表格\d*$", table_name):
                                     docx_util.save_txt2docx(table_name, docx, font_def)
                                 __save_tab2docx(tab_node.table, docx, show_name=False)
                                 written_child_ids.add(id(tab_node))
+                            if not change_req_export_done["value"]:
+                                await __export_change_req_from_db(docx, font_def, node_change_title_written)
                         else:
                             for raw_line in lines:
                                 line = (raw_line or "").strip()
                                 if not line:
                                     continue
+                                if __is_change_req_line(line):
+                                    if node_change_title_written:
+                                        continue
+                                    node_change_title_written = True
+                                    exported_req_labels.add("变更需求")
+                                    docx_util.save_txt2docx(line, docx, font_def)
+                                    continue
                                 docx_util.save_txt2docx(line, docx, font_def)
                                 if "产品需求列表" in line or "产品需求" in line:
                                     __save_tab2docx(await __query_srs_reqs("1"), docx, show_name=False)
                                 elif "其他需求列表" in line or "其他需求" in line:
-                                    __save_tab2docx(await __query_srs_reqs("2"), docx, show_name=False)
-                            for extra in await __query_srs_reqs_x():
-                                if extra.label:
-                                    docx_util.save_txt2docx(extra.label, docx, font_def)
-                                if extra.table and extra.table.headers:
-                                    __save_tab2docx(extra.table, docx, show_name=False)
-                        if use_snapshot_content:
-                            for child in node.children or []:
-                                label_text = str(getattr(child, "label", "") or getattr(child, "title", "") or getattr(getattr(child, "table", None), "name", "") or "")
-                                if "变更" not in label_text:
+                                    await __save_tab_and_export_change_if_other(await __query_srs_reqs("2"), docx, font_def, show_name=False)
+                            if not change_req_export_done["value"]:
+                                await __export_change_req_from_db(docx, font_def, node_change_title_written)
+                        for child in (node.children or []):
+                            if __is_snapshot_change_req_child(child):
+                                written_child_ids.add(id(child))
+                    elif has_change_req_marker:
+                        node_change_title_written = False
+                        if node_text_for_export:
+                            for raw_line in lines:
+                                line = (raw_line or "").strip()
+                                if not line:
                                     continue
-                                if getattr(child, "label", None):
-                                    docx_util.save_txt2docx(child.label, docx, font_def)
-                                if child.table and child.table.headers:
-                                    __save_tab2docx(child.table, docx, show_name=False)
-                                    written_child_ids.add(id(child))
+                                if __is_change_req_line(line):
+                                    if node_change_title_written:
+                                        continue
+                                    node_change_title_written = True
+                                    exported_req_labels.add("变更需求")
+                                docx_util.save_txt2docx(line, docx, font_def)
+                        for child in (node.children or []):
+                            if __is_snapshot_change_req_child(child):
+                                written_child_ids.add(id(child))
                     elif (imported_table_children and has_caption) or (imported_image_children and has_image_caption):
                         table_idx = 0
                         image_idx = 0
@@ -3192,7 +3395,42 @@ class Server(object):
                             else:
                                 docx_util.save_txt2docx(line, docx, font_def)
                     else:
-                        docx_util.save_txt2docx(node_text_for_export, docx, font_def)
+                        if imported_table_children:
+                            table_idx = 0
+                            for raw_line in lines:
+                                line = (raw_line or "").strip()
+                                if not line:
+                                    continue
+                                docx_util.save_txt2docx(line, docx, font_def)
+                                if "变更需求" in line:
+                                    exported_req_labels.add(__norm_title("变更需求"))
+                                if table_idx < len(imported_table_children) and (
+                                    "产品需求列表" in line or "产品需求" in line or
+                                    "其他需求列表" in line or "其他需求" in line or
+                                    "变更需求" in line or "变更" in line
+                                ):
+                                    tab_node = imported_table_children[table_idx]
+                                    table_idx += 1
+                                    if __is_other_req_export_table(tab_node.table):
+                                        await __save_tab_and_export_change_if_other(tab_node.table, docx, font_def, show_name=False)
+                                    else:
+                                        __save_tab2docx(tab_node.table, docx, show_name=False)
+                                    written_child_ids.add(id(tab_node))
+                            for tab_node in imported_table_children[table_idx:]:
+                                if id(tab_node) in written_child_ids:
+                                    continue
+                                __save_tab2docx(tab_node.table, docx, show_name=False)
+                                written_child_ids.add(id(tab_node))
+                        else:
+                            docx_util.save_txt2docx(node_text_for_export, docx, font_def)
+
+                    if not change_req_export_done["value"]:
+                        text_blob = f"{node_text_for_export or ''}\n{getattr(node, 'label', '') or ''}"
+                        if "其他需求" in text_blob or any(
+                            __is_other_req_export_table(getattr(child, "table", None))
+                            for child in imported_table_children
+                        ):
+                            await __export_change_req_from_db(docx, font_def, "变更需求" in exported_req_labels)
 
                 if node.img_url:
                     docx_util.save_img2docx(node.img_url, docx, mw=500, mh=500)
@@ -3205,21 +3443,33 @@ class Server(object):
                         __save_image_caption_txt(docx, node_image_caption, font_def)
 
                 if node.ref_type == RefTypes.srs_reqs.value:
-                    table = await __query_srs_reqs("1")
-                    node1 = SrsNodeForm(label="产品需求列表:", table=table)
-                    
-                    table = await __query_srs_reqs("2")
-                    node2 = SrsNodeForm(label="其他需求列表:", table=table)
-                   
-                    results = await __query_srs_reqs_x()
-                    results = [node1, node2] + results
-                    await __writenodes(results, docx, level + 1)
+                    has_table_children = any(
+                        child.table and child.table.headers
+                        for child in (node.children or [])
+                    )
+                    if not has_table_children:
+                        table = await __query_srs_reqs("1")
+                        node1 = SrsNodeForm(label="产品需求列表:", table=table)
+
+                        table = await __query_srs_reqs("2")
+                        node2 = SrsNodeForm(label="其他需求列表:", table=table)
+
+                        await __writenodes([node1, node2], docx, level + 1)
+                        if not change_req_export_done["value"]:
+                            await __export_change_req_from_db(docx, font_def, False)
                 elif node.ref_type == RefTypes.srs_reqds.value:
                     reqds = await __query_srs_reqds(node.title)
                     await __writenodes(reqds, docx, level + 1)   
                 else:
-                    if node.table and node.table.headers:
-                        __save_tab2docx(node.table, docx)
+                    has_table_children = any(
+                        child.table and child.table.headers
+                        for child in (node.children or [])
+                    )
+                    if node.table and node.table.headers and not has_table_children:
+                        if __is_other_req_export_table(node.table):
+                            await __save_tab_and_export_change_if_other(node.table, docx, show_name=False)
+                        else:
+                            __save_tab2docx(node.table, docx)
 
                 if node.children:
                     next_children = [child for child in node.children if id(child) not in written_child_ids]

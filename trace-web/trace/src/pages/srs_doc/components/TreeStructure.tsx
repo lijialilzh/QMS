@@ -1735,7 +1735,7 @@ interface TreeStructureProps {
     onSaveReqDetailTable?: (detail: any) => Promise<void>;
     onSaveSrsReqTable?: (table: TableData) => Promise<any[] | void>;
     onSaveOtherReqTable?: (table: TableData) => Promise<any[] | void>;
-    onSaveSrsChangeReqTable?: (tableData: TableDataWithHeaders) => Promise<any>;
+    onSaveSrsChangeReqTable?: (tableData: TableDataWithHeaders) => Promise<TreeNode[] | undefined>;
     srsReqPreview?: {
         main: any[];
         other: any[];
@@ -2367,6 +2367,135 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
             type_code: item?.type_code || "2",
         }))
         .filter((item: any) => item.code && item.module);
+    const syncMissingChangeReqPreviewToTree = (nodeList: TreeNode[]): TreeNode[] => {
+        const changeDetails = buildPreviewChangeDetails();
+        if (!changeDetails.length) return nodeList || [];
+        const cloned: TreeNode[] = JSON.parse(JSON.stringify(nodeList || []));
+        const existingCodes = new Set<string>();
+        const walkCodes = (items: TreeNode[]) => {
+            (items || []).forEach((node) => {
+                const code = normalizeSrsCode(node.srs_code || "") ||
+                    (isFunctionalKvTable(node.table) ? normalizeSrsCode(extractSrsCodeFromTable(node.table)) : "");
+                if (code) existingCodes.add(code);
+                walkCodes(node.children || []);
+            });
+        };
+        walkCodes(cloned);
+        const appendChangeDetail = (detail: any) => {
+            const code = normalizeSrsCode(detail?.code);
+            const typeCode = String(detail?.type_code || "");
+            if (!code || existingCodes.has(code) || typeCode === "1" || typeCode === "2") return;
+            const moduleText = String(detail?.module || detail?.name || detail?.function || code || "").trim() || code;
+            const functionText = String(detail?.function || "").trim();
+            const subFunctionText = String(detail?.sub_function || "").trim();
+            const reqDetailRoot = findReqDetailRoot(cloned);
+            if (!reqDetailRoot) return;
+            let moduleNode = findExistingModuleNode(cloned, moduleText);
+            if (!moduleNode) {
+                const rootPrefix = String(reqDetailRoot.title || "").trim().match(/^(\d+)/)?.[1] || "";
+                if (!rootPrefix) return;
+                reqDetailRoot.children = reqDetailRoot.children || [];
+                moduleNode = findChildByTitleText(reqDetailRoot.children, rootPrefix, moduleText);
+                if (!moduleNode) {
+                    const moduleNo = getNextChildNo(reqDetailRoot.children, rootPrefix);
+                    moduleNode = buildAutoNode(`${rootPrefix}.${moduleNo} ${moduleText}`, reqDetailRoot);
+                    reqDetailRoot.children = [...reqDetailRoot.children, moduleNode];
+                }
+            }
+            let targetNode = moduleNode;
+            if (functionText) {
+                const modulePrefix = String(moduleNode.title || "").trim().match(/^(\d+(?:\.\d+)*)\s+/)?.[1] || "";
+                if (modulePrefix) {
+                    moduleNode.children = moduleNode.children || [];
+                    let functionNode = findChildByTitleText(moduleNode.children, modulePrefix, functionText);
+                    if (!functionNode) {
+                        const functionNo = getNextChildNo(moduleNode.children, modulePrefix);
+                        functionNode = buildAutoNode(`${modulePrefix}.${functionNo} ${functionText}`, moduleNode);
+                        moduleNode.children = [...moduleNode.children, functionNode];
+                    }
+                    targetNode = functionNode;
+                }
+            }
+            if (subFunctionText) {
+                const functionPrefix = String(targetNode.title || "").trim().match(/^(\d+(?:\.\d+)*)\s+/)?.[1] || "";
+                if (functionPrefix) {
+                    targetNode.children = targetNode.children || [];
+                    let subFunctionNode = findChildByTitleText(targetNode.children, functionPrefix, subFunctionText);
+                    if (!subFunctionNode) {
+                        const subFunctionNo = getNextChildNo(targetNode.children, functionPrefix);
+                        subFunctionNode = buildAutoNode(`${functionPrefix}.${subFunctionNo} ${subFunctionText}`, targetNode);
+                        targetNode.children = [...targetNode.children, subFunctionNode];
+                    }
+                    targetNode = subFunctionNode;
+                }
+            }
+            if (getHeadingDepth(targetNode.title) === 1) {
+                const rootPrefix = String(targetNode.title || "").trim().match(/^(\d+)/)?.[1] || "";
+                if (!rootPrefix) return;
+                targetNode.children = targetNode.children || [];
+                const detailTitle = String(detail?.name || detail?.function || detail?.sub_function || moduleText || code).trim();
+                const detailNo = getNextChildNo(targetNode.children, rootPrefix);
+                const detailNode = buildAutoNode(`${rootPrefix}.${detailNo} ${detailTitle}`, targetNode);
+                targetNode.children = [...targetNode.children, detailNode];
+                targetNode = detailNode;
+            }
+            targetNode.srs_code = code;
+            targetNode.rcm_codes = null;
+            targetNode.text = "";
+            targetNode.label = "__auto_req_detail";
+            targetNode.table = buildReqDetailTable(detail);
+            existingCodes.add(code);
+        };
+        changeDetails.forEach(appendChangeDetail);
+        const reqRoot = findReqDetailRoot(cloned);
+        if (reqRoot) sortTreeChildrenBySrsCode([reqRoot]);
+        return cloned;
+    };
+    const pruneStaleChangeReqPreviewFromTree = (nodeList: TreeNode[]): TreeNode[] => {
+        const changeCodes = new Set(
+            buildPreviewChangeDetails().map((item) => normalizeSrsCode(item?.code)).filter(Boolean),
+        );
+        const standardCodes = new Set(
+            buildPreviewStandardDetails().map((item) => normalizeSrsCode(item?.code)).filter(Boolean),
+        );
+        const getRootNo = (value?: string) => String(value || "").trim().match(/^(\d+)/)?.[1] || "";
+        const getDepth = (value?: string) => {
+            const matched = String(value || "").trim().match(/^(\d+(?:\.\d+)*)\s+/);
+            return matched ? matched[1].split(".").length : 0;
+        };
+        const stripHeadingNo = (value?: string) => String(value || "").trim().replace(/^\d+(?:\.\d+)*\s*/, "");
+        const isEmptyGeneratedHeading = (node: TreeNode) => (
+            getDepth(node?.title) > 1 &&
+            normalizeTitleText(stripHeadingNo(node?.title)) !== "要求" &&
+            !normalizeReqDisplayText(node?.text) &&
+            !node?.img_url &&
+            !hasRenderableTable(node?.table) &&
+            !isFunctionalKvTable(node?.table) &&
+            !(node?.children || []).length
+        );
+        const walk = (items: TreeNode[], insideReqRoot = false): TreeNode[] => (items || [])
+            .map((node) => {
+                const nextInsideReqRoot = insideReqRoot || getRootNo(node?.title) === "7";
+                return {
+                    ...node,
+                    children: walk(node.children || [], nextInsideReqRoot),
+                };
+            })
+            .filter((node) => {
+                const nextInsideReqRoot = insideReqRoot || getRootNo(node?.title) === "7";
+                if (!nextInsideReqRoot) return true;
+                const isReqDetailNode = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
+                const code = normalizeSrsCode(node.srs_code || (isFunctionalKvTable(node.table) ? extractSrsCodeFromTable(node.table) : ""));
+                const key = normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table));
+                if (isReqDetailNode && key.startsWith("change_reqd_") && code && !changeCodes.has(code)) return false;
+                if (isReqDetailNode && node.label === "__auto_req_detail" && code && !changeCodes.has(code) && !standardCodes.has(code)) {
+                    return false;
+                }
+                if ((node.label === "__auto_req_group" || !node.label) && isEmptyGeneratedHeading(node)) return false;
+                return true;
+            });
+        return walk(nodeList || []);
+    };
     const syncOtherReqCodesToChapters = (items: TreeNode[], otherDetails: any[] = []): TreeNode[] => (
         syncOtherReqCodesToChaptersFromRows(items, otherDetails, {
             fixedTemplateSections: FIXED_TEMPLATE_SECTIONS,
@@ -2679,9 +2808,13 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         const withOtherReqSync = otherDetails.length
             ? syncOtherReqCodesToChapters(withEmbeddedTable, otherDetails)
             : withEmbeddedTable;
+        const hasPreviewChangeRows = (srsReqPreview?.changes || []).some((table) => (table.data || []).length > 0);
+        const withChangePruned = pruneStaleChangeReqPreviewFromTree(withOtherReqSync);
         const nextNodes = enableStandardReqAutoSync
             ? syncReqDetailsToTree(withRcm, reqDetails || [])
-            : withOtherReqSync;
+            : (hasPreviewChangeRows
+                ? syncMissingChangeReqPreviewToTree(withChangePruned)
+                : withChangePruned);
         setNodes(nextNodes);
     }, [value, reqDetails, srsReqPreview, enableStandardReqAutoSync]);
     // 把组件内部“最新树状态”实时回传给父组件，避免保存时拿到滞后值
@@ -3418,7 +3551,10 @@ export default ({ value = [], onChange, docId, hiddenNodeIds = [], readOnly, rcm
         }
         const isSavingChangeReqTable = !!(tableFormat && isReqMainTable(tableFormat) && /变更/.test(String(tableFormat.name || tableData.tableName || "")));
         if (isSavingChangeReqTable && onSaveSrsChangeReqTable) {
-            await onSaveSrsChangeReqTable(tableData);
+            const syncedTree = await onSaveSrsChangeReqTable(tableData);
+            if (syncedTree?.length) {
+                updateNodes(syncedTree);
+            }
             setTableCellsBackup(undefined);
             return;
         }
