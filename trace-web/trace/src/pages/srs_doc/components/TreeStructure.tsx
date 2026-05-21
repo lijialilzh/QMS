@@ -258,6 +258,371 @@ function normalizeSrsCodeValue(value?: string): string {
     return String(value || "").replace(/\s+/g, "").toUpperCase();
 }
 
+export function validateStandardSrsCodeUnique(
+    rows: Array<{ srs_code?: string; code?: string; [key: string]: any }> = [],
+    codeResolver?: (row: any, index: number) => string,
+): string {
+    const resolveCode = codeResolver || ((row) => normalizeSrsCodeValue(row?.srs_code || row?.code || ""));
+    const seen = new Map<string, number>();
+    for (let index = 0; index < rows.length; index += 1) {
+        const code = resolveCode(rows[index], index);
+        if (!code) continue;
+        if (seen.has(code)) {
+            const firstRow = seen.get(code)! + 1;
+            const duplicateRow = index + 1;
+            return `产品需求列表中 SRS 编号 ${code} 重复（第 ${firstRow} 行与第 ${duplicateRow} 行），请确保每条标准需求的编号唯一`;
+        }
+        seen.set(code, index);
+    }
+    return "";
+}
+
+export type StandardReqTableRow = {
+    code: string;
+    module: string;
+    function: string;
+    sub_function: string;
+};
+
+function pickStandardReqTableColumns(headers: Array<{ code: string; name: string }> = []) {
+    const normalizeHeader = (value?: string) => String(value || "")
+        .replace(/[\s↩\r\n\t]+/g, "")
+        .replace(/[：:，,。.;；、]/g, "")
+        .toLowerCase();
+    const pickColumn = (matcher: (text: string) => boolean) => (
+        headers.find((header) => matcher(normalizeHeader(header?.name)))?.code || ""
+    );
+    return {
+        codeCol: pickColumn((text) => isReqCodeHeaderText(text)),
+        moduleCol: pickColumn((text) => text.includes("模块")),
+        functionCol: pickColumn((text) => text.includes("功能") && !text.includes("子功能")),
+        subFunctionCol: pickColumn((text) => text.includes("子功能")),
+    };
+}
+
+export function buildStandardReqRowsFromTableHeaders(
+    headers: Array<{ code: string; name: string }> = [],
+    rows: Array<Record<string, any>> = [],
+): StandardReqTableRow[] {
+    const { codeCol, moduleCol, functionCol, subFunctionCol } = pickStandardReqTableColumns(headers);
+    if (!codeCol || !moduleCol || !functionCol) return [];
+
+    const getSrsExportGroup = (code: string) => {
+        const normalized = normalizeSrsCodeValue(code);
+        return normalized.match(/^(SRS-[A-Z]+\d+)-\d+$/)?.[1] || normalized;
+    };
+    const lastValues: Record<string, string> = {};
+    return (rows || [])
+        .map((row) => {
+            const code = normalizeSrsCodeValue(row?.[codeCol]);
+            const group = getSrsExportGroup(code);
+            const sameGroup = !!group && group === lastValues.group;
+            if (!sameGroup) {
+                lastValues.group = group;
+                lastValues.module = "";
+                lastValues.function = "";
+                lastValues.sub_function = "";
+            }
+            const rawModule = normalizeReqDisplayText(row?.[moduleCol]);
+            const rawFunction = normalizeReqDisplayText(row?.[functionCol]);
+            const rawSubFunction = normalizeReqDisplayText(row?.[subFunctionCol]);
+            if (rawModule) {
+                lastValues.module = rawModule;
+                lastValues.function = "";
+                lastValues.sub_function = "";
+            }
+            if (rawFunction) {
+                lastValues.function = rawFunction;
+                lastValues.sub_function = "";
+            }
+            if (rawSubFunction) {
+                lastValues.sub_function = rawSubFunction;
+            }
+            return {
+                code,
+                module: rawModule || (sameGroup ? lastValues.module || "" : ""),
+                function: rawFunction || (sameGroup ? lastValues.function || "" : ""),
+                sub_function: rawSubFunction || (sameGroup ? lastValues.sub_function || "" : ""),
+            };
+        })
+        .filter((row) => row.code);
+}
+
+export function validateStandardSrsRowContent(rows: StandardReqTableRow[] = []): string {
+    for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index];
+        if (!row.code) continue;
+        if (!row.module && !row.function && !row.sub_function) {
+            return `产品需求列表第 ${index + 1} 行已填写 SRS 编号 ${row.code}，模块/功能/子功能至少填写一项`;
+        }
+    }
+    return "";
+}
+
+/** 按行原始填写值校验，不使用合并单元格继承值 */
+export function validateStandardSrsRowContentRaw(
+    headers: Array<{ code: string; name: string }> = [],
+    rows: Array<Record<string, any>> = [],
+): string {
+    const { codeCol, moduleCol, functionCol, subFunctionCol } = pickStandardReqTableColumns(headers);
+    if (!codeCol || !moduleCol || !functionCol) return "";
+
+    for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index];
+        const code = normalizeSrsCodeValue(row?.[codeCol]);
+        if (!code) continue;
+        const module = normalizeReqDisplayText(row?.[moduleCol]);
+        const fn = normalizeReqDisplayText(row?.[functionCol]);
+        const subFn = normalizeReqDisplayText(row?.[subFunctionCol]);
+        if (!module && !fn && !subFn) {
+            return `产品需求列表第 ${index + 1} 行已填写 SRS 编号 ${code}，模块/功能/子功能至少填写一项`;
+        }
+    }
+    return "";
+}
+
+export function validateStandardSrsTableRows(
+    headers: Array<{ code: string; name: string }> = [],
+    rows: Array<Record<string, any>> = [],
+): string {
+    const { codeCol } = pickStandardReqTableColumns(headers);
+    const duplicateMsg = validateStandardSrsCodeUnique(rows, (row) => (
+        normalizeSrsCodeValue(codeCol ? String(row?.[codeCol] || "") : "")
+    ));
+    if (duplicateMsg) return duplicateMsg;
+    const contentMsg = validateStandardSrsRowContentRaw(headers, rows);
+    if (contentMsg) return contentMsg;
+    const effectiveRows = resolveEffectiveReqRowsFromTable(headers, rows);
+    return validateReqHierarchyDuplicates(effectiveRows, "产品需求列表");
+}
+
+export function validateStandardSrsDataRows(
+    rows: Array<{ srs_code?: string; code?: string; module?: string; function?: string; sub_function?: string }> = [],
+): string {
+    const duplicateMsg = validateStandardSrsCodeUnique(rows);
+    if (duplicateMsg) return duplicateMsg;
+    const mappedRows: StandardReqTableRow[] = (rows || []).map((row) => ({
+        code: normalizeSrsCodeValue(row?.srs_code || row?.code || ""),
+        module: normalizeReqDisplayText(row?.module),
+        function: normalizeReqDisplayText(row?.function),
+        sub_function: normalizeReqDisplayText(row?.sub_function),
+    }));
+    const contentMsg = validateStandardSrsRowContent(mappedRows.filter((row) => row.code));
+    if (contentMsg) return contentMsg;
+    const effectiveRows = resolveEffectiveReqRowsFromData(rows);
+    return validateReqHierarchyDuplicates(effectiveRows, "产品需求列表");
+}
+
+export function validateChangeReqCodeUnique(
+    rows: Array<{ srs_code?: string; code?: string; [key: string]: any }> = [],
+    tableLabel = "变更需求表",
+    codeResolver?: (row: any, index: number) => string,
+): string {
+    const resolveCode = codeResolver || ((row) => normalizeSrsCodeValue(row?.srs_code || row?.code || ""));
+    const seen = new Map<string, number>();
+    for (let index = 0; index < rows.length; index += 1) {
+        const code = resolveCode(rows[index], index);
+        if (!code) continue;
+        if (seen.has(code)) {
+            const firstRow = seen.get(code)! + 1;
+            const duplicateRow = index + 1;
+            return `${tableLabel}中 SRS 编号 ${code} 重复（第 ${firstRow} 行与第 ${duplicateRow} 行），请确保每条变更需求的编号唯一`;
+        }
+        seen.set(code, index);
+    }
+    return "";
+}
+
+function getReqSrsGroup(code: string): string {
+    const normalized = normalizeSrsCodeValue(code);
+    return normalized.match(/^(SRS-[A-Z]+\d+)-\d+$/)?.[1] || normalized;
+}
+
+function resolveEffectiveReqRowsFromData(
+    rows: Array<{ srs_code?: string; code?: string; module?: string; function?: string; sub_function?: string }> = [],
+): StandardReqTableRow[] {
+    const lastValues: Record<string, string> = {};
+    return (rows || []).map((row) => {
+        const code = normalizeSrsCodeValue(row?.srs_code || row?.code || "");
+        const group = getReqSrsGroup(code);
+        const sameGroup = !!group && group === lastValues.group;
+        if (!sameGroup) {
+            lastValues.group = group;
+            lastValues.module = "";
+            lastValues.function = "";
+            lastValues.sub_function = "";
+        }
+        const rawModule = normalizeReqDisplayText(row?.module);
+        const rawFunction = normalizeReqDisplayText(row?.function);
+        const rawSubFunction = normalizeReqDisplayText(row?.sub_function);
+        if (rawModule) {
+            lastValues.module = rawModule;
+            lastValues.function = "";
+            lastValues.sub_function = "";
+        }
+        if (rawFunction) {
+            lastValues.function = rawFunction;
+            lastValues.sub_function = "";
+        }
+        if (rawSubFunction) {
+            lastValues.sub_function = rawSubFunction;
+        }
+        return {
+            code,
+            module: rawModule || (sameGroup ? lastValues.module || "" : ""),
+            function: rawFunction || (sameGroup && !rawModule ? lastValues.function || "" : ""),
+            sub_function: rawSubFunction || (sameGroup && !rawModule && !rawFunction ? lastValues.sub_function || "" : ""),
+        };
+    });
+}
+
+function resolveEffectiveReqRowsFromTable(
+    headers: Array<{ code: string; name: string }> = [],
+    rows: Array<Record<string, any>> = [],
+): StandardReqTableRow[] {
+    const { codeCol, moduleCol, functionCol, subFunctionCol } = pickStandardReqTableColumns(headers);
+    if (!codeCol || !moduleCol || !functionCol) return [];
+    return resolveEffectiveReqRowsFromData(
+        rows.map((row) => ({
+            code: row?.[codeCol],
+            module: row?.[moduleCol],
+            function: row?.[functionCol],
+            sub_function: subFunctionCol ? row?.[subFunctionCol] : "",
+        })),
+    );
+}
+
+/** 同模块名称下，除首行外若功能与子功能均为空则不允许保存 */
+function validateReqDuplicateModule(
+    rows: StandardReqTableRow[] = [],
+    tableLabel = "需求表",
+): string {
+    const moduleOwner = new Map<string, { index: number; code: string }>();
+    for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index];
+        const code = normalizeSrsCodeValue(row.code);
+        if (!code) continue;
+        const moduleKey = normalizeReqDisplayText(row.module);
+        if (!moduleKey) continue;
+        const fn = normalizeReqDisplayText(row.function);
+        const subFn = normalizeReqDisplayText(row.sub_function);
+        if (fn || subFn) continue;
+        if (moduleOwner.has(moduleKey)) {
+            const first = moduleOwner.get(moduleKey)!;
+            return `${tableLabel}第 ${index + 1} 行 SRS 编号 ${code} 与第 ${first.index + 1} 行模块「${moduleKey}」相同，请填写功能或子功能以区分`;
+        }
+        moduleOwner.set(moduleKey, { index, code });
+    }
+    return "";
+}
+
+/** 同模块且同功能时，除首行外子功能必填，且同组内子功能不可重复 */
+function validateReqDuplicateModuleFunction(
+    rows: StandardReqTableRow[] = [],
+    tableLabel = "需求表",
+): string {
+    const moduleFunctionGroups = new Map<string, Array<{ index: number; code: string; subFn: string }>>();
+    for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index];
+        const code = normalizeSrsCodeValue(row.code);
+        if (!code) continue;
+        const moduleKey = normalizeReqDisplayText(row.module);
+        const fnKey = normalizeReqDisplayText(row.function);
+        if (!moduleKey || !fnKey) continue;
+        const subFn = normalizeReqDisplayText(row.sub_function);
+        const key = `${moduleKey}\0${fnKey}`;
+        const members = moduleFunctionGroups.get(key) || [];
+        if (members.length > 0) {
+            if (!subFn) {
+                const first = members[0];
+                return `${tableLabel}第 ${index + 1} 行 SRS 编号 ${code} 与第 ${first.index + 1} 行模块「${moduleKey}」功能「${fnKey}」相同，请填写子功能以区分`;
+            }
+            const duplicateSubFn = members.find((member) => member.subFn === subFn);
+            if (duplicateSubFn) {
+                return `${tableLabel}第 ${index + 1} 行 SRS 编号 ${code} 与第 ${duplicateSubFn.index + 1} 行模块「${moduleKey}」功能「${fnKey}」子功能「${subFn}」重复，请填写不同的子功能以区分`;
+            }
+        }
+        members.push({ index, code, subFn });
+        moduleFunctionGroups.set(key, members);
+    }
+    return "";
+}
+
+function validateReqHierarchyDuplicates(
+    rows: StandardReqTableRow[] = [],
+    tableLabel = "需求表",
+): string {
+    const duplicateModuleMsg = validateReqDuplicateModule(rows, tableLabel);
+    if (duplicateModuleMsg) return duplicateModuleMsg;
+    return validateReqDuplicateModuleFunction(rows, tableLabel);
+}
+
+export function validateStandardSrsHierarchyDuplicates(rows: StandardReqTableRow[] = []): string {
+    return validateReqHierarchyDuplicates(rows, "产品需求列表");
+}
+
+const resolveEffectiveChangeReqRowsFromData = resolveEffectiveReqRowsFromData;
+const resolveEffectiveChangeReqRowsFromTable = resolveEffectiveReqRowsFromTable;
+const validateChangeReqHierarchyDuplicates = validateReqHierarchyDuplicates;
+
+export function validateChangeReqRowContent(
+    rows: Array<{ srs_code?: string; code?: string; module?: string; function?: string; sub_function?: string }> = [],
+    tableLabel = "变更需求表",
+): string {
+    for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index];
+        const code = normalizeSrsCodeValue(row?.srs_code || row?.code || "");
+        if (!code) continue;
+        const module = normalizeReqDisplayText(row?.module);
+        const fn = normalizeReqDisplayText(row?.function);
+        const subFn = normalizeReqDisplayText(row?.sub_function);
+        if (!module && !fn && !subFn) {
+            return `${tableLabel}第 ${index + 1} 行已填写 SRS 编号 ${code}，模块/功能/子功能至少填写一项`;
+        }
+    }
+    return "";
+}
+
+export function validateChangeReqTableRows(
+    headers: Array<{ code: string; name: string }> = [],
+    rows: Array<Record<string, any>> = [],
+    tableLabel = "变更需求表",
+): string {
+    const { codeCol, moduleCol, functionCol, subFunctionCol } = pickStandardReqTableColumns(headers);
+    if (!codeCol || !moduleCol || !functionCol) return "";
+
+    const duplicateMsg = validateChangeReqCodeUnique(rows, tableLabel, (row) => (
+        normalizeSrsCodeValue(codeCol ? String(row?.[codeCol] || "") : "")
+    ));
+    if (duplicateMsg) return duplicateMsg;
+
+    for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index];
+        const code = normalizeSrsCodeValue(row?.[codeCol]);
+        if (!code) continue;
+        const module = normalizeReqDisplayText(row?.[moduleCol]);
+        const fn = normalizeReqDisplayText(row?.[functionCol]);
+        const subFn = normalizeReqDisplayText(row?.[subFunctionCol]);
+        if (!module && !fn && !subFn) {
+            return `${tableLabel}第 ${index + 1} 行已填写 SRS 编号 ${code}，模块/功能/子功能至少填写一项`;
+        }
+    }
+    const effectiveRows = resolveEffectiveChangeReqRowsFromTable(headers, rows);
+    return validateChangeReqHierarchyDuplicates(effectiveRows, tableLabel);
+}
+
+export function validateChangeReqDataRows(
+    rows: Array<{ srs_code?: string; code?: string; module?: string; function?: string; sub_function?: string }> = [],
+    tableLabel = "变更需求表",
+): string {
+    const duplicateMsg = validateChangeReqCodeUnique(rows, tableLabel);
+    if (duplicateMsg) return duplicateMsg;
+    const contentMsg = validateChangeReqRowContent(rows, tableLabel);
+    if (contentMsg) return contentMsg;
+    const effectiveRows = resolveEffectiveChangeReqRowsFromData(rows);
+    return validateChangeReqHierarchyDuplicates(effectiveRows, tableLabel);
+}
+
 function getHeadingNumberFromTitle(title?: string): string {
     return String(title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
 }
@@ -4077,6 +4442,13 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             await onSaveReqDetailTable(reqDetailPayload);
         }
         const isSavingChangeReqTable = !!(tableFormat && isReqMainTable(tableFormat) && /变更/.test(String(tableFormat.name || tableData.tableName || "")));
+        if (isSavingChangeReqTable) {
+            const tableLabel = String(tableFormat?.name || tableData.tableName || "变更需求").trim() || "变更需求表";
+            const validateMsg = validateChangeReqTableRows(tableData.headers, rows, tableLabel);
+            if (validateMsg) {
+                throw new Error(validateMsg);
+            }
+        }
         if (isSavingChangeReqTable && onSaveSrsChangeReqTable) {
             const explicitTypeCode = String(tableData?.type_code || "").trim();
             const explicitTableId = tableData?.tableId;
@@ -4096,6 +4468,12 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         }
         const isSavingOtherReqTable = !!(tableFormat && isReqOtherTable(tableFormat));
         const isSavingStandardSrsTable = !!(tableFormat && isReqMainTable(tableFormat) && !/变更/.test(String(tableFormat.name || "")));
+        if (isSavingStandardSrsTable) {
+            const validateMsg = validateStandardSrsTableRows(tableData.headers, rows);
+            if (validateMsg) {
+                throw new Error(validateMsg);
+            }
+        }
         const allStandardDetailsForIdentitySync = isSavingStandardSrsTable
             ? collectReqRowsFromTreeTables([{
                 id: -1,

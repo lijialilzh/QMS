@@ -18,6 +18,11 @@ import TreeStructure, {
     syncTreeWithOtherReqState,
     remapProductBoundDocImages,
     resolveProductBoundDocImageRefType,
+    validateStandardSrsCodeUnique,
+    validateStandardSrsRowContentRaw,
+    validateStandardSrsDataRows,
+    validateStandardSrsHierarchyDuplicates,
+    validateChangeReqDataRows,
 } from "./components/TreeStructure";
 import EditableTableGenerator, { TableDataWithHeaders } from "./components/EditableTableGenerator";
 
@@ -476,31 +481,32 @@ export default () => {
         const mainRows = fillMergedMainReqRows(mainRowsSource)
             .filter((row: any) => normalizeReqText(row?.srs_code || row?.code) || normalizeReqText(row?.module) || normalizeReqText(row?.function) || normalizeReqText(row?.sub_function));
         if (!mainRows.length) return "产品需求列表至少需要一条标准需求";
-        const invalidMainIndex = mainRows.findIndex((row: any) => {
-            const code = normalizeSrsCodeForSync(row?.srs_code || row?.code);
-            const moduleText = normalizeReqText(row?.module);
-            const functionText = normalizeReqText(row?.function);
-            const subFunctionText = normalizeReqText(row?.sub_function);
-            if (!code) return true;
-            // Word 合并单元格导入后，续行的模块/功能可能在原始数据里为空，
-            // 但页面展示会继承上一行；只要本行有功能或子功能，就不按空合并格误报。
-            if (functionText || subFunctionText) return false;
-            return !moduleText;
-        });
-        if (invalidMainIndex >= 0) return `产品需求列表第 ${invalidMainIndex + 1} 行需填写需求编号、模块，且功能/子功能至少填写一个`;
+
+        const standardRows = (mainRowsSource || []).filter((row: any) => (
+            normalizeReqText(row?.srs_code || row?.code) ||
+            normalizeReqText(row?.module) ||
+            normalizeReqText(row?.function) ||
+            normalizeReqText(row?.sub_function)
+        ));
+        const standardValidateMsg = validateStandardSrsDataRows(standardRows);
+        if (standardValidateMsg) return standardValidateMsg;
+
+        const noCodeIndex = mainRows.findIndex((row: any) => !normalizeSrsCodeForSync(row?.srs_code || row?.code));
+        if (noCodeIndex >= 0) return `产品需求列表第 ${noCodeIndex + 1} 行需填写需求编号`;
 
         const changeTables = (data.srsChangeTables || []) as any[];
         const invalidChangeTitle = changeTables.find((table: any) => !normalizeReqText(table?.title));
         if (invalidChangeTitle) return "变更需求表名称不能为空";
         for (const table of changeTables) {
+            const tableLabel = table.title || "变更需求表";
             const rows = (table.data || []).filter((row: any) => (
                 normalizeReqText(row?.srs_code || row?.code) ||
                 normalizeReqText(row?.module) ||
                 normalizeReqText(row?.function) ||
                 normalizeReqText(row?.sub_function)
             ));
-            const invalidIndex = rows.findIndex((row: any) => !normalizeSrsCodeForSync(row?.srs_code || row?.code) || !normalizeReqText(row?.module));
-            if (invalidIndex >= 0) return `${table.title || "变更需求表"}第 ${invalidIndex + 1} 行需填写需求编号和模块`;
+            const changeValidateMsg = validateChangeReqDataRows(rows, tableLabel);
+            if (changeValidateMsg) return changeValidateMsg;
         }
         const reqChapterMatchMsg = validateReqChapterMatches(mainRows, changeTables, currentTree);
         if (reqChapterMatchMsg) return reqChapterMatchMsg;
@@ -2641,6 +2647,19 @@ export default () => {
             }))
             .filter((row) => row.code || row.module || row.function || row.sub_function);
         const nextTableName = String(tableData?.tableName || "").trim();
+        const tableLabel = nextTableName || String(target?.title || "").trim() || "变更需求表";
+        const changeValidateMsg = validateChangeReqDataRows(
+            rows.map((row) => ({
+                code: row.code,
+                module: row.module,
+                function: row.function,
+                sub_function: row.sub_function,
+            })),
+            tableLabel,
+        );
+        if (changeValidateMsg) {
+            throw new Error(changeValidateMsg);
+        }
 
         try {
             dispatch({ savingChangeReq: true });
@@ -2878,6 +2897,19 @@ export default () => {
                 };
             })
             .filter((row: any) => row.code);
+
+        const duplicateStandardCodeMsg = validateStandardSrsCodeUnique(rows.map((row: any) => ({ code: row.code })));
+        if (duplicateStandardCodeMsg) {
+            throw new Error(duplicateStandardCodeMsg);
+        }
+        const contentStandardCodeMsg = validateStandardSrsRowContentRaw(headers, table?.rows || []);
+        if (contentStandardCodeMsg) {
+            throw new Error(contentStandardCodeMsg);
+        }
+        const hierarchyStandardMsg = validateStandardSrsHierarchyDuplicates(rows);
+        if (hierarchyStandardMsg) {
+            throw new Error(hierarchyStandardMsg);
+        }
 
         try {
             dispatch({ srsTableLoading: true });

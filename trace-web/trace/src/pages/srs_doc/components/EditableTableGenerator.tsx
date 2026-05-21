@@ -1,6 +1,6 @@
 import './EditableTableGenerator.less';
 import { useState, useEffect, useRef } from 'react';
-import { Form, InputNumber, Button, Table, Input, Space, message, Modal, Select } from 'antd';
+import { Form, InputNumber, Button, Table, Input, Space, message, Modal, Select, Alert } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuidv4 } from 'uuid';
@@ -50,6 +50,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
   const [tableData, setTableData] = useState<TableRowData[]>([]); // 表格核心数据
   const [customHeaders, setCustomHeaders] = useState<TableHeaderItem[]>([]); // 自定义表头数组（新结构）
   const [submitting, setSubmitting] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string>("");
   const [form] = Form.useForm(); // 表单实例，用于收集和重置行列数
   const tableDataRef = useRef<TableRowData[]>([]);
   const tableMetaRef = useRef<{ type_code?: string; tableId?: number | string }>({});
@@ -171,6 +172,9 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
 
   // 当 initialData 变化或弹框打开时，初始化数据
   useEffect(() => {
+    if (open) {
+      setSubmitError("");
+    }
     if (open && initialData) {
       // 编辑模式：加载已有数据（适配新的表头结构）
       let headers = initialData.headers.map(header => ({
@@ -445,6 +449,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       // 重新设置表格数据状态，触发组件重渲染
       tableDataRef.current = newTableData;
       setTableData(newTableData);
+      if (submitError) setSubmitError("");
     }
   };
 
@@ -521,6 +526,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       rowMeta: latestTableData.map((row) => ({ ...(row.__rowMeta || {}) })),
     };
 
+    setSubmitError("");
     setSubmitting(true);
     Promise.resolve(onConfirm?.(result))
       .then(() => {
@@ -528,7 +534,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
         resetAndCancel();
       })
       .catch((error: any) => {
-        message.error(error?.message || '保存失败');
+        setSubmitError(error?.message || '保存失败');
       })
       .finally(() => {
         setSubmitting(false);
@@ -621,6 +627,17 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
             size="middle"
           />
           
+          {submitError ? (
+            <Alert
+              type="error"
+              showIcon
+              closable
+              message={submitError}
+              style={{ marginTop: 16 }}
+              onClose={() => setSubmitError("")}
+            />
+          ) : null}
+
           {/* 第三步：操作按钮 */}
           <div style={{ marginTop: '20px', textAlign: 'right' }}>
             <Space>
