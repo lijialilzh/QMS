@@ -2736,6 +2736,30 @@ class Server(object):
                 result[category] = row.file_url
         return result
 
+    def __resolve_product_bound_doc_image_ref_type(self, node: SrsNodeForm):
+        ref_type = getattr(node, "ref_type", None)
+        if ref_type in (RefTypes.img_topo.value, RefTypes.img_struct.value):
+            return ref_type
+        heading_no = self.__heading_no_from_title(getattr(node, "title", "") or "")
+        if heading_no == "2.2":
+            return RefTypes.img_topo.value
+        if heading_no == "2.3":
+            return RefTypes.img_struct.value
+        return None
+
+    def __hydrate_tree_product_doc_images(self, nodes: List[SrsNodeForm], prod_imgs: dict):
+        if not nodes or not prod_imgs:
+            return
+        for node in nodes or []:
+            bound_type = self.__resolve_product_bound_doc_image_ref_type(node)
+            if bound_type:
+                if not getattr(node, "ref_type", None):
+                    node.ref_type = bound_type
+                if prod_imgs.get(bound_type):
+                    node.img_url = prod_imgs[bound_type]
+            if node.children:
+                self.__hydrate_tree_product_doc_images(node.children, prod_imgs)
+
     def __tree(self, doc: SrsDoc):
         tree = []
         sql = select(SrsNode).where(SrsNode.doc_id == doc.id).order_by(SrsNode.priority)
@@ -2764,8 +2788,6 @@ class Server(object):
             obj = SrsNodeForm(children=[], doc_id=node.doc_id, n_id=node.n_id, p_id=node.p_id,
                             title=node.title, label=node.label, img_url=node.img_url, text=node.text, ref_type=node.ref_type, table=table, srs_code=node.srs_code)
             obj.rcm_codes = self.__normalize_rcm_codes(node.rcm_codes.split(",")) if node.rcm_codes is not None else None
-            if not obj.img_url and obj.ref_type in prod_imgs:
-                obj.img_url = prod_imgs[obj.ref_type]
 
             objs_dict[obj.n_id] = obj
             objs.append(obj)
@@ -2778,6 +2800,7 @@ class Server(object):
                     logger.warning("ignoreNode:: %s %s %s", obj.doc_id, obj.p_id, obj.n_id)
                     continue
                 p_obj.children.append(obj)
+        self.__hydrate_tree_product_doc_images(tree, prod_imgs)
         return objs_dict, tree
 
     async def get_srs_doc(self, id:str, with_tree: bool = False):
@@ -3749,6 +3772,7 @@ class Server(object):
                 written_child_ids = set()
                 is_catalog_root = level == 0 and __norm_title(node_title_for_export) == "目录"
                 node_image_caption = ""
+                node_image_written = False
                 if node_title_for_export:
                     if __is_imported_placeholder_title(node_title_for_export):
                         # 过滤系统中间占位标题，导出时不显示“导入表格X/导入图片X”等字样
@@ -3889,7 +3913,7 @@ class Server(object):
                         for child in (node.children or []):
                             if __is_snapshot_change_req_child(child):
                                 written_child_ids.add(id(child))
-                    elif (imported_table_children and has_caption) or (imported_image_children and has_image_caption):
+                    elif (imported_table_children and has_caption) or (imported_image_children and has_image_caption) or (has_image_caption and node.img_url):
                         table_idx = 0
                         image_idx = 0
                         for raw_line in lines:
@@ -3907,12 +3931,21 @@ class Server(object):
                                 else:
                                     __save_tab2docx(tab_node.table, docx, font_def, show_name=False)
                                 written_child_ids.add(id(tab_node))
-                            elif __is_image_caption_line(line) and image_idx < len(imported_image_children):
-                                img_node = imported_image_children[image_idx]
-                                image_idx += 1
-                                docx_util.save_img2docx(img_node.img_url, docx, mw=500, mh=500)
-                                __save_image_caption_txt(docx, line, font_def)
-                                written_child_ids.add(id(img_node))
+                            elif __is_image_caption_line(line):
+                                img_url = None
+                                if image_idx < len(imported_image_children):
+                                    img_node = imported_image_children[image_idx]
+                                    image_idx += 1
+                                    img_url = img_node.img_url
+                                    written_child_ids.add(id(img_node))
+                                elif node.img_url:
+                                    img_url = node.img_url
+                                if img_url:
+                                    docx_util.save_img2docx(img_url, docx, mw=500, mh=500)
+                                    __save_image_caption_txt(docx, line, font_def)
+                                    node_image_written = True
+                                else:
+                                    docx_util.save_txt2docx(line, docx, font_def)
                             else:
                                 docx_util.save_txt2docx(line, docx, font_def)
                     else:
@@ -3964,7 +3997,7 @@ class Server(object):
                         ):
                             await __export_change_req_from_db(docx, font_def)
 
-                if node.img_url:
+                if node.img_url and not node_image_written:
                     docx_util.save_img2docx(node.img_url, docx, mw=500, mh=500)
                     if not node_image_caption:
                         default_caption_name = __strip_heading_no(node_title_for_export)
@@ -4021,6 +4054,10 @@ class Server(object):
                     value = getattr(snapshot, attr, None)
                     if value is not None:
                         setattr(srs_doc, attr, value)
+            product = db.session.execute(select(Product).where(Product.id == srs_doc.product_id)).scalars().first()
+            product_version = getattr(product, "full_version", "") or getattr(product, "name", "") or ""
+            prod_imgs = self.__query_imgs(srs_doc.product_id, srs_doc.version, product_version)
+            self.__hydrate_tree_product_doc_images(srs_doc.content or [], prod_imgs)
             docx = Document()
             docx_util.enable_update_fields_on_open(docx)
 
