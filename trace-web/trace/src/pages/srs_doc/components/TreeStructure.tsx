@@ -323,6 +323,7 @@ function matchesProductBoundDocFileRow(row: any, docVersion?: string, productVer
     }
     if (normalizedDocVersion && docVer === normalizedDocVersion) return true;
     if (normalizedDocVersion && fileName.startsWith(`${normalizedDocVersion}_`)) return true;
+    if (normalizedDocVersion && fileType && fileName.includes(`_${normalizedDocVersion}_${fileType}`)) return true;
     if (productVersion && normalizedDocVersion && fileName.startsWith(`${buildDocImageFilePrefix(productVersion, normalizedDocVersion)}_`)) {
         return true;
     }

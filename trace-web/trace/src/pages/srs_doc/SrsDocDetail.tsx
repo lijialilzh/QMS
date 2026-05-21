@@ -2072,7 +2072,7 @@ export default () => {
                         parsedContentRaw,
                         targetRow.product_id,
                         targetRow.version,
-                        loadProduct?.full_version,
+                        loadProduct?.full_version || targetRow.product_version,
                     );
                     const parsedContent = syncTreeWithSrsTableState(remappedContent, srsTableState);
                     const derivedCoverTitle = extractCoverTitleFromTree(parsedContent);
@@ -3700,7 +3700,7 @@ export default () => {
                                 parsedContentRaw,
                                 targetRow.product_id,
                                 targetRow.version,
-                                reloadProduct?.full_version,
+                                reloadProduct?.full_version || targetRow.product_version,
                             );
                             const derivedCoverTitle = extractCoverTitleFromTree(parsedContent);
                             const derivedFileNo = extractFileNoFromTree(parsedContent);

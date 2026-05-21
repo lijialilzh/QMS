@@ -55,6 +55,7 @@ def pick_doc_image_file_row(
         candidates.append(f"{product_token}_{doc_token}_{category}%")
     if doc_token:
         candidates.append(f"{doc_token}_{category}%")
+        candidates.append(f"%_{doc_token}_{category}%")
     for pattern in candidates:
         row = db.session.execute(
             base_sql.where(DocFile.file_name.like(pattern)).order_by(desc(DocFile.id)).limit(1)
@@ -305,7 +306,6 @@ class Server(object):
             "2.2": "img_topo",
             "2.3": "img_struct",
         }
-        matched_data_url = None
         heading_match = None
         for node in nodes:
             img_url = getattr(node, "img_url", None)
@@ -315,18 +315,16 @@ class Server(object):
             if not img_str.startswith("data:") and not os.path.exists(img_str):
                 continue
             title = self.__normalize_text(getattr(node, "title", "") or "")
+            if re.match(r"^导入图片\d*$", title):
+                continue
             heading_no = re.match(r"^(\d+(?:\.\d+)*)", title)
             heading_no = heading_no.group(1) if heading_no else ""
             if heading_category_map.get(heading_no) == category or getattr(node, "ref_type", None) == category:
                 heading_match = img_url
-                continue
-            ctx_text = self.__node_context_text(node, node_map)
-            if any(word in ctx_text for word in keywords):
-                matched_data_url = img_url
-        matched_data_url = heading_match or matched_data_url
-
-        if not matched_data_url:
+        # 章节节点无图时不覆盖 doc_file，避免手工上传后被空节点或导入图片子节点冲掉
+        if not heading_match:
             return
+        matched_data_url = heading_match
 
         blob, ext = self.__extract_image_blob_and_ext(matched_data_url)
         if not blob:
@@ -483,6 +481,10 @@ class Server(object):
         page_index = page_index if page_index >= 0 else 0
         page_size = page_size if page_size > 0 else 10 
         normalized_doc_version = self.__normalize_doc_version(doc_version)
+        if product_id > 0 and not product_version:
+            row_prd = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+            if row_prd:
+                product_version = getattr(row_prd, "full_version", "") or ""
         if category in self.DOC_IMG_KEYWORDS and product_id > 0:
             # 图源规则：
             # - 网络安全流程图：从详细设计（SDS）节点取图
@@ -516,6 +518,7 @@ class Server(object):
                 patterns.append(f"{product_token}_{doc_token}_{category}%")
             if doc_token and category:
                 patterns.append(f"{doc_token}_{category}%")
+                patterns.append(f"%_{doc_token}_{category}%")
             if patterns:
                 sql = sql.where(or_(*[DocFile.file_name.like(pattern) for pattern in patterns]))
         # 三类图表页面默认显示所有产品（未选择产品时不按用户产品关系限制）
