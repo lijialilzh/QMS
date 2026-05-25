@@ -1609,6 +1609,30 @@ class Server(object):
             return candidates[0]
         return None
 
+    def __node_matches_req_hierarchy(
+        self,
+        node: SdsNodeForm,
+        req: SrsReq,
+        hierarchy_map: dict,
+        module_name: str = None,
+    ) -> bool:
+        """校验 SDS 命中节点的标题是否也匹配模块/功能/子功能名称。"""
+        if node is None or req is None:
+            return False
+        fields = sdstrace_serv.hierarchy_for_req(req, hierarchy_map)
+        mod = self.__normalize_sds_node_title(module_name or fields.get("module") or "")
+        func = self.__normalize_sds_node_title(fields.get("function") or "")
+        sub = self.__normalize_sds_node_title(fields.get("sub_function") or "")
+        expected = [name for name in [sub, func] if name]
+        if not expected and mod:
+            expected.append(mod)
+        if not expected:
+            expected.append(self.__normalize_sds_node_title(
+                sdstrace_serv.compose_srs_req_chapter(req, hierarchy_map=hierarchy_map, **fields)
+            ))
+        node_name = self.__normalize_sds_node_title(getattr(node, "title", "") or "")
+        return any(node_name == name or node_name in name or name in node_name for name in expected if name)
+
     def __prev_code_in_module(
         self,
         current_code: str,
@@ -2436,6 +2460,7 @@ class Server(object):
             reqd_rows = db.session.execute(
                 select(SrsReqd, SrsReq)
                 .join(SrsReq, SrsReq.id == SrsReqd.req_id)
+                .where(SrsReq.doc_id == getattr(sds_doc, "srsdoc_id", None))
                 .where(SrsReq.code.in_(srs_codes))
             ).all()
             for reqd_row, req_row in reqd_rows:
@@ -2650,6 +2675,14 @@ class Server(object):
                         module_node_check, existing, parent_map
                     ):
                         self.__detach_node(roots, existing)
+                        by_code.pop(code, None)
+                        existing = None
+                    elif existing is not None and not self.__node_matches_req_hierarchy(
+                        existing, req, hierarchy_map, module_name
+                    ):
+                        # SDS 编号相同但标题不匹配，说明是旧章节串号，不能复用旧正文。
+                        if re.sub(r"\s+", "", str(getattr(existing, "sds_code", "") or "").strip().upper()) == code:
+                            existing.sds_code = ""
                         by_code.pop(code, None)
                         existing = None
                 if existing is not None and word_imported and code in fixed_rcn300_sds_codes():
