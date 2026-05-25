@@ -1,5 +1,5 @@
 import "./SdsDocDetail.less";
-import { ConfigProvider, Form, Input, Button, message, Select, Row, Col, Modal, Space, Table } from "antd";
+import { ConfigProvider, Form, Input, Button, message, Select, Row, Col, Modal, Space, Table, Spin } from "antd";
 import { ArrowLeftOutlined, EditOutlined, DownloadOutlined, FileAddOutlined, PlusOutlined } from "@ant-design/icons";
 import { useEffect, useRef } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
@@ -216,6 +216,7 @@ export default () => {
         traceListData: [], // 需求追溯表数据
         traceListLoading: false,
         traceSyncing: false,
+        traceTreeRefreshKey: 0,
         showTraceListModal: false, // 需求追溯表弹框
         docProductId: undefined as number | undefined,
         docSrsdocId: undefined as number | undefined,
@@ -1331,9 +1332,13 @@ export default () => {
                 const matched = String(title || "").trim().match(/^(\d+(?:\.\d+)*)\s+/);
                 return matched ? matched[1].split(".").length : 0;
             };
-            const getHeadingMajor = (title?: string) => {
-                const matched = String(title || "").trim().match(/^(\d+)/);
-                return matched?.[1] || "";
+            const getHeadingSectionMinor = (title?: string) => {
+                const matched = String(title || "").trim().match(/^(\d+)\.(\d+)/);
+                return matched ? Number(matched[2]) : null;
+            };
+            const isInFixedTemplateZone = (node: TreeNode) => {
+                const minor = getHeadingSectionMinor(node.title);
+                return minor != null && minor <= 5;
             };
             const fixedSdsChapterTitles = new Set([
                 "总体描述",
@@ -1362,8 +1367,11 @@ export default () => {
                     || validReqTitlesWithRows.find(({ title }) => title && (normalizedTitle.includes(title) || title.includes(normalizedTitle)));
             };
             const isFunctionalReqHeading = (node: TreeNode) => {
+                const minor = getHeadingSectionMinor(node.title);
+                if (minor != null && minor <= 5) return false;
                 const normalizedTitle = normalizeReqTitle(stripHeadingNumber(node.title));
-                return getHeadingMajor(node.title) === "6" &&
+                return minor != null &&
+                    minor >= 6 &&
                     getHeadingDepth(node.title) >= 2 &&
                     !fixedSdsChapterTitles.has(normalizedTitle);
             };
@@ -1390,7 +1398,7 @@ export default () => {
                         if (hasReqChild && rawCode) {
                             delete (nextNode as any).sds_code;
                         }
-                        if (matchedCode && matchedRow) {
+                        if (matchedCode && matchedRow && !isInFixedTemplateZone(node)) {
                             nextNode.text = nextNode.text || composeReqDescription(matchedRow);
                             nextNode.sds_code = matchedCode;
                             nextNode.title = withCurrentReqTitle(node, matchedRow);
@@ -1427,6 +1435,9 @@ export default () => {
             };
             const hydrateExistingReqdNodes = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
                 const children = hydrateExistingReqdNodes((node.children || []) as TreeNode[]);
+                if (isInFixedTemplateZone(node)) {
+                    return { ...node, children };
+                }
                 const currentCode = normalizeReqCode((node as any).sds_code);
                 if (currentCode) {
                     return { ...node, children };
@@ -1742,6 +1753,46 @@ export default () => {
         return synced;
     };
 
+    const applyLoadedDocTree = async (targetRow: any): Promise<TreeNode[]> => {
+        const parsedTree = (targetRow.content || []).map((node: any) => parseTreeNode(node));
+        const wordImported = isWordImportedDoc(parsedTree);
+        const parsedTreeForView = isReadOnly || wordImported
+            ? (isReadOnly ? relocateReviewTablesToStandalonePage(parsedTree) : parsedTree)
+            : normalizeEditRootChapterNumbers(parsedTree);
+        const flowReboundTree = rebindFlowImageToFlowChild(parsedTreeForView);
+        const normalizedRefTree = normalizeImageRefTypes(flowReboundTree);
+        const parsedContent = isReadOnly
+            ? bindTableCaptionsForPersist(normalizedRefTree)
+            : normalizedRefTree;
+        const remappedContent = await remapRefTypeImagesByProduct(
+            parsedContent,
+            targetRow.product_id,
+            targetRow.version
+        );
+        const docIdForSync = targetRow.id || (params.id ? parseInt(params.id) : undefined);
+        const ensuredReqdContent = ensureFrontMatterTables(remappedContent as TreeNode[]);
+        return await syncTraceTableNodes(
+            ensuredReqdContent as TreeNode[],
+            docIdForSync,
+            targetRow.product_version
+        ) as TreeNode[];
+    };
+
+    const refreshSdsDocTree = async (docId: number) => {
+        const docRes: any = await Api.get_sds_doc({ id: docId, _ts: Date.now() });
+        if (docRes?.code !== Api.C_OK) {
+            throw new Error(docRes?.msg || "刷新章节失败");
+        }
+        const latestRow = docRes.data || {};
+        const latestTree = await applyLoadedDocTree(latestRow);
+        treeStructureRef.current = latestTree;
+        dispatch({
+            treeStructure: latestTree,
+            traceTreeRefreshKey: Date.now(),
+        });
+        return latestTree;
+    };
+
     const fetchSrsTrace = async (options?: { openModal?: boolean }) => {
         const docId = params.id ? parseInt(params.id) : 0;
         if (!docId || isReadOnly) return;
@@ -1751,9 +1802,8 @@ export default () => {
             if (res?.code !== Api.C_OK) {
                 throw new Error(res?.msg || "获取SRS追溯失败");
             }
-            const parsedContent = (res.data?.content || []).map((node: any) => parseTreeNode(node));
-            treeStructureRef.current = parsedContent;
-            dispatch({ treeStructure: parsedContent });
+            // 明确刷新章节树：同步接口负责写库，这里重新拉取最新 SDS 树并强制重挂载树组件。
+            await refreshSdsDocTree(docId);
             const rows = res.data?.trace_rows || [];
             const tableData = rows.map((item: any, index: number) => ({
                 key: item.id || `trace_${index}_${Date.now()}`,
@@ -1807,36 +1857,10 @@ export default () => {
 
                     // 解析树状结构数据
                     const parsedTreeRaw = (targetRow.content || []).map((node: any) => parseTreeNode(node));
-                    const parsedTree = parsedTreeRaw;
-                    const wordImported = isWordImportedDoc(parsedTree);
-                    // Word 导入：严格按原章节展示，不自动同步追溯/功能设计
-                    const parsedTreeForView = isReadOnly || wordImported
-                        ? (isReadOnly ? relocateReviewTablesToStandalonePage(parsedTree) : parsedTree)
-                        : normalizeEditRootChapterNumbers(parsedTree);
-                    const flowReboundTree = rebindFlowImageToFlowChild(parsedTreeForView);
-                    const normalizedRefTree = normalizeImageRefTypes(flowReboundTree);
-                    const parsedContent = isReadOnly
-                        ? bindTableCaptionsForPersist(normalizedRefTree)
-                        : normalizedRefTree;
-                    const remappedContent = await remapRefTypeImagesByProduct(parsedContent, targetRow.product_id, targetRow.version);
-                    const docIdForSync = targetRow.id || (params.id ? parseInt(params.id) : undefined);
-                    const ensuredReqdContent = wordImported
-                        ? ensureFrontMatterTables(remappedContent as TreeNode[])
-                        : await syncMissingReqdNodes(
-                            ensureFrontMatterTables(remappedContent as TreeNode[]),
-                            docIdForSync
-                        );
-                    const ensuredContent = wordImported
-                        ? ensuredReqdContent
-                        : await syncTraceTableNodes(
-                            ensuredReqdContent as TreeNode[],
-                            docIdForSync,
-                            targetRow.product_version
-                        );
+                    const ensuredContent = await applyLoadedDocTree(targetRow);
                     const shouldPersistSyncedContent =
                         !isReadOnly &&
-                        !wordImported &&
-                        JSON.stringify(remappedContent || []) !== JSON.stringify(ensuredContent || []);
+                        JSON.stringify(parsedTreeRaw || []) !== JSON.stringify(ensuredContent || []);
 
                     dispatch({
                         loading: false,
@@ -2990,7 +3014,9 @@ export default () => {
                         </div>
                         )}
                     </div>
+                    <Spin spinning={data.traceSyncing} tip="正在同步 SRS 追溯与章节…">
                     <TreeStructure
+                        key={`sds-tree-${params.id || "new"}-${data.traceTreeRefreshKey || 0}`}
                         value={data.treeStructure}
                         onChange={isReadOnly ? undefined : (value) => { treeStructureRef.current = value; }}
                         onNodesSnapshot={(nodes) => {
@@ -3018,6 +3044,7 @@ export default () => {
                         onFetchSrsTrace={() => fetchSrsTrace()}
                         traceSynced={isTraceSyncedOnTree((treeStructureRef.current || data.treeStructure || []) as TreeNode[])}
                     />
+                    </Spin>
                 </div>
             </div>
 

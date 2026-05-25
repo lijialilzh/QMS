@@ -54,7 +54,7 @@ from ..utils.i18n import ts
 from ..utils import get_uuid
 from .serv_utils.tree_util import find_parent
 from .serv_utils import new_version
-from .serv_sds_trace import Server as ServSdsTrace
+from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, fixed_rcn300_sds_codes
 from .serv_sds_reqd import Server as ServSdsReqd
 from .serv_srs_doc import Server as ServSrsDoc
 
@@ -91,12 +91,19 @@ class RefTypes(Enum):
     sds_reqds = "sds_reqds"
 
 class Server(object):
+    FIXED_TEMPLATE_SECTION_MAX = 5  # X.1 ~ X.5 导入后固定不动
+    SYNC_ZONE_SECTION_MIN = 6       # X.6 起为功能设计/追溯同步区
     @staticmethod
     def __is_word_imported_doc(roots: List[SdsNodeForm]) -> bool:
         def walk(nodes: List[SdsNodeForm]):
             for node in nodes or []:
-                title = re.sub(r"\s+", "", (getattr(node, "title", "") or "").strip())
+                raw_title = (getattr(node, "title", "") or "").strip()
+                title = re.sub(r"\s+", "", raw_title)
                 if title == "目录" or title.startswith("目录"):
+                    return True
+                if Server.__is_imported_table_title(raw_title) or re.match(r"^图\s*\d+", raw_title):
+                    return True
+                if getattr(node, "table", None) is not None:
                     return True
                 if walk(getattr(node, "children", None) or []):
                     return True
@@ -1030,8 +1037,10 @@ class Server(object):
                 row = SdsNode(doc_id=doc.id, n_id=doc.n_id, p_id=p_id, priority=idx, title=node.title, label=node.label, img_url=_normalize_sds_img_url(node.img_url), text=node.text, ref_type=node.ref_type,
                             table=table, sds_code=node.sds_code)
                 db.session.add(row)
+                node.n_id = doc.n_id
                 logger.info("add_node: %s, %s, %s", p_id, doc.n_id, node.title)
             else:
+                row.p_id = p_id
                 for key, value in node.dict().items():
                     if key == "doc_id" or key == "n_id" or key == "p_id" or value is None:
                         continue
@@ -1041,9 +1050,16 @@ class Server(object):
                         value = _normalize_sds_img_url(value)
                     setattr(row, key, value)
                 row.priority = idx
+                node.n_id = row.n_id
                 logger.info("alt_node: %s, %s, %s", p_id, doc.n_id, node.title)
             if node.children:
                 self.__update_nodes(doc, row.n_id, node.children)
+
+    @staticmethod
+    def __reset_tree_node_ids(nodes: List[SdsNodeForm]):
+        for node in nodes or []:
+            node.n_id = 0
+            Server.__reset_tree_node_ids(getattr(node, "children", None) or [])
 
     async def duplicate_sds_doc(self, id: int):
         fromdoc:SdsDocObj = (await self.get_sds_doc(id, with_tree=True)).data
@@ -1298,6 +1314,27 @@ class Server(object):
         apply(roots)
         return roots
 
+    def __tree_sync_fingerprint(self, roots: List[SdsNodeForm]) -> tuple:
+        parts: List[str] = []
+
+        def walk(nodes: List[SdsNodeForm]):
+            for node in nodes or []:
+                parts.append(str(getattr(node, "title", "") or ""))
+                parts.append(str(getattr(node, "sds_code", "") or ""))
+                parts.append(str(getattr(node, "text", "") or "")[:80])
+                walk(getattr(node, "children", None) or [])
+
+        walk(roots or [])
+        return tuple(parts)
+
+    def __persist_sds_tree(self, doc: SdsDoc, roots: List[SdsNodeForm]):
+        self.__reset_tree_node_ids(roots)
+        doc.n_id = 0
+        db.session.execute(delete(SdsNode).where(SdsNode.doc_id == doc.id))
+        db.session.flush()
+        self.__update_nodes(doc, 0, roots)
+        db.session.commit()
+
     async def sync_srs_trace(self, doc_id: int):
         """点击「获取SRS追溯」：补章节、写追溯表、同步功能设计（已存在的需求不重复生成）。"""
         row: SdsDoc = db.session.execute(select(SdsDoc).where(SdsDoc.id == doc_id)).scalars().first()
@@ -1325,16 +1362,15 @@ class Server(object):
                     parent.children.append(obj)
 
         sdstrace_serv.__ensure_sds_traces(doc_id=doc_id)
+        if self.__is_word_imported_doc(roots):
+            self.__bind_word_leaf_codes_from_srs(roots, doc_id)
         roots = await self.__sync_missing_design_nodes_from_srs(doc_id, roots)
         if self.__is_word_imported_doc(roots):
             self.__bind_word_leaf_codes_from_srs(roots, doc_id)
         location_by_code, location_by_title = self.__build_sds_tree_location_indexes(roots)
         self.__persist_trace_chapters_from_srs(doc_id, location_by_code, location_by_title, roots)
         roots = await self.__refresh_trace_table_nodes(doc_id, roots, mark_synced=True)
-        row.n_id = 0
-        db.session.execute(delete(SdsNode).where(SdsNode.doc_id == doc_id))
-        self.__update_nodes(row, 0, roots)
-        db.session.commit()
+        self.__persist_sds_tree(row, roots)
 
         trace_resp = await sdstrace_serv.list_sds_trace(None, doc_id=doc_id, page_size=10000, from_sync=True)
         return Resp.resp_ok(data={
@@ -1480,22 +1516,125 @@ class Server(object):
             sub = normalize_title(getattr(req, "sub_function", None) or "")
             func = normalize_title(getattr(req, "function", None) or "")
             mod = normalize_title(getattr(req, "module", None) or "")
-            if not sub:
+            leaf_name = sub or func or mod
+            if not leaf_name:
                 continue
             candidates = []
             for node, chain in indexed:
-                if normalize_title(getattr(node, "title", "") or "") != sub:
+                node_name = normalize_title(getattr(node, "title", "") or "")
+                if node_name != leaf_name and (sub and node_name != sub):
                     continue
                 if node_codes(node):
                     continue
                 parent_func = chain[-2] if len(chain) >= 2 else ""
                 parent_mod = chain[-3] if len(chain) >= 3 else ""
-                func_ok = not func or func in parent_func or parent_func in func
+                # When the requirement has no sub-function, the function itself is
+                # the Word leaf under the module chapter, e.g. 登录 -> 用户登录.
+                func_ok = node_name == leaf_name or not func or func in parent_func or parent_func in func
+                if not func_ok and mod and (mod in parent_mod or parent_mod in mod):
+                    func_ok = True
                 mod_ok = not mod or mod in parent_mod or parent_mod in mod
                 if func_ok and mod_ok:
                     candidates.append(node)
             if len(candidates) == 1:
                 candidates[0].sds_code = code
+
+    def __is_descendant_of(self, ancestor: SdsNodeForm, node: SdsNodeForm, parent_map: Dict[int, Optional[SdsNodeForm]]) -> bool:
+        if ancestor is None or node is None:
+            return False
+        current = node
+        while current is not None:
+            if current is ancestor:
+                return True
+            current = parent_map.get(id(current))
+        return False
+
+    def __find_word_leaf_for_req(
+        self,
+        roots: List[SdsNodeForm],
+        req: SrsReq,
+        hierarchy_map: dict,
+        code: str,
+        module_name: str = None,
+    ) -> Optional[SdsNodeForm]:
+        """Word 导入：按模块路径 + 子功能名查找未绑定叶子（与 bind 规则一致）。"""
+        fields = sdstrace_serv.hierarchy_for_req(req, hierarchy_map)
+        sub = self.__normalize_sds_node_title(fields.get("sub_function") or "")
+        func = self.__normalize_sds_node_title(fields.get("function") or "")
+        mod = self.__normalize_sds_node_title(module_name or fields.get("module") or "")
+        leaf_name = sub or func or mod
+        if not leaf_name:
+            leaf_name = self.__normalize_sds_node_title(
+                sdstrace_serv.compose_srs_req_chapter(req, hierarchy_map=hierarchy_map, **fields)
+            )
+        if not leaf_name:
+            return None
+
+        module_node = self.__find_module_node_for_req(
+            roots,
+            module_name or fields.get("module") or "",
+            code,
+            getattr(req, "type_code", None),
+        ) if (module_name or fields.get("module")) else None
+        scope = [module_node] if module_node else (roots or [])
+
+        def node_codes(node: SdsNodeForm) -> set:
+            return {re.sub(r"\s+", "", c.upper()) for c in self.__extract_node_sds_codes(node)}
+
+        def walk(items: List[SdsNodeForm], ancestors: List[str]):
+            for node in items or []:
+                chain = ancestors + [self.__normalize_sds_node_title(getattr(node, "title", "") or "")]
+                yield node, chain
+                yield from walk(getattr(node, "children", None) or [], chain)
+
+        candidates = []
+        for node, chain in walk(scope, []):
+            node_name = self.__normalize_sds_node_title(getattr(node, "title", "") or "")
+            if node_name != leaf_name and (sub and node_name != sub):
+                continue
+            if node_codes(node):
+                continue
+            parent_func = chain[-2] if len(chain) >= 2 else ""
+            parent_mod = chain[-3] if len(chain) >= 3 else ""
+            # Scoped searches start at the module node, so the matching leaf may
+            # be the function itself rather than a child of another function node.
+            func_ok = node_name == leaf_name or not func or func in parent_func or parent_func in func
+            if not func_ok and mod and (mod in parent_mod or parent_mod in mod):
+                func_ok = True
+            mod_ok = not mod or mod in parent_mod or parent_mod in mod
+            if func_ok and mod_ok:
+                candidates.append(node)
+        if len(candidates) == 1:
+            candidates[0].sds_code = code
+            return candidates[0]
+        return None
+
+    def __prev_code_in_module(
+        self,
+        current_code: str,
+        ordered_codes: List[str],
+        by_code: dict,
+        module_name: str,
+        roots: List[SdsNodeForm],
+        parent_map: Dict[int, Optional[SdsNodeForm]],
+        product_root: Optional[SdsNodeForm] = None,
+    ) -> Optional[str]:
+        module_node = self.__find_module_node(product_root, module_name) if (module_name and product_root) else None
+        if module_node is None:
+            module_node = self.__find_module_node_global(roots, module_name) if module_name else None
+        if module_node is None:
+            return None
+        prev = None
+        for item_code in ordered_codes:
+            if item_code == current_code:
+                break
+            node = by_code.get(item_code)
+            if not node:
+                continue
+            if module_node is not None and not self.__is_descendant_of(module_node, node, parent_map):
+                continue
+            prev = item_code
+        return prev
 
     def __build_sds_code_location_map(self, roots: List[SdsNodeForm]) -> dict:
         by_code, _by_title = self.__build_sds_tree_location_indexes(roots)
@@ -1524,99 +1663,830 @@ class Server(object):
             trace.location = location or None
         db.session.flush()
 
-    async def __sync_missing_design_nodes_from_srs(self, doc_id: int, roots: List[SdsNodeForm]) -> List[SdsNodeForm]:
-        resp = await sdstreqd_serv.list_sds_reqd(None, doc_id=doc_id, page_index=0, page_size=10000)
-        req_rows = resp.data.rows if resp and resp.data else []
-        if not req_rows:
-            return roots
+    @staticmethod
+    def __is_function_stopper_title(title: str) -> bool:
+        txt = re.sub(r"^\s*\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))?", "", str(title or "")).strip()
+        txt = re.sub(r"\s+", "", txt).lower()
+        return "限制条件" in txt or "尚未解决的问题" in txt
 
-        def normalize_code(value: str):
-            return re.sub(r"\s+", "", str(value or "").strip().upper())
-
-        def normalize_title(value: str):
-            txt = re.sub(r"^\s*\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))?", "", str(value or "").strip())
-            return re.sub(r"\s+", "", txt).lower()
-
+    def __find_chapter6_root(self, roots: List[SdsNodeForm]) -> Optional[SdsNodeForm]:
         def parse_heading(value: str):
-            matched = re.match(r"^\s*(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))", str(value or "").strip())
+            matched = re.match(
+                r"^\s*(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))",
+                str(value or "").strip(),
+            )
             if not matched:
                 return None
             return [int(p) for p in matched.group(1).split(".") if p != ""]
 
-        def strip_heading_text(value: str):
-            return re.sub(r"^\s*\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))?", "", str(value or "").strip()).strip()
-
-        def with_heading(title: str, heading: str):
-            body = strip_heading_text(title) or title.strip()
-            return f"{heading} {body}".strip()
-
-        def walk_nodes(items: List[SdsNodeForm]):
-            for node in items or []:
-                yield node
-                yield from walk_nodes(getattr(node, "children", None) or [])
-
-        existing_codes = set()
-        existing_leaf_titles = set()
-        for node in walk_nodes(roots):
-            for code in self.__extract_node_sds_codes(node):
-                existing_codes.add(code)
-            if parse_heading(getattr(node, "title", "") or "") and len(parse_heading(getattr(node, "title", "") or "") or []) >= 3:
-                t = normalize_title(getattr(node, "title", "") or "")
-                if t:
-                    existing_leaf_titles.add(t)
-
-        def find_function_area(nodes: List[SdsNodeForm]):
+        def walk(nodes: List[SdsNodeForm]):
             for node in nodes or []:
                 nums = parse_heading(getattr(node, "title", "") or "")
-                title_txt = normalize_title(getattr(node, "title", "") or "")
+                title_txt = self.__normalize_sds_node_title(getattr(node, "title", "") or "")
                 if nums == [6] or "功能设计" in title_txt:
                     return node
-                found = find_function_area(getattr(node, "children", None) or [])
+                found = walk(getattr(node, "children", None) or [])
                 if found:
                     return found
             return None
 
-        def is_stopper(title: str):
-            t = normalize_title(title)
-            return "限制条件" in t or "尚未解决的问题" in t
+        return walk(roots or [])
 
-        def hierarchy_titles(row):
-            titles = []
-            for val in [getattr(row, "module", None), getattr(row, "function", None), getattr(row, "sub_function", None)]:
-                txt = str(val or "").strip()
-                if txt and txt not in ("/", "-", "\\"):
-                    titles.append(txt)
-            if not titles:
-                fallback = str(getattr(row, "name", None) or getattr(row, "srs_code", "") or "").strip()
-                if fallback:
-                    titles.append(fallback)
-            return titles
+    @staticmethod
+    def __is_front_matter_root(title: str) -> bool:
+        body = Server.__normalize_sds_node_title(title)
+        return any(
+            key in body
+            for key in ("软件详细设计", "概述", "系统结构", "目录", "需求规格说明", "文件修订记录")
+        )
 
-        def req_exists(row) -> bool:
-            code = normalize_code(getattr(row, "sds_code", "") or "")
-            if not code:
-                code = normalize_code(str(getattr(row, "srs_code", "") or "").replace("SRS", "SDS"))
-            return bool(code and code in existing_codes)
+    def __find_design_chapter_roots(self, roots: List[SdsNodeForm]) -> List[SdsNodeForm]:
+        """各产品模块根节点（如 4 DataProcessing、7 NeoViewer），不含前言章节。"""
+        out: List[SdsNodeForm] = []
+        for node in roots or []:
+            title = str(getattr(node, "title", "") or "")
+            if self.__is_front_matter_root(title):
+                continue
+            if self.__parse_sds_node_heading(title):
+                out.append(node)
+        return out
 
-        def build_design_text(row):
-            srs_reqd_row = db.session.execute(
-                select(SrsReqd).join(SrsReq, SrsReq.id == SrsReqd.req_id).where(SrsReq.code == getattr(row, "srs_code", None))
-            ).scalars().first()
-            overview = (getattr(srs_reqd_row, "overview", None) or getattr(row, "overview", None) or "").strip()
+    def __product_chapter_major(self, node: SdsNodeForm) -> Optional[int]:
+        heading = self.__parse_sds_node_heading(getattr(node, "title", "") or "")
+        if not heading:
+            return None
+        part = heading.split(".")[0]
+        try:
+            return int(part)
+        except Exception:
+            return None
+
+    def __heading_section_minor(self, title: str, major: int) -> Optional[int]:
+        heading = self.__parse_sds_node_heading(title or "")
+        if not heading:
+            return None
+        try:
+            parts = [int(p) for p in heading.split(".") if p != ""]
+        except Exception:
+            return None
+        if not parts or parts[0] != major:
+            return None
+        return parts[1] if len(parts) >= 2 else None
+
+    def __build_node_parent_map(self, roots: List[SdsNodeForm]) -> Dict[int, Optional[SdsNodeForm]]:
+        parent_map: Dict[int, Optional[SdsNodeForm]] = {}
+
+        def walk(nodes: List[SdsNodeForm], parent: Optional[SdsNodeForm] = None):
+            for node in nodes or []:
+                parent_map[id(node)] = parent
+                walk(getattr(node, "children", None) or [], node)
+
+        walk(roots or [])
+        return parent_map
+
+    def __find_product_root_for_node(
+        self,
+        roots: List[SdsNodeForm],
+        node: SdsNodeForm,
+        parent_map: Dict[int, Optional[SdsNodeForm]] = None,
+        design_roots: List[SdsNodeForm] = None,
+    ) -> Optional[SdsNodeForm]:
+        if node is None:
+            return None
+        design_roots = design_roots if design_roots is not None else self.__find_design_chapter_roots(roots)
+        design_root_ids = {id(root) for root in design_roots}
+        if id(node) in design_root_ids:
+            return node
+        parent_map = parent_map or self.__build_node_parent_map(roots)
+        current = node
+        while current is not None:
+            if id(current) in design_root_ids:
+                return current
+            current = parent_map.get(id(current))
+        return None
+
+    def __is_in_fixed_template_zone(
+        self,
+        roots: List[SdsNodeForm],
+        node: SdsNodeForm,
+        parent_map: Dict[int, Optional[SdsNodeForm]] = None,
+        design_roots: List[SdsNodeForm] = None,
+    ) -> bool:
+        """产品章节 X.1~X.5 及其子树：Word 导入后不可被追溯同步修改。"""
+        product_root = self.__find_product_root_for_node(roots, node, parent_map, design_roots)
+        if product_root is None or node is product_root:
+            return False
+        major = self.__product_chapter_major(product_root)
+        if major is None:
+            return False
+        parent_map = parent_map or self.__build_node_parent_map(roots)
+        current = node
+        while current is not None and current is not product_root:
+            minor = self.__heading_section_minor(getattr(current, "title", "") or "", major)
+            if minor is not None and minor <= self.FIXED_TEMPLATE_SECTION_MAX:
+                return True
+            current = parent_map.get(id(current))
+        return False
+
+    def __resolve_product_root(self, roots: List[SdsNodeForm], module_name: str) -> Optional[SdsNodeForm]:
+        """按模块名或 NAME_DICT 映射定位产品章节根（NeoViewer / RePACS 等）。"""
+        design_roots = self.__find_design_chapter_roots(roots)
+        if not design_roots:
+            return self.__find_chapter6_root(roots)
+        if not module_name:
+            return design_roots[0]
+
+        norm = self.__normalize_sds_node_title(module_name)
+        mapped = NAME_DICT.get(str(module_name or "").strip())
+        if mapped:
+            mapped_norm = self.__normalize_sds_node_title(mapped)
+            for root in design_roots:
+                body = self.__normalize_sds_node_title(getattr(root, "title", "") or "")
+                if mapped_norm in body or body in mapped_norm:
+                    return root
+
+        for root in design_roots:
+            body = self.__normalize_sds_node_title(getattr(root, "title", "") or "")
+            if norm and (norm in body or body in norm):
+                return root
+        return None
+
+    def __find_product_root_by_name(self, roots: List[SdsNodeForm], product_name: str) -> Optional[SdsNodeForm]:
+        norm = self.__normalize_sds_node_title(product_name or "")
+        if not norm:
+            return None
+        for root in self.__find_design_chapter_roots(roots):
+            body = self.__normalize_sds_node_title(getattr(root, "title", "") or "")
+            if norm and (norm in body or body in norm):
+                return root
+        return None
+
+    @staticmethod
+    def __rcn_series_num(code: str) -> Optional[int]:
+        matched = re.search(r"RCN(\d+)", str(code or "").upper())
+        return int(matched.group(1)) if matched else None
+
+    def __resolve_product_root_for_req(
+        self,
+        roots: List[SdsNodeForm],
+        code: str,
+        module_name: str = None,
+        type_code: str = None,
+    ) -> Optional[SdsNodeForm]:
+        """按 SDS 编号段 / 需求类型确定目标产品章节，优先按产品名而非章节号。"""
+        series = self.__rcn_series_num(code)
+        type_code = str(type_code or "").strip()
+        preferred_product = None
+        if series is not None and 301 <= series <= 307:
+            preferred_product = "NeoViewer"
+        elif type_code and type_code not in ("1", "2", "reqd"):
+            preferred_product = "NeoViewer"
+        if preferred_product:
+            root = self.__find_product_root_by_name(roots, preferred_product)
+            if root:
+                return root
+        major = self.__resolve_product_major_for_req(code, type_code)
+        if major is not None:
+            root = self.__find_product_root_by_major(roots, major)
+            if root:
+                return root
+        return self.__resolve_product_root(roots, module_name)
+
+    @staticmethod
+    def __resolve_product_major_for_req(code: str, type_code: str = None) -> Optional[int]:
+        series = Server.__rcn_series_num(code)
+        type_code = str(type_code or "").strip()
+        if series is not None and 301 <= series <= 307:
+            return 6
+        if type_code and type_code not in ("1", "2", "reqd"):
+            return 6
+        return None
+
+    def __node_in_product_root(
+        self, roots: List[SdsNodeForm], node: SdsNodeForm, product_root: Optional[SdsNodeForm]
+    ) -> bool:
+        if node is None or product_root is None:
+            return False
+        return self.__find_product_root_for_node(roots, node) is product_root
+
+    def __find_module_node(self, chapter_root: SdsNodeForm, module_name: str) -> Optional[SdsNodeForm]:
+        """在产品章节同步区（X.6 起）按模块名查找节点，如「7.9 工作站」。"""
+        norm = self.__normalize_sds_node_title(module_name or "")
+        if not norm:
+            return None
+        major = self.__product_chapter_major(chapter_root)
+        exact_best = None
+        exact_depth = 999
+        fuzzy_best = None
+        fuzzy_depth = 999
+
+        def walk(nodes: List[SdsNodeForm], depth: int = 0):
+            nonlocal exact_best, exact_depth, fuzzy_best, fuzzy_depth
+            for node in nodes or []:
+                title = str(getattr(node, "title", "") or "")
+                if self.__is_function_stopper_title(title):
+                    continue
+                if major is not None and depth == 0:
+                    minor = self.__heading_section_minor(title, major)
+                    if minor is not None and minor <= self.FIXED_TEMPLATE_SECTION_MAX:
+                        continue
+                body_norm = self.__normalize_sds_node_title(self.__strip_sds_heading_text(title))
+                heading = self.__parse_sds_node_heading(title)
+                heading_depth = len(heading.split(".")) if heading else depth
+                if body_norm == norm:
+                    if heading_depth < exact_depth:
+                        exact_best = node
+                        exact_depth = heading_depth
+                elif norm in body_norm or body_norm in norm:
+                    if heading_depth < fuzzy_depth:
+                        fuzzy_best = node
+                        fuzzy_depth = heading_depth
+                walk(getattr(node, "children", None) or [], depth + 1)
+
+        walk(getattr(chapter_root, "children", None) or [])
+        return exact_best or fuzzy_best
+
+    def __find_module_node_global(self, roots: List[SdsNodeForm], module_name: str) -> Optional[SdsNodeForm]:
+        """在全文档各产品章节中查找模块节点。"""
+        best = None
+        best_depth = 999
+        for root in self.__find_design_chapter_roots(roots):
+            found = self.__find_module_node(root, module_name)
+            if not found:
+                continue
+            heading = self.__parse_sds_node_heading(getattr(found, "title", "") or "")
+            depth = len(heading.split(".")) if heading else 999
+            if best is None or depth < best_depth:
+                best = found
+                best_depth = depth
+        return best
+
+    def __find_module_node_for_req(
+        self,
+        roots: List[SdsNodeForm],
+        module_name: str,
+        code: str = None,
+        type_code: str = None,
+    ) -> Optional[SdsNodeForm]:
+        """先按需求编号限定产品章，再找模块，避免「编辑」误命中 RePACS 接口章节。"""
+        product_root = self.__resolve_product_root_for_req(roots, code or "", module_name, type_code)
+        if product_root is not None:
+            found = self.__find_module_node(product_root, module_name)
+            if found is not None:
+                return found
+        return self.__find_module_node_global(roots, module_name)
+
+    def __ensure_module_node(self, roots: List[SdsNodeForm], module_name: str) -> Optional[SdsNodeForm]:
+        found = self.__find_module_node_global(roots, module_name)
+        if found:
+            return found
+        product_root = self.__resolve_product_root(roots, module_name) or self.__find_chapter6_root(roots)
+        if product_root is None:
+            return None
+        if product_root.children is None:
+            product_root.children = []
+        children = list(product_root.children)
+        stopper_idx = len(children)
+        for idx, child in enumerate(children):
+            title = str(getattr(child, "title", "") or "")
+            if self.__is_function_stopper_title(title):
+                stopper_idx = idx
+                break
+        module_title = str(module_name or "").strip() or "未命名模块"
+        new_node = SdsNodeForm(title=module_title, children=[])
+        children.insert(stopper_idx, new_node)
+        product_root.children = children
+        return new_node
+
+    def __ensure_module_node_in_product(
+        self, product_root: Optional[SdsNodeForm], module_name: str
+    ) -> Optional[SdsNodeForm]:
+        if product_root is None:
+            return None
+        found = self.__find_module_node(product_root, module_name)
+        if found:
+            return found
+        if product_root.children is None:
+            product_root.children = []
+        children = list(product_root.children)
+        stopper_idx = len(children)
+        for idx, child in enumerate(children):
+            title = str(getattr(child, "title", "") or "")
+            if self.__is_function_stopper_title(title):
+                stopper_idx = idx
+                break
+        module_title = str(module_name or "").strip() or "未命名模块"
+        new_node = SdsNodeForm(title=module_title, children=[])
+        children.insert(stopper_idx, new_node)
+        product_root.children = children
+        return new_node
+
+    @staticmethod
+    def __heading_tuple(heading: str) -> tuple:
+        try:
+            return tuple(int(part) for part in str(heading or "").split(".") if part != "")
+        except Exception:
+            return (9999,)
+
+    def __find_product_root_by_major(self, roots: List[SdsNodeForm], major: int) -> Optional[SdsNodeForm]:
+        for root in self.__find_design_chapter_roots(roots):
+            if self.__product_chapter_major(root) == major:
+                return root
+        return None
+
+    def __detach_node(self, roots: List[SdsNodeForm], node: SdsNodeForm):
+        parent_map = self.__build_node_parent_map(roots)
+        parent = parent_map.get(id(node))
+        if not parent:
+            return
+        parent.children = [child for child in (getattr(parent, "children", None) or []) if child is not node]
+
+    def __find_node_by_code_in_tree(self, roots: List[SdsNodeForm], code: str) -> Optional[SdsNodeForm]:
+        target = re.sub(r"\s+", "", str(code or "").strip().upper())
+        if not target:
+            return None
+
+        def walk(nodes: List[SdsNodeForm]):
+            for node in nodes or []:
+                for token in self.__extract_node_sds_codes(node):
+                    if re.sub(r"\s+", "", token.upper()) == target:
+                        return node
+                field = re.sub(r"\s+", "", str(getattr(node, "sds_code", "") or "").strip().upper())
+                if field == target:
+                    return node
+                found = walk(getattr(node, "children", None) or [])
+                if found:
+                    return found
+            return None
+
+        return walk(roots)
+
+    def __insert_leaf_by_location(
+        self,
+        roots: List[SdsNodeForm],
+        location: str,
+        display_title: str,
+        code: str,
+        design_text: str,
+    ) -> Optional[SdsNodeForm]:
+        loc = str(location or "").strip().split("\n")[0].strip()
+        if not loc or not re.match(r"^\d", loc):
+            return None
+        try:
+            major = int(loc.split(".")[0])
+        except Exception:
+            return None
+        product_root = self.__find_product_root_by_major(roots, major)
+        if product_root is None:
+            return None
+        if product_root.children is None:
+            product_root.children = []
+        children = list(product_root.children)
+        stopper_idx = len(children)
+        for idx, child in enumerate(children):
+            if self.__is_function_stopper_title(getattr(child, "title", "") or ""):
+                stopper_idx = idx
+                break
+        body = self.__strip_sds_heading_text(display_title) or display_title
+        leaf_title = f"{loc} {body}".strip()
+        loc_tuple = self.__heading_tuple(loc)
+        insert_idx = stopper_idx
+        for idx, child in enumerate(children[:stopper_idx]):
+            child_heading = self.__parse_sds_node_heading(getattr(child, "title", "") or "")
+            if child_heading and self.__heading_tuple(child_heading) < loc_tuple:
+                insert_idx = idx + 1
+        new_node = SdsNodeForm(title=leaf_title, sds_code=code, text=design_text, children=[])
+        children.insert(insert_idx, new_node)
+        product_root.children = children
+        return new_node
+
+    def __insert_leaf_sibling_after_anchor(
+        self,
+        roots: List[SdsNodeForm],
+        anchor_code: str,
+        display_title: str,
+        code: str,
+        design_text: str,
+    ) -> Optional[SdsNodeForm]:
+        anchor = self.__find_node_by_code_in_tree(roots, anchor_code)
+        if anchor is None:
+            return None
+        parent_map = self.__build_node_parent_map(roots)
+        parent = parent_map.get(id(anchor))
+        if parent is None or self.__is_in_fixed_template_zone(roots, parent):
+            return None
+        children = list(getattr(parent, "children", None) or [])
+        try:
+            anchor_idx = children.index(anchor)
+        except ValueError:
+            return None
+        anchor_heading = self.__parse_sds_node_heading(getattr(anchor, "title", "") or "")
+        next_heading = ""
+        if anchor_heading:
+            parts = anchor_heading.split(".")
+            try:
+                parts[-1] = str(int(parts[-1]) + 1)
+                next_heading = ".".join(parts)
+            except Exception:
+                next_heading = ""
+        body = self.__strip_sds_heading_text(display_title) or display_title
+        title = f"{next_heading} {body}".strip() if next_heading else body
+        new_node = SdsNodeForm(title=title, sds_code=code, text=design_text, children=[])
+        children.insert(anchor_idx + 1, new_node)
+        parent_heading = self.__parse_sds_node_heading(getattr(parent, "title", "") or "")
+        if parent_heading:
+            parent_depth = len(parent_heading.split("."))
+            seq = 0
+            for child in children:
+                child_heading = self.__parse_sds_node_heading(getattr(child, "title", "") or "")
+                if not child_heading or not child_heading.startswith(parent_heading + "."):
+                    continue
+                if len(child_heading.split(".")) != parent_depth + 1:
+                    continue
+                seq += 1
+                child_body = self.__strip_sds_heading_text(getattr(child, "title", "") or "") or getattr(child, "title", "") or ""
+                child.title = f"{parent_heading}.{seq} {child_body}".strip()
+        parent.children = children
+        return new_node
+
+    def __insert_module_after_anchor(
+        self,
+        roots: List[SdsNodeForm],
+        module_name: str,
+        display_title: str,
+        code: str,
+        design_text: str,
+        anchor_code: str,
+    ) -> Optional[SdsNodeForm]:
+        anchor = self.__find_node_by_code_in_tree(roots, anchor_code)
+        if anchor is None:
+            return None
+        parent_map = self.__build_node_parent_map(roots)
+        parent = parent_map.get(id(anchor))
+        if parent is None or self.__is_in_fixed_template_zone(roots, parent):
+            return None
+        children = list(getattr(parent, "children", None) or [])
+        try:
+            anchor_idx = children.index(anchor)
+        except ValueError:
+            return None
+
+        module_node = self.__find_module_node_global(roots, module_name) if module_name else None
+        if module_node is not None:
+            self.__detach_node(roots, module_node)
+        else:
+            module_node = SdsNodeForm(title=str(module_name or "").strip() or "未命名模块", children=[])
+        if module_node.children is None:
+            module_node.children = []
+        children = list(getattr(parent, "children", None) or [])
+        try:
+            anchor_idx = children.index(anchor)
+        except ValueError:
+            return None
+        children.insert(anchor_idx + 1, module_node)
+
+        parent_heading = self.__parse_sds_node_heading(getattr(parent, "title", "") or "")
+        if parent_heading:
+            parent_depth = len(parent_heading.split("."))
+            seq = 0
+            for child in children:
+                child_heading = self.__parse_sds_node_heading(getattr(child, "title", "") or "")
+                is_direct = child is module_node
+                if child_heading and child_heading.startswith(parent_heading + "."):
+                    is_direct = len(child_heading.split(".")) == parent_depth + 1
+                if not is_direct:
+                    continue
+                seq += 1
+                child_body = self.__strip_sds_heading_text(getattr(child, "title", "") or "") or getattr(child, "title", "") or ""
+                child.title = f"{parent_heading}.{seq} {child_body}".strip()
+
+        module_heading = self.__parse_sds_node_heading(getattr(module_node, "title", "") or "")
+        leaf = self.__find_node_by_code_in_tree([module_node], code)
+        if leaf is None:
+            leaf = SdsNodeForm(sds_code=code, text=design_text, children=[])
+            module_node.children.append(leaf)
+        leaf_body = self.__strip_sds_heading_text(getattr(leaf, "title", "") or "") or self.__strip_sds_heading_text(display_title) or display_title
+        if module_heading:
+            leaf.title = f"{module_heading}.1 {leaf_body}".strip()
+        else:
+            leaf.title = leaf_body
+        leaf.sds_code = code
+        if not (getattr(leaf, "text", "") or "").strip():
+            leaf.text = design_text
+        parent.children = children
+        return leaf
+
+    def __insert_leaf_in_module(
+        self,
+        roots: List[SdsNodeForm],
+        module_name: str,
+        display_title: str,
+        code: str,
+        design_text: str,
+        parent_map: Optional[Dict[int, Optional[SdsNodeForm]]] = None,
+        product_root: Optional[SdsNodeForm] = None,
+    ) -> Optional[SdsNodeForm]:
+        """Word 导入：在模块节点下追加叶子（模块切换或无模块内前序编号时使用）。"""
+        module_node = self.__find_module_node(product_root, module_name) if (module_name and product_root) else None
+        if module_node is None:
+            module_node = self.__find_module_node_global(roots, module_name) if module_name else None
+        if module_node is None:
+            return None
+        if parent_map is None:
+            parent_map = self.__build_node_parent_map(roots)
+        if self.__is_in_fixed_template_zone(roots, module_node, parent_map):
+            return None
+        if module_node.children is None:
+            module_node.children = []
+        children = list(module_node.children)
+        module_heading = self.__parse_sds_node_heading(getattr(module_node, "title", "") or "")
+        module_depth = len(module_heading.split(".")) if module_heading else 0
+        insert_idx = len(children)
+        target_key = self.__sds_code_sort_key(code)
+        direct_children: List[SdsNodeForm] = []
+        for idx, child in enumerate(children):
+            child_heading = self.__parse_sds_node_heading(getattr(child, "title", "") or "")
+            if not child_heading or not module_heading:
+                continue
+            if not child_heading.startswith(module_heading + "."):
+                continue
+            parts = child_heading.split(".")
+            if len(parts) != module_depth + 1:
+                continue
+            direct_children.append(child)
+            child_code = re.sub(r"\s+", "", str(getattr(child, "sds_code", "") or "").strip().upper())
+            if child_code and self.__sds_code_sort_key(child_code) > target_key and insert_idx == len(children):
+                insert_idx = idx
+        body = self.__strip_sds_heading_text(display_title) or display_title
+        title = body
+        new_node = SdsNodeForm(title=title, sds_code=code, text=design_text, children=[])
+        children.insert(insert_idx, new_node)
+        if module_heading:
+            seq = 0
+            for child in children:
+                child_heading = self.__parse_sds_node_heading(getattr(child, "title", "") or "")
+                is_direct = child is new_node
+                if child_heading and child_heading.startswith(module_heading + "."):
+                    parts = child_heading.split(".")
+                    is_direct = len(parts) == module_depth + 1
+                if not is_direct:
+                    continue
+                seq += 1
+                child_body = self.__strip_sds_heading_text(getattr(child, "title", "") or "") or getattr(child, "title", "") or ""
+                child.title = f"{module_heading}.{seq} {child_body}".strip()
+        module_node.children = children
+        return new_node
+
+    def __insert_leaf_before_product_stopper(
+        self,
+        product_root: Optional[SdsNodeForm],
+        display_title: str,
+        code: str,
+        design_text: str,
+    ) -> Optional[SdsNodeForm]:
+        """将新增功能作为产品章直属功能章节，插在限制条件/尚未解决的问题前。"""
+        if product_root is None:
+            return None
+        if product_root.children is None:
+            product_root.children = []
+        children = list(product_root.children)
+        insert_idx = len(children)
+        for idx, child in enumerate(children):
+            if self.__is_function_stopper_title(getattr(child, "title", "") or ""):
+                insert_idx = idx
+                break
+        body = self.__strip_sds_heading_text(display_title) or display_title
+        new_node = SdsNodeForm(title=body, sds_code=code, text=design_text, children=[])
+        children.insert(insert_idx, new_node)
+        product_root.children = children
+        root_heading = self.__parse_sds_node_heading(getattr(product_root, "title", "") or "")
+        if root_heading:
+            root_depth = len(root_heading.split("."))
+            prev_seq = 0
+            for child in children[:insert_idx]:
+                child_heading = self.__parse_sds_node_heading(getattr(child, "title", "") or "")
+                if not child_heading or not child_heading.startswith(root_heading + "."):
+                    continue
+                parts = child_heading.split(".")
+                if len(parts) != root_depth + 1:
+                    continue
+                try:
+                    prev_seq = max(prev_seq, int(parts[-1]))
+                except Exception:
+                    continue
+            seq = prev_seq
+            for child in children[insert_idx:]:
+                child_heading = self.__parse_sds_node_heading(getattr(child, "title", "") or "")
+                is_direct = child is new_node
+                if child_heading and child_heading.startswith(root_heading + "."):
+                    is_direct = len(child_heading.split(".")) == root_depth + 1
+                if not is_direct:
+                    continue
+                seq += 1
+                child_body = self.__strip_sds_heading_text(getattr(child, "title", "") or "") or getattr(child, "title", "") or ""
+                child.title = f"{root_heading}.{seq} {child_body}".strip()
+        return new_node
+
+    def __remove_unheaded_nodes_by_code_title(
+        self,
+        nodes: List[SdsNodeForm],
+        codes: set,
+        titles: set,
+    ) -> List[SdsNodeForm]:
+        """清理由同步误建的无章节号固定追溯节点，如 300-007「图像显示」。"""
+        cleaned = []
+        norm_titles = {self.__normalize_sds_node_title(title) for title in titles}
+        norm_codes = {re.sub(r"\s+", "", str(code or "").upper()) for code in codes}
+        for node in nodes or []:
+            node_codes = {
+                re.sub(r"\s+", "", str(code or "").upper())
+                for code in self.__extract_node_sds_codes(node)
+            }
+            field_code = re.sub(r"\s+", "", str(getattr(node, "sds_code", "") or "").upper())
+            if field_code:
+                node_codes.add(field_code)
+            title_norm = self.__normalize_sds_node_title(getattr(node, "title", "") or "")
+            should_remove = (
+                bool(node_codes & norm_codes)
+                and not self.__parse_sds_node_heading(getattr(node, "title", "") or "")
+                and title_norm in norm_titles
+            )
+            if should_remove:
+                continue
+            node.children = self.__remove_unheaded_nodes_by_code_title(
+                getattr(node, "children", None) or [], norm_codes, norm_titles
+            )
+            cleaned.append(node)
+        return cleaned
+
+    def __relocate_unheaded_rcn301_modules(self, roots: List[SdsNodeForm]):
+        """Word 导入：把无章节号的 301 新增模块按 SDS 编号移动到前序功能后。"""
+        parent_map = self.__build_node_parent_map(roots)
+
+        def walk(nodes: List[SdsNodeForm]):
+            for node in nodes or []:
+                yield node
+                yield from walk(getattr(node, "children", None) or [])
+
+        all_nodes = list(walk(roots or []))
+        for product_root in self.__find_design_chapter_roots(roots):
+            product_heading = self.__parse_sds_node_heading(getattr(product_root, "title", "") or "")
+            if not product_heading:
+                continue
+            for module_node in list(getattr(product_root, "children", None) or []):
+                title = getattr(module_node, "title", "") or ""
+                if self.__parse_sds_node_heading(title) or self.__is_function_stopper_title(title):
+                    continue
+                module_codes = [
+                    code
+                    for node in walk([module_node])
+                    for code in self.__extract_node_sds_codes(node)
+                    if self.__rcn_series_num(code) == 301
+                ]
+                if not module_codes:
+                    continue
+                target_code = min(module_codes, key=self.__sds_code_sort_key)
+                target_key = self.__sds_code_sort_key(target_code)
+                anchor = None
+                anchor_key = None
+                for node in all_nodes:
+                    if node is module_node or self.__is_descendant_of(module_node, node, parent_map):
+                        continue
+                    if not self.__node_in_product_root(roots, node, product_root):
+                        continue
+                    for code in self.__extract_node_sds_codes(node):
+                        if self.__rcn_series_num(code) != 301:
+                            continue
+                        key = self.__sds_code_sort_key(code)
+                        if key >= target_key:
+                            continue
+                        if anchor_key is None or key > anchor_key:
+                            anchor = node
+                            anchor_key = key
+                anchor_parent = parent_map.get(id(anchor)) if anchor is not None else None
+                anchor_parent_heading = (
+                    self.__parse_sds_node_heading(getattr(anchor_parent, "title", "") or "")
+                    if anchor_parent is not None else ""
+                )
+                if anchor is None or anchor_parent is None or not anchor_parent_heading or anchor_parent is product_root:
+                    continue
+                self.__detach_node(roots, module_node)
+                siblings = list(getattr(anchor_parent, "children", None) or [])
+                try:
+                    insert_idx = siblings.index(anchor) + 1
+                except ValueError:
+                    continue
+                siblings.insert(insert_idx, module_node)
+                parent_depth = len(anchor_parent_heading.split("."))
+                seq = 0
+                for child in siblings:
+                    child_heading = self.__parse_sds_node_heading(getattr(child, "title", "") or "")
+                    is_direct = child is module_node
+                    if child_heading and child_heading.startswith(anchor_parent_heading + "."):
+                        is_direct = len(child_heading.split(".")) == parent_depth + 1
+                    if not is_direct:
+                        continue
+                    seq += 1
+                    body = self.__strip_sds_heading_text(getattr(child, "title", "") or "") or getattr(child, "title", "") or ""
+                    child.title = f"{anchor_parent_heading}.{seq} {body}".strip()
+                module_heading = self.__parse_sds_node_heading(getattr(module_node, "title", "") or "")
+                if module_heading:
+                    child_seq = 0
+                    for child in getattr(module_node, "children", None) or []:
+                        child_seq += 1
+                        body = self.__strip_sds_heading_text(getattr(child, "title", "") or "") or getattr(child, "title", "") or ""
+                        child.title = f"{module_heading}.{child_seq} {body}".strip()
+                anchor_parent.children = siblings
+                parent_map = self.__build_node_parent_map(roots)
+                all_nodes = list(walk(roots or []))
+
+    def __is_product_chapter_root(self, roots: List[SdsNodeForm], node: SdsNodeForm) -> bool:
+        if node is None:
+            return False
+        return node in self.__find_design_chapter_roots(roots)
+
+    async def __sync_missing_design_nodes_from_srs(self, doc_id: int, roots: List[SdsNodeForm]) -> List[SdsNodeForm]:
+        """获取SRS追溯 / 页面加载：在各产品章节 X.6 同步区按 SDS 编号查找并生成功能章节；X.1~X.5 固定不动。"""
+        if not self.__find_design_chapter_roots(roots) and self.__find_chapter6_root(roots) is None:
+            return roots
+
+        sds_doc = db.session.execute(select(SdsDoc).where(SdsDoc.id == doc_id)).scalars().first()
+        hierarchy_map = sdstrace_serv.__load_srs_req_hierarchy_map(getattr(sds_doc, "srsdoc_id", None) or 0)
+        trace_rows = db.session.execute(
+            select(SdsTrace, SrsReq)
+            .join(SrsReq, SrsReq.id == SdsTrace.req_id)
+            .where(SdsTrace.doc_id == doc_id)
+            .where(SrsReq.type_code != "reqd")
+            .order_by(SrsReq.code)
+        ).all()
+        if not trace_rows:
+            return roots
+
+        word_imported = self.__is_word_imported_doc(roots)
+        if word_imported:
+            self.__bind_word_leaf_codes_from_srs(roots, doc_id)
+
+        srs_codes = list({
+            str(getattr(req, "code", "") or "").strip()
+            for _trace, req in trace_rows
+            if str(getattr(req, "code", "") or "").strip()
+        })
+        reqd_by_srs_code: Dict[str, SrsReqd] = {}
+        if srs_codes:
+            reqd_rows = db.session.execute(
+                select(SrsReqd, SrsReq)
+                .join(SrsReq, SrsReq.id == SrsReqd.req_id)
+                .where(SrsReq.code.in_(srs_codes))
+            ).all()
+            for reqd_row, req_row in reqd_rows:
+                code = str(getattr(req_row, "code", "") or "").strip()
+                if code and code not in reqd_by_srs_code:
+                    reqd_by_srs_code[code] = reqd_row
+
+        def normalize_code(value: str) -> str:
+            return re.sub(r"\s+", "", str(value or "").strip().upper())
+
+        def build_design_text(srs_code: str):
+            srs_reqd_row = reqd_by_srs_code.get(str(srs_code or "").strip())
+            overview = (getattr(srs_reqd_row, "overview", None) or "").strip()
             func_detail = ServSdsReqd.__compose_srs_function_for_design(srs_reqd_row) if srs_reqd_row else ""
-            if not func_detail:
-                func_detail = (getattr(row, "func_detail", None) or "").strip()
             return sdstreqd_serv.compose_design_text_for_sync(overview, func_detail)
 
-        def append_hierarchy(level_nodes: List[SdsNodeForm], row, code: str):
-            titles = hierarchy_titles(row)
+        def hierarchy_titles(req_row: SrsReq, module_name: str = None) -> List[str]:
+            fields = sdstrace_serv.hierarchy_for_req(req_row, hierarchy_map)
+            mod = str(fields.get("module") or "").strip()
+            fn = str(fields.get("function") or "").strip()
+            sub = str(fields.get("sub_function") or "").strip()
+            for val in [mod, fn, sub]:
+                if val in ("/", "-", "\\"):
+                    continue
+            titles = []
+            seen = set()
+            mod_norm = self.__normalize_sds_node_title(mod)
+            module_norm = self.__normalize_sds_node_title(module_name or mod)
+            skip_module = module_name and mod_norm and (mod_norm == module_norm or mod_norm in module_norm or module_norm in mod_norm)
+            for val in ([mod] if mod and not skip_module else []) + [fn, sub]:
+                txt = str(val or "").strip()
+                if not txt or txt in ("/", "-", "\\"):
+                    continue
+                norm = self.__normalize_sds_node_title(txt)
+                if norm and norm not in seen:
+                    seen.add(norm)
+                    titles.append(txt)
+            if not titles:
+                leaf = sdstrace_serv.compose_srs_req_chapter(req_row, hierarchy_map=hierarchy_map, **fields)
+                if leaf:
+                    titles.append(leaf)
+            return titles
+
+        def append_hierarchy(level_nodes: List[SdsNodeForm], titles: List[str], code: str, design_text: str):
             for idx, title in enumerate(titles):
                 is_leaf = idx == len(titles) - 1
-                norm = normalize_title(title)
+                norm = self.__normalize_sds_node_title(title)
                 target = None
                 if is_leaf:
                     for candidate in level_nodes:
-                        if normalize_title(getattr(candidate, "title", "") or "") != norm:
+                        if self.__normalize_sds_node_title(getattr(candidate, "title", "") or "") != norm:
                             continue
                         existing_code = normalize_code(getattr(candidate, "sds_code", "") or "")
                         if not existing_code:
@@ -1628,14 +2498,14 @@ class Server(object):
                             break
                 else:
                     target = next(
-                        (n for n in level_nodes if normalize_title(getattr(n, "title", "") or "") == norm),
+                        (n for n in level_nodes if self.__normalize_sds_node_title(getattr(n, "title", "") or "") == norm),
                         None,
                     )
                 if target is None:
                     target = SdsNodeForm(
                         title=title,
                         sds_code=code if is_leaf else None,
-                        text=build_design_text(row) if is_leaf else "",
+                        text=design_text if is_leaf else "",
                         children=[],
                     )
                     level_nodes.append(target)
@@ -1643,35 +2513,393 @@ class Server(object):
                     if not getattr(target, "sds_code", None):
                         target.sds_code = code
                     if not (getattr(target, "text", "") or "").strip():
-                        target.text = build_design_text(row)
+                        target.text = design_text
                 if target.children is None:
                     target.children = []
                 level_nodes = target.children
 
-        missing = [row for row in req_rows if not req_exists(row)]
-        if not missing:
-            return roots
+        by_code, by_title = self.__collect_design_req_index(roots)
+        location_map = sdstrace_serv.build_sync_location_map(doc_id, roots)
+        touched_modules: List[SdsNodeForm] = []
+        ordered_codes: List[str] = []
+        parent_map = self.__build_node_parent_map(roots)
+        design_roots = self.__find_design_chapter_roots(roots)
 
-        function_node = find_function_area(roots)
-        if function_node is None:
-            return roots
-        if function_node.children is None:
-            function_node.children = []
+        def register_code_node(code: str, node: SdsNodeForm):
+            if not code or not node:
+                return
+            by_code[code] = node
+            title_norm = self.__normalize_sds_node_title(getattr(node, "title", "") or "")
+            if title_norm:
+                by_title[title_norm] = node
 
-        word_imported = self.__is_word_imported_doc(roots)
-        for row in sorted(missing, key=lambda r: normalize_code(getattr(r, "sds_code", "") or getattr(r, "srs_code", ""))):
-            code = normalize_code(getattr(row, "sds_code", "") or str(getattr(row, "srs_code", "") or "").replace("SRS", "SDS"))
-            if not code:
-                continue
-            append_hierarchy(function_node.children, row, code)
-            existing_codes.add(code)
+        def prev_code_with_node(current_code: str, product_root: Optional[SdsNodeForm] = None) -> Optional[str]:
+            prev = None
+            for item_code in ordered_codes:
+                if item_code == current_code:
+                    break
+                node = by_code.get(item_code)
+                if not node:
+                    continue
+                if product_root is not None and not self.__node_in_product_root(roots, node, product_root):
+                    continue
+                prev = item_code
+            return prev
 
-        if not word_imported:
-            self.__sort_subtree_siblings_by_sds_code(function_node)
-            self.__renumber_sync_subtree(function_node)
-        else:
-            self.__assign_headings_to_unnumbered_nodes(function_node)
+        def prev_code_in_doc(current_code: str) -> Optional[str]:
+            return prev_code_with_node(current_code, None)
+
+        def prev_existing_code_by_sds_sort(
+            current_code: str, product_root: Optional[SdsNodeForm] = None
+        ) -> Optional[str]:
+            current_key = self.__sds_code_sort_key(current_code)
+            prev = None
+            prev_key = None
+            for item_code, node in by_code.items():
+                if item_code == current_code or not node:
+                    continue
+                if product_root is not None and not self.__node_in_product_root(roots, node, product_root):
+                    continue
+                item_key = self.__sds_code_sort_key(item_code)
+                if item_key >= current_key:
+                    continue
+                if prev_key is None or item_key > prev_key:
+                    prev = item_code
+                    prev_key = item_key
+            return prev
+
+        for _trace, req in trace_rows:
+            raw_code = getattr(_trace, "sds_code", "") or str(getattr(req, "code", "") or "").replace("SRS", "SDS")
+            for code_token in re.split(r"[\r\n,，;；]+", str(raw_code)):
+                code = normalize_code(code_token)
+                if not code:
+                    continue
+                if code not in ordered_codes:
+                    ordered_codes.append(code)
+                fields = sdstrace_serv.hierarchy_for_req(req, hierarchy_map)
+                module_name = str(fields.get("module") or "").strip()
+                type_code = str(getattr(req, "type_code", "") or "").strip()
+                series_num = self.__rcn_series_num(code)
+                is_change_req = series_num == 307 or (
+                    series_num is None and type_code not in ("1", "2", "reqd")
+                )
+                if word_imported:
+                    target_product = self.__resolve_product_root_for_req(roots, code, module_name, type_code)
+                    module_anchor = (
+                        self.__find_module_node(target_product, module_name)
+                        if target_product is not None and module_name else None
+                    )
+                    if module_anchor is None and module_name:
+                        module_anchor = self.__find_module_node_for_req(roots, module_name, code, type_code)
+                    if target_product is None and module_anchor is not None:
+                        target_product = self.__find_product_root_for_node(roots, module_anchor, parent_map, design_roots)
+                else:
+                    target_product = self.__resolve_product_root_for_req(roots, code, module_name, type_code)
+                display_title = sdstrace_serv.compose_srs_req_chapter(req, hierarchy_map=hierarchy_map, **fields)
+                title_norm = self.__normalize_sds_node_title(display_title)
+                design_text = ""
+                def ensure_design_text() -> str:
+                    nonlocal design_text
+                    if not design_text:
+                        design_text = build_design_text(getattr(req, "code", "") or "")
+                    return design_text
+                location = location_map.get(code) or ""
+                expected_major = self.__resolve_product_major_for_req(code, type_code)
+                if location and expected_major is not None:
+                    try:
+                        if int(str(location).split(".")[0]) != expected_major:
+                            location = ""
+                    except Exception:
+                        location = ""
+                if not location and is_change_req:
+                    trace_loc = (getattr(_trace, "location", "") or "").strip().split("\n")[0].strip()
+                    expected_major = self.__resolve_product_major_for_req(code, type_code)
+                    if trace_loc and expected_major is not None:
+                        try:
+                            if int(trace_loc.split(".")[0]) == expected_major:
+                                location = trace_loc
+                        except Exception:
+                            pass
+                    elif trace_loc and expected_major is None:
+                        location = trace_loc
+
+                existing = by_code.get(code)
+                wrong_existing = None
+                if existing is not None:
+                    existing_heading = self.__parse_sds_node_heading(getattr(existing, "title", "") or "")
+                    if word_imported and not existing_heading:
+                        existing_parent = parent_map.get(id(existing))
+                        existing_parent_heading = self.__parse_sds_node_heading(
+                            getattr(existing_parent, "title", "") or ""
+                        ) if existing_parent is not None else ""
+                        if not existing_parent_heading:
+                            by_code.pop(code, None)
+                            existing = None
+                if (
+                    existing is not None
+                    and target_product
+                    and not self.__node_in_product_root(roots, existing, target_product)
+                ):
+                    wrong_existing = existing
+                    self.__detach_node(roots, existing)
+                    by_code.pop(code, None)
+                    existing = None
+                if existing is not None and word_imported and module_name and not is_change_req:
+                    module_node_check = self.__find_module_node_for_req(roots, module_name, code, type_code)
+                    if module_node_check is not None and not self.__is_descendant_of(
+                        module_node_check, existing, parent_map
+                    ):
+                        self.__detach_node(roots, existing)
+                        by_code.pop(code, None)
+                        existing = None
+                if existing is not None and word_imported and code in fixed_rcn300_sds_codes():
+                    if not self.__parse_sds_node_heading(getattr(existing, "title", "") or ""):
+                        self.__detach_node(roots, existing)
+                        by_code.pop(code, None)
+                        existing = None
+                if existing is None and title_norm and word_imported:
+                    module_node = self.__find_module_node_for_req(roots, module_name, code, type_code) if module_name else None
+                    title_candidate = by_title.get(title_norm)
+                    if title_candidate is not None and (
+                        module_node is None
+                        or self.__is_descendant_of(module_node, title_candidate, parent_map)
+                    ):
+                        existing = title_candidate
+                elif existing is None and title_norm:
+                    title_candidate = by_title.get(title_norm)
+                    if title_candidate is not None and (
+                        not target_product or self.__node_in_product_root(roots, title_candidate, target_product)
+                    ):
+                        existing = title_candidate
+                if existing is not None and self.__is_product_chapter_root(roots, existing):
+                    root_title = self.__normalize_sds_node_title(
+                        self.__strip_sds_heading_text(getattr(existing, "title", "") or "")
+                    )
+                    if title_norm and title_norm != root_title:
+                        existing = None
+                if existing is not None and self.__is_in_fixed_template_zone(roots, existing, parent_map, design_roots):
+                    existing = None
+                if existing is not None and self.__rcn_series_num(code) == 307:
+                    self.__detach_node(roots, existing)
+                    by_code.pop(code, None)
+                    existing = None
+                if existing is not None and location and is_change_req:
+                    existing_heading = self.__parse_sds_node_heading(getattr(existing, "title", "") or "")
+                    if existing_heading != location:
+                        self.__detach_node(roots, existing)
+                        existing = None
+                if existing is not None:
+                    existing_heading = self.__parse_sds_node_heading(getattr(existing, "title", "") or "")
+                    existing_code = re.sub(
+                        r"\s+", "", str(getattr(existing, "sds_code", "") or "").strip().upper()
+                    )
+                    if existing_code == code and existing_heading and self.__rcn_series_num(code) != 307:
+                        register_code_node(code, existing)
+                        continue
+                if existing is not None:
+                    if not getattr(existing, "sds_code", None):
+                        existing.sds_code = code
+                    if not (getattr(existing, "text", "") or "").strip():
+                        existing.text = ensure_design_text()
+                    if location and is_change_req and not self.__parse_sds_node_heading(getattr(existing, "title", "") or ""):
+                        body = self.__strip_sds_heading_text(getattr(existing, "title", "") or "") or display_title
+                        existing.title = f"{location} {body}".strip()
+                    if wrong_existing is not None:
+                        self.__detach_node(roots, wrong_existing)
+                    register_code_node(code, existing)
+                    continue
+
+                placed_node = None
+                if word_imported and not is_change_req:
+                    placed_node = self.__find_word_leaf_for_req(
+                        roots, req, hierarchy_map, code, module_name=module_name
+                    )
+                    if placed_node is not None and not (getattr(placed_node, "text", "") or "").strip():
+                        placed_node.text = ensure_design_text()
+                anchor_code = (
+                    self.__prev_code_in_module(code, ordered_codes, by_code, module_name, roots, parent_map, target_product)
+                    if word_imported and module_name
+                    else (prev_code_in_doc(code) if word_imported else prev_code_with_node(code, target_product))
+                )
+                if placed_node is None and anchor_code:
+                    anchor_node = by_code.get(anchor_code)
+                    module_node = self.__find_module_node_for_req(roots, module_name, code, type_code) if module_name else None
+                    if module_node is None:
+                        anchor_code = None
+                    elif anchor_node and not self.__is_descendant_of(module_node, anchor_node, parent_map):
+                        anchor_code = None
+                    elif anchor_node is None and word_imported and module_name:
+                        anchor_trace = db.session.execute(
+                            select(SdsTrace, SrsReq)
+                            .join(SrsReq, SrsReq.id == SdsTrace.req_id)
+                            .where(SdsTrace.doc_id == doc_id)
+                            .where(SdsTrace.sds_code.ilike(f"%{anchor_code.replace('SDS-', '')}%"))
+                        ).first()
+                        if anchor_trace:
+                            _atr, anchor_req = anchor_trace
+                            anchor_fields = sdstrace_serv.hierarchy_for_req(anchor_req, hierarchy_map)
+                            anchor_mod = str(anchor_fields.get("module") or module_name or "").strip()
+                            found = self.__find_word_leaf_for_req(
+                                roots, anchor_req, hierarchy_map,
+                                re.sub(r"\s+", "", anchor_code.strip().upper()),
+                                module_name=anchor_mod,
+                            )
+                            if found:
+                                by_code[anchor_code] = found
+                if placed_node is None and anchor_code:
+                    placed_node = self.__insert_leaf_sibling_after_anchor(
+                        roots, anchor_code, display_title, code, ensure_design_text()
+                    )
+                if placed_node is None and word_imported and module_name and self.__rcn_series_num(code) == 301:
+                    product_anchor_code = prev_existing_code_by_sds_sort(code, target_product)
+                    if product_anchor_code:
+                        placed_node = self.__insert_module_after_anchor(
+                            roots, module_name, display_title, code, ensure_design_text(), product_anchor_code
+                        )
+                if placed_node is None and word_imported and module_name and not is_change_req:
+                    placed_node = self.__insert_leaf_in_module(
+                        roots, module_name, display_title, code, ensure_design_text(), parent_map, target_product
+                    )
+                if placed_node is None and anchor_code and not word_imported:
+                    anchor_node = by_code.get(anchor_code)
+                    if anchor_node is None:
+                        anchor_trace = db.session.execute(
+                            select(SdsTrace, SrsReq)
+                            .join(SrsReq, SrsReq.id == SdsTrace.req_id)
+                            .where(SdsTrace.doc_id == doc_id)
+                            .where(SdsTrace.sds_code.ilike(f"%{anchor_code.replace('SDS-', '')}%"))
+                        ).first()
+                        if anchor_trace:
+                            _atr, anchor_req = anchor_trace
+                            anchor_fields = sdstrace_serv.hierarchy_for_req(anchor_req, hierarchy_map)
+                            anchor_title = sdstrace_serv.compose_srs_req_chapter(
+                                anchor_req, hierarchy_map=hierarchy_map, **anchor_fields
+                            )
+                            anchor_norm = self.__normalize_sds_node_title(anchor_title)
+                            candidate = by_title.get(anchor_norm)
+                            if candidate is not None and (
+                                not target_product or self.__node_in_product_root(roots, candidate, target_product)
+                            ):
+                                by_code[anchor_code] = candidate
+                                placed_node = self.__insert_leaf_sibling_after_anchor(
+                                    roots, anchor_code, display_title, code, ensure_design_text()
+                                )
+                if placed_node is None and is_change_req and self.__rcn_series_num(code) == 307:
+                    placed_node = self.__insert_leaf_before_product_stopper(
+                        target_product, display_title, code, ensure_design_text()
+                    )
+                if placed_node is None and location and is_change_req and self.__rcn_series_num(code) != 307:
+                    product_root = target_product or self.__resolve_product_root(roots, module_name) or self.__find_chapter6_root(roots)
+                    major = self.__product_chapter_major(product_root) if product_root else None
+                    loc = location
+                    if major is not None:
+                        parts = loc.split(".")
+                        if parts:
+                            parts[0] = str(major)
+                            loc = ".".join(parts)
+                    placed_node = self.__insert_leaf_by_location(
+                        roots, loc, display_title, code, ensure_design_text()
+                    )
+                if placed_node is not None:
+                    if wrong_existing is not None:
+                        self.__detach_node(roots, wrong_existing)
+                    register_code_node(code, placed_node)
+                    continue
+
+                if code in fixed_rcn300_sds_codes() and placed_node is None:
+                    continue
+
+                if word_imported:
+                    continue
+
+                module_node = (
+                    self.__ensure_module_node_in_product(target_product, module_name)
+                    if module_name and target_product is not None
+                    else (self.__ensure_module_node(roots, module_name) if module_name else target_product)
+                )
+                if module_node is None:
+                    module_node = self.__resolve_product_root(roots, module_name)
+                if module_node is None:
+                    continue
+                if module_node.children is None:
+                    module_node.children = []
+                titles = hierarchy_titles(req, module_name=module_name or self.__strip_sds_heading_text(getattr(module_node, "title", "") or ""))
+                if not titles:
+                    continue
+                append_hierarchy(module_node.children, titles, code, ensure_design_text())
+                leaf = self.__find_node_by_code_in_tree(roots, code) or module_node
+                register_code_node(code, leaf)
+                if module_node not in touched_modules:
+                    touched_modules.append(module_node)
+
+        roots = self.__remove_unheaded_nodes_by_code_title(
+            roots, {"SDS-RCN300-007"}, {"图像显示"}
+        )
+        if word_imported:
+            self.__relocate_unheaded_rcn301_modules(roots)
+
         return roots
+
+    def __collect_design_req_index(self, roots: List[SdsNodeForm]):
+        """在全文档设计树中索引已有需求节点（按 SDS 编号 / 标题）。"""
+        by_code: Dict[str, SdsNodeForm] = {}
+        by_title: Dict[str, SdsNodeForm] = {}
+        parent_map = self.__build_node_parent_map(roots)
+        design_roots = self.__find_design_chapter_roots(roots)
+        design_root_ids = {id(root) for root in design_roots}
+        product_cache: Dict[str, Optional[SdsNodeForm]] = {}
+        node_product_cache: Dict[int, Optional[SdsNodeForm]] = {}
+
+        def product_for_code(code: str) -> Optional[SdsNodeForm]:
+            if code not in product_cache:
+                product_cache[code] = self.__resolve_product_root_for_req(roots, code)
+            return product_cache[code]
+
+        def node_product(node: SdsNodeForm) -> Optional[SdsNodeForm]:
+            key = id(node)
+            if key not in node_product_cache:
+                found = None
+                current = node
+                while current is not None:
+                    if id(current) in design_root_ids:
+                        found = current
+                        break
+                    current = parent_map.get(id(current))
+                node_product_cache[key] = found
+            return node_product_cache[key]
+
+        def prefer_code_node(current: Optional[SdsNodeForm], candidate: SdsNodeForm, code: str) -> SdsNodeForm:
+            if current is None:
+                return candidate
+            target = product_for_code(code)
+            if target is None:
+                return current
+            if node_product(candidate) is target and node_product(current) is not target:
+                return candidate
+            return current
+
+        def walk(nodes: List[SdsNodeForm]):
+            for node in nodes or []:
+                if self.__is_in_fixed_template_zone(roots, node, parent_map, design_roots):
+                    walk(getattr(node, "children", None) or [])
+                    continue
+                for code in self.__extract_node_sds_codes(node):
+                    by_code[code] = prefer_code_node(by_code.get(code), node, code)
+                field_code = re.sub(r"\s+", "", str(getattr(node, "sds_code", "") or "").strip().upper())
+                if field_code:
+                    by_code[field_code] = prefer_code_node(by_code.get(field_code), node, field_code)
+                title_norm = self.__normalize_sds_node_title(getattr(node, "title", "") or "")
+                if title_norm:
+                    by_title.setdefault(title_norm, node)
+                walk(getattr(node, "children", None) or [])
+
+        for root in self.__find_design_chapter_roots(roots):
+            walk([root])
+        if not by_code and not by_title:
+            ch6 = self.__find_chapter6_root(roots)
+            if ch6:
+                walk([ch6])
+        return by_code, by_title
 
     @staticmethod
     def __sds_code_sort_key(code: str):
@@ -1739,16 +2967,13 @@ class Server(object):
         if not matched:
             return
         prefix = matched.group(1)
-
-        def is_stopper(title: str):
-            txt = re.sub(r"^\s*\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))?", "", str(title or "")).strip()
-            txt = re.sub(r"\s+", "", txt).lower()
-            return "限制条件" in txt or "尚未解决的问题" in txt
+        children = list(getattr(node, "children", None) or [])
+        stoppers = [child for child in children if self.__is_function_stopper_title(getattr(child, "title", "") or "")]
+        regular = [child for child in children if not self.__is_function_stopper_title(getattr(child, "title", "") or "")]
+        node.children = regular + stoppers
 
         idx = 0
-        for child in getattr(node, "children", None) or []:
-            if is_stopper(getattr(child, "title", "") or ""):
-                continue
+        for child in regular:
             idx += 1
             body = re.sub(
                 r"^\s*\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))?",
@@ -2021,7 +3246,7 @@ class Server(object):
                         logger.warning("ignoreNode:: %s %s %s", obj.doc_id, obj.p_id, obj.n_id)
                         continue
                     p_obj.children.append(obj)
-            if not self.__is_word_imported_doc(tree):
+            if tree and not self.__is_word_imported_doc(tree):
                 tree = await self.__refresh_trace_table_nodes(row.id, tree)
         data = row.dict()
         data["srsdoc_id"] = 0 if is_srs_deleted else row.srsdoc_id

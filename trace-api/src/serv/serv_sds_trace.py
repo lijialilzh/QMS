@@ -2,7 +2,7 @@ import logging
 import re
 import sys
 import json
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 from sqlalchemy import select, or_, and_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import desc
@@ -77,6 +77,15 @@ FIXED_RCN300_TRACES = {
         ("SDS-RCN300-010", "外部连接", "10"),
     ],
 }
+
+def fixed_rcn300_sds_codes() -> set:
+    codes = set()
+    for items in FIXED_RCN300_TRACES.values():
+        for token, *_rest in items:
+            code = re.sub(r"\s+", "", str(token or "").upper())
+            if code:
+                codes.add(code)
+    return codes
 
 class Server(object):
     @staticmethod
@@ -716,11 +725,99 @@ class Server(object):
         text = self.__normalize_name(self.__clean_path_title(title))
         return "限制条件" in text or "尚未解决的问题" in text
 
-    def __find_function_area_insert_heading(self, nodes: List[SdsNodeForm]):
+    @staticmethod
+    def __is_front_matter_root(title: str) -> bool:
+        body = re.sub(r"\s+", "", str(title or "")).lower()
+        return any(
+            key in body
+            for key in ("软件详细设计", "概述", "系统结构", "目录", "需求规格说明", "文件修订记录")
+        )
+
+    def __find_design_chapter_roots(self, nodes: List[SdsNodeForm]) -> List[SdsNodeForm]:
+        out: List[SdsNodeForm] = []
         for node in nodes or []:
             title = getattr(node, "title", "") or ""
+            if self.__is_front_matter_root(title):
+                continue
+            if self.__extract_chapter_code(title):
+                out.append(node)
+        return out
+
+    @staticmethod
+    def __rcn_series_num(code: str):
+        matched = re.search(r"RCN(\d+)", str(code or "").upper())
+        return int(matched.group(1)) if matched else None
+
+    def __resolve_product_major_for_req(self, code: str, type_code: str = None) -> Optional[int]:
+        series = self.__rcn_series_num(code)
+        type_code = str(type_code or "").strip()
+        if series == 307 or (type_code and type_code not in ("1", "2", "reqd")):
+            return 6
+        if series is not None and 301 <= series <= 306:
+            return 7
+        return None
+
+    def __find_product_root_by_major(self, nodes: List[SdsNodeForm], major: int):
+        for root in self.__find_design_chapter_roots(nodes):
+            heading = self.__extract_chapter_code(getattr(root, "title", "") or "")
+            try:
+                if heading and int(heading.split(".")[0]) == major:
+                    return root
+            except Exception:
+                continue
+        return None
+
+    def __find_change_req_base_heading(self, product_root: SdsNodeForm) -> str:
+        """变更需求默认挂在 RePACS 6.8 之后：6.8.1 / 6.8.2 …"""
+        for child in getattr(product_root, "children", None) or []:
+            heading = self.__extract_chapter_code(getattr(child, "title", "") or "")
+            if heading == "6.8":
+                return "6.8"
+        return ""
+
+    def __code_heading_in_product(self, code: str, major: int, tree: List[SdsNodeForm], by_code: dict) -> str:
+        loc = (by_code or {}).get(code) or ""
+        if loc:
+            try:
+                loc_major = int(str(loc).split(".")[0])
+            except Exception:
+                loc_major = None
+            if loc_major != major:
+                loc = ""
+        if not loc:
+            for token in self.__extract_code_tokens(code):
+                node = self.__find_sds_node_for_trace(token, None, tree or [])
+                if not node:
+                    continue
+                loc = self.__location_from_sds_node(node)
+                if not loc:
+                    continue
+                try:
+                    if int(loc.split(".")[0]) != major:
+                        loc = ""
+                        continue
+                except Exception:
+                    loc = ""
+                    continue
+                break
+        if not loc:
+            return ""
+        expected_major = self.__resolve_product_major_for_req(code, None)
+        if expected_major is not None and expected_major != major:
+            return ""
+        if self.__rcn_series_num(code) == 307:
+            return loc if str(loc).startswith("6.8.") else ""
+        return loc
+
+    def __find_function_area_insert_heading(self, nodes: List[SdsNodeForm], product_root: SdsNodeForm = None):
+        roots_to_search = [product_root] if product_root else self.__find_design_chapter_roots(nodes)
+        for node in roots_to_search:
+            if node is None:
+                continue
+            title = getattr(node, "title", "") or ""
             heading = self.__extract_chapter_code(title)
-            is_function_area = heading == "6" or "功能设计" in self.__normalize_name(self.__clean_path_title(title))
+            is_product_root = bool(heading and "." not in heading)
+            is_function_area = is_product_root or heading == "6" or "功能设计" in self.__normalize_name(self.__clean_path_title(title))
             if is_function_area:
                 child_infos = []
                 for child in getattr(node, "children", None) or []:
@@ -734,7 +831,7 @@ class Server(object):
                 if normal_headings:
                     return self.__increment_chapter(normal_headings[-1])
                 return f"{heading}.1" if heading else ""
-            child_heading = self.__find_function_area_insert_heading(getattr(node, "children", None) or [])
+            child_heading = self.__find_function_area_insert_heading(getattr(node, "children", None) or [], product_root=None)
             if child_heading:
                 return child_heading
         return ""
@@ -756,14 +853,52 @@ class Server(object):
             if row_req.type_code in ["1", "2"]:
                 continue
             code = ((row_req.code or "").replace("SRS", "SDS")).strip().upper()
-            if not code or not self.__is_empty_location(getattr(row_reqd, "location", "") or ""):
+            if not code:
                 continue
-            if (doc_sds_locations.get(row_sdsdoc.id) or {}).get(code):
+            major = self.__resolve_product_major_for_req(code, row_req.type_code)
+            if major is None:
                 continue
-            groups.setdefault((row_sdsdoc.id, row_req.type_code), []).append((code, row_req))
+            doc_id = row_sdsdoc.id
+            tree = doc_trees.get(doc_id) or []
+            by_code = doc_sds_locations.get(doc_id) or {}
+            if self.__code_heading_in_product(code, major, tree, by_code):
+                continue
+            saved_loc = (getattr(row_reqd, "location", "") or "").strip().split("\n")[0].strip()
+            if saved_loc and not self.__is_empty_location(saved_loc):
+                try:
+                    if int(saved_loc.split(".")[0]) == major:
+                        continue
+                except Exception:
+                    pass
+            is_change = row_req.type_code not in ("1", "2", "reqd") or self.__rcn_series_num(code) == 307
+            type_key = "change" if is_change else "functional"
+            groups.setdefault((doc_id, major, type_key), []).append((code, row_req))
 
-        for (doc_id, _type_code), items in groups.items():
-            insert_heading = self.__find_function_area_insert_heading(doc_trees.get(doc_id) or [])
+        for (doc_id, major, type_key), items in groups.items():
+            tree = doc_trees.get(doc_id) or []
+            product_root = self.__find_product_root_by_major(tree, major)
+            if product_root is None:
+                continue
+            if type_key == "change" and major == 6:
+                base = self.__find_change_req_base_heading(product_root)
+                if base:
+                    for index, (code, _row_req) in enumerate(sorted(items, key=lambda item: self.__compare_code(item[0]))):
+                        result[code] = f"{base}.{index + 1}"
+                    continue
+                insert_heading = self.__find_function_area_insert_heading(tree, product_root)
+                if insert_heading:
+                    parent_heading = ".".join(insert_heading.split(".")[:-1])
+                    try:
+                        start_index = int(insert_heading.split(".")[-1])
+                    except Exception:
+                        start_index = 6
+                    for index, (code, _row_req) in enumerate(sorted(items, key=lambda item: self.__compare_code(item[0]))):
+                        if parent_heading:
+                            result[code] = f"{parent_heading}.{start_index + index}"
+                        else:
+                            result[code] = f"{major}.{start_index + index}"
+                    continue
+            insert_heading = self.__find_function_area_insert_heading(tree, product_root)
             if not insert_heading:
                 continue
             parent_heading = ".".join(insert_heading.split(".")[:-1])
@@ -801,6 +936,41 @@ class Server(object):
                     assign(node.get("children") or [], heading)
 
             assign(roots, parent_heading)
+        return result
+
+    def build_sync_location_map(self, doc_id: int, roots: List[SdsNodeForm]) -> dict:
+        """为同步功能章节准备 location：树上已有 + 虚拟章节 + 追溯表已存 location。"""
+        by_code = self.__build_sds_location_map(roots or [])
+        result = dict(by_code)
+        sql = (
+            select(SdsTrace, SrsReq, SrsType, SdsDoc, SrsDoc, Product)
+            .join(SrsReq, SrsReq.id == SdsTrace.req_id)
+            .outerjoin(SrsType, SrsReq.type_code == SrsType.type_code)
+            .join(SdsDoc, SdsDoc.id == SdsTrace.doc_id)
+            .join(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id)
+            .join(Product, SrsDoc.product_id == Product.id)
+            .where(SdsDoc.id == doc_id)
+        )
+        rows = db.session.execute(sql).all()
+        virtual = self.__build_virtual_location_map(rows, {doc_id: roots or []}, {doc_id: by_code})
+        result.update(virtual or {})
+        for trace, req, *_rest in rows:
+            loc = (getattr(trace, "location", "") or "").strip()
+            if not loc or self.__is_empty_location(loc):
+                continue
+            for token in self.__extract_code_tokens(getattr(trace, "sds_code", "") or ""):
+                token = re.sub(r"\s+", "", token).upper()
+                expected_major = self.__resolve_product_major_for_req(token, getattr(req, "type_code", None))
+                loc_head = loc.split("\n")[0].strip()
+                if expected_major is not None:
+                    try:
+                        if int(loc_head.split(".")[0]) != expected_major:
+                            continue
+                    except Exception:
+                        continue
+                if token in virtual:
+                    continue
+                result.setdefault(token, loc_head)
         return result
 
     def __resolve_sds_locations(self, row_reqd: SdsTrace, doc_id: int, doc_sds_locations, virtual_sds_locations):
