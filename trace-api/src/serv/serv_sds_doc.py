@@ -2311,6 +2311,91 @@ class Server(object):
                 child.title = f"{root_heading}.{seq} {child_body}".strip()
         return new_node
 
+    def __insert_leaf_in_product_module_before_stopper(
+        self,
+        product_root: Optional[SdsNodeForm],
+        module_name: str,
+        display_title: str,
+        code: str,
+        design_text: str,
+    ) -> Optional[SdsNodeForm]:
+        """将变更需求按 模块 -> 功能 层级插在产品章限制条件前。"""
+        if product_root is None:
+            return None
+        if product_root.children is None:
+            product_root.children = []
+
+        module_norm = self.__normalize_sds_node_title(module_name or "")
+        module_node = None
+        if module_norm:
+            for child in getattr(product_root, "children", None) or []:
+                child_norm = self.__normalize_sds_node_title(
+                    self.__strip_sds_heading_text(getattr(child, "title", "") or "")
+                )
+                if child_norm == module_norm and not getattr(child, "sds_code", None):
+                    module_node = child
+                    break
+        if module_node is None:
+            children = list(product_root.children)
+            insert_idx = len(children)
+            for idx, child in enumerate(children):
+                if self.__is_function_stopper_title(getattr(child, "title", "") or ""):
+                    insert_idx = idx
+                    break
+            module_node = SdsNodeForm(title=str(module_name or "").strip() or "未命名模块", children=[])
+            children.insert(insert_idx, module_node)
+            product_root.children = children
+
+            root_heading = self.__parse_sds_node_heading(getattr(product_root, "title", "") or "")
+            if root_heading:
+                root_depth = len(root_heading.split("."))
+                prev_seq = 0
+                for child in children[:insert_idx]:
+                    child_heading = self.__parse_sds_node_heading(getattr(child, "title", "") or "")
+                    if not child_heading or not child_heading.startswith(root_heading + "."):
+                        continue
+                    parts = child_heading.split(".")
+                    if len(parts) != root_depth + 1:
+                        continue
+                    try:
+                        prev_seq = max(prev_seq, int(parts[-1]))
+                    except Exception:
+                        continue
+                seq = prev_seq
+                for child in children[insert_idx:]:
+                    child_heading = self.__parse_sds_node_heading(getattr(child, "title", "") or "")
+                    is_direct = child is module_node
+                    if child_heading and child_heading.startswith(root_heading + "."):
+                        is_direct = len(child_heading.split(".")) == root_depth + 1
+                    if not is_direct:
+                        continue
+                    seq += 1
+                    child_body = self.__strip_sds_heading_text(getattr(child, "title", "") or "") or getattr(child, "title", "") or ""
+                    child.title = f"{root_heading}.{seq} {child_body}".strip()
+
+        if module_node.children is None:
+            module_node.children = []
+        children = list(module_node.children)
+        module_heading = self.__parse_sds_node_heading(getattr(module_node, "title", "") or "")
+        target_key = self.__sds_code_sort_key(code)
+        insert_idx = len(children)
+        for idx, child in enumerate(children):
+            child_code = re.sub(r"\s+", "", str(getattr(child, "sds_code", "") or "").strip().upper())
+            if child_code and self.__sds_code_sort_key(child_code) > target_key:
+                insert_idx = idx
+                break
+        body = self.__strip_sds_heading_text(display_title) or display_title
+        new_node = SdsNodeForm(title=body, sds_code=code, text=design_text, children=[])
+        children.insert(insert_idx, new_node)
+        if module_heading:
+            seq = 0
+            for child in children:
+                seq += 1
+                child_body = self.__strip_sds_heading_text(getattr(child, "title", "") or "") or getattr(child, "title", "") or ""
+                child.title = f"{module_heading}.{seq} {child_body}".strip()
+        module_node.children = children
+        return new_node
+
     def __remove_unheaded_nodes_by_code_title(
         self,
         nodes: List[SdsNodeForm],
@@ -2818,8 +2903,8 @@ class Server(object):
                                     roots, anchor_code, display_title, code, ensure_design_text()
                                 )
                 if placed_node is None and is_change_req and self.__rcn_series_num(code) == 307:
-                    placed_node = self.__insert_leaf_before_product_stopper(
-                        target_product, display_title, code, ensure_design_text()
+                    placed_node = self.__insert_leaf_in_product_module_before_stopper(
+                        target_product, module_name, display_title, code, ensure_design_text()
                     )
                 if placed_node is None and location and is_change_req and self.__rcn_series_num(code) != 307:
                     product_root = target_product or self.__resolve_product_root(roots, module_name) or self.__find_chapter6_root(roots)
