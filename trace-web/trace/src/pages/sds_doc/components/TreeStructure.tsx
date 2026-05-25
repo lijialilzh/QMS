@@ -82,6 +82,8 @@ interface TreeNodeItemProps {
     onDeleteTable: (id: number) => void;
     onOpenReqdList?: () => void;   // 打开设计列表弹框（ref_type=sds_reqds）
     onOpenTraceList?: () => void;  // 打开需求追溯表弹框（ref_type=sds_traces）
+    onFetchSrsTrace?: () => void;  // 获取SRS追溯
+    traceSynced?: boolean;
     readOnlyChapterOffset?: number;
 }
 
@@ -393,7 +395,7 @@ function shiftChapterMajor(chapter: string, offset: number): string {
     return `${nextMajor}${m[2] || ""}`;
 }
 
-const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onSdsCodeChange, onImageChange, onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onOpenReqdList, onOpenTraceList, readOnlyChapterOffset = 0 }: TreeNodeItemProps) => {
+const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onSdsCodeChange, onImageChange, onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, readOnlyChapterOffset = 0 }: TreeNodeItemProps) => {
     const { t: ts } = useTranslation();
     const [fileList, setFileList] = useState<UploadFile[]>([]);
     const [uploadLoading, setUploadLoading] = useState(false);
@@ -1333,7 +1335,18 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           {ts('menu.sds_reqds') || '设计列表'}
                       </Button>
                   )}
-                  {node.ref_type === 'sds_traces' && onOpenTraceList && (
+                  {((node.ref_type === 'sds_traces') || /设计与需求追溯/.test(String(node.title || ""))) && !readOnly && onFetchSrsTrace && !traceSynced && !(node.table as any)?.trace_synced && (
+                      <Button
+                          type="primary"
+                          size="small"
+                          className="node-srsreq-btn"
+                          onClick={onFetchSrsTrace}
+                          style={compactWithImage ? { marginRight: 6, height: 28, padding: "0 8px", fontSize: 13 } : undefined}
+                      >
+                          获取SRS追溯
+                      </Button>
+                  )}
+                  {((node.ref_type === 'sds_traces') || /设计与需求追溯/.test(String(node.title || ""))) && onOpenTraceList && (traceSynced || (node.table as any)?.trace_synced) && (
                       <Button
                           type="primary"
                           size="small"
@@ -1758,6 +1771,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         onDeleteTable={onDeleteTable}
                         onOpenReqdList={onOpenReqdList}
                         onOpenTraceList={onOpenTraceList}
+                        onFetchSrsTrace={onFetchSrsTrace}
+                        traceSynced={traceSynced}
                         readOnlyChapterOffset={readOnlyChapterOffset}
                         captionFromParent={childCaptionById.get(String(child.id)) || childCaptionById.get(String(child.n_id || ""))}
                         tableCaptionFromParent={
@@ -1787,9 +1802,11 @@ interface TreeStructureProps {
     readOnlyRootWrapper?: boolean;
     onOpenReqdList?: () => void;   // 打开设计列表弹框
     onOpenTraceList?: () => void;  // 打开需求追溯表弹框
+    onFetchSrsTrace?: () => void;
+    traceSynced?: boolean;
 }
 
-export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = [], onNodeDelete, readOnly, readOnlyRootWrapper = true, onOpenReqdList, onOpenTraceList }: TreeStructureProps) => {
+export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = [], onNodeDelete, readOnly, readOnlyRootWrapper = true, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced }: TreeStructureProps) => {
     const { t: ts } = useTranslation();
     const [nodes, setNodes] = useState<TreeNode[]>(value);
     const [tableModalVisible, setTableModalVisible] = useState(false);
@@ -2330,6 +2347,8 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                             onDeleteTable: handleDeleteTable,
                             onOpenReqdList,
                             onOpenTraceList,
+                            onFetchSrsTrace,
+                            traceSynced,
                             readOnlyChapterOffset: effectiveReadOnlyChapterOffset,
                         };
                         return readOnly && !readOnlyRootWrapper ? (

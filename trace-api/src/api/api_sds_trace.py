@@ -24,9 +24,9 @@ async def update_sds_trace(form: SdsTraceForm):
 
 @router.get("/list_sds_trace", summary="查询SDS追溯列表", response_model=Resp[Page[SdsTraceObj]])
 @try_log(perm=Perms.sds_doc_view)
-async def list_sds_trace(prod_id: int = None, doc_id: int = None, page_index: int = 0, page_size: int = 10):
+async def list_sds_trace(prod_id: int = None, doc_id: int = None, page_index: int = 0, page_size: int = 10, from_sync: bool = False):
     op_user = CtxUser.get()
-    return await server.list_sds_trace(op_user, prod_id=prod_id, doc_id=doc_id, page_index=page_index, page_size=page_size)
+    return await server.list_sds_trace(op_user, prod_id=prod_id, doc_id=doc_id, page_index=page_index, page_size=page_size, from_sync=from_sync)
 
 
 @router.get("/get_sds_trace", summary="查询SDS追溯详情", response_model=Resp[SdsTraceObj])

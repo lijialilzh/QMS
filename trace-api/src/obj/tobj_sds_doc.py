@@ -4,9 +4,19 @@
 
 from __future__ import annotations
 from typing import List, Optional
-from .tobj_srs_doc import Table
+from .tobj_srs_doc import Table, TabHeader
 from pydantic import BaseModel, Field
 from .node import Node
+
+
+class SdsExtraTable(BaseModel):
+    title: Optional[str] = Field(title="附加表标题")
+    table: Optional[Table] = Field(title="附加表格")
+
+
+class SdsTable(Table):
+    extra_tables: Optional[List[SdsExtraTable]] = Field(title="附加表格列表", default=None)
+    trace_synced: Optional[bool] = Field(title="追溯已从SRS同步", default=None)
 
 
 class SdsNodeForm(Node):
@@ -15,7 +25,7 @@ class SdsNodeForm(Node):
     label: Optional[str] = Field(title="节点小标题")
     img_url: Optional[str] = Field(title="图片URL")
     text: Optional[str] = Field(title="节点文本")
-    table: Optional[Table] = Field(title="表格")
+    table: Optional[SdsTable] = Field(title="表格")
     children: Optional[List[SdsNodeForm]] = Field(title="子节点")
 
 

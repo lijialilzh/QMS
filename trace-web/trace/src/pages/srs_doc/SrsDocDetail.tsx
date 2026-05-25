@@ -2478,11 +2478,11 @@ export default () => {
             const srsTableState = await fetchSrsTableState(docId);
             const createdTable = created.type_code
                 ? {
-                    id: created.id || `change_${created.type_code}`,
-                    title: created.type_name || typeName,
-                    type_code: created.type_code,
+                            id: created.id || `change_${created.type_code}`,
+                            title: created.type_name || typeName,
+                            type_code: created.type_code,
                     create_time: created.create_time,
-                    data: [],
+                            data: [],
                 }
                 : undefined;
             const nextChangeTables = created.type_code
@@ -2663,8 +2663,8 @@ export default () => {
 
         try {
             dispatch({ savingChangeReq: true });
-            const latestState = await fetchSrsTableState(docId);
-            const normalizeTitle = (value?: string) => normalizeReqText(value).replace(/\s+/g, "");
+                const latestState = await fetchSrsTableState(docId);
+                const normalizeTitle = (value?: string) => normalizeReqText(value).replace(/\s+/g, "");
             let typeCode = String(tableData?.type_code || target?.type_code || "");
             let resolvedTarget = typeCode
                 ? (latestState.srsChangeTables || []).find((table: any) => String(table.type_code || "") === typeCode)
@@ -2680,20 +2680,20 @@ export default () => {
                 typeCode = String(resolvedTarget?.type_code || typeCode || "");
             }
             if (!typeCode) {
-                const typeRes: any = await ApiSrsType.add_srs_type({
-                    doc_id: docId,
-                    type_name: nextTableName || String(target?.title || "").trim() || "变更需求",
-                });
-                if (typeRes.code !== ApiSrsType.C_OK || !typeRes.data?.type_code) {
-                    throw new Error(typeRes.msg || "变更表格创建失败");
-                }
-                resolvedTarget = {
-                    id: typeRes.data.id,
-                    title: typeRes.data.type_name || nextTableName || target?.title || "变更需求",
-                    type_code: typeRes.data.type_code,
-                    data: [],
-                };
-                typeCode = String(typeRes.data.type_code || "");
+                    const typeRes: any = await ApiSrsType.add_srs_type({
+                        doc_id: docId,
+                        type_name: nextTableName || String(target?.title || "").trim() || "变更需求",
+                    });
+                    if (typeRes.code !== ApiSrsType.C_OK || !typeRes.data?.type_code) {
+                        throw new Error(typeRes.msg || "变更表格创建失败");
+                    }
+                    resolvedTarget = {
+                        id: typeRes.data.id,
+                        title: typeRes.data.type_name || nextTableName || target?.title || "变更需求",
+                        type_code: typeRes.data.type_code,
+                        data: [],
+                    };
+                    typeCode = String(typeRes.data.type_code || "");
             }
             if (!typeCode) {
                 throw new Error("变更需求保存失败：缺少变更表类型");
@@ -3008,15 +3008,15 @@ export default () => {
             }
 
             const upserts = changedAssignments.map(({ row, oldRow, code }) => ({
-                id: oldRow?.id || 0,
-                doc_id: docId,
-                code,
-                module: row.module,
-                function: row.function,
-                sub_function: row.sub_function,
-                location: oldRow?.location || "",
-                type_code: "1",
-                rcm_ids: oldRow?.rcm_ids || [],
+                    id: oldRow?.id || 0,
+                    doc_id: docId,
+                    code,
+                    module: row.module,
+                    function: row.function,
+                    sub_function: row.sub_function,
+                    location: oldRow?.location || "",
+                    type_code: "1",
+                    rcm_ids: oldRow?.rcm_ids || [],
             }));
             const deleteIds = deletedOldRows.map((oldRow: any) => oldRow.id).filter(Boolean);
 
@@ -3055,7 +3055,7 @@ export default () => {
                 srsTableLoading: false,
             });
             if (needsReqListRefresh) {
-                loadReqListData();
+            loadReqListData();
             }
             return srsTableState.srsTableData;
         } catch (error: any) {
@@ -3653,11 +3653,11 @@ export default () => {
 
     // 保存目录结构
     const handleSaveTreeStructure = () => {
-        editForm.validateFields().then(() => {
-            doSaveTreeStructure();
-        }).catch(() => {
+            editForm.validateFields().then(() => {
+                doSaveTreeStructure();
+            }).catch(() => {
             message.error("请先完善必填项");
-        });
+            });
     };
 
     const doSaveTreeStructure = async () => {

@@ -79,6 +79,168 @@ FIXED_RCN300_TRACES = {
 }
 
 class Server(object):
+    @staticmethod
+    def __normalize_hierarchy_part(value: str) -> str:
+        txt = re.sub(r"\s+", " ", str(value or "").strip())
+        return txt
+
+    @staticmethod
+    def __normalize_srs_code(value: str) -> str:
+        txt = re.sub(r"\s+", "", str(value or "").strip().upper())
+        return txt.replace("_", "-")
+
+    @staticmethod
+    def __resolve_srs_req_table_columns(headers: list) -> dict:
+        col_idx = {}
+        for header in headers or []:
+            if not isinstance(header, dict):
+                continue
+            name = str(header.get("name") or "").strip()
+            code = header.get("code")
+            if not code:
+                continue
+            norm = name.lower()
+            if "需求编号" in name or norm in {"code", "编号"}:
+                col_idx["code"] = code
+            elif "子功能" in name:
+                col_idx["sub_function"] = code
+            elif "功能" in name:
+                col_idx["function"] = code
+            elif "模块" in name:
+                col_idx["module"] = code
+            elif "章节" in name or "位置" in name or norm == "location":
+                col_idx["location"] = code
+        return col_idx
+
+    def __load_srs_req_hierarchy_map(self, srs_doc_id: int) -> Dict[str, dict]:
+        """从 SRS 文档「产品需求列表」读取层级，避免 srs_req 表合并单元格继承污染。"""
+        result: Dict[str, dict] = {}
+        if not srs_doc_id:
+            return result
+        nodes: List[SrsNode] = db.session.execute(
+            select(SrsNode).where(SrsNode.doc_id == srs_doc_id).where(SrsNode.table.isnot(None))
+        ).scalars().all()
+        code_pattern = re.compile(r"^SRS[-_A-Za-z0-9.]+$", re.I)
+        for node in nodes:
+            raw_table = node.table
+            if not raw_table:
+                continue
+            try:
+                table = json.loads(raw_table) if isinstance(raw_table, str) else raw_table
+            except Exception:
+                continue
+            headers = table.get("headers") or []
+            rows = table.get("rows") or []
+            if not headers or not rows:
+                continue
+            col_idx = self.__resolve_srs_req_table_columns(headers)
+            if "code" not in col_idx or "module" not in col_idx:
+                continue
+
+            def read_cell(row: dict, field: str) -> str:
+                key = col_idx.get(field)
+                if not key:
+                    return ""
+                return self.__normalize_hierarchy_part(row.get(key))
+
+            last_values: Dict[str, str] = {}
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                code = self.__normalize_srs_code(read_cell(row, "code"))
+                if not code or not code_pattern.match(code):
+                    continue
+                raw_module = read_cell(row, "module")
+                raw_function = read_cell(row, "function")
+                raw_sub_function = read_cell(row, "sub_function")
+                if raw_module:
+                    last_values["module"] = raw_module
+                    last_values.pop("function", None)
+                    last_values.pop("sub_function", None)
+                if raw_function:
+                    last_values["function"] = raw_function
+                    last_values.pop("sub_function", None)
+                if raw_sub_function:
+                    last_values["sub_function"] = raw_sub_function
+                result[code] = {
+                    "module": last_values.get("module", ""),
+                    "function": last_values.get("function", ""),
+                    "sub_function": last_values.get("sub_function", ""),
+                }
+        return result
+
+    @staticmethod
+    def hierarchy_for_req(row_req: SrsReq = None, hierarchy_map: Dict[str, dict] = None, code: str = None) -> dict:
+        req_code = (code or (getattr(row_req, "code", None) if row_req is not None else None) or "").strip().upper()
+        item = (hierarchy_map or {}).get(req_code) if req_code else None
+        if item:
+            return item
+        return {
+            "module": getattr(row_req, "module", None) if row_req is not None else None,
+            "function": getattr(row_req, "function", None) if row_req is not None else None,
+            "sub_function": getattr(row_req, "sub_function", None) if row_req is not None else None,
+        }
+
+    @staticmethod
+    def compose_srs_req_chapter(
+        row_req: SrsReq = None,
+        module: str = None,
+        function: str = None,
+        sub_function: str = None,
+        hierarchy_map: Dict[str, dict] = None,
+        code: str = None,
+    ) -> str:
+        """需求/代码：有子功能取子功能，无子功能取功能，无功能取模块。"""
+        fields = Server.hierarchy_for_req(row_req, hierarchy_map, code=code)
+        module = module if module is not None else fields.get("module")
+        function = function if function is not None else fields.get("function")
+        sub_function = sub_function if sub_function is not None else fields.get("sub_function")
+        placeholders = {"", "/", "\\", "-", "--", "—", "N/A", "n/a", "无", "暂无"}
+        for val in [sub_function, function, module]:
+            txt = str(val or "").strip()
+            if txt and txt not in placeholders:
+                return txt
+        return ""
+
+    @classmethod
+    def resolve_trace_chapter(
+        cls,
+        stored_chapter: str = None,
+        row_req: SrsReq = None,
+        srs_code: str = None,
+        hierarchy_map: Dict[str, dict] = None,
+        **fields,
+    ) -> str:
+        """展示用章节名：优先按 SRS 层级字段实时计算，仅固定映射/多行追溯保留库内值。"""
+        req_code = srs_code or (getattr(row_req, "code", None) if row_req is not None else None)
+        composed = cls.compose_srs_req_chapter(row_req, hierarchy_map=hierarchy_map, code=req_code, **fields)
+        stored = (stored_chapter or "").strip()
+        stored_lines = [ln.strip() for ln in re.split(r"[\r\n]+", stored) if ln and ln.strip()]
+        code = (req_code or "").strip().upper()
+        if code in FIXED_RCN300_TRACES or len(stored_lines) > 1:
+            return stored
+        return composed or (stored_lines[0] if stored_lines else "")
+
+    @classmethod
+    def trace_chapter_lines(
+        cls,
+        stored_chapter: str = None,
+        row_req: SrsReq = None,
+        srs_code: str = None,
+        hierarchy_map: Dict[str, dict] = None,
+        **fields,
+    ) -> List[str]:
+        """追溯表「需求/代码」列：单行需求用层级字段，固定多行映射保留各行原文。"""
+        req_code = srs_code or (getattr(row_req, "code", None) if row_req is not None else None)
+        composed = cls.compose_srs_req_chapter(row_req, hierarchy_map=hierarchy_map, code=req_code, **fields)
+        stored_lines = [ln.strip() for ln in re.split(r"[\r\n]+", (stored_chapter or "")) if ln and ln.strip()]
+        code = (req_code or "").strip().upper()
+        if code in FIXED_RCN300_TRACES and stored_lines:
+            return stored_lines
+        if composed:
+            return [composed]
+        return stored_lines or [""]
+
     def __ensure_sds_traces(self, prod_id: int = None, doc_id: int = None):
         if not prod_id and not doc_id:
             return
@@ -90,8 +252,9 @@ class Server(object):
                 sql_docs = sql_docs.where(SrsDoc.product_id == prod_id)
             docs = db.session.execute(sql_docs).all()
             for sds_doc_id, srs_doc_id in docs:
+                hierarchy_map = self.__load_srs_req_hierarchy_map(srs_doc_id)
                 reqs = db.session.execute(
-                    select(SrsReq.id, SrsReq.code, SrsReq.module, SrsReq.function)
+                    select(SrsReq.id, SrsReq.code, SrsReq.module, SrsReq.function, SrsReq.sub_function)
                     .where(SrsReq.doc_id == srs_doc_id)
                     .where(SrsReq.type_code != "reqd")
                 ).all()
@@ -99,7 +262,10 @@ class Server(object):
                     continue
                 values = []
                 fixed_values = []
-                for req_id, code, module, function in reqs:
+                for req_id, code, module, function, sub_function in reqs:
+                    fields = self.hierarchy_for_req(None, hierarchy_map, code=code)
+                    if not fields.get("module") and not fields.get("function") and not fields.get("sub_function"):
+                        fields = {"module": module, "function": function, "sub_function": sub_function}
                     fixed_trace = FIXED_RCN300_TRACES.get((code or "").strip().upper())
                     if fixed_trace:
                         fixed_values.append(
@@ -117,11 +283,20 @@ class Server(object):
                             doc_id=sds_doc_id,
                             req_id=req_id,
                             sds_code=(code or "").replace("SRS", "SDS"),
-                            chapter=function or module or "/",
+                            chapter=self.compose_srs_req_chapter(**fields) or fields.get("function") or fields.get("module") or "/",
                         )
                     )
                 if values:
-                    db.session.execute(pg_insert(SdsTrace).values(values).on_conflict_do_nothing())
+                    insert_stmt = pg_insert(SdsTrace).values(values)
+                    db.session.execute(
+                        insert_stmt.on_conflict_do_update(
+                            index_elements=["doc_id", "req_id"],
+                            set_=dict(
+                                sds_code=insert_stmt.excluded.sds_code,
+                                chapter=insert_stmt.excluded.chapter,
+                            ),
+                        )
+                    )
                 for item in fixed_values:
                     insert_stmt = pg_insert(SdsTrace).values(item)
                     db.session.execute(
@@ -400,13 +575,54 @@ class Server(object):
                 return cpaths, cnode
         return paths, None
 
-    def __extract_chapter_levels(self, paths: List[str] = None):
-        levels = []
-        for path in paths or []:
-            chapter = self.__extract_chapter_code(path)
-            if chapter and chapter not in levels:
-                levels.append(chapter)
-        return levels
+    def __find_sds_node_for_trace(self, sdscode: str, row_req: SrsReq, nodes: List[SdsNodeForm]):
+        """在 SDS 树中定位需求节点：仅 sds_code / 正文设计编号。"""
+        target_codes = set(self.__extract_code_tokens(sdscode))
+
+        def walk_by_code(items: List[SdsNodeForm]):
+            for node in items or []:
+                for code in self.__extract_node_sds_codes(node):
+                    if code in target_codes:
+                        return node
+                found = walk_by_code(getattr(node, "children", None) or [])
+                if found:
+                    return found
+            return None
+
+        _, node = self.__find_path(0, sdscode, nodes or [], [])
+        if node:
+            return node
+        return walk_by_code(nodes or [])
+
+    def __location_from_sds_node(self, node: SdsNodeForm) -> str:
+        return self.__extract_chapter_code(getattr(node, "title", "") or "") or ""
+
+    def __resolve_sds_tree_location(
+        self,
+        sdscode: str,
+        row_req: SrsReq,
+        nodes: List[SdsNodeForm],
+        by_code: dict = None,
+        by_title: dict = None,
+    ) -> str:
+        """章节号只取 SDS 树上与 sds_code 绑定的节点，不用子功能名兜底（避免同名串号）。"""
+        by_code = by_code or {}
+        locations = []
+        for token in self.__extract_code_tokens(sdscode):
+            loc = by_code.get(token)
+            if not loc and nodes:
+                node = self.__find_sds_node_for_trace(token, row_req, nodes)
+                if node:
+                    loc = self.__location_from_sds_node(node)
+            if loc:
+                locations.append(loc)
+        seen = set()
+        ordered = []
+        for item in locations:
+            if item and item not in seen:
+                seen.add(item)
+                ordered.append(item)
+        return "\n".join(ordered)
 
     @staticmethod
     def __is_placeholder_name(value: str):
@@ -418,15 +634,59 @@ class Server(object):
         txt = (value or "").strip()
         return txt in ["", "-", "--", "—", "/", "\\", "无", "暂无", "N/A", "n/a"]
 
+    @staticmethod
+    def __extract_sds_code_token(txt: str) -> str:
+        matched = re.search(
+            r"SDS\s*-\s*[A-Za-z0-9._-]+(?:\s*[-_]\s*[A-Za-z0-9._-]+)*",
+            str(txt or ""),
+            flags=re.I,
+        )
+        return re.sub(r"\s+", "", matched.group(0)).upper() if matched else ""
+
+    @classmethod
+    def __extract_node_sds_codes(cls, node: SdsNodeForm) -> List[str]:
+        codes: List[str] = []
+        seen = set()
+
+        def add(raw: str):
+            code = re.sub(r"\s+", "", str(raw or "").strip().upper())
+            if code and code not in seen:
+                seen.add(code)
+                codes.append(code)
+
+        field = str(getattr(node, "sds_code", "") or "")
+        for token in re.split(r"[\r\n,，;；]+", field):
+            add(token)
+        lines = str(getattr(node, "text", "") or "").replace("\r", "").split("\n")
+        for idx, line in enumerate(lines):
+            matched = re.match(r"设计编号\s*[：:]\s*(.*)$", str(line or "").strip())
+            if not matched:
+                continue
+            part = str(matched.group(1) or "").strip()
+            token = cls.__extract_sds_code_token(part)
+            if not token and idx + 1 < len(lines):
+                token = cls.__extract_sds_code_token(f"{part}\n{lines[idx + 1]}")
+            if token:
+                add(token)
+        return codes
+
+    @staticmethod
+    def __heading_depth(value: str) -> int:
+        txt = str(value or "").strip()
+        return len(txt.split(".")) if txt else 0
+
     def __build_sds_location_map(self, nodes: List[SdsNodeForm]):
         result = {}
 
         def walk(items: List[SdsNodeForm]):
             for node in items or []:
-                code = (getattr(node, "sds_code", None) or "").strip()
                 chapter = self.__extract_chapter_code(getattr(node, "title", "") or "")
-                for token in self.__extract_code_tokens(code):
-                    if token and chapter and token not in result:
+                if not chapter:
+                    walk(getattr(node, "children", None) or [])
+                    continue
+                for token in self.__extract_node_sds_codes(node):
+                    prev = result.get(token)
+                    if not prev or self.__heading_depth(chapter) >= self.__heading_depth(prev):
                         result[token] = chapter
                 walk(getattr(node, "children", None) or [])
 
@@ -657,7 +917,7 @@ class Server(object):
             doc_trees[doc_id] = tree
         return doc_trees
 
-    async def list_sds_trace(self, op_user: UserObj, prod_id: int = None, doc_id: int = None, type_code: str = None, page_index: int = 0, page_size: int = 10):
+    async def list_sds_trace(self, op_user: UserObj, prod_id: int = None, doc_id: int = None, type_code: str = None, page_index: int = 0, page_size: int = 10, from_sync: bool = False):
         page_index = page_index if page_index >= 0 else 0
         page_size = page_size if page_size > 0 else 10 
         self.__ensure_sds_traces(prod_id=prod_id, doc_id=doc_id)
@@ -688,16 +948,19 @@ class Server(object):
         type_names = self.__query_srs_types(req_ids)
         doc_ids = list(set([row_sdsdoc.id for row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product in rows]))
         doc_trees = self.__query_doc_tree(doc_ids)
-        doc_chapter_offsets = {d_id: self.__get_doc_chapter_offset(tree) for d_id, tree in doc_trees.items()}
         doc_sds_locations = {d_id: self.__build_sds_location_map(tree) for d_id, tree in doc_trees.items()}
-        virtual_sds_locations = self.__build_virtual_location_map(rows, doc_trees, doc_sds_locations)
+        virtual_sds_locations = {} if from_sync else self.__build_virtual_location_map(rows, doc_trees, doc_sds_locations)
+        srs_doc_ids = list(set([row_srsdoc.id for row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product in rows if row_srsdoc]))
+        hierarchy_by_srs_doc = {sid: self.__load_srs_req_hierarchy_map(sid) for sid in srs_doc_ids}
         objs = []
         for row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product in rows:
             obj = SdsTraceObj(**row_reqd.dict())
             obj.srs_code = row_req.code
-            obj.module = row_req.module
-            obj.function = row_req.function
-            obj.sub_function = row_req.sub_function
+            hierarchy_map = hierarchy_by_srs_doc.get(row_srsdoc.id if row_srsdoc else 0) or {}
+            req_fields = self.hierarchy_for_req(row_req, hierarchy_map)
+            obj.module = req_fields.get("module")
+            obj.function = req_fields.get("function")
+            obj.sub_function = req_fields.get("sub_function")
             if row_srsdoc:
                 obj.srsdoc_version = row_srsdoc.version
             if row_sdsdoc:
@@ -707,44 +970,56 @@ class Server(object):
                 obj.product_version = row_product.full_version
             obj.type_code = row_req.type_code
             obj.type_name = type_names.get(row_req.id) or default_types.get(row_req.type_code) or row_req.type_code
+            req_chapter = self.resolve_trace_chapter(
+                row_reqd.chapter, row_req, srs_code=row_req.code, hierarchy_map=hierarchy_map, **req_fields
+            )
+            req_name = req_chapter or self.compose_srs_req_chapter(row_req, hierarchy_map=hierarchy_map, **req_fields) or "/"
+            if from_sync:
+                obj.name = req_name
+                obj.chapter = req_chapter
+                obj.location = (row_reqd.location or "").strip()
+                objs.append(obj)
+                continue
             sds_location = self.__resolve_sds_locations(row_reqd, row_sdsdoc.id, doc_sds_locations, virtual_sds_locations)
             if (row_req.code or "").strip().upper() in FIXED_RCN300_TRACES:
-                obj.chapter = row_reqd.chapter or ""
+                obj.chapter = req_chapter
                 obj.location = sds_location
                 objs.append(obj)
                 continue
             doc_tree = doc_trees.get(row_sdsdoc.id)
             # 未导入详细设计：从SRS需求结构字段回退，避免结果被过滤为空
             if not doc_tree:
-                obj.name = row_req.sub_function or row_req.function or row_req.module or "/"
-                obj.chapter = obj.name
-                # 章节号仅来自详细设计侧（SDS），不回退SRS章节号
+                obj.name = req_name
+                obj.chapter = req_chapter or req_name
                 obj.location = sds_location
                 objs.append(obj)
                 continue
             # 严格按详细设计树节点读取章节号：优先 sds_code 命中；无编码时仅做标题精确匹配
             paths, _ = self.__find_path(0, row_reqd.sds_code, doc_tree, [])
             if not paths:
-                exact_names = self.__build_match_names(row_req.sub_function, row_req.function, row_req.module)
+                exact_names = self.__build_match_names(
+                    req_fields.get("sub_function"), req_fields.get("function"), req_fields.get("module")
+                )
                 for name in exact_names:
                     paths, _ = self.__find_path_by_names(0, [name], doc_tree, [], exact_only=True)
                     if paths:
                         break
             # 严格匹配失败时，回退到模糊匹配，兼容“安装包” vs “制作安装包”等命名差异
             if not paths:
-                fuzzy_names = self.__build_match_names(row_req.sub_function, row_req.function, row_req.module)
+                fuzzy_names = self.__build_match_names(
+                    req_fields.get("sub_function"), req_fields.get("function"), req_fields.get("module")
+                )
                 for name in fuzzy_names:
                     paths, _ = self.__find_path_by_names(0, [name], doc_tree, [], exact_only=False)
                     if paths:
                         break
             # 详细设计树中未命中路径时，仍按SRS基础信息展示，便于后续在追溯页手工编辑
             if not paths:
-                obj.name = row_req.sub_function or row_req.function or row_req.module or "/"
-                obj.chapter = obj.name
+                obj.name = req_name
+                obj.chapter = req_chapter or req_name
                 obj.location = sds_location
                 objs.append(obj)
                 continue
-            # 需求/代码固定取 SRS需求名称（子功能 > 功能 > 模块），占位值时用树标题兜底
             obj.name = self.__pick_req_display_name(row_req, paths)
             # 业务强约束：图像相关条目优先按给定映射命中对应模块章节，避免误配到相邻章节
             module_alias = NAME_DICT.get(obj.name or "")
@@ -755,18 +1030,18 @@ class Server(object):
                     if mapped_paths:
                         paths = mapped_paths
                         break
-            obj.chapter = obj.name
-            levels = self.__extract_chapter_levels(paths)
-            # 章节号统一取详细设计侧：优先 sds_code 命中的 SDS 树/虚拟节点，其次才是 SDS 树标题路径。
+            obj.chapter = req_chapter or self.compose_srs_req_chapter(row_req, hierarchy_map=hierarchy_map, **req_fields) or obj.name
             if sds_location:
                 obj.location = sds_location
-            elif levels:
-                obj.location = levels[-1]
-            elif self.__is_empty_location(obj.location):
-                obj.location = self.__find_chapter(paths)
-                logger.info("location: %s %s", row_reqd.sds_code, obj.location)
-            if not sds_location:
-                obj.location = self.__extract_chapter_code(obj.location) or None
+            elif not self.__is_empty_location(getattr(row_reqd, "location", "") or ""):
+                obj.location = str(row_reqd.location or "").strip()
+            elif doc_tree:
+                obj.location = self.__resolve_sds_tree_location(
+                    row_reqd.sds_code or "",
+                    row_req,
+                    doc_tree,
+                    doc_sds_locations.get(row_sdsdoc.id) or {},
+                )
             objs.append(obj)
         objs = self.__sort_objs_by_srs_manage_order(objs)
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
@@ -777,8 +1052,15 @@ class Server(object):
         if not row:
             return Resp.resp_err(msg=ts("msg_obj_null"))
         row_reqd, row_req = row
-        name = row_req.sub_function or row_req.function or row_req.module
+        srs_doc_id = db.session.execute(
+            select(SdsDoc.srsdoc_id).join(SdsTrace, SdsTrace.doc_id == SdsDoc.id).where(SdsTrace.id == id)
+        ).scalar()
+        hierarchy_map = self.__load_srs_req_hierarchy_map(srs_doc_id)
+        req_fields = self.hierarchy_for_req(row_req, hierarchy_map)
+        name = self.compose_srs_req_chapter(row_req, hierarchy_map=hierarchy_map, **req_fields) or row_req.sub_function or row_req.function or row_req.module
         obj = SdsTraceObj(**row_reqd.dict(), srs_code=row_req.code, name=name)
-        obj.chapter = name
+        obj.chapter = self.resolve_trace_chapter(
+            row_reqd.chapter, row_req, hierarchy_map=hierarchy_map, **req_fields
+        ) or name
         return Resp.resp_ok(data=obj)
     

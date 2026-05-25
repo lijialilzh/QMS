@@ -50,3 +50,7 @@ export const compare_sds_doc = async (params: { id0: number; id1: number }) => {
 export const import_sds_doc_word = async (params: any) => {
     return await httpPost("/trace-api/sds_doc/import_sds_doc_word", params2form(params));
 };
+
+export const sync_srs_trace = async (params: { doc_id: number }) => {
+    return await httpPost("/trace-api/sds_doc/sync_srs_trace", params2form(params));
+};

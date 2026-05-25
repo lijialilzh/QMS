@@ -76,6 +76,28 @@ class Server(object):
         return trigger or work_flow
 
     @staticmethod
+    def __compose_srs_function_for_design(row_srsreqd: SrsReqd):
+        """功能设计(2)功能：前置条件 + 触发器 + 工作流。"""
+        if not row_srsreqd:
+            return ""
+        parts = []
+        for field in ["pre_condition", "trigger", "work_flow"]:
+            val = (getattr(row_srsreqd, field, None) or "").strip()
+            if val and val not in parts:
+                parts.append(val)
+        return "\n".join(parts)
+
+    def compose_design_text_for_sync(self, overview: str, func_detail: str, logic_txt: str = "", intput: str = "", output: str = "", interface: str = ""):
+        return "\n".join([
+            f"(1) 总体描述\n{(overview or '').strip() or '无'}",
+            f"(2) 功能\n{(func_detail or '').strip() or '无'}",
+            f"(3) 程序逻辑\n{(logic_txt or '').strip() or '无'}",
+            f"(4) 输入项\n{(intput or '').strip() or '无'}",
+            f"(5) 输出项\n{(output or '').strip() or '无'}",
+            f"(6) 接口\n{(interface or '').strip() or '无'}",
+        ])
+
+    @staticmethod
     def __has_srs_detail_content(row_srsreqd: SrsReqd):
         if not row_srsreqd:
             return False

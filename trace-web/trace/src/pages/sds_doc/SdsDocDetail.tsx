@@ -215,6 +215,7 @@ export default () => {
         // 需求追溯表相关（改为弹框展示）
         traceListData: [], // 需求追溯表数据
         traceListLoading: false,
+        traceSyncing: false,
         showTraceListModal: false, // 需求追溯表弹框
         docProductId: undefined as number | undefined,
         docSrsdocId: undefined as number | undefined,
@@ -1231,9 +1232,14 @@ export default () => {
         .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
         .replace(/\s+/g, "")
         .toLowerCase();
-    const getReqSubFunctionTitle = (row: any) => [row.sub_function, row.name, row.function, row.module, row.srs_code]
+    const getReqSubFunctionTitle = (row: any) => [row.sub_function, row.function, row.module, row.name, row.srs_code]
         .map((value) => normalizeReqNamePart(String(value || "")))
         .find(Boolean) || "";
+    const resolveReqChapter = (row: any) => {
+        const composed = getReqSubFunctionTitle(row);
+        if (composed) return composed;
+        return normalizeReqNamePart(String(row?.chapter || ""));
+    };
     const syncMissingReqdNodes = async (roots: TreeNode[], docId?: number): Promise<TreeNode[]> => {
         if (isReadOnly || !docId || !Array.isArray(roots) || roots.length === 0) return roots;
         try {
@@ -1707,6 +1713,75 @@ export default () => {
 
     const cloneTree = (nodes: TreeNode[]): TreeNode[] => JSON.parse(JSON.stringify(nodes || []));
 
+    const isWordImportedDoc = (nodes: TreeNode[]): boolean => {
+        const walk = (items: TreeNode[]): boolean => (items || []).some((node) => {
+            const title = String(node.title || "").replace(/\s+/g, "");
+            if (title === "目录" || title.startsWith("目录")) return true;
+            return walk((node.children || []) as TreeNode[]);
+        });
+        return walk(nodes);
+    };
+
+    const isTraceSyncedOnTree = (nodes: TreeNode[]): boolean => {
+        let synced = false;
+        const walk = (items: TreeNode[]) => {
+            (items || []).forEach((node) => {
+                const title = String(node.title || "").replace(/\s+/g, "");
+                const refType = String((node as any).ref_type || "");
+                const isTraceNode = refType === "sds_traces"
+                    || title.includes("设计与需求追溯表")
+                    || title.includes("设计与需求追溯列表")
+                    || !!(node.table as any)?.trace_synced;
+                if (isTraceNode && (node.table as any)?.trace_synced) {
+                    synced = true;
+                }
+                walk((node.children || []) as TreeNode[]);
+            });
+        };
+        walk(nodes);
+        return synced;
+    };
+
+    const fetchSrsTrace = async (options?: { openModal?: boolean }) => {
+        const docId = params.id ? parseInt(params.id) : 0;
+        if (!docId || isReadOnly) return;
+        dispatch({ traceSyncing: true, traceListLoading: true });
+        try {
+            const res: any = await Api.sync_srs_trace({ doc_id: docId });
+            if (res?.code !== Api.C_OK) {
+                throw new Error(res?.msg || "获取SRS追溯失败");
+            }
+            const parsedContent = (res.data?.content || []).map((node: any) => parseTreeNode(node));
+            treeStructureRef.current = parsedContent;
+            dispatch({ treeStructure: parsedContent });
+            const rows = res.data?.trace_rows || [];
+            const tableData = rows.map((item: any, index: number) => ({
+                key: item.id || `trace_${index}_${Date.now()}`,
+                id: item.id,
+                doc_id: item.doc_id,
+                srs_code: item.srs_code || "",
+                sds_code: item.sds_code || "",
+                chapter: resolveReqChapter(item) || item.chapter || "",
+                location: item.location || "",
+                product_name: item.product_name || "",
+                product_version: item.product_version || "",
+                type_code: item.type_code || "",
+                type_name: item.type_name || "",
+            }));
+            dispatch({
+                traceListData: expandTraceRows(tableData),
+                traceListLoading: false,
+                traceSyncing: false,
+                showTraceListModal: options?.openModal ? true : data.showTraceListModal,
+            });
+            message.success("已从SRS获取追溯数据");
+        } catch (error: any) {
+            console.error("获取SRS追溯失败:", error);
+            message.error(error?.message || "获取SRS追溯失败");
+            dispatch({ traceSyncing: false, traceListLoading: false });
+        }
+    };
+
     useEffect(() => {
         const id = params.id;
         if (id) {
@@ -1733,9 +1808,10 @@ export default () => {
                     // 解析树状结构数据
                     const parsedTreeRaw = (targetRow.content || []).map((node: any) => parseTreeNode(node));
                     const parsedTree = parsedTreeRaw;
-                    // 严格按 Word 导入层级展示：不做前端二次“章节重排/补号/拆分”
-                    const parsedTreeForView = isReadOnly
-                        ? relocateReviewTablesToStandalonePage(parsedTree)
+                    const wordImported = isWordImportedDoc(parsedTree);
+                    // Word 导入：严格按原章节展示，不自动同步追溯/功能设计
+                    const parsedTreeForView = isReadOnly || wordImported
+                        ? (isReadOnly ? relocateReviewTablesToStandalonePage(parsedTree) : parsedTree)
                         : normalizeEditRootChapterNumbers(parsedTree);
                     const flowReboundTree = rebindFlowImageToFlowChild(parsedTreeForView);
                     const normalizedRefTree = normalizeImageRefTypes(flowReboundTree);
@@ -1743,17 +1819,23 @@ export default () => {
                         ? bindTableCaptionsForPersist(normalizedRefTree)
                         : normalizedRefTree;
                     const remappedContent = await remapRefTypeImagesByProduct(parsedContent, targetRow.product_id, targetRow.version);
-                    const ensuredReqdContent = await syncMissingReqdNodes(
-                        ensureFrontMatterTables(remappedContent as TreeNode[]),
-                        targetRow.id || (params.id ? parseInt(params.id) : undefined)
-                    );
-                    const ensuredContent = await syncTraceTableNodes(
-                        ensuredReqdContent as TreeNode[],
-                        targetRow.id || (params.id ? parseInt(params.id) : undefined),
-                        targetRow.product_version
-                    );
+                    const docIdForSync = targetRow.id || (params.id ? parseInt(params.id) : undefined);
+                    const ensuredReqdContent = wordImported
+                        ? ensureFrontMatterTables(remappedContent as TreeNode[])
+                        : await syncMissingReqdNodes(
+                            ensureFrontMatterTables(remappedContent as TreeNode[]),
+                            docIdForSync
+                        );
+                    const ensuredContent = wordImported
+                        ? ensuredReqdContent
+                        : await syncTraceTableNodes(
+                            ensuredReqdContent as TreeNode[],
+                            docIdForSync,
+                            targetRow.product_version
+                        );
                     const shouldPersistSyncedContent =
                         !isReadOnly &&
+                        !wordImported &&
                         JSON.stringify(remappedContent || []) !== JSON.stringify(ensuredContent || []);
 
                     dispatch({
@@ -1976,12 +2058,27 @@ export default () => {
 
     const buildSdsLocationMapFromTree = (nodes: TreeNode[]) => {
         const map = new Map<string, string>();
+        const headingDepth = (value: string) => String(value || "").split(".").filter(Boolean).length;
+        const putCode = (code: string, heading: string) => {
+            const normalizedCode = normalizeReqCode(code);
+            if (!normalizedCode || !heading) return;
+            const prev = map.get(normalizedCode);
+            if (!prev || headingDepth(heading) >= headingDepth(prev)) {
+                map.set(normalizedCode, heading);
+            }
+        };
         const walk = (items: TreeNode[]) => {
             (items || []).forEach((node) => {
                 const heading = parseHeadingNumber(node.title) || "";
-                const code = normalizeReqCode((node as any).sds_code);
-                if (code && heading && !map.has(code)) {
-                    map.set(code, heading);
+                if (heading) {
+                    const explicitCode = normalizeReqCode((node as any).sds_code);
+                    if (explicitCode) {
+                        putCode(explicitCode, heading);
+                    }
+                    const fromText = extractSdsCodeFromText(node.text).code;
+                    if (fromText) {
+                        putCode(fromText, heading);
+                    }
                 }
                 walk((node.children || []) as TreeNode[]);
             });
@@ -1999,11 +2096,12 @@ export default () => {
     const buildTraceTableFromRows = (rows: any[], locationBySdsCode?: Map<string, string>) => {
         const buildChapterCell = (row: any) => {
             const sdsCodes = splitTraceLines(row.sds_code);
-            const chapters = splitTraceLines(row.chapter);
+            const reqChapter = resolveReqChapter(row);
+            const chapters = reqChapter ? [reqChapter] : splitTraceLines(row.chapter);
             const locations = splitTraceLines(row.location);
             const count = Math.max(1, sdsCodes.length, chapters.length, locations.length);
             return Array.from({ length: count }).map((_, index) => {
-                const chapter = String(chapters[index] ?? "").trim();
+                const chapter = String(chapters[index] ?? chapters[0] ?? "").trim();
                 const sdsCode = normalizeReqCode(sdsCodes[index] ?? "");
                 const location = String(
                     locations[index]
@@ -2103,37 +2201,33 @@ export default () => {
         if (!docId) {
             return;
         }
+        const currentTree = (((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) || []) as TreeNode[];
+        if (!isTraceSyncedOnTree(currentTree)) {
+            message.warning("请先点击「获取SRS追溯」");
+            return;
+        }
         dispatch({ traceListLoading: true });
-        let currentTree = (((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) || []) as TreeNode[];
-        currentTree = await syncMissingReqdNodes(currentTree, docId);
-        currentTree = await syncTraceTableNodes(
-            currentTree,
-            docId,
-            String((currentProduct as any)?.full_version || (currentProduct as any)?.version || "").trim()
-        );
-        treeStructureRef.current = currentTree;
-        dispatch({ treeStructure: currentTree });
         ApiSdsTrace.list_sds_trace({
             doc_id: docId,
             page_index: 0,
             page_size: 10000,
+            from_sync: 1,
         }).then((res: any) => {
             if (res.code === ApiSdsTrace.C_OK) {
                 const rows = res.data?.rows || [];
-                const locationBySdsCode = buildSdsLocationMapFromTree(currentTree);
                 const tableData = rows.map((item: any, index: number) => ({
                     key: item.id || `trace_${index}_${Date.now()}`,
                     id: item.id,
                     doc_id: item.doc_id,
                     srs_code: item.srs_code || "",
                     sds_code: item.sds_code || "",
-                    chapter: item.chapter || "",
-                    location: item.location || locationBySdsCode.get(normalizeReqCode(item.sds_code)) || "",
+                    chapter: resolveReqChapter(item) || item.chapter || "",
+                    location: item.location || "",
                     product_name: item.product_name || "",
                     product_version: item.product_version || "",
                     doc_version: item.doc_version || "",
                 }));
-                dispatch({ traceListData: expandTraceRows(tableData, locationBySdsCode), traceListLoading: false });
+                dispatch({ traceListData: expandTraceRows(tableData), traceListLoading: false });
             } else {
                 message.error(res.msg || "加载需求追溯表数据失败");
                 dispatch({ traceListData: [], traceListLoading: false });
@@ -2881,6 +2975,14 @@ export default () => {
                         <div className="doc-section-buttons">
                             <Button
                                 type="primary"
+                                loading={data.traceSyncing}
+                                onClick={() => fetchSrsTrace()}
+                                style={{ marginRight: 8 }}
+                            >
+                                获取SRS追溯
+                            </Button>
+                            <Button
+                                type="primary"
                                 icon={<PlusOutlined />}
                                 onClick={handleAddRootNode}>
                                 {ts("sds_doc.add_root_menu")}
@@ -2905,9 +3007,16 @@ export default () => {
                             dispatch({ showReqdListModal: true });
                         }}
                         onOpenTraceList={() => {
+                            const tree = (treeStructureRef.current || data.treeStructure || []) as TreeNode[];
+                            if (!isTraceSyncedOnTree(tree)) {
+                                fetchSrsTrace({ openModal: true });
+                                return;
+                            }
                             loadTraceListData();
                             dispatch({ showTraceListModal: true });
                         }}
+                        onFetchSrsTrace={() => fetchSrsTrace()}
+                        traceSynced={isTraceSyncedOnTree((treeStructureRef.current || data.treeStructure || []) as TreeNode[])}
                     />
                 </div>
             </div>

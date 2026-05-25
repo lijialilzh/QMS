@@ -203,17 +203,32 @@ const buildVirtualLocationMap = (
     return savedMap;
 };
 
+const normalizeReqNamePart = (value?: string) => {
+    const txt = String(value || "").trim();
+    const invalid = new Set(["/", "\\", "／", "＼", "-", "--", "_", "无", "N/A", "n/a", "NA", "na", "null", "NULL", "None", "none"]);
+    return invalid.has(txt) ? "" : txt;
+};
+
+const resolveReqChapter = (row: any) => {
+    for (const val of [row?.sub_function, row?.function, row?.module]) {
+        const txt = normalizeReqNamePart(val);
+        if (txt) return txt;
+    }
+    return normalizeReqNamePart(row?.chapter);
+};
+
 const expandTraceRows = (rows: any[], locationBySdsCode?: Map<string, string>) => {
     return (rows || []).flatMap((row: any, rowIndex: number) => {
         const sdsCodes = splitTraceLines(row.sds_code);
-        const chapters = splitTraceLines(row.chapter);
+        const reqChapter = resolveReqChapter(row);
+        const chapters = reqChapter ? [reqChapter] : splitTraceLines(row.chapter);
         const locations = splitTraceLines(row.location);
         const count = Math.max(1, sdsCodes.length, chapters.length, locations.length);
         return Array.from({ length: count }).map((_, index) => ({
             ...row,
             key: `${row.id || row.key || rowIndex}_${index}`,
             sds_code: sdsCodes[index] ?? "",
-            chapter: chapters[index] ?? "",
+            chapter: chapters[index] ?? chapters[0] ?? "",
             location: (locations[index] ?? "") || locationBySdsCode?.get(normalizeSdsCode(sdsCodes[index])) || "",
             _sourceRow: row,
             _splitIndex: index,
