@@ -2,6 +2,7 @@ import logging
 import base64
 import os
 import re
+from datetime import datetime
 from typing import Any
 from typing import List, Tuple
 from sqlalchemy import select, delete, func, or_
@@ -353,13 +354,6 @@ class Server(object):
         if not product_id or category not in self.DOC_IMG_KEYWORDS:
             return
         normalized_doc_version = self.__normalize_doc_version(doc_version)
-        # 已存在记录时不自动覆盖，避免用户手工上传/替换被“回填逻辑”改回旧图
-        exists_sql = select(DocFile.id).where(DocFile.product_id == product_id, DocFile.category == category)
-        if normalized_doc_version:
-            exists_sql = exists_sql.where(DocFile.file_name.like(f"{normalized_doc_version}_%"))
-        exists = db.session.execute(exists_sql.limit(1)).scalar()
-        if exists:
-            return
 
         sql_docs = select(SdsDoc).join(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id).where(SrsDoc.product_id == product_id)
         if normalized_doc_version:
@@ -404,24 +398,65 @@ class Server(object):
         if not matched_img:
             return
 
-        blob, ext = self.__extract_image_blob_and_ext(matched_img)
-        if not blob:
-            return
-
-        row = DocFile(product_id=product_id, category=category)
-        db.session.add(row)
-        db.session.flush()
-
-        path = os.path.join("data.trace", category, f"{row.id}{ext}")
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "wb") as fs:
-            fs.write(blob)
         matched_doc_version = self.__normalize_doc_version(getattr(matched_doc, "version", "") or "")
+        matched_path = str(matched_img or "").strip()
+        if matched_path.startswith("/"):
+            matched_path = matched_path[1:]
+        ext = os.path.splitext(matched_path)[1] or ".png"
+        file_size = os.path.getsize(matched_path) if matched_path and os.path.exists(matched_path) else 0
+        if not matched_path or not file_size:
+            blob, blob_ext = self.__extract_image_blob_and_ext(matched_img)
+            if not blob:
+                return
+            ext = blob_ext
+
+        row = pick_doc_image_file_row(product_id, category, matched_doc_version)
+        if row is None:
+            row = DocFile(product_id=product_id, category=category)
+            db.session.add(row)
+            db.session.flush()
+
+        if not matched_path or not file_size:
+            matched_path = os.path.join("data.trace", category, f"{row.id}{ext}")
+            os.makedirs(os.path.dirname(matched_path), exist_ok=True)
+            with open(matched_path, "wb") as fs:
+                fs.write(blob)
+            file_size = len(blob)
+
         file_name_prefix = matched_doc_version or category
         row.file_name = f"{file_name_prefix}_{category}{ext}"
-        row.file_size = len(blob)
-        row.file_url = path
+        row.file_size = file_size
+        row.file_url = matched_path
+        row.update_time = datetime.now()
         db.session.commit()
+
+    def __sync_sds_nodes_from_doc_file(self, row: DocFile, doc_version: str = None):
+        """图表文件页更新后，反向同步到同产品/同版本 SDS 图片节点。"""
+        if not row or row.category not in self.DOC_IMG_KEYWORDS or not row.product_id or not row.file_url:
+            return
+        normalized_doc_version = self.__normalize_doc_version(
+            doc_version or self.__extract_doc_version_from_file_name(row.file_name, row.category)
+        )
+        sql_docs = (
+            select(SdsDoc.id)
+            .join(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id)
+            .where(SrsDoc.product_id == row.product_id)
+        )
+        if normalized_doc_version:
+            sql_docs = sql_docs.where(SdsDoc.version == normalized_doc_version)
+        doc_ids = [doc_id for doc_id in db.session.execute(sql_docs).scalars().all()]
+        if not doc_ids:
+            return
+        img_url = str(row.file_url or "").strip()
+        if img_url and not img_url.startswith("/"):
+            img_url = f"/{img_url}"
+        nodes = db.session.execute(
+            select(SdsNode)
+            .where(SdsNode.doc_id.in_(doc_ids))
+            .where(SdsNode.ref_type == row.category)
+        ).scalars().all()
+        for node in nodes:
+            node.img_url = img_url
 
     async def add_doc_file(self, form: DocFileForm, file):
         try:           
@@ -434,6 +469,7 @@ class Server(object):
                 row.file_size = file_size
                 row.file_name = file.filename
                 row.file_url = file_url
+            self.__sync_sds_nodes_from_doc_file(row)
             db.session.commit()
             return Resp.resp_ok()
         except Exception:
@@ -462,6 +498,7 @@ class Server(object):
                 row.file_size = file_size
                 row.file_name = file.filename
                 row.file_url = file_url
+            self.__sync_sds_nodes_from_doc_file(row, getattr(form, "doc_version", None))
             db.session.commit()
             return Resp.resp_ok()
         except Exception:

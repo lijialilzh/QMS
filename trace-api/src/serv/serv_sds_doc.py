@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple, Union
 from sqlalchemy import select, delete, func
@@ -1111,8 +1112,10 @@ class Server(object):
             resp = await self.add_sds_doc(form, preserve_word_structure=True)
             if resp.code == 200 and resp.data and resp.data.id:
                 self.__sync_imported_sds_reqd_fields(resp.data.id, srs_row.id, sds_content)
+                self.__sync_imported_sds_doc_images_to_doc_file(resp.data.id, sds_content)
                 # 首次进入编辑页应展示 Word 自带追溯表；点击“获取SRS追溯”后才重算追溯表。
                 sdstrace_serv.__ensure_sds_traces(doc_id=resp.data.id)
+                db.session.commit()
             return resp
         except Exception:
             logger.exception("")
@@ -1254,7 +1257,61 @@ class Server(object):
         row.file_name = f"{sds_doc.version or ref_type}_{ref_type}{ext}"
         row.file_size = file_size
         row.file_url = file_url
+        row.update_time = datetime.now()
         db.session.flush()
+
+    def __sync_imported_sds_doc_images_to_doc_file(self, doc_id: int, nodes: List[SdsNodeForm]):
+        """Word 重新导入时，以 Word 内嵌图覆盖产品图表文件，避免沿用旧编辑页上传图。"""
+        if not doc_id or not nodes:
+            return
+
+        def file_size_of(url: str) -> int:
+            path = str(url or "").strip()
+            if path.startswith("/"):
+                path = path[1:]
+            try:
+                return os.path.getsize(path) if path and os.path.exists(path) else 0
+            except Exception:
+                return 0
+
+        best_flow: Optional[SdsNodeForm] = None
+        best_score = -1
+
+        def score_flow_node(node: SdsNodeForm) -> int:
+            title = f"{getattr(node, 'title', '') or ''} {getattr(node, 'label', '') or ''} {getattr(node, 'text', '') or ''}"
+            norm = re.sub(r"\s+", "", title)
+            if "网络安全流程图" in norm:
+                return 100
+            if "安全流程图" in norm:
+                return 80
+            if "流程图" in norm:
+                return 50
+            return 10
+
+        def walk(items: List[SdsNodeForm]):
+            nonlocal best_flow, best_score
+            for node in items or []:
+                ref_type = str(getattr(node, "ref_type", "") or "").strip()
+                img_url = _normalize_sds_img_url(getattr(node, "img_url", "") or "")
+                if ref_type == RefTypes.img_flow.value and img_url:
+                    score = score_flow_node(node)
+                    if score > best_score:
+                        best_flow = node
+                        best_score = score
+                walk(getattr(node, "children", None) or [])
+
+        walk(nodes or [])
+        if best_flow is not None:
+            img_url = _normalize_sds_img_url(getattr(best_flow, "img_url", "") or "")
+            if img_url.startswith("/"):
+                img_url = img_url[1:]
+            self.__upsert_product_doc_image_from_sds_upload(
+                doc_id,
+                RefTypes.img_flow.value,
+                getattr(best_flow, "title", "") or "网络安全流程图",
+                file_size_of(img_url),
+                img_url,
+            )
 
     async def add_doc_file(self, doc_id: int, file, ref_type: str = None):
         size, path = await save_file("sds_node_img", doc_id, file)
@@ -3992,7 +4049,7 @@ class Server(object):
             prod_imgs = self.__query_imgs(row_srs.product_id) if row_srs else {}
             def hydrate_imgs(nodes: List[SdsNodeForm]):
                 for obj in nodes or []:
-                    if not obj.img_url and obj.ref_type in prod_imgs:
+                    if obj.ref_type in prod_imgs:
                         obj.img_url = prod_imgs[obj.ref_type]
                     hydrate_imgs(getattr(obj, "children", None) or [])
             hydrate_imgs(tree)
