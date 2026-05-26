@@ -740,7 +740,7 @@ function buildProductBoundDocFileUrl(row?: any): string {
     if (!row?.file_url) return "";
     return withProductImageCacheBuster(
         row.file_url,
-        `${row?.id || ""}_${row?.file_size || ""}_${row?.file_name || ""}`,
+        `${row?.id || ""}_${row?.file_size || ""}_${row?.file_name || ""}_${row?.update_time || ""}`,
     );
 }
 

@@ -458,6 +458,77 @@ class Server(object):
         for node in nodes:
             node.img_url = img_url
 
+    def __sync_srs_nodes_from_doc_file(self, row: DocFile, doc_version: str = None):
+        """图表文件页更新后，反向同步到同产品/同版本 SRS 图片节点。"""
+        if not row or row.category not in {"img_topo", "img_struct"} or not row.product_id or not row.file_url:
+            return
+        normalized_doc_version = self.__normalize_doc_version(
+            doc_version or self.__extract_doc_version_from_file_name(row.file_name, row.category)
+        )
+        sql_docs = select(SrsDoc.id).where(SrsDoc.product_id == row.product_id)
+        if normalized_doc_version:
+            sql_docs = sql_docs.where(SrsDoc.version == normalized_doc_version)
+        doc_ids = [doc_id for doc_id in db.session.execute(sql_docs).scalars().all()]
+        if not doc_ids:
+            return
+        img_url = str(row.file_url or "").strip()
+        if img_url and not img_url.startswith("/"):
+            img_url = f"/{img_url}"
+        heading_by_category = {
+            "img_topo": "2.2",
+            "img_struct": "2.3",
+        }
+        heading = heading_by_category.get(row.category, "")
+        nodes = db.session.execute(
+            select(SrsNode)
+            .where(SrsNode.doc_id.in_(doc_ids))
+            .where(or_(
+                SrsNode.ref_type == row.category,
+                SrsNode.title.like(f"{heading}%") if heading else False,
+            ))
+        ).scalars().all()
+        for node in nodes:
+            title = str(getattr(node, "title", "") or "").strip()
+            heading_match = bool(heading and re.match(rf"^\s*{re.escape(heading)}(?:\s+|[、．]+|(?=[\u4e00-\u9fffA-Za-z])|$)", title))
+            if getattr(node, "ref_type", None) != row.category and not heading_match:
+                continue
+            node.ref_type = row.category
+            node.img_url = img_url
+
+    def __sync_doc_nodes_from_doc_file(self, row: DocFile, doc_version: str = None):
+        self.__sync_sds_nodes_from_doc_file(row, doc_version)
+        self.__sync_srs_nodes_from_doc_file(row, doc_version)
+
+    def __build_preserved_doc_file_name(self, row: DocFile, category: str, ext: str, doc_version: str = None):
+        normalized_doc_version = self.__normalize_doc_version(
+            doc_version or self.__extract_doc_version_from_file_name(getattr(row, "file_name", "") or "", category)
+        )
+        product_version = ""
+        if getattr(row, "product_id", None):
+            product = db.session.execute(select(Product).where(Product.id == row.product_id)).scalars().first()
+            product_version = getattr(product, "full_version", "") or getattr(product, "name", "") or ""
+        if normalized_doc_version:
+            return build_doc_image_file_name(product_version, normalized_doc_version, category, ext)
+        return getattr(row, "file_name", None) or build_doc_image_file_name(product_version, "", category, ext)
+
+    def __fallback_doc_version_for_file(self, row: DocFile):
+        if not row or row.category not in self.DOC_IMG_KEYWORDS or not row.product_id:
+            return ""
+        if row.category == "img_flow":
+            return db.session.execute(
+                select(SdsDoc.version)
+                .join(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id)
+                .where(SrsDoc.product_id == row.product_id)
+                .order_by(desc(SdsDoc.id))
+                .limit(1)
+            ).scalar() or ""
+        return db.session.execute(
+            select(SrsDoc.version)
+            .where(SrsDoc.product_id == row.product_id)
+            .order_by(desc(SrsDoc.id))
+            .limit(1)
+        ).scalar() or ""
+
     async def add_doc_file(self, form: DocFileForm, file):
         try:           
             row = DocFile(**form.dict())
@@ -467,9 +538,11 @@ class Server(object):
             file_size, file_url = await save_file(row.category, row.id, file, with_uid=False)
             if file_url:
                 row.file_size = file_size
-                row.file_name = file.filename
+                ext = os.path.splitext(str(getattr(file, "filename", "") or ""))[1] or os.path.splitext(file_url)[1] or ".png"
+                row.file_name = self.__build_preserved_doc_file_name(row, row.category, ext)
                 row.file_url = file_url
-            self.__sync_sds_nodes_from_doc_file(row)
+                row.update_time = datetime.now()
+            self.__sync_doc_nodes_from_doc_file(row)
             db.session.commit()
             return Resp.resp_ok()
         except Exception:
@@ -493,12 +566,18 @@ class Server(object):
                     continue
                 setattr(row, key, value)
             category = form.category or row.category 
+            old_doc_version = (
+                self.__extract_doc_version_from_file_name(row.file_name, category)
+                or self.__fallback_doc_version_for_file(row)
+            )
             file_size, file_url = await save_file(category, row.id, file, with_uid=False)  
             if file_url:
                 row.file_size = file_size
-                row.file_name = file.filename
+                ext = os.path.splitext(str(getattr(file, "filename", "") or ""))[1] or os.path.splitext(file_url)[1] or ".png"
+                row.file_name = self.__build_preserved_doc_file_name(row, category, ext, old_doc_version)
                 row.file_url = file_url
-            self.__sync_sds_nodes_from_doc_file(row, getattr(form, "doc_version", None))
+                row.update_time = datetime.now()
+            self.__sync_doc_nodes_from_doc_file(row, old_doc_version)
             db.session.commit()
             return Resp.resp_ok()
         except Exception:
@@ -576,5 +655,7 @@ class Server(object):
                 obj.product_type_code = row_prd.type_code
                 obj.product_version = row_prd.full_version
             obj.doc_version = self.__extract_doc_version_from_file_name(obj.file_name, obj.category)
+            if not obj.doc_version:
+                obj.doc_version = normalized_doc_version or self.__fallback_doc_version_for_file(row)
             objs.append(obj)
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
