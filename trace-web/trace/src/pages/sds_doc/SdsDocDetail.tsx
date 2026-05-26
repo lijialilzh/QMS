@@ -1778,8 +1778,7 @@ export default () => {
         return isTraceSyncedOnTree(ensuredReqdContent as TreeNode[])
             ? await syncTraceTableNodes(
                 ensuredReqdContent as TreeNode[],
-                docIdForSync,
-                targetRow.product_version
+                docIdForSync
             ) as TreeNode[]
             : ensuredReqdContent as TreeNode[];
     };
@@ -1996,8 +1995,7 @@ export default () => {
                     const ensuredContent = isTraceSyncedOnTree(ensuredReqdContent as TreeNode[])
                         ? await syncTraceTableNodes(
                             ensuredReqdContent as TreeNode[],
-                            latestRow.id || docId,
-                            latestRow.product_version
+                            latestRow.id || docId
                         )
                         : ensuredReqdContent as TreeNode[];
                     currentTree = ensuredContent as TreeNode[];
@@ -2166,12 +2164,26 @@ export default () => {
         return !!typeCode && typeCode !== "1" && typeCode !== "2";
     };
 
-    const makeTraceChangeTableTitle = (productFullVersion?: string) => {
-        const version = String(productFullVersion || "").trim();
-        return `${version || "产品"}变更需求`;
+    const buildTraceChangeExtraTables = (rows: any[], locationBySdsCode?: Map<string, string>) => {
+        const groups: Array<{ typeCode: string; title: string; rows: any[] }> = [];
+        const groupIndex = new Map<string, number>();
+        (rows || []).forEach((row: any) => {
+            const typeCode = String(row?.type_code || "").trim();
+            if (!typeCode) return;
+            const title = String(row?.type_name || "").trim() || "变更需求";
+            if (!groupIndex.has(typeCode)) {
+                groupIndex.set(typeCode, groups.length);
+                groups.push({ typeCode, title, rows: [] });
+            }
+            groups[groupIndex.get(typeCode)!].rows.push(row);
+        });
+        return groups.map((group) => ({
+            title: group.title,
+            table: buildTraceTableFromRows(group.rows, locationBySdsCode),
+        }));
     };
 
-    const syncTraceTableNodes = async (roots: TreeNode[], docId?: number, productFullVersion?: string): Promise<TreeNode[]> => {
+    const syncTraceTableNodes = async (roots: TreeNode[], docId?: number): Promise<TreeNode[]> => {
         if (!docId || !Array.isArray(roots) || roots.length === 0) return roots;
         const hasTraceNode = (nodes: TreeNode[]): boolean => (nodes || []).some((node) =>
             isTraceTableNode(node) || hasTraceNode((node.children || []) as TreeNode[])
@@ -2189,17 +2201,14 @@ export default () => {
             const normalRows = rows.filter((row: any) => !isChangeTraceRow(row));
             const changeRows = rows.filter((row: any) => isChangeTraceRow(row));
             const table = buildTraceTableFromRows(normalRows, locationBySdsCode);
-            const changeTable = buildTraceTableFromRows(changeRows, locationBySdsCode);
-            const changeProductVersion = productFullVersion || changeRows.find((row: any) => row?.product_version)?.product_version || "";
+            const changeExtraTables = buildTraceChangeExtraTables(changeRows, locationBySdsCode);
             const updateNodes = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
                 const children = updateNodes((node.children || []) as TreeNode[]);
                 if (!isTraceTableNode(node)) return { ...node, children };
                 const nextChildren = children.filter((child) => !hasRenderableTraceTableChild(child));
                 const traceTable = {
                     ...(table as any),
-                    extra_tables: changeRows.length > 0
-                        ? [{ title: makeTraceChangeTableTitle(changeProductVersion), table: changeTable }]
-                        : [],
+                    extra_tables: changeExtraTables,
                 };
                 return {
                     ...node,
@@ -2219,7 +2228,7 @@ export default () => {
         const title = String(node.title || "").trim();
         const table = node.table as any;
         const hasTable = !!(table && Array.isArray(table.headers) && table.headers.length > 0);
-        return hasTable && (/^导入表格\d*$/i.test(title) || /变更需求$/.test(title));
+        return hasTable && (/^导入表格\d*$/i.test(title) || /变更需求\d*$/.test(title));
     };
 
     const renderMergedCell = (children: any, row: any) => ({
@@ -2617,8 +2626,7 @@ export default () => {
                             const ensuredContent = isTraceSyncedOnTree(ensuredReqdContent as TreeNode[])
                                 ? await syncTraceTableNodes(
                                     ensuredReqdContent as TreeNode[],
-                                    targetRow.id || (params.id ? parseInt(params.id) : undefined),
-                                    targetRow.product_version
+                                    targetRow.id || (params.id ? parseInt(params.id) : undefined)
                                 )
                                 : ensuredReqdContent as TreeNode[];
                             dispatch({

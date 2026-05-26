@@ -48,7 +48,7 @@ from ..obj.tobj_srs_doc import Table, TabHeader
 from ..model.product import Product, UserProd
 from ..obj.vobj_sds_doc import CompareObj, SdsDocObj
 from ..model.sds_doc import SdsDoc, SdsNode
-from ..obj.tobj_sds_doc import SdsDocForm, SdsNodeForm, SdsTable
+from ..obj.tobj_sds_doc import SdsDocForm, SdsNodeForm, SdsTable, SdsExtraTable
 from ..utils.sql_ctx import db
 from ..utils.i18n import ts
 from ..utils import get_uuid
@@ -1388,6 +1388,17 @@ class Server(object):
             row for row in rows
             if str(getattr(row, "type_code", "") or "").strip() in ["", "1", "2"]
         ]
+        change_groups: List[Tuple[str, str, List[SdsTraceObj]]] = []
+        change_group_index: Dict[str, int] = {}
+        for row in rows:
+            type_code = str(getattr(row, "type_code", "") or "").strip()
+            if not type_code or type_code in ["1", "2"]:
+                continue
+            type_name = str(getattr(row, "type_name", "") or "").strip() or "变更需求"
+            if type_code not in change_group_index:
+                change_group_index[type_code] = len(change_groups)
+                change_groups.append((type_code, type_name, []))
+            change_groups[change_group_index[type_code]][2].append(row)
 
         def build_chapter_cell(row: SdsTraceObj):
             sds_codes = split_lines(getattr(row, "sds_code", "") or "")
@@ -1422,19 +1433,31 @@ class Server(object):
                 values.append(f"{chapter}{f'（章节 {location}）' if location else ''}")
             return "\n".join(values)
 
-        table = SdsTable(
-            headers=[
+        trace_headers = [
                 TabHeader(code="srs_code", name="需求编号"),
                 TabHeader(code="sds_code", name="设计编号"),
                 TabHeader(code="chapter", name="需求/代码"),
-            ],
-            rows=[
+            ]
+
+        def build_trace_rows(table_rows: List[SdsTraceObj]):
+            return [
                 {
                     "srs_code": getattr(row, "srs_code", "") or "",
                     "sds_code": getattr(row, "sds_code", "") or "",
                     "chapter": build_chapter_cell(row),
                 }
-                for row in normal_rows
+                for row in table_rows
+            ]
+
+        table = SdsTable(
+            headers=trace_headers,
+            rows=build_trace_rows(normal_rows),
+            extra_tables=[
+                SdsExtraTable(
+                    title=type_name,
+                    table=Table(headers=trace_headers, rows=build_trace_rows(group_rows)),
+                )
+                for _type_code, type_name, group_rows in change_groups
             ],
             trace_synced=mark_synced or None,
         )
@@ -3500,6 +3523,7 @@ class Server(object):
         )
         if word_imported:
             self.__relocate_unheaded_rcn301_modules(roots)
+            self.__sort_direct_function_siblings_by_sds_code(roots)
 
         return roots
 
@@ -3568,6 +3592,84 @@ class Server(object):
     def __sds_code_sort_key(code: str):
         nums = [int(x) for x in re.findall(r"\d+", str(code or ""))]
         return tuple(nums) if nums else (9999, 9999, 9999)
+
+    def __replace_heading_prefix_in_descendants(self, node: SdsNodeForm, old_prefix: str, new_prefix: str):
+        if not old_prefix or not new_prefix or old_prefix == new_prefix:
+            return
+        for child in getattr(node, "children", None) or []:
+            heading = self.__parse_sds_node_heading(getattr(child, "title", "") or "")
+            if heading and (heading == old_prefix or heading.startswith(old_prefix + ".")):
+                body = self.__strip_sds_heading_text(getattr(child, "title", "") or "") or getattr(child, "title", "") or ""
+                new_heading = new_prefix + heading[len(old_prefix):]
+                child.title = f"{new_heading} {body}".strip()
+            self.__replace_heading_prefix_in_descendants(child, old_prefix, new_prefix)
+
+    def __sort_direct_function_siblings_by_sds_code(self, roots: List[SdsNodeForm]):
+        """Word 同步后：仅排序同一父级下带 SDS 编号的直接功能节点，避免 304-022 排在 304-021 前。"""
+        parent_map = self.__build_node_parent_map(roots)
+        design_roots = self.__find_design_chapter_roots(roots)
+
+        def normalize_code(value: str) -> str:
+            return re.sub(r"\s+", "", str(value or "").strip().upper())
+
+        def direct_coded_child(parent_heading: str, child: SdsNodeForm) -> bool:
+            if not parent_heading:
+                return False
+            code = normalize_code(getattr(child, "sds_code", "") or "")
+            if not code or self.__rcn_series_num(code) is None:
+                return False
+            child_heading = self.__parse_sds_node_heading(getattr(child, "title", "") or "")
+            if not child_heading or not child_heading.startswith(parent_heading + "."):
+                return False
+            return len(child_heading.split(".")) == len(parent_heading.split(".")) + 1
+
+        def renumber_direct_children(parent: SdsNodeForm):
+            parent_heading = self.__parse_sds_node_heading(getattr(parent, "title", "") or "")
+            if not parent_heading:
+                return
+            seq = 0
+            parent_depth = len(parent_heading.split("."))
+            for child in getattr(parent, "children", None) or []:
+                child_heading = self.__parse_sds_node_heading(getattr(child, "title", "") or "")
+                if not child_heading or not child_heading.startswith(parent_heading + "."):
+                    continue
+                if len(child_heading.split(".")) != parent_depth + 1:
+                    continue
+                seq += 1
+                new_heading = f"{parent_heading}.{seq}"
+                if child_heading == new_heading:
+                    continue
+                body = self.__strip_sds_heading_text(getattr(child, "title", "") or "") or getattr(child, "title", "") or ""
+                child.title = f"{new_heading} {body}".strip()
+                self.__replace_heading_prefix_in_descendants(child, child_heading, new_heading)
+
+        def walk(parent: SdsNodeForm):
+            if self.__is_in_fixed_template_zone(roots, parent, parent_map, design_roots):
+                return
+            children = list(getattr(parent, "children", None) or [])
+            parent_heading = self.__parse_sds_node_heading(getattr(parent, "title", "") or "")
+            changed = False
+            idx = 0
+            while idx < len(children):
+                if not direct_coded_child(parent_heading, children[idx]):
+                    idx += 1
+                    continue
+                start = idx
+                while idx < len(children) and direct_coded_child(parent_heading, children[idx]):
+                    idx += 1
+                run = children[start:idx]
+                sorted_run = sorted(run, key=lambda item: self.__sds_code_sort_key(getattr(item, "sds_code", "") or ""))
+                if run != sorted_run:
+                    children[start:idx] = sorted_run
+                    changed = True
+            if changed:
+                parent.children = children
+                renumber_direct_children(parent)
+            for child in getattr(parent, "children", None) or []:
+                walk(child)
+
+        for root in roots or []:
+            walk(root)
 
     @staticmethod
     def __subtree_min_sds_code(node: SdsNodeForm) -> str:
