@@ -190,6 +190,118 @@ class Server(object):
             "sub_function": getattr(row_req, "sub_function", None) if row_req is not None else None,
         }
 
+    def __ensure_traces_from_imported_srs_trace_table(self, sds_doc_id: int, srs_doc_id: int) -> bool:
+        """SDS 页面兜底：SRS 需求表未生成时，从已导入 Word 的追溯表直接生成追溯数据。"""
+        nodes: List[SrsNode] = db.session.execute(
+            select(SrsNode).where(SrsNode.doc_id == srs_doc_id).order_by(SrsNode.priority, SrsNode.n_id)
+        ).scalars().all()
+        if not nodes:
+            return False
+
+        def normalize_code(value: str) -> str:
+            return re.sub(r"\s+", "", str(value or "").strip().upper())
+
+        def clean_chapter(value: str) -> str:
+            txt = str(value or "").strip()
+            txt = re.sub(r"（章节\s*[^）]*）", "", txt)
+            txt = re.sub(r"\(章节\s*[^)]*\)", "", txt)
+            return txt.strip()
+
+        rows_to_import = []
+        seen = set()
+        for node in nodes:
+            table = getattr(node, "table", None)
+            if isinstance(table, str):
+                try:
+                    table = json.loads(table)
+                except Exception:
+                    table = None
+            if not isinstance(table, dict):
+                continue
+            headers = table.get("headers") or []
+            rows = table.get("rows") or []
+            if not headers or not rows:
+                continue
+
+            columns = {}
+            for header in headers:
+                if not isinstance(header, dict):
+                    continue
+                code = str(header.get("code") or "")
+                name = re.sub(r"\s+", "", str(header.get("name") or ""))
+                if ("需求编号" in name or name.lower() in ["srscode", "code"]) and "srs_code" not in columns:
+                    columns["srs_code"] = code
+                elif ("设计编号" in name or name.lower() in ["sdscode"]) and "sds_code" not in columns:
+                    columns["sds_code"] = code
+                elif ("需求/代码" in name or "需求代码" in name or "章节" in name) and "chapter" not in columns:
+                    columns["chapter"] = code
+            if "srs_code" not in columns or "sds_code" not in columns:
+                continue
+
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                srs_code = normalize_code(row.get(columns.get("srs_code")) or "")
+                sds_code = normalize_code(row.get(columns.get("sds_code")) or "")
+                chapter = clean_chapter(row.get(columns.get("chapter")) or "")
+                if not srs_code or not sds_code:
+                    continue
+                key = (srs_code, sds_code)
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows_to_import.append({
+                    "srs_code": srs_code,
+                    "sds_code": sds_code,
+                    "chapter": chapter or srs_code,
+                })
+
+        if not rows_to_import:
+            return False
+
+        req_values = [
+            dict(
+                doc_id=srs_doc_id,
+                code=row["srs_code"],
+                function=row["chapter"],
+                type_code="1",
+            )
+            for row in rows_to_import
+        ]
+        db.session.execute(pg_insert(SrsReq).values(req_values).on_conflict_do_nothing())
+        db.session.flush()
+
+        req_rows = db.session.execute(
+            select(SrsReq).where(SrsReq.doc_id == srs_doc_id, SrsReq.code.in_([row["srs_code"] for row in rows_to_import]))
+        ).scalars().all()
+        req_by_code = {normalize_code(row.code): row for row in req_rows}
+        trace_values = []
+        for row in rows_to_import:
+            req = req_by_code.get(row["srs_code"])
+            if not req:
+                continue
+            trace_values.append(
+                dict(
+                    doc_id=sds_doc_id,
+                    req_id=req.id,
+                    sds_code=row["sds_code"],
+                    chapter=row["chapter"],
+                )
+            )
+        if not trace_values:
+            return False
+        insert_stmt = pg_insert(SdsTrace).values(trace_values)
+        db.session.execute(
+            insert_stmt.on_conflict_do_update(
+                index_elements=["doc_id", "req_id"],
+                set_=dict(
+                    sds_code=insert_stmt.excluded.sds_code,
+                    chapter=insert_stmt.excluded.chapter,
+                )
+            )
+        )
+        return True
+
     @staticmethod
     def compose_srs_req_chapter(
         row_req: SrsReq = None,
@@ -268,6 +380,8 @@ class Server(object):
                     .where(SrsReq.type_code != "reqd")
                 ).all()
                 if not reqs:
+                    if self.__ensure_traces_from_imported_srs_trace_table(sds_doc_id, srs_doc_id):
+                        continue
                     continue
                 values = []
                 fixed_values = []

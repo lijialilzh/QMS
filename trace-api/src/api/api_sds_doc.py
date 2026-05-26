@@ -52,8 +52,12 @@ async def duplicate_sds_doc(id: int):
 
 @router.post("/add_doc_file", summary="添加文档文件", response_model=Resp[str])
 @try_log(perm=Perms.sds_doc_edit)
-async def add_doc_file(doc_id: int = Form(...), file: UploadFile = File(default=None)):
-    return await server.add_doc_file(doc_id, file) 
+async def add_doc_file(
+    doc_id: int = Form(...),
+    ref_type: str = Form(default=None),
+    file: UploadFile = File(default=None),
+):
+    return await server.add_doc_file(doc_id, file, ref_type=ref_type)
 
 
 @router.delete("/delete_sds_doc", summary="删除SDS_DOC", response_model=Resp[Any])

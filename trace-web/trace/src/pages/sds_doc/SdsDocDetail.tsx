@@ -1726,8 +1726,12 @@ export default () => {
 
     const isWordImportedDoc = (nodes: TreeNode[]): boolean => {
         const walk = (items: TreeNode[]): boolean => (items || []).some((node) => {
-            const title = String(node.title || "").replace(/\s+/g, "");
+            const rawTitle = String(node.title || "").trim();
+            const title = rawTitle.replace(/\s+/g, "");
             if (title === "目录" || title.startsWith("目录")) return true;
+            if (/^导入(?:图片|表格)\d*$/i.test(rawTitle) || /^图\s*\d+/.test(rawTitle)) return true;
+            if (String(node.img_url || "").trim()) return true;
+            if (hasRenderableTable(node.table)) return true;
             return walk((node.children || []) as TreeNode[]);
         });
         return walk(nodes);
@@ -1771,11 +1775,13 @@ export default () => {
         );
         const docIdForSync = targetRow.id || (params.id ? parseInt(params.id) : undefined);
         const ensuredReqdContent = ensureFrontMatterTables(remappedContent as TreeNode[]);
-        return await syncTraceTableNodes(
-            ensuredReqdContent as TreeNode[],
-            docIdForSync,
-            targetRow.product_version
-        ) as TreeNode[];
+        return isTraceSyncedOnTree(ensuredReqdContent as TreeNode[])
+            ? await syncTraceTableNodes(
+                ensuredReqdContent as TreeNode[],
+                docIdForSync,
+                targetRow.product_version
+            ) as TreeNode[]
+            : ensuredReqdContent as TreeNode[];
     };
 
     const refreshSdsDocTree = async (docId: number) => {
@@ -1987,11 +1993,13 @@ export default () => {
                         ensureFrontMatterTables(remappedContent as TreeNode[]),
                         latestRow.id || docId
                     );
-                    const ensuredContent = await syncTraceTableNodes(
-                        ensuredReqdContent as TreeNode[],
-                        latestRow.id || docId,
-                        latestRow.product_version
-                    );
+                    const ensuredContent = isTraceSyncedOnTree(ensuredReqdContent as TreeNode[])
+                        ? await syncTraceTableNodes(
+                            ensuredReqdContent as TreeNode[],
+                            latestRow.id || docId,
+                            latestRow.product_version
+                        )
+                        : ensuredReqdContent as TreeNode[];
                     currentTree = ensuredContent as TreeNode[];
                     treeStructureRef.current = ensuredContent;
                     dispatch({ treeStructure: ensuredContent });
@@ -2120,9 +2128,11 @@ export default () => {
     const buildTraceTableFromRows = (rows: any[], locationBySdsCode?: Map<string, string>) => {
         const buildChapterCell = (row: any) => {
             const sdsCodes = splitTraceLines(row.sds_code);
-            const reqChapter = resolveReqChapter(row);
-            const chapters = reqChapter ? [reqChapter] : splitTraceLines(row.chapter);
             const locations = splitTraceLines(row.location);
+            const rawChapters = splitTraceLines(row.chapter);
+            const isMultiTrace = sdsCodes.length > 1 || rawChapters.length > 1 || locations.length > 1;
+            const reqChapter = isMultiTrace ? "" : resolveReqChapter(row);
+            const chapters = reqChapter ? [reqChapter] : rawChapters;
             const count = Math.max(1, sdsCodes.length, chapters.length, locations.length);
             return Array.from({ length: count }).map((_, index) => {
                 const chapter = String(chapters[index] ?? chapters[0] ?? "").trim();
@@ -2604,11 +2614,13 @@ export default () => {
                                 ensureFrontMatterTables(remappedContent as TreeNode[]),
                                 targetRow.id || (params.id ? parseInt(params.id) : undefined)
                             );
-                            const ensuredContent = await syncTraceTableNodes(
-                                ensuredReqdContent as TreeNode[],
-                                targetRow.id || (params.id ? parseInt(params.id) : undefined),
-                                targetRow.product_version
-                            );
+                            const ensuredContent = isTraceSyncedOnTree(ensuredReqdContent as TreeNode[])
+                                ? await syncTraceTableNodes(
+                                    ensuredReqdContent as TreeNode[],
+                                    targetRow.id || (params.id ? parseInt(params.id) : undefined),
+                                    targetRow.product_version
+                                )
+                                : ensuredReqdContent as TreeNode[];
                             dispatch({
                                 changeDescription: targetRow.change_log || "",
                                 docNId: targetRow.n_id || 0,

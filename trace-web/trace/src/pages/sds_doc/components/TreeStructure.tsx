@@ -133,6 +133,29 @@ function hasRenderableTable(table?: TableData | null): boolean {
     return hasRows || hasCells;
 }
 
+function normalizeRepeatedTraceChapterCell(value: any): string {
+    const raw = String(value || "");
+    const lines = raw.replace(/\r/g, "").split("\n").map((line) => line.trim()).filter(Boolean);
+    if (lines.length < 4) return raw;
+    const chapterIndexes = lines
+        .map((line, index) => /（章节\s*[^）]+）|\(章节\s*[^)]+\)/.test(line) ? index : -1)
+        .filter((index) => index >= 0);
+    if (chapterIndexes.length < 2) return raw;
+    const groupSize = chapterIndexes[0] + 1;
+    if (groupSize <= 1 || lines.length !== groupSize * chapterIndexes.length) return raw;
+    for (let i = 0; i < chapterIndexes.length; i += 1) {
+        if (chapterIndexes[i] !== (i + 1) * groupSize - 1) return raw;
+    }
+    const normalized = chapterIndexes.map((_chapterIndex, groupIndex) => {
+        const groupStart = groupIndex * groupSize;
+        const groupLines = lines.slice(groupStart, groupStart + groupSize);
+        const chapterMatch = groupLines[groupSize - 1].match(/（章节\s*[^）]+）|\(章节\s*[^)]+\)/)?.[0] || "";
+        const name = groupLines[groupIndex]?.replace(/（章节\s*[^）]+）|\(章节\s*[^)]+\)/g, "").trim();
+        return name && chapterMatch ? `${name}${chapterMatch}` : "";
+    }).filter(Boolean);
+    return normalized.length === chapterIndexes.length ? normalized.join("\n") : raw;
+}
+
 function isReviewStyleTable(table?: TableData | null): boolean {
     if (!table || !Array.isArray(table.headers) || table.headers.length === 0) return false;
     const headerText = table.headers
@@ -430,6 +453,9 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                 const formData = new FormData();
                 formData.append('file', file);
                 formData.append('doc_id', String(docId ?? 0));
+                if (node.ref_type) {
+                    formData.append('ref_type', String(node.ref_type));
+                }
                 
                 // 调用add_doc_file接口上传图片
                 const res = await Api.add_doc_file(formData); // 第一个参数根据实际fileType调整
@@ -493,13 +519,21 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                     const colSpan = cell?.col_span ?? 1;
                     const hAlign = (cell?.h_align || "left") as "left" | "center" | "right";
                     const vAlign = (cell?.v_align || "top") as "top" | "middle" | "bottom";
+                    const cellValue = header.name === "需求/代码"
+                        ? normalizeRepeatedTraceChapterCell(cell?.value)
+                        : (cell?.value || "");
                     return {
-                        children: <div className="table-cell-content">{cell?.value || ""}</div>,
+                        children: <div className="table-cell-content">{cellValue}</div>,
                         props: { rowSpan, colSpan, style: { textAlign: hAlign, verticalAlign: vAlign } },
                     };
                 };
             } else {
-                col.render = (val: any) => <div className="table-cell-content">{val || ""}</div>;
+                col.render = (val: any) => {
+                    const cellValue = header.name === "需求/代码"
+                        ? normalizeRepeatedTraceChapterCell(val)
+                        : (val || "");
+                    return <div className="table-cell-content">{cellValue}</div>;
+                };
             }
             return col;
         });
