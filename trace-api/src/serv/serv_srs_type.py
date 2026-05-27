@@ -1,4 +1,5 @@
 import logging
+import re
 from sqlalchemy import select, delete, func, or_
 from sqlalchemy.sql import desc
 from ..model.srs_req import SrsReq
@@ -15,8 +16,21 @@ logger = logging.getLogger(__name__)
 
 class Server(object):
 
+    @staticmethod
+    def __normalize_type_name(value: str):
+        return re.sub(r"\s+", "", str(value or "").replace("：", ":").rstrip(":").strip())
+
     async def add_srs_type(self, form: SrsTypeForm):
         try:  
+            type_name = str(form.type_name or "").strip()
+            if form.doc_id and type_name:
+                normalized_name = self.__normalize_type_name(type_name)
+                existed_rows = db.session.execute(
+                    select(SrsType).where(SrsType.doc_id == form.doc_id)
+                ).scalars().all()
+                for existed in existed_rows:
+                    if self.__normalize_type_name(existed.type_name) == normalized_name:
+                        return Resp.resp_ok(data=SrsTypeForm(**existed.dict()))
             form.type_code = get_uuid()          
             row = SrsType(**form.dict())
             row.id = None

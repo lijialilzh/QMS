@@ -174,7 +174,7 @@ function normalizeCellText(value: string | undefined): string {
 
 function renderChangeTableTitle(title?: string) {
     const txt = String(title || "").trim();
-    return !txt || /^表格\d+$/.test(txt) ? "变更需求" : txt;
+    return txt || "变更需求";
 }
 
 function findChangeTableForPreview(
@@ -1788,10 +1788,7 @@ const TreeNodeItem = ({
         isReqMainTable(tbl.table) &&
         !/变更/.test(String(tbl.table?.name || tbl.title || ""))
     ));
-    const hasNormalChangeReqTable = orderedNormalTables.some((tbl) => (
-        isReqMainTable(tbl.table) &&
-        /变更/.test(String(tbl.table?.name || tbl.title || ""))
-    ));
+    const changeReqPreviewTablesToRender = srsReqPreview?.changes || [];
     const shouldShowSrsReqPreviewTables = !!(
         (isSrsReqRefNode || isImportedReqTableAnchor) &&
         !(hasNormalMainReqTable || hasNormalOtherReqTable) &&
@@ -1799,13 +1796,12 @@ const TreeNodeItem = ({
         (
             (srsReqPreview.main || []).length > 0 ||
             (srsReqPreview.other || []).length > 0 ||
-            (srsReqPreview.changes || []).length > 0
+            changeReqPreviewTablesToRender.length > 0
         )
     );
     const shouldShowChangeReqTables = !!(
         (isSrsReqListNode || (isImportedReqTableAnchor && hasNormalOtherReqTable)) &&
-        !hasNormalChangeReqTable &&
-        (srsReqPreview?.changes || []).length > 0
+        changeReqPreviewTablesToRender.length > 0
     );
     const shouldMoveOtherReqMarker = readOnly && hasOtherReqMarker && otherReqTableIndex >= 0;
     const imageCaptionData = extractImageCaptionAndBody(node.text);
@@ -2367,7 +2363,7 @@ const TreeNodeItem = ({
                       </div>
                   </div>
               ))}
-              {shouldShowChangeReqTables && (srsReqPreview?.changes || []).map((table) => (
+              {shouldShowChangeReqTables && changeReqPreviewTablesToRender.map((table) => (
                   <div className="node-table" key={`srs_change_${table.id}`}>
                       <div style={{ marginBottom: 8, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                           <span>{renderChangeTableTitle(table.title)}</span>
@@ -2461,7 +2457,7 @@ const TreeNodeItem = ({
                           </>
                       )}
 
-                      {(srsReqPreview.changes || []).map((table) => (
+                      {changeReqPreviewTablesToRender.map((table) => (
                           <div key={`srs_preview_change_${table.id}`} style={{ marginTop: 16 }}>
                               <div style={{ marginBottom: 8, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                                   <span>{renderChangeTableTitle(table.title)}</span>
@@ -3386,10 +3382,13 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         return (items || []).map((node) => {
             const table = node.table;
             let nextTable = table;
-            if (isReqMainTable(table) && /变更/.test(String(table?.name || node.title || ""))) {
+            if (
+                isReqMainTable(table) &&
+                /变更/.test(String(table?.name || node.title || "")) &&
+                !/^导入表格\d*$/.test(String(node.title || "").trim())
+            ) {
                 const tableTitle = normalizeTitle(table?.name || node.title || "");
-                const matchedPreview = previewTables.find((preview: any) => normalizeTitle(preview?.title) === tableTitle) ||
-                    (previewTables.length === 1 ? previewTables[0] : undefined);
+                const matchedPreview = previewTables.find((preview: any) => normalizeTitle(preview?.title) === tableTitle);
                 if (matchedPreview) {
                     const headers = table?.headers || [];
                     const codeCol = getColumnCode(headers, (text) => isReqCodeHeaderText(text));

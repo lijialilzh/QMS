@@ -1447,15 +1447,18 @@ class Server(object):
         ]
         change_groups: List[Tuple[str, str, List[SdsTraceObj]]] = []
         change_group_index: Dict[str, int] = {}
+        def normalize_type_name_key(value: str):
+            return re.sub(r"\s+", "", str(value or "").replace("：", ":").rstrip(":").strip())
         for row in rows:
             type_code = str(getattr(row, "type_code", "") or "").strip()
             if not type_code or type_code in ["1", "2"]:
                 continue
             type_name = str(getattr(row, "type_name", "") or "").strip() or "变更需求"
-            if type_code not in change_group_index:
-                change_group_index[type_code] = len(change_groups)
-                change_groups.append((type_code, type_name, []))
-            change_groups[change_group_index[type_code]][2].append(row)
+            group_key = normalize_type_name_key(type_name) or type_code
+            if group_key not in change_group_index:
+                change_group_index[group_key] = len(change_groups)
+                change_groups.append((group_key, type_name, []))
+            change_groups[change_group_index[group_key]][2].append(row)
 
         def build_chapter_cell(row: SdsTraceObj):
             sds_codes = split_lines(getattr(row, "sds_code", "") or "")
@@ -1605,6 +1608,32 @@ class Server(object):
         row: SdsDoc = db.session.execute(select(SdsDoc).where(SdsDoc.id == doc_id)).scalars().first()
         if not row:
             return Resp.resp_err(msg=ts("msg_obj_null"))
+        srs_row = db.session.execute(select(SrsDoc).where(SrsDoc.id == row.srsdoc_id)).scalars().first()
+        if srs_row and str(srs_row.version or "").startswith(DELETED_SRS_VERSION_PREFIX):
+            active_srs = db.session.execute(
+                select(SrsDoc)
+                .where(
+                    SrsDoc.product_id == srs_row.product_id,
+                    SrsDoc.version == row.version,
+                    ~SrsDoc.version.like(f"{DELETED_SRS_VERSION_PREFIX}%"),
+                )
+                .order_by(desc(SrsDoc.create_time), desc(SrsDoc.id))
+                .limit(1)
+            ).scalars().first()
+            if active_srs is None:
+                active_srs = db.session.execute(
+                    select(SrsDoc)
+                    .where(
+                        SrsDoc.product_id == srs_row.product_id,
+                        ~SrsDoc.version.like(f"{DELETED_SRS_VERSION_PREFIX}%"),
+                    )
+                    .order_by(desc(SrsDoc.create_time), desc(SrsDoc.id))
+                    .limit(1)
+                ).scalars().first()
+            if active_srs is not None:
+                row.srsdoc_id = active_srs.id
+                db.session.execute(delete(SdsTrace).where(SdsTrace.doc_id == row.id))
+                db.session.flush()
 
         sql = select(SdsNode).where(SdsNode.doc_id == doc_id).order_by(SdsNode.priority)
         nodes: list[SdsNode] = db.session.execute(sql).scalars().all()

@@ -352,7 +352,22 @@ export default () => {
             node.table &&
             (
                 (node.table.rows !== null && Array.isArray(node.table.rows) && node.table.rows.length > 0) ||
-                (Array.isArray(node.table.cells) && node.table.cells.length > 1)
+                (Array.isArray(node.table.cells) && node.table.cells.length > 1) ||
+                (
+                    Array.isArray(node.table.extra_tables) &&
+                    node.table.extra_tables.some((extra: any) => {
+                        const extraTable = extra?.table;
+                        return !!(
+                            extraTable &&
+                            Array.isArray(extraTable.headers) &&
+                            extraTable.headers.length > 0 &&
+                            (
+                                (Array.isArray(extraTable.rows) && extraTable.rows.length > 0) ||
+                                (Array.isArray(extraTable.cells) && extraTable.cells.length > 1)
+                            )
+                        );
+                    })
+                )
             )
         );
         return {
@@ -384,7 +399,14 @@ export default () => {
         if (!table || !Array.isArray(table.headers) || table.headers.length === 0) return false;
         const hasRows = Array.isArray(table.rows) && table.rows.length > 0;
         const hasCells = Array.isArray(table.cells) && table.cells.length > 1;
-        return hasRows || hasCells;
+        const hasExtraTables = Array.isArray(table.extra_tables) && table.extra_tables.some((extra: any) => {
+            const extraTable = extra?.table;
+            if (!extraTable || !Array.isArray(extraTable.headers) || extraTable.headers.length === 0) return false;
+            const extraRows = Array.isArray(extraTable.rows) && extraTable.rows.length > 0;
+            const extraCells = Array.isArray(extraTable.cells) && extraTable.cells.length > 1;
+            return extraRows || extraCells;
+        });
+        return hasRows || hasCells || hasExtraTables;
     };
     const hasTableInSubtree = (node: TreeNode): boolean => {
         if (hasRenderableTable(node.table)) return true;
@@ -2167,15 +2189,21 @@ export default () => {
     const buildTraceChangeExtraTables = (rows: any[], locationBySdsCode?: Map<string, string>) => {
         const groups: Array<{ typeCode: string; title: string; rows: any[] }> = [];
         const groupIndex = new Map<string, number>();
+        const normalizeTypeNameKey = (value?: string) => String(value || "")
+            .replace(/：/g, ":")
+            .replace(/:$/g, "")
+            .replace(/\s+/g, "")
+            .trim();
         (rows || []).forEach((row: any) => {
             const typeCode = String(row?.type_code || "").trim();
             if (!typeCode) return;
             const title = String(row?.type_name || "").trim() || "变更需求";
-            if (!groupIndex.has(typeCode)) {
-                groupIndex.set(typeCode, groups.length);
-                groups.push({ typeCode, title, rows: [] });
+            const groupKey = normalizeTypeNameKey(title) || typeCode;
+            if (!groupIndex.has(groupKey)) {
+                groupIndex.set(groupKey, groups.length);
+                groups.push({ typeCode: groupKey, title, rows: [] });
             }
-            groups[groupIndex.get(typeCode)!].rows.push(row);
+            groups[groupIndex.get(groupKey)!].rows.push(row);
         });
         return groups.map((group) => ({
             title: group.title,
@@ -2202,10 +2230,24 @@ export default () => {
             const changeRows = rows.filter((row: any) => isChangeTraceRow(row));
             const table = buildTraceTableFromRows(normalRows, locationBySdsCode);
             const changeExtraTables = buildTraceChangeExtraTables(changeRows, locationBySdsCode);
+            let traceTableApplied = false;
             const updateNodes = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
+                if (!isTraceTableNode(node)) {
+                    const children = updateNodes((node.children || []) as TreeNode[]);
+                    return { ...node, children };
+                }
+                const shouldApplyTraceTable = !traceTableApplied;
+                traceTableApplied = true;
                 const children = updateNodes((node.children || []) as TreeNode[]);
-                if (!isTraceTableNode(node)) return { ...node, children };
                 const nextChildren = children.filter((child) => !hasRenderableTraceTableChild(child));
+                if (!shouldApplyTraceTable) {
+                    return {
+                        ...node,
+                        ref_type: "",
+                        table: {} as any,
+                        children: nextChildren,
+                    };
+                }
                 const traceTable = {
                     ...(table as any),
                     extra_tables: changeExtraTables,
@@ -2225,10 +2267,16 @@ export default () => {
     };
 
     const hasRenderableTraceTableChild = (node: TreeNode) => {
-        const title = String(node.title || "").trim();
+        const title = String(node.title || "")
+            .trim()
+            .replace(/^\d+(?:\.\d+)*\.?\s*/, "");
         const table = node.table as any;
         const hasTable = !!(table && Array.isArray(table.headers) && table.headers.length > 0);
-        return hasTable && (/^导入表格\d*$/i.test(title) || /变更需求\d*$/.test(title));
+        return hasTable && (
+            /^导入表格\d*$/i.test(title) ||
+            /变更需求\d*$/.test(title) ||
+            /设计与需求追溯/.test(title)
+        );
     };
 
     const renderMergedCell = (children: any, row: any) => ({

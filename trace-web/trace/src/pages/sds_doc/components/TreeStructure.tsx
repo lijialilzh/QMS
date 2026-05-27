@@ -130,7 +130,14 @@ function hasRenderableTable(table?: TableData | null): boolean {
     if (!table || !Array.isArray(table.headers) || table.headers.length === 0) return false;
     const hasRows = Array.isArray(table.rows) && table.rows.length > 0;
     const hasCells = Array.isArray(table.cells) && table.cells.length > 1;
-    return hasRows || hasCells;
+    const hasExtraTables = Array.isArray(table.extra_tables) && table.extra_tables.some((extra) => {
+        const extraTable = extra?.table;
+        if (!extraTable || !Array.isArray(extraTable.headers) || extraTable.headers.length === 0) return false;
+        const extraRows = Array.isArray(extraTable.rows) && extraTable.rows.length > 0;
+        const extraCells = Array.isArray(extraTable.cells) && extraTable.cells.length > 1;
+        return extraRows || extraCells;
+    });
+    return hasRows || hasCells || hasExtraTables;
 }
 
 function normalizeRepeatedTraceChapterCell(value: any): string {

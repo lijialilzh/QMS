@@ -2,6 +2,7 @@ import logging
 import re
 import sys
 import json
+import hashlib
 from typing import Dict, List, Optional, Tuple, Union
 from sqlalchemy import select, or_, and_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -303,6 +304,115 @@ class Server(object):
         return True
 
     @staticmethod
+    def __normalize_change_req_type_name(value: str):
+        name = re.sub(r"\s+", " ", str(value or "").replace("：", ":")).rstrip(":").strip()
+        return name or "变更需求"
+
+    @staticmethod
+    def __normalize_change_req_type_key(value: str):
+        name = Server.__normalize_change_req_type_name(value)
+        return re.sub(r"\s+", "", name)
+
+    def __ensure_reqs_from_imported_srs_tables(self, srs_doc_id: int) -> bool:
+        """SDS 同步前补齐 SRS Word 中导入的标准/其他/变更需求表。"""
+        nodes: List[SrsNode] = db.session.execute(
+            select(SrsNode).where(SrsNode.doc_id == srs_doc_id).where(SrsNode.table.isnot(None))
+        ).scalars().all()
+        if not nodes:
+            return False
+
+        type_code_by_name = {}
+        for row in db.session.execute(select(SrsType).where(SrsType.doc_id == srs_doc_id)).scalars().all():
+            key = self.__normalize_change_req_type_key(row.type_name)
+            if key and key not in type_code_by_name:
+                type_code_by_name[key] = row.type_code
+        type_values = {}
+        req_values = {}
+        for node in nodes:
+            table = getattr(node, "table", None)
+            if isinstance(table, str):
+                try:
+                    table = json.loads(table)
+                except Exception:
+                    table = None
+            if not isinstance(table, dict):
+                continue
+            headers = table.get("headers") or []
+            rows = table.get("rows") or []
+            col_idx = self.__resolve_srs_req_table_columns(headers)
+            if "code" not in col_idx or "module" not in col_idx:
+                continue
+            has_function_col = "function" in col_idx
+            has_sub_function_col = "sub_function" in col_idx
+            has_location_col = "location" in col_idx
+            table_name = self.__normalize_change_req_type_name(table.get("name") or getattr(node, "title", ""))
+            if "变更" in table_name:
+                table_name_key = self.__normalize_change_req_type_key(table_name)
+                type_code = type_code_by_name.get(table_name_key)
+                if not type_code:
+                    type_code = f"change_{hashlib.md5(table_name.encode('utf-8')).hexdigest()[:12]}"
+                    if table_name_key:
+                        type_code_by_name[table_name_key] = type_code
+                type_values[type_code] = dict(doc_id=srs_doc_id, type_code=type_code, type_name=table_name)
+            elif has_function_col or has_sub_function_col:
+                type_code = "1"
+            elif has_location_col:
+                type_code = "2"
+            else:
+                continue
+            last_values: Dict[str, str] = {}
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                code = self.__normalize_srs_code(row.get(col_idx.get("code")))
+                if not code or not re.match(r"^SRS[-_A-Za-z0-9.]+$", code, re.I):
+                    continue
+                fields = {}
+                for key in ["module", "function", "sub_function", "location"]:
+                    col = col_idx.get(key)
+                    value = self.__normalize_hierarchy_part(row.get(col)) if col else ""
+                    if value:
+                        last_values[key] = value
+                        if key == "module":
+                            last_values.pop("function", None)
+                            last_values.pop("sub_function", None)
+                        elif key == "function":
+                            last_values.pop("sub_function", None)
+                    fields[key] = last_values.get(key, "")
+                req_values[(type_code, code)] = dict(
+                    doc_id=srs_doc_id,
+                    code=code,
+                    type_code=type_code,
+                    module=fields.get("module"),
+                    function=fields.get("function"),
+                    sub_function=fields.get("sub_function"),
+                    location=fields.get("location"),
+                )
+
+        if type_values:
+            insert_stmt = pg_insert(SrsType).values(list(type_values.values()))
+            db.session.execute(
+                insert_stmt.on_conflict_do_update(
+                    index_elements=["doc_id", "type_code"],
+                    set_=dict(type_name=insert_stmt.excluded.type_name),
+                )
+            )
+        if req_values:
+            insert_stmt = pg_insert(SrsReq).values(list(req_values.values()))
+            db.session.execute(
+                insert_stmt.on_conflict_do_update(
+                    index_elements=["doc_id", "type_code", "code"],
+                    set_=dict(
+                        module=insert_stmt.excluded.module,
+                        function=insert_stmt.excluded.function,
+                        sub_function=insert_stmt.excluded.sub_function,
+                        location=insert_stmt.excluded.location,
+                    ),
+                )
+            )
+        return bool(req_values)
+
+    @staticmethod
     def compose_srs_req_chapter(
         row_req: SrsReq = None,
         module: str = None,
@@ -374,6 +484,7 @@ class Server(object):
             docs = db.session.execute(sql_docs).all()
             for sds_doc_id, srs_doc_id in docs:
                 hierarchy_map = self.__load_srs_req_hierarchy_map(srs_doc_id)
+                self.__ensure_reqs_from_imported_srs_tables(srs_doc_id)
                 reqs = db.session.execute(
                     select(SrsReq.id, SrsReq.code, SrsReq.module, SrsReq.function, SrsReq.sub_function)
                     .where(SrsReq.doc_id == srs_doc_id)
@@ -524,13 +635,52 @@ class Server(object):
                 order_map[key] = seq_by_doc[node.doc_id]
         return order_map
 
+    def __query_srs_doc_change_type_order(self, doc_ids: List[int]) -> Dict[Tuple[int, str], int]:
+        if not doc_ids:
+            return {}
+        nodes: List[SrsNode] = db.session.execute(
+            select(SrsNode)
+            .where(SrsNode.doc_id.in_(doc_ids), SrsNode.table.isnot(None))
+            .order_by(SrsNode.doc_id, SrsNode.priority, SrsNode.n_id)
+        ).scalars().all()
+        order_map: Dict[Tuple[int, str], int] = {}
+        seq_by_doc: Dict[int, int] = {}
+        for node in nodes:
+            table = node.table
+            if isinstance(table, str):
+                try:
+                    table = json.loads(table)
+                except Exception:
+                    table = None
+            if not isinstance(table, dict):
+                continue
+            table_name = self.__normalize_change_req_type_name(table.get("name") or getattr(node, "title", ""))
+            if "变更" not in table_name:
+                continue
+            key = (node.doc_id, self.__normalize_change_req_type_key(table_name))
+            if key in order_map:
+                continue
+            seq_by_doc[node.doc_id] = seq_by_doc.get(node.doc_id, 0) + 1
+            order_map[key] = seq_by_doc[node.doc_id]
+        return order_map
+
     def __resort_rows(self, rows: List[Tuple[SdsTrace, SrsReq, SrsType, SdsDoc, SrsDoc, Product]]):
         order_map = self.__query_srs_doc_req_order(list({row_srsdoc.id for _, _, _, _, row_srsdoc, _ in rows if row_srsdoc}))
+        change_type_order_map = self.__query_srs_doc_change_type_order(
+            list({row_srsdoc.id for _, _, row_type, _, row_srsdoc, _ in rows if row_srsdoc and row_type})
+        )
         sorted_rows = []
         for row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product in rows:
             type_id = row_type.id if row_type else sys.maxsize
             type_id = -1 if row_req.type_code == "1" else type_id
             type_id = 0 if row_req.type_code == "2" else type_id
+            if row_req.type_code not in ["1", "2"] and row_srsdoc and row_type:
+                type_order = change_type_order_map.get((
+                    row_srsdoc.id,
+                    self.__normalize_change_req_type_key(row_type.type_name),
+                ))
+                if type_order is not None:
+                    type_id = type_order
             doc_order = order_map.get((row_srsdoc.id if row_srsdoc else 0, self.__normalize_req_code(row_req.code)), sys.maxsize)
             key = (-row_sdsdoc.id, type_id, doc_order, self.__srs_code_sort_key(row_req.code))
             sorted_rows.append((key, (row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product)))

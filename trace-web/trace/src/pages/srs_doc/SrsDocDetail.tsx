@@ -848,8 +848,8 @@ export default () => {
                 nextTable = flattenExportReqTable(node.table);
             } else if (isReqMainTable(node.table)) {
                 const tableName = String(node.table?.name || node.title || node.label || "");
-                if (/变更/.test(tableName)) {
-                    const changeRows = changeRowsByTitle.get(normalizeTableTitle(tableName)) || changeRowsByTitle.get(normalizeTableTitle("变更需求")) || [];
+                if (/变更/.test(tableName) && !isImportedTableNode(node)) {
+                    const changeRows = changeRowsByTitle.get(normalizeTableTitle(tableName)) || [];
                     nextTable = changeRows.length ? applyExportRowsToTable(node.table, changeRows) : flattenExportReqTable(node.table);
                 } else {
                     nextTable = flattenExportReqTable(node.table);
@@ -869,8 +869,8 @@ export default () => {
                     }
                     if (isReqMainTable(child.table)) {
                         const tableName = String(child.table?.name || child.title || child.label || "");
-                        if (/变更/.test(tableName)) {
-                            const changeRows = changeRowsByTitle.get(normalizeTableTitle(tableName)) || changeRowsByTitle.get(normalizeTableTitle("变更需求")) || [];
+                        if (/变更/.test(tableName) && !isImportedTableNode(child)) {
+                            const changeRows = changeRowsByTitle.get(normalizeTableTitle(tableName)) || [];
                             if (changeRows.length) {
                                 return { ...child, table: applyExportRowsToTable(child.table, changeRows) };
                             }
@@ -1048,9 +1048,7 @@ export default () => {
             const existingTitles = collectChangeTableTitlesInTree(children);
             const entriesToInject = missingEntries.filter((entry) => {
                 const normalized = normalizeTableTitle(entry.title);
-                return !Array.from(existingTitles).some((item) => (
-                    item === normalized || item.includes(normalized) || normalized.includes(item)
-                ));
+                return !existingTitles.has(normalized);
             });
             if (!entriesToInject.length) {
                 const rawText = String(node.text || "");
@@ -1100,10 +1098,9 @@ export default () => {
         return (tree || []).map((node: any) => {
             const table = node.table;
             let nextTable = table;
-            if (isReqMainTable(table) && /变更/.test(String(table?.name || node.title || ""))) {
+            if (isReqMainTable(table) && /变更/.test(String(table?.name || node.title || "")) && !isImportedTableNode(node)) {
                 const currentTitle = normalizeTableTitle(table?.name || node.title || "");
-                const matched = (changeTables || []).find((item: any) => normalizeTableTitle(item?.title) === currentTitle) ||
-                    ((changeTables || []).length === 1 ? changeTables[0] : undefined);
+                const matched = (changeTables || []).find((item: any) => normalizeTableTitle(item?.title) === currentTitle);
                 if (matched) {
                     const headers = table?.headers || [];
                     const codeCol = findColumn(headers, (text) => isReqCodeHeaderText(text));
@@ -2057,7 +2054,10 @@ export default () => {
             ? appendChangeReqDetailsToTree(treeAfterChangeTableSync, detailsForSync)
             : treeAfterChangeTableSync;
         return syncTreeWithOtherReqState(
-            flattenRedundantReqDetailLayers(pruneEmptyReqChapterShells(synced)),
+            appendMissingChangeTablesForExport(
+                flattenRedundantReqDetailLayers(pruneEmptyReqChapterShells(synced)),
+                srsTableState,
+            ),
             srsTableState.srsOtherReqData || [],
             otherReqSyncOptions,
         );
@@ -2398,7 +2398,7 @@ export default () => {
         fetchSrsTableState(docId).then((srsTableState) => {
             const baseTree = (treeStructureRef.current?.length ? treeStructureRef.current : data.treeStructure) as TreeNode[];
             const syncedTree = baseTree?.length
-                ? syncTreeWithOtherReqState(baseTree, srsTableState.srsOtherReqData || [], otherReqSyncOptions)
+                ? syncTreeWithSrsTableState(baseTree, srsTableState)
                 : baseTree;
             if (syncedTree?.length) {
                 treeStructureRef.current = syncedTree;
