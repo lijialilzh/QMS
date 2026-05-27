@@ -1439,8 +1439,6 @@ class Server(object):
 
         resp = await sdstrace_serv.list_sds_trace(None, doc_id=doc_id, page_size=10000, from_sync=mark_synced)
         rows: List[SdsTraceObj] = resp.data.rows or []
-        if not rows:
-            return roots
         normal_rows = [
             row for row in rows
             if str(getattr(row, "type_code", "") or "").strip() in ["", "1", "2"]
@@ -1660,6 +1658,9 @@ class Server(object):
             self.__normalize_word_imported_chapter_numbers(roots)
             self.__bind_word_leaf_codes_from_srs(roots, doc_id)
         roots = await self.__sync_missing_design_nodes_from_srs(doc_id, roots)
+        for root in self.__find_design_chapter_roots(roots):
+            self.__sort_subtree_siblings_by_sds_code(root)
+            self.__renumber_design_children(root)
         if self.__is_word_imported_doc(roots):
             self.__bind_word_leaf_codes_from_srs(roots, doc_id)
         location_by_code, location_by_title = self.__build_sds_tree_location_indexes(roots)
@@ -2029,16 +2030,19 @@ class Server(object):
         ).all()
         srs_doc_id = db.session.execute(select(SdsDoc.srsdoc_id).where(SdsDoc.id == doc_id)).scalar()
         hierarchy_map = sdstrace_serv.__load_srs_req_hierarchy_map(srs_doc_id)
+        strict_location_map = self.__build_strict_srs_trace_location_map(rows, hierarchy_map, roots)
         for trace, req in rows:
             req_fields = sdstrace_serv.hierarchy_for_req(req, hierarchy_map)
             chapter = sdstrace_serv.compose_srs_req_chapter(req, hierarchy_map=hierarchy_map, **req_fields)
-            location = sdstrace_serv.__resolve_sds_tree_location(
-                getattr(trace, "sds_code", "") or "",
-                req,
-                roots,
-                by_code,
-                by_title or {},
-            )
+            location = strict_location_map.get(self.__normalize_code(getattr(trace, "sds_code", "") or "")) or ""
+            if not location:
+                location = sdstrace_serv.__resolve_sds_tree_location(
+                    getattr(trace, "sds_code", "") or "",
+                    req,
+                    roots,
+                    by_code,
+                    by_title or {},
+                )
             inferred_node = None
             if not location:
                 inferred_node = self.__infer_node_for_missing_sds_code(roots, getattr(trace, "sds_code", "") or "")
@@ -2056,6 +2060,70 @@ class Server(object):
                 trace.chapter = None
             trace.location = location or None
         db.session.flush()
+
+    def __build_strict_srs_trace_location_map(self, rows, hierarchy_map: dict, roots: List[SdsNodeForm]) -> Dict[str, str]:
+        """标准需求严格按 SRS 表层级编号：模块=二级，功能=三级，子功能=四级。"""
+        result: Dict[str, str] = {}
+        module_seq_by_major: Dict[int, Dict[str, int]] = {}
+        function_seq_by_module: Dict[Tuple[int, str], Dict[str, int]] = {}
+        sub_seq_by_function: Dict[Tuple[int, str, str], Dict[str, int]] = {}
+
+        def norm_name(value: str) -> str:
+            return self.__normalize_sds_node_title(value or "") or str(value or "").strip()
+
+        def is_placeholder(value: str) -> bool:
+            txt = str(value or "").strip()
+            return not txt or txt in {"/", "-", "\\", "--", "无", "暂无"}
+
+        sorted_rows = sorted(
+            rows or [],
+            key=lambda item: self.__sds_code_sort_key(getattr(item[1], "code", "") or ""),
+        )
+        for trace, req in sorted_rows:
+            type_code = str(getattr(req, "type_code", "") or "").strip()
+            if type_code not in ("1", ""):
+                continue
+            sds_code = self.__normalize_code(getattr(trace, "sds_code", "") or str(getattr(req, "code", "") or "").replace("SRS", "SDS"))
+            if not sds_code:
+                continue
+            major = self.__resolve_product_major_for_req(sds_code, type_code)
+            product_root = self.__resolve_product_root_for_req(
+                roots,
+                sds_code,
+                getattr(req, "module", "") or "",
+                type_code,
+            )
+            root_heading = self.__parse_sds_node_heading(getattr(product_root, "title", "") or "") if product_root else ""
+            if root_heading:
+                try:
+                    major = int(root_heading.split(".")[0])
+                except Exception:
+                    pass
+            if major is None:
+                continue
+            fields = sdstrace_serv.hierarchy_for_req(req, hierarchy_map)
+            module_name = str(fields.get("module") or getattr(req, "module", "") or "").strip()
+            function_name = str(fields.get("function") or getattr(req, "function", "") or "").strip()
+            sub_name = str(fields.get("sub_function") or getattr(req, "sub_function", "") or "").strip()
+            if is_placeholder(module_name):
+                continue
+            module_key = norm_name(module_name)
+            module_seq = module_seq_by_major.setdefault(major, {})
+            module_idx = module_seq.setdefault(module_key, len(module_seq) + 1)
+            if is_placeholder(function_name):
+                result[sds_code] = f"{major}.{module_idx}"
+                continue
+            function_key = norm_name(function_name)
+            function_seq = function_seq_by_module.setdefault((major, module_key), {})
+            function_idx = function_seq.setdefault(function_key, len(function_seq) + 1)
+            if is_placeholder(sub_name):
+                result[sds_code] = f"{major}.{module_idx}.{function_idx}"
+                continue
+            sub_key = norm_name(sub_name)
+            sub_seq = sub_seq_by_function.setdefault((major, module_key, function_key), {})
+            sub_idx = sub_seq.setdefault(sub_key, len(sub_seq) + 1)
+            result[sds_code] = f"{major}.{module_idx}.{function_idx}.{sub_idx}"
+        return result
 
     @staticmethod
     def __is_function_stopper_title(title: str) -> bool:
@@ -3019,7 +3087,7 @@ class Server(object):
             .order_by(SrsReq.code)
         ).all()
         if not trace_rows:
-            return roots
+            return self.__prune_design_nodes_not_in_trace(roots, set())
 
         word_imported = self.__is_word_imported_doc(roots)
         if word_imported:
@@ -3101,6 +3169,13 @@ class Server(object):
                 for token in re.split(r"[\r\n,，;；]+", str(raw_code or ""))
                 if normalize_code(token)
             ]
+
+        active_trace_codes = {
+            code
+            for trace, req in trace_rows
+            for code in trace_sds_codes(trace, req)
+        }
+        roots = self.__prune_design_nodes_not_in_trace(roots, active_trace_codes)
 
         algorithm_codes = {
             code
@@ -3537,8 +3612,7 @@ class Server(object):
                 titles = hierarchy_titles(req, module_name=module_name or self.__strip_sds_heading_text(getattr(module_node, "title", "") or ""))
                 if not titles:
                     continue
-                append_hierarchy(module_node.children, titles, code, ensure_design_text())
-                leaf = self.__find_node_by_code_in_tree(roots, code) or module_node
+                leaf = self.__append_numbered_hierarchy(module_node, titles, code, ensure_design_text()) or module_node
                 register_code_node(code, leaf)
                 if module_node not in touched_modules:
                     touched_modules.append(module_node)
@@ -3673,6 +3747,58 @@ class Server(object):
             if ch6:
                 walk([ch6])
         return by_code, by_title
+
+    def __prune_design_nodes_not_in_trace(self, roots: List[SdsNodeForm], active_codes: set) -> List[SdsNodeForm]:
+        """获取 SRS 追溯时，移除已不在当前 SRS 追溯里的旧同步章节。"""
+        active_codes = {self.__normalize_code(code) for code in (active_codes or set()) if self.__normalize_code(code)}
+        parent_map = self.__build_node_parent_map(roots)
+        design_roots = self.__find_design_chapter_roots(roots)
+
+        def node_trace_codes(node: SdsNodeForm) -> set:
+            return {
+                self.__normalize_code(code)
+                for code in self.__extract_node_sds_codes(node)
+                if self.__normalize_code(code).startswith("SDS-")
+            }
+
+        def has_active_code(node: SdsNodeForm) -> bool:
+            codes = node_trace_codes(node)
+            if codes & active_codes:
+                return True
+            return any(has_active_code(child) for child in getattr(node, "children", None) or [])
+
+        def prune_children(parent: Optional[SdsNodeForm], children: List[SdsNodeForm]) -> Tuple[List[SdsNodeForm], bool]:
+            kept: List[SdsNodeForm] = []
+            changed = False
+            for child in children or []:
+                if self.__is_in_fixed_template_zone(roots, child, parent_map, design_roots):
+                    next_children, child_changed = prune_children(child, getattr(child, "children", None) or [])
+                    child.children = next_children
+                    kept.append(child)
+                    changed = changed or child_changed
+                    continue
+                next_children, child_changed = prune_children(child, getattr(child, "children", None) or [])
+                child.children = next_children
+                codes = node_trace_codes(child)
+                if codes and codes.isdisjoint(active_codes) and not any(has_active_code(grand) for grand in next_children):
+                    changed = True
+                    continue
+                if codes and codes.isdisjoint(active_codes):
+                    field_code = self.__normalize_code(getattr(child, "sds_code", "") or "")
+                    if field_code in codes:
+                        child.sds_code = None
+                        changed = True
+                kept.append(child)
+                changed = changed or child_changed
+            if changed and parent is not None:
+                self.__renumber_design_children(parent)
+            return kept, changed
+
+        roots, changed = prune_children(None, roots or [])
+        if changed:
+            for root in self.__find_design_chapter_roots(roots):
+                self.__renumber_design_children(root)
+        return roots
 
     @staticmethod
     def __sds_code_sort_key(code: str):

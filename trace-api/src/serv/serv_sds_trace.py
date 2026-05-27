@@ -4,7 +4,7 @@ import sys
 import json
 import hashlib
 from typing import Dict, List, Optional, Tuple, Union
-from sqlalchemy import select, or_, and_
+from sqlalchemy import select, or_, and_, delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import desc
 from ..obj.vobj_user import UserObj
@@ -490,10 +490,25 @@ class Server(object):
                     .where(SrsReq.doc_id == srs_doc_id)
                     .where(SrsReq.type_code != "reqd")
                 ).all()
+                active_srs_codes = {self.__normalize_srs_code(code) for code in hierarchy_map.keys() if code}
+                if active_srs_codes:
+                    reqs = [
+                        row for row in reqs
+                        if self.__normalize_srs_code(row[1]) in active_srs_codes
+                    ]
                 if not reqs:
-                    if self.__ensure_traces_from_imported_srs_trace_table(sds_doc_id, srs_doc_id):
+                    if not active_srs_codes and self.__ensure_traces_from_imported_srs_trace_table(sds_doc_id, srs_doc_id):
                         continue
+                    db.session.execute(delete(SdsTrace).where(SdsTrace.doc_id == sds_doc_id))
                     continue
+                current_req_ids = [req_id for req_id, *_rest in reqs]
+                if current_req_ids:
+                    db.session.execute(
+                        delete(SdsTrace).where(
+                            SdsTrace.doc_id == sds_doc_id,
+                            SdsTrace.req_id.notin_(current_req_ids),
+                        )
+                    )
                 values = []
                 fixed_values = []
                 for req_id, code, module, function, sub_function in reqs:
