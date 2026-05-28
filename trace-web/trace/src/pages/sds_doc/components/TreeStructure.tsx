@@ -10,6 +10,7 @@ import type { UploadFile, UploadProps } from "antd/es/upload/interface";
 import { v4 as uuidv4 } from 'uuid';
 import * as XLSX from "xlsx";
 import * as Api from "@/api/ApiSdsDoc";
+import { isSdsTraceSectionNode, SdsTraceSectionActions } from "./SdsTraceSection";
 
 // 表格数据结构（匹配后端接口，允许空对象表示无表格数据）
 interface TableData {
@@ -589,7 +590,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         /^\d+\.\d+\.\d+(?:\.\d+)*$/.test(effectiveChapter)
     );
 
-    const isTraceSectionTitle = /设计与需求追溯/.test(`${titleWithoutChapter || ""}${title || ""}`);
+    const isTraceSectionTitle = isSdsTraceSectionNode({ ref_type: node.ref_type, title: `${titleWithoutChapter || ""}${title || ""}` });
     const hasTable = hasRenderableTable(node.table);
     const titleIsTableCaption = hasTable && !isTraceSectionTitle && isLikelyTableCaptionLine(titleWithoutChapter || title);
     const hideImportedTablePlaceholderTitle = !readOnly && hasTable && !isTraceSectionTitle && (isSystemPlaceholderTitle(title) || titleIsTableCaption);
@@ -1376,28 +1377,15 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           {ts('menu.sds_reqds') || '设计列表'}
                       </Button>
                   )}
-                  {((node.ref_type === 'sds_traces') || /设计与需求追溯/.test(String(node.title || ""))) && !readOnly && onFetchSrsTrace && !traceSynced && !(node.table as any)?.trace_synced && (
-                      <Button
-                          type="primary"
-                          size="small"
-                          className="node-srsreq-btn"
-                          onClick={onFetchSrsTrace}
-                          style={compactWithImage ? { marginRight: 6, height: 28, padding: "0 8px", fontSize: 13 } : undefined}
-                      >
-                          获取SRS追溯
-                      </Button>
-                  )}
-                  {((node.ref_type === 'sds_traces') || /设计与需求追溯/.test(String(node.title || ""))) && onOpenTraceList && (traceSynced || (node.table as any)?.trace_synced) && (
-                      <Button
-                          type="primary"
-                          size="small"
-                          className="node-srsreq-btn"
-                          onClick={onOpenTraceList}
-                          style={compactWithImage ? { marginRight: 6, height: 28, padding: "0 8px", fontSize: 13 } : undefined}
-                      >
-                          {ts('menu.sds_traces') || '需求追溯表'}
-                      </Button>
-                  )}
+                  <SdsTraceSectionActions
+                      node={node}
+                      readOnly={readOnly}
+                      traceSynced={traceSynced}
+                      onFetchSrsTrace={onFetchSrsTrace}
+                      onOpenTraceList={onOpenTraceList}
+                      compactStyle={compactWithImage ? { marginRight: 6, height: 28, padding: "0 8px", fontSize: 13 } : undefined}
+                      ts={ts}
+                  />
                   {!readOnly && (
                     <Tooltip title={ts('sds_doc.add_sibling_after') || '在后面添加同级节点'}>
                       <Button

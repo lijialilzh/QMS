@@ -24,8 +24,15 @@ const splitTraceLines = (value?: string) => {
 };
 
 const normalizeSdsCode = (value?: string) => String(value || "").trim().toUpperCase().replace(/\s+/g, "");
-const parseHeadingNumber = (value?: string) => String(value || "").trim().match(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/)?.[1] || "";
-const stripHeadingNumber = (value?: string) => String(value || "").trim().replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "").trim();
+const parseHeadingNumber = (value?: string) => String(value || "").trim().match(/^(\d+(?:\.\d+)+|\d{1,2})(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/)?.[1] || "";
+const stripHeadingNumber = (value?: string) => {
+    const raw = String(value || "").trim();
+    const matched = raw.match(/^(\d+(?:\.\d+)+|\d{1,2})(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/);
+    if (!matched) return raw;
+    const prefix = matched[1];
+    if (!prefix.includes(".") && prefix.length > 2) return raw;
+    return raw.slice(matched[0].length).trim();
+};
 const normalizeReqTitle = (value?: string) => {
     const raw = String(value || "").trim();
     const stripped = stripHeadingNumber(raw);

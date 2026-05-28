@@ -391,10 +391,11 @@ export default () => {
     const normalizePlain = (value?: string) => String(value || "").replace(/\s+/g, "").toLowerCase();
     const stripTitlePrefixMarks = (value?: string) => String(value || "").replace(/^[\s\u3000•·▪■◆●○□◇\-–—]+/, "").trim();
     const IMPORTED_PLACEHOLDER_RE = /^导入(表格|图片)\d*$/;
-    const HEADING_NUM_RE = /^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/;
+    const CHAPTER_PREFIX_RE = /^(\d+(?:\.\d+)+|\d{1,2})(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/;
+    const HEADING_NUM_RE = CHAPTER_PREFIX_RE;
     const TABLE_CAPTION_RE = /^\s*(?:表|table)\s*\d+(?:[.\-_]\d+)*\s*[:：、.．-]?\s*.*$/i;
     const JSON_KV_LINE_RE = /^\s*['"]\s*[^'"]+\s*['"]\s*:\s*.+$/;
-    const hasChapterTitle = (title?: string) => /^\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))\S+/.test(stripTitlePrefixMarks(title));
+    const hasChapterTitle = (title?: string) => /^\d+(?:\.\d+)+(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))\S+|^\d{1,2}(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))\S+/.test(stripTitlePrefixMarks(title));
     const hasRenderableTable = (table: any): boolean => {
         if (!table || !Array.isArray(table.headers) || table.headers.length === 0) return false;
         const hasRows = Array.isArray(table.rows) && table.rows.length > 0;
@@ -441,7 +442,7 @@ export default () => {
         const bodyTxt = normalizePlain(node.text);
         const merged = `${titleTxt} ${bodyTxt}`;
         // 兼容 5.6 / 6.6 / 7.6 ... 等任意“章节号 + 数据结构”场景，避免写死 5.6 导致规则失效
-        const hasChapterPrefix = /^\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/.test(rawTitle);
+        const hasChapterPrefix = /^(\d+(?:\.\d+)+|\d{1,2})(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/.test(rawTitle);
         return hasChapterPrefix && merged.includes("数据结构");
     };
     const isLikelyFalseSingleDigitHeading = (title?: string): boolean => {
@@ -492,7 +493,7 @@ export default () => {
         const normalizeBusinessTitle = (title?: string) =>
             String(title || "")
                 .trim()
-                .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+                .replace(/^(\d+(?:\.\d+)+|\d{1,2})(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
                 .replace(/\s+/g, "");
         const isFrontMatterTitle = (title?: string) =>
             /^(目录|需求规格说明|文件修订记录|软件详细设计说明书|软件详细设计)$/.test(normalizeBusinessTitle(title));
@@ -523,7 +524,7 @@ export default () => {
     const stripHeadingPrefix = (value?: string): string => {
         return String(value || "")
             .trim()
-            .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z"']))/, "")
+            .replace(/^(\d+(?:\.\d+)+|\d{1,2})(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z"']))/, "")
             .trim();
     };
     const isJsonLikeBodyLine = (value?: string): boolean => {
@@ -579,7 +580,7 @@ export default () => {
         if (IMPORTED_PLACEHOLDER_RE.test(title)) return false;
         if (isJsonLikeBodyLine(title)) return false;
         const pureTitleRaw = stripHeadingEmphasis(title
-            .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+            .replace(/^(\d+(?:\.\d+)+|\d{1,2})(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
         );
         const pureTitle = pureTitleRaw.replace(/\s+/g, "");
         const pureTitleWithoutTrailingColon = pureTitle.replace(/[:：]+$/, "");
@@ -667,7 +668,7 @@ export default () => {
         // 不因末尾冒号等标点被误降级为正文。
         if (HEADING_NUM_RE.test(txt)) return false;
         const bodyPart = txt
-            .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z"']))/, "")
+            .replace(/^(\d+(?:\.\d+)+|\d{1,2})(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z"']))/, "")
             .trim();
         const probe = bodyPart || txt;
         // 数据结构章节下常见二级标题（如“Postgresql库1数据库:”“库2数据库:”）需要保留为节点
@@ -742,7 +743,7 @@ export default () => {
         const normalizeBusinessTitle = (title?: string) =>
             String(title || "")
                 .trim()
-                .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+                .replace(/^(\d+(?:\.\d+)+|\d{1,2})(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
                 .replace(/\s+/g, "");
         const isFrontMatterTitle = (title?: string) => {
             const t = normalizeBusinessTitle(title);
@@ -890,7 +891,7 @@ export default () => {
                     const rawTitle = String(node.title || "").trim();
                     if (!rawTitle) return node;
                     const hasNo = !!rawTitle.match(HEADING_NUM_RE);
-                    const plain = rawTitle.replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "").trim();
+                    const plain = rawTitle.replace(/^(\d+(?:\.\d+)+|\d{1,2})(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "").trim();
                     const isDbHeading = /数据库\s*[:：]?$/.test(plain) && plain.length <= 80;
                     if (isDbHeading && !hasNo) {
                         dbHeadingIdx += 1;
@@ -985,7 +986,7 @@ export default () => {
             // 二次兜底：若数据库子标题已成为子节点，确保父节点正文中不再重复显示这些标题文本
             const dbHeadingTitles = (dataNode.children || [])
                 .map((child) => String(child.title || "").trim())
-                .map((title) => title.replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "").trim())
+                .map((title) => title.replace(/^(\d+(?:\.\d+)+|\d{1,2})(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "").trim())
                 .filter((title) => /数据库\s*[:：]?$/.test(title));
             if (dbHeadingTitles.length > 0) {
                 const escapeRegExp = (value: string) => String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1038,7 +1039,7 @@ export default () => {
             const hasImage = !!String(node.img_url || "").trim();
             const hasChildren = Array.isArray(node.children) && node.children.length > 0;
             const title = String(node.title || "").trim();
-            const hasChapterLikeTitle = /^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/.test(title);
+            const hasChapterLikeTitle = /^(\d+(?:\.\d+)+|\d{1,2})(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/.test(title);
             return hasText || hasLabel || hasImage || hasChildren || hasChapterLikeTitle;
         };
         const detachedTables: TreeNode[] = [];
@@ -1122,7 +1123,7 @@ export default () => {
     const normalizeImageRefTypes = (roots: TreeNode[]): TreeNode[] => {
         const detectRefType = (txt: string): string | undefined => {
             const normalized = String(txt || "")
-                .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+                .replace(/^(\d+(?:\.\d+)+|\d{1,2})(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
                 .replace(/^图\s*\d+\s*/, "")
                 .replace(/\s+/g, "")
                 .trim();
@@ -1252,7 +1253,7 @@ export default () => {
     };
     const normalizeReqTitle = (value?: string) => normalizeReqNamePart(value)
         .trim()
-        .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+        .replace(/^(\d+(?:\.\d+)+|\d{1,2})(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
         .replace(/\s+/g, "")
         .toLowerCase();
     const getReqSubFunctionTitle = (row: any) => [row.sub_function, row.function, row.module, row.name, row.srs_code]

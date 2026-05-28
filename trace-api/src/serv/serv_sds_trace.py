@@ -541,7 +541,6 @@ class Server(object):
                         insert_stmt.on_conflict_do_update(
                             index_elements=["doc_id", "req_id"],
                             set_=dict(
-                                sds_code=insert_stmt.excluded.sds_code,
                                 chapter=insert_stmt.excluded.chapter,
                             ),
                         )
@@ -566,7 +565,14 @@ class Server(object):
     @staticmethod
     def __normalize_name(value: str):
         txt = (value or "").strip()
-        txt = re.sub(r"^[\d一二三四五六七八九十零]+([.\-、）)\s]+[\d一二三四五六七八九十零]*)*", "", txt)
+        matched = re.match(
+            r"^((?:\d+(?:\.\d+)+|\d{1,2}))(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))",
+            txt,
+        )
+        if matched:
+            prefix = matched.group(1)
+            if "." in prefix or len(prefix) <= 2:
+                txt = txt[matched.end():].strip()
         txt = re.sub(r"[\s:：\-_，。；;、,.()（）]+", "", txt)
         return txt.lower()
     
@@ -707,7 +713,13 @@ class Server(object):
         txt = str(value or "").replace(" ", "").upper()
         matched = re.match(r"^SRS-[A-Z]+(\d+)-(\d+)$", txt)
         if matched:
-            return (int(matched.group(1)), int(matched.group(2)), txt)
+            series_raw = matched.group(1)
+            seq = int(matched.group(2))
+            if series_raw.startswith("3") and len(series_raw) > 1:
+                series = int(series_raw[1:])
+            else:
+                series = int(series_raw)
+            return (series, seq, txt)
         return (sys.maxsize, sys.maxsize, txt)
 
     def __sort_objs_by_srs_manage_order(self, objs: List[SdsTraceObj]):
