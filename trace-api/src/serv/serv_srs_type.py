@@ -46,7 +46,13 @@ class Server(object):
     async def delete_srs_type(self, id):
         row = db.session.execute(select(SrsType).where(SrsType.id == id)).scalars().first()
         if row:
-            db.session.execute(delete(SrsReq).where(SrsReq.type_code == row.type_code))
+            # 必须按 doc_id 过滤，否则不同文档同 type_code 的 srs_req 会被一并误删。
+            db.session.execute(
+                delete(SrsReq).where(
+                    SrsReq.doc_id == row.doc_id,
+                    SrsReq.type_code == row.type_code,
+                )
+            )
         db.session.execute(delete(SrsType).where(SrsType.id == id))
         db.session.commit()
         return Resp.resp_ok()

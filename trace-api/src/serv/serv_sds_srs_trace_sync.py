@@ -1833,12 +1833,12 @@ class SdsSrsTraceSyncMixin:
             location = strict_location_map.get(trace_code) or ""
             if not location:
                 location = _trace_resolve_sds_tree_location(
-                    getattr(trace, "sds_code", "") or "",
-                    req,
-                    roots,
-                    by_code,
-                    by_title or {},
-                )
+                getattr(trace, "sds_code", "") or "",
+                req,
+                roots,
+                by_code,
+                by_title or {},
+            )
             inferred_node = None
             if not location:
                 inferred_node = self._infer_node_for_missing_sds_code(roots, getattr(trace, "sds_code", "") or "")
@@ -3373,13 +3373,13 @@ class SdsSrsTraceSyncMixin:
                 if existing is not None and module_name and not is_change_req and target_product is not None:
                     if hierarchy_path and len(hierarchy_path) > 1:
                         module_node_check = self._ensure_child_node_by_title(target_product, hierarchy_path[0])
-                        if module_node_check is not None and not self._is_descendant_of(
-                            module_node_check, existing, parent_map
-                        ):
-                            existing = self._ensure_existing_node_in_srs_hierarchy(
+                    if module_node_check is not None and not self._is_descendant_of(
+                        module_node_check, existing, parent_map
+                    ):
+                        existing = self._ensure_existing_node_in_srs_hierarchy(
                                 roots, existing, target_product, hierarchy_path
-                            )
-                            parent_map = self._build_node_parent_map(roots)
+                        )
+                        parent_map = self._build_node_parent_map(roots)
                 if existing is not None and word_imported and code in fixed_rcn300_sds_codes():
                     if not self._parse_sds_node_heading(getattr(existing, "title", "") or ""):
                         self._detach_node(roots, existing)
@@ -3542,7 +3542,7 @@ class SdsSrsTraceSyncMixin:
                     if placed_node is not None:
                         placed_node = self._ensure_existing_node_in_srs_hierarchy(
                             roots, placed_node, target_product, hierarchy_path
-                        )
+                    )
                 if placed_node is not None:
                     if wrong_existing is not None:
                         self._detach_node(roots, wrong_existing)
@@ -3564,8 +3564,8 @@ class SdsSrsTraceSyncMixin:
                         leaf = self._ensure_existing_node_in_srs_hierarchy(
                             roots, leaf, target_product, hierarchy_path
                         )
-                        by_req_id[req.id] = leaf
-                        register_code_node(code, leaf)
+                by_req_id[req.id] = leaf
+                register_code_node(code, leaf)
 
         by_code, by_title = self._collect_design_req_index(roots)
         for _trace, req in trace_rows:

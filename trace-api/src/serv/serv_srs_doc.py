@@ -755,9 +755,23 @@ class Server(object):
         return False
 
     @staticmethod
+    def __is_req_table_title_text(text: str) -> bool:
+        """需求表标题（如 2.0 变更需求 / 产品需求列表）不是文档章节。"""
+        clean = Server.__normalize_text(text).replace("：", ":").rstrip(":").strip()
+        if not clean:
+            return False
+        compact = re.sub(r"\s+", "", clean)
+        return bool(
+            re.search(r"(产品需求|标准需求|其他需求|变更需求|变更列表)", compact)
+            or re.match(r"^表\s*\d+", clean)
+        )
+
+    @staticmethod
     def __guess_heading_level(para):
         txt = (para.text or "").strip()
         if not txt:
+            return None
+        if Server.__is_req_table_title_text(txt):
             return None
         is_bold = Server.__is_bold_paragraph(para)
         # JSON 键值行（如 "version":4,）按正文处理，不能当作章节标题
@@ -1146,6 +1160,30 @@ class Server(object):
     def __normalize_change_req_type_key(self, value: str):
         return re.sub(r"\s+", "", self.__normalize_change_req_type_name(value))
 
+    def __strip_change_table_title_heading(self, value: str) -> str:
+        txt = self.__normalize_change_req_type_name(value)
+        return re.sub(
+            r"^\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))",
+            "",
+            txt,
+        ).strip()
+
+    def __change_table_title_matches(self, table_title: str, type_name: str) -> bool:
+        """仅用于识别同一张变更表，不会把表名统一改成 type_name。"""
+        left_key = self.__normalize_change_req_type_key(table_title)
+        right_key = self.__normalize_change_req_type_key(type_name)
+        if not left_key or not right_key:
+            return False
+        if left_key == right_key:
+            return True
+        left_body = self.__normalize_change_req_type_key(
+            self.__strip_change_table_title_heading(table_title)
+        )
+        right_body = self.__normalize_change_req_type_key(
+            self.__strip_change_table_title_heading(type_name)
+        )
+        return bool(left_body and right_body and left_body == right_body)
+
     def __remap_change_req_types_by_existing_names(self, doc_id: int, req_rows: List[dict]):
         if not doc_id or not req_rows:
             return req_rows
@@ -1164,6 +1202,11 @@ class Server(object):
                 continue
             name_key = self.__normalize_change_req_type_key(type_name)
             existing_type_code = type_code_by_name.get(name_key)
+            if not existing_type_code:
+                for row in type_rows:
+                    if self.__change_table_title_matches(type_name, row.type_name):
+                        existing_type_code = row.type_code
+                        break
             if existing_type_code:
                 item["type_code"] = existing_type_code
             elif name_key:
@@ -1827,9 +1870,15 @@ class Server(object):
                 db.session.add(SrsType(doc_id=doc_id, type_code=type_code, type_name=type_name))
 
         seen = set()
+        added_change = 0
+        skipped_change = 0
         for item in req_rows:
             key = (item.get("type_code") or "1", item.get("code") or "")
+            type_code_for_log = key[0]
+            is_change_type = type_code_for_log not in ["1", "2", ""]
             if not key[1] or key in seen:
+                if is_change_type:
+                    skipped_change += 1
                 continue
             seen.add(key)
             row = exists_dict.get(key)
@@ -1845,8 +1894,141 @@ class Server(object):
             else:
                 row_data = {key: value for key, value in item.items() if key != "type_name"}
                 db.session.add(SrsReq(doc_id=doc_id, **row_data))
+                if is_change_type:
+                    added_change += 1
+        if any(str(item.get("type_code") or "") not in ["1", "2", ""] for item in req_rows or []):
+            logger.info(
+                "__upsert_imported_srs_reqs change: doc=%s req_rows=%d added=%d skipped=%d",
+                doc_id, len(req_rows or []), added_change, skipped_change,
+            )
         self.__merge_duplicate_change_req_types_by_name(doc_id)
         db.session.commit()
+
+    def __upsert_imported_change_req_tables_from_tree(self, doc_id: int, nodes: List[SrsNodeForm]):
+        """Word 导入兜底：扫描已入库的文档树，把所有"table.name 含变更"的需求表入到 SrsType + SrsReq。
+
+        - 已存在 SrsType / SrsReq 原则上保留；但如果发现 srs_req 里同 code 行被错存为
+          type_code='1'/'2'（标准/其他需求），会迁移到正确的变更类型，避免变更需求被当成
+          产品需求展示和自动生成章节缺失。
+        - 与主流程 `__extract_srs_reqs_from_nodes` 并行存在；用于覆盖前者因表头/路径异常漏识别的场景。
+        - 不参与"标准需求(1) / 其他需求(2)"分类下的产品需求行；只针对"变更需求表"里出现的行。
+        """
+        if not doc_id or not nodes:
+            return
+        code_pattern = re.compile(r"^[A-Z]{2,}(?:[-_][A-Z0-9.]+)+$", re.I)
+        existing_types: List[SrsType] = db.session.execute(
+            select(SrsType).where(SrsType.doc_id == doc_id)
+        ).scalars().all()
+        type_code_by_name: Dict[str, str] = {}
+        for type_row in existing_types:
+            key = self.__normalize_change_req_type_key(type_row.type_name or "")
+            if key and key not in type_code_by_name:
+                type_code_by_name[key] = type_row.type_code
+
+        existing_reqs: List[SrsReq] = db.session.execute(
+            select(SrsReq).where(SrsReq.doc_id == doc_id)
+        ).scalars().all()
+        existing_req_set = {
+            (row.type_code or "", self.__normalize_srs_code(row.code or "").upper())
+            for row in existing_reqs
+        }
+        # 按 code 索引现有行（不区分 type_code），用于检测 type_code 错分类。
+        existing_reqs_by_code: Dict[str, List[SrsReq]] = {}
+        for row in existing_reqs:
+            code_key = self.__normalize_srs_code(row.code or "").upper()
+            if code_key:
+                existing_reqs_by_code.setdefault(code_key, []).append(row)
+
+        added_type = 0
+        added_req = 0
+        migrated_req = 0
+
+        def migrate_misclassified(target_type_code: str, code_upper: str) -> bool:
+            """把同 code 错存为 type_code='1'/'2' 的 srs_req 行迁移到 target_type_code。
+
+            返回 True 表示已迁移（之后无需再 INSERT 新行）。
+            """
+            nonlocal migrated_req
+            for candidate in existing_reqs_by_code.get(code_upper, []) or []:
+                if (candidate.type_code or "") not in ("1", "2"):
+                    continue
+                # 同 (doc_id, target_type_code, code) 已经存在就不能再迁移，避免唯一约束冲突。
+                if (target_type_code, code_upper) in existing_req_set:
+                    return False
+                old_type_code = candidate.type_code or ""
+                candidate.type_code = target_type_code
+                # SdsTrace 不依赖 type_code，但更新章节文本以反映新分类下的功能字段。
+                chapter = candidate.sub_function or candidate.function or candidate.module or "/"
+                for trace_row in db.session.execute(
+                    select(SdsTrace).where(SdsTrace.req_id == candidate.id)
+                ).scalars().all():
+                    trace_row.chapter = chapter
+                existing_req_set.discard((old_type_code, code_upper))
+                existing_req_set.add((target_type_code, code_upper))
+                migrated_req += 1
+                logger.info(
+                    "import change_req fallback migrate: doc_id=%s code=%s %s -> %s",
+                    doc_id, code_upper, old_type_code, target_type_code,
+                )
+                return True
+            return False
+
+        def walk(items: List[SrsNodeForm]):
+            nonlocal added_type, added_req
+            for node in items or []:
+                table = getattr(node, "table", None)
+                raw_name = getattr(table, "name", "") if table else ""
+                table_name = self.__normalize_change_req_type_name(raw_name or "")
+                if table and "变更" in table_name:
+                    headers = getattr(table, "headers", None) or []
+                    rows = getattr(table, "rows", None) or []
+                    if headers and rows:
+                        header_names = [self.__normalize_text(getattr(h, "name", "") or "") for h in headers]
+                        header_norm = [self.__normalize_header(item) for item in header_names]
+                        col_idx = self.__resolve_req_columns(header_norm)
+                        if "code" in col_idx:
+                            type_key = self.__normalize_change_req_type_key(table_name)
+                            type_code = type_code_by_name.get(type_key)
+                            if not type_code:
+                                digest = hashlib.md5(table_name.encode("utf-8")).hexdigest()[:12]
+                                type_code = f"change_{digest}"
+                                db.session.add(SrsType(doc_id=doc_id, type_code=type_code, type_name=table_name))
+                                type_code_by_name[type_key] = type_code
+                                added_type += 1
+                            col_codes = [getattr(h, "code", "") for h in headers]
+                            last_values: Dict[str, str] = {}
+                            for row in rows:
+                                values = [self.__normalize_text(str((row or {}).get(code, "") or "")) for code in col_codes]
+                                code = values[col_idx["code"]] if col_idx["code"] < len(values) else ""
+                                code = self.__normalize_srs_code(code)
+                                if not code_pattern.match(code or ""):
+                                    continue
+                                code_upper = code.upper()
+                                if (type_code, code_upper) in existing_req_set:
+                                    continue
+                                if migrate_misclassified(type_code, code_upper):
+                                    continue
+                                values = self.__fill_req_table_merged_values(values, col_idx, last_values)
+                                db.session.add(SrsReq(
+                                    doc_id=doc_id,
+                                    code=code_upper,
+                                    type_code=type_code,
+                                    module=(self.__clean_req_table_field(values[col_idx["module"]]) if "module" in col_idx and col_idx["module"] < len(values) else None),
+                                    function=(self.__clean_req_table_field(values[col_idx["function"]]) if "function" in col_idx and col_idx["function"] < len(values) else None),
+                                    sub_function=(self.__clean_req_table_field(values[col_idx["sub_function"]]) if "sub_function" in col_idx and col_idx["sub_function"] < len(values) else None),
+                                    location=(self.__clean_req_table_field(values[col_idx["location"]]) if "location" in col_idx and col_idx["location"] < len(values) else None),
+                                ))
+                                existing_req_set.add((type_code, code_upper))
+                                added_req += 1
+                walk(getattr(node, "children", None) or [])
+
+        walk(nodes)
+        if added_type or added_req or migrated_req:
+            db.session.commit()
+            logger.info(
+                "import change_req fallback: doc_id=%s added_type=%d added_req=%d migrated_req=%d",
+                doc_id, added_type, added_req, migrated_req,
+            )
 
     def __sync_srs_reqs_from_doc_tables(self, doc_id: int, nodes: List[SrsNodeForm]):
         req_rows, req_rcm_map = self.__extract_srs_reqs_from_nodes(nodes or [], include_node_codes=False)
@@ -2156,14 +2338,7 @@ class Server(object):
             return ".".join(str(v) for v in heading_counters[:depth] if v > 0)
 
         def is_table_title_text(text: str):
-            clean = self.__normalize_text(text).replace("：", ":").rstrip(":").strip()
-            if not clean:
-                return False
-            compact = re.sub(r"\s+", "", clean)
-            return bool(
-                re.search(r"(产品需求|标准需求|其他需求|变更需求|变更列表)", compact)
-                or re.match(r"^表\s*\d+", clean)
-            )
+            return self.__is_req_table_title_text(text)
 
         def extract_table_titles_from_text(text: str):
             titles = []
@@ -2230,6 +2405,10 @@ class Server(object):
                     )
                     if is_interface_parent and is_interface_subtitle:
                         level = min(parent_level + 1, 5)
+                # 需求表标题（如 2.0 变更需求）仅作后续表格名，不生成文档章节节点。
+                if txt and level is not None and is_table_title_text(txt):
+                    pending_table_title = txt
+                    level = None
                 if txt and level is not None:
                     heading_number = self.__extract_heading_number(txt)
                     title_with_number = txt
@@ -2345,9 +2524,36 @@ class Server(object):
                 change_log=change_log,
                 content=content,
             )
+            def _is_change_type_code(value) -> bool:
+                return str(value or "") not in ["1", "2", "", "None", "none", "null"]
+            change_req_row_count = sum(1 for item in srs_req_rows if _is_change_type_code((item or {}).get("type_code")))
+            change_from_nodes = sum(1 for item in srs_req_rows_nodes or [] if _is_change_type_code((item or {}).get("type_code")))
+            change_from_docx = sum(1 for item in srs_req_rows_docx or [] if _is_change_type_code((item or {}).get("type_code")))
+            logger.info(
+                "import_srs_doc_word: req_rows=%d (change=%d, change_from_nodes=%d, change_from_docx=%d), reqd_rows=%d",
+                len(srs_req_rows or []),
+                change_req_row_count,
+                change_from_nodes,
+                change_from_docx,
+                len(srs_reqd_rows_nodes or []),
+            )
+            for item in srs_req_rows:
+                if _is_change_type_code((item or {}).get("type_code")):
+                    logger.info(
+                        "import change row: type=%s code=%s type_name=%s module=%s function=%s",
+                        (item or {}).get("type_code"),
+                        (item or {}).get("code"),
+                        (item or {}).get("type_name"),
+                        (item or {}).get("module"),
+                        (item or {}).get("function"),
+                    )
+
             resp = await self.add_srs_doc(form)
             if resp.code == 200 and resp.data and resp.data.id:
                 self.__upsert_imported_srs_reqs(resp.data.id, srs_req_rows)
+                # 兜底：再次按"已入库的文档树节点"扫描一次变更需求表，确保 Word 自带的
+                # "X.X 变更需求"表行被入到 SrsType+SrsReq，不依赖前面解析路径是否漏识别。
+                self.__upsert_imported_change_req_tables_from_tree(resp.data.id, content)
                 self.__sync_saved_doc_srs_tables_from_req_rows(resp.data.id)
                 self.__sync_imported_req_rcms(resp.data.id, req_rcm_map)
                 self.__upsert_imported_srs_reqds(resp.data.id, srs_reqd_rows_nodes)
@@ -2404,8 +2610,10 @@ class Server(object):
             if node.children:
                 self.__reset_tree_node_ids(node.children)
 
-    def __sync_change_req_tables_from_db(self, doc_id: int, nodes: List[SrsNodeForm]):
-        """只补齐缺失的变更需求表；已有 Word 导入表不覆盖，避免改掉原文档内容。"""
+    def __sync_change_req_tables_from_db(
+        self, doc_id: int, nodes: List[SrsNodeForm], *, restructure: bool = False
+    ):
+        """将已有变更需求表同步为数据库最新行；restructure=True 时才补齐缺失表并调整节点位置。"""
         req_rows: List[SrsReq] = db.session.execute(
             select(SrsReq).where(
                 SrsReq.doc_id == doc_id,
@@ -2424,6 +2632,33 @@ class Server(object):
         for row in req_rows:
             reqs_by_type.setdefault(row.type_code or "", []).append(row)
         changed = False
+
+        def normalize_change_table_node_titles(items: List[SrsNodeForm]):
+            nonlocal changed
+            for item in items or []:
+                table = getattr(item, "table", None)
+                node_title = str(getattr(item, "title", "") or "").strip()
+                table_name = getattr(table, "name", None) if table else None
+                resolved_title = table_name or node_title or getattr(item, "label", "") or ""
+                if (
+                    table is not None
+                    and "变更" in str(resolved_title or "")
+                    and node_title
+                    and not re.match(r"^导入表格\d*$", node_title)
+                    and (
+                        self.__change_table_title_matches(node_title, resolved_title)
+                        or re.match(r"^\d+(?:\.\d+)*\s+\S*变更", node_title)
+                    )
+                ):
+                    item.title = ""
+                    if not table_name:
+                        table.name = resolved_title
+                    if not getattr(item, "label", None):
+                        item.label = resolved_title
+                    changed = True
+                normalize_change_table_node_titles(getattr(item, "children", None) or [])
+
+        normalize_change_table_node_titles(nodes or [])
 
         def norm_text(value):
             return re.sub(r"\s+", "", str(value or "").replace("：", ":").rstrip(":").strip())
@@ -2457,18 +2692,20 @@ class Server(object):
             return None
 
         preferred_target = find_preferred_change_table_parent(nodes or [])
-        managed_type_titles = {
-            norm_text(type_name_by_code.get(type_code) or "变更需求")
-            for type_code in reqs_by_type.keys()
-        }
 
         def is_generated_change_table_node(item: SrsNodeForm):
-            title_norm = norm_text(node_change_title(item))
-            if title_norm not in managed_type_titles:
+            if re.match(r"^导入表格\d*$", str(getattr(item, "title", "") or "").strip()):
                 return False
-            return not re.match(r"^导入表格\d*$", str(getattr(item, "title", "") or "").strip())
+            title = node_change_title(item)
+            if "变更" not in str(title or ""):
+                return False
+            for type_code in reqs_by_type.keys():
+                type_name = type_name_by_code.get(type_code) or "变更需求"
+                if self.__change_table_title_matches(title, type_name):
+                    return True
+            return False
 
-        if preferred_target is not None:
+        if restructure and preferred_target is not None:
             moved_nodes: List[SrsNodeForm] = []
 
             def detach_misplaced(items: List[SrsNodeForm], under_preferred: bool = False):
@@ -2512,14 +2749,8 @@ class Server(object):
 
         collect_change_table_titles(nodes or [])
 
-        def build_change_table_node(type_code: str, type_name: str, rows: List[SrsReq]):
-            headers = [
-                TabHeader(code="srs_code", name="需求编号"),
-                TabHeader(code="module", name="模块"),
-                TabHeader(code="function", name="功能"),
-                TabHeader(code="sub_function", name="子功能"),
-            ]
-            table_rows = [
+        def build_change_table_rows(rows: List[SrsReq]):
+            return [
                 dict(
                     srs_code=req.code or "",
                     module=req.module or "",
@@ -2528,20 +2759,89 @@ class Server(object):
                 )
                 for req in rows or []
             ]
+
+        def apply_change_rows_to_node(item: SrsNodeForm, rows: List[SrsReq]) -> bool:
+            table = getattr(item, "table", None)
+            if table is None:
+                return False
+            preserved_name = getattr(table, "name", None)
+            headers = [
+                TabHeader(code="srs_code", name="需求编号"),
+                TabHeader(code="module", name="模块"),
+                TabHeader(code="function", name="功能"),
+                TabHeader(code="sub_function", name="子功能"),
+            ]
+            table.headers = headers
+            table.rows = build_change_table_rows(rows)
+            if preserved_name:
+                table.name = preserved_name
+            if hasattr(table, "cells"):
+                table.cells = None
+            return True
+
+        def sync_type_name_from_tree_item(item: SrsNodeForm, type_code: str):
+            nonlocal changed
+            tree_name = self.__normalize_change_req_type_name(node_change_title(item))
+            if not tree_name or "变更" not in tree_name:
+                return
+            type_row = db.session.execute(
+                select(SrsType).where(SrsType.doc_id == doc_id, SrsType.type_code == type_code)
+            ).scalars().first()
+            if not type_row:
+                return
+            current_name = self.__normalize_change_req_type_name(type_row.type_name or "")
+            if tree_name != current_name:
+                type_row.type_name = tree_name
+                changed = True
+
+        def sync_existing_change_tables(items: List[SrsNodeForm]):
+            nonlocal changed
+            for item in items or []:
+                table = getattr(item, "table", None)
+                if table is not None:
+                    title = node_change_title(item)
+                    if "变更" in str(title or ""):
+                        for type_code, rows in reqs_by_type.items():
+                            type_name = type_name_by_code.get(type_code) or "变更需求"
+                            if self.__change_table_title_matches(title, type_name):
+                                if apply_change_rows_to_node(item, rows):
+                                    changed = True
+                                sync_type_name_from_tree_item(item, type_code)
+                                break
+                sync_existing_change_tables(getattr(item, "children", None) or [])
+
+        sync_existing_change_tables(nodes or [])
+
+        def has_existing_change_table(type_name: str) -> bool:
+            for title in existing_titles:
+                if self.__change_table_title_matches(title, type_name):
+                    return True
+            return False
+
+        def build_change_table_node(type_code: str, type_name: str, rows: List[SrsReq]):
+            headers = [
+                TabHeader(code="srs_code", name="需求编号"),
+                TabHeader(code="module", name="模块"),
+                TabHeader(code="function", name="功能"),
+                TabHeader(code="sub_function", name="子功能"),
+            ]
+            table_rows = build_change_table_rows(rows)
+            # 表名只放 table.name；节点 title 不能带 2.1 变更需求，否则前端会当成章节号。
             return SrsNodeForm(
-                title=type_name,
+                title="",
                 label=type_name,
                 table=Table(name=type_name, headers=headers, rows=table_rows),
                 children=[],
             )
 
         missing_nodes = []
-        for type_code, rows in reqs_by_type.items():
-            type_name = type_name_by_code.get(type_code) or "变更需求"
-            if norm_text(type_name) in existing_titles:
-                continue
-            missing_nodes.append(build_change_table_node(type_code, type_name, rows))
-        if missing_nodes:
+        if restructure:
+            for type_code, rows in reqs_by_type.items():
+                type_name = type_name_by_code.get(type_code) or "变更需求"
+                if has_existing_change_table(type_name):
+                    continue
+                missing_nodes.append(build_change_table_node(type_code, type_name, rows))
+        if restructure and missing_nodes:
             target = preferred_target
 
             def score_node(item: SrsNodeForm):
@@ -2569,10 +2869,75 @@ class Server(object):
                 target = nodes[0]
             if target is not None:
                 target.children = list(getattr(target, "children", None) or [])
-                target.children.extend(missing_nodes)
+                for node in missing_nodes:
+                    node_title = node_change_title(node)
+                    if has_existing_change_table(node_title):
+                        continue
+                    target.children.append(node)
             else:
                 nodes.extend(missing_nodes)
             changed = True
+
+        def is_change_table_node(item: SrsNodeForm):
+            title = node_change_title(item)
+            if "变更" not in str(title or ""):
+                return False
+            table = getattr(item, "table", None)
+            if table is None:
+                return False
+            headers = getattr(table, "headers", None) or []
+            rows = getattr(table, "rows", None) or []
+            cells = getattr(table, "cells", None) or []
+            table_name = getattr(table, "name", None) or ""
+            return bool(headers or rows or cells or table_name)
+
+        def dedupe_change_table_nodes(items: List[SrsNodeForm]):
+            nonlocal changed
+            groups: Dict[str, List[SrsNodeForm]] = {}
+
+            def collect(nodes: List[SrsNodeForm]):
+                for node in nodes or []:
+                    if is_change_table_node(node):
+                        title = node_change_title(node)
+                        group_key = None
+                        for key in groups.keys():
+                            if self.__change_table_title_matches(key, title):
+                                group_key = key
+                                break
+                        if group_key is None:
+                            group_key = title
+                        groups.setdefault(group_key, []).append(node)
+                    collect(getattr(node, "children", None) or [])
+
+            collect(items or [])
+            remove_ids = set()
+            for group in groups.values():
+                if len(group) <= 1:
+                    continue
+                group.sort(
+                    key=lambda node: (
+                        0 if re.match(r"^导入表格\d*$", str(getattr(node, "title", "") or "").strip()) else 1,
+                        0 if getattr(getattr(node, "table", None), "name", None) else 1,
+                    )
+                )
+                for extra in group[1:]:
+                    remove_ids.add(id(extra))
+            if not remove_ids:
+                return
+
+            def filter_removed(nodes: List[SrsNodeForm]):
+                result = []
+                for node in nodes or []:
+                    if id(node) in remove_ids:
+                        continue
+                    node.children = filter_removed(getattr(node, "children", None) or [])
+                    result.append(node)
+                return result
+
+            items[:] = filter_removed(items or [])
+            changed = True
+
+        dedupe_change_table_nodes(nodes or [])
         return changed
 
     def __fix_rcms(self, doc: SrsDoc):
@@ -2858,6 +3223,9 @@ class Server(object):
             self.__update_nodes(row, 0, form.content)
             db.session.commit()
             self.__sync_srs_reqs_from_doc_tables(row.id, form.content or [])
+            # 兜底：保存时也扫描树上的变更需求表，把误存为 type_code='1'/'2' 的行
+            # 自动迁移到正确的变更类型，避免 Word 导入历史遗留的错分类继续影响。
+            self.__upsert_imported_change_req_tables_from_tree(row.id, form.content or [])
             self.__sync_srs_req_names_from_doc_nodes(row.id, form.content or [])
             self.__upsert_imported_srs_reqds(row.id, self.__extract_srs_reqds_from_nodes(form.content or []))
             self.__fix_rcms(row)

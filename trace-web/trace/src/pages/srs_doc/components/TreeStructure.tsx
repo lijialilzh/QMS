@@ -1,5 +1,5 @@
 import "./TreeStructure.less";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button, Input, Space, Popconfirm, Table, Empty, Tooltip, Select, Tag, Upload, message, Image } from "antd";
 import { PlusOutlined, DeleteOutlined, TableOutlined, EditOutlined, FileOutlined, UploadOutlined, CaretRightOutlined, CaretDownOutlined } from "@ant-design/icons";
 import { numberToChinese } from "@/common";
@@ -177,18 +177,41 @@ function renderChangeTableTitle(title?: string) {
     return txt || "变更需求";
 }
 
+function stripChangeTableTitleHeading(value?: string) {
+    return String(value || "")
+        .trim()
+        .replace(/[：:，,。.;；、]/g, "")
+        .replace(/^\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+        .trim();
+}
+
+function normalizeChangeTableTitleKey(value?: string) {
+    return normalizeCellText(value).replace(/\s+/g, "");
+}
+
+function matchesChangeTableTitle(left?: string, right?: string) {
+    const leftKey = normalizeChangeTableTitleKey(left);
+    const rightKey = normalizeChangeTableTitleKey(right);
+    if (!leftKey || !rightKey) return false;
+    if (leftKey === rightKey) return true;
+    const leftBody = normalizeChangeTableTitleKey(stripChangeTableTitleHeading(left));
+    const rightBody = normalizeChangeTableTitleKey(stripChangeTableTitleHeading(right));
+    return !!leftBody && !!rightBody && leftBody === rightBody;
+}
+
 function findChangeTableForPreview(
     changeTables: Array<{ id: number | string; title: string; data: any[]; type_code?: string }> = [],
     table?: TableData | null,
     title?: string,
     options?: { allowSingleFallback?: boolean },
 ) {
-    const currentTitle = normalizeCellText(renderChangeTableTitle(table?.name || title));
-    const titleMatched = changeTables.find((item) =>
-        normalizeCellText(renderChangeTableTitle(item?.title)) === currentTitle
-    );
+    const treeTitle = renderChangeTableTitle(table?.name || title);
+    const titleMatched = changeTables.find((item) => matchesChangeTableTitle(treeTitle, item?.title));
     if (titleMatched) return titleMatched;
-    if (options?.allowSingleFallback !== false && changeTables.length === 1) return changeTables[0];
+    // 关键：仅在调用方显式传 allowSingleFallback=true 时才回退。
+    // 旧默认 true 在"多张变更表 / DB 状态滞后"等场景下会错把另一张表的数据当作当前表数据
+    // （例如点击的是 2.0 变更需求，但 srsReqPreview.changes 里此刻只有 变更需求1，就会拿后者的 data）。
+    if (options?.allowSingleFallback === true && changeTables.length === 1) return changeTables[0];
     return undefined;
 }
 
@@ -1420,6 +1443,7 @@ interface TreeNodeItemProps {
     };
     reqDetails?: any[];
     srsReqLoading?: boolean;
+    existingChangeTableTitles?: string[];
     hideLevelPrefix?: boolean;
     disableHierarchyActions?: boolean;
 }
@@ -1452,6 +1476,7 @@ const TreeNodeItem = ({
     srsReqPreview,
     reqDetails,
     srsReqLoading,
+    existingChangeTableTitles = [],
     hideLevelPrefix = false,
     disableHierarchyActions = false,
 }: TreeNodeItemProps) => {
@@ -1788,7 +1813,23 @@ const TreeNodeItem = ({
         isReqMainTable(tbl.table) &&
         !/变更/.test(String(tbl.table?.name || tbl.title || ""))
     ));
-    const changeReqPreviewTablesToRender = srsReqPreview?.changes || [];
+    const hasNormalChangeReqTable = orderedNormalTables.some((tbl) => {
+        const title = String(tbl.table?.name || tbl.title || getNormalTableDisplayTitle(tbl) || "");
+        return /变更/.test(title) && !!tbl.table?.headers?.length;
+    });
+    const hasChangeReqTableInSubtree = (items: TreeNode[] = []): boolean => (
+        (items || []).some((item) => {
+            const title = String(item?.table?.name || item?.title || item?.label || "");
+            const isChangeTable = /变更/.test(title) && !!item?.table?.headers?.length;
+            return isChangeTable || hasChangeReqTableInSubtree(item.children || []);
+        })
+    );
+    const hasMatchingChangeTableInTree = (title?: string): boolean => (
+        existingChangeTableTitles.some((existingTitle) => matchesChangeTableTitle(existingTitle, title))
+    );
+    const changeReqPreviewTablesToRender = (srsReqPreview?.changes || []).filter((table) => (
+        !hasMatchingChangeTableInTree(table?.title)
+    ));
     const shouldShowSrsReqPreviewTables = !!(
         (isSrsReqRefNode || isImportedReqTableAnchor) &&
         !(hasNormalMainReqTable || hasNormalOtherReqTable) &&
@@ -1801,7 +1842,9 @@ const TreeNodeItem = ({
     );
     const shouldShowChangeReqTables = !!(
         (isSrsReqListNode || (isImportedReqTableAnchor && hasNormalOtherReqTable)) &&
-        changeReqPreviewTablesToRender.length > 0
+        changeReqPreviewTablesToRender.length > 0 &&
+        !hasNormalChangeReqTable &&
+        !hasChangeReqTableInSubtree(node.children || [])
     );
     const shouldMoveOtherReqMarker = readOnly && hasOtherReqMarker && otherReqTableIndex >= 0;
     const imageCaptionData = extractImageCaptionAndBody(node.text);
@@ -2305,13 +2348,18 @@ const TreeNodeItem = ({
                                     onClick={() => {
                                         const isChangeReqTable = isReqMainTable(tbl.table) && /变更/.test(String(tbl.table?.name || tbl.title || getNormalTableDisplayTitle(tbl) || ""));
                                         if (isChangeReqTable) {
+                                            const treeTableTitle = renderChangeTableTitle(tbl.table?.name || tbl.title);
                                             const matchedChangeTable = findChangeTableForRenderedTable(tbl.table, tbl.title);
                                             if (onEditSrsChangeTable) {
-                                                onEditSrsChangeTable((matchedChangeTable || {
-                                                    id: `node_${tbl.ownerNodeId}`,
-                                                    title: renderChangeTableTitle(tbl.table?.name || tbl.title),
-                                                    data: buildChangeRowsFromRenderedTable(tbl.table),
-                                                }) as any);
+                                                onEditSrsChangeTable({
+                                                    ...(matchedChangeTable || {}),
+                                                    id: matchedChangeTable?.id ?? `node_${tbl.ownerNodeId}`,
+                                                    title: treeTableTitle,
+                                                    type_code: matchedChangeTable?.type_code,
+                                                    data: (matchedChangeTable?.data || []).length
+                                                        ? (matchedChangeTable?.data || [])
+                                                        : buildChangeRowsFromRenderedTable(tbl.table),
+                                                } as any);
                                             } else {
                                                 message.error("变更需求表未加载完成，请刷新后重试");
                                             }
@@ -2537,6 +2585,7 @@ const TreeNodeItem = ({
                     srsReqPreview={srsReqPreview}
                     reqDetails={reqDetails}
                     srsReqLoading={srsReqLoading}
+                    existingChangeTableTitles={existingChangeTableTitles}
                 />
             ))}
         </div>
@@ -2576,6 +2625,18 @@ interface TreeStructureProps {
 export default ({ value = [], onChange, docId, productId, docVersion, productVersion, hiddenNodeIds = [], readOnly, rcmOptions, onNodeDelete, onOpenSrsTable, onOpenReqList, onEditSrsChangeTable, onDeleteSrsChangeTable, onSaveReqDetailTable, onSaveSrsReqTable, onSaveOtherReqTable, onSaveSrsChangeReqTable, srsReqPreview, reqDetails, srsReqLoading, onNodesSnapshot, enableStandardReqAutoSync = false }: TreeStructureProps) => {
     const { t: ts } = useTranslation();
     const [nodes, setNodes] = useState<TreeNode[]>(value);
+    // 注意：srsReqPreview 在父组件里是每次渲染都新建的字面量对象 ({main, other, changes})，
+    // 直接用对象引用比较会"永远不等"，导致每次 onChange 都把 demand 同步链路重新跑一遍，
+    // 副作用就是普通表保存后 7 章节被重建。
+    // 这里改成记录其内部稳定引用（main/other/changes 数组本身、reqDetails 本身、enableStandardReqAutoSync 标记），
+    // 只有真正的 demand 数据来源发生变化时才跑 demand 同步。
+    const reqSyncSourceRef = useRef<{
+        reqDetails?: any[];
+        srsReqPreviewMain?: any[];
+        srsReqPreviewOther?: any[];
+        srsReqPreviewChanges?: any[];
+        enableStandardReqAutoSync?: boolean;
+    }>({});
     const [tableModalVisible, setTableModalVisible] = useState(false);
     const [currentNodeId, setCurrentNodeId] = useState<number | null>(null);
     const [initialTableData, setInitialTableData] = useState<TableDataWithHeaders | undefined>(undefined);
@@ -3148,7 +3209,8 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                 }
                 const detailTypeCode = String(detailMap.get(code)?.type_code || "");
                 if (!enableStandardReqAutoSync && label === "__auto_req_detail" && (detailTypeCode === "1" || !detailTypeCode)) {
-                    return false;
+                    const table = normalizeFunctionalHeaderToRow(node.table);
+                    return isFunctionalKvTable(table) || hasRenderableTable(node.table);
                 }
                 if (!enableStandardReqAutoSync && isReqDetailTableNode && label !== "__auto_req_detail") {
                     return true;
@@ -3291,9 +3353,13 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                 standardKeyByCode.set(code, `reqd_${item.id}`);
             }
         });
-        const standardCodes = new Set(
-            buildPreviewStandardDetails().map((item) => normalizeSrsCode(item?.code)).filter(Boolean),
-        );
+        const standardCodes = new Set([
+            ...buildPreviewStandardDetails().map((item) => normalizeSrsCode(item?.code)).filter(Boolean),
+            ...collectReqRowsFromTreeTables(nodeList || [])
+                .filter((item: any) => String(item?.type_code || "1") === "1")
+                .map((item: any) => normalizeSrsCode(item?.code))
+                .filter(Boolean),
+        ]);
         const rebindNodeReqDetailKey = (node: TreeNode, nextKey: string): TreeNode => {
             if (!nextKey) return node;
             const table = node.table;
@@ -3354,8 +3420,15 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                 if (isReqDetailNode && key.startsWith("change_reqd_") && code && !changeCodes.has(code)) {
                     return standardCodes.has(code);
                 }
-                if (isReqDetailNode && node.label === "__auto_req_detail" && code && !changeCodes.has(code) && !standardCodes.has(code)) {
-                    return false;
+                if (
+                    isReqDetailNode &&
+                    node.label === "__auto_req_detail" &&
+                    code &&
+                    !changeCodes.has(code) &&
+                    !standardCodes.has(code)
+                ) {
+                    // 已有功能描述表的章节保留，不因预览数据未加载而被误删
+                    return isFunctionalKvTable(node.table) || hasRenderableTable(node.table);
                 }
                 if ((node.label === "__auto_req_group" || !node.label) && isEmptyGeneratedHeading(node)) return false;
                 return true;
@@ -3382,10 +3455,12 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         return (items || []).map((node) => {
             const table = node.table;
             let nextTable = table;
+            // 只判定 table.name / node.title 是否含"变更"，不再用 node.title 是否为"导入表格X"做排除。
+            // 旧逻辑会把 Word 导入的变更需求表（title="导入表格6"、table.name="2.0 变更需求列表："）排除掉，
+            // 导致弹窗里删除/编辑行后页面 2.1 章节仍展示 srs_node 里旧的原始行。
             if (
                 isReqMainTable(table) &&
-                /变更/.test(String(table?.name || node.title || "")) &&
-                !/^导入表格\d*$/.test(String(node.title || "").trim())
+                /变更/.test(String(table?.name || node.title || ""))
             ) {
                 const tableTitle = normalizeTitle(table?.name || node.title || "");
                 const matchedPreview = previewTables.find((preview: any) => normalizeTitle(preview?.title) === tableTitle);
@@ -3667,6 +3742,26 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
     // 同步外部传入的 value 到内部状态
     useEffect(() => {
         const withRcm = syncRcmCodesFromText(value);
+        const previewMain = srsReqPreview?.main;
+        const previewOther = srsReqPreview?.other;
+        const previewChanges = srsReqPreview?.changes;
+        const shouldSyncReqDerivedTree =
+            reqSyncSourceRef.current.reqDetails !== reqDetails ||
+            reqSyncSourceRef.current.srsReqPreviewMain !== previewMain ||
+            reqSyncSourceRef.current.srsReqPreviewOther !== previewOther ||
+            reqSyncSourceRef.current.srsReqPreviewChanges !== previewChanges ||
+            reqSyncSourceRef.current.enableStandardReqAutoSync !== enableStandardReqAutoSync;
+        reqSyncSourceRef.current = {
+            reqDetails,
+            srsReqPreviewMain: previewMain,
+            srsReqPreviewOther: previewOther,
+            srsReqPreviewChanges: previewChanges,
+            enableStandardReqAutoSync,
+        };
+        if (!shouldSyncReqDerivedTree) {
+            setNodes(withRcm);
+            return;
+        }
         const previewOtherDetails = buildPreviewOtherDetails();
         const tableOtherDetails = collectReqRowsFromTreeTables(withRcm)
             .filter((item: any) => String(item?.type_code || "") === "2" && normalizeSrsCode(item?.code));
@@ -3680,7 +3775,10 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             ? syncOtherReqCodesToChapters(withEmbeddedTable, otherDetails)
             : withEmbeddedTable;
         const hasPreviewChangeRows = (srsReqPreview?.changes || []).some((table) => (table.data || []).length > 0);
-        const withChangePruned = pruneStaleChangeReqPreviewFromTree(withOtherReqSync);
+        // 编辑模式下也要把 preview 中的变更需求表行强制覆盖到树节点（含 title="导入表格X" 这种导入表），
+        // 否则保存弹窗里删除/编辑行后，页面 2.1 章节展示的仍是 srs_node 里旧的原始 rows。
+        const withChangeTableRowsSynced = syncChangeReqTablesFromPreview(withOtherReqSync);
+        const withChangePruned = pruneStaleChangeReqPreviewFromTree(withChangeTableRowsSynced);
         const nextNodes = enableStandardReqAutoSync
             ? syncReqDetailsToTree(withRcm, reqDetails || [])
             : (hasPreviewChangeRows
@@ -3820,7 +3918,55 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
 
         const nodeToDelete = findNodeById(nodes, id);
 
-        // 如果节点有 n_id（已保存到后端），则调用删除API
+        // 变更需求表节点：节点级"删除"按钮原先只调 delete_srs_node，
+        // 不会清理 srs_type / srs_req，导致 fetchSrsTableState 后 srsReqPreview 仍含该表，
+        // syncMissingChangeReqPreviewToTree 会把 7 章节里被删需求对应的功能描述节点又补回来。
+        // 这里识别到变更需求表节点时，先走 onDeleteSrsChangeTable 把整张变更表清掉（含 7 章节联动），
+        // 再让 onNodeDelete 删除 srs_node。
+        const candidateTitle = String(nodeToDelete?.table?.name || nodeToDelete?.title || nodeToDelete?.label || "").trim();
+        const tableMeta: any = nodeToDelete?.table || null;
+        const isChangeReqNode = !!(
+            tableMeta &&
+            typeof tableMeta === "object" &&
+            /变更/.test(candidateTitle) &&
+            (
+                (Array.isArray(tableMeta.headers) && tableMeta.headers.length > 0) ||
+                (Array.isArray(tableMeta.rows) && tableMeta.rows.length > 0) ||
+                (Array.isArray(tableMeta.cells) && tableMeta.cells.length > 0) ||
+                !!String(tableMeta.name || "").trim()
+            )
+        );
+        if (nodeToDelete && isChangeReqNode && onDeleteSrsChangeTable) {
+            const nodeTitle = candidateTitle;
+            const matchedPreview = (srsReqPreview?.changes || []).find((preview: any) => (
+                matchesChangeTableTitle(nodeTitle, preview?.title)
+            ));
+            const payload = matchedPreview
+                ? matchedPreview
+                : {
+                    id: `node_${nodeToDelete.n_id || nodeToDelete.id}`,
+                    title: nodeTitle,
+                    type_code: undefined,
+                    data: [],
+                };
+            try {
+                // 1) 先把当前 srs_node 删掉，避免下次刷新还能看到这张表节点
+                if (nodeToDelete?.n_id && docId && onNodeDelete) {
+                    const success = await onNodeDelete(docId, nodeToDelete.n_id);
+                    if (!success) return;
+                }
+                // 2) 再走 onDeleteSrsChangeTable：会清理 srs_type / srs_req / 7 章节联动节点，
+                //    并 dispatch 更新父组件的 treeStructure。
+                //    这里完成后直接 return，不再让外层 updateNodes(deleteNode(nodes, id))
+                //    用 dispatch 之前的旧 nodes 把父组件最新的树覆盖回去。
+                await onDeleteSrsChangeTable(payload as any);
+            } catch (err) {
+                console.error("delete change-req-table failed:", err);
+            }
+            return;
+        }
+
+        // 普通节点：保留原行为
         if (nodeToDelete?.n_id && docId && onNodeDelete) {
             const success = await onNodeDelete(docId, nodeToDelete.n_id);
             if (!success) return; // 删除失败，不更新前端状态
@@ -4449,6 +4595,37 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             }
         }
         if (isSavingChangeReqTable && onSaveSrsChangeReqTable) {
+            // 关键：在调用父级保存逻辑前，先把当前手动新增/编辑的变更表节点写入 state 与 ref，
+            // 避免父级把"树里已有的这张"当成"缺失变更表"再自动补一张，造成重复。
+            const nodesAfterChangeTableApply = findNodeAndUpdate(nodes, currentNodeId, (node) => {
+                const isAddingTable = !initialTableData;
+                const hasExistingTableInNode = hasRenderableTable(node.table);
+                const hasExistingChildTables = (node.children || []).some((child) => hasRenderableTable(child.table));
+                if (isAddingTable && (hasExistingTableInNode || hasExistingChildTables)) {
+                    const importedIndexes = (node.children || [])
+                        .map((child) => String(child.title || "").trim().match(/^导入表格(\d+)$/)?.[1])
+                        .filter((item): item is string => !!item)
+                        .map((item) => parseInt(item, 10))
+                        .filter((item) => Number.isFinite(item));
+                    const nextTableIndex = Math.max(0, ...importedIndexes) + 1;
+                    const newTableNode: TreeNode = {
+                        id: generateId(),
+                        doc_id: node.doc_id || docId,
+                        n_id: 0,
+                        p_id: node.n_id || 0,
+                        title: `导入表格${nextTableIndex}`,
+                        text: "",
+                        table: tableFormat,
+                        children: [],
+                    };
+                    return {
+                        ...node,
+                        children: [...(node.children || []), newTableNode],
+                    };
+                }
+                return { ...node, table: tableFormat };
+            });
+            updateNodes(nodesAfterChangeTableApply);
             const explicitTypeCode = String(tableData?.type_code || "").trim();
             const explicitTableId = tableData?.tableId;
             const matchedChangeTable = (!explicitTypeCode && explicitTableId == null)
@@ -5624,12 +5801,11 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         void stripIgnoredReqDetailTables;
         void dedupeReqDetailsByKey;
         void syncChangedModuleTitles;
-        const isSavingReqDetailTable = !!reqDetailPayload;
         const nextNodes = isSavingStandardSrsTable
             ? pruneDeletedStandardReqDetails(
                 syncSrsReqDetailsByKey(newNodes, allStandardDetailsForIdentitySync)
             )
-            : (isSavingReqDetailTable ? newNodes : syncReqDetailsToTree(newNodes, reqDetails || [], true));
+            : newNodes;
         updateNodes(nextNodes);
         setTableCellsBackup(undefined);
     };
@@ -5648,6 +5824,14 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             }));
     };
     const visibleNodes = getVisibleNodes(nodes);
+    const collectChangeTableTitles = (items: TreeNode[] = []): string[] => (
+        (items || []).flatMap((item) => {
+            const title = String(item?.table?.name || item?.title || item?.label || "").trim();
+            const ownTitle = /变更/.test(title) && !!item?.table?.headers?.length ? [title] : [];
+            return [...ownTitle, ...collectChangeTableTitles(item.children || [])];
+        })
+    );
+    const existingChangeTableTitles = collectChangeTableTitles(visibleNodes);
 
     return (
         <>
@@ -5689,6 +5873,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                             srsReqPreview={srsReqPreview}
                             reqDetails={reqDetails}
                             srsReqLoading={srsReqLoading}
+                            existingChangeTableTitles={existingChangeTableTitles}
                         />
                       </div>
                   </div>

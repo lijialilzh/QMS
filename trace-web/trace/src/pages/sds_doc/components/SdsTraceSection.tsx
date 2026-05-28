@@ -4,7 +4,9 @@ import type { CSSProperties } from "react";
 export interface SdsTraceTreeNode {
     ref_type?: string;
     title?: string;
-    table?: { trace_synced?: boolean } | null;
+    // 放宽 table 类型以兼容 SDS TreeStructure 中更宽的 TableData 类型，
+    // 这里只有 trace_synced 字段会被本组件读取。
+    table?: ({ trace_synced?: boolean } & Record<string, any>) | null;
 }
 
 /** 判断是否为 SDS 文档「2.4 设计与需求追溯表」节点（图2） */
