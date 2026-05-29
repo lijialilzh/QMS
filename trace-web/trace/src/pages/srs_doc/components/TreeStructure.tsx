@@ -215,6 +215,27 @@ function findChangeTableForPreview(
     return undefined;
 }
 
+function buildChangeRowsFromRenderedTable(table?: TableData | null) {
+    if (!table?.headers?.length || !Array.isArray(table.rows)) return [];
+    const headers = table.headers;
+    const pickColumn = (matcher: (text: string) => boolean) => (
+        headers.find((header) => matcher(normalizeCellText(header?.name)))?.code || ""
+    );
+    const codeCol = pickColumn((text) => isReqCodeHeaderText(text));
+    const moduleCol = pickColumn((text) => text.includes("模块"));
+    const functionCol = pickColumn((text) => text.includes("功能") && !text.includes("子功能"));
+    const subFunctionCol = pickColumn((text) => text.includes("子功能"));
+    return (table.rows || [])
+        .map((row: any, index: number) => ({
+            key: `rendered_change_${index}`,
+            srs_code: String(row?.[codeCol] || extractSrsCodeFromTableRow(row) || "").trim(),
+            module: normalizeReqDisplayText(row?.[moduleCol]),
+            function: normalizeReqDisplayText(row?.[functionCol]),
+            sub_function: normalizeReqDisplayText(row?.[subFunctionCol]),
+        }))
+        .filter((row) => row.srs_code || row.module || row.function || row.sub_function);
+}
+
 function isReqCodeHeaderText(text: string): boolean {
     return text.includes("需求编号") || text.includes("需求列表") || text.includes("srscode") || text === "code";
 }
@@ -3427,8 +3448,12 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                     !changeCodes.has(code) &&
                     !standardCodes.has(code)
                 ) {
-                    // 已有功能描述表的章节保留，不因预览数据未加载而被误删
-                    return isFunctionalKvTable(node.table) || hasRenderableTable(node.table);
+                    // 预览加载中保留已有功能描述，避免误删；加载完成后不在 preview 中的变更章节应清掉
+                    // （外部删除变更表后 preview 已刷新，此处若继续保留会导致 7 章节删不掉）
+                    if (srsReqLoading) {
+                        return isFunctionalKvTable(node.table) || hasRenderableTable(node.table);
+                    }
+                    return false;
                 }
                 if ((node.label === "__auto_req_group" || !node.label) && isEmptyGeneratedHeading(node)) return false;
                 return true;
@@ -4348,6 +4373,31 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         const tableTitle = targetNode
             ? resolveDeletedTableTitle(parentNode, targetNode)
             : "";
+        const tableMeta = targetNode?.table;
+        const changeTableTitle = renderChangeTableTitle(tableMeta?.name || tableTitle || targetNode?.title);
+        const isChangeReqTable = isReqMainTable(tableMeta) && /变更/.test(String(tableMeta?.name || tableTitle || targetNode?.title || ""));
+        // 章节内嵌变更需求表：不能只清空 node.table，必须走 onDeleteSrsChangeTable 删除 srs_type/srs_req 并联动清理 7 章节。
+        if (isChangeReqTable && onDeleteSrsChangeTable) {
+            const matchedChangeTable = findChangeTableForPreview(
+                srsReqPreview?.changes || [],
+                tableMeta,
+                tableTitle || targetNode?.title,
+            );
+            try {
+                await onDeleteSrsChangeTable({
+                    ...(matchedChangeTable || {}),
+                    id: matchedChangeTable?.id ?? targetNode?.id,
+                    title: changeTableTitle,
+                    type_code: matchedChangeTable?.type_code,
+                    data: (matchedChangeTable?.data || []).length
+                        ? (matchedChangeTable?.data || [])
+                        : buildChangeRowsFromRenderedTable(tableMeta),
+                } as any);
+            } catch (err) {
+                console.error("delete embedded change-req-table failed:", err);
+            }
+            return;
+        }
 
         // Word 导入的“导入表格N”承载节点：删除表格时应整节点移除，避免留下空壳四级菜单
         if (isImportedTableCarrierTitle(targetNode?.title)) {

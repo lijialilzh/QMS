@@ -943,6 +943,28 @@ export default () => {
         const cells = Array.isArray(table.cells) ? table.cells : [];
         return headers.length > 0 || rows.length > 0 || cells.length > 0 || !!String(table.name || "").trim();
     };
+    const isImportedChangeTableNode = (node: any) => (
+        isImportedTableNode(node)
+        || /^\d+(?:\.\d+)*\s+\S*变更/.test(getNodeChangeTableTitle(node))
+    );
+    const pruneDetachedManualChangeTableNodes = (
+        items: TreeNode[],
+        changeTables: any[] = [],
+    ): TreeNode[] => (
+        (items || [])
+            .map((node: any) => ({
+                ...node,
+                children: pruneDetachedManualChangeTableNodes(node.children || [], changeTables),
+            }))
+            .filter((node: any) => {
+                if (!isTreeChangeTableNode(node)) return true;
+                if (isImportedChangeTableNode(node)) return true;
+                const nodeTitle = getNodeChangeTableTitle(node);
+                return (changeTables || []).some((table: any) => (
+                    matchesChangeTableTitle(nodeTitle, table?.title)
+                ));
+            })
+    );
     const treeHasMatchingChangeTable = (nodes: TreeNode[] = [], candidateTitle = ""): boolean => {
         let found = false;
         const walk = (items: TreeNode[]) => {
@@ -2586,8 +2608,11 @@ export default () => {
             const baseTree = (treeStructureRef.current?.length ? treeStructureRef.current : data.treeStructure) as TreeNode[];
             const syncedTree = baseTree?.length
                 ? dedupeChangeTableNodesInTree(
-                    syncChangeReqTablesToTree(
-                        normalizeChangeTableNodeTitles(baseTree as TreeNode[]),
+                    pruneDetachedManualChangeTableNodes(
+                        syncChangeReqTablesToTree(
+                            normalizeChangeTableNodeTitles(baseTree as TreeNode[]),
+                            srsTableState.srsChangeTables,
+                        ),
                         srsTableState.srsChangeTables,
                     ),
                 )
@@ -2747,11 +2772,29 @@ export default () => {
 
     const handleDeleteChangeReqTableInCurrentPage = async (table: { id: number | string; title: string; type_code?: string; data: any[] }) => {
         const docId = params.id ? parseInt(params.id) : 0;
-        const typeId = Number(table?.id);
+        const targetTitle = String(table?.title || "").trim();
+        // 外部删除按钮传入的 table.data 可能不完整（例如树节点删除路径 data=[]），
+        // 以父组件 srsChangeTables 为准，和弹窗保存 deletedOldRows 同一数据来源。
+        const matchedChangeTable = (data.srsChangeTables || []).find((item: any) => (
+            String(item?.id) === String(table?.id) || matchesChangeTableTitle(item?.title, targetTitle)
+        ));
+        const deletedRows = [...(matchedChangeTable?.data || table?.data || [])];
+        const resolveDeleteTypeId = async (): Promise<number> => {
+            let candidate = Number(matchedChangeTable?.id);
+            if (Number.isFinite(candidate) && candidate > 0 && candidate < 1_000_000_000) {
+                return candidate;
+            }
+            if (!docId || !targetTitle) return NaN;
+            const typeRes: any = await ApiSrsType.list_srs_type({ doc_id: docId, page_index: 0, page_size: 10000 });
+            if (typeRes.code !== ApiSrsType.C_OK) return NaN;
+            const matched = (typeRes.data?.rows || []).find((item: any) => (
+                matchesChangeTableTitle(item?.type_name, targetTitle)
+            ));
+            return matched?.id ? Number(matched.id) : NaN;
+        };
         // 当前被删的变更表，syncChangeReqTablesToTree 只能覆盖 rows、不会删节点。
         // 这里显式地把树里 table.name / title 匹配这张表的变更表节点整个移除，
         // 以及移除"导入表格X"包壳的 Word 导入变更表节点，避免页面 2.1 章节仍展示该表。
-        const targetTitle = String(table?.title || "").trim();
         const removeMatchingChangeTableNode = (items: TreeNode[]): TreeNode[] => (
             (items || [])
                 .map((node: any) => ({
@@ -2764,50 +2807,127 @@ export default () => {
                     return !matchesChangeTableTitle(nodeTitle, targetTitle);
                 })
         );
-        // 未保存的变更表（无 typeId）也可能因为预览数据生成了 7.X 自动章节，
-        // 删除时同样要按行 srs_code / req_detail_key 把对应章节强制清掉。
-        const forceDeletedCodes = new Set(
-            (table?.data || [])
-                .map((row: any) => normalizeSrsCodeForSync(row?.srs_code || row?.code))
-                .filter(Boolean)
-        );
-        const forceDeletedReqIds = new Set(
-            (table?.data || [])
-                .map((row: any) => Number(row?.id))
-                .filter((id) => Number.isFinite(id) && id > 0)
-                .map((id) => `change_reqd_${id}`)
-        );
-        const forceRemoveDeletedReqDetails = (items: TreeNode[]): TreeNode[] => (
+        const removeEmptyMatchingChangeTableShells = (items: TreeNode[]): TreeNode[] => (
             (items || [])
                 .map((node: any) => ({
                     ...node,
-                    children: forceRemoveDeletedReqDetails(node.children || []),
+                    children: removeEmptyMatchingChangeTableShells(node.children || []),
                 }))
                 .filter((node: any) => {
-                    const isReqDetailNode = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
-                    if (!isReqDetailNode) return true;
-                    const code = normalizeSrsCodeForSync(node.srs_code || (isFunctionalKvTable(node.table) ? extractSrsCodeFromTable(node.table) : ""));
-                    if (code && forceDeletedCodes.has(code)) return false;
-                    const key = String(node.req_detail_key || node?.table?.req_detail_key || "").trim();
-                    if (key && forceDeletedReqIds.has(key)) return false;
-                    return true;
+                    if (!isTreeChangeTableNode(node)) return true;
+                    const nodeTitle = getNodeChangeTableTitle(node);
+                    if (!matchesChangeTableTitle(nodeTitle, targetTitle)) return true;
+                    const rows = node?.table?.rows || [];
+                    return Array.isArray(rows) && rows.length > 0;
                 })
         );
-        if (!Number.isFinite(typeId) || typeId <= 0) {
-            const nextChangeTables = (data.srsChangeTables || []).filter((item: any) => item.id !== table?.id);
-            const currentTree = ((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) as TreeNode[];
-            const codeSets = buildActiveReqDetailCodeSets({
-                srsTableData: (data.srsTableData || []) as any[],
-                srsChangeTables: nextChangeTables,
+        const stripDeletedChangeTableArtifacts = (items: TreeNode[]): TreeNode[] => (
+            removeEmptyMatchingChangeTableShells(removeMatchingChangeTableNode(items))
+        );
+        const reloadDocTreeAfterChangeTableDelete = async () => {
+            const reloadRes: any = await Api.get_srs_doc({ id: docId });
+            if (reloadRes.code !== Api.C_OK) {
+                throw new Error(reloadRes.msg || "刷新文档失败");
+            }
+            const targetRow = reloadRes.data;
+            const parsedContentRaw = (targetRow.content || []).map((node: any) => parseTreeNode(node));
+            const reloadProduct = (data.products as any[]).find((p: any) => p.id === targetRow.product_id);
+            const remappedContent = await remapProductBoundDocImages(
+                parsedContentRaw,
+                targetRow.product_id,
+                targetRow.version,
+                reloadProduct?.full_version || targetRow.product_version,
+            );
+            let syncedTree = dedupeChangeTableNodesInTree(
+                stripDeletedChangeTableArtifacts(remappedContent as TreeNode[]),
+            );
+            const needPersistTree = treeHasMatchingChangeTable(remappedContent as TreeNode[], targetTitle)
+                || JSON.stringify(syncedTree) !== JSON.stringify(
+                    dedupeChangeTableNodesInTree(remappedContent as TreeNode[]),
+                );
+            if (needPersistTree) {
+                const cleanedContent = syncedTree.map((node: any) => cleanTreeNode(node, docId, 0));
+                const saveRes: any = await Api.update_srs_doc({
+                    id: docId,
+                    product_id: editForm.getFieldValue("product_id"),
+                    version: editForm.getFieldValue("version"),
+                    file_no: editForm.getFieldValue("file_no"),
+                    folder_name: editForm.getFieldValue("folder_name"),
+                    change_log: data.changeDescription || "",
+                    content: cleanedContent,
+                    n_id: targetRow.n_id || 0,
+                });
+                if (saveRes.code !== Api.C_OK) {
+                    throw new Error(saveRes.msg || "删除后文档同步保存失败");
+                }
+                const reloadRes2: any = await Api.get_srs_doc({ id: docId });
+                if (reloadRes2.code === Api.C_OK) {
+                    const parsed2 = (reloadRes2.data.content || []).map((node: any) => parseTreeNode(node));
+                    const remapped2 = await remapProductBoundDocImages(
+                        parsed2,
+                        reloadRes2.data.product_id,
+                        reloadRes2.data.version,
+                        reloadProduct?.full_version || reloadRes2.data.product_version,
+                    );
+                    syncedTree = dedupeChangeTableNodesInTree(
+                        stripDeletedChangeTableArtifacts(remapped2 as TreeNode[]),
+                    );
+                }
+            }
+            const srsTableState = docId
+                ? await fetchSrsTableState(docId)
+                : { srsTableData: [], srsOtherReqData: [], srsChangeTables: [] };
+            const stillInDb = (srsTableState.srsChangeTables || []).some((item: any) => (
+                matchesChangeTableTitle(item?.title, targetTitle)
+            ));
+            if (stillInDb) {
+                throw new Error(`变更表「${targetTitle}」仍未从数据库删除，请重试`);
+            }
+            syncedTree = dedupeChangeTableNodesInTree(
+                pruneDetachedManualChangeTableNodes(syncedTree, srsTableState.srsChangeTables),
+            );
+            treeStructureRef.current = syncedTree;
+            dispatch({
+                srsTableData: srsTableState.srsTableData,
+                srsOtherReqData: srsTableState.srsOtherReqData,
+                srsChangeTables: srsTableState.srsChangeTables,
+                treeStructure: syncedTree,
+                docNId: targetRow.n_id || 0,
+                srsTableLoading: false,
             });
-            const syncedTree = pruneEmptyReqChapterShells(
-                forceRemoveDeletedReqDetails(
+            return syncedTree;
+        };
+        const syncTreeAfterDeleteChangeTable = (
+            baseTree: TreeNode[],
+            srsTableState: { srsTableData: any[]; srsOtherReqData: any[]; srsChangeTables: any[] },
+            rowsToPrune: any[] = deletedRows,
+        ) => {
+            const codeSets = buildActiveReqDetailCodeSets(srsTableState);
+            const treeAfterChangeTableSync = syncChangeReqTablesToTree(baseTree, srsTableState.srsChangeTables);
+            return dedupeChangeTableNodesInTree(
+                pruneEmptyReqChapterShells(
                     pruneDeletedChangeReqChapters(
-                        removeMatchingChangeTableNode(currentTree),
-                        table?.data || [],
+                        syncTreeWithSrsTableState(treeAfterChangeTableSync, srsTableState),
+                        rowsToPrune,
                         codeSets,
                     ),
                 ),
+            );
+        };
+        const previewTypeId = Number(matchedChangeTable?.id ?? table?.id);
+        if (!Number.isFinite(previewTypeId) || previewTypeId <= 0 || previewTypeId >= 1_000_000_000) {
+            const nextChangeTables = (data.srsChangeTables || []).filter((item: any) => item.id !== table?.id);
+            const currentTree = removeMatchingChangeTableNode(
+                ((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) as TreeNode[],
+            );
+            const syncedTree = syncTreeAfterDeleteChangeTable(
+                currentTree,
+                {
+                    srsTableData: (data.srsTableData || []) as any[],
+                    srsOtherReqData: (data.srsOtherReqData || []) as any[],
+                    srsChangeTables: nextChangeTables,
+                },
+                deletedRows,
             );
             treeStructureRef.current = syncedTree;
             dispatch({
@@ -2817,46 +2937,29 @@ export default () => {
             return;
         }
         try {
-            dispatch({ srsTableLoading: true });
-            for (const row of table?.data || []) {
-                if (!row?.id) continue;
-                const deleteReqRes: any = await ApiSrsReq.delete_srs_req({ id: row.id });
-                if (deleteReqRes.code !== ApiSrsReq.C_OK) {
-                    throw new Error(deleteReqRes.msg || "删除变更需求失败");
-                }
+            const optimisticChangeTables = (data.srsChangeTables || []).filter((item: any) => (
+                String(item?.id) !== String(matchedChangeTable?.id ?? table?.id)
+                && !matchesChangeTableTitle(item?.title, targetTitle)
+            ));
+            const optimisticTree = stripDeletedChangeTableArtifacts(
+                ((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) as TreeNode[],
+            );
+            treeStructureRef.current = optimisticTree;
+            dispatch({
+                srsChangeTables: optimisticChangeTables,
+                treeStructure: optimisticTree,
+                srsTableLoading: true,
+            });
+            const typeId = await resolveDeleteTypeId();
+            if (!Number.isFinite(typeId) || typeId <= 0) {
+                throw new Error("未找到可删除的变更需求表，请刷新后重试");
             }
+            // delete_srs_type 在后端会删除 srs_type/srs_req，并清理 srs_node 中变更表 + 7 章节功能描述。
             const res: any = await ApiSrsType.delete_srs_type({ id: typeId });
             if (res.code !== ApiSrsType.C_OK) {
                 throw new Error(res.msg || "删除变更表格失败");
             }
-            const srsTableState = docId ? await fetchSrsTableState(docId) : { srsTableData: [], srsOtherReqData: [], srsChangeTables: [] };
-            const codeSets = buildActiveReqDetailCodeSets(srsTableState);
-            const baseTree = ((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) as TreeNode[];
-            // 用户主动点击"删除变更表"时，必须把这张表里所有 srs_code 对应的自动生成
-            // 章节（功能描述表 / __auto_req_detail）强制移除——不能再让通用 prune 里的
-            // "保留已有功能描述章节"防御性逻辑把它们留下，否则会出现"表删了、章节还在"。
-            const syncedTree = dedupeChangeTableNodesInTree(
-                pruneEmptyReqChapterShells(
-                    forceRemoveDeletedReqDetails(
-                        pruneDeletedChangeReqChapters(
-                            syncTreeWithSrsTableState(
-                                removeMatchingChangeTableNode(baseTree),
-                                srsTableState,
-                            ),
-                            table?.data || [],
-                            codeSets,
-                        ),
-                    ),
-                ),
-            );
-            treeStructureRef.current = syncedTree;
-            dispatch({
-                srsTableData: srsTableState.srsTableData,
-                srsOtherReqData: srsTableState.srsOtherReqData,
-                srsChangeTables: srsTableState.srsChangeTables,
-                treeStructure: syncedTree,
-                srsTableLoading: false,
-            });
+            await reloadDocTreeAfterChangeTableDelete();
             message.success(res.msg || "删除成功");
         } catch (error: any) {
             dispatch({ srsTableLoading: false });
