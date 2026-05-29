@@ -969,21 +969,24 @@ class SdsSrsTraceSyncMixin:
             node, req, req_id, hierarchy_map, module_name, expected_text, trace_rows, by_req_id
         )
 
+    def _design_text_is_substantive(self, text: str) -> bool:
+        """功能设计文本是否含实质内容（区别于『(1)总体描述 无 …』空模板）。"""
+        if not text or not text.strip():
+            return False
+        stripped = re.sub(
+            r"[（(]\s*\d+\s*[)）](总体描述|功能|程序逻辑|输入项|输出项|接口)?",
+            "",
+            re.sub(r"\s+", "", text),
+        )
+        stripped = stripped.replace("无", "").replace("。", "")
+        return len(stripped) > 4
+
     def _node_has_substantive_design_body(self, node: SdsNodeForm) -> bool:
         """节点功能设计正文是否含实质内容（区别于『(1)总体描述 无 …』空模板）。"""
         ov = self._extract_design_overview(node)
         if ov and ov not in ("无", "无。"):
             return True
-        text = re.sub(r"\s+", "", str(getattr(node, "text", "") or ""))
-        if not text:
-            return False
-        stripped = re.sub(
-            r"[（(]\s*\d+\s*[)）](总体描述|功能|程序逻辑|输入项|输出项|接口)?",
-            "",
-            text,
-        )
-        stripped = stripped.replace("无", "").replace("。", "")
-        return len(stripped) > 4
+        return self._design_text_is_substantive(str(getattr(node, "text", "") or ""))
 
     def _node_text_matches_req(self, node: SdsNodeForm, expected_text: str) -> bool:
         """比对节点正文与 SRS 设计说明是否同源，避免新 key 复用旧编号时保留旧正文。"""
@@ -1034,9 +1037,6 @@ class SdsSrsTraceSyncMixin:
         for marker in ("操作指南", "快捷键映射", "keymap"):
             if marker.replace(" ", "").lower() in detail_cmp:
                 return False
-        reqd_name = self._normalize_sds_node_title(getattr(reqd_row, "name", None) or "")
-        if reqd_name and reqd_name == self._normalize_sds_node_title(chapter):
-            return False
         return True
 
     def _compose_design_text_for_trace_sync(
@@ -1525,12 +1525,16 @@ class SdsSrsTraceSyncMixin:
             and req_id is not None
             and by_req_id.get(req_id) is node
         ):
-            # 该节点已被内容/功能名匹配确认是同一旧功能：只要它有实质设计内容，
-            # 就保留（改名/编号偏移不丢内容）；正文与 SRS 同源时同样保留。
-            if self._node_has_substantive_design_body(node) or self._node_text_matches_req(
-                node, expected_text
-            ):
+            # 该节点已被内容/功能名匹配确认是同一功能：
+            # 1) 节点有实质设计内容 → 保留（改名/编号偏移不丢内容）；
+            if self._node_has_substantive_design_body(node):
                 return
+            # 2) 节点为空、SRS 设计有实质内容 → 取 SRS 填充（新增功能补全内容）；
+            if self._design_text_is_substantive(expected_text):
+                node.text = expected_text
+                return
+            # 3) 正文与 SRS 同源，或两者皆空 → 维持现状。
+            return
         if (
             req is not None
             and hierarchy_map is not None
