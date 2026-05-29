@@ -212,6 +212,7 @@
         "init_template_todo": "初始化模版功能待实现",
         "load_standard_structure_success": "加载标准结构成功",
         "add_table": "添加表格",
+        "edit_table": "编辑表格",
         "add_req_table": "增加表格",
         "generate_table_preview": "生成表格预览",
         "reset": "重置",

@@ -345,27 +345,79 @@ class Server(object):
         row = db.session.execute(select(SrsType).where(SrsType.id == id)).scalars().first()
         if not row:
             return Resp.resp_err(msg=ts("msg_obj_null"))
+        doc_id = row.doc_id
+        target_name = row.type_name or ""
+        # Word 导入的同一张变更表在 srs_type 里可能存在多行同名记录（不同 type_code），
+        # 仅删 id 这一行会残留同名空壳，刷新后渲染成“暂无数据”空表。
+        # 这里把“同一张变更表”的所有同名 srs_type 行一并清理。
+        all_types: List[SrsType] = db.session.execute(
+            select(SrsType).where(SrsType.doc_id == doc_id)
+        ).scalars().all()
+        target_type_ids: Set[int] = {id}
+        target_type_codes: Set[str] = set()
+        if row.type_code:
+            target_type_codes.add(row.type_code)
+        for item in all_types:
+            if item.id == id:
+                continue
+            if target_name and self.__matches_change_table_title(item.type_name or "", target_name):
+                if item.id:
+                    target_type_ids.add(item.id)
+                if item.type_code:
+                    target_type_codes.add(item.type_code)
         req_rows: List[SrsReq] = db.session.execute(
             select(SrsReq).where(
-                SrsReq.doc_id == row.doc_id,
-                SrsReq.type_code == row.type_code,
+                SrsReq.doc_id == doc_id,
+                SrsReq.type_code.in_(list(target_type_codes)),
             )
-        ).scalars().all()
+        ).scalars().all() if target_type_codes else []
         req_ids = [item.id for item in req_rows if item.id]
         deleted_codes = [item.code for item in req_rows if item.code]
         if req_ids:
             db.session.execute(delete(SdsReqd).where(SdsReqd.req_id.in_(req_ids)))
             db.session.execute(delete(SdsTrace).where(SdsTrace.req_id.in_(req_ids)))
             db.session.execute(delete(SrsReqd).where(SrsReqd.req_id.in_(req_ids)))
-        self.__prune_change_table_nodes(row.doc_id, row.type_name or "", deleted_codes)
-        self.__prune_req_detail_nodes_by_codes(row.doc_id, deleted_codes)
+        self.__prune_change_table_nodes(doc_id, target_name, deleted_codes)
+        self.__prune_req_detail_nodes_by_codes(doc_id, deleted_codes)
+        if target_type_codes:
+            db.session.execute(
+                delete(SrsReq).where(
+                    SrsReq.doc_id == doc_id,
+                    SrsReq.type_code.in_(list(target_type_codes)),
+                )
+            )
         db.session.execute(
-            delete(SrsReq).where(
-                SrsReq.doc_id == row.doc_id,
-                SrsReq.type_code == row.type_code,
+            delete(SrsType).where(
+                SrsType.doc_id == doc_id,
+                SrsType.id.in_(list(target_type_ids)),
             )
         )
-        db.session.execute(delete(SrsType).where(SrsType.id == id))
+        # 清理导入兜底（__upsert_imported_change_req_tables_from_tree）误建的“变更类型空壳”：
+        # 这类自动生成的 type_code 一律是 change_ 前缀；当其名下已无任何 srs_req 时即为无效空表，
+        # 删除变更表时一并清掉，避免刷新后渲染出“暂无数据”空表。
+        # 用户手动新增的变更表 type_code 为 uuid（见 add_srs_type），不以 change_ 开头，不受影响。
+        orphan_types: List[SrsType] = db.session.execute(
+            select(SrsType).where(
+                SrsType.doc_id == doc_id,
+                SrsType.type_code.like("change_%"),
+            )
+        ).scalars().all()
+        empty_type_ids = []
+        for orphan in orphan_types:
+            req_count = db.session.execute(
+                select(func.count()).select_from(SrsReq).where(
+                    SrsReq.doc_id == doc_id,
+                    SrsReq.type_code == orphan.type_code,
+                )
+            ).scalars().first()
+            if not req_count and orphan.id:
+                empty_type_ids.append(orphan.id)
+        if empty_type_ids:
+            db.session.execute(delete(SrsType).where(SrsType.id.in_(empty_type_ids)))
+            logger.info(
+                "delete_srs_type prune empty change-type shells: doc_id=%s type_ids=%s",
+                doc_id, sorted(empty_type_ids),
+            )
         db.session.commit()
         return Resp.resp_ok()
    

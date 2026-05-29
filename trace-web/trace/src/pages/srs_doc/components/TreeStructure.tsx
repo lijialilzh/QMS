@@ -1505,7 +1505,7 @@ const TreeNodeItem = ({
     const [fileList, setFileList] = useState<UploadFile[]>([]);
     const [uploadLoading, setUploadLoading] = useState(false);
     // 新增模板需要直接展示二级/三级结构，避免空模板看起来只剩一级菜单。
-    const [expanded, setExpanded] = useState(() => level < 2);
+    const [expanded, setExpanded] = useState(() => level < 1);
     const embeddedImageNode = (node.children || []).find((child) => isEmbeddedImageNode(child));
     const productBoundImageRefType = resolveProductBoundDocImageRefType(node);
     const isProductBoundDocImageNode = !!productBoundImageRefType;

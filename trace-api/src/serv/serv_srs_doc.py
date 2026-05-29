@@ -2023,11 +2023,33 @@ class Server(object):
                 walk(getattr(node, "children", None) or [])
 
         walk(nodes)
-        if added_type or added_req or migrated_req:
+        # 兜底建表后清理“变更类型空壳”：模板占位/无合规需求行的“变更”表节点会被建出 type 但 0 条
+        # srs_req，这类 change_ 前缀空壳会被前端渲染成“暂无数据”空表，且每次保存都重建。
+        # 这里统一清掉本文档下无任何 srs_req 的 change_ 空壳；有数据的导入表(req>0)不受影响，
+        # 用户手动新增的变更表 type_code 为 uuid（不以 change_ 开头）也不受影响。
+        db.session.flush()
+        removed_shell_ids: List[int] = []
+        shell_types: List[SrsType] = db.session.execute(
+            select(SrsType).where(
+                SrsType.doc_id == doc_id,
+                SrsType.type_code.like("change_%"),
+            )
+        ).scalars().all()
+        for shell in shell_types:
+            shell_req_count = db.session.execute(
+                select(func.count()).select_from(SrsReq).where(
+                    SrsReq.doc_id == doc_id,
+                    SrsReq.type_code == shell.type_code,
+                )
+            ).scalars().first()
+            if not shell_req_count and shell.id:
+                db.session.delete(shell)
+                removed_shell_ids.append(shell.id)
+        if added_type or added_req or migrated_req or removed_shell_ids:
             db.session.commit()
             logger.info(
-                "import change_req fallback: doc_id=%s added_type=%d added_req=%d migrated_req=%d",
-                doc_id, added_type, added_req, migrated_req,
+                "import change_req fallback: doc_id=%s added_type=%d added_req=%d migrated_req=%d removed_shells=%s",
+                doc_id, added_type, added_req, migrated_req, sorted(removed_shell_ids),
             )
 
     def __sync_srs_reqs_from_doc_tables(self, doc_id: int, nodes: List[SrsNodeForm]):

@@ -543,7 +543,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
 
   return (
     <Modal
-      title={ts('srs_doc.add_table')}
+      title={initialData ? ts('srs_doc.edit_table') : ts('srs_doc.add_table')}
       open={open}
       onCancel={handleCancel}
       footer={null}
