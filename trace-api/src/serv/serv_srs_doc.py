@@ -55,6 +55,7 @@ from ..model.srs_doc import SrsDoc, SrsNode
 from ..obj.tobj_srs_doc import SrsDocForm, SrsNodeForm
 from ..utils.sql_ctx import db
 from ..utils.i18n import ts
+from ..utils import get_uuid
 from ..obj import Page, Resp
 from .serv_srs_req import Server as ServSrsReq
 from .serv_srs_reqd import Server as ServSrsReqd
@@ -3131,17 +3132,25 @@ class Server(object):
             db.session.flush()
             self.__update_nodes(newdoc, 0, fromdoc.content)
 
+            # 变更需求表的 type_code 是跨文档业务标识，复制时必须重新生成，否则新旧文档共享
+            # 同一 type_code，导致在副本里操作变更需求会串改到原文档。标准/其他需求(1/2)语义固定，保持不变。
+            type_code_map: Dict[str, str] = {}
             srstypes: List[SrsType] = db.session.execute(select(SrsType).where(SrsType.doc_id == fromdoc.id).order_by(SrsType.id)).scalars().all()
             for srstype in srstypes:
-                newtype = SrsType(doc_id=newdoc.id, type_code=srstype.type_code, type_name=srstype.type_name)
+                new_type_code = srstype.type_code
+                if srstype.type_code and srstype.type_code not in ("1", "2"):
+                    new_type_code = get_uuid()
+                    type_code_map[srstype.type_code] = new_type_code
+                newtype = SrsType(doc_id=newdoc.id, type_code=new_type_code, type_name=srstype.type_name)
                 db.session.add(newtype)
 
             sql = select(SrsReq, SrsReqd).outerjoin(SrsReqd, SrsReq.id == SrsReqd.req_id).where(SrsReq.doc_id == fromdoc.id)
             srsreqs: List[Tuple[SrsReq, SrsReqd]] = db.session.execute(sql).all()
             for srsreq, reqd in srsreqs:
+                new_req_type_code = type_code_map.get(srsreq.type_code, srsreq.type_code)
                 newreq = SrsReq(doc_id=newdoc.id, code=srsreq.code, module=srsreq.module, 
                             function=srsreq.function, sub_function=srsreq.sub_function,
-                            location=srsreq.location, type_code=srsreq.type_code)
+                            location=srsreq.location, type_code=new_req_type_code)
                 db.session.add(newreq)
                 db.session.flush()
                 if reqd:
