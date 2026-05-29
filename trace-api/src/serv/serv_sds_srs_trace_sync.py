@@ -2031,6 +2031,9 @@ class SdsSrsTraceSyncMixin:
                 return
             if id(node) in design_root_ids:
                 return
+            # 第1-5/7/8章整章、以及第6章模板固定区(X.1~X.5)：一切以导入为准，不改标题。
+            if self._is_in_fixed_template_zone(roots, node, parent_map, None):
+                return
             body = self._strip_sds_heading_text(getattr(node, "title", "") or "") or getattr(node, "title", "") or ""
             node.title = f"{heading} {body}".strip() if body else heading
 
@@ -2258,6 +2261,10 @@ class SdsSrsTraceSyncMixin:
         major = self._product_chapter_major(product_root)
         if major is None:
             return False
+        # 只有第6章是功能同步区；第1-5/7/8章整章一切以导入为准，全部视为固定区，
+        # 获取SRS追溯不剪枝、不清理、不重排，保持导入原样。
+        if major != 6:
+            return True
         parent_map = parent_map or self._build_node_parent_map(roots)
         current = node
         while current is not None and current is not product_root:
@@ -3401,6 +3408,14 @@ class SdsSrsTraceSyncMixin:
             return clean(items or [])
 
         for _trace, req in trace_rows:
+            # 仅第6章功能参与同步；落在第1-5/7/8章的标准需求一切以导入为准，不生成/放置/覆盖。
+            # 用 _resolve_product_major_for_req 判定(RCN301~307 先按编号段判为第6章，不受 type_code 影响)，
+            # 避免误伤 type_code=1 的第6章功能(如 RCN301 用户登录)。
+            if self._resolve_product_major_for_req(
+                str(getattr(req, "code", "") or ""),
+                str(getattr(req, "type_code", "") or ""),
+            ) != 6:
+                continue
             desired_code = normalize_code(str(getattr(req, "code", "") or "").replace("SRS", "SDS"))
             old_codes = [
                 normalize_code(token)
@@ -4106,6 +4121,9 @@ class SdsSrsTraceSyncMixin:
             return
         major = self._product_chapter_major(product_root)
         if major is None:
+            return
+        # 只有第6章是功能同步区；第1-5/7/8章一切以导入为准，不重排不过滤，保持原样。
+        if major != 6:
             return
 
         def is_stopper(node: SdsNodeForm):
