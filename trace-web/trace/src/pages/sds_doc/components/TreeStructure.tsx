@@ -694,6 +694,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const compactWithImage = !readOnly && hasDisplayImage;
     // 物理拓扑图(img_topo)、系统结构图(img_struct)只能自动获取，禁止删除/重新上传
     const isAutoOnlyImage = node.ref_type === 'img_topo' || node.ref_type === 'img_struct';
+    // 标准需求/变更需求对应章节(SDS-RCN 编码)：章节标题与 SDS 编码只读，不可修改
+    const isTraceReqNode = /^SDS-RCN/i.test(String(resolvedSdsCode || node.sds_code || "").trim());
     const imageSourceNodeId = !readOnly
         ? node.id
         : node.ref_type === "img_flow"
@@ -1246,7 +1248,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           value={editDisplayTitle}
                           onChange={(e) => onTitleChange(node.id, e.target.value)}
                           placeholder={ts('please_input_title')}
-                          disabled={readOnly}
+                          disabled={readOnly || isTraceReqNode}
                       />
                   )}
                   {
@@ -1258,7 +1260,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                             value={resolvedSdsCode}
                             onChange={(e) => onSdsCodeChange(node.id, e.target.value)}
                             placeholder={ts('please_input_sds_code')}
-                            disabled={readOnly}
+                            disabled={readOnly || isTraceReqNode}
                         />
                     )
                   }
@@ -1491,7 +1493,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                               tableLayout="fixed"
                           />
                           </div>
-                          {!readOnly && (
+                          {!readOnly && !isTraceSectionTitle && (
                           <Space className="node-table-actions" size={8}>
                               <Button
                                   size="small"
