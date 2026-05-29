@@ -1117,6 +1117,66 @@ class Server(SdsSrsTraceSyncMixin, object):
             db.session.rollback()
         return Resp.resp_err(msg=ts(msg_err_db))
 
+    def _backfill_sds_code_from_trace_table(self, roots: List[SdsNodeForm]):
+        """导入时用 word 自带的“需求-设计追溯表”按功能名称把设计编号回填到第6章下的功能节点。
+
+        追溯表“需求/代码”列形如“用户登录(章节 6.6.1)”，取其功能名“用户登录”，与第6章
+        （功能详细设计）下功能节点标题去掉章节号后的名称匹配，把“设计编号”列回填到节点
+        sds_code（仅空值）。只处理第6章下功能（标准需求/变更需求对应的功能），其它章节的
+        模块节点不回填；仅导入环节使用，不改标题/正文/结构，不触碰 word 解析逻辑。
+        """
+        if not roots:
+            return
+        name_to_code: Dict[str, str] = {}
+
+        def norm_name(value: str) -> str:
+            return re.sub(r"\s+", "", self._strip_sds_heading_text(str(value or "")).strip())
+
+        def collect(nodes: List[SdsNodeForm]):
+            for node in nodes or []:
+                tbl = getattr(node, "table", None)
+                headers = getattr(tbl, "headers", None) if tbl is not None else None
+                rows = getattr(tbl, "rows", None) if tbl is not None else None
+                if headers and rows:
+                    code_col = None
+                    ref_col = None
+                    for h in headers:
+                        hname = re.sub(r"\s+", "", str(getattr(h, "name", "") or ""))
+                        hcode = getattr(h, "code", "") or ""
+                        if not code_col and "设计编号" in hname:
+                            code_col = hcode
+                        elif not ref_col and ("需求/代码" in hname or "代码" in hname):
+                            ref_col = hcode
+                    if code_col and ref_col:
+                        for row in rows:
+                            if not isinstance(row, dict):
+                                continue
+                            raw_code = str(row.get(code_col, "") or "")
+                            sds_code = raw_code.replace("\r", "").split("\n")[0].strip()
+                            ref = str(row.get(ref_col, "") or "")
+                            # “用户登录(章节 6.6.1)” → 仅取功能名“用户登录”
+                            feat = re.sub(r"[（(]\s*章节.*$", "", ref).strip()
+                            key = re.sub(r"\s+", "", feat)
+                            if sds_code and key:
+                                name_to_code.setdefault(key, sds_code)
+                collect(getattr(node, "children", None) or [])
+
+        collect(roots)
+        if not name_to_code:
+            return
+
+        def backfill(nodes: List[SdsNodeForm]):
+            for node in nodes or []:
+                heading = self._parse_sds_node_heading(getattr(node, "title", "") or "")
+                in_chapter6 = bool(heading) and heading.split(".")[0] == "6"
+                if in_chapter6 and not (getattr(node, "sds_code", "") or "").strip():
+                    key = norm_name(getattr(node, "title", "") or "")
+                    if key and key in name_to_code:
+                        node.sds_code = name_to_code[key]
+                backfill(getattr(node, "children", None) or [])
+
+        backfill(roots)
+
     def _update_nodes(self, doc: SdsDoc, p_id, nodes: List[SdsNodeForm]):
         for idx, node in enumerate(nodes):
             sql = select(SdsNode).where(SdsNode.doc_id == doc.id, SdsNode.n_id == node.n_id) if node.n_id else None
@@ -1204,6 +1264,7 @@ class Server(SdsSrsTraceSyncMixin, object):
                     form.content = self.__normalize_heading_hierarchy(form.content)
                     form.content = self._dedupe_requirement_nodes(form.content)
                 form.content = self._clear_node_ids(form.content)
+                self._backfill_sds_code_from_trace_table(form.content)
                 self._update_nodes(row, 0, form.content)
             srs_reqs: List[SrsReq] = db.session.execute(select(SrsReq).where(SrsReq.doc_id == form.srsdoc_id)).scalars().all()
     

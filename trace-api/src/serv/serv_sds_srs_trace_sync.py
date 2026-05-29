@@ -1,6 +1,7 @@
 """SDS 获取 SRS 追溯、图2 追溯表、第6章功能设计同步 — 与 SRS 独立维护。"""
 
 import re
+import difflib
 import logging
 from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple
@@ -587,6 +588,10 @@ class SdsSrsTraceSyncMixin:
         )
         if body_norm != display_norm or parent_body != mod_norm:
             return existing
+        # 原功能节点已有实质设计内容：说明这是『真实模块 > 功能』正确两级结构，
+        # 不是 Word 多套的冗余空壳层，保持原结构、不合并，避免丢失内容。
+        if self._node_has_substantive_design_body(existing):
+            return existing
         parent.sds_code = code
         if design_text:
             parent.text = design_text
@@ -895,10 +900,10 @@ class SdsSrsTraceSyncMixin:
             return False
         by_req_id = by_req_id or {}
         if req_id is not None and by_req_id.get(req_id) is node:
-            if trace_rows and self._body_mentions_other_trace_req(
-                node, req_id, req, hierarchy_map, trace_rows
-            ):
-                return False
+            # by_req_id 由内容/功能名匹配确认是同一旧功能：直接认定属于该需求。
+            # 不再用 _body_mentions_other_trace_req 否决——功能正文普遍含
+            # “超级管理员…登录成功”等通用前缀，易被误判为提及其他功能，
+            # 从而导致改名/编号偏移的旧功能内容被错误清空。
             return True
         if trace_rows and self._body_mentions_other_trace_req(
             node, req_id, req, hierarchy_map, trace_rows
@@ -963,6 +968,22 @@ class SdsSrsTraceSyncMixin:
         return not self._node_content_belongs_to_req(
             node, req, req_id, hierarchy_map, module_name, expected_text, trace_rows, by_req_id
         )
+
+    def _node_has_substantive_design_body(self, node: SdsNodeForm) -> bool:
+        """节点功能设计正文是否含实质内容（区别于『(1)总体描述 无 …』空模板）。"""
+        ov = self._extract_design_overview(node)
+        if ov and ov not in ("无", "无。"):
+            return True
+        text = re.sub(r"\s+", "", str(getattr(node, "text", "") or ""))
+        if not text:
+            return False
+        stripped = re.sub(
+            r"[（(]\s*\d+\s*[)）](总体描述|功能|程序逻辑|输入项|输出项|接口)?",
+            "",
+            text,
+        )
+        stripped = stripped.replace("无", "").replace("。", "")
+        return len(stripped) > 4
 
     def _node_text_matches_req(self, node: SdsNodeForm, expected_text: str) -> bool:
         """比对节点正文与 SRS 设计说明是否同源，避免新 key 复用旧编号时保留旧正文。"""
@@ -1500,13 +1521,16 @@ class SdsSrsTraceSyncMixin:
         req_id = getattr(req, "id", None) if req is not None else None
         if (
             req is not None
-            and hierarchy_map is not None
             and by_req_id is not None
             and req_id is not None
             and by_req_id.get(req_id) is node
-            and self._node_text_matches_req(node, expected_text)
         ):
-            return
+            # 该节点已被内容/功能名匹配确认是同一旧功能：只要它有实质设计内容，
+            # 就保留（改名/编号偏移不丢内容）；正文与 SRS 同源时同样保留。
+            if self._node_has_substantive_design_body(node) or self._node_text_matches_req(
+                node, expected_text
+            ):
+                return
         if (
             req is not None
             and hierarchy_map is not None
@@ -3128,6 +3152,9 @@ class SdsSrsTraceSyncMixin:
         parent_map = self._build_node_parent_map(roots)
         design_roots = self._find_design_chapter_roots(roots)
         by_req_id: Dict[int, SdsNodeForm] = {}
+        self._bootstrap_by_req_id_by_content(
+            trace_rows, roots, reqd_by_req_id, hierarchy_map, by_req_id
+        )
         for _bootstrap_trace, _bootstrap_req in trace_rows:
             req_id = getattr(_bootstrap_req, "id", None)
             if req_id is None or req_id in by_req_id:
@@ -3371,6 +3398,7 @@ class SdsSrsTraceSyncMixin:
                     by_code.pop(code, None)
                     existing = None
                 if existing is not None and module_name and not is_change_req and target_product is not None:
+                    module_node_check = None
                     if hierarchy_path and len(hierarchy_path) > 1:
                         module_node_check = self._ensure_child_node_by_title(target_product, hierarchy_path[0])
                     if module_node_check is not None and not self._is_descendant_of(
@@ -3438,6 +3466,10 @@ class SdsSrsTraceSyncMixin:
                         by_code.pop(code, None)
                         existing = promoted
                         register_code_node(code, existing)
+                        # 同步绑定到提升后的节点，使后续 can_reuse 命中 req_id 绑定、保留内容
+                        _promoted_rid = getattr(req, "id", None)
+                        if _promoted_rid is not None:
+                            by_req_id[_promoted_rid] = existing
                         parent_map = self._build_node_parent_map(roots)
                 skip_module_nest = len(hierarchy_path or []) == 1
                 if existing is not None and not self._trace_can_reuse_node(
@@ -3660,6 +3692,146 @@ class SdsSrsTraceSyncMixin:
                 self._sort_and_renumber_sync_area_by_sds_code(product_root)
 
         return roots
+
+    def _extract_design_overview(self, node: SdsNodeForm) -> str:
+        """提取 SDS 节点正文中的『总体描述』段，用于与 SRS 需求概述做内容匹配。"""
+        text = str(getattr(node, "text", "") or "")
+        if not text.strip():
+            return ""
+        matched = re.search(
+            r"总体描述[）)\s]*\n?(.*?)(?:\n\s*[（(]\s*\d+\s*[)）]|\Z)",
+            text,
+            re.S,
+        )
+        body = matched.group(1) if matched else text
+        return re.sub(r"\s+", "", body)
+
+    @staticmethod
+    def _content_match_ratio(a: str, b: str) -> float:
+        """两段已归一化文本的相似度（0~1）：短串被长串包含按长度比，否则用序列相似度。"""
+        if not a or not b:
+            return 0.0
+        if a == b:
+            return 1.0
+        shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+        if shorter in longer:
+            # 概述（短串）整段出现在设计正文（长串）里即视为强匹配，
+            # 不让正文长度把分数拖低，避免“详细设计 vs 简短概述”被误判为不匹配。
+            if len(shorter) >= 6:
+                return 0.9
+            return len(shorter) / len(longer)
+        return difflib.SequenceMatcher(None, a, b).ratio()
+
+    def _name_match_ratio(self, node: SdsNodeForm, req: SrsReq, hierarchy_map: dict) -> float:
+        """SDS 节点标题与 SRS 章节名的模糊相似度（0~1）：完全相等=1；
+        互为子串（用户登录↔用户登录33）=0.9；否则按字符集 Jaccard，
+        使『编辑目标物↔目标物编辑』算同一功能，而『添加目标物↔删除目标物』不会误配。"""
+        fields = sdstrace_serv.hierarchy_for_req(req, hierarchy_map)
+        chapter = sdstrace_serv.compose_srs_req_chapter(req, hierarchy_map=hierarchy_map, **fields)
+        chapter_norm = self._normalize_sds_node_title(chapter or "")
+        node_name = self._normalize_sds_node_title(
+            self._strip_sds_heading_text(getattr(node, "title", "") or "")
+        )
+        if not chapter_norm or not node_name:
+            return 0.0
+        if chapter_norm == node_name:
+            return 1.0
+        if chapter_norm in node_name or node_name in chapter_norm:
+            return 0.9
+        sa, sb = set(chapter_norm), set(node_name)
+        union = sa | sb
+        return len(sa & sb) / len(union) if union else 0.0
+
+    def _bootstrap_by_req_id_by_content(
+        self,
+        trace_rows,
+        roots: List[SdsNodeForm],
+        reqd_by_req_id: Dict[int, SrsReqd],
+        hierarchy_map: dict,
+        by_req_id: Dict[int, SdsNodeForm],
+        content_threshold: float = 0.6,
+    ) -> None:
+        """以『功能设计内容(总体描述) ↔ SRS需求概述』相似度，建立 req_id→SDS节点 锚点。
+
+        SDS 设计内容基本抄自 SRS 概述，且不随改名/编号偏移而变，故作为对应主依据：
+        相似度足够高即认定为同一旧功能（保留内容）；相似度不足的留给后续
+        功能名/saved_location 兜底，仍无人认领的 SRS 需求即视为新功能（取 SRS）。
+        """
+        design_roots = self._find_design_chapter_roots(roots)
+        if not design_roots:
+            return
+        parent_map = self._build_node_parent_map(roots)
+        design_root_ids = {id(root) for root in design_roots}
+        containers = self._container_title_norms()
+        design_nodes: List[SdsNodeForm] = []
+        seen_ids = set()
+
+        def walk(nodes):
+            for node in nodes or []:
+                if self._is_in_fixed_template_zone(roots, node, parent_map, design_roots):
+                    walk(getattr(node, "children", None) or [])
+                    continue
+                raw_title = self._strip_sds_heading_text(getattr(node, "title", "") or "")
+                title_norm = self._normalize_sds_node_title(raw_title)
+                is_figure = bool(re.match(r"^图\s*\d", raw_title.strip()))
+                has_code = bool(re.sub(r"\s+", "", str(getattr(node, "sds_code", "") or "")))
+                ov = self._extract_design_overview(node)
+                has_real_content = bool(ov) and ov not in ("无", "无。")
+                # 不再要求已有编号（导入态可能未回填）；但排除产品根、图节点、
+                # 纯模块容器，且至少要『有编号 或 有实质设计内容』，避免误纳空壳/标题节点。
+                if (
+                    title_norm
+                    and id(node) not in design_root_ids
+                    and not is_figure
+                    and title_norm not in containers
+                    and (has_code or has_real_content)
+                    and id(node) not in seen_ids
+                ):
+                    seen_ids.add(id(node))
+                    design_nodes.append(node)
+                walk(getattr(node, "children", None) or [])
+
+        for root in design_roots:
+            walk([root])
+        if not design_nodes:
+            return
+
+        node_overviews = [(node, self._extract_design_overview(node)) for node in design_nodes]
+        pending = []
+        for _trace, req in trace_rows:
+            rid = getattr(req, "id", None)
+            if rid is None or rid in by_req_id:
+                continue
+            if self._is_algorithm_requirement(req, hierarchy_map):
+                continue
+            reqd = reqd_by_req_id.get(rid)
+            overview = re.sub(r"\s+", "", str(getattr(reqd, "overview", "") or "")) if reqd else ""
+            # 概述为空也加入：可仅靠功能名模糊匹配兜底锚定旧功能
+            pending.append((rid, overview, req))
+        if not pending:
+            return
+
+        used_nodes = {id(n) for n in by_req_id.values()}
+        pairs = []
+        for rid, overview, req in pending:
+            for node, node_ov in node_overviews:
+                content_ratio = self._content_match_ratio(overview, node_ov) if node_ov else 0.0
+                name_ratio = self._name_match_ratio(node, req, hierarchy_map)
+                # 内容相似 或 功能名模糊一致，任一达标即视为候选（模糊匹配）
+                score = max(content_ratio, name_ratio)
+                if score >= content_threshold:
+                    name_match = 1 if name_ratio >= 0.9 else 0
+                    pairs.append((score, name_match, rid, node))
+        # 相似度优先；相似度相同时，功能名与节点标题一致的需求优先占用该节点，
+        # 避免 reqd 错位的新需求（如反转概述=操作指南）抢走旧功能（操作指南）的节点。
+        pairs.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        bound_reqs = set()
+        for _ratio, _name_match, rid, node in pairs:
+            if rid in bound_reqs or id(node) in used_nodes:
+                continue
+            by_req_id[rid] = node
+            bound_reqs.add(rid)
+            used_nodes.add(id(node))
 
     def _collect_design_req_index(self, roots: List[SdsNodeForm]):
         """在全文档设计树中索引已有需求节点（按 SDS 编号 / 标题）。"""
