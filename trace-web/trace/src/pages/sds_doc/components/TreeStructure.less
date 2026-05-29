@@ -54,6 +54,7 @@
         .node-row {
             display: flex;
             align-items: center;
+            flex-wrap: wrap;
 
             .node-expand-btn {
                 margin-right: 4px;
@@ -105,9 +106,13 @@
             }
 
             .node-text-area {
-                margin-right: 12px;
-                flex: 1 1 auto;
+                margin-right: 0;
+                flex: 1 1 calc(100% - 134px);
+                max-width: calc(100% - 134px);
                 min-width: 0;
+                order: 99;
+                margin-top: 6px;
+                margin-left: 134px;
             }
 
             .node-pic {
@@ -253,6 +258,8 @@
             }
 
             &.node-row-has-image {
+                flex-wrap: nowrap;
+
                 .node-title-prefix {
                     margin-right: 12px;
                 }
@@ -274,6 +281,9 @@
                     flex: 0 0 160px;
                     min-width: 160px;
                     max-width: 220px;
+                    order: 0;
+                    margin-top: 0;
+                    margin-left: 0;
                 }
 
                 .node-pic {
