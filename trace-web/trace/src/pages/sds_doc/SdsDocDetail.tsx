@@ -1918,6 +1918,22 @@ export default () => {
                             console.error("静默保存详细设计同步目录失败:", error);
                         });
                     }
+                    // 进入/刷新页面自动同步功能设计：仅对内容为空的章节从 SRS 补全，
+                    // 已有内容一律不动（以详细设计为准），不重排结构/编号/标题。
+                    if (!isReadOnly && !needRebindSrs && targetRow.srsdoc_id) {
+                        const syncDocId = targetRow.id || (params.id ? parseInt(params.id) : 0);
+                        if (syncDocId) {
+                            Api.sync_design_text_only({ doc_id: syncDocId })
+                                .then(async (syncRes: any) => {
+                                    if (syncRes?.code === Api.C_OK && (syncRes.data?.updated || 0) > 0) {
+                                        await refreshSdsDocTree(syncDocId);
+                                    }
+                                })
+                                .catch((error: any) => {
+                                    console.error("自动补全功能设计内容失败:", error);
+                                });
+                        }
+                    }
                     if (needRebindSrs) {
                         message.warning("该详细设计未绑定需求规格说明版本，请先绑定该产品下需求规格说明后再进行操作。");
                         if (isReadOnly) {

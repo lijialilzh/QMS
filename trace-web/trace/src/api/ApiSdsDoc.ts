@@ -54,3 +54,7 @@ export const import_sds_doc_word = async (params: any) => {
 export const sync_srs_trace = async (params: { doc_id: number }) => {
     return await httpPost("/trace-api/sds_doc/sync_srs_trace", params2form(params));
 };
+
+export const sync_design_text_only = async (params: { doc_id: number }) => {
+    return await httpPost("/trace-api/sds_doc/sync_design_text_only", params2form(params));
+};

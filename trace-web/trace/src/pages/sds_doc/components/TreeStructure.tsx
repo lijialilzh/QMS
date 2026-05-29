@@ -692,6 +692,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         : (node.img_url || embeddedImageChild?.img_url || firstImageChild?.img_url || "");
     const hasDisplayImage = !!String(displayImageUrl || "").trim();
     const compactWithImage = !readOnly && hasDisplayImage;
+    // 物理拓扑图(img_topo)、系统结构图(img_struct)只能自动获取，禁止删除/重新上传
+    const isAutoOnlyImage = node.ref_type === 'img_topo' || node.ref_type === 'img_struct';
     const imageSourceNodeId = !readOnly
         ? node.id
         : node.ref_type === "img_flow"
@@ -1323,6 +1325,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                               alt={displayTitle || 'image'}
                               preview={true}
                           />
+                          {!isAutoOnlyImage && (
                           <Button
                               type="text"
                               size="small"
@@ -1351,9 +1354,10 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                   justifyContent: "center",
                               }}
                           />
+                          )}
                       </div>
                   )}
-                  {level <= 2 && !readOnly && (
+                  {(level <= 2 || !!String(node.img_url || "").trim()) && !readOnly && !isAutoOnlyImage && (
                       <Space className="node-pic" size={compactWithImage ? 4 : 8} style={compactWithImage ? { marginRight: 6 } : undefined}>
                           <Upload {...uploadProps}>
                               <Button
@@ -1428,6 +1432,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           </Button>
                       </Upload>
                       )}
+                      {!isAutoOnlyImage && (
                       <Popconfirm
                           title={ts('confirm_delete')}
                           onConfirm={() => onDelete(node.id)}
@@ -1441,6 +1446,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                               {ts('delete')}
                           </Button>
                       </Popconfirm>
+                      )}
                   </Space>
                   )}
               </div>

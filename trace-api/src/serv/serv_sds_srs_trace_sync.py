@@ -278,6 +278,108 @@ class SdsSrsTraceSyncMixin:
             "content": roots,
         })
 
+    async def sync_design_text_only(self, doc_id: int):
+        """页面加载自动同步：仅对功能设计为空的章节，按编号从 SRS 补全内容。
+        已有内容一律不动（以详细设计为准、只补空），不重排结构/编号/标题。"""
+        row: SdsDoc = db.session.execute(select(SdsDoc).where(SdsDoc.id == doc_id)).scalars().first()
+        if not row:
+            return Resp.resp_err(msg=ts("msg_obj_null"))
+
+        nodes: list[SdsNode] = db.session.execute(
+            select(SdsNode).where(SdsNode.doc_id == doc_id).order_by(SdsNode.priority)
+        ).scalars().all()
+        objs_dict: Dict[int, SdsNodeForm] = {}
+        roots: List[SdsNodeForm] = []
+        for node in nodes:
+            obj = SdsNodeForm(
+                children=[], doc_id=node.doc_id, n_id=node.n_id, p_id=node.p_id,
+                title=node.title, label=node.label, img_url=node.img_url, text=node.text,
+                ref_type=node.ref_type, table=self._parse_sds_table(node.table), sds_code=node.sds_code,
+            )
+            objs_dict[obj.n_id] = obj
+        for obj in objs_dict.values():
+            if obj.p_id == 0:
+                roots.append(obj)
+            else:
+                parent = objs_dict.get(obj.p_id)
+                if parent:
+                    parent.children.append(obj)
+
+        hierarchy_map = _trace_load_srs_req_hierarchy_map(getattr(row, "srsdoc_id", None) or 0)
+        trace_rows = db.session.execute(
+            select(SdsTrace, SrsReq)
+            .join(SrsReq, SrsReq.id == SdsTrace.req_id)
+            .where(SdsTrace.doc_id == doc_id)
+            .where(SrsReq.type_code != "reqd")
+        ).all()
+        if not trace_rows:
+            return Resp.resp_ok(data={"updated": 0})
+
+        srs_codes = list({
+            str(getattr(req, "code", "") or "").strip()
+            for _t, req in trace_rows if str(getattr(req, "code", "") or "").strip()
+        })
+        trace_req_ids = [getattr(req, "id", None) for _t, req in trace_rows if getattr(req, "id", None)]
+        reqd_by_srs_code: Dict[str, SrsReqd] = {}
+        reqd_by_req_id: Dict[int, SrsReqd] = {}
+        if srs_codes or trace_req_ids:
+            reqd_query = (
+                select(SrsReqd, SrsReq)
+                .join(SrsReq, SrsReq.id == SrsReqd.req_id)
+                .where(SrsReq.doc_id == getattr(row, "srsdoc_id", None))
+            )
+            if srs_codes and trace_req_ids:
+                reqd_query = reqd_query.where(
+                    (SrsReq.code.in_(srs_codes)) | (SrsReq.id.in_(trace_req_ids))
+                )
+            elif srs_codes:
+                reqd_query = reqd_query.where(SrsReq.code.in_(srs_codes))
+            else:
+                reqd_query = reqd_query.where(SrsReq.id.in_(trace_req_ids))
+            for reqd_row, req_row in db.session.execute(reqd_query).all():
+                ccode = str(getattr(req_row, "code", "") or "").strip()
+                if ccode and ccode not in reqd_by_srs_code:
+                    reqd_by_srs_code[ccode] = reqd_row
+                rid = getattr(req_row, "id", None)
+                if rid is not None and rid not in reqd_by_req_id:
+                    reqd_by_req_id[rid] = reqd_row
+
+        def _norm(v) -> str:
+            return re.sub(r"\s+", "", str(v or "").strip().upper())
+
+        code_to_req: Dict[str, SrsReq] = {}
+        for _trace, req in trace_rows:
+            sds_code = _norm(getattr(_trace, "sds_code", "") or "") or _norm(
+                str(getattr(req, "code", "") or "").replace("SRS", "SDS")
+            )
+            if sds_code and sds_code not in code_to_req:
+                code_to_req[sds_code] = req
+
+        updated = 0
+
+        def walk(node_list):
+            nonlocal updated
+            for node in node_list or []:
+                code = _norm(getattr(node, "sds_code", "") or "")
+                # 仅处理有编号、且功能设计为空（无实质内容）的章节
+                if code and not self._node_has_substantive_design_body(node):
+                    req = code_to_req.get(code)
+                    if req is not None:
+                        design_text = self._compose_design_text_for_trace_sync(
+                            req, str(getattr(req, "code", "") or ""), getattr(req, "id", None),
+                            reqd_by_srs_code, reqd_by_req_id, hierarchy_map, trace_rows,
+                        )
+                        if self._design_text_is_substantive(design_text) and \
+                                design_text.strip() != (getattr(node, "text", "") or "").strip():
+                            node.text = design_text
+                            updated += 1
+                walk(getattr(node, "children", None) or [])
+
+        walk(roots)
+        if updated:
+            self._persist_sds_tree(row, roots)
+        return Resp.resp_ok(data={"updated": updated})
+
     @staticmethod
     def _parse_sds_node_heading(value: str) -> str:
         matched = re.match(
@@ -1131,6 +1233,18 @@ class SdsSrsTraceSyncMixin:
             for child in getattr(node, "children", None) or []
         )
 
+    def _node_subtree_has_image(self, node: SdsNodeForm) -> bool:
+        """子树内是否含图片（程序逻辑图等）：图节点无追溯编号，
+        清理同步区残留章节时须按内容保留，避免误删用户导入的程序逻辑图。"""
+        if node is None:
+            return False
+        if str(getattr(node, "img_url", "") or "").strip():
+            return True
+        return any(
+            self._node_subtree_has_image(child)
+            for child in getattr(node, "children", None) or []
+        )
+
     def _remove_sync_title_duplicates_without_code(
         self,
         roots: List[SdsNodeForm],
@@ -1221,6 +1335,9 @@ class SdsSrsTraceSyncMixin:
                     kept.append(node)
                     continue
                 if self._node_subtree_has_active_trace_code(node, active_codes):
+                    kept.append(node)
+                elif self._node_subtree_has_image(node):
+                    # 含程序逻辑图等图片内容的分支随所属功能保留，不当作残留删除
                     kept.append(node)
             return kept
 
@@ -1611,8 +1728,9 @@ class SdsSrsTraceSyncMixin:
                     continue
                 has_code = bool(getattr(node, "sds_code", None))
                 has_text = bool((getattr(node, "text", "") or "").strip())
+                has_image = bool(str(getattr(node, "img_url", "") or "").strip())
                 children = getattr(node, "children", None) or []
-                if parent is not None and not has_code and not has_text and children:
+                if parent is not None and not has_code and not has_text and not has_image and children:
                     node_norm = self._normalize_sds_node_title(
                         self._strip_sds_heading_text(getattr(node, "title", "") or "")
                     )
@@ -1622,7 +1740,8 @@ class SdsSrsTraceSyncMixin:
                     if node_norm and node_norm == parent_norm:
                         kept.extend(children)
                         continue
-                if not has_code and not has_text and not children:
+                # 含图片（程序逻辑图等）的节点不是空容器，须随功能保留
+                if not has_code and not has_text and not children and not has_image:
                     continue
                 kept.append(node)
             return kept
@@ -3267,7 +3386,8 @@ class SdsSrsTraceSyncMixin:
                     body_norm = self._normalize_sds_node_title(
                         self._strip_sds_heading_text(getattr(node, "title", "") or "")
                     )
-                    is_empty_leaf = not codes and not getattr(node, "children", None)
+                    has_image = bool(str(getattr(node, "img_url", "") or "").strip())
+                    is_empty_leaf = not codes and not getattr(node, "children", None) and not has_image
                     if (
                         is_empty_leaf
                         and self._is_product_sync_area_node(items, node, parent_map, design_roots)
@@ -4016,7 +4136,9 @@ class SdsSrsTraceSyncMixin:
             stoppers = [child for child in sortable_children if is_stopper(child)]
             regular = [
                 child for child in regular
-                if self._subtree_min_sds_code(child) or (getattr(child, "children", None) or [])
+                if self._subtree_min_sds_code(child)
+                or (getattr(child, "children", None) or [])
+                or self._node_subtree_has_image(child)
             ]
             regular.sort(key=sort_key)
             ordered = fixed_children + regular + stoppers

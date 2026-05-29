@@ -96,6 +96,12 @@ async def sync_srs_trace(doc_id: int = Form(...)):
     return await server.sync_srs_trace(doc_id)
 
 
+@router.post("/sync_design_text_only", summary="页面加载：仅补空章节功能设计内容", response_model=Resp[Any])
+@try_log(perm=Perms.sds_doc_edit)
+async def sync_design_text_only(doc_id: int = Form(...)):
+    return await server.sync_design_text_only(doc_id)
+
+
 @router.get("/list_sds_doc", summary="查询SDS_DOC列表", response_model=Resp[Page[SdsDocObj]])
 @try_log(perm=Perms.sds_doc_view)
 async def list_sds_doc(product_id: int = 0, version: str = None, page_index: int = 0, page_size: int = 10):
