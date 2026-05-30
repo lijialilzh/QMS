@@ -327,12 +327,56 @@ export default () => {
         });
         return { nodes: walk(nodes), changed };
     };
+    // 新增：全文产品名称同步（程序推断旧名 + 负向先行防重复，幂等、不写库；推断不出旧名则不动）
+    const collectTreeText = (nodes: TreeNode[]): string => {
+        const chunks: string[] = [];
+        const walk = (items: TreeNode[]) => (items || []).forEach((n) => {
+            chunks.push(String((n as any).text || ""));
+            walk((n.children || []) as TreeNode[]);
+        });
+        walk(nodes || []);
+        return chunks.join("\n");
+    };
+    const inferPreviousProductName = (nodes: TreeNode[], currentName: string): string => {
+        const allText = collectTreeText(nodes);
+        const candidates = Array.from(new Set([
+            currentName.replace(/[0-9０-９]+$/, ""),
+            currentName.replace(/[A-Za-z0-9０-９._\-（）()]+$/, ""),
+        ].map((s) => s.trim()).filter((s) => s && s !== currentName && s.length >= 4 && currentName.startsWith(s))));
+        return candidates.find((c) => allText.includes(c)) || "";
+    };
+    const applyProductNameAcrossTree = (nodes: TreeNode[], product?: any): { nodes: TreeNode[]; changed: boolean } => {
+        if (!Array.isArray(nodes) || !product) return { nodes, changed: false };
+        const currentName = String(product.name ?? "").trim();
+        if (!currentName) return { nodes, changed: false };
+        const previousName = inferPreviousProductName(nodes, currentName);
+        if (!previousName || previousName === currentName || !currentName.startsWith(previousName)) {
+            return { nodes, changed: false };
+        }
+        const suffix = currentName.slice(previousName.length);
+        if (!suffix) return { nodes, changed: false };
+        const escapeReg = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const pattern = new RegExp(`${escapeReg(previousName)}(?!${escapeReg(suffix)})`, "g");
+        let changed = false;
+        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+            const children = walk((node.children || []) as TreeNode[]);
+            const nextNode = { ...node, children };
+            const text = String(nextNode.text || "");
+            if (text) {
+                const replaced = text.replace(pattern, currentName);
+                if (replaced !== text) { nextNode.text = replaced; changed = true; }
+            }
+            return nextNode;
+        });
+        return { nodes: walk(nodes), changed };
+    };
     useEffect(() => {
         const scopeResult = applyProductScopeToTree(data.treeStructure as TreeNode[], currentProduct);
         const basicResult = applyProductBasicInfoToTree(scopeResult.nodes as TreeNode[], currentProduct);
-        if (scopeResult.changed || basicResult.changed) {
-            treeStructureRef.current = basicResult.nodes;
-            dispatch({ treeStructure: basicResult.nodes });
+        const nameResult = applyProductNameAcrossTree(basicResult.nodes as TreeNode[], currentProduct);
+        if (scopeResult.changed || basicResult.changed || nameResult.changed) {
+            treeStructureRef.current = nameResult.nodes;
+            dispatch({ treeStructure: nameResult.nodes });
         }
     }, [displayProductId, currentProduct?.scope, currentProduct?.name, currentProduct?.type_code, data.treeStructure]);
     const extractSdsCodeToken = (txt?: string): string => {
