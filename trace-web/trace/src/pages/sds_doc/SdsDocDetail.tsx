@@ -1138,9 +1138,13 @@ export default () => {
                 const guessedRefType = detectRefType(merged);
                 const nextChildren = walk((node.children || []) as TreeNode[]);
                 const keepExistingRefType = node.ref_type && !DOC_IMAGE_REF_TYPES.includes(node.ref_type as any);
+                // 修复：非图片章节（标题识别不出拓扑图/结构图/流程图）却误绑了产品库拓扑图/结构图，清空脏 img_url
+                const isMisboundProductImg = !guessedRefType
+                    && /\/img_topo\/|\/img_struct\//.test(String((node as any).img_url || ""));
                 return {
                     ...node,
                     ref_type: guessedRefType || (keepExistingRefType ? node.ref_type : undefined),
+                    ...(isMisboundProductImg ? { img_url: "" } : {}),
                     children: nextChildren,
                 };
             });

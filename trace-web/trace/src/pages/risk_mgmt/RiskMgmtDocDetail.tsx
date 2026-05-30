@@ -451,7 +451,7 @@ export default () => {
         loadParticipantOptions(dispatch);
         if (isAdd) {
             form.resetFields();
-            const content = ensureFrontMatterSections(emptyContent);
+            const content = cloneTemplateContent();
             const defaultSection = (content.sections || []).find((section: any) => !isCoverSection(section) && !isRevisionSection(section));
             dispatch({ detail: {}, content, participants: [], selectedParticipantIds: [], participantsTouched: false, activeSectionKey: sectionKey(defaultSection) });
             return;
@@ -1350,6 +1350,10 @@ export default () => {
                                     versionPlaceholder={ts("product.full_version")}
                                     onChange={(value) => {
                                         form.setFieldValue("product_id", value);
+                                        const selectedProduct = (data.products || []).find((p: any) => p.id === value);
+                                        const productName = selectedProduct?.name || "";
+                                        const content = syncProductNameInContent(data.content || emptyContent, productName);
+                                        dispatch({ content });
                                         loadRiskLookupData(value);
                                     }}
                                 />
