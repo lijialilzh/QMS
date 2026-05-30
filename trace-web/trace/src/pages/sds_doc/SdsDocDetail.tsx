@@ -2959,12 +2959,56 @@ export default () => {
                     {(data.isEdit || isReadOnly) && !data.requireRebindSrs ? (
                         <Row gutter={24} className="form-display-row">
                             <Col span={6}>
-                                <span className="form-display-label">{ts("sds_doc.current_product")}：</span>
-                                <span className="form-display-value">{productLabel || "-"}</span>
+                                {isReadOnly ? (
+                                    <>
+                                        <span className="form-display-label">{ts("sds_doc.current_product")}：</span>
+                                        <span className="form-display-value">{productLabel || "-"}</span>
+                                    </>
+                                ) : (
+                                    <Form.Item
+                                        label={ts("sds_doc.current_product")}
+                                        name="product_id"
+                                        rules={[{ required: true, message: "" }]}>
+                                        <ProductVersionSelect
+                                            products={data.products}
+                                            allowClear
+                                            namePlaceholder={ts("product.name")}
+                                            versionPlaceholder={ts("product.full_version")}
+                                            onChange={(value) => {
+                                                editForm.setFieldValue("product_id", value);
+                                                editForm.setFieldsValue({ srsdoc_id: undefined });
+                                                dispatch({ srsDocList: [] });
+                                                if (value) loadSrsDocList(value);
+                                            }}
+                                        />
+                                    </Form.Item>
+                                )}
                             </Col>
                             <Col span={6}>
-                                <span className="form-display-label">{ts("sds_doc.req_doc")}：</span>
-                                <span className="form-display-value">{srsdocLabel || "-"}</span>
+                                {isReadOnly ? (
+                                    <>
+                                        <span className="form-display-label">{ts("sds_doc.req_doc")}：</span>
+                                        <span className="form-display-value">{srsdocLabel || "-"}</span>
+                                    </>
+                                ) : (
+                                    <Form.Item
+                                        label={ts("sds_doc.req_doc")}
+                                        name="srsdoc_id"
+                                        rules={[{ required: true, message: "" }]}>
+                                        <Select
+                                            placeholder={ts("sds_doc.please_select_req_doc")}
+                                            showSearch
+                                            allowClear
+                                            optionFilterProp="label"
+                                            disabled={!data.srsDocList.length}
+                                            style={{ width: 200 }}
+                                            options={data.srsDocList.map((item: any) => ({
+                                                label: `${item.version || item.full_version || ''}`,
+                                                value: item.id
+                                            }))}
+                                        />
+                                    </Form.Item>
+                                )}
                             </Col>
                             <Col span={6}>
                                 <Form.Item
