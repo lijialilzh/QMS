@@ -2682,6 +2682,13 @@ export default () => {
             message.warning("请输入表名");
             return;
         }
+        const isDuplicateChangeTableName = (data.srsChangeTables || []).some(
+            (item: any) => String(item?.title || "").trim() === typeName
+        );
+        if (isDuplicateChangeTableName) {
+            message.warning("表名已存在，不允许重复");
+            return;
+        }
         try {
             dispatch({ srsTableLoading: true });
             const res: any = await ApiSrsType.add_srs_type({
@@ -3009,6 +3016,20 @@ export default () => {
         );
         if (changeValidateMsg) {
             throw new Error(changeValidateMsg);
+        }
+
+        if (nextTableName) {
+            const selfTypeCode = String(tableData?.type_code || target?.type_code || "");
+            const isDuplicateChangeTableName = (data.srsChangeTables || []).some((item: any) => {
+                const isSelf =
+                    (selfTypeCode && String(item?.type_code || "") === selfTypeCode) ||
+                    (targetTableId != null && String(item?.id) === String(targetTableId));
+                if (isSelf) return false;
+                return String(item?.title || "").trim() === nextTableName;
+            });
+            if (isDuplicateChangeTableName) {
+                throw new Error("表名已存在，不允许重复，请修改后重试");
+            }
         }
 
         try {

@@ -4643,6 +4643,19 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             if (validateMsg) {
                 throw new Error(validateMsg);
             }
+            if (!initialTableData) {
+                const normalizeChangeTableNameKey = (value: string) =>
+                    String(value || "").replace(/\s+/g, "").replace(/：/g, ":").replace(/:$/, "").trim();
+                const newTitleKey = normalizeChangeTableNameKey(tableData?.tableName || tableFormat?.name || "");
+                if (newTitleKey) {
+                    const isDuplicateChangeTableName = (srsReqPreview?.changes || []).some(
+                        (item) => normalizeChangeTableNameKey(item?.title) === newTitleKey
+                    );
+                    if (isDuplicateChangeTableName) {
+                        throw new Error("表名已存在，不允许重复，请修改后重试");
+                    }
+                }
+            }
         }
         if (isSavingChangeReqTable && onSaveSrsChangeReqTable) {
             // 关键：在调用父级保存逻辑前，先把当前手动新增/编辑的变更表节点写入 state 与 ref，
