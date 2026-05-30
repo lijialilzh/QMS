@@ -2659,6 +2659,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         enableStandardReqAutoSync?: boolean;
     }>({});
     const [tableModalVisible, setTableModalVisible] = useState(false);
+    const [showReqTableHint, setShowReqTableHint] = useState(false);
     const [currentNodeId, setCurrentNodeId] = useState<number | null>(null);
     const [initialTableData, setInitialTableData] = useState<TableDataWithHeaders | undefined>(undefined);
     const [tableCellsBackup, setTableCellsBackup] = useState<TableData["cells"] | undefined>(undefined);
@@ -4116,6 +4117,18 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
     };
 
     const handleAddTable = (id: number) => {
+        const findNodeById = (list: TreeNode[]): TreeNode | undefined => {
+            for (const item of list) {
+                if (item.id === id) return item;
+                const found = item.children?.length ? findNodeById(item.children) : undefined;
+                if (found) return found;
+            }
+            return undefined;
+        };
+        const targetNode = findNodeById(nodes);
+        const headingNo = getHeadingNumberFromTitle(targetNode?.title);
+        // 仅第 2 章小节（2.1、2.2…）的表格添加弹窗显示需求表规则提示
+        setShowReqTableHint(/^2\./.test(headingNo));
         setCurrentNodeId(id);
         setTableModalVisible(true);
         setInitialTableData(undefined); // 新增模式，不传初始数据
@@ -5949,9 +5962,11 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                 initialData={initialTableData}
                 rcmOptions={rcmOptions}
                 lockedRowLabels={lockedTableRowLabels}
+                showReqTableHint={showReqTableHint}
                 onConfirm={handleTableConfirm}
                 onCancel={() => {
                     setTableModalVisible(false);
+                    setShowReqTableHint(false);
                     setCurrentNodeId(null);
                     setInitialTableData(undefined);
                     setTableCellsBackup(undefined);

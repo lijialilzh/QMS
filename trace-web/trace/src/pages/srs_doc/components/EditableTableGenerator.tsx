@@ -34,12 +34,13 @@ interface EditableTableGeneratorProps {
   initialData?: TableDataWithHeaders; // 初始数据，用于编辑模式
   rcmOptions?: Array<{ value: number; label: string; description?: string }>;
   lockedRowLabels?: string[];
+  showReqTableHint?: boolean;
   onConfirm?: (tableData: TableDataWithHeaders) => void | Promise<void>;
   onCancel?: () => void;
 }
 
 // 可编辑表格组件
-const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = false, initialData, rcmOptions = [], lockedRowLabels = [], onConfirm, onCancel }) => {
+const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = false, initialData, rcmOptions = [], lockedRowLabels = [], showReqTableHint = false, onConfirm, onCancel }) => {
   const { t: ts } = useTranslation();
   
   // 1. 状态管理：行列数、表格数据、表单实例
@@ -551,6 +552,19 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       destroyOnClose
     >
       <div className="editable-table-generator" style={{ padding: '20px' }}>
+      {showReqTableHint && !initialData && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12, padding: '6px 12px' }}
+          message={
+            <div style={{ fontSize: 12, lineHeight: 1.6, color: '#595959' }}>
+              <div><b>需求表格规则：</b>标准需求、其他需求各限一张，变更需求可多张。</div>
+              <div>表头含「需求编号」+「功能」为需求表，名称带「变更」即变更需求表；含「需求编号」+「章节」为其他需求表。</div>
+            </div>
+          }
+        />
+      )}
       {/* 第一步：表单收集行列数 */}
       <Form
         form={form}
