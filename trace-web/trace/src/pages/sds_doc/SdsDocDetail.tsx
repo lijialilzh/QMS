@@ -291,13 +291,50 @@ export default () => {
         });
         return { nodes: walk(nodes), changed };
     };
+    // 新增：自动同步「产品名称 / 产品型号」单行字段（适用范围沿用上方 applyProductScopeToTree，不改动）
+    const replaceLabeledLineInText = (text: string, label: string, value: string): string => {
+        const raw = String(text || "");
+        if (!raw.trim() || !value) return raw;
+        const normalized = raw.replace(/\r/g, "");
+        const marker = new RegExp(`(${label}\\s*[：:]\\s*)`);
+        const markerMatch = marker.exec(normalized);
+        if (!markerMatch || markerMatch.index < 0) return raw;
+        const markerText = markerMatch[1] || "";
+        const valueStart = markerMatch.index + markerText.length;
+        const rest = normalized.slice(valueStart);
+        const nlIdx = rest.search(/[\n\r]/);
+        const valueEnd = nlIdx >= 0 ? valueStart + nlIdx : normalized.length;
+        const current = normalized.slice(valueStart, valueEnd).trim();
+        if (current === value) return raw;
+        const nextText = `${normalized.slice(0, valueStart)}${value}${normalized.slice(valueEnd)}`;
+        return nextText === normalized ? raw : nextText;
+    };
+    const applyProductBasicInfoToTree = (nodes: TreeNode[], product?: any): { nodes: TreeNode[]; changed: boolean } => {
+        if (!Array.isArray(nodes) || !product) return { nodes, changed: false };
+        const name = String(product.name ?? "").trim();
+        const model = String(product.type_code ?? "").trim();
+        let changed = false;
+        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+            const children = walk((node.children || []) as TreeNode[]);
+            const nextNode = { ...node, children };
+            let text = String(nextNode.text || "");
+            const afterName = replaceLabeledLineInText(text, "产品名称", name);
+            if (afterName !== text) { text = afterName; changed = true; }
+            const afterModel = replaceLabeledLineInText(text, "产品型号", model);
+            if (afterModel !== text) { text = afterModel; changed = true; }
+            nextNode.text = text;
+            return nextNode;
+        });
+        return { nodes: walk(nodes), changed };
+    };
     useEffect(() => {
-        const { nodes, changed } = applyProductScopeToTree(data.treeStructure as TreeNode[], currentProduct);
-        if (changed) {
-            treeStructureRef.current = nodes;
-            dispatch({ treeStructure: nodes });
+        const scopeResult = applyProductScopeToTree(data.treeStructure as TreeNode[], currentProduct);
+        const basicResult = applyProductBasicInfoToTree(scopeResult.nodes as TreeNode[], currentProduct);
+        if (scopeResult.changed || basicResult.changed) {
+            treeStructureRef.current = basicResult.nodes;
+            dispatch({ treeStructure: basicResult.nodes });
         }
-    }, [displayProductId, currentProduct?.scope]);
+    }, [displayProductId, currentProduct?.scope, currentProduct?.name, currentProduct?.type_code, data.treeStructure]);
     const extractSdsCodeToken = (txt?: string): string => {
         const raw = String(txt || "");
         const matched = raw.match(/SDS\s*-\s*[A-Za-z0-9._-]+(?:\s*[-_]\s*[A-Za-z0-9._-]+)*/i);
