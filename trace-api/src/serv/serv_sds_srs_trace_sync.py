@@ -1334,6 +1334,10 @@ class SdsSrsTraceSyncMixin:
                 if not self._is_product_sync_area_node(roots, node, parent_map, design_roots):
                     kept.append(node)
                     continue
+                if self._is_function_stopper_title(getattr(node, "title", "") or ""):
+                    # 固定章节「限制条件 / 尚未解决的问题」始终保留，不当作残留删除
+                    kept.append(node)
+                    continue
                 if self._node_subtree_has_active_trace_code(node, active_codes):
                     kept.append(node)
                 elif self._node_subtree_has_image(node):
@@ -1741,7 +1745,11 @@ class SdsSrsTraceSyncMixin:
                         kept.extend(children)
                         continue
                 # 含图片（程序逻辑图等）的节点不是空容器，须随功能保留
-                if not has_code and not has_text and not children and not has_image:
+                # 固定章节「限制条件 / 尚未解决的问题」即使为空也须保留
+                if (
+                    not has_code and not has_text and not children and not has_image
+                    and not self._is_function_stopper_title(getattr(node, "title", "") or "")
+                ):
                     continue
                 kept.append(node)
             return kept
@@ -3400,6 +3408,7 @@ class SdsSrsTraceSyncMixin:
                         and self._is_product_sync_area_node(items, node, parent_map, design_roots)
                         and body_norm
                         and body_norm not in active_titles
+                        and not self._is_function_stopper_title(getattr(node, "title", "") or "")
                     ):
                         continue
                     kept.append(node)
@@ -3945,17 +3954,28 @@ class SdsSrsTraceSyncMixin:
                 continue
             reqd = reqd_by_req_id.get(rid)
             overview = re.sub(r"\s+", "", str(getattr(reqd, "overview", "") or "")) if reqd else ""
+            target_code = re.sub(r"\s+", "", str(getattr(_trace, "sds_code", "") or "").strip().upper())
             # 概述为空也加入：可仅靠功能名模糊匹配兜底锚定旧功能
-            pending.append((rid, overview, req))
+            pending.append((rid, overview, req, target_code))
         if not pending:
             return
 
         used_nodes = {id(n) for n in by_req_id.values()}
         pairs = []
-        for rid, overview, req in pending:
+        for rid, overview, req, target_code in pending:
             for node, node_ov in node_overviews:
+                node_code = re.sub(r"\s+", "", str(getattr(node, "sds_code", "") or "").strip().upper())
+                # key 护栏：节点已属于另一个 key（不同设计编号）→ 内容再相似也不锚定，
+                # 交给 by_code 真实编号匹配与"新需求判断"处理，避免新功能抢占旧功能节点。
+                if node_code and target_code and node_code != target_code:
+                    continue
                 content_ratio = self._content_match_ratio(overview, node_ov) if node_ov else 0.0
                 name_ratio = self._name_match_ratio(node, req, hierarchy_map)
+                # 功能名护栏：仅内容相似、但功能名与节点标题几乎不相关（reqd 错位/内容串台，
+                # 如"翻转"概述≈"操作指南"内容）→ 不锚定，交给"新需求"走新建并取 SRS。
+                # 适用于重新导入（节点尚未回填 sds_code、上面 key 护栏不生效）等场景。
+                if name_ratio < 0.34 and content_ratio >= content_threshold:
+                    continue
                 # 内容相似 或 功能名模糊一致，任一达标即视为候选（模糊匹配）
                 score = max(content_ratio, name_ratio)
                 if score >= content_threshold:

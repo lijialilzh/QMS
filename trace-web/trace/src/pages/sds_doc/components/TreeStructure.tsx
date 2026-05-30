@@ -696,6 +696,17 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const isAutoOnlyImage = node.ref_type === 'img_topo' || node.ref_type === 'img_struct';
     // 标准需求/变更需求对应章节(SDS-RCN 编码)：章节标题与 SDS 编码只读，不可修改
     const isTraceReqNode = /^SDS-RCN/i.test(String(resolvedSdsCode || node.sds_code || "").trim());
+    // 第6章 6.6 及之后的模块名称章节：标题只读，不可编辑
+    // 固定章节「限制条件 / 尚未解决的问题」不锁，保持可编辑
+    const isFunctionStopperTitle = /限制条件|尚未解决的问题/.test(
+        String(titleWithoutChapter || title || "").replace(/\s+/g, "")
+    );
+    const isLockedModuleChapter = (() => {
+        if (isFunctionStopperTitle) return false;
+        const segs = String(effectiveChapter || "").split(".").map((seg) => parseInt(seg, 10));
+        if (segs.length < 2 || segs[0] !== 6 || !Number.isFinite(segs[1])) return false;
+        return segs[1] >= 6;
+    })();
     const imageSourceNodeId = !readOnly
         ? node.id
         : node.ref_type === "img_flow"
@@ -1248,7 +1259,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           value={editDisplayTitle}
                           onChange={(e) => onTitleChange(node.id, e.target.value)}
                           placeholder={ts('please_input_title')}
-                          disabled={readOnly || isTraceReqNode}
+                          disabled={readOnly || isTraceReqNode || isLockedModuleChapter}
                       />
                   )}
                   {
