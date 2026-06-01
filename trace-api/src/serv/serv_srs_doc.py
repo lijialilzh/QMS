@@ -3838,10 +3838,57 @@ class Server(object):
             merge_column(location_idx, [module_idx] if module_idx is not None else [])
             return cells
 
+        NUMBERED_REQ_DETAIL_FIELDS = ("事件流", "工作流", "工作流程", "前置条件", "触发器", "后置条件", "异常情况", "约束")
+
+        def __renumber_req_detail_lines(value):
+            # 与前端 normalizeReqDetailNumberedText 保持一致：把每行行首的数字序号重排为 1,2,3...
+            next_no = 1
+            pat = re.compile(r"^(\s*)(\d{1,4})([）)、．]|[.](?!\d))\s*(.*)$")
+            out = []
+            for line in str(value or "").split("\n"):
+                m = pat.match(line or "")
+                if not m:
+                    out.append(line)
+                    continue
+                prefix = m.group(1) or ""
+                sep = "." if m.group(3) == "．" else m.group(3)
+                rest = m.group(4) or ""
+                out.append(f"{prefix}{next_no}{sep} {rest}".rstrip())
+                next_no += 1
+            return "\n".join(out)
+
+        def __renumber_req_detail_table(table):
+            # 仅对“字段|值”详细需求表中、字段为事件流/工作流/前置条件等的行，重排其值的行首序号；其他表/行不动
+            def _is_numbered_field(label):
+                lab = re.sub(r"\s+", "", str(label or ""))
+                return any(re.sub(r"\s+", "", f) in lab for f in NUMBERED_REQ_DETAIL_FIELDS)
+            cells = getattr(table, "cells", None)
+            if isinstance(cells, list):
+                for row in cells:
+                    if not isinstance(row, list) or not row:
+                        continue
+                    if _is_numbered_field(getattr(row[0], "value", "")):
+                        for c in row[1:]:
+                            if getattr(c, "value", None):
+                                c.value = __renumber_req_detail_lines(c.value)
+            rows = getattr(table, "rows", None)
+            headers = getattr(table, "headers", None) or []
+            if isinstance(rows, list) and headers:
+                codes = [getattr(h, "code", "") for h in headers]
+                if codes:
+                    for row in rows:
+                        if not isinstance(row, dict):
+                            continue
+                        if _is_numbered_field(row.get(codes[0], "")):
+                            for code in codes[1:]:
+                                if row.get(code):
+                                    row[code] = __renumber_req_detail_lines(row[code])
+
         def __prepare_srs_table_for_word_export(table):
             if not table:
                 return table
             export_table = deepcopy(table)
+            __renumber_req_detail_table(export_table)
             # 表格本身带横向合并(col_span>1)时（如导入Word的合并表头），
             # 直接保留原合并结构导出，不清空、不重建（重建无法还原横向合并）。
             # 需求表的合并为纵向(col_span 全为1)，不受影响，仍走下方重建逻辑。
