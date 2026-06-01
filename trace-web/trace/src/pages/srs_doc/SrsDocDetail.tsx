@@ -2633,9 +2633,14 @@ export default () => {
             const hasValidHeaders = node.table.headers && Array.isArray(node.table.headers) && node.table.headers.length > 0;
             const hasValidRows = node.table.rows && Array.isArray(node.table.rows) && node.table.rows.length > 0;
             if (hasValidHeaders && hasValidRows) {
+                // 仅「真正含合并单元格」的表格保留 cells（避免导入合并表后保存丢失合并信息）；
+                // 普通表格仍剥离 cells，保持原有编辑/保存行为不受影响
+                const hasRealMerge = Array.isArray(node.table.cells)
+                    && node.table.cells.some((row: any) => Array.isArray(row)
+                        && row.some((c: any) => Number(c?.col_span) > 1 || Number(c?.row_span) > 1));
                 tableValue = isExportReqTable(node.table)
                     ? flattenExportReqTable(node.table)
-                    : { ...node.table, cells: undefined };
+                    : (hasRealMerge ? { ...node.table } : { ...node.table, cells: undefined });
             } else if (hasValidHeaders && isChangeTableNode) {
                 tableValue = {
                     name: node.table.name || changeTableTitle,

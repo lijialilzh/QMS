@@ -3842,6 +3842,16 @@ class Server(object):
             if not table:
                 return table
             export_table = deepcopy(table)
+            # 表格本身带横向合并(col_span>1)时（如导入Word的合并表头），
+            # 直接保留原合并结构导出，不清空、不重建（重建无法还原横向合并）。
+            # 需求表的合并为纵向(col_span 全为1)，不受影响，仍走下方重建逻辑。
+            orig_cells = getattr(export_table, "cells", None)
+            has_h_merge = isinstance(orig_cells, list) and any(
+                isinstance(r, list) and any((getattr(c, "col_span", 1) or 1) > 1 for c in r)
+                for r in orig_cells
+            )
+            if has_h_merge:
+                return export_table
             export_table = __clean_srs_table_for_export(export_table)
             built_cells = __build_srs_table_export_cells(export_table)
             if built_cells:
@@ -3877,6 +3887,21 @@ class Server(object):
         exported_req_tables = set()
         change_req_export_done = {"value": False}
         other_req_title_written = {"value": False}
+        written_table_caption_norms = set()
+
+        def __write_table_caption_once(table, docx, font_def, context_text: str = ""):
+            # 补写表格名称（如「表1 服务器硬件配置要求」「产品需求列表如下：」）。
+            # 仅当表名为真实名（非「导入表格N」占位）、未写过、且不在节点正文中时才写，避免重复。
+            name = str(getattr(table, "name", "") or "").strip() if table else ""
+            if not name or re.match(r"^导入表格\d*$", name):
+                return
+            norm = __norm_title(name)
+            if not norm or norm in written_table_caption_norms:
+                return
+            if context_text and norm in __norm_title(context_text):
+                return
+            docx_util.save_txt2docx(name, docx, font_def)
+            written_table_caption_norms.add(norm)
 
         def __is_other_req_export_table(table):
             if not table or not getattr(table, "headers", None):
@@ -4447,10 +4472,10 @@ class Server(object):
                                 if __is_other_req_export_table(tab_node.table):
                                     await __export_db_req_list_table("other", docx, font_def, is_other=True)
                                 elif __is_main_req_export_table(tab_node.table):
+                                    __write_table_caption_once(tab_node.table, docx, font_def, node_text_for_export)
                                     await __export_db_req_list_table("main", docx, font_def, is_other=False)
                                 else:
-                                    if table_name and not re.match(r"^导入表格\d*$", table_name):
-                                        docx_util.save_txt2docx(table_name, docx, font_def)
+                                    __write_table_caption_once(tab_node.table, docx, font_def, node_text_for_export)
                                     __save_tab2docx(tab_node.table, docx, font_def, show_name=False)
                                 written_child_ids.add(id(tab_node))
                             if not change_req_export_done["value"]:
@@ -4561,8 +4586,10 @@ class Server(object):
                                 if __is_other_req_export_table(tab_node.table):
                                     await __export_db_req_list_table("other", docx, font_def, is_other=True)
                                 elif __is_main_req_export_table(tab_node.table):
+                                    __write_table_caption_once(tab_node.table, docx, font_def, node_text_for_export)
                                     await __export_db_req_list_table("main", docx, font_def, is_other=False)
                                 else:
+                                    __write_table_caption_once(tab_node.table, docx, font_def, node_text_for_export)
                                     __save_tab2docx(tab_node.table, docx, font_def, show_name=False)
                                 written_child_ids.add(id(tab_node))
                         else:

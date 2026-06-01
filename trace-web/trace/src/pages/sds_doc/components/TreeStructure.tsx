@@ -520,6 +520,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                 key: `col_${index}`,
             };
             if (hasMergedCells) {
+                // 表头也按 cells[0] 的 col_span 合并，延续列 colSpan=0 隐藏，避免导入合并单元格时多出「列N」
+                col.onHeaderCell = () => {
+                    const headerCell = tableCells[0]?.[index];
+                    return { colSpan: headerCell?.col_span ?? 1 } as any;
+                };
                 col.render = (_val: any, _row: any, rowIndex: number) => {
                     const bodyCells = tableCells.slice(1);
                     const cell = bodyCells[rowIndex]?.[index];
