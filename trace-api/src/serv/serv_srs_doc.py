@@ -895,6 +895,11 @@ class Server(object):
                 return f"{prefix}{rest}"
         return value
 
+    def __keep_req_field(self, txt: str):
+        # 导出阶段：数据库需求字段已是干净值，仅做基础空白规整，
+        # 不能像 __clean_req_table_field 那样压缩重复字符（会误伤 AAA、AAAA1 等合法内容）。
+        return re.sub(r"\s+", "", self.__normalize_text(txt or ""))
+
     def __normalize_rcm_codes(self, codes):
         result = []
         for code in codes or []:
@@ -3712,7 +3717,7 @@ class Server(object):
                 if not isinstance(row, dict):
                     continue
                 current_values = {
-                    field: self.__clean_req_table_field(row.get(code, ""))
+                    field: re.sub(r"\s+", "", self.__normalize_text(row.get(code, "") or ""))
                     for field, code in field_codes.items()
                 }
                 module_changed = bool(current_values.get("module"))
@@ -4075,9 +4080,9 @@ class Server(object):
                     prev = effective[idx - 1] if idx > 0 else {}
                     group = group_of(row)
                     same_group = bool(group and group == prev.get("group"))
-                    raw_module = self.__clean_req_table_field(row.get(getattr(headers[module_idx], "code", ""))) if module_idx >= 0 else ""
-                    raw_function = self.__clean_req_table_field(row.get(getattr(headers[function_idx], "code", ""))) if function_idx >= 0 else ""
-                    raw_sub_function = self.__clean_req_table_field(row.get(getattr(headers[sub_function_idx], "code", ""))) if sub_function_idx >= 0 else ""
+                    raw_module = self.__keep_req_field(row.get(getattr(headers[module_idx], "code", ""))) if module_idx >= 0 else ""
+                    raw_function = self.__keep_req_field(row.get(getattr(headers[function_idx], "code", ""))) if function_idx >= 0 else ""
+                    raw_sub_function = self.__keep_req_field(row.get(getattr(headers[sub_function_idx], "code", ""))) if sub_function_idx >= 0 else ""
                     item = {
                         "group": group,
                         "module": raw_module or (prev.get("module") if same_group else ""),
@@ -4092,7 +4097,7 @@ class Server(object):
                         return effective[row_idx].get("function") or ""
                     if col_idx == sub_function_idx:
                         return effective[row_idx].get("sub_function") or ""
-                    return self.__clean_req_table_field(rows[row_idx].get(getattr(headers[col_idx], "code", "")))
+                    return self.__keep_req_field(rows[row_idx].get(getattr(headers[col_idx], "code", "")))
                 def merge_column(col_idx, parent_indexes):
                     if col_idx < 0:
                         return
@@ -4132,8 +4137,8 @@ class Server(object):
                 for req in reqs:
                     row = dict()
                     row["srs_code"] = req.code
-                    row["module"] = self.__clean_req_table_field(req.module)
-                    row["location"] = self.__clean_req_table_field(req.location)
+                    row["module"] = self.__keep_req_field(req.module)
+                    row["location"] = self.__keep_req_field(req.location)
                     rows.append(row)
                 table = Table(headers=headers, rows=rows)
                 table.cells = build_cells(table)
@@ -4147,9 +4152,9 @@ class Server(object):
             for req in reqs:
                 row = dict()
                 row["srs_code"] = req.code
-                row["module"] = self.__clean_req_table_field(req.module)
-                row["function"] = self.__clean_req_table_field(req.function)
-                row["sub_function"] = self.__clean_req_table_field(req.sub_function)
+                row["module"] = self.__keep_req_field(req.module)
+                row["function"] = self.__keep_req_field(req.function)
+                row["sub_function"] = self.__keep_req_field(req.sub_function)
                 rows.append(row)
             table = Table(headers=headers, rows=rows)
             table.cells = build_cells(table)
