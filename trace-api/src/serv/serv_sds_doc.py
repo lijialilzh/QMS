@@ -810,6 +810,32 @@ class Server(SdsSrsTraceSyncMixin, object):
 
         walk(nodes or [])
 
+        def cleanup_duplicate_db_heading_text(node_list: List[SdsNodeForm]):
+            # 库标题（如「Postgresql库1数据库：」）已被提为子节点(5.6.1/5.6.2)后，
+            # 从数据结构父节点正文里删除与子节点标题重复的同名行，避免正文与子节点重复展示。
+            for node in node_list or []:
+                title = str(getattr(node, "title", "") or "").strip()
+                text = str(getattr(node, "text", "") or "")
+                children = list(getattr(node, "children", None) or [])
+                if text and "数据结构" in f"{title} {text}":
+                    db_titles = {
+                        normalize_compare(str(getattr(c, "title", "") or ""))
+                        for c in children
+                        if is_db_heading_title(str(getattr(c, "title", "") or ""))
+                    }
+                    db_titles = {t for t in db_titles if t}
+                    if db_titles:
+                        kept_lines = []
+                        for line in text.replace("\r", "").split("\n"):
+                            norm = normalize_compare(line)
+                            if norm and norm in db_titles:
+                                continue
+                            kept_lines.append(line)
+                        node.text = "\n".join(kept_lines).strip()
+                cleanup_duplicate_db_heading_text(children)
+
+        cleanup_duplicate_db_heading_text(nodes or [])
+
     def __persist_data_url_images(self, nodes: List[SdsNodeForm]):
         ext_map = {
             "image/png": "png",
