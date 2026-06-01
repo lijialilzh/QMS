@@ -1733,8 +1733,9 @@ class SdsSrsTraceSyncMixin:
                 has_code = bool(getattr(node, "sds_code", None))
                 has_text = bool((getattr(node, "text", "") or "").strip())
                 has_image = bool(str(getattr(node, "img_url", "") or "").strip())
+                has_table = bool(getattr(getattr(node, "table", None), "headers", None))
                 children = getattr(node, "children", None) or []
-                if parent is not None and not has_code and not has_text and not has_image and children:
+                if parent is not None and not has_code and not has_text and not has_image and not has_table and children:
                     node_norm = self._normalize_sds_node_title(
                         self._strip_sds_heading_text(getattr(node, "title", "") or "")
                     )
@@ -1744,10 +1745,10 @@ class SdsSrsTraceSyncMixin:
                     if node_norm and node_norm == parent_norm:
                         kept.extend(children)
                         continue
-                # 含图片（程序逻辑图等）的节点不是空容器，须随功能保留
+                # 含图片（程序逻辑图等）或表格的节点不是空容器，须随功能保留
                 # 固定章节「限制条件 / 尚未解决的问题」即使为空也须保留
                 if (
-                    not has_code and not has_text and not children and not has_image
+                    not has_code and not has_text and not children and not has_image and not has_table
                     and not self._is_function_stopper_title(getattr(node, "title", "") or "")
                 ):
                     continue
@@ -2530,6 +2531,10 @@ class SdsSrsTraceSyncMixin:
                 continue
             node = self._find_node_by_code_in_tree(roots, code)
             if node is None or self._is_in_fixed_template_zone(roots, node, parent_map, design_roots):
+                continue
+            # 产品章节根（如「5 RePACS」）本身可能带 SDS 编号，绝不能被当作功能节点搬动，
+            # 否则整章会被错位到其它章节下。
+            if any(node is dr for dr in design_roots):
                 continue
             product_root = self._resolve_product_root_for_req(
                 roots, code, str(fields.get("module") or "").strip(), type_code
