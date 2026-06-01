@@ -14,6 +14,7 @@ import { isSdsTraceSectionNode, SdsTraceSectionActions } from "./SdsTraceSection
 
 // 表格数据结构（匹配后端接口，允许空对象表示无表格数据）
 interface TableData {
+    name?: string;
     headers?: Array<{ code: string; name: string }>;
     rows?: { [key: string]: string }[];
     cells?: Array<Array<{ value?: string; row_span?: number; col_span?: number; h_align?: string; v_align?: string }>>;
@@ -648,13 +649,9 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                 isStrictTableCaptionTitle(childTitle) && !child.img_url && !String(child.text || "").trim()
             );
         });
-    const complianceTableChildren = (node.children || []).filter((child) => hasRenderableTable(child.table) && !child.img_url);
-    const enableEditInlineComplianceLayout = !readOnly
-        && complianceTableChildren.length >= 2
-        && /法规符合性需求|网络安全/.test(`${title || ""} ${node.text || ""}`);
-    const inlineTableChildren = (readOnly || enableEditInlineComplianceLayout)
-        ? (enableEditInlineComplianceLayout ? complianceTableChildren : candidateInlineTableChildren)
-        : [];
+    // 编辑态不把合规表「提为内联」：编辑态内联渲染恒关闭（showComplianceInlineInEdit=false），
+    // 若仍提走会导致表既不在子节点列表渲染、也不内联渲染而丢失（如第7章端口表）。
+    const inlineTableChildren = readOnly ? candidateInlineTableChildren : [];
     const inlineTableChildIdSet = new Set(
         inlineTableChildren.flatMap((child) => [String(child.id), String(child.n_id || "")])
     );
@@ -995,6 +992,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
             (normalizedResolvedCaption && normalizedResolvedCaption !== "-" ? normalizedResolvedCaption : "")
             || stripChapterPrefixForTableCaption(safeNodeLabel)
             || (isLikelyTableCaptionLine(titleWithoutChapter || title) ? stripChapterPrefixForTableCaption(titleWithoutChapter || title) : "")
+            || normalizeInlineTableCaption(node.table?.name)
         )
         : "";
     const sanitizedFinalTableCaption = isTraceSectionTitle || isSyntheticTableCaption(finalTableCaption) ? "" : finalTableCaption;
@@ -1007,6 +1005,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                     || stripChapterPrefixForTableCaption(safeNodeLabel)
                     || (isLikelyTableCaptionLine(titleWithoutChapter || title) ? stripChapterPrefixForTableCaption(titleWithoutChapter || title) : "")
                     || pickEditableTableCaption(node.text)
+                    || normalizeInlineTableCaption(node.table?.name)
                     || ""
                 )
         )
