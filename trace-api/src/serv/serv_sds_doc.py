@@ -1125,6 +1125,7 @@ class Server(SdsSrsTraceSyncMixin, object):
             self.__persist_data_url_images(sds_content)
             form = SdsDocForm(
                 srsdoc_id=srs_row.id,
+                product_id=product_id,
                 version=version,
                 file_no=file_no or None,
                 change_log=change_log,
@@ -1241,12 +1242,22 @@ class Server(SdsSrsTraceSyncMixin, object):
         fromdoc:SdsDocObj = (await self.get_sds_doc(id, with_tree=True)).data
         if not fromdoc:
             return Resp.resp_err(msg=ts("msg_obj_null"))
+        srcrow = db.session.execute(select(SdsDoc).where(SdsDoc.id == id)).scalars().first()
+        if not srcrow:
+            return Resp.resp_err(msg=ts("msg_obj_null"))
+        real_srsdoc_id = srcrow.srsdoc_id or 0
+        real_product_id = (srcrow.product_id or getattr(fromdoc, "product_id", 0) or 0)
         version = new_version(fromdoc.version)
-        newdoc = SdsDoc(srsdoc_id=fromdoc.srsdoc_id, version=version, change_log=fromdoc.change_log, n_id=0)
+        next_file_no = srsdoc_serv._Server__sync_file_no_version(getattr(fromdoc, "file_no", None), version)
+        newdoc = SdsDoc(srsdoc_id=real_srsdoc_id, product_id=real_product_id, version=version, change_log=fromdoc.change_log, n_id=0, file_no=next_file_no)
         sql = select(func.count(SdsDoc.id)).where(SdsDoc.srsdoc_id == newdoc.srsdoc_id, SdsDoc.version == newdoc.version)
         count = db.session.execute(sql).scalar()
         if count > 0:
             return Resp.resp_err(msg=ts("msg_obj_exist"))
+        if real_product_id:
+            dup_sql = select(func.count(SdsDoc.id)).where(SdsDoc.product_id == real_product_id, SdsDoc.version == newdoc.version)
+            if (db.session.execute(dup_sql).scalar() or 0) > 0:
+                return Resp.resp_err(msg=ts("msg_obj_exist"))
         try:
             db.session.add(newdoc)
             db.session.flush()
@@ -1278,8 +1289,12 @@ class Server(SdsSrsTraceSyncMixin, object):
             count = db.session.execute(sql).scalar()
             if count > 0:
                 return Resp.resp_err(msg=ts("msg_obj_exist"))
-            
-            row = SdsDoc(srsdoc_id=form.srsdoc_id, version=form.version, change_log=form.change_log, n_id=0, file_no=form.file_no)
+
+            product_id = form.product_id or 0
+            if not product_id and form.srsdoc_id:
+                srs = db.session.execute(select(SrsDoc).where(SrsDoc.id == form.srsdoc_id)).scalars().first()
+                product_id = (srs.product_id if srs else 0) or 0
+            row = SdsDoc(srsdoc_id=form.srsdoc_id, product_id=product_id, version=form.version, change_log=form.change_log, n_id=0, file_no=form.file_no)
             db.session.add(row)
             db.session.flush()
             word_imported = preserve_word_structure or self._is_word_imported_doc(form.content or [])
@@ -1450,6 +1465,7 @@ class Server(SdsSrsTraceSyncMixin, object):
                 if key == "id" or key == "n_id" or value is None:
                     continue
                 setattr(row, key, value)
+            row.file_no = srsdoc_serv._Server__sync_file_no_version(row.file_no, row.version)
             if form.content:
                 word_imported = self._is_word_imported_doc(form.content or [])
                 if not word_imported:
@@ -1611,7 +1627,7 @@ class Server(SdsSrsTraceSyncMixin, object):
         return roots
 
     async def get_sds_doc(self, id:str, with_tree: bool = False):
-        sql = select(SdsDoc, SrsDoc, Product).outerjoin(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id).outerjoin(Product, SrsDoc.product_id == Product.id).where(SdsDoc.id == id)
+        sql = select(SdsDoc, SrsDoc, Product).outerjoin(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id).outerjoin(Product, SdsDoc.product_id == Product.id).where(SdsDoc.id == id)
         row, row_srs, row_prd = db.session.execute(sql).first() or (None, None, None)
         if not row:
             return Resp.resp_err(msg=ts("msg_obj_null"))
@@ -1620,7 +1636,7 @@ class Server(SdsSrsTraceSyncMixin, object):
         tree = []
         if with_tree:
             tree = self._load_sds_tree(row.id)
-            prod_imgs = self.__query_imgs(row_srs.product_id) if row_srs else {}
+            prod_imgs = self.__query_imgs(row.product_id) if row.product_id else (self.__query_imgs(row_srs.product_id) if row_srs else {})
             def hydrate_imgs(nodes: List[SdsNodeForm]):
                 for obj in nodes or []:
                     if obj.ref_type in prod_imgs:
@@ -1630,7 +1646,7 @@ class Server(SdsSrsTraceSyncMixin, object):
             tree = await self._refresh_trace_table_for_display(row.id, tree, persist=True)
         data = row.dict()
         data["srsdoc_id"] = 0 if is_srs_deleted else row.srsdoc_id
-        data["product_id"] = row_prd.id if row_prd else (row_srs.product_id if row_srs else 0)
+        data["product_id"] = row.product_id or (row_prd.id if row_prd else (row_srs.product_id if row_srs else 0))
         data["product_name"] = row_prd.name if row_prd else ""
         data["product_version"] = row_prd.full_version if row_prd else ""
         data["srs_version"] = "" if is_srs_deleted else (row_srs.version if row_srs else "")
@@ -1641,9 +1657,9 @@ class Server(SdsSrsTraceSyncMixin, object):
         page_index = page_index if page_index >= 0 else 0
         page_size = page_size if page_size > 0 else 10 
     
-        sql = select(SdsDoc, SrsDoc, Product).outerjoin(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id).outerjoin(Product, SrsDoc.product_id == Product.id)
+        sql = select(SdsDoc, SrsDoc, Product).outerjoin(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id).outerjoin(Product, SdsDoc.product_id == Product.id)
         if product_id:
-            sql = sql.where(SrsDoc.product_id == product_id)
+            sql = sql.where(SdsDoc.product_id == product_id)
         if version:
             sql = sql.where(SdsDoc.version.like(f"%{version}%"))
         if not product_id and op_user and op_user.id != 1:

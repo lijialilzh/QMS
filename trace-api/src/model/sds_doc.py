@@ -9,6 +9,7 @@ from . import Model
 class SdsDoc(Model):
     __tablename__ = "sds_doc"
     srsdoc_id = Column(Integer, nullable=False, default=0, comment="SRS_DOC_ID")
+    product_id = Column(Integer, nullable=False, default=0, comment="产品ID")
     version = Column(String(64), nullable=False, comment="版本号")
     file_no = Column(String(64), comment="文件编号")
     change_log = Column(String(256), comment="版本变更说明")
