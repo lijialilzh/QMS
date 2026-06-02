@@ -390,17 +390,31 @@ class Server(object):
                 db.session.commit()
         return resp
 
-    async def duplicate_risk_mgmt_doc(self, id: int):
+    async def duplicate_risk_mgmt_doc(self, id: int, product_id: int = None):
         try:
             fromdoc: RiskMgmtDoc = db.session.execute(select(RiskMgmtDoc).where(RiskMgmtDoc.id == id)).scalars().first()
             if not fromdoc:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
-            version = new_version(fromdoc.version)
-            sql = select(func.count(RiskMgmtDoc.id)).where(RiskMgmtDoc.product_id == fromdoc.product_id, RiskMgmtDoc.version == version)
-            if db.session.execute(sql).scalar() > 0:
-                return Resp.resp_err(msg=ts("msg_obj_exist"))
+            # 复制目标产品：默认沿用原产品，跨产品复制时使用指定产品
+            target_pid = product_id or fromdoc.product_id
+            # 自动计算新版本号（不允许手动指定）
+            all_versions = db.session.execute(select(RiskMgmtDoc.version).where(RiskMgmtDoc.product_id == target_pid)).scalars().all()
+            existing_set = {v for v in all_versions if v}
+            if target_pid == fromdoc.product_id:
+                # 同产品复制：在原文档版本号上递增
+                version = new_version(fromdoc.version)
+            else:
+                # 跨产品复制：查目标产品现有最大版本后递增；目标产品无文档时沿用原版本
+                def _version_seq(v):
+                    m = re.search(r"(\d+)(?!.*\d)", v or "")
+                    return int(m.group(1)) if m else -1
+                valid = [v for v in all_versions if v]
+                version = new_version(max(valid, key=_version_seq)) if valid else fromdoc.version
+            # 兜底：确保目标产品下版本唯一
+            while version in existing_set:
+                version = new_version(version)
             newdoc = RiskMgmtDoc(
-                product_id=fromdoc.product_id,
+                product_id=target_pid,
                 version=version,
                 file_no=fromdoc.file_no,
                 change_log=fromdoc.change_log,
@@ -413,11 +427,13 @@ class Server(object):
                 newitem = RiskAnalysis(**item.dict())
                 newitem.id = None
                 newitem.doc_id = newdoc.id
+                newitem.product_id = target_pid
                 db.session.add(newitem)
             for item in db.session.execute(select(RiskControl).where(RiskControl.doc_id == fromdoc.id)).scalars().all():
                 newitem = RiskControl(**item.dict())
                 newitem.id = None
                 newitem.doc_id = newdoc.id
+                newitem.product_id = target_pid
                 db.session.add(newitem)
             db.session.commit()
             return Resp.resp_ok(data=RiskMgmtDocForm(id=newdoc.id))

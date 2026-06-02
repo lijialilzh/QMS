@@ -1238,26 +1238,49 @@ class Server(SdsSrsTraceSyncMixin, object):
             node.n_id = 0
             Server._reset_tree_node_ids(getattr(node, "children", None) or [])
 
-    async def duplicate_sds_doc(self, id: int):
+    async def duplicate_sds_doc(self, id: int, product_id: int = None):
         fromdoc:SdsDocObj = (await self.get_sds_doc(id, with_tree=True)).data
         if not fromdoc:
             return Resp.resp_err(msg=ts("msg_obj_null"))
         srcrow = db.session.execute(select(SdsDoc).where(SdsDoc.id == id)).scalars().first()
         if not srcrow:
             return Resp.resp_err(msg=ts("msg_obj_null"))
-        real_srsdoc_id = srcrow.srsdoc_id or 0
-        real_product_id = (srcrow.product_id or getattr(fromdoc, "product_id", 0) or 0)
-        version = new_version(fromdoc.version)
+        src_srsdoc_id = srcrow.srsdoc_id or 0
+        src_product_id = (srcrow.product_id or getattr(fromdoc, "product_id", 0) or 0)
+        # 复制目标产品：默认沿用原产品，跨产品复制时使用指定产品
+        target_pid = product_id or src_product_id
+        cross = bool(product_id) and product_id != src_product_id
+        if cross:
+            # 跨产品：自动绑定目标产品下最新有效 SRS 文档，无则不绑定
+            real_product_id = target_pid
+            srs_latest = db.session.execute(
+                select(SrsDoc)
+                .where(SrsDoc.product_id == target_pid, ~SrsDoc.version.like(f"{DELETED_SRS_VERSION_PREFIX}%"))
+                .order_by(desc(SrsDoc.create_time), desc(SrsDoc.id))
+            ).scalars().first()
+            real_srsdoc_id = srs_latest.id if srs_latest else 0
+            # 版本：目标产品现有最大版本递增，目标产品无文档时沿用原版本
+            def _version_seq(v):
+                m = re.search(r"(\d+)(?!.*\d)", v or "")
+                return int(m.group(1)) if m else -1
+            tgt_versions = db.session.execute(select(SdsDoc.version).where(SdsDoc.product_id == target_pid)).scalars().all()
+            valid = [v for v in tgt_versions if v]
+            version = new_version(max(valid, key=_version_seq)) if valid else fromdoc.version
+        else:
+            real_product_id = src_product_id
+            real_srsdoc_id = src_srsdoc_id
+            version = new_version(fromdoc.version)
+        # 兜底：确保目标产品/绑定SRS下版本唯一，撞号则继续递增
+        def _sds_version_exists(ver):
+            c1 = db.session.execute(select(func.count(SdsDoc.id)).where(SdsDoc.srsdoc_id == real_srsdoc_id, SdsDoc.version == ver)).scalar() or 0
+            c2 = 0
+            if real_product_id:
+                c2 = db.session.execute(select(func.count(SdsDoc.id)).where(SdsDoc.product_id == real_product_id, SdsDoc.version == ver)).scalar() or 0
+            return c1 > 0 or c2 > 0
+        while _sds_version_exists(version):
+            version = new_version(version)
         next_file_no = srsdoc_serv._Server__sync_file_no_version(getattr(fromdoc, "file_no", None), version)
         newdoc = SdsDoc(srsdoc_id=real_srsdoc_id, product_id=real_product_id, version=version, change_log=fromdoc.change_log, n_id=0, file_no=next_file_no)
-        sql = select(func.count(SdsDoc.id)).where(SdsDoc.srsdoc_id == newdoc.srsdoc_id, SdsDoc.version == newdoc.version)
-        count = db.session.execute(sql).scalar()
-        if count > 0:
-            return Resp.resp_err(msg=ts("msg_obj_exist"))
-        if real_product_id:
-            dup_sql = select(func.count(SdsDoc.id)).where(SdsDoc.product_id == real_product_id, SdsDoc.version == newdoc.version)
-            if (db.session.execute(dup_sql).scalar() or 0) > 0:
-                return Resp.resp_err(msg=ts("msg_obj_exist"))
         try:
             db.session.add(newdoc)
             db.session.flush()

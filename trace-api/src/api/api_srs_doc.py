@@ -31,8 +31,8 @@ async def add_srs_doc(form: SrsDocForm):
 
 @router.get("/duplicate_srs_doc", summary="复制SRS_DOC", response_model=Resp[SrsDocForm])
 @try_log(perm=Perms.srs_doc_edit)
-async def duplicate_srs_doc(id: int):
-    return await server.duplicate_srs_doc(id)
+async def duplicate_srs_doc(id: int, product_id: int = None):
+    return await server.duplicate_srs_doc(id, product_id)
 
 
 @router.delete("/delete_srs_doc", summary="删除SRS_DOC", response_model=Resp[Any])

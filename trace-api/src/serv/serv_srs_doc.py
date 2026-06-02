@@ -3129,13 +3129,30 @@ class Server(object):
             db.session.rollback()
         return Resp.resp_err(msg=ts(msg_err_db))
     
-    async def duplicate_srs_doc(self, id: int):
+    async def duplicate_srs_doc(self, id: int, product_id: int = None):
         fromdoc:SrsDocObj = (await self.get_srs_doc(id, with_tree=True)).data
         if not fromdoc:
             return Resp.resp_err(msg=ts("msg_obj_null"))
-        version = new_version(fromdoc.version)
+        # 复制目标产品：默认沿用原产品，跨产品复制时使用指定产品
+        target_pid = product_id or fromdoc.product_id
+        # 自动计算新版本号（不允许手动指定）
+        all_versions = db.session.execute(select(SrsDoc.version).where(SrsDoc.product_id == target_pid)).scalars().all()
+        existing_set = {v for v in all_versions if v}
+        if target_pid == fromdoc.product_id:
+            # 同产品复制：在原文档版本号上递增
+            version = new_version(fromdoc.version)
+        else:
+            # 跨产品复制：查目标产品现有最大版本后递增；目标产品无文档时沿用原版本
+            def _version_seq(v):
+                m = re.search(r"(\d+)(?!.*\d)", v or "")
+                return int(m.group(1)) if m else -1
+            valid = [v for v in all_versions if v and not str(v).startswith(DELETED_SRS_VERSION_PREFIX)]
+            version = new_version(max(valid, key=_version_seq)) if valid else fromdoc.version
+        # 兜底：确保目标产品下版本唯一
+        while version in existing_set:
+            version = new_version(version)
         newdoc = SrsDoc(
-            product_id=fromdoc.product_id,
+            product_id=target_pid,
             version=version,
             folder_name=fromdoc.folder_name,
             file_no=self.__sync_file_no_version(fromdoc.file_no, version),

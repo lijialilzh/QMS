@@ -15,6 +15,7 @@ const pageSizeOptions = [20, 50, 100];
 enum DlgTypes {
     import = "import",
     delete = "delete",
+    copy = "copy",
 }
 
 const loadProducts = (data: any, dispatch: any) => {
@@ -46,6 +47,7 @@ export default () => {
         editingFileNoId: 0,
         editingFileNoValue: "",
         savingFileNoId: 0,
+        copyProductId: undefined,
     });
 
     const productId = Form.useWatch("product_id", queryForm);
@@ -97,26 +99,26 @@ export default () => {
     };
 
     const doDuplicate = (row: any) => {
-        Modal.confirm({
-            title: ts("srs_doc.copy_confirm_title") || "确认复制",
-            content: sprintf(ts("sds_doc.copy_confirm_content"), row.product_name || "", row.product_full_version || "", row.version || ""),
-            okText: ts("confirm"),
-            cancelText: ts("cancel"),
-            onOk: () => {
-                dispatch({ loading: true });
-                return Api.duplicate_risk_mgmt_doc({ id: row.id }).then((res: any) => {
-                    dispatch({ loading: false });
-                    if (res.code === Api.C_OK) {
-                        message.success("复制成功");
-                        doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
-                    } else {
-                        message.error(res.msg);
-                    }
-                }).catch(() => {
-                    dispatch({ loading: false });
-                    message.error("复制失败");
-                });
-            },
+        loadProducts(data, dispatch);
+        dispatch({ dlgType: DlgTypes.copy, targetRow: row, copyProductId: row.product_id });
+    };
+
+    const doCopy = () => {
+        const row = data.targetRow || {};
+        if (!row.id) return;
+        dispatch({ loading: true });
+        Api.duplicate_risk_mgmt_doc({ id: row.id, product_id: data.copyProductId }).then((res: any) => {
+            dispatch({ loading: false });
+            if (res.code === Api.C_OK) {
+                dispatch({ dlgType: null });
+                message.success("复制成功");
+                doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
+            } else {
+                message.error(res.msg);
+            }
+        }).catch(() => {
+            dispatch({ loading: false });
+            message.error("复制失败");
         });
     };
 
@@ -389,6 +391,29 @@ export default () => {
                 onOk={doDelete}
                 onCancel={() => dispatch({ dlgType: null })}>
                 {ts("confirm_delete")}
+            </Modal>
+            <Modal
+                centered
+                width={520}
+                title="复制"
+                open={data.dlgType === DlgTypes.copy}
+                maskClosable={false}
+                confirmLoading={data.loading}
+                onOk={doCopy}
+                onCancel={() => dispatch({ dlgType: null })}>
+                <div style={{ lineHeight: 1.8 }}>
+                    <div style={{ marginBottom: 12 }}>复制到目标产品（默认当前产品，可选其它产品）：</div>
+                    <ProductVersionSelect
+                        products={data.products}
+                        value={data.copyProductId}
+                        namePlaceholder={ts("product.name")}
+                        versionPlaceholder={ts("product.full_version")}
+                        onChange={(value: any) => dispatch({ copyProductId: value })}
+                    />
+                    <div style={{ color: "#888", marginTop: 12 }}>
+                        版本号自动生成：同产品在原版本号上递增；跨产品按目标产品现有最大版本递增。
+                    </div>
+                </div>
             </Modal>
         </div>
     );

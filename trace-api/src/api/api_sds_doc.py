@@ -46,8 +46,8 @@ async def import_sds_doc_word(
 
 @router.get("/duplicate_sds_doc", summary="复制SDS_DOC", response_model=Resp[SdsDocForm])
 @try_log(perm=Perms.sds_doc_edit)
-async def duplicate_sds_doc(id: int):
-    return await server.duplicate_sds_doc(id)
+async def duplicate_sds_doc(id: int, product_id: int = None):
+    return await server.duplicate_sds_doc(id, product_id)
 
 
 @router.post("/add_doc_file", summary="添加文档文件", response_model=Resp[str])

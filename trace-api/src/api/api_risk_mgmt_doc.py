@@ -45,8 +45,8 @@ async def import_risk_mgmt_doc_word(
 
 @router.get("/duplicate_risk_mgmt_doc", summary="复制风险管理文档", response_model=Resp[RiskMgmtDocForm])
 @try_log(perm=Perms.risk_mgmt_doc_edit)
-async def duplicate_risk_mgmt_doc(id: int):
-    return await server.duplicate_risk_mgmt_doc(id)
+async def duplicate_risk_mgmt_doc(id: int, product_id: int = None):
+    return await server.duplicate_risk_mgmt_doc(id, product_id)
 
 
 @router.post("/update_risk_mgmt_doc", summary="更新风险管理文档", response_model=Resp[Any])
