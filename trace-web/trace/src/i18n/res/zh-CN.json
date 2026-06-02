@@ -61,7 +61,7 @@
     "pwd_len_err": "请输入6-12位数字和字母的组合密码",
     "msg_req_fail": "请求失败，请稍后再试！",
     "loading": "加载中，请稍后...",
-    "pwds_not_same": "两次输入的密码不一致！",
+    "pwds_not_same": "新密码与确认新密码不一致",
     "action": "操作",
     "add": "新增",
     "edit": "编辑",

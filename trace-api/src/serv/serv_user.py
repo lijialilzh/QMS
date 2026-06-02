@@ -15,7 +15,7 @@ from .. import env
 from .import msg_err_db
 
 logger = logging.getLogger(__name__)
-DEF_PWD = getenv("DEF_PWD", "test")
+DEF_PWD = getenv("DEF_PWD", "test123")
 
 
 def pwd2sign(raw_pwd: str, pwd_sk: str):
@@ -67,7 +67,7 @@ class Server(object):
             pwd_hash = pwd2sign(raw_pwd, row.pwd_sk)
             if not pwd_hash == row.pwd:
                 logger.warning("%s %s %s %s", form.pwd, row.pwd_sk, pwd_hash, row.pwd)
-                return Resp.resp_err(msg=ts("msg_err_pwd"))
+                return Resp.resp_err(msg=ts("msg_old_pwd_err"))
             if not form.pwd_new1 or not form.pwd_new2:
                 return Resp.resp_err(msg=ts("msg_newpwd_unset"))
             if form.pwd_new1 != form.pwd_new2:

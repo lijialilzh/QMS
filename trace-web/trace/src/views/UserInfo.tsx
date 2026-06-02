@@ -39,7 +39,7 @@ export const PwdDlg = ({ isOpen, onClose }: any) => {
     };
     const rules = [
         { required: true, message: ts("input_new_pwd") },
-        { min: 6, message: ts("pwd_len_err") },
+        { pattern: /^(?=.*[0-9])(?=.*[a-zA-Z])[0-9a-zA-Z]{6,12}$/, message: ts("pwd_len_err") },
     ];
 
     return (
@@ -59,7 +59,19 @@ export const PwdDlg = ({ isOpen, onClose }: any) => {
                 <Form.Item label={ts("label_pwd_new1")} name="pwd_new1" rules={rules}>
                     <Input.Password allowClear autoComplete="new-password" />
                 </Form.Item>
-                <Form.Item label={ts("label_pwd_new2")} name="pwd_new2" rules={rules}>
+                <Form.Item
+                    label={ts("label_pwd_new2")}
+                    name="pwd_new2"
+                    dependencies={["pwd_new1"]}
+                    rules={[
+                        ...rules,
+                        ({ getFieldValue }) => ({
+                            validator(_, value) {
+                                if (!value || getFieldValue("pwd_new1") === value) return Promise.resolve();
+                                return Promise.reject(new Error(ts("pwds_not_same")));
+                            },
+                        }),
+                    ]}>
                     <Input.Password allowClear autoComplete="new-password" />
                 </Form.Item>
             </Form>

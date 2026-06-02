@@ -17,7 +17,9 @@ class Server(object):
 
     async def add_project(self, form: ProjectForm):
         try:
-            sql = select(func.count(Project.id)).where(Project.name == form.name)
+            sql = select(func.count(Project.id)).where(
+                Project.name == form.name, Project.country == form.country
+            )
             count = db.session.execute(sql).scalar()
             if count > 0:
                 return Resp.resp_err(msg=ts("msg_obj_exist"))
@@ -43,6 +45,13 @@ class Server(object):
    
     async def update_project(self, form: ProjectForm):
         try:
+            dup_sql = select(func.count(Project.id)).where(
+                Project.name == form.name,
+                Project.country == form.country,
+                Project.id != form.id,
+            )
+            if db.session.execute(dup_sql).scalar() > 0:
+                return Resp.resp_err(msg=ts("msg_obj_exist"))
             sql = select(Project).where(Project.id == form.id)
             row:Project = db.session.execute(sql).scalars().first()
             if not row:
