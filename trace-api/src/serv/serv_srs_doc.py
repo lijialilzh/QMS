@@ -2285,7 +2285,7 @@ class Server(object):
             db.session.execute(pg_insert(ReqRcm).values(insert_values).on_conflict_do_nothing())
         db.session.commit()
 
-    def __parse_docx_content(self, docx: Document, bind_block_lead: bool = False):
+    def __parse_docx_content(self, docx: Document):
         roots: List[SrsNodeForm] = []
         stack: List[Tuple[int, SrsNodeForm]] = []
         current: SrsNodeForm = None
@@ -2299,9 +2299,6 @@ class Server(object):
         numbering_defs = self.__build_numbering_definitions(docx)
         body_numbering_counters: Dict[str, dict] = {}
         pending_table_title = ""
-        # 仅 SDS 导入启用：暂存「引导句段落」（如「功能清单：」），绑定到紧跟其后的表/图节点上方，
-        # 而不并入父章节正文。SRS 导入不开启，行为完全不变。
-        pending_block_lead = None  # Optional[Tuple[holder_node, lead_text]]
 
         def ensure_text_holder():
             nonlocal current
@@ -2371,41 +2368,6 @@ class Server(object):
         def is_table_title_text(text: str):
             return self.__is_req_table_title_text(text)
 
-        def is_block_lead(text: str) -> bool:
-            # 引导句：短、以冒号结尾、非完整句、非表标题（如「功能清单：」「衔接处理任务流程：」）。
-            if not bind_block_lead:
-                return False
-            s = self.__normalize_text(text or "").strip()
-            if not s or not (s.endswith("：") or s.endswith(":")):
-                return False
-            core = s[:-1].strip()
-            if not core or len(core) > 15:
-                return False
-            if re.search(r"[。！？；.!?;]$", core):
-                return False
-            if re.search(r"https?://|/[\w\-]", core, re.I):
-                return False
-            if is_table_title_text(s):
-                return False
-            return True
-
-        def consume_block_lead(target_node: SrsNodeForm):
-            # 把暂存引导句从父正文末尾移除，并置于目标表/图节点正文最前（显示在块上方）。
-            nonlocal pending_block_lead
-            if not pending_block_lead:
-                return
-            holder, lead = pending_block_lead
-            pending_block_lead = None
-            if holder is not None and getattr(holder, "text", ""):
-                lines = holder.text.split("\n")
-                while lines and lines[-1].strip() == "":
-                    lines.pop()
-                if lines and lines[-1].strip() == str(lead).strip():
-                    lines.pop()
-                    holder.text = "\n".join(lines).strip()
-            existing = getattr(target_node, "text", "") or ""
-            target_node.text = f"{lead}\n{existing}".strip() if existing else str(lead)
-
         def extract_table_titles_from_text(text: str):
             titles = []
             for line in str(text or "").replace("\r", "").split("\n"):
@@ -2471,9 +2433,6 @@ class Server(object):
                     )
                     if is_interface_parent and is_interface_subtitle:
                         level = min(parent_level + 1, 5)
-                # 引导句后若紧跟的是标题/表标题而非表/图，则放弃绑定，保持其留在父正文（行为不变）。
-                if bind_block_lead and txt and level is not None and pending_block_lead is not None:
-                    pending_block_lead = None
                 # 需求表标题（如 2.0 变更需求）仅作后续表格名，不生成文档章节节点。
                 if txt and level is not None and is_table_title_text(txt):
                     pending_table_title = txt
@@ -2503,7 +2462,6 @@ class Server(object):
                     body_txt = self.__paragraph_text_with_numbering(para, numbering_defs, body_numbering_counters)
                     if is_table_title_text(body_txt):
                         pending_table_title = body_txt
-                        pending_block_lead = None
                     else:
                         pending_table_title = ""
                         holder = ensure_text_holder()
@@ -2516,14 +2474,10 @@ class Server(object):
                         srs_hit = srs_pattern.search(body_txt)
                         if srs_hit and not holder.srs_code:
                             holder.srs_code = srs_hit.group(0).upper()
-                        # 引导句：暂存，等待紧跟的表/图来消费；否则保持在正文。
-                        pending_block_lead = (holder, body_txt) if is_block_lead(body_txt) else None
 
                 for img_url in extract_images_from_para(para):
                     img_idx += 1
-                    img_node = SrsNodeForm(title=f"导入图片{img_idx}", img_url=img_url, children=[])
-                    attach_to_current(img_node)
-                    consume_block_lead(img_node)
+                    attach_to_current(SrsNodeForm(title=f"导入图片{img_idx}", img_url=img_url, children=[]))
             elif tag.endswith("}tbl"):
                 tab = DocxTable(child, docx._body)
                 for row in tab.rows:
@@ -2538,9 +2492,7 @@ class Server(object):
                 table_title = pending_table_title or f"导入表格{table_idx}"
                 pending_table_title = ""
                 table.name = table_title if not re.match(r"^导入表格\d*$", table_title or "") else None
-                table_node = SrsNodeForm(title=f"导入表格{table_idx}", table=table, children=[])
-                consume_block_lead(table_node)
-                attach_to_current(table_node)
+                attach_to_current(SrsNodeForm(title=f"导入表格{table_idx}", table=table, children=[]))
         apply_table_titles_from_parent_text(roots)
         return roots, heading_rows
 

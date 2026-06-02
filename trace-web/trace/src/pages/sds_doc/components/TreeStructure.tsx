@@ -1018,7 +1018,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         || trailingInlineTables.length > 0
     );
     // 只读三级及以下标题：点击标题后才展开表内容（符合“5.6.1/5.6.2 点击后显示表”）
-    const collapseTableByDefault = !!(readOnly && level >= 2 && hasTableBody);
+    const collapseTableByDefault = !!(readOnly && level >= 2 && hasTableBody && !hideNodeRow);
     const hasToggle = hasChildren || collapseTableByDefault;
     // 性能优化：编辑态也按展开状态渲染子内容，避免大文档首屏一次性挂载全部节点。
     const showExpandedBody = collapseTableByDefault

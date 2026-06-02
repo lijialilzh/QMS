@@ -1064,7 +1064,7 @@ class Server(SdsSrsTraceSyncMixin, object):
             bys = await file.read()
             docx = Document(io.BytesIO(bys))
             db_table_plans = self.__extract_data_structure_db_table_plan(docx)
-            content, _ = srsdoc_serv._Server__parse_docx_content(docx, bind_block_lead=True)  # 复用 SRS 导入解析
+            content, _ = srsdoc_serv._Server__parse_docx_content(docx)  # 复用 SRS 导入解析
             file_name = file.filename or ""
             _, file_no = srsdoc_serv._Server__extract_file_info(file_name)
 
