@@ -301,6 +301,58 @@ const syncProductNameInContent = (content: any, productName?: string) => {
     return nextContent;
 };
 
+const stripSectionNo = (title: any) => String(title || "").replace(/^[0-9０-９.．\s、]+/, "").trim();
+
+const buildProductDescription = (product: any) => [
+    `产品名称：${product?.name || ""}`,
+    `产品型号：${product?.type_code || ""}`,
+    `完整版本：${product?.full_version || ""}`,
+].join("\n");
+
+const buildDefaultSectionTextMap = (product: any): Record<string, string> => {
+    const pname = product?.name || "";
+    return {
+        "目的": `风险管理的目的是确保${pname}的危害得到了定义，评估和评价了相关风险，控制了这些风险和在寿命周期中监控这些控制措施的有效性。本公司采用的主要方式和程序来自于GB/T 42062、ISO14971和YY/T 1406.1-2016。`,
+        "审评历史": `按照评审记录的模板，在风险管理过程中，形成了以下风险相关文件（部分含评审记录）：\n《风险管理计划》及评审记录\n《初步危害分析清单》及评审记录\n《网络安全漏洞自评报告》\n《自研软件网络安全研究报告》\n《风险管理报告》及评审记录`,
+        "风险分析方式": `根据YY/T 0316、ISO14971和风险管理控制程序，对于每个危害发生概率、危害程度的评估、综合考虑概率和危害程度的风险等级、风险可接受准则如下所示。`,
+        "危害识别": `与合理可预见相关的环境相关的危害：\n正常使用\n不正确的使用\n人为恶意使用\n考虑的危害包括：\n对患者的危害\n对操作者的危害\n对信息资产的危害\n危害初步原因的考虑应包括:\n用户界面\n患者或者临床用户的忽视\n人因工程\n硬件故障\n软件故障\n集成错误\n环境条件\n网络安全\n危害重点考虑的原因应包括：\n网络工具；\n系统部件的集成，包括硬件和软件；\n用户界面，包括命令语言，警告和错误信息；\n在用户界面和用户手册中文字翻译的准确性；\n用户预期或非预期情况下数据的保护；\n第三方软件。`,
+        "与合理可预见相关的环境相关的危害": `与合理可预见相关的环境相关的危害：\n正常使用\n不正确的使用\n人为恶意使用`,
+        "考虑的危害包括": `考虑的危害包括：\n对患者的危害\n对操作者的危害\n对信息资产的危害`,
+        "危害初步原因的考虑应包括": `危害初步原因的考虑应包括:\n用户界面\n患者或者临床用户的忽视\n人因工程\n硬件故障\n软件故障\n集成错误\n环境条件\n网络安全`,
+        "危害重点考虑的原因应包括": `危害重点考虑的原因应包括：\n网络工具；\n系统部件的集成，包括硬件和软件；\n用户界面，包括命令语言，警告和错误信息；\n在用户界面和用户手册中文字翻译的准确性；\n用户预期或非预期情况下数据的保护；\n第三方软件。`,
+        "严重度定义": `见图1`,
+        "发生概率定义": `见图2`,
+        "风险分析": `根据YY/T 0316、ISO14971和风险管理控制程序，${pname}的风险分析过程应该定义可能的危险（源），评估每个危险情况，评估每个风险的可接受程度，降低风险的方式和评审由于采取风险控制措施带来的风险。在所有这些风险已经被分析后，这些程序和结果的记录见本报告。`,
+        "生产和生产后活动": `在风险管理计划中，已经描述了生产和生产后信息收集的方式。\n通过对执行这些过程中记录的评审，来评审是否引入了风险和开始一个新的风险分析和管理过程。\n截至目前搜集到的所有信息，没有新的风险产生。`,
+        "参考标准": `YY/T 0664-2020 医疗器械软件 软件生存周期过程\nGB/T 42062-2022 医疗器械 风险管理对医疗器械的应用\nYY/T 1406.1-2016 医疗器械软件 第1部分：YY/T 0316应用于医疗器械软件的指南\nISO 14971-2019 医疗器械-风险管理对医疗器械的应用\n《医疗器械软件注册技术审查指导原则》（2022年第9号）\n《医疗器械网络安全注册审查指导原则》（2022年第7号）\n《人工智能医疗器械注册审查指导原则》（2022年第8号）\nFDA-Content of Premarket Submissions for Device Software Functions`,
+    };
+};
+
+const fillProductTextSections = (content: any, product: any) => {
+    const nextContent = ensureFrontMatterSections(content);
+    const defaultMap = buildDefaultSectionTextMap(product);
+    const fill = (sections: any[] = []) => {
+        (sections || []).forEach((section: any) => {
+            const key = stripSectionNo(section.title);
+            const hasText = String(section.text || "").trim().length > 0;
+            if (!hasText) {
+                if (key === "范围") {
+                    section.text = product?.scope || "";
+                } else if (key === "产品描述") {
+                    section.text = buildProductDescription(product);
+                } else if (key === "产品预期用途") {
+                    section.text = product?.component || "";
+                } else if (defaultMap[key] !== undefined) {
+                    section.text = defaultMap[key];
+                }
+            }
+            fill(section.children || []);
+        });
+    };
+    fill(nextContent.sections || []);
+    return nextContent;
+};
+
 const relocateMisplacedRiskTables = (content: any) => {
     const nextContent = ensureFrontMatterSections(content);
     let riskMgmtFilesSection: any = null;
@@ -441,6 +493,7 @@ export default () => {
         participantsTouched: false,
         products: [],
         activeSectionKey: "",
+        selectedProductId: undefined,
         prodRcms: [],
         prodHazs: [],
         hazs: [],
@@ -501,6 +554,11 @@ export default () => {
         });
     };
 
+    useEffect(() => {
+        if (!isAdd) return;
+        loadRiskLookupData(data.selectedProductId);
+    }, [isAdd, data.selectedProductId]);
+
     const doSave = () => {
         form.validateFields().then((values) => {
             const participantSource = data.participantsTouched || (data.participants || []).length
@@ -555,7 +613,9 @@ export default () => {
     };
 
     const initTemplate = () => {
-        const content = cloneTemplateContent();
+        const currentProductId = data.selectedProductId || data.detail?.product_id;
+        const currentProduct = (data.products || []).find((p: any) => p.id === currentProductId);
+        const content = fillProductTextSections(cloneTemplateContent(), currentProduct);
         const defaultSection = (content.sections || []).find((section: any) => !isCoverSection(section) && !isRevisionSection(section));
         dispatch({ content, participants: [], selectedParticipantIds: [], participantsTouched: false, activeSectionKey: sectionKey(defaultSection) });
         message.success("初始化模版成功");
@@ -1346,15 +1406,17 @@ export default () => {
                                 rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
                                 <ProductVersionSelect
                                     products={data.products}
+                                    value={data.selectedProductId}
                                     namePlaceholder={ts("product.name")}
                                     versionPlaceholder={ts("product.full_version")}
                                     onChange={(value) => {
                                         form.setFieldValue("product_id", value);
+                                        dispatch({ selectedProductId: value });
                                         const selectedProduct = (data.products || []).find((p: any) => p.id === value);
                                         const productName = selectedProduct?.name || "";
-                                        const content = syncProductNameInContent(data.content || emptyContent, productName);
+                                        let content = syncProductNameInContent(data.content || emptyContent, productName);
+                                        content = fillProductTextSections(content, selectedProduct);
                                         dispatch({ content });
-                                        loadRiskLookupData(value);
                                     }}
                                 />
                             </Form.Item>

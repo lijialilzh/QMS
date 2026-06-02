@@ -198,7 +198,7 @@ export default () => {
         {
             title: ts("risk_mgmt_doc.file_no"),
             dataIndex: "file_no",
-            width: "9%",
+            width: "20%",
             render: (value: string, row: any) => {
                 const isEditing = data.editingFileNoId === row.id;
                 const isSaving = data.savingFileNoId === row.id;
@@ -226,7 +226,7 @@ export default () => {
                 );
             },
         },
-        { title: ts("risk_mgmt_doc.change_log"), dataIndex: "change_log", width: "16%" },
+        { title: ts("risk_mgmt_doc.change_log"), dataIndex: "change_log", width: "6%" },
         { title: ts("create_time"), dataIndex: "create_time", width: "15%" },
         {
             title: ts("action"),
