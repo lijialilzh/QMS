@@ -353,6 +353,24 @@ const fillProductTextSections = (content: any, product: any) => {
     return nextContent;
 };
 
+const syncFileVersionInCover = (content: any, version: any) => {
+    const ver = String(version ?? "");
+    const nextContent = JSON.parse(JSON.stringify(content || emptyContent));
+    (nextContent.sections || []).forEach((section: any) => {
+        if (!isCoverSection(section)) return;
+        (section.tables || []).forEach((table: any[]) => {
+            (table || []).forEach((row: any[]) => {
+                for (let i = 0; i + 1 < (row || []).length; i += 1) {
+                    if (normalizeTitleText(row[i]) === "文件版本") {
+                        row[i + 1] = ver;
+                    }
+                }
+            });
+        });
+    });
+    return nextContent;
+};
+
 const relocateMisplacedRiskTables = (content: any) => {
     const nextContent = ensureFrontMatterSections(content);
     let riskMgmtFilesSection: any = null;
@@ -514,7 +532,8 @@ export default () => {
         Api.get_risk_mgmt_doc({ id: params.id }).then((res: any) => {
             if (res.code === Api.C_OK) {
                 const detail = res.data || {};
-                const content = syncProductNameInContent(relocateMisplacedRiskTables(detail.content || emptyContent), detail.product_name);
+                let content = syncProductNameInContent(relocateMisplacedRiskTables(detail.content || emptyContent), detail.product_name);
+                content = syncFileVersionInCover(content, detail.version);
                 const participants = (content.participants || []).map((row: any) => ({ ...row, _rowKey: makeRowKey() }));
                 const selectedParticipantIds = participants.map((row: any) => row.id).filter(Boolean);
                 const defaultSection = (content.sections || []).find((section: any) => !isCoverSection(section) && !isRevisionSection(section));
@@ -1396,7 +1415,16 @@ export default () => {
                     </Button>
                 )}
             </div>
-            <Form form={form} layout="vertical" disabled={isView}>
+            <Form
+                form={form}
+                layout="vertical"
+                disabled={isView}
+                onValuesChange={(changed) => {
+                    if (Object.prototype.hasOwnProperty.call(changed, "version")) {
+                        const nextContent = syncFileVersionInCover(data.content || emptyContent, changed.version);
+                        dispatch({ content: nextContent });
+                    }
+                }}>
                 <Card title="基础信息" loading={data.loading}>
                     <div className="risk-mgmt-basic-grid">
                         {isAdd ? (

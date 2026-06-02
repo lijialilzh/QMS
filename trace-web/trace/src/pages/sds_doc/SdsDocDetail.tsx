@@ -235,8 +235,10 @@ export default () => {
 
     const productId = Form.useWatch("product_id", editForm);
     const srsdocId = Form.useWatch("srsdoc_id", editForm);
+    const docVersion = Form.useWatch("version", editForm);
     const displayProductId = (data.isEdit || isReadOnly) ? (data.docProductId ?? productId) : productId;
     const displaySrsdocId = (data.isEdit || isReadOnly) ? (data.docSrsdocId ?? srsdocId) : srsdocId;
+    const displayDocVersion = (data.isEdit || isReadOnly) ? (data.docVersion ?? docVersion) : docVersion;
     const currentProduct = (data.products as any[]).find((p: any) => p.id === displayProductId);
     const productLabel = currentProduct ? `${currentProduct.name}-${currentProduct.full_version}` : "";
     const currentSrsdoc = (data.srsDocList as any[]).find((s: any) => s.id === displaySrsdocId);
@@ -1281,7 +1283,13 @@ export default () => {
                 { code: "changer", name: "修订人" },
                 { code: "approver", name: "批准人" },
             ],
-            rows: [{ change_date: "", version_no: "", change_desc: "", changer: "", approver: "" }],
+            rows: [
+                { change_date: "", version_no: "", change_desc: "", changer: "", approver: "" },
+                { change_date: "", version_no: "", change_desc: "", changer: "", approver: "" },
+                { change_date: "", version_no: "", change_desc: "", changer: "", approver: "" },
+                { change_date: "", version_no: "", change_desc: "", changer: "", approver: "" },
+                { change_date: "", version_no: "", change_desc: "", changer: "", approver: "" },
+            ],
         } as any,
         children: [],
     });
@@ -2927,6 +2935,75 @@ export default () => {
         treeStructureRef.current = nextTree;
         dispatch({ treeStructure: nextTree });
     };
+
+    const applyVersionToCoverTable = (nodes: TreeNode[], version?: any): { nodes: TreeNode[]; changed: boolean } => {
+        const ver = String(version ?? "");
+        let changed = false;
+        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+            const children = walk((node.children || []) as TreeNode[]);
+            let nextNode: TreeNode = { ...node, children };
+            if (nextNode.table && isCoverTable(nextNode)) {
+                const rows = normalizeApprovalRows(nextNode).map((r: any) => ({ ...r }));
+                const cur = String((rows[0] || {}).value2 ?? "");
+                if (cur !== ver) {
+                    rows[0] = { ...(rows[0] || {}), value2: ver };
+                    nextNode = { ...nextNode, table: { ...nextNode.table, headers: approvalHeaders, rows } };
+                    changed = true;
+                }
+            }
+            return nextNode;
+        });
+        return { nodes: walk(nodes), changed };
+    };
+    const applyDeptToCoverTable = (nodes: TreeNode[], dept: string): { nodes: TreeNode[]; changed: boolean } => {
+        const want = String(dept ?? "");
+        if (!want) return { nodes, changed: false };
+        let changed = false;
+        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+            const children = walk((node.children || []) as TreeNode[]);
+            let nextNode: TreeNode = { ...node, children };
+            if (nextNode.table && isCoverTable(nextNode)) {
+                const rows = normalizeApprovalRows(nextNode).map((r: any) => ({ ...r }));
+                const cur = String((rows[0] || {}).value1 ?? "").trim();
+                if (!cur) {
+                    rows[0] = { ...(rows[0] || {}), value1: want };
+                    nextNode = { ...nextNode, table: { ...nextNode.table, headers: approvalHeaders, rows } };
+                    changed = true;
+                }
+            }
+            return nextNode;
+        });
+        return { nodes: walk(nodes), changed };
+    };
+    const ensureChangeLogMinRows = (nodes: TreeNode[], minRows = 5): { nodes: TreeNode[]; changed: boolean } => {
+        let changed = false;
+        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+            const children = walk((node.children || []) as TreeNode[]);
+            let nextNode: TreeNode = { ...node, children };
+            if (nextNode.table && isChangeLogTable(nextNode)) {
+                const rows = [...((nextNode.table as any).rows || [])];
+                if (rows.length < minRows) {
+                    while (rows.length < minRows) {
+                        rows.push({ change_date: "", version_no: "", change_desc: "", changer: "", approver: "" });
+                    }
+                    nextNode = { ...nextNode, table: { ...nextNode.table, rows } as any };
+                    changed = true;
+                }
+            }
+            return nextNode;
+        });
+        return { nodes: walk(nodes), changed };
+    };
+    useEffect(() => {
+        if (!(data.treeStructure as TreeNode[] || []).length) return;
+        const verResult = applyVersionToCoverTable(data.treeStructure as TreeNode[], displayDocVersion);
+        const deptResult = applyDeptToCoverTable(verResult.nodes, "研发部");
+        const logResult = ensureChangeLogMinRows(deptResult.nodes, 5);
+        if (verResult.changed || deptResult.changed || logResult.changed) {
+            treeStructureRef.current = logResult.nodes;
+            dispatch({ treeStructure: logResult.nodes });
+        }
+    }, [displayDocVersion, data.treeStructure]);
 
     const renderApprovalTable = (node: TreeNode, keyPrefix: string) => {
         const columns = approvalHeaders.map((header: any, index: number) => ({

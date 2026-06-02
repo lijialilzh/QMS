@@ -2039,6 +2039,55 @@ export default () => {
         }
     }, [displayProductId, currentProduct?.scope, currentProduct?.name, currentProduct?.type_code]);
 
+    const applyVersionToCoverTable = (nodes: TreeNode[], version?: any): { nodes: TreeNode[]; changed: boolean } => {
+        const ver = String(version ?? "");
+        let changed = false;
+        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+            const children = walk((node.children || []) as TreeNode[]);
+            let nextNode: TreeNode = { ...node, children };
+            if (nextNode.table && isApprovalTable(nextNode)) {
+                const rows = normalizeApprovalRows(nextNode).map((r: any) => ({ ...r }));
+                const cur = String((rows[0] || {}).value2 ?? "");
+                if (cur !== ver) {
+                    rows[0] = { ...(rows[0] || {}), value2: ver };
+                    nextNode = { ...nextNode, table: { ...nextNode.table, headers: approvalHeaders, rows } };
+                    changed = true;
+                }
+            }
+            return nextNode;
+        });
+        return { nodes: walk(nodes), changed };
+    };
+    const applyDeptToCoverTable = (nodes: TreeNode[], dept: string): { nodes: TreeNode[]; changed: boolean } => {
+        const want = String(dept ?? "");
+        if (!want) return { nodes, changed: false };
+        let changed = false;
+        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+            const children = walk((node.children || []) as TreeNode[]);
+            let nextNode: TreeNode = { ...node, children };
+            if (nextNode.table && isApprovalTable(nextNode)) {
+                const rows = normalizeApprovalRows(nextNode).map((r: any) => ({ ...r }));
+                const cur = String((rows[0] || {}).value1 ?? "").trim();
+                if (!cur) {
+                    rows[0] = { ...(rows[0] || {}), value1: want };
+                    nextNode = { ...nextNode, table: { ...nextNode.table, headers: approvalHeaders, rows } };
+                    changed = true;
+                }
+            }
+            return nextNode;
+        });
+        return { nodes: walk(nodes), changed };
+    };
+    useEffect(() => {
+        if (!(data.treeStructure as TreeNode[] || []).length) return;
+        const verResult = applyVersionToCoverTable(data.treeStructure as TreeNode[], displayDocVersion);
+        const deptResult = applyDeptToCoverTable(verResult.nodes, "产品部");
+        if (verResult.changed || deptResult.changed) {
+            treeStructureRef.current = deptResult.nodes;
+            dispatch({ treeStructure: deptResult.nodes });
+        }
+    }, [displayDocVersion, data.treeStructure]);
+
     useEffect(() => {
         if (params.id || data.loading || !(data.treeStructure as TreeNode[] || []).length) return;
         const { nodes, changed } = ensureStandardTemplateChildren(data.treeStructure as TreeNode[]);
