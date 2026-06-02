@@ -61,10 +61,9 @@ class Server(object):
             if role.code not in self.fixed_role_codes:
                 role.name = form.name
             role_perms = set(form.role_perms or [])
-            # Fixed roles keep their baseline permissions and only allow incremental additions.
-            if role.code in self.fixed_role_codes:
-                base_perms = set(self.fixed_default_perm_codes.get(role.code, []))
-                role_perms = base_perms.union(role_perms)
+            # Only super admin (root) is locked to full permissions; other roles can be freely edited.
+            if role.code == "root":
+                role_perms = set(self.fixed_default_perm_codes.get(role.code, []))
 
             db.session.execute(delete(RolePerm).where(RolePerm.role_code == role.code))
             for perm_code in sorted(role_perms):

@@ -1041,6 +1041,20 @@ class Server(object):
                 file_no = tokens[1]
         return folder_name, file_no or folder_name
 
+    @staticmethod
+    def __sync_file_no_version(file_no: str, version: str):
+        # 将文件编号末尾的版本段（形如 -A0/-A1，字母+数字）同步为当前文档版本。
+        # 仅替换最后一个 "-" 之后、且为"字母+数字"的版本段，避免误伤 -003 这类纯数字序号。
+        if not file_no or not version:
+            return file_no
+        idx = file_no.rfind("-")
+        if idx == -1:
+            return file_no
+        tail = file_no[idx + 1:]
+        if re.match(r"^[A-Za-z]+\d+$", tail):
+            return file_no[:idx + 1] + version
+        return file_no
+
     def __is_product_req_context(self, context_text: str):
         normalized = self.__normalize_header(context_text or "")
         keywords = [
@@ -3124,7 +3138,7 @@ class Server(object):
             product_id=fromdoc.product_id,
             version=version,
             folder_name=fromdoc.folder_name,
-            file_no=fromdoc.file_no,
+            file_no=self.__sync_file_no_version(fromdoc.file_no, version),
             change_log=fromdoc.change_log,
             n_id=0,
         )
@@ -3252,6 +3266,7 @@ class Server(object):
                 if key == "id" or key == "n_id" or value is None:
                     continue
                 setattr(row, key, value)
+            row.file_no = self.__sync_file_no_version(row.file_no, row.version)
             row.n_id = 0
             db.session.execute(delete(SrsNode).where(SrsNode.doc_id == row.id))
             self.__sync_change_req_tables_from_db(row.id, form.content or [])

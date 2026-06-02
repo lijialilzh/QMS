@@ -119,6 +119,14 @@ def get_all_perm_codes():
 
 def get_default_role_perm_codes():
     all_perms = set(get_all_perm_codes())
+    ra_perms = {
+        "srs_doc", "srs_doc_view", "srs_doc_edit",
+        "sds_doc", "sds_doc_view", "sds_doc_edit",
+        "risk_mgmt_doc", "risk_mgmt_doc_view", "risk_mgmt_doc_edit",
+        "prod_haz", "prod_haz_view", "prod_haz_edit",
+        "prod_rcm", "prod_rcm_view", "prod_rcm_edit",
+        "prod_cst", "prod_cst_view", "prod_cst_edit",
+    }
     product_manager_perms = {
         "product", "product_view", "product_edit",
         "srs_doc", "srs_doc_view", "srs_doc_edit",
@@ -157,7 +165,7 @@ def get_default_role_perm_codes():
         Roles.root.value.code: sorted(all_perms),
         Roles.dqa.value.code: sorted(all_perms),
         Roles.qa.value.code: sorted(all_perms),
-        Roles.ra.value.code: sorted(all_perms),
+        Roles.ra.value.code: sorted(ra_perms),
         Roles.product_manager.value.code: sorted(product_manager_perms),
         Roles.developer.value.code: sorted(developer_perms),
         Roles.tester.value.code: sorted(tester_perms),

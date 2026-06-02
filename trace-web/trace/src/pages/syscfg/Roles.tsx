@@ -28,6 +28,7 @@ const SCOPE_MODULES = [
     "设计管理",
     "图表文件管理",
     "风险追溯管理",
+    "风险管理",
     "全局视图",
 ];
 
@@ -60,6 +61,7 @@ const matchModuleCodes = (moduleName: string, items: Array<{ code: string; name:
         if (moduleName === "设计管理") return code === "sds_doc" || code.startsWith("sds_doc_");
         if (moduleName === "图表文件管理") return name.startsWith("图表文件/") || code.startsWith("doc_file_");
         if (moduleName === "风险追溯管理") return ["prod_haz", "prod_rcm", "prod_cst", "test_set", "test_case"].some((k) => code.startsWith(k));
+        if (moduleName === "风险管理") return code.startsWith("risk_mgmt_doc") || name.startsWith("风险管理/");
         if (moduleName === "全局视图") return code.startsWith("overview") || name.includes("全局视图");
         return false;
     };
@@ -105,8 +107,7 @@ const RoleDlg = ({ data, dispatch, onSaved }: any) => {
                     const role_perms = data.dlgType === DlgTypes.edit ? res.data.role_perms || [] : [];
                     const all_perms = res.data.all_perms || [];
                     const fixed_base_perms = res.data.fixed_base_perms || [];
-                    const mergedRolePerms = Array.from(new Set([...(role_perms || []), ...fixed_base_perms]));
-                    const targetRow = { ...data.targetRow, perm_tree, role_perms: mergedRolePerms, all_perms, fixed_base_perms };
+                    const targetRow = { ...data.targetRow, perm_tree, role_perms: role_perms || [], all_perms, fixed_base_perms };
                     editForm.setFieldsValue(targetRow);
                     dispatch({ loading: false, targetRow });
                 } else {
@@ -161,7 +162,7 @@ const RoleDlg = ({ data, dispatch, onSaved }: any) => {
                             disabled={data.targetRow.code === ROOT}
                             className="all_perms"
                             onChange={(e) => {
-                                const role_perms = e.target.checked ? data.targetRow.all_perms || [] : Array.from(fixedPerms);
+                                const role_perms = e.target.checked ? data.targetRow.all_perms || [] : [];
                                 dispatch({ targetRow: { ...data.targetRow, role_perms } });
                             }}>
                             {ts("select_all")}
@@ -182,12 +183,9 @@ const RoleDlg = ({ data, dispatch, onSaved }: any) => {
                                                     if (e.target.checked) {
                                                         item.codes.forEach((code) => current.add(code));
                                                     } else {
-                                                        item.codes.forEach((code) => {
-                                                            if (!fixedPerms.has(code)) current.delete(code);
-                                                        });
+                                                        item.codes.forEach((code) => current.delete(code));
                                                     }
-                                                    const merged = Array.from(new Set([...Array.from(current), ...Array.from(fixedPerms)]));
-                                                    dispatch({ targetRow: { ...data.targetRow, role_perms: merged } });
+                                                    dispatch({ targetRow: { ...data.targetRow, role_perms: Array.from(current) } });
                                                 }}
                                             />
                                         </div>
@@ -198,11 +196,6 @@ const RoleDlg = ({ data, dispatch, onSaved }: any) => {
                         <div className="perm_scope_tip">
                             仅展示导航模块权限范围，不展示查看/编辑等子权限项。
                         </div>
-                        {fixedPerms.size > 0 && (
-                            <div style={{ marginTop: 8, color: "#999" }}>
-                                固定角色默认权限不可取消，可在此基础上新增权限。
-                            </div>
-                        )}
                     </Form.Item>
                 </Form>
             </div>
