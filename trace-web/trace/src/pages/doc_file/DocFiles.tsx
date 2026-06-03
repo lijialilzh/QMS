@@ -156,6 +156,9 @@ export default ({ fileType }: any) => {
         docVersionOptions: [] as Array<{ label: string; value: string }>,
         loadingDocVersions: false,
         selectedRowKeys: [],
+        previewOpen: false,
+        previewUrl: "",
+        previewName: "",
     });
     const productId = Form.useWatch("product_id", queryForm);
     const normalizeQueryParams = (params: any) => {
@@ -260,6 +263,22 @@ export default ({ fileType }: any) => {
         });
     };
 
+    const doDownload = async (row: any) => {
+        try {
+            const resp = await fetch(`/${row.file_url}`);
+            if (!resp.ok) throw new Error("download failed");
+            const blob = await resp.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = formatDisplayFileName(row);
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch {
+            message.error(ts("msg_req_fail"));
+        }
+    };
+
     const columns = [
         {
             title: ts("product.name"),
@@ -296,13 +315,24 @@ export default ({ fileType }: any) => {
             render: (_value: any, row: any) => {
                 return (
                     <Space>
+                        <Button
+                            type="link"
+                            onClick={() =>
+                                dispatch({
+                                    previewOpen: true,
+                                    previewUrl: `/${row.file_url}`,
+                                    previewName: formatDisplayFileName(row),
+                                })
+                            }>
+                            {ts("view")}
+                        </Button>
                         <Button type="link" onClick={() => dispatch({ dlgType: DlgTypes.edit, targetRow: row })}>
                             {ts("edit")}
                         </Button>
                         <Button type="link" danger onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
                             {ts("delete")}
                         </Button>
-                        <Button type="link" onClick={() => window.open(`/${row.file_url}`, "_blank")}>
+                        <Button type="link" onClick={() => doDownload(row)}>
                             {ts("download")}
                         </Button>
                     </Space>
@@ -411,6 +441,18 @@ export default ({ fileType }: any) => {
                 onOk={doDelete}
                 onCancel={() => dispatch({ dlgType: null })}>
                 <div>{ts("confirm_delete")}</div>
+            </Modal>
+            <Modal
+                centered
+                width={"60%"}
+                title={data.previewName || ts("view")}
+                open={!!data.previewOpen}
+                footer={null}
+                maskClosable
+                onCancel={() => dispatch({ previewOpen: false })}>
+                {data.previewUrl ? (
+                    <img src={data.previewUrl} alt={data.previewName} style={{ width: "100%", objectFit: "contain" }} />
+                ) : null}
             </Modal>
             <DetailDlg
                 fileType={fileType}

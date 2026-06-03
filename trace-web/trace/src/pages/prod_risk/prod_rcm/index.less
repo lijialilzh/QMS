@@ -18,7 +18,12 @@
         table-layout: fixed !important;
     }
 
-    .ant-table-thead > tr > th,
+    .ant-table-thead > tr > th {
+        white-space: nowrap !important;
+        overflow: visible;
+        text-overflow: clip;
+    }
+
     .ant-table-tbody > tr > td {
         white-space: nowrap !important;
         overflow: hidden;

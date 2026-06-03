@@ -120,7 +120,7 @@ export default () => {
         {
             title: ts("rcm.srs_flag"),
             dataIndex: "srs_flag",
-            width: 82,
+            width: 110,
             render: (value: any) => {
                 return value ? ts("yes") : ts("no");
             },
@@ -142,7 +142,7 @@ export default () => {
         {
             title: ts("rcm.proof"),
             dataIndex: "proof",
-            width: 80,
+            width: 96,
         },
         {
             title: ts("rcm.note"),
