@@ -11,6 +11,7 @@ from ..obj.vobj_user import UserObj
 from ..model.srs_doc import SrsDoc, SrsNode
 from ..model.sds_doc import SdsDoc, SdsNode
 from ..model.product import Product, UserProd
+from ..obj.tobj_role import Roles
 from ..obj.vobj_doc_file import DocFileObj
 from ..model.doc_file import DocFile
 from ..obj.tobj_doc_file import DocFileForm
@@ -637,8 +638,12 @@ class Server(object):
                 patterns.append(f"%_{doc_token}_{category}%")
             if patterns:
                 sql = sql.where(or_(*[DocFile.file_name.like(pattern) for pattern in patterns]))
-        # 三类图表页面默认显示所有产品（未选择产品时不按用户产品关系限制）
-        if category not in self.DOC_IMG_KEYWORDS and not product_id and op_user and op_user.id != 1:
+        # 数据可见范围（与产品列表口径一致）：
+        # - 产品经理：仅自己创建的产品对应的图（含物理拓扑/体系结构/网络安全流程三类图表页面）
+        # - 其它非超管：三类图表页面仍显示全部；其余按用户产品关系限制
+        if op_user and op_user.id != 1 and op_user.role_code == Roles.product_manager.value.code:
+            sql = sql.where(Product.create_user_id == op_user.id)
+        elif category not in self.DOC_IMG_KEYWORDS and not product_id and op_user and op_user.id != 1:
             subquery = select(UserProd.product_id).where(UserProd.user_id == op_user.id).scalar_subquery()
             sql = sql.where(Product.id.in_(subquery))
         

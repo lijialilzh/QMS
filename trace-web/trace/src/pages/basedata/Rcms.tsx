@@ -103,6 +103,16 @@ const DetailDlg = ({ data, dispatch, onSaved }: any) => {
                             </Form.Item>
                         </Col>
                     </Row>
+                    <Row gutter={24}>
+                        <Col span={24}>
+                            <Form.Item
+                                label={ts("rcm.test_keywords")}
+                                name="test_keywords"
+                                extra="多个特征词用、分隔；填写后将只匹配“简短描述/前置条件/测试步骤/预期结果”中同时包含全部特征词的用例；留空则按原描述匹配规则。">
+                                <Input.TextArea allowClear placeholder="如：用户分层、重启机器" />
+                            </Form.Item>
+                        </Col>
+                    </Row>
                 </Form>
             </div>
         </Modal>

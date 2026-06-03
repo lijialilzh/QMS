@@ -13,7 +13,7 @@ from ..obj.tobj_risk_mgmt_doc import RiskAnalysisForm, RiskControlForm, RiskMgmt
 from ..obj.tobj_role import Perms
 from ..obj.vobj_risk_mgmt_doc import RiskAnalysisObj, RiskControlObj, RiskMgmtDocObj, RiskParticipantObj
 from ..serv.serv_risk_mgmt_doc import Server
-from . import try_log
+from . import CtxUser, try_log
 
 router = APIRouter()
 server = Server()
@@ -64,7 +64,8 @@ async def delete_risk_mgmt_doc(id: int):
 @router.get("/list_risk_mgmt_doc", summary="查询风险管理文档列表", response_model=Resp[Page[RiskMgmtDocObj]])
 @try_log(perm=Perms.risk_mgmt_doc_view)
 async def list_risk_mgmt_doc(product_id: int = 0, version: str = None, page_index: int = 0, page_size: int = 10):
-    return await server.list_risk_mgmt_doc(product_id=product_id, version=version, page_index=page_index, page_size=page_size)
+    op_user = CtxUser.get()
+    return await server.list_risk_mgmt_doc(op_user=op_user, product_id=product_id, version=version, page_index=page_index, page_size=page_size)
 
 
 @router.get("/get_risk_mgmt_doc", summary="查询风险管理文档详情", response_model=Resp[RiskMgmtDocObj])

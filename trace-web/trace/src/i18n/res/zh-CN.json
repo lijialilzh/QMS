@@ -51,6 +51,7 @@
     "reset_pwd": "重置密码",
     "exit": "退出登录",
     "confirm_exit": "确认退出登录吗？",
+    "exit_success": "退出登录成功",
     "tips": "提示",
     "update_pwd": "修改密码",
     "input_new_pwd": "请输入新密码",

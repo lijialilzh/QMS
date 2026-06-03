@@ -215,6 +215,17 @@ class Server(object):
                     ["密码格式", "显示提示"],
                 ])
 
+        if "用户分层" in normalized:
+            focus_sets.append(["用户分层"])
+        if "重启" in normalized and ("容错" in normalized or "异常" in normalized):
+            focus_sets.append(["重启机器"])
+        if "版权" in normalized and ("序列码" in normalized or "序列号" in normalized):
+            focus_sets.append(["版权保护"])
+        if "明文" in normalized:
+            focus_sets.append(["明文"])
+        if "目标物" in normalized and "编辑" in normalized:
+            focus_sets.append(["编辑目标物"])
+
         return [terms for terms in focus_sets if terms]
 
     def __rcm_fuzzy_terms(self, description: str) -> List[str]:
@@ -267,6 +278,7 @@ class Server(object):
             merged_text = "\n".join([
                 str(getattr(test, "function", "") or ""),
                 str(getattr(test, "description", "") or ""),
+                str(getattr(test, "precondition", "") or ""),
                 str(getattr(test, "test_step", "") or ""),
                 str(getattr(test, "expect", "") or ""),
                 str(getattr(test, "note", "") or ""),
@@ -300,6 +312,7 @@ class Server(object):
             merged_text = "\n".join([
                 str(getattr(test, "function", "") or ""),
                 str(getattr(test, "description", "") or ""),
+                str(getattr(test, "precondition", "") or ""),
                 str(getattr(test, "test_step", "") or ""),
                 str(getattr(test, "expect", "") or ""),
                 str(getattr(test, "note", "") or ""),

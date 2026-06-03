@@ -35,7 +35,7 @@ async def update_project(form: ProjectForm):
 
 
 @router.get("/list_project", summary="查询项目列表", response_model=Resp[Page[ProjectObj]])
-@try_log(perm=Perms.project_view)
+@try_log(perm=[Perms.project_view, Perms.product_edit])
 async def list_project(name: str = None, page_index: int = 0, page_size: int = 10):
     return await server.list_project(name, page_index, page_size)
 

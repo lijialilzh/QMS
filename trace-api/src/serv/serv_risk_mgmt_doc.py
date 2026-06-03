@@ -24,6 +24,8 @@ from ..model.haz import Haz
 from ..model.prod_haz import ProdHaz
 from ..model.risk_mgmt_doc import RiskAnalysis, RiskControl, RiskMgmtDoc, RiskParticipant
 from ..obj import Page, Resp
+from ..obj.tobj_role import Roles
+from ..obj.vobj_user import UserObj
 from ..obj.tobj_risk_mgmt_doc import RiskAnalysisForm, RiskControlForm, RiskMgmtDocForm, RiskParticipantForm
 from ..obj.vobj_risk_mgmt_doc import RiskAnalysisObj, RiskControlObj, RiskMgmtDocObj, RiskParticipantObj
 from ..utils.i18n import ts
@@ -475,13 +477,16 @@ class Server(object):
         doc, product = row
         return Resp.resp_ok(data=self.__to_obj(doc, product))
 
-    async def list_risk_mgmt_doc(self, product_id: int = 0, version: str = None, page_index: int = 0, page_size: int = 10):
+    async def list_risk_mgmt_doc(self, op_user: UserObj = None, product_id: int = 0, version: str = None, page_index: int = 0, page_size: int = 10):
         wheres = []
         if product_id:
             wheres.append(RiskMgmtDoc.product_id == product_id)
         if version:
             wheres.append(RiskMgmtDoc.version.like(f"%{version}%"))
-        sql_total = select(func.count(RiskMgmtDoc.id)).where(*wheres)
+        # 数据可见范围（与产品列表口径一致）：产品经理只看自己创建的产品对应的风险管理报告
+        if op_user and op_user.id != 1 and op_user.role_code == Roles.product_manager.value.code:
+            wheres.append(Product.create_user_id == op_user.id)
+        sql_total = select(func.count(RiskMgmtDoc.id)).join(Product, RiskMgmtDoc.product_id == Product.id).where(*wheres)
         total = db.session.execute(sql_total).scalar() or 0
         sql = (
             select(RiskMgmtDoc, Product)

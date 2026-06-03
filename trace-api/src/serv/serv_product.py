@@ -187,12 +187,9 @@ class Server(object):
                     Product.note.like(f"%{fuzzy}%"),
                 )
             )
+        # 数据可见范围：产品经理只看自己创建的产品；超管及其它角色（DQA/RA/QA/开发/测试）查看全部产品
         if op_user.id != 1 and op_user.role_code == Roles.product_manager.value.code:
             sql = sql.where(Product.create_user_id == op_user.id)
-        elif op_user.id != 1:
-            subquery = select(UserProd.product_id).where(UserProd.user_id == op_user.id).scalar_subquery()
-            # 兼容历史数据：早期新增产品可能缺少 UserProd 关联，但 create_user_id 已记录。
-            sql = sql.where(or_(Product.id.in_(subquery), Product.create_user_id == op_user.id))
         
         total = 0
         if not export:

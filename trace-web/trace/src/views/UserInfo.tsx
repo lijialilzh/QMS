@@ -95,15 +95,12 @@ export default ({ ...attrs }: any) => {
 
     const logout = () => {
         dispatch({ loading: true });
-        Api.logout().then((res) => {
-            dispatch({ loading: false });
-            if (res.code === Api.C_OK) {
-                dispatchStore(actions.user.clear());
-                dispatch({ dlgExit: false });
-                navigate("/login", { replace: true });
-            } else {
-                message.error(res.msg);
-            }
+        Api.logout().finally(() => {
+            dispatch({ loading: false, dlgExit: false });
+            dispatchStore(actions.user.clear());
+            message.destroy();
+            message.success(ts("exit_success"));
+            navigate("/login", { replace: true });
         });
     };
 
