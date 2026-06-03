@@ -46,6 +46,7 @@ const process = async (resp: any) => {
                 if (res.code === C_ERR_AUTH) {
                     const ctxPath = new URL(window.location.href).pathname;
                     window.location.replace(`${ctxPath}#/login`);
+                    return new Promise(() => {});
                 }
                 return res;
             }
