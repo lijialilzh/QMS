@@ -283,35 +283,47 @@ export default ({ fileType }: any) => {
         {
             title: ts("product.name"),
             dataIndex: "product_name",
+            width: 160,
+            ellipsis: true,
         },
         {
             title: ts("product.type_code"),
             dataIndex: "product_type_code",
+            width: 150,
+            ellipsis: true,
         },
         {
             title: ts("product.full_version"),
             dataIndex: "product_version",
+            width: 100,
+            ellipsis: true,
         },
         {
             title: "文档版本",
             dataIndex: "doc_version",
+            width: 90,
             render: (value: string) => value || "-",
         },
         {
             title: ts("doc_file.file_name"),
             dataIndex: "file_name",
+            width: 240,
+            ellipsis: true,
             render: (_value: any, row: any) => formatDisplayFileName(row),
         },
         {
             title: ts("doc_file.file_size"),
             dataIndex: "file_size",
+            width: 90,
         },
         {
             title: ts("create_time"),
             dataIndex: "create_time",
+            width: 160,
         },
         {
             title: ts("action"),
+            width: 210,
             render: (_value: any, row: any) => {
                 return (
                     <Space>
@@ -405,6 +417,7 @@ export default ({ fileType }: any) => {
             </div>
             <Table
                 className="expand"
+                tableLayout="fixed"
                 rowSelection={{
                     selectedRowKeys: data.selectedRowKeys || [],
                     onChange: (keys: any) => dispatch({ selectedRowKeys: keys }),
