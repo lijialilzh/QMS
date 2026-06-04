@@ -7,6 +7,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
 import UserInfo from "@/views/UserInfo";
+import AiAssistant from "@/views/AiAssistant";
 import * as Api from "@/api/ApiUser";
 import { Root, actions, useDispatch, useSelector } from "@/store";
 import Loading from "@/views/Loading";
@@ -386,6 +387,7 @@ export default () => {
                     />
                 )}
             </Drawer>
+            <AiAssistant />
         </div>
     );
 };

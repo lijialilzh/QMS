@@ -31,6 +31,7 @@ services:
           - trace.api
     volumes:
       - ./trace-api:/work
+      - ./docs:/docs:ro
       - trace_api_data:/work/data.trace
       - trace_api_logs:/work/logs
     depends_on:
