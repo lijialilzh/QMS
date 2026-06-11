@@ -39,4 +39,12 @@ class SessionData(Base):
 
 # 2.0 独立模块：风险管理。显式导入让 Alembic autogenerate 能发现新表。
 from .risk_mgmt_doc import RiskAnalysis, RiskControl, RiskMgmtDoc, RiskParticipant  # noqa: E402,F401
-    
+
+# 2.1 独立模块：网络安全管理。详见 docs/function_docs/47_网络安全管理.md。
+from .cybersec_doc import (  # noqa: E402,F401
+    CybersecDoc,
+    CybersecThreat,
+    CybersecControlInternal,
+    CybersecControlSbom,
+    CybersecControlScan,
+)

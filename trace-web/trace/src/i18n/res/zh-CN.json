@@ -45,7 +45,9 @@
         "risk_mgmt_docs": "风险管理报告",
         "risk_analysis": "风险分析矩阵",
         "risk_participants": "风险分析参与人员",
-        "risk_controls": "风险控制措施库"
+        "risk_controls": "风险控制措施库",
+        "cybersec": "网络安全管理",
+        "cybersec_docs": "网络安全风险管理报告"
     },
     "confirm_reset_pwd": "确认要重置密码吗？",
     "reset_pwd": "重置密码",

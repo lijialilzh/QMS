@@ -268,6 +268,18 @@ export default () => {
                 ],
             },
             {
+                key: "/cybersec",
+                label: ts("menu.cybersec"),
+                icon: <img src="assets/icon/menu-create.svg" />,
+                children: [
+                    {
+                        key: "/cybersec_docs",
+                        label: ts("menu.cybersec_docs"),
+                        perm: "cybersec_doc_view",
+                    },
+                ],
+            },
+            {
                 key: "/prod_overview",
                 label: ts("menu.prod_overview"),
                 icon: <img src="assets/icon/menu-create.svg" />,

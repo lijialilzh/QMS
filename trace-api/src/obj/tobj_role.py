@@ -95,6 +95,10 @@ class Perms(Enum):
     risk_mgmt_doc_view = PermForm(code="risk_mgmt_doc_view", name="查看", p_code=risk_mgmt_doc.code)
     risk_mgmt_doc_edit = PermForm(code="risk_mgmt_doc_edit", name="编辑", p_code=risk_mgmt_doc.code)
 
+    cybersec_doc = PermForm(code="cybersec_doc", name="网络安全管理/网络安全风险管理报告")
+    cybersec_doc_view = PermForm(code="cybersec_doc_view", name="查看", p_code=cybersec_doc.code)
+    cybersec_doc_edit = PermForm(code="cybersec_doc_edit", name="编辑", p_code=cybersec_doc.code)
+
 
 class RoleForm(BaseModel):
     id: Optional[int] = Field(title="角色ID")
@@ -123,6 +127,7 @@ def get_default_role_perm_codes():
         "srs_doc", "srs_doc_view", "srs_doc_edit",
         "sds_doc", "sds_doc_view", "sds_doc_edit",
         "risk_mgmt_doc", "risk_mgmt_doc_view", "risk_mgmt_doc_edit",
+        "cybersec_doc", "cybersec_doc_view", "cybersec_doc_edit",
         "prod_haz", "prod_haz_view", "prod_haz_edit",
         "prod_rcm", "prod_rcm_view", "prod_rcm_edit",
         "prod_cst", "prod_cst_view", "prod_cst_edit",
@@ -137,6 +142,7 @@ def get_default_role_perm_codes():
         "prod_rcm", "prod_rcm_view", "prod_rcm_edit",
         "prod_cst", "prod_cst_view", "prod_cst_edit",
         "risk_mgmt_doc", "risk_mgmt_doc_view", "risk_mgmt_doc_edit",
+        "cybersec_doc", "cybersec_doc_view", "cybersec_doc_edit",
     }
     developer_perms = {
         "sds_doc", "sds_doc_view", "sds_doc_edit",
@@ -148,6 +154,7 @@ def get_default_role_perm_codes():
         "prod_cst", "prod_cst_view", "prod_cst_edit",
         "product", "product_view",
         "risk_mgmt_doc", "risk_mgmt_doc_view", "risk_mgmt_doc_edit",
+        "cybersec_doc", "cybersec_doc_view", "cybersec_doc_edit",
     }
     tester_perms = {
         "prod_dhf", "prod_dhf_view", "prod_dhf_edit",
@@ -160,6 +167,7 @@ def get_default_role_perm_codes():
         "prod_cst", "prod_cst_view", "prod_cst_edit",
         "product", "product_view",
         "risk_mgmt_doc", "risk_mgmt_doc_view", "risk_mgmt_doc_edit",
+        "cybersec_doc", "cybersec_doc_view", "cybersec_doc_edit",
     }
     return {
         Roles.root.value.code: sorted(all_perms),

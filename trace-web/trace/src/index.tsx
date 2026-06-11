@@ -39,6 +39,8 @@ import ProdComparison from "./pages/overview/ProdComparison";
 import RiskMgmtDocs from "./pages/risk_mgmt/RiskMgmtDocs";
 import RiskMgmtDocDetail from "./pages/risk_mgmt/RiskMgmtDocDetail";
 import RiskMgmtParticipants from "./pages/risk_mgmt/RiskMgmtParticipants";
+import CybersecDocs from "./pages/cybersec/CybersecDocs";
+import CybersecDocDetail from "./pages/cybersec/CybersecDocDetail";
 
 const DEF_LANG = localStorage.getItem("lang") || I18N.DEF_LANG;
 I18N.init(DEF_LANG);
@@ -88,6 +90,11 @@ const router = createRouter([
             { path: "/risk_mgmt_docs/edit/:id", element: <RiskMgmtDocDetail /> },
             { path: "/risk_mgmt_docs/view/:id", element: <RiskMgmtDocDetail /> },
             { path: "/risk_participants", element: <RiskMgmtParticipants /> },
+
+            { path: "/cybersec_docs", element: <CybersecDocs /> },
+            { path: "/cybersec_docs/add", element: <CybersecDocDetail /> },
+            { path: "/cybersec_docs/edit/:id", element: <CybersecDocDetail /> },
+            { path: "/cybersec_docs/view/:id", element: <CybersecDocDetail /> },
 
             {path: "/prod_traces", element: <ProdTraces /> },
             {path: "/prod_comparison", element: <ProdComparison /> },
