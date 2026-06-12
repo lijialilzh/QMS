@@ -10,7 +10,7 @@ from typing import Any
 from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import StreamingResponse
 from ..obj.vobj_cst import CstObj
-from ..obj.tobj_cst import CstForm
+from ..obj.tobj_cst import CstSaveForm
 from ..obj.tobj_role import Perms
 from ..obj import Resp, Page
 from ..serv.serv_cst import Server
@@ -23,7 +23,7 @@ server = Server()
 
 @router.post("/add_cst", summary="添加CST", response_model=Resp[Any])
 @try_log(perm=Perms.cst_edit)
-async def add_cst(form: CstForm):
+async def add_cst(form: CstSaveForm):
     return await server.add_cst(form) 
 
 
@@ -35,7 +35,7 @@ async def delete_cst(id: int):
 
 @router.post("/update_cst", summary="更新CST", response_model=Resp[Any])
 @try_log(perm=Perms.cst_edit)
-async def update_cst(form: CstForm):
+async def update_cst(form: CstSaveForm):
     return await server.update_cst(form) 
 
 

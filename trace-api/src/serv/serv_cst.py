@@ -7,9 +7,11 @@ from openpyxl import load_workbook
 from openpyxl.styles import Alignment
 
 from ..model.prod_cst import ProdCst
-from ..obj.vobj_cst import CstObj
+from ..obj.vobj_cst import CstObj, CstRcmBrief
 from ..model.cst import Cst
-from ..obj.tobj_cst import CstForm
+from ..model.cst_rcm import CstRcm
+from ..model.rcm import Rcm
+from ..obj.tobj_cst import CstForm, CstSaveForm
 from ..utils.sql_ctx import db
 from ..utils.i18n import ts
 from ..obj import Page, Resp
@@ -35,16 +37,45 @@ class Server(object):
             return raw
         return value
 
-    async def add_cst(self, form: CstForm):
+    @staticmethod
+    def __replace_cst_rcms(cst_id, rcm_ids):
+        # 全量重置某 CST 的关联 RCM（先删后插，去重）；rcm_ids 为 None 时按空处理
+        db.session.execute(delete(CstRcm).where(CstRcm.cst_id == cst_id))
+        seen = set()
+        for rid in (rcm_ids or []):
+            if rid is None or rid in seen:
+                continue
+            seen.add(rid)
+            db.session.add(CstRcm(cst_id=cst_id, rcm_id=rid))
+
+    @staticmethod
+    def __load_cst_rcms_map(cst_ids):
+        # 返回 {cst_id: [CstRcmBrief...]}
+        result = {}
+        if not cst_ids:
+            return result
+        sql = (
+            select(CstRcm.cst_id, Rcm.id, Rcm.code, Rcm.description)
+            .join(Rcm, CstRcm.rcm_id == Rcm.id)
+            .where(CstRcm.cst_id.in_(list(cst_ids)))
+            .order_by(Rcm.code)
+        )
+        for cst_id, rid, code, description in db.session.execute(sql).all():
+            result.setdefault(cst_id, []).append(CstRcmBrief(id=rid, code=code, description=description))
+        return result
+
+    async def add_cst(self, form: CstSaveForm):
         try:
             sql = select(func.count(Cst.id)).where(Cst.code == form.code)
             count = db.session.execute(sql).scalar()
             if count > 0:
                 return Resp.resp_err(msg=ts("msg_obj_exist"))
-            
-            row = Cst(**form.dict())
+
+            row = Cst(**form.dict(exclude={"rcm_ids"}))
             row.id = None
             db.session.add(row)
+            db.session.flush()
+            self.__replace_cst_rcms(row.id, form.rcm_ids)
             db.session.commit()
             return Resp.resp_ok()
         except Exception:
@@ -92,19 +123,23 @@ class Server(object):
     async def delete_cst(self, id):
         db.session.execute(delete(Cst).where(Cst.id == id))
         db.session.execute(delete(ProdCst).where(ProdCst.cst_id == id))
+        db.session.execute(delete(CstRcm).where(CstRcm.cst_id == id))
         db.session.commit()
         return Resp.resp_ok()
    
-    async def update_cst(self, form: CstForm):
+    async def update_cst(self, form: CstSaveForm):
         try:
             sql = select(Cst).where(Cst.id == form.id)
             row:Cst = db.session.execute(sql).scalars().first()
             if not row:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
-            for key, value in form.dict().items():
+            for key, value in form.dict(exclude={"rcm_ids"}).items():
                 if key == "id" or value is None:
                     continue
                 setattr(row, key, value)
+            # rcm_ids 显式传入（含空列表）时全量重置关联；未传(None)则不动
+            if form.rcm_ids is not None:
+                self.__replace_cst_rcms(row.id, form.rcm_ids)
             db.session.commit()
             return Resp.resp_ok()
         except Exception:
@@ -117,7 +152,11 @@ class Server(object):
         row = db.session.execute(sql).scalars().first()
         if not row:
             return Resp.resp_err(msg=ts("msg_obj_null"))
-        return Resp.resp_ok(data=CstObj(**row.dict()))
+        obj = CstObj(**row.dict())
+        rcms = self.__load_cst_rcms_map([row.id]).get(row.id, [])
+        obj.rcms = rcms
+        obj.rcm_ids = [item.id for item in rcms]
+        return Resp.resp_ok(data=obj)
 
     async def list_cst(self, export = False, fuzzy: str = None, page_index: int = 0, page_size: int = 10):
         page_index = page_index if page_index >= 0 else 0
@@ -141,9 +180,13 @@ class Server(object):
             total = db.session.execute(sql_count).scalars().first()
         sql = sql.offset(page_size * page_index).limit(page_size).order_by(Cst.code)
         rows: list[Cst] = db.session.execute(sql).scalars().all()
+        rcms_map = self.__load_cst_rcms_map([row.id for row in rows])
         objs = []
         for row in rows:
             obj = CstObj(**row.dict())
+            rcms = rcms_map.get(row.id, [])
+            obj.rcms = rcms
+            obj.rcm_ids = [item.id for item in rcms]
             objs.append(obj)
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
       

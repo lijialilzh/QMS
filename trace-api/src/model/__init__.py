@@ -48,3 +48,6 @@ from .cybersec_doc import (  # noqa: E402,F401
     CybersecControlSbom,
     CybersecControlScan,
 )
+
+# CST(总表) 与 RCM(总表) 多对多关联。详见 docs/function_docs/41_网络安全威胁CST管理.md。
+from .cst_rcm import CstRcm  # noqa: E402,F401

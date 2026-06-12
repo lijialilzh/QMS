@@ -5,6 +5,7 @@ import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { renderOneLineWithTooltip, useData } from "@/common";
 import * as Api from "@/api/ApiCst";
+import * as ApiRcm from "@/api/ApiRcm";
 
 const pageSizeOptions = [20, 50, 100];
 
@@ -16,7 +17,7 @@ enum DlgTypes {
 
 const CATEGORIES = ["认证", "授权", "保密性", "密码学", "代码/数据和执行完整性", "事件检测与日记记录", "恢复力与恢复", "其他"];
 
-const DetailDlg = ({ data, dispatch, onSaved }: any) => {
+const DetailDlg = ({ data, dispatch, onSaved, rcmOptions }: any) => {
     const { t: ts } = useTranslation();
     const [editForm] = Form.useForm();
 
@@ -119,6 +120,22 @@ const DetailDlg = ({ data, dispatch, onSaved }: any) => {
                             </Form.Item>
                         </Col>
                     </Row>
+                    <Row gutter={24}>
+                        <Col span={24}>
+                            <Form.Item label="关联RCM" name="rcm_ids">
+                                <Select
+                                    allowClear
+                                    mode="multiple"
+                                    optionFilterProp="label"
+                                    placeholder="可选择关联的 RCM"
+                                    options={(rcmOptions || []).map((item: any) => ({
+                                        label: `${item.code}${item.description ? " " + item.description : ""}`,
+                                        value: item.id,
+                                    }))}
+                                />
+                            </Form.Item>
+                        </Col>
+                    </Row>
                 </Form>
             </div>
         </Modal>
@@ -136,7 +153,14 @@ export default () => {
         targetRow: {},
         loading: false,
         selectedRowKeys: [],
+        rcmOptions: [],
     });
+
+    const loadRcmOptions = () => {
+        ApiRcm.list_rcm({ page_index: 0, page_size: 10000 }).then((res: any) => {
+            if (res.code === Api.C_OK) dispatch({ rcmOptions: res.data?.rows || [] });
+        });
+    };
 
     const doSearch = (params: any, pageIndex: any, pageSize: any) => {
         dispatch({ loading: true });
@@ -241,6 +265,16 @@ export default () => {
             render: (value: any) => renderOneLineWithTooltip(value, { emptyText: "" }),
         },
         {
+            title: "关联RCM",
+            dataIndex: "rcms",
+            width: 160,
+            ellipsis: true,
+            render: (value: any) => {
+                const codes = (value || []).map((item: any) => item.code).filter(Boolean).join("、");
+                return renderOneLineWithTooltip(codes, { emptyText: "" });
+            },
+        },
+        {
             title: ts("create_time"),
             dataIndex: "create_time",
             width: 130,
@@ -268,6 +302,7 @@ export default () => {
     useEffect(() => {
         const form = queryForm.getFieldsValue();
         doSearch(form, data.pageIndex, data.pageSize);
+        loadRcmOptions();
     }, []);
 
     return (
@@ -373,6 +408,7 @@ export default () => {
             <DetailDlg
                 data={data}
                 dispatch={dispatch}
+                rcmOptions={data.rcmOptions}
                 onSaved={() => {
                     if(data.dlgType === DlgTypes.add){
                         queryForm.resetFields();
