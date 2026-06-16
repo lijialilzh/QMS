@@ -225,6 +225,44 @@
     }
 }
 
+// 网络安全导入表专用：横向可滚动 + 限制单列宽度，避免 RCM 过宽、编号被挤成竖排
+.cybersec-section-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+}
+
+.cybersec-section-table {
+    width: 100%;
+    table-layout: auto;
+
+    td,
+    th {
+        min-width: 64px;
+        max-width: 340px;
+        white-space: normal;
+        word-break: normal;
+        overflow-wrap: anywhere;
+        vertical-align: top;
+    }
+
+    .cybersec-table-th {
+        font-weight: 600;
+        background: #fafafa;
+        text-align: center;
+    }
+
+    // 威胁编号列保持单行，避免 THREAT-001 被逐字换行
+    td:first-child,
+    th:first-child {
+        min-width: 88px;
+        white-space: nowrap;
+    }
+
+    .ant-input {
+        min-width: 56px;
+    }
+}
+
 .risk-mgmt-participant-static-table {
     width: 420px;
     max-width: 100%;

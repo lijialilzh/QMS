@@ -47,7 +47,8 @@ CST 基础数据库（网络安全相关原因/条件，IEC 62443 风格分类�
 - `code` 唯一。
 - 与 HAZ 无主数据层关联（区别于危害分析）；与 RCM 通过 `cst_rcm` 多对多关联，在 CST 总表用多选维护，列表/详情返回 `rcms`(含 code/description) 与 `rcm_ids`。
 - 删除 CST 级联删 prod_cst、cst_rcm。
-- CST↔RCM 关联仅为 CST 总表新增能力，**不改动 RCM、HAZ、prod_cst 模块的既有逻辑**。
+- CST↔RCM 关联仅为 CST 总表新增能力，不改动 RCM、HAZ 模块既有逻辑。
+- 产品威胁管理(prod_cst)从总表新增时，按 `cst_rcm` 自动带入该威胁关联的 RCM 编号到新行 `rcm_codes`（逗号分隔）；已存在的产品威胁行不覆盖（`on_conflict_do_nothing`）。
 
 ---
 

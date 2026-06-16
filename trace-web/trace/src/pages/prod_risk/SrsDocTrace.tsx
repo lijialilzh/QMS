@@ -84,10 +84,12 @@ const DetailDlg = ({ data, dispatch }: any) => {
     };
     const renderMultilineRcmCodes = (values: any) => {
         const raw = Array.isArray(values) ? values : [values];
-        const list = raw
+        const numOf = (code: string) => { const m = String(code).match(/(\d+)\s*$/); return m ? parseInt(m[1], 10) : 0; };
+        const list = Array.from(new Set(raw
             .flatMap((item) => String(item || "").split(/[,\n，]/g))
             .map((item) => item.trim())
-            .filter(Boolean);
+            .filter(Boolean)))
+            .sort((a, b) => numOf(a) - numOf(b) || String(a).localeCompare(String(b)));
         if (list.length === 0) return "/";
         if (list.length === 1) return list[0];
         return (
@@ -175,6 +177,7 @@ const DetailDlg = ({ data, dispatch }: any) => {
             title: "集成测试记录",
             dataIndex: "tests_integ",
             width: 95,
+            onCell: mergedCell,
             render: (values: any) => {
                 return renderMultilineCaseCodes(values);
             },
@@ -183,6 +186,7 @@ const DetailDlg = ({ data, dispatch }: any) => {
             title: "系统测试记录",
             dataIndex: "tests_sys",
             width: 95,
+            onCell: mergedCell,
             render: (values: any) => {
                 return renderMultilineCaseCodes(values);
             },
@@ -191,6 +195,7 @@ const DetailDlg = ({ data, dispatch }: any) => {
             title: "用户测试记录",
             dataIndex: "tests_user",
             width: 95,
+            onCell: mergedCell,
             render: (values: any) => {
                 return renderMultilineCaseCodes(values);
             },
@@ -199,6 +204,7 @@ const DetailDlg = ({ data, dispatch }: any) => {
             title: "RCM",
             dataIndex: "rcm_codes",
             width: 110,
+            onCell: mergedCell,
             render: (values: any) => {
                 return renderMultilineRcmCodes(values);
             },

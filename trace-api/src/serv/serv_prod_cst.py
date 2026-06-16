@@ -8,6 +8,8 @@ from openpyxl import load_workbook
 from ..obj.vobj_user import UserObj
 from ..model.product import Product, UserProd
 from ..model.cst import Cst
+from ..model.cst_rcm import CstRcm
+from ..model.rcm import Rcm
 from ..model.prod_cst import ProdCst
 from ..obj.tobj_prod_cst import ProdCstForm, ProdCstsForm
 from ..obj.vobj_prod_cst import ProdCstObj
@@ -23,9 +25,23 @@ class Server(object):
 
     async def add_prod_csts(self, form: ProdCstsForm):
         try:
+            cst_ids = form.cst_ids or []
+            if not cst_ids:
+                return Resp.resp_ok()
+            # 从 CST 总表(cst_rcm)带入每个威胁已维护的关联 RCM 编号，写入新行的 rcm_codes（逗号分隔）
+            rcm_map = {}
+            sql = (
+                select(CstRcm.cst_id, Rcm.code)
+                .join(Rcm, CstRcm.rcm_id == Rcm.id)
+                .where(CstRcm.cst_id.in_(list(cst_ids)))
+                .order_by(Rcm.code)
+            )
+            for cst_id, code in db.session.execute(sql).all():
+                rcm_map.setdefault(cst_id, []).append(code)
             values = []
-            for cst_id in form.cst_ids:
-                values.append(dict(prod_id=form.prod_id, cst_id=cst_id))
+            for cst_id in cst_ids:
+                codes = rcm_map.get(cst_id) or []
+                values.append(dict(prod_id=form.prod_id, cst_id=cst_id, rcm_codes=",".join(codes) if codes else None))
             db.session.execute(pg_insert(ProdCst).values(values).on_conflict_do_nothing())
             db.session.commit()
             return Resp.resp_ok()

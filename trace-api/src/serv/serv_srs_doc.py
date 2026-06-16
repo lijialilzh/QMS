@@ -4961,7 +4961,10 @@ class Server(object):
                         continue
                     existed = result.get(mcode) or []
                     result[mcode] = list(dict.fromkeys(existed + parts))
-                srs_code = str(own_code or "").strip().upper() or resolve_srs_code(int(n_id))
+                # 仅按节点自身的 SRS 编号归属 RCM；不再把无编号节点(如导入表格)的 RCM 上挂到祖先章节，
+                # 避免章节型需求(如 SRS-RCN300-007「图像显示」)被子表 RCM 过度聚合。
+                # 文本中显式写明 SRS 编号的情况已由上方 mentioned_srs_codes 分支处理。
+                srs_code = str(own_code or "").strip().upper()
                 if not srs_code:
                     continue
                 if srs_set and srs_code not in srs_set:
@@ -5111,19 +5114,44 @@ class Server(object):
         rows: List[Tuple[SdsTrace, SdsDoc, SrsReq]] = db.session.execute(sql).all()
         rows = __resort_rows(rows, row_sdsdoc.srsdoc_id)
         # 以当前SDS文档节点为准，建立“设计编号 -> 章节标题”映射，避免导出章节名错配
+        # 设计编号 -> 顶层组件名（源代码名称）：沿 p_id 上溯到顶层组件节点(p_id=0 且带 sds_code)，
+        # 取其标题去掉前缀序号（如“6 NeoViewer”->“NeoViewer”）。导出括号内显示组件名而非功能小节标题。
         sds_code_chapter_map = {}
         node_rows = db.session.execute(
-            select(SdsNode.sds_code, SdsNode.title).where(SdsNode.doc_id == row_sdsdoc.id)
+            select(SdsNode.n_id, SdsNode.p_id, SdsNode.sds_code, SdsNode.title).where(SdsNode.doc_id == row_sdsdoc.id)
         ).all()
-        for code_raw, title_raw in node_rows:
-            code = str(code_raw or "").strip().upper()
-            if not code:
+        sds_node_by_nid = {
+            int(n_id): {
+                "p_id": int(p_id or 0),
+                "sds_code": str(sds_code or "").strip().upper(),
+                "title": str(title or "").strip(),
+            }
+            for n_id, p_id, sds_code, title in node_rows
+        }
+
+        def __strip_chapter_no(raw_title: str) -> str:
+            return re.sub(r"^\d+\s*[\.、\-]?\s*", "", str(raw_title or "")).strip()
+
+        def __resolve_top_component_title(start_nid: int) -> str:
+            cur = sds_node_by_nid.get(start_nid)
+            safety = 0
+            while cur and safety < 300:
+                if cur["p_id"] == 0:
+                    return __strip_chapter_no(cur["title"])
+                cur = sds_node_by_nid.get(cur["p_id"])
+                safety += 1
+            return ""
+
+        for n_id, p_id, sds_code, title in node_rows:
+            code = str(sds_code or "").strip().upper()
+            if not code or code in sds_code_chapter_map:
                 continue
-            title = str(title_raw or "").strip()
-            # 章节标题通常是“3 DataProcessing”，导出时去掉前缀序号
-            title = re.sub(r"^\d+\s*[\.、\-]?\s*", "", title).strip()
-            if title and code not in sds_code_chapter_map:
-                sds_code_chapter_map[code] = title
+            component = __resolve_top_component_title(int(n_id))
+            # 兜底：若上溯失败（无顶层组件），仍用本节点标题去序号，保持原有可读性
+            if not component:
+                component = __strip_chapter_no(title)
+            if component:
+                sds_code_chapter_map[code] = component
         req_ids = [row.id for _, _, row in rows]
         req_rcms = __query_rcms(req_ids)
         reqd_text_rcm_codes = __query_reqd_text_rcm_codes(req_ids)
@@ -5145,12 +5173,32 @@ class Server(object):
             if not rcm_codes:
                 rcm_codes = []
             rcm_flag = True if rcm_codes else False
-            sds_code_norm = str(row_trace.sds_code or "").strip().upper()
-            chapter = sds_code_chapter_map.get(sds_code_norm) or ""
-            if not chapter:
-                chapter = row_trace.chapter or row.sub_function or row.function or row.module or ""
-                chapter = NAME_DICT.get(chapter) or chapter
-                chapter = chapter if row.type_code == "2" else "NeoViewer"
+            # 组件名（源代码名称）按 SDS 编号逐个解析，与编号顺序对齐：多编号→多行组件，单编号→单个。
+            sds_codes_list = [x.strip().upper() for x in re.split(r"[,，\s]+", str(row_trace.sds_code or "").strip()) if x.strip()]
+            trace_chapter_lines = [x.strip() for x in str(row_trace.chapter or "").split("\n") if x.strip()]
+
+            def __default_chapter() -> str:
+                comp = row.sub_function or row.function or row.module or ""
+                comp = NAME_DICT.get(comp) or comp
+                return comp if row.type_code == "2" else "NeoViewer"
+
+            if len(sds_codes_list) > 1:
+                comps = []
+                for idx, sc in enumerate(sds_codes_list):
+                    comp = sds_code_chapter_map.get(sc) or ""
+                    if not comp and idx < len(trace_chapter_lines):
+                        comp = trace_chapter_lines[idx]
+                    if not comp:
+                        comp = __default_chapter()
+                    comps.append(comp)
+                chapter = "\n".join(comps)
+            else:
+                sc = sds_codes_list[0] if sds_codes_list else ""
+                chapter = sds_code_chapter_map.get(sc) or ""
+                if not chapter:
+                    chapter = row_trace.chapter or row.sub_function or row.function or row.module or ""
+                    chapter = NAME_DICT.get(chapter) or chapter
+                    chapter = chapter if row.type_code == "2" else "NeoViewer"
 
             test_data = req_tests.get(row.code) or {}
 
@@ -5261,6 +5309,19 @@ class Server(object):
             codes = [item.strip() for item in re.split(r"[,，\s]+", str(value or "").strip()) if item.strip()]
             return "\n".join(codes) if len(codes) > 1 else str(value or "").strip()
 
+        def __pair_sds_chapter(sds_raw: str, chapter_raw: str, hide_set: set):
+            # 每个 SDS 编号各自配对其组件名（源代码名称），逐行：编号（组件）
+            codes = [c.strip() for c in re.split(r"[,，\s]+", str(sds_raw or "").strip()) if c.strip()]
+            comps = [x.strip() for x in str(chapter_raw or "").split("\n")]
+            lines = []
+            for i, code in enumerate(codes):
+                comp = comps[i] if i < len(comps) else ""
+                if code.upper() in hide_set or not comp:
+                    lines.append(code)
+                else:
+                    lines.append(f"{code}（{comp}）")
+            return "\n".join(lines) if lines else str(sds_raw or "").strip()
+
         def __write_trace_rows(ws, rows: list[dict]):
             all_subs = 0
             for ridx, obj in enumerate(rows or [], 4):
@@ -5276,10 +5337,7 @@ class Server(object):
                     "SDS-RCN300-009",
                     "SDS-RCN300-010",
                 }
-                if sds_code_raw in hide_chapter_codes or not chapter_raw:
-                    sds_code = __format_sds_code(sds_code_raw)
-                else:
-                    sds_code = f"{__format_sds_code(sds_code_raw)}（{chapter_raw}）"
+                sds_code = __pair_sds_chapter(sds_code_raw, chapter_raw, hide_chapter_codes)
                 sis_codes = obj.get("sis_codes") or []
 
                 test_codes = obj.get("test_codes") or []
@@ -5385,6 +5443,19 @@ class Server(object):
             codes = [item.strip() for item in re.split(r"[,，\s]+", str(value or "").strip()) if item.strip()]
             return "\n".join(codes) if len(codes) > 1 else str(value or "").strip()
 
+        def __pair_sds_chapter(sds_raw: str, chapter_raw: str, hide_set: set):
+            # 每个 SDS 编号各自配对其组件名（源代码名称），逐行：编号（组件）
+            codes = [c.strip() for c in re.split(r"[,，\s]+", str(sds_raw or "").strip()) if c.strip()]
+            comps = [x.strip() for x in str(chapter_raw or "").split("\n")]
+            lines = []
+            for i, code in enumerate(codes):
+                comp = comps[i] if i < len(comps) else ""
+                if code.upper() in hide_set or not comp:
+                    lines.append(code)
+                else:
+                    lines.append(f"{code}（{comp}）")
+            return "\n".join(lines) if lines else str(sds_raw or "").strip()
+
         def __format_list(values):
             if isinstance(values, list):
                 return "\n".join([str(item or "").strip() for item in values if str(item or "").strip()])
@@ -5408,10 +5479,7 @@ class Server(object):
             for obj in rows or []:
                 sds_code_raw = str(obj.get("sds_code") or "").strip()
                 chapter_raw = str(obj.get("chapter") or "").strip()
-                if sds_code_raw in hide_chapter_codes or not chapter_raw:
-                    sds_code = __format_sds_code(sds_code_raw)
-                else:
-                    sds_code = f"{__format_sds_code(sds_code_raw)}（{chapter_raw}）"
+                sds_code = __pair_sds_chapter(sds_code_raw, chapter_raw, hide_chapter_codes)
                 sis_codes = obj.get("sis_codes") or []
                 test_codes = obj.get("test_codes") or []
                 tests_unit = test_codes if test_codes else (obj.get("tests_unit") or [])

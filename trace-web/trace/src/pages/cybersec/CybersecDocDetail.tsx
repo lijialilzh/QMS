@@ -12,6 +12,7 @@ import * as ApiProdCst from "@/api/ApiProdCst";
 import * as ApiProdRcm from "@/api/ApiProdRcm";
 import * as ApiProdHaz from "@/api/ApiProdHaz";
 import * as ApiDocFile from "@/api/ApiDocFile";
+import * as ApiSrsDoc from "@/api/ApiSrsDoc";
 import "../risk_mgmt/RiskMgmtDocDetail.less";
 
 const emptyContent = { sections: [], productName: "" };
@@ -144,6 +145,31 @@ const buildCstRcmMap = (prodCsts: any[]): Map<string, string> => {
     });
     return map;
 };
+// 反推 RCM 编号 -> 关联的威胁编号（来自产品 CST 的 rcm_codes）
+const buildRcmThreatMap = (prodCsts: any[]): Map<string, string[]> => {
+    const map = new Map<string, string[]>();
+    (prodCsts || []).forEach((row: any) => {
+        const threat = String(row?.code || "").trim();
+        if (!threat) return;
+        const codes = String(row?.rcm_codes || "").match(RCM_CODE_RE) || [];
+        codes.forEach((rcm: string) => {
+            const arr = map.get(rcm) || [];
+            if (!arr.includes(threat)) arr.push(threat);
+            map.set(rcm, arr);
+        });
+    });
+    return map;
+};
+// trace 行的 rcm_codes（数组或串）归一化为 RCM 编号数组
+const normalizeRcmCodeList = (val: any): string[] => {
+    if (Array.isArray(val)) return val.flatMap((v) => String(v).match(RCM_CODE_RE) || []);
+    return String(val ?? "").match(RCM_CODE_RE) || [];
+};
+// 测试用例数组（[首, 末]）拼成展示串
+const joinTestCodes = (val: any): string => {
+    if (Array.isArray(val)) return val.filter((v) => v != null && String(v) !== "").join(" ~ ");
+    return String(val ?? "");
+};
 // 把 RCM 编号串解析为产品 RCM 描述（命中不到的编号原样保留）
 const resolveRcmCodesText = (text: any, descMap: Map<string, string>): string => {
     const raw = String(text ?? "");
@@ -162,6 +188,25 @@ const findThreatTableCols = (rows: any[]): { codeCol: number; rcmCol: number } =
         if (t.includes("缓解措施") || t.includes("RCM")) rcmCol = idx;
     });
     return { codeCol, rcmCol };
+};
+// 定位威胁表「缓解前/缓解后」4 子列 → prod_cst 评分字段（map1：CVSS=score,可利用性=severity,严重度=level,接受度=accept）
+const findScoreColMap = (rows: any[]): Record<number, string> => {
+    const header = (rows && rows[0]) || [];
+    const map: Record<number, string> = {};
+    let pre = -1;
+    let post = -1;
+    header.forEach((cell: any, idx: number) => {
+        const t = normalizeTitleText(cell);
+        if (pre < 0 && t.includes("缓解前")) pre = idx;
+        if (post < 0 && t.includes("缓解后")) post = idx;
+    });
+    if (pre >= 0) {
+        map[pre] = "prev_score"; map[pre + 1] = "prev_severity"; map[pre + 2] = "prev_level"; map[pre + 3] = "prev_accept";
+    }
+    if (post >= 0) {
+        map[post] = "cur_score"; map[post + 1] = "cur_severity"; map[post + 2] = "cur_level"; map[post + 3] = "cur_accept";
+    }
+    return map;
 };
 // 威胁表表头合并还原（仅显示层）：横向连续空串→colspan，表头内上下同文本→rowspan；数据行(THREAT-xxx)不参与
 const computeHeaderMergePlan = (rows: any[], codeCol: number) => {
@@ -195,6 +240,36 @@ const computeHeaderMergePlan = (rows: any[], codeCol: number) => {
         }
     }
     return { headerRows, skip, span };
+};
+// 追溯表默认表头（与 Word《威胁缓解措施追溯》一致），导入表无表头时兜底
+const TRACE_HEADER_ROWS: string[][] = [
+    ["软件需求规格", "是否为RCM", "威胁编号", "软件详细设计", "单元测试用例", "集成测试用例", "系统测试用例", "用户测试用例", "风险控制措施RCMID", "备注"],
+    ["《需求规格说明》", "是否为RCM", "威胁编号", "《软件详细设计》", "《单元测试记录》", "《集成测试记录》", "《系统测试记录》", "《用户测试记录》", "《风险管理报告》（RCMID）", "如果SRS不作为风险控制措施，RCMID将以“/”表示。"],
+    ["《需求规格说明》", "是否为RCM", "威胁编号", "（源代码名称）", "《软件测试报告》", "《软件测试报告》", "《软件测试报告》", "《用户测试报告》", "《风险管理报告》（RCMID）", "如果SRS不作为风险控制措施，RCMID将以“/”表示。"],
+];
+// 表头合并（全部行均为表头）：横向连续空串→colspan，上下同文本→rowspan
+const computeAllHeaderMerge = (hrows: any[][]) => {
+    const width = hrows.reduce((m: number, r: any[]) => Math.max(m, (r || []).length), 0);
+    const n = hrows.length;
+    const skip: boolean[][] = hrows.map(() => new Array(width).fill(false));
+    const span: ({ colspan: number; rowspan: number } | null)[][] = hrows.map(() => new Array(width).fill(null));
+    const txt = (r: number, c: number) => String(hrows[r]?.[c] ?? "");
+    for (let r = 0; r < n; r += 1) {
+        for (let c = 0; c < width; c += 1) {
+            if (skip[r][c]) continue;
+            let colspan = 1;
+            while (c + colspan < width && txt(r, c + colspan) === "") { skip[r][c + colspan] = true; colspan += 1; }
+            let rowspan = 1;
+            if (txt(r, c) !== "") {
+                while (r + rowspan < n && txt(r + rowspan, c) === txt(r, c)) {
+                    for (let cc = c; cc < c + colspan; cc += 1) skip[r + rowspan][cc] = true;
+                    rowspan += 1;
+                }
+            }
+            span[r][c] = { colspan, rowspan };
+        }
+    }
+    return { width, skip, span };
 };
 // 单元格按产品 RCM 编号刷新描述：仅当至少一个编号能在产品 RCM 命中时才重写；否则原样保留（不丢数据）
 const refreshRcmCell = (cell: any, map: Map<string, string>): { value: any; changed: boolean } => {
@@ -393,6 +468,7 @@ export default () => {
         matrixTarget: {},
         matrixSaving: false,
         flowImageUrl: "",
+        traceRows: [],
     });
 
     const loadProducts = () => {
@@ -404,9 +480,19 @@ export default () => {
 
     const loadReferenceData = (productId?: any) => {
         if (!productId) {
-            dispatch({ prodCsts: [], prodRcms: [], prodHazs: [] });
+            dispatch({ prodCsts: [], prodRcms: [], prodHazs: [], traceRows: [] });
             return;
         }
+        // 7 威胁缓解措施追溯：复用「追溯分析」的 SRS 追溯数据（RCM→SRS/测试用例）
+        ApiSrsDoc.list_srs_doc({ product_id: productId, page_index: 0, page_size: 50 }).then((res: any) => {
+            if (res.code !== ApiSrsDoc.C_OK) { dispatch({ traceRows: [] }); return; }
+            const docs = res.data?.rows || [];
+            if (!docs.length) { dispatch({ traceRows: [] }); return; }
+            const srsDocId = docs[0].id; // 取该产品最新一份 SRS 文档
+            ApiSrsDoc.list_doc_trace({ id: srsDocId }).then((r2: any) => {
+                dispatch({ traceRows: (r2.code === ApiSrsDoc.C_OK ? (r2.data || []) : []) });
+            });
+        });
         ApiProdCst.list_prod_cst({ prod_id: productId, page_index: 0, page_size: 10000 }).then((res: any) => {
             if (res.code === ApiProdCst.C_OK) dispatch({ prodCsts: res.data?.rows || [] });
         });
@@ -908,20 +994,72 @@ export default () => {
         );
     };
 
-    const renderTraceabilitySection = () => (
+    const renderTraceabilitySection = () => {
+        const rcmThreatMap = buildRcmThreatMap(data.prodCsts || []);
+        const rows = data.traceRows || [];
+        // 表头沿用 Word 导入原表的前导表头行（数据行 col0 形如 SRS-xxx），无则用默认模板
+        const importedTable: any[] = (Array.isArray(activeSection?.tables) && activeSection.tables[0]) || [];
+        let headerCount = 0;
+        for (let r = 0; r < importedTable.length; r += 1) {
+            const c0 = String(importedTable[r]?.[0] ?? "").trim();
+            if (/^SRS[-_]/i.test(c0)) break;
+            headerCount += 1;
+        }
+        const headerRows: any[][] = headerCount > 0 ? importedTable.slice(0, headerCount) : TRACE_HEADER_ROWS;
+        const merge = computeAllHeaderMerge(headerRows);
+        const colCount = merge.width || 10;
+        // 仅保留「威胁编号↔RCM」有对应关系的行：既有 RCM 编号、又能反推出威胁编号（只有 RCM 号但无对应威胁的不纳入）
+        const bodyRows = rows
+            .map((row: any) => {
+                const numOf = (code: string) => { const m = String(code).match(/(\d+)\s*$/); return m ? parseInt(m[1], 10) : 0; };
+                const byNum = (a: string, b: string) => numOf(a) - numOf(b) || String(a).localeCompare(String(b));
+                const rcmList = Array.from(new Set(normalizeRcmCodeList(row.rcm_codes))).sort(byNum);
+                const threats = Array.from(new Set(rcmList.flatMap((c) => rcmThreatMap.get(c) || []))).sort(byNum);
+                return { row, rcmList, threats };
+            })
+            .filter((x: any) => x.rcmList.length > 0 && x.threats.length > 0)
+            // 严格按 Word 列序 [需求, 是否RCM, 威胁编号, SDS, 单元, 集成, 系统, 用户, RCMID, 备注]
+            .map(({ row, rcmList, threats }: any) => [
+                row.srs_code || "",
+                "是",
+                threats.join(" "),
+                row.sds_code || "",
+                joinTestCodes(row.tests_unit),
+                joinTestCodes(row.tests_integ),
+                joinTestCodes(row.tests_sys),
+                joinTestCodes(row.tests_user),
+                rcmList.join(" "),
+                row.note || "",
+            ]);
+        return (
         <div className="risk-mgmt-rcm-block">
-            <div className="risk-mgmt-rcm-title">威胁缓解措施追溯（运行时计算，只读）</div>
-            <table className="risk-mgmt-rcm-native-table">
-                <thead><tr><th>威胁编号</th><th>威胁描述</th><th>关联RCM编号</th><th>控制措施描述</th><th>来源</th></tr></thead>
-                <tbody>
-                    {traceabilityRows.map((row: any) => (
-                        <tr key={row.key}><td>{row.threat_code}</td><td>{row.description}</td><td>{row.rcm_code}</td><td>{row.ctrl_desc}</td><td>{row.source}</td></tr>
-                    ))}
-                    {!traceabilityRows.length && <tr><td colSpan={5}>暂无可追溯的威胁↔控制措施关联。</td></tr>}
-                </tbody>
-            </table>
+            <div className="risk-mgmt-rcm-title">威胁缓解措施追溯（自动追溯：RCM→SRS/测试用例、RCM→威胁编号，只读）</div>
+            <div className="cybersec-section-table-wrap">
+                <table className="risk-mgmt-section-table cybersec-section-table">
+                    <tbody>
+                        {headerRows.map((hrow: any[], r: number) => (
+                            <tr key={`thead-${r}`}>
+                                {hrow.map((cell: any, c: number) => {
+                                    if (merge.skip[r]?.[c]) return null;
+                                    const sp = merge.span[r]?.[c];
+                                    return (
+                                        <td key={`th-${r}-${c}`} className="cybersec-table-th" colSpan={sp?.colspan} rowSpan={sp?.rowspan}>{cell}</td>
+                                    );
+                                })}
+                            </tr>
+                        ))}
+                        {bodyRows.map((brow: any[], idx: number) => (
+                            <tr key={`trace-${idx}`}>
+                                {brow.map((cell: any, c: number) => (<td key={`td-${idx}-${c}`}>{cell}</td>))}
+                            </tr>
+                        ))}
+                        {!bodyRows.length && <tr><td colSpan={colCount}>未获取到该产品 SRS 追溯数据（请确认已建立对应 SRS 文档）。</td></tr>}
+                    </tbody>
+                </table>
+            </div>
         </div>
-    );
+        );
+    };
 
     const renderFrontMatterTable = (section: any, tableIndex: number, rows: any[]) => (
         <table className="risk-mgmt-section-table risk-mgmt-front-table" key={`${sectionKey(section)}-${tableIndex}`}>
@@ -974,18 +1112,27 @@ export default () => {
         const images: string[] = Array.isArray(activeSection.images) ? activeSection.images : [];
         const cstRcmMap = buildCstRcmMap(data.prodCsts || []);
         const rcmDescMap = buildRcmCodeMap(data.prodRcms || []);
+        // 按威胁编号索引产品 CST 行（评分列实时取该行 prev_*/cur_*）
+        const cstByCode = new Map<string, any>();
+        (data.prodCsts || []).forEach((row: any) => {
+            const c = String(row?.code || "").trim();
+            if (c) cstByCode.set(c, row);
+        });
         const renderRawTables = () => tables.map((rows: any[], tableIndex: number) => {
             // 威胁表：RCM 列若产品 CST 有该威胁的 RCM 则取 CST（只读），否则保留 Word 导入值
             const isThreatTbl = tableHasThreatColumn(rows);
             const { codeCol, rcmCol } = isThreatTbl ? findThreatTableCols(rows) : { codeCol: -1, rcmCol: -1 };
+            const scoreColMap = isThreatTbl ? findScoreColMap(rows) : {};
             const mergePlan = isThreatTbl ? computeHeaderMergePlan(rows, codeCol) : null;
             return (
             <div key={`table-wrap-${tableIndex}`}>
-                <table className="risk-mgmt-section-table">
+                <div className="cybersec-section-table-wrap">
+                <table className="risk-mgmt-section-table cybersec-section-table">
                     <tbody>
                         {(rows || []).map((row: any[], rowIndex: number) => {
                             const code = codeCol >= 0 ? String(row?.[codeCol] ?? "").trim() : "";
                             const cstRcm = code && cstRcmMap.has(code) ? cstRcmMap.get(code) || "" : null;
+                            const cstRow = code && cstByCode.has(code) ? cstByCode.get(code) : null;
                             const isHeaderRow = !!mergePlan && rowIndex < mergePlan.headerRows;
                             return (
                             <tr key={`row-${rowIndex}`}>
@@ -997,6 +1144,14 @@ export default () => {
                                         return (
                                             <td key={`cell-${cellIndex}`}>{resolveRcmCodesText(cstRcm, rcmDescMap)}</td>
                                         );
+                                    }
+                                    // 评分列：产品 CST 该威胁有值则实时取（只读），否则保留 Word 导入值
+                                    const scoreField = (scoreColMap as Record<number, string>)[cellIndex];
+                                    if (scoreField && cstRow && !isHeaderRow) {
+                                        const v = cstRow[scoreField];
+                                        if (v !== null && v !== undefined && String(v) !== "") {
+                                            return <td key={`cell-${cellIndex}`}>{String(v)}</td>;
+                                        }
                                     }
                                     return (
                                     <td
@@ -1031,6 +1186,7 @@ export default () => {
                         })}
                     </tbody>
                 </table>
+                </div>
                 {!isView && (
                     <Button
                         size="small"
@@ -1110,7 +1266,7 @@ export default () => {
                 )}
                 {isStrideSection(activeSection) ? (<>{showMatrix && renderThreatSection()}{importedTablesBlock}</>)
                     : kind ? (<>{showMatrix && renderControlSection(kind)}{importedTablesBlock}</>)
-                        : isTraceabilitySection(activeSection) ? (<>{showMatrix && renderTraceabilitySection()}{importedTablesBlock}</>)
+                        : isTraceabilitySection(activeSection) ? renderTraceabilitySection()
                             : renderRawTables()}
             </div>
         );

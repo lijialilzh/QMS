@@ -24,6 +24,16 @@
         border-right: none !important;
     }
 
+    // 合并单元格(rowSpan)跨多行时，左侧竖线由相邻列逐行 border-right 提供会断开；
+    // 给带 rowspan 的单元格补 border-left，由其跨满整段高度补全竖线。
+    .ant-table-tbody > tr > td[rowspan] {
+        border-left: 1px solid #d9d9d9 !important;
+    }
+
+    .ant-table-tbody > tr > td[rowspan]:first-child {
+        border-left: none !important;
+    }
+
     .trace-note-col {
         white-space: normal !important;
         overflow: visible !important;
