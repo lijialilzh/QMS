@@ -775,10 +775,34 @@ class Server(object):
                     image_data = raw_url.split(",", 1)[1]
                     paragraph = document.add_paragraph()
                     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    paragraph.add_run().add_picture(io.BytesIO(base64.b64decode(image_data)), width=Inches(5.8))
+                    pic = paragraph.add_run().add_picture(io.BytesIO(base64.b64decode(image_data)))
+                    # 等比缩放，限制最大宽/高，避免竖向流程图撑出页面；不放大小图
+                    max_w = Inches(5.5)
+                    max_h = Inches(7.0)
+                    if pic.width and pic.height:
+                        ratio = min(max_w / pic.width, max_h / pic.height, 1)
+                        pic.width = int(pic.width * ratio)
+                        pic.height = int(pic.height * ratio)
                     document.add_paragraph()
             except Exception:
                 logger.exception("导出网络安全图片失败")
+
+        def slim_trace_rcm_cells(rows):
+            # 仅用于追溯表导出：含 RCM 编号的单元格（即 RCMID 列）只保留编号，去重并按数字排序、每个一行；
+            # 不含 RCM 编号的单元格（威胁编号/SDS/测试/备注/表头）保持原样。
+            out = []
+            for row in rows or []:
+                new_row = []
+                for cell in (row or []):
+                    codes = re.findall(r"RCM\d+", str(cell or ""))
+                    if codes:
+                        uniq = list(dict.fromkeys(codes))
+                        uniq.sort(key=lambda c: int(re.sub(r"\D", "", c) or 0))
+                        new_row.append("\n".join(uniq))
+                    else:
+                        new_row.append(cell)
+                out.append(new_row)
+            return out
 
         def add_section(sec: dict, level: int = 1):
             title = sec.get("title", "")
@@ -800,7 +824,7 @@ class Server(object):
             elif ref_type == "traceability":
                 add_traceability()
             for table_rows in sec.get("tables", []) or []:
-                add_plain_table(table_rows)
+                add_plain_table(slim_trace_rcm_cells(table_rows) if ref_type == "traceability" else table_rows)
             for child in sec.get("children", []) or []:
                 add_section(child, level + 1)
 

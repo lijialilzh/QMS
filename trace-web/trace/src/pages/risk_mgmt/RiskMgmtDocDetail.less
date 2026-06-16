@@ -258,6 +258,14 @@
         white-space: nowrap;
     }
 
+    // 用例编号：单个编号不被逐字折断，给足列宽
+    .cybersec-code-nowrap {
+        white-space: nowrap;
+    }
+    td:has(.cybersec-code-nowrap) {
+        min-width: 120px;
+    }
+
     .ant-input {
         min-width: 56px;
     }

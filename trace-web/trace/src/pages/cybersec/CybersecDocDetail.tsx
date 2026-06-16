@@ -166,9 +166,15 @@ const normalizeRcmCodeList = (val: any): string[] => {
     return String(val ?? "").match(RCM_CODE_RE) || [];
 };
 // 测试用例数组（[首, 末]）拼成展示串
-const joinTestCodes = (val: any): string => {
-    if (Array.isArray(val)) return val.filter((v) => v != null && String(v) !== "").join(" ~ ");
-    return String(val ?? "");
+// 用例编号逐个独占一行，且编号本身不被逐字折断（区间以 "~" 分隔）
+const renderTestCodes = (val: any) => {
+    const arr = Array.isArray(val)
+        ? val.filter((v) => v != null && String(v) !== "").map((v) => String(v))
+        : String(val ?? "").split(/[,，\s]+/).filter(Boolean);
+    if (!arr.length) return "";
+    return arr.map((c: string, i: number) => (
+        <div key={i} className="cybersec-code-nowrap">{i > 0 ? "~ " : ""}{c}</div>
+    ));
 };
 // 把 RCM 编号串解析为产品 RCM 描述（命中不到的编号原样保留）
 const resolveRcmCodesText = (text: any, descMap: Map<string, string>): string => {
@@ -1022,13 +1028,13 @@ export default () => {
             .map(({ row, rcmList, threats }: any) => [
                 row.srs_code || "",
                 "是",
-                threats.join(" "),
-                row.sds_code || "",
-                joinTestCodes(row.tests_unit),
-                joinTestCodes(row.tests_integ),
-                joinTestCodes(row.tests_sys),
-                joinTestCodes(row.tests_user),
-                rcmList.join(" "),
+                threats.map((c: string, i: number) => <div key={i} className="cybersec-code-nowrap">{c}</div>),
+                String(row.sds_code || "").split(/[,，\s]+/).filter(Boolean).map((c: string, i: number) => <div key={i} className="cybersec-code-nowrap">{c}</div>),
+                renderTestCodes(row.tests_unit),
+                renderTestCodes(row.tests_integ),
+                renderTestCodes(row.tests_sys),
+                renderTestCodes(row.tests_user),
+                rcmList.map((c: string, i: number) => <div key={i} className="cybersec-code-nowrap">{c}</div>),
                 row.note || "",
             ]);
         return (
