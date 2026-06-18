@@ -8,6 +8,7 @@ import logging
 import base64
 import copy
 import io
+import json
 import os
 import re
 from typing import List
@@ -84,6 +85,10 @@ DEFAULT_CYBERSEC_CONTENT = {
         {"title": "文件修订记录", "ref_type": "revision", "children": [], "tables": [[
             ["修改日期", "版本号", "修订说明", "修订人", "批准人"],
             ["", "", "", "", ""],
+            ["", "", "", "", ""],
+            ["", "", "", "", ""],
+            ["", "", "", "", ""],
+            ["", "", "", "", ""],
         ]]},
         {"title": "1 概述", "children": [
             {"title": "1.1 目的", "children": []},
@@ -153,6 +158,20 @@ DEFAULT_CYBERSEC_CONTENT = {
     ],
     "productName": "",
 }
+
+
+# 默认内容优先从资源文件加载（含各章节默认正文/表格/图片；自动获取章节为模板态）；
+# 文件缺失时回退到上面的内联结构。资源文件由编辑页参考文档生成，前端新增页用同一份 JSON。
+_DEFAULT_CONTENT_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "src-res", "cybersec_default_content.json"
+)
+try:
+    with open(_DEFAULT_CONTENT_FILE, encoding="utf-8") as _f:
+        _loaded = json.load(_f)
+    if isinstance(_loaded, dict) and isinstance(_loaded.get("sections"), list) and _loaded["sections"]:
+        DEFAULT_CYBERSEC_CONTENT = _loaded
+except Exception:
+    logging.getLogger(__name__).exception("加载网络安全默认内容资源失败，使用内联默认模版")
 
 
 class Server(object):
@@ -728,6 +747,103 @@ class Server(object):
                     set_cell_text(cells[idx], row[idx] if idx < len(row or []) else "", bold=(len(table.rows) == 1))
             document.add_paragraph()
 
+        def set_cell_bg(cell, color_hex):
+            tc_pr = cell._tc.get_or_add_tcPr()
+            shd = OxmlElement("w:shd")
+            shd.set(qn("w:val"), "clear")
+            shd.set(qn("w:color"), "auto")
+            shd.set(qn("w:fill"), color_hex)
+            tc_pr.append(shd)
+
+        SCORE_GREEN = "00B050"
+        SCORE_YELLOW = "FFFF00"
+        SCORE_RED = "FF0000"
+
+        def is_score_matrix(rows):
+            has_rv = False
+            has_sev = False
+            for row in rows or []:
+                for cell in row or []:
+                    v = str(cell or "").strip()
+                    if v == "风险值":
+                        has_rv = True
+                    elif v == "严重度":
+                        has_sev = True
+            return has_rv and has_sev
+
+        def score_zone_color(likelihood, severity):
+            # likelihood / severity 均为 1..5；与《风险评估评分标准》矩阵配色一致
+            if likelihood <= 1:
+                return SCORE_GREEN
+            if likelihood in (2, 3):
+                return SCORE_GREEN if severity <= 3 else SCORE_YELLOW
+            if severity <= 1:
+                return SCORE_GREEN
+            if severity in (2, 3):
+                return SCORE_YELLOW
+            return SCORE_RED
+
+        def add_score_matrix_table(rows):
+            rows = rows or []
+            n = len(rows)
+            width = max([len(row or []) for row in rows] or [0])
+            if width <= 0 or n <= 0:
+                return
+
+            def txt(r, c):
+                row = rows[r] or []
+                return str(row[c]).strip() if c < len(row) and row[c] is not None else ""
+
+            skip = [[False] * width for _ in range(n)]
+            span = [[None] * width for _ in range(n)]
+            for r in range(n):
+                for c in range(width):
+                    if skip[r][c]:
+                        continue
+                    colspan = 1
+                    while c + colspan < width and txt(r, c + colspan) == "":
+                        skip[r][c + colspan] = True
+                        colspan += 1
+                    rowspan = 1
+                    if txt(r, c) != "":
+                        while r + rowspan < n and txt(r + rowspan, c) == txt(r, c):
+                            for cc in range(c, c + colspan):
+                                skip[r + rowspan][cc] = True
+                            rowspan += 1
+                    span[r][c] = (colspan, rowspan)
+
+            likelihood_map = {}
+            li = 0
+            for r in range(n):
+                if txt(r, 0) == "可利用性":
+                    li += 1
+                    likelihood_map[r] = li
+
+            label_colors = {"红色": SCORE_RED, "黄色": SCORE_YELLOW, "绿色": SCORE_GREEN}
+            table = document.add_table(rows=n, cols=width)
+            table.style = "Table Grid"
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+            for r in range(n):
+                for c in range(width):
+                    if skip[r][c]:
+                        continue
+                    colspan, rowspan = span[r][c]
+                    top_left = table.cell(r, c)
+                    if colspan > 1 or rowspan > 1:
+                        merged = top_left.merge(table.cell(r + rowspan - 1, c + colspan - 1))
+                    else:
+                        merged = top_left
+                    value = txt(r, c)
+                    bold = r <= 1 or value == "可利用性" or value in label_colors
+                    set_cell_text(merged, value, bold=bold)
+                    if value in label_colors:
+                        set_cell_bg(merged, label_colors[value])
+                    elif r in likelihood_map and c >= 2:
+                        severity = c - 1
+                        if 1 <= severity <= 5:
+                            set_cell_bg(merged, score_zone_color(likelihood_map[r], severity))
+            document.add_paragraph()
+
         def add_header_table(headers, value_rows):
             if not value_rows:
                 return
@@ -804,10 +920,31 @@ class Server(object):
                 out.append(new_row)
             return out
 
+        def add_one_table(table_rows, ref_type=None):
+            if is_score_matrix(table_rows):
+                add_score_matrix_table(table_rows)
+            else:
+                add_plain_table(slim_trace_rcm_cells(table_rows) if ref_type == "traceability" else table_rows)
+
         def add_section(sec: dict, level: int = 1):
             title = sec.get("title", "")
             if title and not is_cover_section(sec):
                 docx_util.save_title2docx(title, document, level=max(1, min(level, 9)))
+            # 有序内容块（text/table 交错）：按块顺序输出，忽略平铺 text/tables
+            blocks = sec.get("blocks")
+            if isinstance(blocks, list) and blocks:
+                for image_url in sec.get("images", []) or []:
+                    add_section_image(image_url)
+                for block in blocks:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") == "table":
+                        add_one_table(block.get("table") or [])
+                    elif block.get("text"):
+                        docx_util.save_txt2docx(str(block.get("text") or ""), document)
+                for child in sec.get("children", []) or []:
+                    add_section(child, level + 1)
+                return
             if sec.get("text"):
                 docx_util.save_txt2docx(str(sec.get("text") or ""), document)
             for image_url in sec.get("images", []) or []:
@@ -824,7 +961,7 @@ class Server(object):
             elif ref_type == "traceability":
                 add_traceability()
             for table_rows in sec.get("tables", []) or []:
-                add_plain_table(slim_trace_rcm_cells(table_rows) if ref_type == "traceability" else table_rows)
+                add_one_table(table_rows, ref_type)
             for child in sec.get("children", []) or []:
                 add_section(child, level + 1)
 

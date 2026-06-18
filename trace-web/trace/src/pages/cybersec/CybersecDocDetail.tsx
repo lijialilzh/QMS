@@ -14,21 +14,13 @@ import * as ApiProdHaz from "@/api/ApiProdHaz";
 import * as ApiDocFile from "@/api/ApiDocFile";
 import * as ApiSrsDoc from "@/api/ApiSrsDoc";
 import "../risk_mgmt/RiskMgmtDocDetail.less";
+// 新增页默认内容：与后端 src-res/cybersec_default_content.json 同源（自动获取章节为模板态，其余为编辑页默认正文/表格/图片）
+import cybersecDefaultContent from "./cybersecDefaultContent.json";
 
 const emptyContent = { sections: [], productName: "" };
 
-const CYBERSEC_SCORE_TABLE = [
-    ["风险值", "", "", "严重度", "", "", "", ""],
-    ["", "", "", "可忽略 A", "轻度 B", "严重 C", "危重的 D", "灾难性的 E"],
-    ["发生概率", "经常", "5", "5A", "5B", "5C", "5D", "5E"],
-    ["", "有时", "4", "4A", "4B", "4C", "4D", "4E"],
-    ["", "偶然", "3", "3A", "3B", "3C", "3D", "3E"],
-    ["", "很少", "2", "2A", "2B", "2C", "2D", "2E"],
-    ["", "非常少", "1", "1A", "1B", "1C", "1D", "1E"],
-    ["红色", "不可接受：这类网络安全风险本质上不可接受，必须寻求风险降低措施。", "", "", "", "", "", ""],
-    ["橙色", "可控：需进一步降低到合理可行的最低限度才可视为可接受。", "", "", "", "", "", ""],
-    ["绿色", "可接受：这类风险实际上可接受。", "", "", "", "", "", ""],
-];
+// 网络安全扫描类威胁编号固定名单（手动维护）：5.2.3 只显示名单内 THREAT，5.2.1 显示名单外 THREAT
+const CYBERSEC_SCAN_THREAT_CODES = ["THREAT-040"];
 
 const createCoverSection = () => ({
     title: "网络安全风险管理报告",
@@ -50,66 +42,14 @@ const createRevisionSection = () => ({
     tables: [[
         ["修改日期", "版本号", "修订说明", "修订人", "批准人"],
         ["", "", "", "", ""],
+        ["", "", "", "", ""],
+        ["", "", "", "", ""],
+        ["", "", "", "", ""],
+        ["", "", "", "", ""],
     ]],
 });
 
-const templateContent = {
-    sections: [
-        createCoverSection(),
-        createRevisionSection(),
-        {
-            title: "1 概述",
-            children: [
-                { title: "1.1 目的", children: [] },
-                { title: "1.2 产品描述", children: [] },
-                { title: "1.3 适用范围", children: [] },
-                { title: "1.4 系统架构和安全实现", children: [] },
-            ],
-        },
-        {
-            title: "2 阶段活动", ref_type: "stage_activity", children: [],
-            tables: [[["阶段", "开始", "结束", "结果"], ["", "", "", ""]]],
-        },
-        { title: "3 关联文件", children: [] },
-        {
-            title: "4 视图分析与威胁建模", ref_type: "view_analysis",
-            children: [
-                { title: "4.1 系统全局视图", children: [] },
-                { title: "4.2 多患者危害视图", children: [] },
-                { title: "4.3 安全用例视图", children: [] },
-                { title: "4.4 可更新性视图", children: [] },
-                { title: "4.5 威胁建模 STRIDE", ref_type: "stride_threats", children: [] },
-            ],
-        },
-        {
-            title: "5 风险评估",
-            children: [
-                { title: "5.1 评分标准", children: [], tables: [JSON.parse(JSON.stringify(CYBERSEC_SCORE_TABLE))] },
-                {
-                    title: "5.2 风险评估及控制措施（RCM）",
-                    children: [
-                        { title: "5.2.1 内部 RCM", ref_type: "cybersec_controls_internal", children: [] },
-                        { title: "5.2.2 SBOM RCM", ref_type: "cybersec_controls_sbom", children: [] },
-                        { title: "5.2.3 网络安全扫描 RCM", ref_type: "cybersec_controls_scan", children: [] },
-                    ],
-                },
-                { title: "5.3 残余风险评估", ref_type: "residual_risk", children: [] },
-            ],
-        },
-        {
-            title: "6 维护更新", ref_type: "maintenance",
-            children: [
-                { title: "6.1 设计保证", children: [] },
-                { title: "6.2 异常情况响应", children: [] },
-                { title: "6.3 安全更新策略", children: [] },
-                { title: "6.4 用户指导", children: [] },
-            ],
-        },
-        { title: "7 威胁缓解措施追溯", ref_type: "traceability", children: [] },
-        { title: "8 参考标准", children: [] },
-    ],
-    productName: "",
-};
+const templateContent: any = cybersecDefaultContent;
 
 const makeRowKey = () => `${Date.now()}-${Math.random()}`;
 const cloneTemplateContent = () => JSON.parse(JSON.stringify(templateContent));
@@ -276,6 +216,20 @@ const computeAllHeaderMerge = (hrows: any[][]) => {
         }
     }
     return { width, skip, span };
+};
+// 风险评估评分矩阵表识别：仅该表做整表合并（空串→colspan、上下同文本→rowspan），避免误伤其他可编辑空表
+const tableIsScoreMatrix = (rows: any[]): boolean => {
+    if (!Array.isArray(rows) || rows.length === 0) return false;
+    let hasRiskVal = false;
+    let hasSeverity = false;
+    for (const r of rows) {
+        for (const c of r || []) {
+            const v = String(c ?? "").trim();
+            if (v === "风险值") hasRiskVal = true;
+            if (v === "严重度") hasSeverity = true;
+        }
+    }
+    return hasRiskVal && hasSeverity;
 };
 // 单元格按产品 RCM 编号刷新描述：仅当至少一个编号能在产品 RCM 命中时才重写；否则原样保留（不丢数据）
 const refreshRcmCell = (cell: any, map: Map<string, string>): { value: any; changed: boolean } => {
@@ -650,7 +604,10 @@ export default () => {
         const content = fillProductTextSections(cloneTemplateContent(), currentProduct);
         const defaultSection = (content.sections || []).find((section: any) => !isCoverSection(section) && !isRevisionSection(section));
         dispatch({ content, activeSectionKey: sectionKey(defaultSection) });
-        message.success("初始化模版成功");
+        // 初始化只重置静态模版（文字/表格/blocks）；动态自动内容（STRIDE、5.2.x、追溯、流程图）重新拉取，避免“都没了”
+        loadReferenceData(currentProductId);
+        loadMatrixData(data.detail?.id);
+        message.success("初始化模版成功，已重新获取自动内容");
     };
 
     // ---------------- 章节树操作 ----------------
@@ -721,6 +678,70 @@ export default () => {
                 const tables = cloneSectionTables(section);
                 if (tables[tableIndex]) tables[tableIndex].splice(rowIndex, 1);
                 return { ...section, tables };
+            }
+            return { ...section, children: update(section.children || []) };
+        });
+        updateSections(update);
+    };
+
+    // 有序内容块（text/table 交错）编辑
+    const cloneBlocks = (section: any) => (
+        Array.isArray(section.blocks)
+            ? section.blocks.map((b: any) => (
+                b?.type === "table"
+                    ? { ...b, table: (b.table || []).map((row: any[]) => [...(row || [])]) }
+                    : { ...b }
+            ))
+            : []
+    );
+    const updateBlockText = (key: string, blockIndex: number, value: string) => {
+        const update = (sections: any[] = []): any[] => (sections || []).map((section) => {
+            if (sectionKey(section) === key) {
+                const blocks = cloneBlocks(section);
+                if (blocks[blockIndex]) blocks[blockIndex] = { ...blocks[blockIndex], text: value };
+                return { ...section, blocks };
+            }
+            return { ...section, children: update(section.children || []) };
+        });
+        updateSections(update);
+    };
+    const updateBlockTableCell = (key: string, blockIndex: number, rowIndex: number, cellIndex: number, value: string) => {
+        const update = (sections: any[] = []): any[] => (sections || []).map((section) => {
+            if (sectionKey(section) === key) {
+                const blocks = cloneBlocks(section);
+                const block = blocks[blockIndex];
+                if (block && block.type === "table") {
+                    if (!block.table[rowIndex]) block.table[rowIndex] = [];
+                    block.table[rowIndex][cellIndex] = value;
+                }
+                return { ...section, blocks };
+            }
+            return { ...section, children: update(section.children || []) };
+        });
+        updateSections(update);
+    };
+    const addBlockTableRow = (key: string, blockIndex: number) => {
+        const update = (sections: any[] = []): any[] => (sections || []).map((section) => {
+            if (sectionKey(section) === key) {
+                const blocks = cloneBlocks(section);
+                const block = blocks[blockIndex];
+                if (block && block.type === "table") {
+                    const colCount = Math.max(1, ...(block.table || []).map((row: any[]) => (row || []).length));
+                    block.table.push(new Array(colCount).fill(""));
+                }
+                return { ...section, blocks };
+            }
+            return { ...section, children: update(section.children || []) };
+        });
+        updateSections(update);
+    };
+    const deleteBlockTableRow = (key: string, blockIndex: number, rowIndex: number) => {
+        const update = (sections: any[] = []): any[] => (sections || []).map((section) => {
+            if (sectionKey(section) === key) {
+                const blocks = cloneBlocks(section);
+                const block = blocks[blockIndex];
+                if (block && block.type === "table") block.table.splice(rowIndex, 1);
+                return { ...section, blocks };
             }
             return { ...section, children: update(section.children || []) };
         });
@@ -957,18 +978,69 @@ export default () => {
     };
 
     const renderControlSection = (kind: "internal" | "sbom" | "scan") => {
-        if (!docId) {
+        // 5.2.2 SBOM：新增页不自动获取，保持默认模版；已有文档仍可手动维护 RCM
+        if (kind === "sbom") {
+            if (!docId) {
+                return (
+                    <div className="risk-mgmt-rcm-block">
+                        {matrixTip}
+                        <div className="risk-mgmt-rcm-title">SBOM 风险评估及控制措施（默认模版，不自动获取）</div>
+                    </div>
+                );
+            }
+        } else {
+            // 5.2.1 内部 / 5.2.3 网络安全扫描：新增页与编辑页均展示产品 THREAT 参考表（名单外/名单内）
+            const scanSet = new Set(CYBERSEC_SCAN_THREAT_CODES);
+            const csts = (data.prodCsts || []).filter((row: any) => {
+                const isScan = scanSet.has(String(row?.code || "").trim());
+                return kind === "scan" ? isScan : !isScan;
+            });
+            const refRcmDescMap = buildRcmCodeMap(data.prodRcms || []);
             return (
                 <div className="risk-mgmt-rcm-block">
                     {matrixTip}
-                    <div className="risk-mgmt-rcm-title">产品 RCM 参考</div>
-                    <table className="risk-mgmt-rcm-native-table">
-                        <thead><tr><th>控制措施描述</th></tr></thead>
-                        <tbody>
-                            {(data.prodRcms || []).map((row: any) => (<tr key={row.id || row.rcm_id || row.code}><td>{row.description}</td></tr>))}
-                            {!(data.prodRcms || []).length && <tr><td>当前产品暂无 RCM 数据。</td></tr>}
-                        </tbody>
-                    </table>
+                    <div className="risk-mgmt-rcm-title">{kind === "scan" ? "网络安全扫描 THREAT 参考" : "内部 THREAT 参考"}</div>
+                    <div className="cybersec-section-table-wrap">
+                        <table className="risk-mgmt-section-table cybersec-section-table">
+                            <tbody>
+                                <tr>
+                                    <td className="cybersec-table-th" rowSpan={2}>威胁编号</td>
+                                    <td className="cybersec-table-th" rowSpan={2}>分类</td>
+                                    <td className="cybersec-table-th" rowSpan={2}>威胁描述</td>
+                                    <td className="cybersec-table-th" colSpan={4}>缓解前</td>
+                                    <td className="cybersec-table-th" colSpan={4}>缓解后</td>
+                                    <td className="cybersec-table-th" rowSpan={2}>缓解措施(RCM)</td>
+                                </tr>
+                                <tr>
+                                    <td className="cybersec-table-th">CVSS分值</td>
+                                    <td className="cybersec-table-th">可利用性分值</td>
+                                    <td className="cybersec-table-th">严重度</td>
+                                    <td className="cybersec-table-th">接受度</td>
+                                    <td className="cybersec-table-th">CVSS分值</td>
+                                    <td className="cybersec-table-th">可利用性分值</td>
+                                    <td className="cybersec-table-th">严重度</td>
+                                    <td className="cybersec-table-th">接受度</td>
+                                </tr>
+                                {csts.map((row: any) => (
+                                    <tr key={row.id || row.cst_id || row.code}>
+                                        <td>{row.code}</td>
+                                        <td>{row.category}</td>
+                                        <td>{row.description}</td>
+                                        <td>{row.prev_score ?? ""}</td>
+                                        <td>{row.prev_severity ?? ""}</td>
+                                        <td>{row.prev_level ?? ""}</td>
+                                        <td>{row.prev_accept ?? ""}</td>
+                                        <td>{row.cur_score ?? ""}</td>
+                                        <td>{row.cur_severity ?? ""}</td>
+                                        <td>{row.cur_level ?? ""}</td>
+                                        <td>{row.cur_accept ?? ""}</td>
+                                        <td>{resolveRcmCodesText(row.rcm_codes, refRcmDescMap)}</td>
+                                    </tr>
+                                ))}
+                                {!csts.length && <tr><td colSpan={12}>当前产品暂无对应 THREAT 数据。</td></tr>}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             );
         }
@@ -1124,14 +1196,24 @@ export default () => {
             const c = String(row?.code || "").trim();
             if (c) cstByCode.set(c, row);
         });
-        const renderRawTables = () => tables.map((rows: any[], tableIndex: number) => {
+        const renderOneTable = (
+            rows: any[],
+            tableKey: string,
+            handlers: {
+                onCell: (rowIndex: number, cellIndex: number, value: string) => void;
+                onDelRow: (rowIndex: number) => void;
+                onAddRow: () => void;
+            },
+        ) => {
             // 威胁表：RCM 列若产品 CST 有该威胁的 RCM 则取 CST（只读），否则保留 Word 导入值
             const isThreatTbl = tableHasThreatColumn(rows);
             const { codeCol, rcmCol } = isThreatTbl ? findThreatTableCols(rows) : { codeCol: -1, rcmCol: -1 };
             const scoreColMap = isThreatTbl ? findScoreColMap(rows) : {};
             const mergePlan = isThreatTbl ? computeHeaderMergePlan(rows, codeCol) : null;
+            // 风险评估评分矩阵：整表合并（空串→colspan、同列上下同文本→rowspan）
+            const scoreMerge = !isThreatTbl && tableIsScoreMatrix(rows) ? computeAllHeaderMerge(rows) : null;
             return (
-            <div key={`table-wrap-${tableIndex}`}>
+            <div key={`table-wrap-${tableKey}`}>
                 <div className="cybersec-section-table-wrap">
                 <table className="risk-mgmt-section-table cybersec-section-table">
                     <tbody>
@@ -1144,7 +1226,10 @@ export default () => {
                             <tr key={`row-${rowIndex}`}>
                                 {(row || []).map((cell: any, cellIndex: number) => {
                                     if (isHeaderRow && mergePlan!.skip[rowIndex]?.[cellIndex]) return null;
-                                    const cellSpan = isHeaderRow ? mergePlan!.span[rowIndex]?.[cellIndex] : null;
+                                    if (scoreMerge && scoreMerge.skip[rowIndex]?.[cellIndex]) return null;
+                                    const cellSpan = isHeaderRow
+                                        ? mergePlan!.span[rowIndex]?.[cellIndex]
+                                        : (scoreMerge ? scoreMerge.span[rowIndex]?.[cellIndex] : null);
                                     const useCstRcm = cstRcm !== null && cellIndex === rcmCol;
                                     if (useCstRcm) {
                                         return (
@@ -1169,7 +1254,7 @@ export default () => {
                                             <Input.TextArea
                                                 autoSize={{ minRows: 1, maxRows: 8 }}
                                                 value={cell}
-                                                onChange={(e) => updateSectionTableCell(sectionKey(activeSection), tableIndex, rowIndex, cellIndex, e.target.value)}
+                                                onChange={(e) => handlers.onCell(rowIndex, cellIndex, e.target.value)}
                                             />
                                         )}
                                     </td>
@@ -1177,12 +1262,14 @@ export default () => {
                                 })}
                                 {!isView && (
                                     <td style={{ width: 56, textAlign: "center", verticalAlign: "middle" }}>
-                                        {rowIndex > 0 && (
+                                        {rowIndex === 0 ? (
+                                            "操作"
+                                        ) : (
                                             <Button
                                                 type="link"
                                                 danger
                                                 size="small"
-                                                onClick={() => deleteSectionTableRow(sectionKey(activeSection), tableIndex, rowIndex)}
+                                                onClick={() => handlers.onDelRow(rowIndex)}
                                             >删除</Button>
                                         )}
                                     </td>
@@ -1197,16 +1284,58 @@ export default () => {
                     <Button
                         size="small"
                         style={{ margin: "8px 0 16px" }}
-                        onClick={() => addSectionTableRow(sectionKey(activeSection), tableIndex)}
+                        onClick={() => handlers.onAddRow()}
                     >+ 添加行</Button>
                 )}
             </div>
             );
+        };
+        const renderRawTables = () => tables.map((rows: any[], tableIndex: number) => renderOneTable(
+            rows,
+            `t${tableIndex}`,
+            {
+                onCell: (r, c, v) => updateSectionTableCell(sectionKey(activeSection), tableIndex, r, c, v),
+                onDelRow: (r) => deleteSectionTableRow(sectionKey(activeSection), tableIndex, r),
+                onAddRow: () => addSectionTableRow(sectionKey(activeSection), tableIndex),
+            },
+        ));
+        const blocks: any[] = Array.isArray(activeSection.blocks) ? activeSection.blocks : [];
+        const hasBlocks = blocks.length > 0;
+        const renderBlocks = () => blocks.map((block: any, blockIndex: number) => {
+            if (block?.type === "table") {
+                const rows = Array.isArray(block.table) ? block.table : [];
+                return renderOneTable(rows, `b${blockIndex}`, {
+                    onCell: (r, c, v) => updateBlockTableCell(sectionKey(activeSection), blockIndex, r, c, v),
+                    onDelRow: (r) => deleteBlockTableRow(sectionKey(activeSection), blockIndex, r),
+                    onAddRow: () => addBlockTableRow(sectionKey(activeSection), blockIndex),
+                });
+            }
+            const textVal = block?.text || "";
+            return (
+                <div key={`block-${blockIndex}`} style={{ margin: "8px 0" }}>
+                    {isView ? (textVal ? <div className="risk-mgmt-section-text">{textVal}</div> : null) : (
+                        <Input.TextArea
+                            value={textVal}
+                            onChange={(e) => updateBlockText(sectionKey(activeSection), blockIndex, e.target.value)}
+                            autoSize={{ minRows: 3, maxRows: 18 }}
+                            placeholder="请输入内容"
+                        />
+                    )}
+                </div>
+            );
         });
         const hasRawTables = tables.length > 0;
+        const controlThreatCount = (k: "internal" | "scan") => {
+            const scanSet = new Set(CYBERSEC_SCAN_THREAT_CODES);
+            return (data.prodCsts || []).filter((r: any) => {
+                const isScan = scanSet.has(String(r?.code || "").trim());
+                return k === "scan" ? isScan : !isScan;
+            }).length;
+        };
         const matrixRowCount = isStrideSection(activeSection) ? (data.threats || []).length
-            : kind ? ((controlApi[kind]?.list) || []).length
-                : isTraceabilitySection(activeSection) ? traceabilityRows.length : 0;
+            : (kind === "internal" || kind === "scan") ? controlThreatCount(kind)
+                : kind ? ((controlApi[kind]?.list) || []).length
+                    : isTraceabilitySection(activeSection) ? traceabilityRows.length : 0;
         // 有导入原始表且矩阵为空时，隐藏空矩阵（避免冗余）；矩阵有数据或无导入表时仍展示
         const showMatrix = matrixRowCount > 0 || !hasRawTables;
         const importedTablesBlock = hasRawTables
@@ -1216,14 +1345,14 @@ export default () => {
             : null;
         return (
             <div className="risk-mgmt-section-content">
-                {isView ? (sectionText ? <div className="risk-mgmt-section-text">{sectionText}</div> : null) : (
+                {!hasBlocks && (isView ? (sectionText ? <div className="risk-mgmt-section-text">{sectionText}</div> : null) : (
                     <Input.TextArea
                         value={sectionText}
                         onChange={(e) => updateSectionText(sectionKey(activeSection), e.target.value)}
                         autoSize={{ minRows: 5, maxRows: 18 }}
                         placeholder="请输入章节内容"
                     />
-                )}
+                ))}
                 {isFlowDiagramSection(activeSection) ? (
                     <div className="cybersec-section-images">
                         {data.flowImageUrl ? (
@@ -1273,7 +1402,8 @@ export default () => {
                 {isStrideSection(activeSection) ? (<>{showMatrix && renderThreatSection()}{importedTablesBlock}</>)
                     : kind ? (<>{showMatrix && renderControlSection(kind)}{importedTablesBlock}</>)
                         : isTraceabilitySection(activeSection) ? renderTraceabilitySection()
-                            : renderRawTables()}
+                            : hasBlocks ? renderBlocks()
+                                : renderRawTables()}
             </div>
         );
     };
@@ -1333,7 +1463,7 @@ export default () => {
                                 <Form.Item label={ts("product.full_version")} name="product_full_version"><Input disabled /></Form.Item>
                             </>
                         )}
-                        <Form.Item label="报告版本" name="version" rules={[{ required: true, message: sprintf(ts("msg_input"), { label: "报告版本" }) }]}>
+                        <Form.Item label="文档版本" name="version" rules={[{ required: true, message: sprintf(ts("msg_input"), { label: "文档版本" }) }]}>
                             <Input />
                         </Form.Item>
                     </div>
