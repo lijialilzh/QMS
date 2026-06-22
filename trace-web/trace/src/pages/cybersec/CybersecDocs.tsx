@@ -200,7 +200,7 @@ export default () => {
         {
             title: "文件编号",
             dataIndex: "file_no",
-            width: "20%",
+            width: "16%",
             render: (value: string, row: any) => {
                 const isEditing = data.editingFileNoId === row.id;
                 const isSaving = data.savingFileNoId === row.id;
@@ -228,7 +228,7 @@ export default () => {
                 );
             },
         },
-        { title: "变更说明", dataIndex: "change_log", width: "6%" },
+        { title: "变更说明", dataIndex: "change_log", width: "10%" },
         { title: ts("create_time"), dataIndex: "create_time", width: "15%" },
         {
             title: ts("action"),

@@ -924,9 +924,7 @@ export default () => {
     })();
 
     // ---------------- 渲染 ----------------
-    const matrixTip = (
-        <div className="risk-mgmt-section-tip">请先保存报告后再维护威胁与控制措施明细（明细按报告独立持久化）。</div>
-    );
+    const matrixTip = null;
 
     const renderThreatSection = () => {
         if (!docId) {
@@ -1128,7 +1126,10 @@ export default () => {
                         ))}
                         {bodyRows.map((brow: any[], idx: number) => (
                             <tr key={`trace-${idx}`}>
-                                {brow.map((cell: any, c: number) => (<td key={`td-${idx}-${c}`}>{cell}</td>))}
+                                {brow.map((cell: any, c: number) => {
+                                    const isEmpty = Array.isArray(cell) ? cell.length === 0 : (cell === null || cell === undefined || String(cell) === "");
+                                    return (<td key={`td-${idx}-${c}`}>{isEmpty ? "/" : cell}</td>);
+                                })}
                             </tr>
                         ))}
                         {!bodyRows.length && <tr><td colSpan={colCount}>未获取到该产品 SRS 追溯数据（请确认已建立对应 SRS 文档）。</td></tr>}
@@ -1399,8 +1400,9 @@ export default () => {
                         )}
                     </div>
                 )}
-                {isStrideSection(activeSection) ? (<>{showMatrix && renderThreatSection()}{importedTablesBlock}</>)
-                    : kind ? (<>{showMatrix && renderControlSection(kind)}{importedTablesBlock}</>)
+                {/* 自动获取章节（STRIDE、内部/网络安全扫描）只展示最新自动表，不再显示导入的原始表（旧数据残留） */}
+                {isStrideSection(activeSection) ? (<>{showMatrix && renderThreatSection()}</>)
+                    : kind ? (<>{showMatrix && renderControlSection(kind)}{kind === "sbom" ? importedTablesBlock : null}</>)
                         : isTraceabilitySection(activeSection) ? renderTraceabilitySection()
                             : hasBlocks ? renderBlocks()
                                 : renderRawTables()}
