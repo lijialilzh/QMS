@@ -33,6 +33,7 @@ export default () => {
         products: [],
         targetProdId: null,
         targetEdit: {},
+        editingField: null,
         rcms: [],
         selectedRowKeys: [],
     });
@@ -49,19 +50,36 @@ export default () => {
         });
     };
 
-    const doUpdate = () => {
+    // 点击单元格进入单字段编辑
+    const startEdit = (row: any, field: string) => {
+        if (data.targetEdit.id === row.id && data.editingField === field) return;
+        dispatch({ targetEdit: { ...row }, editingField: field });
+        if (field === "rcms") doSearchRcms(row.prod_id, data, dispatch);
+    };
+
+    // 该格失焦时实时保存（保存后本地更新该行，避免整表刷新闪烁）
+    const saveCell = () => {
+        const edit = data.targetEdit;
+        if (!edit?.id || data.updating) return;
         dispatch({ updating: true });
-        Api.update_prod_haz({ ...data.targetEdit }).then((res: any) => {
+        Api.update_prod_haz({ ...edit }).then((res: any) => {
             if (res.code === Api.C_OK) {
-                dispatch({ updating: false, targetEdit: {} });
+                const rows = (data.rows || []).map((r: any) => (r.id === edit.id ? { ...r, ...edit } : r));
+                dispatch({ updating: false, targetEdit: {}, editingField: null, rows });
                 message.success(res.msg);
-                doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
             } else {
                 dispatch({ updating: false });
                 message.error(res.msg);
             }
         });
     };
+
+    // 一格多控件（风险三个下拉、RCM 多选）：焦点离开该格时统一保存
+    const cellBlurSave = (evt: any) => {
+        if (!evt.currentTarget.contains(evt.relatedTarget as Node)) saveCell();
+    };
+
+    const isEditing = (row: any, field: string) => data.targetEdit.id === row.id && data.editingField === field;
 
     const doDelete = () => {
         dispatch({ loading: true });
@@ -197,13 +215,19 @@ export default () => {
             dataIndex: "situation",
             width: 200,
             render: (value: any, row: any) => {
-                if (data.targetEdit.id !== row.id) {
-                    return renderOneLineWithTooltip(value, { emptyText: "" });
+                if (!isEditing(row, "situation")) {
+                    return (
+                        <div className="haz-click-cell" style={{ cursor: "pointer", minHeight: 22 }} title="点击编辑" onClick={() => startEdit(row, "situation")}>
+                            {renderOneLineWithTooltip(value, { emptyText: "点击编辑" })}
+                        </div>
+                    );
                 }
                 return (
                     <Input.TextArea
+                        autoFocus
                         rows={3}
                         value={data.targetEdit.situation}
+                        onBlur={saveCell}
                         onChange={(evt: any) => dispatch({ targetEdit: { ...data.targetEdit, situation: evt.target.value } })}
                     />
                 );
@@ -214,13 +238,19 @@ export default () => {
             dataIndex: "damage",
             width: 200,
             render: (value: any, row: any) => {
-                if (data.targetEdit.id !== row.id) {
-                    return renderOneLineWithTooltip(value, { emptyText: "" });
+                if (!isEditing(row, "damage")) {
+                    return (
+                        <div className="haz-click-cell" style={{ cursor: "pointer", minHeight: 22 }} title="点击编辑" onClick={() => startEdit(row, "damage")}>
+                            {renderOneLineWithTooltip(value, { emptyText: "点击编辑" })}
+                        </div>
+                    );
                 }
                 return (
                     <Input.TextArea
+                        autoFocus
                         rows={3}
                         value={data.targetEdit.damage}
+                        onBlur={saveCell}
                         onChange={(evt: any) => dispatch({ targetEdit: { ...data.targetEdit, damage: evt.target.value } })}
                     />
                 );
@@ -247,15 +277,21 @@ export default () => {
                 },
             }),
             render: (_value: any, row: any) => {
-                if (data.targetEdit.id !== row.id) {
-                    return renderRiskTip(row, "init");
+                if (!isEditing(row, "init_risk")) {
+                    return (
+                        <div style={{ cursor: "pointer" }} title="点击编辑" onClick={() => startEdit(row, "init_risk")}>
+                            {renderRiskTip(row, "init")}
+                        </div>
+                    );
                 }
                 return (
-                    <div>
+                    <div tabIndex={-1} onBlur={cellBlurSave}>
                         <div>
                             概率：
                             <Select
+                                autoFocus
                                 allowClear
+                                getPopupContainer={(t: any) => t.parentElement}
                                 options={HAZ_RATES}
                                 value={data.targetEdit.init_rate}
                                 onChange={(evt: any) => dispatch({ targetEdit: { ...data.targetEdit, init_rate: evt } })}
@@ -265,6 +301,7 @@ export default () => {
                             程度：
                             <Select
                                 allowClear
+                                getPopupContainer={(t: any) => t.parentElement}
                                 options={HAZ_DEGREES}
                                 value={data.targetEdit.init_degree}
                                 onChange={(evt: any) => dispatch({ targetEdit: { ...data.targetEdit, init_degree: evt } })}
@@ -274,6 +311,7 @@ export default () => {
                             危险水平：
                             <Select
                                 allowClear
+                                getPopupContainer={(t: any) => t.parentElement}
                                 options={HAZ_LEVELS}
                                 value={data.targetEdit.init_level}
                                 onChange={(evt: any) => dispatch({ targetEdit: { ...data.targetEdit, init_level: evt } })}
@@ -305,23 +343,25 @@ export default () => {
                 },
             }),
             render: (value: any, row: any) => {
-                if (data.targetEdit.id !== row.id) {
+                if (!isEditing(row, "deal")) {
                     const text = value || "";
                     const lines = buildDealLines(text);
                     return (
-                        <div className="deal-wrap" title={text}>
-                            {lines.map((item, idx) => (
+                        <div className="deal-wrap" style={{ cursor: "pointer", minHeight: 22 }} title={text || "点击编辑"} onClick={() => startEdit(row, "deal")}>
+                            {lines.length ? lines.map((item, idx) => (
                                 <div key={`${item}-${idx}`} className="deal-item">
                                     {item}
                                 </div>
-                            ))}
+                            )) : <span style={{ color: "#bbb" }}>点击编辑</span>}
                         </div>
                     );
                 }
                 return (
                     <Input.TextArea
+                        autoFocus
                         rows={3}
                         value={data.targetEdit.deal}
+                        onBlur={saveCell}
                         onChange={(evt: any) => dispatch({ targetEdit: { ...data.targetEdit, deal: evt.target.value } })}
                     />
                 );
@@ -333,44 +373,48 @@ export default () => {
             width: 120,
             className: "wrap-cell",
             render: (value: any, row: any) => {
-                if (data.targetEdit.id !== row.id) {
+                if (!isEditing(row, "rcms")) {
                     const rcms = String(value || "")
                         .split(/[\s,，]+/)
                         .map((item) => item.trim())
                         .filter((item) => item !== "");
                     return (
-                        <div className="wrap-list-cell" title={value || ""}>
-                            {rcms.map((item, idx) => (
+                        <div className="wrap-list-cell" style={{ cursor: "pointer", minHeight: 22 }} title={value || "点击编辑"} onClick={() => startEdit(row, "rcms")}>
+                            {rcms.length ? rcms.map((item, idx) => (
                                 <div key={`${item}-${idx}`} className="wrap-list-item">
                                     {item}
                                 </div>
-                            ))}
+                            )) : <span style={{ color: "#bbb" }}>点击编辑</span>}
                         </div>
                     );
                 }
                 return (
-                    <Select
-                        showSearch
-                        className="rcms-select"
-                        style={{ width: "100%", minWidth: "200px" }}
-                        maxTagCount={999}
-                        tagRender={(item: any) => {
-                            return <Tag color="blue">{item.value}</Tag>;
-                        }}
-                        mode="multiple"
-                        options={data.rcms.map((item: any) => ({ label: item.description, value: item.code }))}
-                        value={(data.targetEdit.rcms || "").split(",").filter((item: any) => item !== "")}
-                        onChange={(values: any) => {
-                            const selectedCodes = (values || []) as string[];
-                            dispatch({
-                                targetEdit: {
-                                    ...data.targetEdit,
-                                    rcms: selectedCodes.join(","),
-                                    deal: buildDealTextFromRcms(selectedCodes),
-                                }
-                            });
-                        }}
-                    />
+                    <div tabIndex={-1} onBlur={cellBlurSave}>
+                        <Select
+                            autoFocus
+                            showSearch
+                            className="rcms-select"
+                            style={{ width: "100%", minWidth: "200px" }}
+                            maxTagCount={999}
+                            getPopupContainer={(t: any) => t.parentElement}
+                            tagRender={(item: any) => {
+                                return <Tag color="blue">{item.value}</Tag>;
+                            }}
+                            mode="multiple"
+                            options={data.rcms.map((item: any) => ({ label: item.description, value: item.code }))}
+                            value={(data.targetEdit.rcms || "").split(",").filter((item: any) => item !== "")}
+                            onChange={(values: any) => {
+                                const selectedCodes = (values || []) as string[];
+                                dispatch({
+                                    targetEdit: {
+                                        ...data.targetEdit,
+                                        rcms: selectedCodes.join(","),
+                                        deal: buildDealTextFromRcms(selectedCodes),
+                                    }
+                                });
+                            }}
+                        />
+                    </div>
                 );
             },
         },
@@ -382,22 +426,24 @@ export default () => {
             onHeaderCell: () => ({ style: { minWidth: 320 } }),
             onCell: () => ({ style: { minWidth: 320 } }),
             render: (value: any, row: any) => {
-                if (data.targetEdit.id !== row.id) {
+                if (!isEditing(row, "evidence")) {
                     const evidences = buildEvidenceLines(value);
                     return (
-                        <div className="wrap-list-cell" title={value || ""}>
-                            {evidences.map((item, idx) => (
+                        <div className="wrap-list-cell" style={{ cursor: "pointer", minHeight: 22 }} title={value || "点击编辑"} onClick={() => startEdit(row, "evidence")}>
+                            {evidences.length ? evidences.map((item, idx) => (
                                 <div key={`${item}-${idx}`} className="wrap-list-item evidence-list-item">
                                     {item}
                                 </div>
-                            ))}
+                            )) : <span style={{ color: "#bbb" }}>点击编辑</span>}
                         </div>
                     );
                 }
                 return (
                     <Input.TextArea
+                        autoFocus
                         rows={2}
                         value={data.targetEdit.evidence}
+                        onBlur={saveCell}
                         onChange={(evt: any) => dispatch({ targetEdit: { ...data.targetEdit, evidence: evt.target.value } })}
                     />
                 );
@@ -425,15 +471,21 @@ export default () => {
                 },
             }),
             render: (_value: any, row: any) => {
-                if (data.targetEdit.id !== row.id) {
-                    return renderRiskTip(row, "cur");
+                if (!isEditing(row, "cur_risk")) {
+                    return (
+                        <div style={{ cursor: "pointer" }} title="点击编辑" onClick={() => startEdit(row, "cur_risk")}>
+                            {renderRiskTip(row, "cur")}
+                        </div>
+                    );
                 }
                 return (
-                    <div>
+                    <div tabIndex={-1} onBlur={cellBlurSave}>
                         <div>
                             概率：
                             <Select
+                                autoFocus
                                 allowClear
+                                getPopupContainer={(t: any) => t.parentElement}
                                 options={HAZ_RATES}
                                 value={data.targetEdit.cur_rate}
                                 onChange={(evt: any) => dispatch({ targetEdit: { ...data.targetEdit, cur_rate: evt } })}
@@ -443,6 +495,7 @@ export default () => {
                             程度：
                             <Select
                                 allowClear
+                                getPopupContainer={(t: any) => t.parentElement}
                                 options={HAZ_DEGREES}
                                 value={data.targetEdit.cur_degree}
                                 onChange={(evt: any) => dispatch({ targetEdit: { ...data.targetEdit, cur_degree: evt } })}
@@ -452,6 +505,7 @@ export default () => {
                             危险水平：
                             <Select
                                 allowClear
+                                getPopupContainer={(t: any) => t.parentElement}
                                 options={HAZ_LEVELS}
                                 value={data.targetEdit.cur_level}
                                 onChange={(evt: any) => dispatch({ targetEdit: { ...data.targetEdit, cur_level: evt } })}
@@ -492,29 +546,9 @@ export default () => {
             render: (_value: any, row: any) => {
                 return (
                     <Space size={8} style={{ whiteSpace: "nowrap" }}>
-                        {data.targetEdit.id === row.id && (
-                            <Button type="link" onClick={() => dispatch({ targetEdit: {} })}>
-                                {ts("cancel")}
-                            </Button>
-                        )}
-                        <Button
-                            type="link"
-                            loading={data.updating && data.targetEdit.id === row.id}
-                            onClick={() => {
-                                if (data.targetEdit.id === row.id) {
-                                    doUpdate();
-                                } else {
-                                    dispatch({ targetEdit: row });
-                                    doSearchRcms(row.prod_id, data, dispatch);
-                                }
-                            }}>
-                            {data.targetEdit.id === row.id ? ts("save") : ts("edit")}
+                        <Button type="link" danger onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
+                            {ts("delete")}
                         </Button>
-                        {data.targetEdit.id !== row.id && (
-                            <Button type="link" danger onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
-                                {ts("delete")}
-                            </Button>
-                        )}
                     </Space>
                 );
             },

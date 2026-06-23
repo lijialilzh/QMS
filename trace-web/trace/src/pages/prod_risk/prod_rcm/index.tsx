@@ -152,10 +152,12 @@ export default () => {
         {
             title: ts("create_time"),
             dataIndex: "create_time",
-            width: 90,
+            width: 160,
         },
         {
             title: ts("action"),
+            width: 90,
+            fixed: "right" as const,
             render: (_value: any, row: any) => {
                 return (
                     <Space size={8} style={{ whiteSpace: "nowrap" }}>
@@ -245,6 +247,8 @@ export default () => {
                 dataSource={data.rows}
                 loading={data.loading}
                 tableLayout="fixed"
+                sticky
+                scroll={{ x: 1470, y: "68vh" }}
                 pagination={{
                     total: data.total,
                     current: data.pageIndex,

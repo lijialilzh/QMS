@@ -33,6 +33,7 @@ export default () => {
         products: [],
         targetProdId: null,
         targetEdit: {},
+        editingField: null,
         rcms: [],
         selectedRowKeys: [],
     });
@@ -96,19 +97,37 @@ export default () => {
         });
     };
 
-    const doUpdate = () => {
+    // 点击单元格进入单字段编辑
+    const startEdit = (row: any, field: string) => {
+        if (data.targetEdit.id === row.id && data.editingField === field) return;
+        dispatch({ targetEdit: { ...row }, editingField: field });
+        if (field === "rcm_codes") doSearchRcms(row.prod_id, data, dispatch);
+    };
+
+    // 该格失焦时实时保存（保存后本地更新该行，避免整表刷新闪烁）
+    const saveCell = (override?: any) => {
+        const edit = { ...data.targetEdit, ...(override || {}) };
+        if (!edit?.id || data.updating) return;
         dispatch({ updating: true });
-        Api.update_prod_cst({ ...data.targetEdit }).then((res: any) => {
+        Api.update_prod_cst({ ...edit }).then((res: any) => {
             if (res.code === Api.C_OK) {
-                dispatch({ updating: false, targetEdit: {} });
+                const rows = (data.rows || []).map((r: any) => (r.id === edit.id ? { ...r, ...edit } : r));
+                dispatch({ updating: false, targetEdit: {}, editingField: null, rows });
                 message.success(res.msg);
-                doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
             } else {
                 dispatch({ updating: false });
                 message.error(res.msg);
             }
         });
     };
+
+    const isEditing = (row: any, field: string) => data.targetEdit.id === row.id && data.editingField === field;
+
+    const clickToEdit = (row: any, field: string, value: any) => (
+        <div style={{ cursor: "pointer", minHeight: 22 }} title="点击编辑" onClick={() => startEdit(row, field)}>
+            {value !== null && value !== undefined && String(value) !== "" ? value : <span style={{ color: "#d9d9d9" }}>—</span>}
+        </div>
+    );
 
     const columns = [
         {
@@ -127,12 +146,13 @@ export default () => {
             title: ts("cst.prev_score"),
             dataIndex: "prev_score",
             render: (value: any, row: any) => {
-                if (data.targetEdit.id !== row.id) {
-                    return value;
-                }
+                if (!isEditing(row, "prev_score")) return clickToEdit(row, "prev_score", value);
                 return (
                     <InputNumber
+                        autoFocus
                         value={data.targetEdit.prev_score}
+                        onBlur={saveCell}
+                        onPressEnter={saveCell}
                         onChange={(v: any) => dispatch({ targetEdit: { ...data.targetEdit, prev_score: v } })}
                     />
                 );
@@ -142,12 +162,13 @@ export default () => {
             title: ts("cst.prev_severity"),
             dataIndex: "prev_severity",
             render: (value: any, row: any) => {
-                if (data.targetEdit.id !== row.id) {
-                    return value;
-                }
+                if (!isEditing(row, "prev_severity")) return clickToEdit(row, "prev_severity", value);
                 return (
                     <InputNumber
+                        autoFocus
                         value={data.targetEdit.prev_severity}
+                        onBlur={saveCell}
+                        onPressEnter={saveCell}
                         onChange={(v: any) => dispatch({ targetEdit: { ...data.targetEdit, prev_severity: v } })}
                     />
                 );
@@ -157,12 +178,13 @@ export default () => {
             title: ts("cst.prev_level"),
             dataIndex: "prev_level",
             render: (value: any, row: any) => {
-                if (data.targetEdit.id !== row.id) {
-                    return value;
-                }
+                if (!isEditing(row, "prev_level")) return clickToEdit(row, "prev_level", value);
                 return (
                     <InputNumber
+                        autoFocus
                         value={data.targetEdit.prev_level}
+                        onBlur={saveCell}
+                        onPressEnter={saveCell}
                         onChange={(v: any) => dispatch({ targetEdit: { ...data.targetEdit, prev_level: v } })}
                     />
                 );
@@ -172,18 +194,17 @@ export default () => {
             title: ts("cst.prev_accept"),
             dataIndex: "prev_accept",
             render: (value: any, row: any) => {
-                if (data.targetEdit.id !== row.id) {
-                    return value;
-                }
+                if (!isEditing(row, "prev_accept")) return clickToEdit(row, "prev_accept", value);
                 return (
                     <Select
+                        autoFocus
+                        defaultOpen
                         allowClear
                         style={{ minWidth: "100px" }}
                         value={data.targetEdit.prev_accept}
                         options={ACCEPTS.map((item) => ({ label: item, value: item }))}
-                        onChange={(v: any) => {
-                            dispatch({ targetEdit: { ...data.targetEdit, prev_accept: v || "" } });
-                        }}></Select>
+                        onChange={(v: any) => saveCell({ prev_accept: v || "" })}
+                        onBlur={() => dispatch({ targetEdit: {}, editingField: null })}></Select>
                 );
             },
         },
@@ -191,12 +212,13 @@ export default () => {
             title: ts("cst.cur_score"),
             dataIndex: "cur_score",
             render: (value: any, row: any) => {
-                if (data.targetEdit.id !== row.id) {
-                    return value;
-                }
+                if (!isEditing(row, "cur_score")) return clickToEdit(row, "cur_score", value);
                 return (
                     <InputNumber
+                        autoFocus
                         value={data.targetEdit.cur_score}
+                        onBlur={saveCell}
+                        onPressEnter={saveCell}
                         onChange={(v: any) => dispatch({ targetEdit: { ...data.targetEdit, cur_score: v } })}
                     />
                 );
@@ -206,12 +228,13 @@ export default () => {
             title: ts("cst.cur_severity"),
             dataIndex: "cur_severity",
             render: (value: any, row: any) => {
-                if (data.targetEdit.id !== row.id) {
-                    return value;
-                }
+                if (!isEditing(row, "cur_severity")) return clickToEdit(row, "cur_severity", value);
                 return (
                     <InputNumber
+                        autoFocus
                         value={data.targetEdit.cur_severity}
+                        onBlur={saveCell}
+                        onPressEnter={saveCell}
                         onChange={(v: any) => dispatch({ targetEdit: { ...data.targetEdit, cur_severity: v } })}
                     />
                 );
@@ -221,12 +244,13 @@ export default () => {
             title: ts("cst.cur_level"),
             dataIndex: "cur_level",
             render: (value: any, row: any) => {
-                if (data.targetEdit.id !== row.id) {
-                    return value;
-                }
+                if (!isEditing(row, "cur_level")) return clickToEdit(row, "cur_level", value);
                 return (
                     <InputNumber
+                        autoFocus
                         value={data.targetEdit.cur_level}
+                        onBlur={saveCell}
+                        onPressEnter={saveCell}
                         onChange={(v: any) => dispatch({ targetEdit: { ...data.targetEdit, cur_level: v } })}
                     />
                 );
@@ -236,18 +260,17 @@ export default () => {
             title: ts("cst.cur_accept"),
             dataIndex: "cur_accept",
             render: (value: any, row: any) => {
-                if (data.targetEdit.id !== row.id) {
-                    return value;
-                }
+                if (!isEditing(row, "cur_accept")) return clickToEdit(row, "cur_accept", value);
                 return (
                     <Select
+                        autoFocus
+                        defaultOpen
                         allowClear
                         style={{ minWidth: "100px" }}
                         value={data.targetEdit.cur_accept}
                         options={ACCEPTS.map((item) => ({ label: item, value: item }))}
-                        onChange={(v: any) => {
-                            dispatch({ targetEdit: { ...data.targetEdit, cur_accept: v || "" } });
-                        }}></Select>
+                        onChange={(v: any) => saveCell({ cur_accept: v || "" })}
+                        onBlur={() => dispatch({ targetEdit: {}, editingField: null })}></Select>
                 );
             },
         },
@@ -255,11 +278,11 @@ export default () => {
             title: ts("cst.rcm_codes"),
             dataIndex: "rcm_codes",
             render: (value: any, row: any) => {
-                if (data.targetEdit.id !== row.id) {
-                    return value;
-                }
+                if (!isEditing(row, "rcm_codes")) return clickToEdit(row, "rcm_codes", value);
                 return (
                     <Select
+                        autoFocus
+                        defaultOpen
                         showSearch
                         style={{ minWidth: "300px" }}
                         tagRender={(item: any) => {
@@ -271,38 +294,21 @@ export default () => {
                         onChange={(values: any) => {
                             dispatch({ targetEdit: { ...data.targetEdit, rcm_codes: values.join(",") } });
                         }}
+                        onBlur={() => saveCell()}
                     />
                 );
             },
         },
         {
             title: ts("action"),
+            width: 90,
+            fixed: "right" as const,
             render: (_value: any, row: any) => {
                 return (
                     <Space size={8} style={{ whiteSpace: "nowrap" }}>
-                        {data.targetEdit.id === row.id && (
-                            <Button type="link" onClick={() => dispatch({ targetEdit: {} })}>
-                                {ts("cancel")}
-                            </Button>
-                        )}
-                        <Button
-                            type="link"
-                            loading={data.updating && data.targetEdit.id === row.id}
-                            onClick={() => {
-                                if (data.targetEdit.id === row.id) {
-                                    doUpdate();
-                                } else {
-                                    doSearchRcms(row.prod_id, data, dispatch);
-                                    dispatch({ targetEdit: row });
-                                }
-                            }}>
-                            {data.targetEdit.id === row.id ? ts("save") : ts("edit")}
+                        <Button type="link" danger onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
+                            {ts("delete")}
                         </Button>
-                        {data.targetEdit.id !== row.id && (
-                            <Button type="link" danger onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
-                                {ts("delete")}
-                            </Button>
-                        )}
                     </Space>
                 );
             },
@@ -385,6 +391,8 @@ export default () => {
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}
                 loading={data.loading}
+                sticky
+                scroll={{ x: 1600, y: "68vh" }}
                 pagination={{
                     total: data.total,
                     current: data.pageIndex,
