@@ -31,6 +31,18 @@ class Perms(Enum):
     project_view = PermForm(code="project_view", name="查看", p_code=project.code)
     project_edit = PermForm(code="project_edit", name="编辑", p_code=project.code)
 
+    project_member = PermForm(code="project_member", name="产品管理/产品参与人员")
+    project_member_view = PermForm(code="project_member_view", name="查看", p_code=project_member.code)
+    project_member_edit = PermForm(code="project_member_edit", name="编辑", p_code=project_member.code)
+
+    project_timeline = PermForm(code="project_timeline", name="产品管理/产品时间逻辑线")
+    project_timeline_view = PermForm(code="project_timeline_view", name="查看", p_code=project_timeline.code)
+    project_timeline_edit = PermForm(code="project_timeline_edit", name="编辑", p_code=project_timeline.code)
+
+    prod_runtime = PermForm(code="prod_runtime", name="产品管理/运行环境")
+    prod_runtime_view = PermForm(code="prod_runtime_view", name="查看", p_code=prod_runtime.code)
+    prod_runtime_edit = PermForm(code="prod_runtime_edit", name="编辑", p_code=prod_runtime.code)
+
     haz = PermForm(code="haz", name="基础数据/HAZ管理")
     haz_view = PermForm(code="haz_view", name="查看", p_code=haz.code)
     haz_edit = PermForm(code="haz_edit", name="编辑", p_code=haz.code)
@@ -43,7 +55,7 @@ class Perms(Enum):
     cst_view = PermForm(code="cst_view", name="查看", p_code=cst.code)
     cst_edit = PermForm(code="cst_edit", name="编辑", p_code=cst.code)
 
-    product = PermForm(code="product", name="产品版本/产品管理")
+    product = PermForm(code="product", name="产品管理/产品版本管理")
     product_view = PermForm(code="product_view", name="查看", p_code=product.code)
     product_edit = PermForm(code="product_edit", name="编辑", p_code=product.code)
 
@@ -133,6 +145,9 @@ def get_default_role_perm_codes():
         "prod_cst", "prod_cst_view", "prod_cst_edit",
     }
     product_manager_perms = {
+        "project_member", "project_member_view", "project_member_edit",
+        "project_timeline", "project_timeline_view", "project_timeline_edit",
+        "prod_runtime", "prod_runtime_view", "prod_runtime_edit",
         "product", "product_view", "product_edit",
         "srs_doc", "srs_doc_view", "srs_doc_edit",
         "doc_file_flow", "doc_file_flow_view", "doc_file_flow_edit",

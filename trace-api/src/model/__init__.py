@@ -51,3 +51,12 @@ from .cybersec_doc import (  # noqa: E402,F401
 
 # CST(总表) 与 RCM(总表) 多对多关联。详见 docs/function_docs/41_网络安全威胁CST管理.md。
 from .cst_rcm import CstRcm  # noqa: E402,F401
+
+# 项目人员管理。详见 docs/function_docs/48_项目人员管理.md。
+from .project_member import ProjectMember  # noqa: E402,F401
+
+# 项目时间逻辑线。详见 docs/function_docs/49_项目时间逻辑线.md。
+from .project_timeline import ProjectTimelineRow, ProjectTimelineCell  # noqa: E402,F401
+
+# 运行环境（按产品）。详见 docs/function_docs/50_运行环境.md。
+from .prod_runtime_env import ProdRuntimeEnv  # noqa: E402,F401

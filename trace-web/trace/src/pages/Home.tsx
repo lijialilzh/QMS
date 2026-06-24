@@ -158,6 +158,21 @@ export default () => {
                         label: ts("menu.products"),
                         perm: "product_view",
                     },
+                    {
+                        key: "/project_members",
+                        label: ts("menu.project_members"),
+                        perm: "project_member_view",
+                    },
+                    {
+                        key: "/project_timeline",
+                        label: ts("menu.project_timeline"),
+                        perm: "project_timeline_view",
+                    },
+                    {
+                        key: "/prod_runtime_env",
+                        label: ts("menu.prod_runtime_env"),
+                        perm: "prod_runtime_view",
+                    },
                 ],
             },
             {

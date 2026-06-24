@@ -1,0 +1,150 @@
+.prod-runtime-env {
+    .env-saving {
+        margin-left: 12px;
+        color: #52c41a;
+        font-size: 12px;
+    }
+
+    // 文档卡片容器
+    .env-scroll {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        padding: 18px 12px 36px;
+        background: #f4f6f9;
+        border-radius: 8px;
+
+        .ant-spin-container {
+            height: 100%;
+        }
+    }
+
+    .env-body {
+        max-width: 940px;
+        margin: 0 auto;
+        background: #fff;
+        border: 1px solid #eef0f3;
+        border-radius: 12px;
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.05);
+        padding: 28px 34px 34px;
+    }
+
+    .env-title {
+        font-size: 19px;
+        font-weight: 700;
+        color: #1f2d3d;
+        margin: 0 0 4px;
+    }
+
+    .env-arch {
+        margin: 0 0 22px;
+        max-width: 420px;
+
+        .env-input {
+            color: #5b6b7b;
+            font-style: normal;
+        }
+    }
+
+    // 小节标题，带左侧色条
+    .env-cap {
+        position: relative;
+        font-size: 14px;
+        font-weight: 600;
+        color: #2b3a4b;
+        margin: 24px 0 10px;
+        padding-left: 12px;
+
+        &::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 1px;
+            bottom: 1px;
+            width: 4px;
+            border-radius: 2px;
+            background: #1677ff;
+        }
+    }
+
+    .env-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0;
+        table-layout: fixed;
+        border: 1px solid #e8edf2;
+        border-radius: 10px;
+        overflow: hidden;
+
+        th,
+        td {
+            border-bottom: 1px solid #eef1f5;
+            border-right: 1px solid #eef1f5;
+            padding: 0;
+            vertical-align: top;
+            text-align: left;
+            word-break: break-word;
+        }
+
+        th:last-child,
+        td:last-child {
+            border-right: none;
+        }
+
+        tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        th {
+            background: #f5f8fc;
+            font-weight: 600;
+            font-size: 13px;
+            color: #46586b;
+            text-align: center;
+            padding: 9px 12px;
+            letter-spacing: 0.3px;
+        }
+
+        td.lbl {
+            background: #fbfcfe;
+            font-weight: 600;
+            color: #2b3a4b;
+            text-align: center;
+            vertical-align: middle;
+            padding: 8px 10px;
+        }
+
+        // 可编辑值单元格
+        td:not(.lbl) {
+            transition: background 0.15s;
+
+            &:hover {
+                background: #f0f7ff;
+            }
+
+            &:focus-within {
+                background: #fff;
+                box-shadow: inset 0 0 0 2px #91caff;
+            }
+        }
+    }
+
+    .env-input {
+        border: none;
+        box-shadow: none;
+        padding: 8px 12px;
+        background: transparent;
+        resize: none;
+        color: #1f2d3d;
+        line-height: 1.6;
+
+        &:hover,
+        &:focus {
+            box-shadow: none;
+        }
+
+        &::placeholder {
+            color: #bfbfbf;
+        }
+    }
+}

@@ -19,6 +19,9 @@ import DashBoard from "./pages/DashBoard";
 import Roles from "./pages/syscfg/Roles";
 import Users from "./pages/syscfg/Users";
 import Projects from "./pages/syscfg/Projects";
+import ProjectMembers from "./pages/syscfg/ProjectMembers";
+import ProjectTimeline from "./pages/syscfg/ProjectTimeline";
+import ProdRuntimeEnv from "./pages/syscfg/ProdRuntimeEnv";
 import Hazs from "./pages/basedata/Hazs";
 import Rcms from "./pages/basedata/Rcms";
 import Csts from "./pages/basedata/Csts";
@@ -56,6 +59,9 @@ const router = createRouter([
             { path: "/roles", element: <Roles /> },
             { path: "/users", element: <Users /> },
             { path: "/projects", element: <Projects /> },
+            { path: "/project_members", element: <ProjectMembers /> },
+            { path: "/project_timeline", element: <ProjectTimeline /> },
+            { path: "/prod_runtime_env", element: <ProdRuntimeEnv /> },
 
             { path: "/hazs", element: <Hazs /> },
             { path: "/rcms", element: <Rcms /> },

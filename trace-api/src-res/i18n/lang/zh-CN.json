@@ -39,6 +39,7 @@
     "file_prod_rcm": "产品RCM表",
     "file_prod_cst": "产品CST表",
     "file_prod_dhf": "产品DHF表",
+    "file_project_timeline": "项目时间逻辑线",
     "file_doc_trace": "产品追溯分析表",
     "file_product_trace": "产品追溯表",
     "file_srs_doc": "SRS文档",
