@@ -14,6 +14,7 @@
         "project_members": "产品参与人员",
         "project_timeline": "产品时间逻辑线",
         "prod_runtime_env": "运行环境",
+        "prod_device_res": "设备资源",
         "basedata": "基础数据",
         "hazs": "HAZ管理",
         "rcms": "RCM管理",

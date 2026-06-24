@@ -22,10 +22,9 @@ const SCOPE_MODULES = [
     "仪表盘",
     "系统配置",
     "基础数据",
-    "产品版本管理",
+    "产品管理",
     "产品文件管理",
-    "需求管理",
-    "设计管理",
+    "开发测试文件管理",
     "图表文件管理",
     "风险追溯管理",
     "风险管理",
@@ -53,12 +52,22 @@ const matchModuleCodes = (moduleName: string, items: Array<{ code: string; name:
         const name = item.name || "";
         const code = item.code || "";
         if (moduleName === "仪表盘") return name.startsWith("仪表盘") || code.startsWith("dashboard");
-        if (moduleName === "系统配置") return name.startsWith("系统管理/") || ["role", "user", "project"].some((k) => code.startsWith(k));
+        if (moduleName === "系统配置")
+            return (
+                code.startsWith("role") ||
+                code.startsWith("user") ||
+                (code.startsWith("project") && !code.startsWith("project_member") && !code.startsWith("project_timeline"))
+            );
         if (moduleName === "基础数据") return name.startsWith("基础数据/") || ["haz", "rcm", "cst"].some((k) => code.startsWith(k));
-        if (moduleName === "产品版本管理") return name.startsWith("产品版本/产品管理") || code.startsWith("product");
-        if (moduleName === "产品文件管理") return name.startsWith("产品版本/产品DHF管理") || code.startsWith("prod_dhf");
-        if (moduleName === "需求管理") return code === "srs_doc" || code.startsWith("srs_doc_");
-        if (moduleName === "设计管理") return code === "sds_doc" || code.startsWith("sds_doc_");
+        if (moduleName === "产品管理")
+            return (
+                code.startsWith("product") ||
+                code.startsWith("prod_dhf") ||
+                ["project_member", "project_timeline", "prod_runtime", "prod_device"].some((k) => code.startsWith(k))
+            );
+        if (moduleName === "产品文件管理") return code === "srs_doc" || code.startsWith("srs_doc_");
+        if (moduleName === "开发测试文件管理")
+            return code === "sds_doc" || code.startsWith("sds_doc_") || code.startsWith("test_set") || code.startsWith("test_case");
         if (moduleName === "图表文件管理") return name.startsWith("图表文件/") || code.startsWith("doc_file_");
         if (moduleName === "风险追溯管理") return ["prod_haz", "prod_rcm", "prod_cst", "test_set", "test_case"].some((k) => code.startsWith(k));
         if (moduleName === "风险管理") return code.startsWith("risk_mgmt_doc") || name.startsWith("风险管理/");

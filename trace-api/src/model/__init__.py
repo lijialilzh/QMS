@@ -60,3 +60,6 @@ from .project_timeline import ProjectTimelineRow, ProjectTimelineCell  # noqa: E
 
 # 运行环境（按产品）。详见 docs/function_docs/50_运行环境.md。
 from .prod_runtime_env import ProdRuntimeEnv  # noqa: E402,F401
+
+# 设备资源（按产品）。详见 docs/function_docs/51_设备资源.md。
+from .prod_device_res import ProdDeviceRes  # noqa: E402,F401

@@ -22,6 +22,7 @@ import Projects from "./pages/syscfg/Projects";
 import ProjectMembers from "./pages/syscfg/ProjectMembers";
 import ProjectTimeline from "./pages/syscfg/ProjectTimeline";
 import ProdRuntimeEnv from "./pages/syscfg/ProdRuntimeEnv";
+import ProdDeviceRes from "./pages/syscfg/ProdDeviceRes";
 import Hazs from "./pages/basedata/Hazs";
 import Rcms from "./pages/basedata/Rcms";
 import Csts from "./pages/basedata/Csts";
@@ -62,6 +63,7 @@ const router = createRouter([
             { path: "/project_members", element: <ProjectMembers /> },
             { path: "/project_timeline", element: <ProjectTimeline /> },
             { path: "/prod_runtime_env", element: <ProdRuntimeEnv /> },
+            { path: "/prod_device_res", element: <ProdDeviceRes /> },
 
             { path: "/hazs", element: <Hazs /> },
             { path: "/rcms", element: <Rcms /> },

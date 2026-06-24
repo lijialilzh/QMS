@@ -173,22 +173,15 @@ export default () => {
                         label: ts("menu.prod_runtime_env"),
                         perm: "prod_runtime_view",
                     },
-                ],
-            },
-            {
-                key: "/manage_prod_info",
-                label: ts("menu.manage_prod_info"),
-                icon: <img src="assets/icon/menu-create.svg" />,
-                children: [
+                    {
+                        key: "/prod_device_res",
+                        label: ts("menu.prod_device_res"),
+                        perm: "prod_device_view",
+                    },
                     {
                         key: "/prod_dhfs",
                         label: ts("menu.prod_dhfs"),
                         perm: "prod_dhf_view",
-                    },
-                    {
-                        key: "/test_sets",
-                        label: ts("menu.test_sets"),
-                        perm: "test_set_view",
                     },
                 ],
             },
@@ -213,6 +206,11 @@ export default () => {
                         key: "/sds_docs",
                         label: ts("menu.sds_docs"),
                         perm: "sds_doc_view",
+                    },
+                    {
+                        key: "/test_sets",
+                        label: ts("menu.test_sets"),
+                        perm: "test_set_view",
                     },
                 ],
             },

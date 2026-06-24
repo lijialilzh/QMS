@@ -43,6 +43,10 @@ class Perms(Enum):
     prod_runtime_view = PermForm(code="prod_runtime_view", name="查看", p_code=prod_runtime.code)
     prod_runtime_edit = PermForm(code="prod_runtime_edit", name="编辑", p_code=prod_runtime.code)
 
+    prod_device = PermForm(code="prod_device", name="产品管理/设备资源")
+    prod_device_view = PermForm(code="prod_device_view", name="查看", p_code=prod_device.code)
+    prod_device_edit = PermForm(code="prod_device_edit", name="编辑", p_code=prod_device.code)
+
     haz = PermForm(code="haz", name="基础数据/HAZ管理")
     haz_view = PermForm(code="haz_view", name="查看", p_code=haz.code)
     haz_edit = PermForm(code="haz_edit", name="编辑", p_code=haz.code)
@@ -148,6 +152,7 @@ def get_default_role_perm_codes():
         "project_member", "project_member_view", "project_member_edit",
         "project_timeline", "project_timeline_view", "project_timeline_edit",
         "prod_runtime", "prod_runtime_view", "prod_runtime_edit",
+        "prod_device", "prod_device_view", "prod_device_edit",
         "product", "product_view", "product_edit",
         "srs_doc", "srs_doc_view", "srs_doc_edit",
         "doc_file_flow", "doc_file_flow_view", "doc_file_flow_edit",
