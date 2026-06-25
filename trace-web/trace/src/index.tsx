@@ -47,6 +47,8 @@ import CybersecDocs from "./pages/cybersec/CybersecDocs";
 import CybersecDocDetail from "./pages/cybersec/CybersecDocDetail";
 import PdpDocs from "./pages/pdp/PdpDocs";
 import PdpDocDetail from "./pages/pdp/PdpDocDetail";
+import PirDocs from "./pages/pir/PirDocs";
+import PirDocDetail from "./pages/pir/PirDocDetail";
 
 const DEF_LANG = localStorage.getItem("lang") || I18N.DEF_LANG;
 I18N.init(DEF_LANG);
@@ -108,6 +110,9 @@ const router = createRouter([
             { path: "/pdp_docs", element: <PdpDocs /> },
             { path: "/pdp_docs/edit/:id", element: <PdpDocDetail /> },
             { path: "/pdp_docs/view/:id", element: <PdpDocDetail /> },
+            { path: "/pir_docs", element: <PirDocs /> },
+            { path: "/pir_docs/edit/:id", element: <PirDocDetail /> },
+            { path: "/pir_docs/view/:id", element: <PirDocDetail /> },
 
             {path: "/prod_traces", element: <ProdTraces /> },
             {path: "/prod_comparison", element: <ProdComparison /> },

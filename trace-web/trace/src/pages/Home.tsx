@@ -200,6 +200,11 @@ export default () => {
                         label: ts("menu.pdp_docs"),
                         perm: "pdp_doc_view",
                     },
+                    {
+                        key: "/pir_docs",
+                        label: ts("menu.pir_docs"),
+                        perm: "pir_doc_view",
+                    },
                 ],
             },
             {

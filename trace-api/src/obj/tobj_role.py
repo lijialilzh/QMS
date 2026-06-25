@@ -119,6 +119,10 @@ class Perms(Enum):
     pdp_doc_view = PermForm(code="pdp_doc_view", name="查看", p_code=pdp_doc.code)
     pdp_doc_edit = PermForm(code="pdp_doc_edit", name="编辑", p_code=pdp_doc.code)
 
+    pir_doc = PermForm(code="pir_doc", name="产品文件管理/产品立项报告")
+    pir_doc_view = PermForm(code="pir_doc_view", name="查看", p_code=pir_doc.code)
+    pir_doc_edit = PermForm(code="pir_doc_edit", name="编辑", p_code=pir_doc.code)
+
 
 class RoleForm(BaseModel):
     id: Optional[int] = Field(title="角色ID")
@@ -168,6 +172,7 @@ def get_default_role_perm_codes():
         "risk_mgmt_doc", "risk_mgmt_doc_view", "risk_mgmt_doc_edit",
         "cybersec_doc", "cybersec_doc_view", "cybersec_doc_edit",
         "pdp_doc", "pdp_doc_view", "pdp_doc_edit",
+        "pir_doc", "pir_doc_view", "pir_doc_edit",
     }
     developer_perms = {
         "sds_doc", "sds_doc_view", "sds_doc_edit",

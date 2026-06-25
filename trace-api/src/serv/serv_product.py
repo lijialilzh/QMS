@@ -115,6 +115,10 @@ class Server(object):
         if not row:
             return Resp.resp_err(msg=ts("msg_obj_null"))
         obj = ProductObj(**row.dict())
+        if row.project_id:
+            proj = db.session.execute(select(Project).where(Project.id == row.project_id)).scalars().first()
+            if proj:
+                obj.country = proj.country
         if with_trace:
             traces_dict = self.__query_traces([row])
             obj.traces = traces_dict.get(row.id, [])

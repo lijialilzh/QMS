@@ -65,7 +65,7 @@ const matchModuleCodes = (moduleName: string, items: Array<{ code: string; name:
                 code.startsWith("prod_dhf") ||
                 ["project_member", "project_timeline", "prod_runtime", "prod_device"].some((k) => code.startsWith(k))
             );
-        if (moduleName === "产品文件管理") return code === "srs_doc" || code.startsWith("srs_doc_") || code.startsWith("pdp_doc");
+        if (moduleName === "产品文件管理") return code === "srs_doc" || code.startsWith("srs_doc_") || code.startsWith("pdp_doc") || code.startsWith("pir_doc");
         if (moduleName === "开发测试文件管理")
             return code === "sds_doc" || code.startsWith("sds_doc_") || code.startsWith("test_set") || code.startsWith("test_case");
         if (moduleName === "图表文件管理") return name.startsWith("图表文件/") || code.startsWith("doc_file_");
