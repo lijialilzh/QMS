@@ -146,6 +146,10 @@ export default () => {
                         label: ts("menu.csts"),
                         perm: "cst_view",
                     },
+                    {
+                        key: "/version_rule",
+                        label: ts("menu.version_rule"),
+                    },
                 ],
             },
             {
@@ -182,6 +186,11 @@ export default () => {
                         key: "/prod_dhfs",
                         label: ts("menu.prod_dhfs"),
                         perm: "prod_dhf_view",
+                    },
+                    {
+                        key: "/vuh_docs",
+                        label: ts("menu.vuh_docs"),
+                        perm: "vuh_doc_view",
                     },
                 ],
             },

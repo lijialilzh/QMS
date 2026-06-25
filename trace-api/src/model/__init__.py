@@ -69,3 +69,6 @@ from .pdp_doc import PdpDoc  # noqa: E402,F401
 
 # 产品立项报告（独立文档模块）。详见 docs/function_docs/53_产品立项报告.md。
 from .pir_doc import PirDoc  # noqa: E402,F401
+
+# 版本更新历史（独立文档模块）。详见 docs/function_docs/54_版本更新历史.md。
+from .vuh_doc import VuhDoc  # noqa: E402,F401

@@ -63,6 +63,7 @@ const matchModuleCodes = (moduleName: string, items: Array<{ code: string; name:
             return (
                 code.startsWith("product") ||
                 code.startsWith("prod_dhf") ||
+                code.startsWith("vuh_doc") ||
                 ["project_member", "project_timeline", "prod_runtime", "prod_device"].some((k) => code.startsWith(k))
             );
         if (moduleName === "产品文件管理") return code === "srs_doc" || code.startsWith("srs_doc_") || code.startsWith("pdp_doc") || code.startsWith("pir_doc");

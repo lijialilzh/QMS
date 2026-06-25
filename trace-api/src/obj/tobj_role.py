@@ -59,6 +59,9 @@ class Perms(Enum):
     cst_view = PermForm(code="cst_view", name="查看", p_code=cst.code)
     cst_edit = PermForm(code="cst_edit", name="编辑", p_code=cst.code)
 
+    version_rule = PermForm(code="version_rule", name="基础数据/版本命名规则")
+    version_rule_edit = PermForm(code="version_rule_edit", name="编辑", p_code=version_rule.code)
+
     product = PermForm(code="product", name="产品管理/产品版本管理")
     product_view = PermForm(code="product_view", name="查看", p_code=product.code)
     product_edit = PermForm(code="product_edit", name="编辑", p_code=product.code)
@@ -123,6 +126,10 @@ class Perms(Enum):
     pir_doc_view = PermForm(code="pir_doc_view", name="查看", p_code=pir_doc.code)
     pir_doc_edit = PermForm(code="pir_doc_edit", name="编辑", p_code=pir_doc.code)
 
+    vuh_doc = PermForm(code="vuh_doc", name="产品管理/版本更新历史")
+    vuh_doc_view = PermForm(code="vuh_doc_view", name="查看", p_code=vuh_doc.code)
+    vuh_doc_edit = PermForm(code="vuh_doc_edit", name="编辑", p_code=vuh_doc.code)
+
 
 class RoleForm(BaseModel):
     id: Optional[int] = Field(title="角色ID")
@@ -173,6 +180,7 @@ def get_default_role_perm_codes():
         "cybersec_doc", "cybersec_doc_view", "cybersec_doc_edit",
         "pdp_doc", "pdp_doc_view", "pdp_doc_edit",
         "pir_doc", "pir_doc_view", "pir_doc_edit",
+        "vuh_doc", "vuh_doc_view", "vuh_doc_edit",
     }
     developer_perms = {
         "sds_doc", "sds_doc_view", "sds_doc_edit",
