@@ -195,6 +195,11 @@ export default () => {
                         label: ts("menu.srs_docs"),
                         perm: "srs_doc_view",
                     },
+                    {
+                        key: "/pdp_docs",
+                        label: ts("menu.pdp_docs"),
+                        perm: "pdp_doc_view",
+                    },
                 ],
             },
             {

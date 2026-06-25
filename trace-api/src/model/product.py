@@ -19,6 +19,7 @@ class Product(Model):
     product_code = Column(String(256), comment="产品代码")
     scope = Column(TEXT, comment="试用范围")
     component = Column(TEXT, comment="产品组成")
+    overall_desc = Column(TEXT, comment="总体描述")
     note = Column(TEXT, comment="备注")
     create_user_id = Column(Integer, comment="创建人ID")
 

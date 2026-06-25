@@ -13,6 +13,7 @@ class ProductForm(BaseModel):
     product_code: Optional[str] = Field(title="产品代码")
     scope: Optional[str] = Field(title="试用范围")
     component: Optional[str] = Field(title="产品组成")
+    overall_desc: Optional[str] = Field(title="总体描述")
     note: Optional[str] = Field(title="备注")
 
     user_ids: Optional[List[int]] = Field(title="用户ID列表")

@@ -1,0 +1,230 @@
+.pdp-detail {
+    .pdp-toolbar {
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 4px 12px;
+    }
+
+    .pdp-toolbar-title {
+        font-size: 18px;
+        font-weight: 700;
+        color: #1f2d3d;
+    }
+
+    .pdp-meta {
+        margin-left: 8px;
+        font-size: 13px;
+        font-weight: 400;
+        color: #8a97a6;
+    }
+
+    .pdp-scroll {
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+
+        .ant-spin-container {
+            height: 100%;
+        }
+    }
+
+    .pdp-layout {
+        display: flex;
+        height: 100%;
+        gap: 14px;
+    }
+
+    // 左侧目录树
+    .pdp-nav {
+        flex: 0 0 260px;
+        overflow: auto;
+        background: #fff;
+        border: 1px solid #eef0f3;
+        border-radius: 10px;
+        padding: 10px 8px;
+    }
+
+    .pdp-nav-head {
+        font-size: 13px;
+        font-weight: 700;
+        color: #2b3a4b;
+        padding: 2px 8px 4px;
+    }
+
+    .pdp-nav-hint {
+        font-size: 11px;
+        color: #9aa6b2;
+        line-height: 1.5;
+        padding: 0 8px 8px;
+    }
+
+    .pdp-nav-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 6px 8px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 13px;
+        color: #46586b;
+
+        &:hover {
+            background: #f2f6fb;
+
+            .pdp-nav-ops {
+                opacity: 1;
+            }
+        }
+
+        &.active .pdp-nav-ops {
+            opacity: 1;
+        }
+
+        &.active {
+            background: #e6f0ff;
+            color: #1677ff;
+            font-weight: 600;
+        }
+    }
+
+    .pdp-nav-title {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .pdp-nav-ops {
+        opacity: 0.5;
+        display: inline-flex;
+        gap: 10px;
+        color: #8a97a6;
+
+        .anticon:hover {
+            color: #1677ff;
+        }
+
+        .anticon:last-child:hover {
+            color: #ff4d4f;
+        }
+    }
+
+    .pdp-nav-add {
+        margin: 10px 6px 2px;
+        width: calc(100% - 12px);
+    }
+
+    // 右侧编辑区
+    .pdp-editor {
+        flex: 1;
+        min-width: 0;
+        overflow: auto;
+        background: #fff;
+        border: 1px solid #eef0f3;
+        border-radius: 10px;
+        padding: 18px 22px 28px;
+    }
+
+    .pdp-empty {
+        color: #8a97a6;
+        text-align: center;
+        padding: 60px 0;
+    }
+
+    .pdp-field {
+        margin-bottom: 16px;
+    }
+
+    .pdp-label {
+        font-size: 13px;
+        font-weight: 600;
+        color: #46586b;
+        margin-bottom: 6px;
+    }
+
+    .pdp-table-block {
+        margin-bottom: 18px;
+        border-top: 1px dashed #eef0f3;
+        padding-top: 12px;
+    }
+
+    .pdp-table-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+    }
+
+    .pdp-grid {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+
+        td {
+            border: 1px solid #e8edf2;
+            padding: 0;
+            vertical-align: top;
+            position: relative;
+
+            &.head {
+                background: #f5f8fc;
+            }
+        }
+
+        td.pdp-row-op {
+            border: none;
+            width: 26px;
+            text-align: center;
+            vertical-align: middle;
+            color: #c0c8d2;
+
+            .anticon:hover {
+                color: #ff4d4f;
+            }
+        }
+
+        .pdp-cell {
+            border: none;
+            box-shadow: none;
+            background: transparent;
+            padding: 4px 8px;
+            resize: none;
+
+            &:hover,
+            &:focus {
+                box-shadow: none;
+            }
+        }
+
+        .pdp-col-del {
+            position: absolute;
+            top: 2px;
+            right: 2px;
+            font-size: 11px;
+            color: #c0c8d2;
+            cursor: pointer;
+
+            &:hover {
+                color: #ff4d4f;
+            }
+        }
+    }
+
+    .pdp-add-table {
+        width: 100%;
+        margin-top: 6px;
+    }
+
+    .pdp-pull-bar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 14px;
+        flex-wrap: wrap;
+    }
+
+    .pdp-pull-hint {
+        font-size: 12px;
+        color: #9aa6b2;
+    }
+}

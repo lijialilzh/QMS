@@ -30,6 +30,7 @@ def create_tables():
                 # Lightweight schema migration for local deployment.
                 sql_ctx.db.session.execute(expression.text("ALTER TABLE IF EXISTS product ADD COLUMN IF NOT EXISTS product_code VARCHAR(256)"))
                 sql_ctx.db.session.execute(expression.text("ALTER TABLE IF EXISTS product ADD COLUMN IF NOT EXISTS create_user_id INTEGER"))
+                sql_ctx.db.session.execute(expression.text("ALTER TABLE IF EXISTS product ADD COLUMN IF NOT EXISTS overall_desc TEXT"))
                 sql_ctx.db.session.execute(expression.text("ALTER TABLE IF EXISTS srs_node ALTER COLUMN img_url TYPE TEXT"))
                 sql_ctx.db.session.execute(expression.text("ALTER TABLE IF EXISTS sds_node ALTER COLUMN img_url TYPE TEXT"))
                 sql_ctx.db.session.execute(expression.text("ALTER TABLE IF EXISTS srs_doc ADD COLUMN IF NOT EXISTS folder_name VARCHAR(128)"))

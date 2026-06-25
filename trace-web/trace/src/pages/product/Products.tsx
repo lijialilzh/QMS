@@ -181,6 +181,13 @@ const DetailDlg = ({ data, dispatch, onSaved }: any) => {
                     </Row>
                     <Row gutter={24}>
                         <Col span={24}>
+                            <Form.Item label="总体描述" name="overall_desc">
+                                <Input.TextArea allowClear />
+                            </Form.Item>
+                        </Col>
+                    </Row>
+                    <Row gutter={24}>
+                        <Col span={24}>
                             <Form.Item label={ts("product.note")} name="note">
                                 <Input.TextArea allowClear />
                             </Form.Item>

@@ -63,3 +63,6 @@ from .prod_runtime_env import ProdRuntimeEnv  # noqa: E402,F401
 
 # 设备资源（按产品）。详见 docs/function_docs/51_设备资源.md。
 from .prod_device_res import ProdDeviceRes  # noqa: E402,F401
+
+# 产品开发计划（独立文档模块）。详见 docs/function_docs/52_产品开发计划.md。
+from .pdp_doc import PdpDoc  # noqa: E402,F401

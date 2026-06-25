@@ -45,6 +45,8 @@ import RiskMgmtDocDetail from "./pages/risk_mgmt/RiskMgmtDocDetail";
 import RiskMgmtParticipants from "./pages/risk_mgmt/RiskMgmtParticipants";
 import CybersecDocs from "./pages/cybersec/CybersecDocs";
 import CybersecDocDetail from "./pages/cybersec/CybersecDocDetail";
+import PdpDocs from "./pages/pdp/PdpDocs";
+import PdpDocDetail from "./pages/pdp/PdpDocDetail";
 
 const DEF_LANG = localStorage.getItem("lang") || I18N.DEF_LANG;
 I18N.init(DEF_LANG);
@@ -103,6 +105,9 @@ const router = createRouter([
             { path: "/cybersec_docs/add", element: <CybersecDocDetail /> },
             { path: "/cybersec_docs/edit/:id", element: <CybersecDocDetail /> },
             { path: "/cybersec_docs/view/:id", element: <CybersecDocDetail /> },
+            { path: "/pdp_docs", element: <PdpDocs /> },
+            { path: "/pdp_docs/edit/:id", element: <PdpDocDetail /> },
+            { path: "/pdp_docs/view/:id", element: <PdpDocDetail /> },
 
             {path: "/prod_traces", element: <ProdTraces /> },
             {path: "/prod_comparison", element: <ProdComparison /> },
