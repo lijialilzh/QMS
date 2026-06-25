@@ -6,6 +6,8 @@ import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
 import * as Api from "@/api/ApiPdpDoc";
 import * as ApiMember from "@/api/ApiProjectMember";
+import * as ApiProduct from "@/api/ApiProduct";
+import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import "./PdpDocDetail.less";
 
 let _seq = 0;
@@ -20,6 +22,40 @@ const ROLE_ALIAS: Record<string, string> = {
 const resolveRole = (role: string): string => {
     const k = String(role || "").trim();
     return ROLE_ALIAS[k] || k;
+};
+
+// 从「产品时间逻辑线」的日期行计算开发周期：开始=最早日期，结束=最后一个「有文件输出」行的日期
+// 输出「YYYY 年 M 月~YYYY 年 M 月」
+const computeCycle = (rows: any[]): string => {
+    const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
+    const hasOutput = (r: any) => Object.values(r.cells || {}).some((v: any) => String(v || "").trim());
+    const dates = (rows || [])
+        .filter((r: any) => (r.row_type || "date") === "date")
+        .map((r: any) => ({ y: num(r.year), m: num(r.month), d: num(r.day), out: hasOutput(r) }))
+        .filter((x: any) => !isNaN(x.y) && !isNaN(x.m));
+    if (!dates.length) return "";
+    const key = (x: any) => x.y * 10000 + x.m * 100 + (isNaN(x.d) ? 0 : x.d);
+    let min = dates[0];
+    dates.forEach((x: any) => { if (key(x) < key(min)) min = x; });
+    // 结束日期以最后一个有输出的行为准；若都没有输出则退回最晚日期
+    const outDates = dates.filter((x: any) => x.out);
+    const pool = outDates.length ? outDates : dates;
+    let max = pool[0];
+    pool.forEach((x: any) => { if (key(x) > key(max)) max = x; });
+    return `${min.y} 年 ${min.m} 月~${max.y} 年 ${max.m} 月`;
+};
+
+// 从时间线里找「产品开发计划」文件所在行的日期（取最早匹配行），格式「YYYY年M月D日」
+const computeFileDate = (rows: any[], keyword = "产品开发计划"): string => {
+    const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
+    const matches = (rows || []).filter((r: any) =>
+        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => String(v || "").includes(keyword))
+    );
+    if (!matches.length) return "";
+    const key = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
+    let best = matches[0];
+    matches.forEach((r: any) => { if (key(r) < key(best)) best = r; });
+    return `${num(best.year)}年${num(best.month)}月${num(best.day)}日`;
 };
 
 const ensureKeys = (nodes: any[]): any[] =>
@@ -99,24 +135,99 @@ export default () => {
         activeKey: "",
     });
 
+    // 加载时按产品自动填充：产品简介=「产品名称：xxx」，产品概况=总体描述，产品开发周期=时间逻辑线最早~最晚
+    const autoFillProduct = (nodes: any[], info: { name?: string; desc?: string; cycle?: string }): any[] => {
+        const name = String(info.name || "").trim();
+        const desc = String(info.desc || "").trim();
+        const cycle = String(info.cycle || "").trim();
+        const fix = (n: any): any => {
+            let body = n.body;
+            const isOverview = n.ref_type === "prod_overview"
+                || (stripNum(n.title) === "产品概况" && (n.children || []).length === 0);
+            const isCycle = n.ref_type === "prod_cycle"
+                || (stripNum(n.title) === "产品开发周期" && (n.children || []).length === 0);
+            if ((n.ref_type === "prod_name" || stripNum(n.title) === "产品简介") && name) {
+                body = `产品名称：${name}`;
+            } else if (isOverview && desc) {
+                body = desc;
+            } else if (isCycle && cycle) {
+                body = cycle;
+            }
+            return { ...n, body, children: (n.children || []).map(fix) };
+        };
+        return (nodes || []).map(fix);
+    };
+
+    // 文件修订记录首行默认值：日期/版本/修订说明/修订人(产品经理)/批准人(产品部负责人)，仅填空格不覆盖已填
+    const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; pm?: string; approver?: string }): any[] => {
+        const fix = (n: any): any => {
+            const isRev = n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
+            let tables = n.tables;
+            if (isRev && Array.isArray(n.tables) && Array.isArray(n.tables[0])) {
+                const t = n.tables[0].map((r: any[]) => (Array.isArray(r) ? [...r] : r));
+                const cols = (t[0] || []).length || 5;
+                while (t.length < 6) t.push(new Array(cols).fill(""));
+                const row = t[1];
+                const setIf = (i: number, val: any) => { if (val && !String(row[i] || "").trim()) row[i] = val; };
+                setIf(0, info.fileDate);
+                setIf(1, info.version);
+                if (!String(row[2] || "").trim()) row[2] = "首次发布";
+                setIf(3, info.pm);
+                setIf(4, info.approver);
+                tables = [t, ...n.tables.slice(1)];
+            }
+            return { ...n, tables, children: (n.children || []).map(fix) };
+        };
+        return (nodes || []).map(fix);
+    };
+
     const load = () => {
         if (!id) return;
         dispatch({ loading: true });
         Api.get_pdp_doc({ id }).then((res: any) => {
-            if (res.code === Api.C_OK) {
-                const doc = res.data || {};
-                const sections = ensureKeys((doc.content && doc.content.sections) || []);
-                dispatch({ loading: false, doc, sections, activeKey: firstKey(sections) });
-            } else {
+            if (res.code !== Api.C_OK) {
                 dispatch({ loading: false });
                 message.error(res.msg);
+                return;
             }
+            const doc = res.data || {};
+            const sections = ensureKeys((doc.content && doc.content.sections) || []);
+            const finish = (secs: any[]) => dispatch({ loading: false, doc, sections: secs, activeKey: firstKey(secs) });
+            if (!doc.product_id) {
+                finish(sections);
+                return;
+            }
+            Promise.all([
+                ApiProduct.get_product({ id: doc.product_id }).catch(() => null),
+                ApiTimeline.list_timeline({ prod_id: doc.product_id }).catch(() => null),
+                ApiMember.list_project_member({ prod_id: doc.product_id, page_index: 0, page_size: 1000 }).catch(() => null),
+            ]).then(([pr, tl, mb]: any[]) => {
+                const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
+                const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
+                const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
+                const findRole = (pred: (role: string) => boolean) => {
+                    const hit = members.find((m: any) => pred(String(m.role || "")));
+                    return hit ? String(hit.name || "").trim() : "";
+                };
+                let secs = autoFillProduct(sections, {
+                    name: prod.name,
+                    desc: prod.overall_desc,
+                    cycle: computeCycle(tlRows),
+                });
+                secs = fillRevision(secs, {
+                    fileDate: computeFileDate(tlRows),
+                    version: doc.version,
+                    pm: findRole((r) => r.includes("产品经理")),
+                    approver: findRole((r) => r.includes("负责人") && r.includes("产品")),
+                });
+                finish(secs);
+            }).catch(() => finish(sections));
         });
     };
 
     useEffect(() => {
         load();
-    }, [id]);
+    }, [id, location.pathname]);
 
     const setSections = (sections: any[]) => dispatch({ sections });
     const patchNode = (key: string, patch: any) =>
