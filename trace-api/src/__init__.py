@@ -20,7 +20,7 @@ from .api import web_auth, web_session, api_user, api_role, api_project, api_haz
     api_prod_haz, api_prod_rcm, api_prod_cst, api_srs_req, api_srs_reqd, api_prod_dhf, api_sds_reqd, api_sds_trace, \
     api_srs_type, api_doc_file, api_risk_mgmt_doc, api_cybersec_doc, api_ai_support, \
     api_project_member, api_project_timeline, api_prod_runtime_env, api_prod_device_res, api_pdp_doc, api_pir_doc, \
-    api_vuh_doc
+    api_vuh_doc, api_version_rule
 from .utils import read_line
 from .utils.i18n import ts
 from .utils.sql_middleware import SQLAlchemyMiddleware
@@ -84,6 +84,7 @@ def create_app():
     main_router.include_router(api_pdp_doc.router, prefix="/pdp_doc", tags=["产品开发计划"])
     main_router.include_router(api_pir_doc.router, prefix="/pir_doc", tags=["产品立项报告"])
     main_router.include_router(api_vuh_doc.router, prefix="/vuh_doc", tags=["版本更新历史"])
+    main_router.include_router(api_version_rule.router, prefix="/version_rule", tags=["版本命名规则"])
     main_router.include_router(api_haz.router, prefix="/haz", tags=["HAZ"])
     main_router.include_router(api_rcm.router, prefix="/rcm", tags=["RCM"])
     main_router.include_router(api_cst.router, prefix="/cst", tags=["CST"])

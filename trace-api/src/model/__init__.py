@@ -72,3 +72,6 @@ from .pir_doc import PirDoc  # noqa: E402,F401
 
 # 版本更新历史（独立文档模块）。详见 docs/function_docs/54_版本更新历史.md。
 from .vuh_doc import VuhDoc  # noqa: E402,F401
+
+# 版本命名规则（基础数据，全局单条配置）。详见 docs/function_docs/55_版本命名规则.md。
+from .version_rule import VersionRule  # noqa: E402,F401

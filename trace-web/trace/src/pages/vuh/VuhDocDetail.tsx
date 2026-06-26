@@ -8,24 +8,31 @@ import * as Api from "@/api/ApiVuhDoc";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
+import * as ApiVersionRule from "@/api/ApiVersionRule";
 import "../pdp/PdpDocDetail.less";
+
+// 由「基础数据-版本命名规则」全局配置生成「软件版本命名规则」章节正文
+const buildNamingBody = (c: any): string => {
+    c = c || {};
+    const items = Array.isArray(c.items) ? c.items : [];
+    const lines: string[] = [
+        "软件版本命名规则为：",
+        `发布版本：${c.release_format || ""}`,
+        `完整版本：${c.full_format || ""}`,
+        "软件完整版本及说明：",
+    ];
+    if (String(c.note_top || "").trim()) lines.push(c.note_top);
+    items.forEach((it: any) => {
+        const title = String(it.title || "").trim();
+        const desc = String(it.desc || "").trim();
+        if (title || desc) lines.push(`${title}：${desc}`);
+    });
+    if (String(c.note_bottom || "").trim()) lines.push(c.note_bottom);
+    return lines.join("\n");
+};
 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
-
-// 软件版本命名规则（写死，可改）：仅在该章节正文为空时填入
-const NAMING_RULE_BODY = [
-    "软件版本命名规则为：",
-    "发布版本：VX",
-    "完整版本：VX.Y.Z.B",
-    "软件完整版本及说明：主版本号X、次版本号Y、修订版本号Z、上市后软件升级次数号B。",
-    "注：V代表vision，是版本标识符号，其余每一位字母代表一位数字，X 从 1 开始计数，Y、Z、B 从 0 开始计数。",
-    "主版本号X：重大增强类软件更新和重大网络安全更新，比如增加核心功能模块、整体架构发生变化、网络环境改变、数据接口改变、核心算法重大改变。主版本X的范围为1～9。",
-    "次版本号Y：轻微增强类软件更新和轻微网络安全更新，比如功能模块局部增强、加密方式改变、训练数据量增加算法性能未发生显著性改变、数据接口传输效率优化、操作系统的安全补丁。次版本Y的范围为0～9。",
-    "修订版本号Z：纠正类软件更新和纠正类网络安全更新，修正软件已知缺陷和潜在未知缺陷。修订版本Z的范围为0～9。",
-    "上市后软件升级次数号 B：上市后的软件升级迭代次数，0 代表软件第一次发布。上市后软件升级次数号B的范围为0～999。",
-    "注：版本号中可不含V（version）。",
-].join("\n");
 
 // 从时间线里找「版本更新历史」文件所在行的日期（取最早匹配行）
 const findFileRow = (rows: any[], keyword = "版本更新历史"): any => {
@@ -84,6 +91,39 @@ const firstKey = (nodes: any[]): string => (nodes && nodes[0] ? nodes[0]._key : 
 
 const stripNum = (title: string): string => String(title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();
 
+// 「软件版本命名规则」章节的固定示意图（只读，仅展示用）
+const NamingRuleDiagram = () => (
+    <svg viewBox="0 0 470 290" style={{ width: 470, maxWidth: "100%", margin: "4px 0 8px" }}>
+        <defs>
+            <marker id="vuh-vr-arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto" markerUnits="strokeWidth">
+                <path d="M0,0 L8,3 L0,6 Z" fill="#333" />
+            </marker>
+        </defs>
+        <rect x="10" y="12" width="210" height="44" fill="none" stroke="#333" />
+        <text x="45" y="43" fontSize="20" fontWeight="700" textAnchor="middle">X</text>
+        <text x="68" y="43" fontSize="20" textAnchor="middle">.</text>
+        <text x="95" y="43" fontSize="20" fontWeight="700" textAnchor="middle">Y</text>
+        <text x="118" y="43" fontSize="20" textAnchor="middle">.</text>
+        <text x="145" y="43" fontSize="20" fontWeight="700" textAnchor="middle">Z</text>
+        <text x="168" y="43" fontSize="20" textAnchor="middle">.</text>
+        <text x="195" y="43" fontSize="20" fontWeight="700" textAnchor="middle">B</text>
+        <polyline points="195,56 195,87 300,87" fill="none" stroke="#333" markerEnd="url(#vuh-vr-arrow)" />
+        <polyline points="145,56 145,142 300,142" fill="none" stroke="#333" markerEnd="url(#vuh-vr-arrow)" />
+        <polyline points="95,56 95,197 300,197" fill="none" stroke="#333" markerEnd="url(#vuh-vr-arrow)" />
+        <polyline points="45,56 45,252 300,252" fill="none" stroke="#333" markerEnd="url(#vuh-vr-arrow)" />
+        <g fontSize="13" textAnchor="middle">
+            <rect x="302" y="70" width="150" height="34" fill="none" stroke="#333" />
+            <text x="377" y="92">上市后软件升级次数号</text>
+            <rect x="302" y="125" width="150" height="34" fill="none" stroke="#333" />
+            <text x="377" y="147">修订版本号</text>
+            <rect x="302" y="180" width="150" height="34" fill="none" stroke="#333" />
+            <text x="377" y="202">次版本号</text>
+            <rect x="302" y="235" width="150" height="34" fill="none" stroke="#333" />
+            <text x="377" y="257">主版本号</text>
+        </g>
+    </svg>
+);
+
 const computeNumbers = (nodes: any[]): Record<string, string> => {
     const map: Record<string, string> = {};
     let bodyIdx = 0;
@@ -137,10 +177,18 @@ export default () => {
                 if (name || rel || full) {
                     body = `本次软件为首次注册，软件完整版本为${full}，发布版本为${rel}。\n产品名称：${name}\n发布版本：${rel}\n完整版本：${full}`;
                 }
-            } else if (t === "软件版本命名规则") {
-                if (!String(body || "").trim()) body = NAMING_RULE_BODY;
             }
             return { ...n, body, children: (n.children || []).map(fix) };
+        };
+        return (nodes || []).map(fix);
+    };
+
+    // 软件版本命名规则：从全局「版本命名规则」配置始终取最新覆盖
+    const fillNamingRule = (nodes: any[], body: string): any[] => {
+        if (!body) return nodes;
+        const fix = (n: any): any => {
+            const b = stripNum(n.title) === "软件版本命名规则" ? body : n.body;
+            return { ...n, body: b, children: (n.children || []).map(fix) };
         };
         return (nodes || []).map(fix);
     };
@@ -209,10 +257,12 @@ export default () => {
                 ApiProduct.get_product({ id: doc.product_id }).catch(() => null),
                 ApiTimeline.list_timeline({ prod_id: doc.product_id }).catch(() => null),
                 ApiMember.list_project_member({ prod_id: doc.product_id, page_index: 0, page_size: 1000 }).catch(() => null),
-            ]).then(([pr, tl, mb]: any[]) => {
+                ApiVersionRule.get_version_rule().catch(() => null),
+            ]).then(([pr, tl, mb, vr]: any[]) => {
                 const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
                 const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
                 const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
+                const vrContent = vr && vr.code === Api.C_OK ? (vr.data && vr.data.content) : null;
                 const findRole = (pred: (role: string) => boolean) => {
                     const hit = members.find((m: any) => pred(String(m.role || "")));
                     return hit ? String(hit.name || "").trim() : "";
@@ -222,6 +272,7 @@ export default () => {
                     releaseVersion: prod.release_version,
                     fullVersion: prod.full_version,
                 });
+                if (vrContent) secs = fillNamingRule(secs, buildNamingBody(vrContent));
                 secs = fillUpdateHistory(secs, {
                     fullVersion: prod.full_version,
                     releaseVersion: prod.release_version,
@@ -405,6 +456,13 @@ export default () => {
                                         onChange={(e) => patchNode(active._key, { body: e.target.value })}
                                     />
                                 </div>
+
+                                {stripNum(active.title) === "软件版本命名规则" && (
+                                    <div className="pdp-field">
+                                        <div className="pdp-label">软件完整版本及说明（示意图，导出自动包含）</div>
+                                        <NamingRuleDiagram />
+                                    </div>
+                                )}
 
                                 {(active.tables || []).map((tb: any[], ti: number) => (
                                     <div className="pdp-table-block" key={ti}>

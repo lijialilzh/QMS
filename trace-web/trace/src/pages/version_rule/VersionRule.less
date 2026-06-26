@@ -1,0 +1,126 @@
+.version-rule {
+    .vr-saving {
+        margin-left: 12px;
+        color: #52c41a;
+        font-size: 12px;
+    }
+
+    .vr-scroll {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        padding: 18px 12px 36px;
+        background: #f4f6f9;
+        border-radius: 8px;
+
+        .ant-spin-container {
+            height: 100%;
+        }
+    }
+
+    .vr-body {
+        max-width: 940px;
+        margin: 0 auto;
+        background: #fff;
+        border: 1px solid #eef0f3;
+        border-radius: 12px;
+        box-shadow: 0 6px 24px rgba(0, 0, 0, 0.05);
+        padding: 28px 34px 34px;
+    }
+
+    .vr-title {
+        font-size: 19px;
+        font-weight: 700;
+        color: #1f2d3d;
+        margin: 0 0 18px;
+    }
+
+    .vr-cap {
+        position: relative;
+        font-size: 14px;
+        font-weight: 600;
+        color: #2b3a4b;
+        margin: 22px 0 10px;
+        padding-left: 12px;
+
+        &::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 1px;
+            bottom: 1px;
+            width: 4px;
+            border-radius: 2px;
+            background: #1677ff;
+        }
+    }
+
+    .vr-line {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 10px;
+        padding-left: 12px;
+
+        .vr-line-lbl {
+            color: #46586b;
+            min-width: 72px;
+        }
+
+        .vr-inline-input {
+            max-width: 240px;
+        }
+    }
+
+    .vr-svg {
+        width: 470px;
+        max-width: 100%;
+        margin: 6px 0 18px 12px;
+    }
+
+    .vr-note {
+        margin: 4px 0 18px;
+    }
+
+    .vr-item {
+        margin: 0 0 16px;
+        padding: 12px 14px;
+        border: 1px solid #eef1f5;
+        border-radius: 10px;
+        background: #fbfcfe;
+
+        .vr-item-title {
+            margin-bottom: 8px;
+            max-width: 320px;
+        }
+    }
+
+    // 透明无边框输入，hover/focus 才显形，贴近运行环境的「直接编辑」观感
+    .vr-input {
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        transition: background 0.15s, border-color 0.15s;
+        color: #1f2d3d;
+        line-height: 1.7;
+
+        &:hover {
+            background: #f0f7ff;
+            border-color: #d6e8ff;
+        }
+
+        &:focus,
+        &.ant-input-focused {
+            background: #fff;
+            border-color: #91caff;
+            box-shadow: none;
+        }
+
+        &[disabled] {
+            background: transparent;
+            border-color: transparent;
+            color: #1f2d3d;
+            cursor: default;
+        }
+    }
+}

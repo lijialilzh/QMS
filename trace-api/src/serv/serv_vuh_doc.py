@@ -7,6 +7,7 @@
 
 import copy
 import logging
+import os
 import re
 from typing import List
 from sqlalchemy import delete, func, select
@@ -19,8 +20,10 @@ from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 
 from ..model.product import Product
 from ..model.vuh_doc import VuhDoc
+from ..model.version_rule import VersionRule
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..model.project_member import ProjectMember
+from .serv_version_rule import DEFAULT_VERSION_RULE
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
 from ..obj.vobj_user import UserObj
@@ -33,21 +36,6 @@ from .serv_utils import new_version
 from .serv_utils import docx_util
 
 logger = logging.getLogger(__name__)
-
-
-# 软件版本命名规则（写死，可改）：与「基础数据-版本命名规则」一致
-NAMING_RULE_BODY = (
-    "软件版本命名规则为：\n"
-    "发布版本：VX\n"
-    "完整版本：VX.Y.Z.B\n"
-    "软件完整版本及说明：主版本号X、次版本号Y、修订版本号Z、上市后软件升级次数号B。\n"
-    "注：V代表vision，是版本标识符号，其余每一位字母代表一位数字，X 从 1 开始计数，Y、Z、B 从 0 开始计数。\n"
-    "主版本号X：重大增强类软件更新和重大网络安全更新，比如增加核心功能模块、整体架构发生变化、网络环境改变、数据接口改变、核心算法重大改变。主版本X的范围为1～9。\n"
-    "次版本号Y：轻微增强类软件更新和轻微网络安全更新，比如功能模块局部增强、加密方式改变、训练数据量增加算法性能未发生显著性改变、数据接口传输效率优化、操作系统的安全补丁。次版本Y的范围为0～9。\n"
-    "修订版本号Z：纠正类软件更新和纠正类网络安全更新，修正软件已知缺陷和潜在未知缺陷。修订版本Z的范围为0～9。\n"
-    "上市后软件升级次数号 B：上市后的软件升级迭代次数，0 代表软件第一次发布。上市后软件升级次数号B的范围为0～999。\n"
-    "注：版本号中可不含V（version）。"
-)
 
 
 # 标准模板默认内容（取自《版本更新历史》模板），新增文档时预填、可改。
@@ -201,20 +189,47 @@ class Server(object):
         pm = find_member(lambda r: "产品经理" in r)
         approver = find_member(lambda r: "负责人" in r and "产品" in r)
 
+        vr = db.session.execute(select(VersionRule).where(VersionRule.id == 1)).scalars().first()
+        vr_content = vr.content if vr and isinstance(vr.content, dict) else DEFAULT_VERSION_RULE
+        naming_body = self.__build_naming_body(vr_content)
+
         return {
             "prod_name": prod_name, "full_version": full_version, "release_version": release_version,
             "file_date": file_date, "release_date": release_date, "version": doc_version,
-            "pm": pm, "approver": approver,
+            "pm": pm, "approver": approver, "naming_body": naming_body,
         }
 
     @staticmethod
     def __strip_num(title):
         return re.sub(r"^\s*\d+(?:\.\d+)*[\.、\s]*", "", str(title or "")).strip()
 
+    @staticmethod
+    def __build_naming_body(c):
+        # 由「基础数据-版本命名规则」全局配置生成「软件版本命名规则」章节正文
+        c = c if isinstance(c, dict) else {}
+        items = c.get("items") or []
+        lines = [
+            "软件版本命名规则为：",
+            f"发布版本：{c.get('release_format', '')}",
+            f"完整版本：{c.get('full_format', '')}",
+            "软件完整版本及说明：",
+        ]
+        if str(c.get("note_top") or "").strip():
+            lines.append(c["note_top"])
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            title = str(it.get("title") or "").strip()
+            desc = str(it.get("desc") or "").strip()
+            if title or desc:
+                lines.append(f"{title}：{desc}")
+        if str(c.get("note_bottom") or "").strip():
+            lines.append(c["note_bottom"])
+        return "\n".join(lines)
+
     def __fill_node(self, node, info):
         ref = node.get("ref_type")
         title = self.__strip_num(node.get("title"))
-        cur = str(node.get("body") or "").strip()
         # 版本信息：自动获取产品名/发布版本/完整版本（始终取最新）
         if ref == "version_info" or title == "版本信息":
             if info["full_version"] or info["release_version"] or info["prod_name"]:
@@ -225,9 +240,9 @@ class Server(object):
                     f"完整版本：{info['full_version']}"
                 )
         elif title == "软件版本命名规则":
-            # 命名规则写死（可改，仅填空不覆盖）
-            if not cur:
-                node["body"] = NAMING_RULE_BODY
+            # 从全局「版本命名规则」配置始终取最新覆盖
+            if info.get("naming_body"):
+                node["body"] = info["naming_body"]
         # 修订记录首行
         if ref == "revision" or title == "文件修订记录":
             tables = node.get("tables") or []
@@ -467,12 +482,49 @@ class Server(object):
             p.paragraph_format.space_after = Pt(0)
             docx_util.fonted_txt(p, title, font_size=size, bold=True)
 
+        def add_naming_diagram():
+            # 嵌入版本命名规则示意图（与模板一致的箭头图）；缺图时回落为对应关系表格
+            img_path = os.path.join(os.path.dirname(__file__), "..", "..", "src-res", "assets", "version_naming_rule.png")
+            if os.path.exists(img_path):
+                try:
+                    p = document.add_paragraph()
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    p.add_run().add_picture(img_path, width=Inches(5.3))
+                    document.add_paragraph()
+                    return
+                except Exception:
+                    logger.exception("add_naming_diagram_picture_failed")
+            add_grid([
+                ["软件完整版本", "V X . Y . Z . B"],
+                ["主版本号", "X"],
+                ["次版本号", "Y"],
+                ["修订版本号", "Z"],
+                ["上市后软件升级次数号", "B"],
+            ])
+
         def render_body_section(node, level, number=""):
             name = self.__strip_num(node.get("title"))
             heading = f"{number} {name}".strip() if number else name
             add_body_heading(heading, level=max(1, min(level, 9)))
-            if (node.get("body") or "").strip():
-                add_text(node.get("body"))
+            body = node.get("body") or ""
+            if name == "软件版本命名规则":
+                # 示意图紧跟在「软件完整版本及说明：」行之后，再接剩余正文
+                lines = body.split("\n")
+                cut = next((i for i, ln in enumerate(lines) if ln.strip().startswith("软件完整版本及说明")), -1)
+                if cut >= 0:
+                    before = "\n".join(lines[:cut + 1])
+                    after = "\n".join(lines[cut + 1:])
+                    if before.strip():
+                        add_text(before)
+                    add_naming_diagram()
+                    if after.strip():
+                        add_text(after)
+                else:
+                    if body.strip():
+                        add_text(body)
+                    add_naming_diagram()
+            elif body.strip():
+                add_text(body)
             for table in (node.get("tables") or []):
                 add_grid(table)
             idx = 0
