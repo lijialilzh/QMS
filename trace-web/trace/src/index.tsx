@@ -54,6 +54,7 @@ import VuhDocDetail from "./pages/vuh/VuhDocDetail";
 import PtrDocs from "./pages/ptr/PtrDocs";
 import PtrDocDetail from "./pages/ptr/PtrDocDetail";
 import VersionRule from "./pages/version_rule/VersionRule";
+import CompanyInfos from "./pages/basedata/CompanyInfos";
 
 const DEF_LANG = localStorage.getItem("lang") || I18N.DEF_LANG;
 I18N.init(DEF_LANG);
@@ -78,6 +79,7 @@ const router = createRouter([
             { path: "/rcms", element: <Rcms /> },
             { path: "/csts", element: <Csts /> },
             { path: "/version_rule", element: <VersionRule /> },
+            { path: "/company_infos", element: <CompanyInfos /> },
 
             { path: "/products", element: <Products /> },
             { path: "/prod_dhfs", element: <ProdDhfs /> },

@@ -62,6 +62,10 @@ class Perms(Enum):
     version_rule = PermForm(code="version_rule", name="基础数据/版本命名规则")
     version_rule_edit = PermForm(code="version_rule_edit", name="编辑", p_code=version_rule.code)
 
+    company_info = PermForm(code="company_info", name="基础数据/公司基本信息")
+    company_info_view = PermForm(code="company_info_view", name="查看", p_code=company_info.code)
+    company_info_edit = PermForm(code="company_info_edit", name="编辑", p_code=company_info.code)
+
     product = PermForm(code="product", name="产品管理/产品版本管理")
     product_view = PermForm(code="product_view", name="查看", p_code=product.code)
     product_edit = PermForm(code="product_edit", name="编辑", p_code=product.code)

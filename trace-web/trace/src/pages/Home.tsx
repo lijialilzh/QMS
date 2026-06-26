@@ -150,6 +150,11 @@ export default () => {
                         key: "/version_rule",
                         label: ts("menu.version_rule"),
                     },
+                    {
+                        key: "/company_infos",
+                        label: ts("menu.company_infos"),
+                        perm: "company_info_view",
+                    },
                 ],
             },
             {

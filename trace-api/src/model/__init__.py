@@ -78,3 +78,6 @@ from .version_rule import VersionRule  # noqa: E402,F401
 
 # 产品技术要求（独立文档模块）。详见 docs/function_docs/56_产品技术要求.md。
 from .ptr_doc import PtrDoc  # noqa: E402,F401
+
+# 公司基本信息（基础数据）。详见 docs/function_docs/57_公司基本信息.md。
+from .company_info import CompanyInfo  # noqa: E402,F401

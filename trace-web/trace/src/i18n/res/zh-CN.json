@@ -17,6 +17,7 @@
         "prod_device_res": "设备资源",
         "basedata": "基础数据",
         "version_rule": "版本命名规则",
+        "company_infos": "公司基本信息",
         "hazs": "HAZ管理",
         "rcms": "RCM管理",
         "csts": "THREAT管理",
@@ -151,6 +152,14 @@
         "test_codes": "测试用例编号",
         "proof": "手册体现",
         "note": "备注"
+    },
+    "company_info": {
+        "registrant": "注册人",
+        "address": "住所",
+        "manufacturer": "受托生产企业",
+        "production_address": "生产地址",
+        "production_license_no": "生产许可证编号",
+        "contact_phone": "联系电话"
     },
     "cst": {
         "code": "编号",
