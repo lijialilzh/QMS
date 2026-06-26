@@ -192,16 +192,6 @@ export default () => {
                         label: ts("menu.prod_dhfs"),
                         perm: "prod_dhf_view",
                     },
-                    {
-                        key: "/vuh_docs",
-                        label: ts("menu.vuh_docs"),
-                        perm: "vuh_doc_view",
-                    },
-                    {
-                        key: "/ptr_docs",
-                        label: ts("menu.ptr_docs"),
-                        perm: "ptr_doc_view",
-                    },
                 ],
             },
             {
@@ -223,6 +213,21 @@ export default () => {
                         key: "/pir_docs",
                         label: ts("menu.pir_docs"),
                         perm: "pir_doc_view",
+                    },
+                    {
+                        key: "/vuh_docs",
+                        label: ts("menu.vuh_docs"),
+                        perm: "vuh_doc_view",
+                    },
+                    {
+                        key: "/ptr_docs",
+                        label: ts("menu.ptr_docs"),
+                        perm: "ptr_doc_view",
+                    },
+                    {
+                        key: "/label_docs",
+                        label: ts("menu.label_docs"),
+                        perm: "label_doc_view",
                     },
                 ],
             },

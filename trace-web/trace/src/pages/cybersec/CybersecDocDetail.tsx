@@ -309,14 +309,13 @@ const fillProductTextSections = (content: any, product: any) => {
         (sections || []).forEach((section: any) => {
             const key = stripSectionNo(section.title);
             const hasText = String(section.text || "").trim().length > 0;
-            if (!hasText) {
-                if (key === "适用范围") {
-                    section.text = product?.scope || "";
-                } else if (key === "产品描述") {
-                    section.text = buildProductDescription(product);
-                } else if (defaultMap[key] !== undefined) {
-                    section.text = defaultMap[key];
-                }
+            // 适用范围/产品描述为自动获取项，始终以产品数据为准覆盖（即使为空也补位/清空）
+            if (key === "适用范围") {
+                section.text = product?.scope || "";
+            } else if (key === "产品描述") {
+                section.text = buildProductDescription(product);
+            } else if (!hasText && defaultMap[key] !== undefined) {
+                section.text = defaultMap[key];
             }
             fill(section.children || []);
         });
@@ -1438,33 +1437,36 @@ export default () => {
                 }}>
                 <Card title="基础信息" loading={data.loading}>
                     <div className="risk-mgmt-basic-grid">
-                        {isAdd ? (
-                            <Form.Item
-                                label={ts("product.product")}
-                                name="product_id"
-                                rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
-                                <ProductVersionSelect
-                                    products={data.products}
-                                    value={data.selectedProductId}
-                                    namePlaceholder={ts("product.name")}
-                                    versionPlaceholder={ts("product.full_version")}
-                                    onChange={(value) => {
-                                        form.setFieldValue("product_id", value);
-                                        dispatch({ selectedProductId: value });
-                                        const selectedProduct = (data.products || []).find((p: any) => p.id === value);
-                                        let content = syncProductNameInContent(data.content || emptyContent, selectedProduct?.name || "");
-                                        content = fillProductTextSections(content, selectedProduct);
-                                        dispatch({ content });
-                                    }}
-                                />
-                            </Form.Item>
-                        ) : (
-                            <>
-                                <Form.Item label={ts("product.name")} name="product_name"><Input disabled /></Form.Item>
-                                <Form.Item label={ts("product.type_code")} name="product_type_code"><Input disabled /></Form.Item>
-                                <Form.Item label={ts("product.full_version")} name="product_full_version"><Input disabled /></Form.Item>
-                            </>
-                        )}
+                        <Form.Item
+                            label={ts("product.product")}
+                            name="product_id"
+                            rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
+                            <ProductVersionSelect
+                                products={data.products}
+                                value={isAdd ? data.selectedProductId : data.detail?.product_id}
+                                namePlaceholder={ts("product.name")}
+                                versionPlaceholder={ts("product.full_version")}
+                                onChange={(value) => {
+                                    form.setFieldValue("product_id", value);
+                                    const selectedProduct = (data.products || []).find((p: any) => p.id === value);
+                                    dispatch({ selectedProductId: value });
+                                    if (!isAdd) {
+                                        dispatch({
+                                            detail: {
+                                                ...data.detail,
+                                                product_id: value,
+                                                product_name: selectedProduct?.name || "",
+                                                product_type_code: selectedProduct?.type_code || "",
+                                                product_full_version: selectedProduct?.full_version || "",
+                                            },
+                                        });
+                                    }
+                                    let content = syncProductNameInContent(data.content || emptyContent, selectedProduct?.name || "");
+                                    content = fillProductTextSections(content, selectedProduct);
+                                    dispatch({ content });
+                                }}
+                            />
+                        </Form.Item>
                         <Form.Item label="文档版本" name="version" rules={[{ required: true, message: sprintf(ts("msg_input"), { label: "文档版本" }) }]}>
                             <Input />
                         </Form.Item>

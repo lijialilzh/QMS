@@ -9,6 +9,7 @@ import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiVersionRule from "@/api/ApiVersionRule";
 import * as ApiRuntime from "@/api/ApiProdRuntimeEnv";
 import * as ApiDocFile from "@/api/ApiDocFile";
+import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
 
 const IMG_CATEGORY_LABEL: Record<string, string> = {
@@ -217,6 +218,7 @@ export default () => {
         activeKey: "",
         docImages: {} as Record<string, string>,
         uploadingCat: "",
+        products: [] as any[],
     });
 
     // 封面=产品名称；产品版本=完整/发布版本；版本命名规则=全局配置（均始终取最新覆盖）
@@ -256,7 +258,8 @@ export default () => {
                 if (full || release) body = `软件完整版本：${full}\n软件发布版本：${release}`;
             } else if ((ref === "naming_rule" || t === "版本命名规则") && info.namingBody) {
                 body = info.namingBody;
-            } else if ((ref === "ui_relation" || t.includes("用户界面关系图")) && overview) {
+            } else if (ref === "ui_relation" || t.includes("用户界面关系图")) {
+                // 用户界面关系图文案取「总体描述」，始终覆盖补位（为空则仅保留图题，清掉旧产品文案）
                 body = `图2 用户界面关系图\n${overview}\n图3 主页面图示`;
             } else if (env && (ref === "runtime" || t === "运行环境")) {
                 if (String(env.arch || "").trim()) body = env.arch;
@@ -300,6 +303,30 @@ export default () => {
         });
     };
 
+    // 按产品重新获取并填充所有自动获取内容（封面/版本/命名规则/运行环境/总体描述）
+    const autofill = (productId: number, secs: any[]): Promise<any[]> =>
+        new Promise((resolve) => {
+            if (!productId) { resolve(secs); return; }
+            Promise.all([
+                ApiProduct.get_product({ id: productId }).catch(() => null),
+                ApiVersionRule.get_version_rule().catch(() => null),
+                ApiRuntime.get_prod_runtime_env({ prod_id: productId }).catch(() => null),
+            ]).then(([pr, vr, rt]: any[]) => {
+                const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
+                const vrContent = vr && vr.code === Api.C_OK ? (vr.data && vr.data.content) : null;
+                const env = rt && rt.code === Api.C_OK ? (rt.data || null) : null;
+                const out = fillAuto(secs, {
+                    name: prod.name,
+                    full: prod.full_version,
+                    release: prod.release_version,
+                    namingBody: vrContent ? buildNamingBody(vrContent) : "",
+                    overview: prod.overall_desc,
+                    env,
+                });
+                resolve(out);
+            }).catch(() => resolve(secs));
+        });
+
     const load = () => {
         if (!id) return;
         dispatch({ loading: true });
@@ -311,36 +338,30 @@ export default () => {
             }
             const doc = res.data || {};
             const sections = ensureKeys((doc.content && doc.content.sections) || []);
-            const finish = (secs: any[]) => dispatch({ loading: false, doc, sections: secs, activeKey: firstKey(secs) });
-            if (!doc.product_id) {
-                finish(sections);
-                return;
-            }
-            loadDocImages(doc.product_id, sections);
-            Promise.all([
-                ApiProduct.get_product({ id: doc.product_id }).catch(() => null),
-                ApiVersionRule.get_version_rule().catch(() => null),
-                ApiRuntime.get_prod_runtime_env({ prod_id: doc.product_id }).catch(() => null),
-            ]).then(([pr, vr, rt]: any[]) => {
-                const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
-                const vrContent = vr && vr.code === Api.C_OK ? (vr.data && vr.data.content) : null;
-                const env = rt && rt.code === Api.C_OK ? (rt.data || null) : null;
-                const secs = fillAuto(sections, {
-                    name: prod.name,
-                    full: prod.full_version,
-                    release: prod.release_version,
-                    namingBody: vrContent ? buildNamingBody(vrContent) : "",
-                    overview: prod.overall_desc,
-                    env,
-                });
-                finish(secs);
-            }).catch(() => finish(sections));
+            if (doc.product_id) loadDocImages(doc.product_id, sections);
+            autofill(doc.product_id, sections).then((secs) => {
+                dispatch({ loading: false, doc, sections: secs, activeKey: findNode(secs, data.activeKey) ? data.activeKey : firstKey(secs) });
+            });
         });
+    };
+
+    // 修改产品名称/版本后，重新拉取并填充所有自动获取内容（保留人工编辑的非自动字段）
+    const rebindProduct = (newId: number) => {
+        const product = (data.products || []).find((p: any) => p.id === newId) || {};
+        dispatch({ loading: true, doc: { ...data.doc, product_id: newId, product_name: product.name, product_full_version: product.full_version } });
+        if (newId) loadDocImages(newId, data.sections);
+        autofill(newId, data.sections).then((secs) => dispatch({ loading: false, sections: secs }));
     };
 
     useEffect(() => {
         load();
     }, [id, location.pathname]);
+
+    useEffect(() => {
+        ApiProduct.list_product({ page_size: 10000 }).then((res: any) => {
+            if (res.code === Api.C_OK) dispatch({ products: res.data?.rows || [] });
+        });
+    }, []);
 
     const setSections = (sections: any[]) => dispatch({ sections });
     const patchNode = (key: string, patch: any) =>
@@ -488,10 +509,12 @@ export default () => {
         if (!id) return;
         dispatch({ saving: true });
         const content = { sections: stripKeys(data.sections) };
-        Api.update_ptr_doc({ id, content }).then((res: any) => {
+        Api.update_ptr_doc({ id, content, product_id: data.doc.product_id, version: data.doc.version }).then((res: any) => {
             dispatch({ saving: false });
-            if (res.code === Api.C_OK) message.success(ts("save_success"));
-            else message.error(res.msg);
+            if (res.code === Api.C_OK) {
+                message.success(ts("save_success"));
+                load();
+            } else message.error(res.msg);
         });
     };
 
@@ -538,11 +561,33 @@ export default () => {
             <div className="div-h pdp-toolbar">
                 <div className="pdp-toolbar-title">
                     产品技术要求
-                    <span className="pdp-meta">
-                        {data.doc.product_name ? `　${data.doc.product_name}` : ""}
-                        {data.doc.product_full_version ? ` / ${data.doc.product_full_version}` : ""}
-                        {data.doc.version ? `　文档版本：${data.doc.version}` : ""}
-                    </span>
+                    {readonly ? (
+                        <span className="pdp-meta">
+                            {data.doc.product_name ? `　${data.doc.product_name}` : ""}
+                            {data.doc.product_full_version ? ` / ${data.doc.product_full_version}` : ""}
+                            {data.doc.version ? `　文档版本：${data.doc.version}` : ""}
+                        </span>
+                    ) : (
+                        <span className="pdp-meta" style={{ display: "inline-flex", alignItems: "center", gap: 8, marginLeft: 12 }}>
+                            <span style={{ width: 340, display: "inline-block" }}>
+                                <ProductVersionSelect
+                                    products={data.products}
+                                    value={data.doc.product_id}
+                                    allowClear={false}
+                                    namePlaceholder={ts("product.name")}
+                                    versionPlaceholder={ts("product.full_version")}
+                                    onChange={(v) => v && rebindProduct(v)}
+                                />
+                            </span>
+                            <span style={{ whiteSpace: "nowrap" }}>文档版本：</span>
+                            <Input
+                                size="small"
+                                style={{ width: 110 }}
+                                value={data.doc.version || ""}
+                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })}
+                            />
+                        </span>
+                    )}
                 </div>
                 <Space>
                     {!readonly && (

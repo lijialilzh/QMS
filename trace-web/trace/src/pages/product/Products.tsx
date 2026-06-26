@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { renderOneLineWithTooltip, useData } from "@/common";
 import * as Api from "@/api/ApiProduct";
 import * as ApiProject from "@/api/ApiProject";
+import * as ApiCompanyInfo from "@/api/ApiCompanyInfo";
 
 const pageSizeOptions = [20, 50, 100];
 
@@ -28,6 +29,15 @@ const doSearchProjects = (data: any, dispatch: any) => {
             }
         });
     }
+};
+
+const loadCompanies = (data: any, dispatch: any) => {
+    if ((data.companies || []).length > 0) return;
+    ApiCompanyInfo.list_company_info({ page_index: 0, page_size: 1000 }).then((res: any) => {
+        if (res.code === ApiCompanyInfo.C_OK) {
+            dispatch({ companies: res.data?.rows || [] });
+        }
+    });
 };
 
 
@@ -56,6 +66,7 @@ const DetailDlg = ({ data, dispatch, onSaved }: any) => {
         if (data.dlgType === DlgTypes.add || data.dlgType === DlgTypes.edit) {
             editForm.resetFields();
             doSearchProjects(data, dispatch);
+            loadCompanies(data, dispatch);
             if (data.dlgType === DlgTypes.edit) {
                 dispatch({ loading: true });
                 Api.get_product({ id: data.targetRow.id }).then((res: any) => {
@@ -160,6 +171,21 @@ const DetailDlg = ({ data, dispatch, onSaved }: any) => {
                         </Col>
                     </Row>
                     <Row gutter={24}>
+                        <Col span={12}>
+                            <Form.Item label="注册人" name="registrant">
+                                <Select
+                                    allowClear
+                                    showSearch
+                                    optionFilterProp="label"
+                                    placeholder="请选择注册人"
+                                    options={Array.from(
+                                        new Set((data.companies || []).map((c: any) => c.registrant).filter(Boolean))
+                                    ).map((registrant: any) => ({ label: registrant, value: registrant }))}
+                                />
+                            </Form.Item>
+                        </Col>
+                    </Row>
+                    <Row gutter={24}>
                         <Col span={24}>
                             <Form.Item
                                 label={ts("product.scope")}
@@ -210,6 +236,7 @@ export default () => {
         targetRow: {},
         loading: false,
         projects: [],
+        companies: [],
         selectedRowKeys: [],
     });
 
@@ -326,6 +353,13 @@ export default () => {
             title: "产品代码",
             dataIndex: "product_code",
             width: 50,
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: "注册人",
+            dataIndex: "registrant",
+            width: 80,
             ellipsis: true,
             render: (value: any) => renderOneLineWithTooltip(value),
         },

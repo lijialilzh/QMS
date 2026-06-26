@@ -8,6 +8,7 @@ import * as Api from "@/api/ApiPirDoc";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
+import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
 
 let _seq = 0;
@@ -127,6 +128,7 @@ export default () => {
         doc: {} as any,
         sections: [] as any[],
         activeKey: "",
+        products: [] as any[],
     });
 
     // 项目概述-基本信息表：按行标签自动填充（仅填空不覆盖）
@@ -177,7 +179,8 @@ export default () => {
             const cur = String(body || "").trim();
             const t = stripNum(n.title);
             if (n.ref_type === "prod_overview" || t === "产品描述") {
-                if (overview) body = overview;
+                // 产品描述始终以「总体描述」为准覆盖（即使为空也补位/清空，避免残留旧产品文案）
+                body = overview;
             } else if (t === "产品可提供成果") {
                 const fresh = `本项目目标是申请并获得${name || "InferCare"}产品的 ${country || "FDA"}注册认可`;
                 if (!cur || /^本项目目标是申请并获得.*产品的\s*\S*注册认可$/.test(cur)) body = fresh;
@@ -212,6 +215,41 @@ export default () => {
         return (nodes || []).map(fix);
     };
 
+    // 按产品重新获取并填充所有自动获取内容（基本信息表/正文/文件修订记录）
+    const autofill = (productId: number, secs: any[], version: string): Promise<any[]> =>
+        new Promise((resolve) => {
+            if (!productId) { resolve(secs); return; }
+            Promise.all([
+                ApiProduct.get_product({ id: productId }).catch(() => null),
+                ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
+                ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
+            ]).then(([pr, tl, mb]: any[]) => {
+                const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
+                const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
+                const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
+                const findRole = (pred: (role: string) => boolean) => {
+                    const hit = members.find((m: any) => pred(String(m.role || "")));
+                    return hit ? String(hit.name || "").trim() : "";
+                };
+                let out = fillBasicInfo(secs, {
+                    name: prod.name,
+                    country: prod.country,
+                    version: prod.full_version,
+                    code: prod.product_code,
+                    scope: prod.scope,
+                    period: computeCycleDot(tlRows),
+                });
+                out = fillBodies(out, { overview: prod.overall_desc, name: prod.name, country: prod.country });
+                out = fillRevision(out, {
+                    fileDate: computeFileDate(tlRows),
+                    version,
+                    pm: findRole((r) => r.includes("产品经理")),
+                    approver: findRole((r) => r.includes("负责人") && r.includes("产品")),
+                });
+                resolve(out);
+            }).catch(() => resolve(secs));
+        });
+
     const load = () => {
         if (!id) return;
         dispatch({ loading: true });
@@ -223,46 +261,28 @@ export default () => {
             }
             const doc = res.data || {};
             const sections = ensureKeys((doc.content && doc.content.sections) || []);
-            const finish = (secs: any[]) => dispatch({ loading: false, doc, sections: secs, activeKey: firstKey(secs) });
-            if (!doc.product_id) {
-                finish(sections);
-                return;
-            }
-            Promise.all([
-                ApiProduct.get_product({ id: doc.product_id }).catch(() => null),
-                ApiTimeline.list_timeline({ prod_id: doc.product_id }).catch(() => null),
-                ApiMember.list_project_member({ prod_id: doc.product_id, page_index: 0, page_size: 1000 }).catch(() => null),
-            ]).then(([pr, tl, mb]: any[]) => {
-                const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
-                const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
-                const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
-                const findRole = (pred: (role: string) => boolean) => {
-                    const hit = members.find((m: any) => pred(String(m.role || "")));
-                    return hit ? String(hit.name || "").trim() : "";
-                };
-                let secs = fillBasicInfo(sections, {
-                    name: prod.name,
-                    country: prod.country,
-                    version: prod.full_version,
-                    code: prod.product_code,
-                    scope: prod.scope,
-                    period: computeCycleDot(tlRows),
-                });
-                secs = fillBodies(secs, { overview: prod.overall_desc, name: prod.name, country: prod.country });
-                secs = fillRevision(secs, {
-                    fileDate: computeFileDate(tlRows),
-                    version: doc.version,
-                    pm: findRole((r) => r.includes("产品经理")),
-                    approver: findRole((r) => r.includes("负责人") && r.includes("产品")),
-                });
-                finish(secs);
-            }).catch(() => finish(sections));
+            autofill(doc.product_id, sections, doc.version).then((secs) => {
+                dispatch({ loading: false, doc, sections: secs, activeKey: findNode(secs, data.activeKey) ? data.activeKey : firstKey(secs) });
+            });
         });
+    };
+
+    // 修改产品名称/版本后，重新拉取并填充所有自动获取内容（保留人工编辑的非自动字段）
+    const rebindProduct = (newId: number) => {
+        const product = (data.products || []).find((p: any) => p.id === newId) || {};
+        dispatch({ loading: true, doc: { ...data.doc, product_id: newId, product_name: product.name, product_full_version: product.full_version, country: product.country } });
+        autofill(newId, data.sections, data.doc.version).then((secs) => dispatch({ loading: false, sections: secs }));
     };
 
     useEffect(() => {
         load();
     }, [id, location.pathname]);
+
+    useEffect(() => {
+        ApiProduct.list_product({ page_size: 10000 }).then((res: any) => {
+            if (res.code === Api.C_OK) dispatch({ products: res.data?.rows || [] });
+        });
+    }, []);
 
     const setSections = (sections: any[]) => dispatch({ sections });
     const patchNode = (key: string, patch: any) =>
@@ -320,7 +340,7 @@ export default () => {
         if (!id) return;
         dispatch({ saving: true });
         const content = { sections: stripKeys(data.sections) };
-        Api.update_pir_doc({ id, content }).then((res: any) => {
+        Api.update_pir_doc({ id, content, product_id: data.doc.product_id, version: data.doc.version }).then((res: any) => {
             dispatch({ saving: false });
             if (res.code === Api.C_OK) message.success(ts("save_success"));
             else message.error(res.msg);
@@ -370,11 +390,33 @@ export default () => {
             <div className="div-h pdp-toolbar">
                 <div className="pdp-toolbar-title">
                     产品立项报告
+                    {readonly ? (
                     <span className="pdp-meta">
                         {data.doc.product_name ? `　${data.doc.product_name}` : ""}
                         {data.doc.product_full_version ? ` / ${data.doc.product_full_version}` : ""}
                         {data.doc.version ? `　文档版本：${data.doc.version}` : ""}
                     </span>
+                    ) : (
+                        <span className="pdp-meta" style={{ display: "inline-flex", alignItems: "center", gap: 8, marginLeft: 12 }}>
+                            <span style={{ width: 340, display: "inline-block" }}>
+                                <ProductVersionSelect
+                                    products={data.products}
+                                    value={data.doc.product_id}
+                                    allowClear={false}
+                                    namePlaceholder={ts("product.name")}
+                                    versionPlaceholder={ts("product.full_version")}
+                                    onChange={(v) => v && rebindProduct(v)}
+                                />
+                            </span>
+                            <span style={{ whiteSpace: "nowrap" }}>文档版本：</span>
+                            <Input
+                                size="small"
+                                style={{ width: 110 }}
+                                value={data.doc.version || ""}
+                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })}
+                            />
+                        </span>
+                    )}
                 </div>
                 <Space>
                     {!readonly && (

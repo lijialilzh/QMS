@@ -11,6 +11,7 @@ class ProductForm(BaseModel):
     release_version: Optional[str] = Field(title="发布版本")
     udi: Optional[str] = Field(title="UDI")
     product_code: Optional[str] = Field(title="产品代码")
+    registrant: Optional[str] = Field(title="注册人")
     scope: Optional[str] = Field(title="试用范围")
     component: Optional[str] = Field(title="产品组成")
     overall_desc: Optional[str] = Field(title="总体描述")

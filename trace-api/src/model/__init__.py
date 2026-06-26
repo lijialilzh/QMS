@@ -81,3 +81,6 @@ from .ptr_doc import PtrDoc  # noqa: E402,F401
 
 # 公司基本信息（基础数据）。详见 docs/function_docs/57_公司基本信息.md。
 from .company_info import CompanyInfo  # noqa: E402,F401
+
+# 产品标签样稿（独立文档模块）。详见 docs/function_docs/58_产品标签样稿.md。
+from .label_doc import LabelDoc  # noqa: E402,F401
