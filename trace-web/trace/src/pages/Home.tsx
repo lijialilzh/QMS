@@ -254,6 +254,11 @@ export default () => {
                         perm: "doc_file_struct_view",
                     },
                     {
+                        key: "/doc_files_ui",
+                        label: ts("menu.doc_files_ui"),
+                        perm: "doc_file_ui_view",
+                    },
+                    {
                         key: "/doc_files_flow",
                         label: ts("menu.doc_files_flow"),
                         perm: "doc_file_flow_view",

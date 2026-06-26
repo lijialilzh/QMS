@@ -2,7 +2,7 @@
 # encoding: utf-8
 
 # 产品技术要求服务层，详见 docs/function_docs/56_产品技术要求.md。
-# 整份文档以 content(JSON) 的「目录树」结构存储；导出：封面→目录→正文(含附录嵌图)。
+# 整份文档以 content(JSON) 的「目录树」结构存储；导出：首页(编号+产品名称)→正文(含附录嵌图)，不含目录页。
 
 import copy
 import json
@@ -12,11 +12,11 @@ import re
 from typing import List
 from sqlalchemy import delete, func, select
 from docx import Document
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 
 from ..model.product import Product
 from ..model.ptr_doc import PtrDoc
@@ -77,6 +77,8 @@ class Server(object):
             if isinstance(table, list):
                 norm_tables.append([[str(c) if c is not None else "" for c in (row or [])] for row in table if isinstance(row, list)])
         result["tables"] = norm_tables
+        imgs = result.get("images")
+        result["images"] = [str(x) for x in imgs if isinstance(x, str) and x] if isinstance(imgs, list) else []
         children = result.get("children")
         result["children"] = [self.__normalize_node(c) for c in children] if isinstance(children, list) else []
         return result
@@ -114,6 +116,7 @@ class Server(object):
         prod_name = (getattr(product, "name", "") or "").strip()
         full_version = (getattr(product, "full_version", "") or "").strip()
         release_version = (getattr(product, "release_version", "") or "").strip()
+        overview = (getattr(product, "overall_desc", "") or "").strip()
 
         vr = db.session.execute(select(VersionRule).where(VersionRule.id == 1)).scalars().first()
         vr_content = vr.content if vr and isinstance(vr.content, dict) else DEFAULT_VERSION_RULE
@@ -128,7 +131,7 @@ class Server(object):
 
         return {
             "prod_name": prod_name, "full_version": full_version, "release_version": release_version,
-            "naming_body": naming_body, "runtime": runtime, "version": doc_version,
+            "naming_body": naming_body, "runtime": runtime, "version": doc_version, "overview": overview,
         }
 
     @staticmethod
@@ -158,6 +161,9 @@ class Server(object):
         elif ref == "naming_rule" or title == "版本命名规则":
             if info.get("naming_body"):
                 node["body"] = info["naming_body"]
+        elif ref == "ui_relation" or "用户界面关系图" in title:
+            if info.get("overview"):
+                node["body"] = f"图2 用户界面关系图\n{info['overview']}\n图3 主页面图示"
         elif ref == "runtime" or title == "运行环境":
             if rt.get("arch"):
                 node["body"] = rt["arch"]
@@ -314,13 +320,6 @@ class Server(object):
         section.bottom_margin = Inches(0.8)
         section.left_margin = Inches(0.7)
         section.right_margin = Inches(0.7)
-        update_fields = OxmlElement("w:updateFields")
-        update_fields.set(qn("w:val"), "true")
-        document.settings.element.append(update_fields)
-        header_para = section.header.add_paragraph()
-        header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        docx_util.fonted_txt(header_para, obj.file_no or "")
-
         def write_center_title(text, size=22.0, bold=False):
             p = document.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -346,6 +345,64 @@ class Server(object):
                 docx_util.fonted_txt(para, line, font_size=10.5, bold=bold)
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER if align == WD_ALIGN_PARAGRAPH.CENTER else WD_CELL_VERTICAL_ALIGNMENT.TOP
 
+        def set_grid_widths(table, grid, cols):
+            # 用「固定布局 + 按内容比例计算列宽」替代不稳定的 autofit，
+            # 让列宽贴合内容、整表不超过页面可用宽度（参考原始 Word 模板）。
+            def cell_units(text):
+                m = 0
+                for line in str(text or "").split("\n"):
+                    w = sum(2 if ord(ch) > 127 else 1 for ch in line)
+                    m = max(m, w)
+                return max(m, 2)
+
+            col_units = []
+            for c in range(cols):
+                u = 2
+                for row in grid:
+                    if c < len(row):
+                        u = max(u, cell_units(row[c]))
+                col_units.append(u)
+            # 每个字符宽度单位约 120 dxa，外加单元格左右内边距约 440 dxa
+            widths = [u * 120 + 440 for u in col_units]
+            sect = document.sections[0]
+            usable = int((sect.page_width - sect.left_margin - sect.right_margin) / 635)
+            total = sum(widths)
+            if total > usable and total > 0:
+                scale = usable / total
+                widths = [max(int(w * scale), 600) for w in widths]
+                total = sum(widths)
+
+            tbl_pr = table._tbl.tblPr
+            layout = tbl_pr.find(qn("w:tblLayout"))
+            if layout is None:
+                layout = OxmlElement("w:tblLayout")
+                tbl_pr.append(layout)
+            layout.set(qn("w:type"), "fixed")
+            tbl_w = tbl_pr.find(qn("w:tblW"))
+            if tbl_w is None:
+                tbl_w = OxmlElement("w:tblW")
+                tbl_pr.append(tbl_w)
+            tbl_w.set(qn("w:w"), str(total))
+            tbl_w.set(qn("w:type"), "dxa")
+
+            grid_el = table._tbl.find(qn("w:tblGrid"))
+            if grid_el is not None:
+                grid_cols = grid_el.findall(qn("w:gridCol"))
+                for i, gc in enumerate(grid_cols):
+                    if i < len(widths):
+                        gc.set(qn("w:w"), str(widths[i]))
+            for row in table.rows:
+                for i, cell in enumerate(row.cells):
+                    if i >= len(widths):
+                        continue
+                    tc_pr = cell._tc.get_or_add_tcPr()
+                    tc_w = tc_pr.find(qn("w:tcW"))
+                    if tc_w is None:
+                        tc_w = OxmlElement("w:tcW")
+                        tc_pr.append(tc_w)
+                    tc_w.set(qn("w:w"), str(widths[i]))
+                    tc_w.set(qn("w:type"), "dxa")
+
         def add_grid(grid):
             grid = [row for row in (grid or []) if isinstance(row, list)]
             cols = max((len(row) for row in grid), default=0)
@@ -354,11 +411,13 @@ class Server(object):
             table = document.add_table(rows=0, cols=cols)
             table.style = "Table Grid"
             table.alignment = WD_TABLE_ALIGNMENT.CENTER
-            table.autofit = True
+            table.autofit = False
             for r_idx, row in enumerate(grid):
                 cells = table.add_row().cells
                 for c_idx in range(cols):
                     set_cell(cells[c_idx], row[c_idx] if c_idx < len(row) else "", bold=(r_idx == 0))
+            # 按内容比例设置列宽（不撑满页面，参考原始 Word 模板）
+            set_grid_widths(table, grid, cols)
             document.add_paragraph()
 
         def add_body_heading(title_text, level):
@@ -386,10 +445,32 @@ class Server(object):
                 try:
                     p = document.add_paragraph()
                     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                    p.add_run().add_picture(img_path, width=Inches(5.3))
+                    p.add_run().add_picture(img_path, width=Inches(3.8))
                     document.add_paragraph()
                 except Exception:
                     logger.exception("ptr_naming_diagram_failed")
+
+        # 图题关键词 -> 图表文件管理分类（兼容新旧文档，按正文图题行匹配嵌图）
+        caption_cats = [("用户界面关系图", "img_ui"), ("主页面图示", "img_home"), ("物理拓扑图", "img_topo"), ("体系结构图", "img_struct")]
+
+        def render_appendix_body(body):
+            # 逐行渲染；遇到「图N xxx」图题行且能匹配到分类时，在该行后插入对应图片
+            buf = []
+
+            def flush():
+                if buf:
+                    add_text("\n".join(buf))
+                    buf.clear()
+
+            for ln in (body or "").split("\n"):
+                buf.append(ln)
+                s = ln.strip()
+                if re.match(r"^图\s*\d", s):
+                    cat = next((c for kw, c in caption_cats if kw in s), None)
+                    if cat:
+                        flush()
+                        add_picture_by_category(cat)
+            flush()
 
         def render_section(node, level, number=""):
             name = self.__strip_num(node.get("title"))
@@ -397,11 +478,13 @@ class Server(object):
             is_appendix = ref == "appendix"
             heading = name if (is_appendix or not number) else f"{number} {name}".strip()
             add_body_heading(heading, level=max(1, min(level, 9)))
-            # 附录：图题后嵌入对应图表文件图片
-            if is_appendix and node.get("img_category"):
-                add_picture_by_category(node["img_category"])
             body = node.get("body") or ""
-            if ref == "naming_rule" or name == "版本命名规则":
+            if is_appendix:
+                if body.strip():
+                    render_appendix_body(body)
+                elif node.get("img_category"):
+                    add_picture_by_category(node["img_category"])
+            elif ref == "naming_rule" or name == "版本命名规则":
                 lines = body.split("\n")
                 cut = next((i for i, ln in enumerate(lines) if ln.strip().startswith("软件完整版本及说明")), -1)
                 if cut >= 0:
@@ -418,6 +501,12 @@ class Server(object):
                     add_naming_diagram()
             elif body.strip():
                 add_text(body)
+            # 本章节手动上传的图片（base64），导出嵌入
+            for img in (node.get("images") or []):
+                try:
+                    docx_util.save_img2docx(img, document, mw=520, mh=520)
+                except Exception:
+                    logger.exception("ptr_node_image_failed")
             for table in (node.get("tables") or []):
                 add_grid(table)
             # 子章节编号
@@ -430,20 +519,19 @@ class Server(object):
         cover = next((s for s in sections if s.get("ref_type") == "cover"), None)
         body_sections = [s for s in sections if s.get("ref_type") != "cover"]
 
-        # 封面
-        add_blank_lines(8)
-        write_center_title((self.__strip_num(cover.get("title")) if cover else "") or "医疗器械产品技术要求", size=24.0, bold=True)
-        add_blank_lines(2)
-        if cover and (cover.get("body") or "").strip():
-            write_center_title(cover.get("body"), size=16.0, bold=False)
-
-        # 目录
-        document.add_page_break()
-        write_center_title("目录", size=16.0, bold=True)
-        docx_util.insert_toc_field(document)
+        # 首页头部：左侧「医疗器械产品技术要求编号：xxx」+ 居中产品名称（参考模板首页），随后紧接正文
+        cover_title = (self.__strip_num(cover.get("title")) if cover else "") or "医疗器械产品技术要求"
+        no_para = document.add_paragraph()
+        no_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        no_para.paragraph_format.line_spacing = 1.5
+        docx_util.fonted_txt(no_para, f"{cover_title}编号：", font_size=14.0, bold=True)
+        add_blank_lines(1)
+        product_name = ((cover.get("body") if cover else "") or obj.product_name or "").strip()
+        if product_name:
+            write_center_title(product_name, size=20.0, bold=True)
+        add_blank_lines(1)
 
         # 正文（附录不编号）
-        document.add_page_break()
         body_no = 0
         for node in body_sections:
             if node.get("ref_type") == "appendix":

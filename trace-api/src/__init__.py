@@ -16,7 +16,7 @@ from starlette.middleware.cors import CORSMiddleware
 from .obj import Resp
 from . import env
 from .api import web_auth, web_session, api_user, api_role, api_project, api_haz, api_rcm, api_cst, api_product, \
-    api_srs_doc, api_sds_doc, api_test_set, api_test_case, api_doc_file_flow, api_doc_file_topo, api_doc_file_struct, \
+    api_srs_doc, api_sds_doc, api_test_set, api_test_case, api_doc_file_flow, api_doc_file_topo, api_doc_file_struct, api_doc_file_ui, api_doc_file_home, \
     api_prod_haz, api_prod_rcm, api_prod_cst, api_srs_req, api_srs_reqd, api_prod_dhf, api_sds_reqd, api_sds_trace, \
     api_srs_type, api_doc_file, api_risk_mgmt_doc, api_cybersec_doc, api_ai_support, \
     api_project_member, api_project_timeline, api_prod_runtime_env, api_prod_device_res, api_pdp_doc, api_pir_doc, \
@@ -109,6 +109,8 @@ def create_app():
     main_router.include_router(api_doc_file_flow.router, prefix="/doc_file/img_flow", tags=["文档文件-流程"])
     main_router.include_router(api_doc_file_topo.router, prefix="/doc_file/img_topo", tags=["文档文件-拓扑"])
     main_router.include_router(api_doc_file_struct.router, prefix="/doc_file/img_struct", tags=["文档文件-结构"])
+    main_router.include_router(api_doc_file_ui.router, prefix="/doc_file/img_ui", tags=["文档文件-用户界面关系图"])
+    main_router.include_router(api_doc_file_home.router, prefix="/doc_file/img_home", tags=["文档文件-主页面图示"])
     
     main_router.include_router(api_prod_haz.router, prefix="/prod_haz", tags=["产品HAZ"])
     main_router.include_router(api_prod_rcm.router, prefix="/prod_rcm", tags=["产品RCM"])

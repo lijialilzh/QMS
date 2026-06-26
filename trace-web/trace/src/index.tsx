@@ -95,6 +95,7 @@ const router = createRouter([
             { path: "/test_sets", element: <TestSets /> },
 
             { path: "/doc_files_topo", element: <DocFiles fileType="img_topo" /> },
+            { path: "/doc_files_ui", element: <DocFiles fileType="img_ui" /> },
             { path: "/doc_files_flow", element: <DocFiles fileType="img_flow" /> },
             { path: "/doc_files_struct", element: <DocFiles fileType="img_struct" /> },
 

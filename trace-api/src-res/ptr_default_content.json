@@ -339,6 +339,7 @@
     {
       "title": "附录2 用户界面关系图与主页面图示",
       "ref_type": "appendix",
+      "img_category": "img_ui",
       "body": "图2 用户界面关系图\nInferCare RECIST 主要包括 InferCare RECIST Portal、InferCare RECIST Timeline、InferCare RECIST Viewer 和 InferCare RECIST Report 四个模块。\nInferCare RECIST Portal 主要包含登录、用户管理、部门管理和图像导入4个功能模块；InferCare RECIST Timeline 负责医学影像数据的展示与交互，集成多部位病例信息的时间线显示。用户可在时间线上查看来自不同部位的影像数据，通过时间点选择等功能快速定位和对比影像数据；InferCare RECIST Viewer提供影像客户端界面，支持详细的病灶编辑、半自动分割、影像配准以及三维重建结果的交互展示，为临床评估提供直观支持；InferCare RECIST Report 包含报告生成工具，支持报告编辑、保存和导出，辅助临床医生进行肿瘤疗效评估。\n图3 主页面图示",
       "tables": [],
       "children": []

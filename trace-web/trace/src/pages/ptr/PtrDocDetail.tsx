@@ -1,5 +1,5 @@
-import { Button, Input, Space, Spin, message } from "antd";
-import { PlusOutlined, DeleteOutlined, FileAddOutlined } from "@ant-design/icons";
+import { Button, Input, Space, Spin, Upload, message } from "antd";
+import { PlusOutlined, DeleteOutlined, FileAddOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -14,7 +14,75 @@ import "../pdp/PdpDocDetail.less";
 const IMG_CATEGORY_LABEL: Record<string, string> = {
     img_struct: "体系结构图",
     img_topo: "物理拓扑图",
+    img_ui: "用户界面关系图",
+    img_home: "主页面图示",
     img_flow: "网络安全流程图",
+};
+
+// 正文图题关键词 -> 图表文件管理分类
+const CAPTION_CATS: [string, string][] = [
+    ["用户界面关系图", "img_ui"],
+    ["主页面图示", "img_home"],
+    ["物理拓扑图", "img_topo"],
+    ["体系结构图", "img_struct"],
+];
+
+// 仅这些分类允许在文档内上传（写回图表文件管理）；其余为只读预览
+const UPLOADABLE_CATS = new Set(["img_ui", "img_home"]);
+
+// 扫描节点正文图题行（图N xxx），返回 [{caption, category}]
+const getNodeFigures = (node: any): { caption: string; category: string }[] => {
+    const figs: { caption: string; category: string }[] = [];
+    String(node?.body || "").split("\n").forEach((ln: string) => {
+        const s = ln.trim();
+        if (/^图\s*\d/.test(s)) {
+            const hit = CAPTION_CATS.find(([kw]) => s.includes(kw));
+            if (hit && !figs.some((f) => f.category === hit[1])) {
+                figs.push({ caption: s, category: hit[1] });
+            }
+        }
+    });
+    return figs;
+};
+
+const NAMING_ANCHOR = "软件完整版本及说明";
+
+type ImgAnchor = { kind: "naming" | "docfile"; category?: string; caption?: string; lineIndex: number };
+
+// 含图章节：返回图片锚点（图片插入在该行之后），按出现顺序
+const getImageAnchors = (node: any): ImgAnchor[] => {
+    const anchors: ImgAnchor[] = [];
+    const lines = String(node?.body || "").split("\n");
+    const isNaming = node?.ref_type === "naming_rule" || String(node?.title || "").includes("版本命名规则");
+    if (isNaming) {
+        const idx = lines.findIndex((l) => l.trim().startsWith(NAMING_ANCHOR));
+        if (idx >= 0) anchors.push({ kind: "naming", lineIndex: idx });
+    } else if (node?.ref_type === "appendix") {
+        lines.forEach((l, idx) => {
+            const s = l.trim();
+            if (/^图\s*\d/.test(s)) {
+                const hit = CAPTION_CATS.find(([kw]) => s.includes(kw));
+                if (hit && !anchors.some((a) => a.category === hit[1])) {
+                    anchors.push({ kind: "docfile", category: hit[1], caption: s, lineIndex: idx });
+                }
+            }
+        });
+    }
+    return anchors;
+};
+
+// 按锚点把正文拆成 N+1 段（每段含其末尾的锚点行；图片排在该段之后）
+const splitBodyByAnchors = (body: string, anchors: ImgAnchor[]): string[] => {
+    const lines = String(body || "").split("\n");
+    const idxs = anchors.map((a) => a.lineIndex).sort((a, b) => a - b);
+    const parts: string[] = [];
+    let start = 0;
+    idxs.forEach((ai) => {
+        parts.push(lines.slice(start, ai + 1).join("\n"));
+        start = ai + 1;
+    });
+    parts.push(lines.slice(start).join("\n"));
+    return parts;
 };
 
 let _seq = 0;
@@ -79,6 +147,7 @@ const ensureKeys = (nodes: any[]): any[] =>
         _key: n._key || genKey(),
         body: n.body ?? "",
         tables: Array.isArray(n.tables) ? n.tables : [],
+        images: Array.isArray(n.images) ? n.images : [],
         children: ensureKeys(n.children || []),
     }));
 
@@ -147,13 +216,15 @@ export default () => {
         sections: [] as any[],
         activeKey: "",
         docImages: {} as Record<string, string>,
+        uploadingCat: "",
     });
 
     // 封面=产品名称；产品版本=完整/发布版本；版本命名规则=全局配置（均始终取最新覆盖）
-    const fillAuto = (nodes: any[], info: { name?: string; full?: string; release?: string; namingBody?: string; env?: any }): any[] => {
+    const fillAuto = (nodes: any[], info: { name?: string; full?: string; release?: string; namingBody?: string; env?: any; overview?: string }): any[] => {
         const name = String(info.name || "").trim();
         const full = String(info.full || "").trim();
         const release = String(info.release || "").trim();
+        const overview = String(info.overview || "").trim();
         const env = info.env || null;
         const overwriteCol1 = (table: any[], map: Record<string, any>) =>
             table.map((row: any[]) => {
@@ -185,6 +256,8 @@ export default () => {
                 if (full || release) body = `软件完整版本：${full}\n软件发布版本：${release}`;
             } else if ((ref === "naming_rule" || t === "版本命名规则") && info.namingBody) {
                 body = info.namingBody;
+            } else if ((ref === "ui_relation" || t.includes("用户界面关系图")) && overview) {
+                body = `图2 用户界面关系图\n${overview}\n图3 主页面图示`;
             } else if (env && (ref === "runtime" || t === "运行环境")) {
                 if (String(env.arch || "").trim()) body = env.arch;
             } else if (env && ref === "rt_srv_hw") {
@@ -206,6 +279,7 @@ export default () => {
         const cats = new Set<string>();
         const walk = (nodes: any[]) => (nodes || []).forEach((n: any) => {
             if (n.img_category) cats.add(n.img_category);
+            getNodeFigures(n).forEach((f) => cats.add(f.category));
             walk(n.children || []);
         });
         walk(sections);
@@ -220,7 +294,8 @@ export default () => {
                 .catch(() => [cat, ""] as [string, string])
         )).then((pairs) => {
             const images: Record<string, string> = {};
-            pairs.forEach(([cat, url]) => { if (url) images[cat] = url; });
+            const bust = Date.now();
+            pairs.forEach(([cat, url]) => { if (url) images[cat] = `${url}?t=${bust}`; });
             dispatch({ docImages: images });
         });
     };
@@ -255,6 +330,7 @@ export default () => {
                     full: prod.full_version,
                     release: prod.release_version,
                     namingBody: vrContent ? buildNamingBody(vrContent) : "",
+                    overview: prod.overall_desc,
                     env,
                 });
                 finish(secs);
@@ -317,6 +393,96 @@ export default () => {
     };
     const addTable = () => updateTables([...(active.tables || []), [["", ""], ["", ""]]]);
     const delTable = (ti: number) => updateTables((active.tables || []).filter((_: any, i: number) => i !== ti));
+
+    // 在文档内上传/替换图片：写回「图表文件管理」对应分类（按产品全局共享）
+    const uploadDocImage = (category: string, file: any) => {
+        const productId = data.doc.product_id;
+        if (!productId) {
+            message.error("该文档未关联产品，无法上传");
+            return false;
+        }
+        if (!/^image\//.test(file.type || "")) {
+            message.error("请选择图片文件");
+            return false;
+        }
+        if (file.size > 8 * 1024 * 1024) {
+            message.error("图片不能超过 8MB");
+            return false;
+        }
+        dispatch({ uploadingCat: category });
+        ApiDocFile.list_doc_file(category, { product_id: productId, page_index: 0, page_size: 1 })
+            .then((res: any) => {
+                const existing = res.code === Api.C_OK ? (res.data?.rows || [])[0] : null;
+                return existing
+                    ? ApiDocFile.update_doc_file(category, { id: existing.id, product_id: productId, file })
+                    : ApiDocFile.add_doc_file(category, { product_id: productId, file });
+            })
+            .then((res: any) => {
+                dispatch({ uploadingCat: "" });
+                if (res.code === Api.C_OK) {
+                    message.success(`上传成功，已保存到「图表文件管理 · ${IMG_CATEGORY_LABEL[category] || ""}」`);
+                    loadDocImages(productId, data.sections);
+                } else {
+                    message.error(res.msg || "上传失败");
+                }
+            })
+            .catch(() => {
+                dispatch({ uploadingCat: "" });
+                message.error("上传失败");
+            });
+        return false;
+    };
+
+    // 含图章节：编辑某一段正文，重新拼回整段 body（图片位置由锚点行决定）
+    const setSegment = (i: number, val: string) => {
+        const anchors = getImageAnchors(active);
+        const parts = splitBodyByAnchors(active.body, anchors);
+        parts[i] = val;
+        patchNode(active._key, { body: parts.join("\n") });
+    };
+
+    // 段之间渲染对应图片块（示意图 / 取自图表文件管理的图片，可上传）
+    const renderImageBlock = (anchor: ImgAnchor) => {
+        if (anchor.kind === "naming") {
+            return (
+                <div className="pdp-field">
+                    <div className="pdp-label">软件完整版本及说明（示意图，导出自动包含）</div>
+                    <NamingRuleDiagram />
+                </div>
+            );
+        }
+        const cat = anchor.category as string;
+        return (
+            <div className="pdp-field">
+                <div className="pdp-label">
+                    {anchor.caption}（{IMG_CATEGORY_LABEL[cat] || "图片"}，取自「图表文件管理」，导出自动嵌入）
+                </div>
+                {data.docImages[cat] ? (
+                    <img
+                        src={data.docImages[cat]}
+                        alt={IMG_CATEGORY_LABEL[cat] || ""}
+                        style={{ maxWidth: "100%", border: "1px solid #eee", borderRadius: 4 }}
+                    />
+                ) : (
+                    <div style={{ color: "#999", padding: "8px 0" }}>
+                        未在「图表文件管理 - {IMG_CATEGORY_LABEL[cat] || ""}」找到该产品的图片。
+                    </div>
+                )}
+                {!readonly && UPLOADABLE_CATS.has(cat) && (
+                    <div style={{ marginTop: 10 }}>
+                        <Upload beforeUpload={(file: any) => uploadDocImage(cat, file)} showUploadList={false} accept="image/*">
+                            <Button icon={<UploadOutlined />} loading={data.uploadingCat === cat}>
+                                {data.docImages[cat] ? "替换图片" : "上传图片"}
+                            </Button>
+                        </Upload>
+                        <span style={{ color: "#999", marginLeft: 10 }}>
+                            上传后保存到「图表文件管理 · {IMG_CATEGORY_LABEL[cat]}」（按产品全局共享）
+                        </span>
+                    </div>
+                )}
+            </div>
+        );
+    };
 
     const doSave = () => {
         if (!id) return;
@@ -419,42 +585,41 @@ export default () => {
                                         onChange={(e) => patchNode(active._key, { title: e.target.value })}
                                     />
                                 </div>
-                                <div className="pdp-field">
-                                    <div className="pdp-label">正文</div>
-                                    <Input.TextArea
-                                        autoSize={{ minRows: 3, maxRows: 20 }}
-                                        value={active.body ?? ""}
-                                        disabled={readonly}
-                                        placeholder="本章节正文内容，可多行"
-                                        onChange={(e) => patchNode(active._key, { body: e.target.value })}
-                                    />
-                                </div>
-
-                                {stripNum(active.title) === "版本命名规则" && (
-                                    <div className="pdp-field">
-                                        <div className="pdp-label">软件完整版本及说明（示意图，导出自动包含）</div>
-                                        <NamingRuleDiagram />
-                                    </div>
-                                )}
-
-                                {active.ref_type === "appendix" && active.img_category && (
-                                    <div className="pdp-field">
-                                        <div className="pdp-label">
-                                            {IMG_CATEGORY_LABEL[active.img_category] || "图片"}（取自「图表文件管理」，导出自动嵌入）
-                                        </div>
-                                        {data.docImages[active.img_category] ? (
-                                            <img
-                                                src={data.docImages[active.img_category]}
-                                                alt={IMG_CATEGORY_LABEL[active.img_category] || ""}
-                                                style={{ maxWidth: "100%", border: "1px solid #eee", borderRadius: 4 }}
-                                            />
-                                        ) : (
-                                            <div style={{ color: "#999", padding: "8px 0" }}>
-                                                未在「图表文件管理 - {IMG_CATEGORY_LABEL[active.img_category] || ""}」找到该产品的图片，请先在该模块上传；导出时也将留空。
+                                {(() => {
+                                    const anchors = getImageAnchors(active);
+                                    if (anchors.length === 0) {
+                                        return (
+                                            <div className="pdp-field">
+                                                <div className="pdp-label">正文</div>
+                                                <Input.TextArea
+                                                    autoSize={{ minRows: 3, maxRows: 20 }}
+                                                    value={active.body ?? ""}
+                                                    disabled={readonly}
+                                                    placeholder="本章节正文内容，可多行"
+                                                    onChange={(e) => patchNode(active._key, { body: e.target.value })}
+                                                />
                                             </div>
-                                        )}
-                                    </div>
-                                )}
+                                        );
+                                    }
+                                    const parts = splitBodyByAnchors(active.body, anchors);
+                                    const segLabel = (i: number) =>
+                                        parts.length === 1 ? "正文" : i === 0 ? "正文（图前）" : i === parts.length - 1 ? "正文（图后）" : "正文（图间）";
+                                    return parts.map((p, i) => (
+                                        <div key={`seg-${i}`}>
+                                            <div className="pdp-field">
+                                                <div className="pdp-label">{segLabel(i)}</div>
+                                                <Input.TextArea
+                                                    autoSize={{ minRows: 2, maxRows: 20 }}
+                                                    value={p}
+                                                    disabled={readonly}
+                                                    placeholder={i === 0 ? "图片前的正文内容，可多行" : "图片后的正文内容，可多行"}
+                                                    onChange={(e) => setSegment(i, e.target.value)}
+                                                />
+                                            </div>
+                                            {i < anchors.length && renderImageBlock(anchors[i])}
+                                        </div>
+                                    ));
+                                })()}
 
                                 {(active.tables || []).map((tb: any[], ti: number) => (
                                     <div className="pdp-table-block" key={ti}>

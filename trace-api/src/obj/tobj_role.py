@@ -94,6 +94,14 @@ class Perms(Enum):
     doc_file_struct_view = PermForm(code="doc_file_struct_view", name="查看", p_code=doc_file_struct.code)
     doc_file_struct_edit = PermForm(code="doc_file_struct_edit", name="编辑", p_code=doc_file_struct.code)
 
+    doc_file_ui = PermForm(code="doc_file_ui", name="图表文件/用户界面关系图管理")
+    doc_file_ui_view = PermForm(code="doc_file_ui_view", name="查看", p_code=doc_file_ui.code)
+    doc_file_ui_edit = PermForm(code="doc_file_ui_edit", name="编辑", p_code=doc_file_ui.code)
+
+    doc_file_home = PermForm(code="doc_file_home", name="图表文件/主页面图示管理")
+    doc_file_home_view = PermForm(code="doc_file_home_view", name="查看", p_code=doc_file_home.code)
+    doc_file_home_edit = PermForm(code="doc_file_home_edit", name="编辑", p_code=doc_file_home.code)
+
     prod_haz = PermForm(code="prod_haz", name="产品版本/产品HAZ管理")
     prod_haz_view = PermForm(code="prod_haz_view", name="查看", p_code=prod_haz.code)
     prod_haz_edit = PermForm(code="prod_haz_edit", name="编辑", p_code=prod_haz.code)
@@ -177,6 +185,8 @@ def get_default_role_perm_codes():
         "doc_file_flow", "doc_file_flow_view", "doc_file_flow_edit",
         "doc_file_topo", "doc_file_topo_view", "doc_file_topo_edit",
         "doc_file_struct", "doc_file_struct_view", "doc_file_struct_edit",
+        "doc_file_ui", "doc_file_ui_view", "doc_file_ui_edit",
+        "doc_file_home", "doc_file_home_view", "doc_file_home_edit",
         "prod_haz", "prod_haz_view", "prod_haz_edit",
         "prod_rcm", "prod_rcm_view", "prod_rcm_edit",
         "prod_cst", "prod_cst_view", "prod_cst_edit",
@@ -192,6 +202,8 @@ def get_default_role_perm_codes():
         "doc_file_flow", "doc_file_flow_view", "doc_file_flow_edit",
         "doc_file_topo", "doc_file_topo_view", "doc_file_topo_edit",
         "doc_file_struct", "doc_file_struct_view", "doc_file_struct_edit",
+        "doc_file_ui", "doc_file_ui_view", "doc_file_ui_edit",
+        "doc_file_home", "doc_file_home_view", "doc_file_home_edit",
         "prod_haz", "prod_haz_view", "prod_haz_edit",
         "prod_rcm", "prod_rcm_view", "prod_rcm_edit",
         "prod_cst", "prod_cst_view", "prod_cst_edit",
@@ -205,6 +217,8 @@ def get_default_role_perm_codes():
         "doc_file_flow", "doc_file_flow_view", "doc_file_flow_edit",
         "doc_file_topo", "doc_file_topo_view", "doc_file_topo_edit",
         "doc_file_struct", "doc_file_struct_view", "doc_file_struct_edit",
+        "doc_file_ui", "doc_file_ui_view", "doc_file_ui_edit",
+        "doc_file_home", "doc_file_home_view", "doc_file_home_edit",
         "prod_haz", "prod_haz_view", "prod_haz_edit",
         "prod_rcm", "prod_rcm_view", "prod_rcm_edit",
         "prod_cst", "prod_cst_view", "prod_cst_edit",
