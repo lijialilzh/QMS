@@ -51,6 +51,8 @@ import PirDocs from "./pages/pir/PirDocs";
 import PirDocDetail from "./pages/pir/PirDocDetail";
 import VuhDocs from "./pages/vuh/VuhDocs";
 import VuhDocDetail from "./pages/vuh/VuhDocDetail";
+import PtrDocs from "./pages/ptr/PtrDocs";
+import PtrDocDetail from "./pages/ptr/PtrDocDetail";
 import VersionRule from "./pages/version_rule/VersionRule";
 
 const DEF_LANG = localStorage.getItem("lang") || I18N.DEF_LANG;
@@ -120,6 +122,9 @@ const router = createRouter([
             { path: "/vuh_docs", element: <VuhDocs /> },
             { path: "/vuh_docs/edit/:id", element: <VuhDocDetail /> },
             { path: "/vuh_docs/view/:id", element: <VuhDocDetail /> },
+            { path: "/ptr_docs", element: <PtrDocs /> },
+            { path: "/ptr_docs/edit/:id", element: <PtrDocDetail /> },
+            { path: "/ptr_docs/view/:id", element: <PtrDocDetail /> },
 
             {path: "/prod_traces", element: <ProdTraces /> },
             {path: "/prod_comparison", element: <ProdComparison /> },

@@ -75,3 +75,6 @@ from .vuh_doc import VuhDoc  # noqa: E402,F401
 
 # 版本命名规则（基础数据，全局单条配置）。详见 docs/function_docs/55_版本命名规则.md。
 from .version_rule import VersionRule  # noqa: E402,F401
+
+# 产品技术要求（独立文档模块）。详见 docs/function_docs/56_产品技术要求.md。
+from .ptr_doc import PtrDoc  # noqa: E402,F401

@@ -192,6 +192,11 @@ export default () => {
                         label: ts("menu.vuh_docs"),
                         perm: "vuh_doc_view",
                     },
+                    {
+                        key: "/ptr_docs",
+                        label: ts("menu.ptr_docs"),
+                        perm: "ptr_doc_view",
+                    },
                 ],
             },
             {
