@@ -244,6 +244,11 @@ export default () => {
                         label: ts("menu.cyber_cap_docs"),
                         perm: "cyber_cap_doc_view",
                     },
+                    {
+                        key: "/research_docs",
+                        label: ts("menu.research_docs"),
+                        perm: "research_doc_view",
+                    },
                 ],
             },
             {

@@ -162,6 +162,10 @@ class Perms(Enum):
     cyber_cap_doc_view = PermForm(code="cyber_cap_doc_view", name="查看", p_code=cyber_cap_doc.code)
     cyber_cap_doc_edit = PermForm(code="cyber_cap_doc_edit", name="编辑", p_code=cyber_cap_doc.code)
 
+    research_doc = PermForm(code="research_doc", name="产品文件管理/自研软件研究报告")
+    research_doc_view = PermForm(code="research_doc_view", name="查看", p_code=research_doc.code)
+    research_doc_edit = PermForm(code="research_doc_edit", name="编辑", p_code=research_doc.code)
+
 
 class RoleForm(BaseModel):
     id: Optional[int] = Field(title="角色ID")
@@ -220,6 +224,7 @@ def get_default_role_perm_codes():
         "release_note", "release_note_view", "release_note_edit",
         "pha_doc", "pha_doc_view", "pha_doc_edit",
         "cyber_cap_doc", "cyber_cap_doc_view", "cyber_cap_doc_edit",
+        "research_doc", "research_doc_view", "research_doc_edit",
     }
     developer_perms = {
         "sds_doc", "sds_doc_view", "sds_doc_edit",

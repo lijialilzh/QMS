@@ -35,6 +35,7 @@
         "release_notes": "产品发布说明",
         "pha_docs": "初步危害分析清单",
         "cyber_cap_docs": "网络安全能力分析",
+        "research_docs": "自研软件研究报告",
         "srs_manage": "SRS管理",
         "srs_req": "需求列表",
         "sds_docs": "软件详细设计",

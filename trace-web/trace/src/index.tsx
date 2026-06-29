@@ -61,6 +61,8 @@ import PhaDocs from "./pages/pha/PhaDocs";
 import PhaDocDetail from "./pages/pha/PhaDocDetail";
 import CyberCapDocs from "./pages/cyber_cap/CyberCapDocs";
 import CyberCapDocDetail from "./pages/cyber_cap/CyberCapDocDetail";
+import ResearchDocs from "./pages/research/ResearchDocs";
+import ResearchDocDetail from "./pages/research/ResearchDocDetail";
 import VersionRule from "./pages/version_rule/VersionRule";
 import CompanyInfos from "./pages/basedata/CompanyInfos";
 
@@ -148,6 +150,9 @@ const router = createRouter([
             { path: "/cyber_cap_docs", element: <CyberCapDocs /> },
             { path: "/cyber_cap_docs/edit/:id", element: <CyberCapDocDetail /> },
             { path: "/cyber_cap_docs/view/:id", element: <CyberCapDocDetail /> },
+            { path: "/research_docs", element: <ResearchDocs /> },
+            { path: "/research_docs/edit/:id", element: <ResearchDocDetail /> },
+            { path: "/research_docs/view/:id", element: <ResearchDocDetail /> },
 
             {path: "/prod_traces", element: <ProdTraces /> },
             {path: "/prod_comparison", element: <ProdComparison /> },

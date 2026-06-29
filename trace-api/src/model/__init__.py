@@ -93,3 +93,6 @@ from .pha_doc import PhaDoc  # noqa: E402,F401
 
 # 网络安全能力分析（MDS2，独立文档模块）。
 from .cyber_cap_doc import CyberCapDoc  # noqa: E402,F401
+
+# 自研软件研究报告（独立文档模块）。
+from .research_doc import ResearchDoc  # noqa: E402,F401
