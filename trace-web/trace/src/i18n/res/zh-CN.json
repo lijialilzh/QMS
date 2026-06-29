@@ -32,6 +32,8 @@
         "vuh_docs": "版本更新历史",
         "ptr_docs": "产品技术要求",
         "label_docs": "产品标签样稿",
+        "release_notes": "产品发布说明",
+        "pha_docs": "初步危害分析清单",
         "srs_manage": "SRS管理",
         "srs_req": "需求列表",
         "sds_docs": "软件详细设计",

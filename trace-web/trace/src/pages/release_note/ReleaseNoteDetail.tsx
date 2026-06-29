@@ -4,21 +4,21 @@ import { useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
-import * as Api from "@/api/ApiLabelDoc";
-import * as ApiProduct from "@/api/ApiProduct";
-import * as ApiCompanyInfo from "@/api/ApiCompanyInfo";
-import * as ApiTimeline from "@/api/ApiProjectTimeline";
+import * as Api from "@/api/ApiReleaseNote";
 import * as ApiMember from "@/api/ApiProjectMember";
+import * as ApiProduct from "@/api/ApiProduct";
+import * as ApiTimeline from "@/api/ApiProjectTimeline";
+import * as ApiProdDhf from "@/api/ApiProdDhf";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
 
-const stripNum = (title: string) => String(title || "").replace(/^\s*\d+(?:\.\d+)*[\.、\s]*/, "").trim();
+const stripNum = (title: string): string => String(title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();
 
-// 时间线里找含「标签」文件输出的最早日期行，作为文件修订记录的修改日期
-const computeFileDate = (rows: any[], keyword = "标签"): string => {
+// 时间线里找含「发布说明」输出的最早日期行，作为发布时间，格式「YYYY年M月D日」
+const computeReleaseDate = (rows: any[], keyword = "发布说明"): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
     const matches = (rows || []).filter((r: any) =>
         (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => String(v || "").includes(keyword))
@@ -26,8 +26,25 @@ const computeFileDate = (rows: any[], keyword = "标签"): string => {
     if (!matches.length) return "";
     const key = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
     let best = matches[0];
-    matches.forEach((r: any) => { if (key(r) < key(best)) best = r; });
+    matches.forEach((r: any) => { if (key(r) > key(best)) best = r; });
     return `${num(best.year)}年${num(best.month)}月${num(best.day)}日`;
+};
+
+const archiveText = (name: string) =>
+    `通过评审，${String(name || "").trim()}的全套设计开发历史文档（DHF）和全套器械主记录（DMR）已完成归档。`;
+
+const overviewText = (name: string, release: string, full: string, funcDesc: string) => {
+    const lines = [
+        `产品名称：${String(name || "").trim()}`,
+        `发布版本：${String(release || "").trim()}`,
+        `完整版本：${String(full || "").trim()}`,
+        "交付形式：物理交付",
+        "存储媒介：U盘",
+        "产品功能概述：",
+    ];
+    const desc = String(funcDesc || "").trim();
+    if (desc) lines.push(desc);
+    return lines.join("\n");
 };
 
 const ensureKeys = (nodes: any[]): any[] =>
@@ -61,6 +78,41 @@ const removeNode = (nodes: any[], key: string): any[] =>
 
 const firstKey = (nodes: any[]): string => (nodes && nodes[0] ? nodes[0]._key : "");
 
+// 找「发布时间」章节节点
+const findReleaseNode = (nodes: any[]): any => {
+    for (const n of nodes || []) {
+        if (n.ref_type === "rn_release_time" || stripNum(n.title) === "发布时间") return n;
+        const hit = findReleaseNode(n.children || []);
+        if (hit) return hit;
+    }
+    return null;
+};
+
+const computeNumbers = (nodes: any[]): Record<string, string> => {
+    const map: Record<string, string> = {};
+    let bodyIdx = 0;
+    (nodes || []).forEach((n: any) => {
+        if (n.ref_type === "cover" || n.ref_type === "revision") {
+            map[n._key] = "";
+            walkChildren(n.children || [], "", map);
+            return;
+        }
+        bodyIdx += 1;
+        map[n._key] = String(bodyIdx);
+        walkChildren(n.children || [], String(bodyIdx), map);
+    });
+    return map;
+};
+const walkChildren = (nodes: any[], prefix: string, map: Record<string, string>) => {
+    let idx = 0;
+    (nodes || []).forEach((n: any) => {
+        idx += 1;
+        const num = prefix ? `${prefix}.${idx}` : `${idx}`;
+        map[n._key] = num;
+        walkChildren(n.children || [], num, map);
+    });
+};
+
 export default () => {
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
@@ -78,87 +130,145 @@ export default () => {
         products: [] as any[],
     });
 
-    // 标签表格：按行首标签自动覆盖第 2 列（产品信息 + 公司基本信息），封面表不覆盖
-    const fillAuto = (nodes: any[], labelMap: Record<string, string>): any[] => {
-        const overwriteCol1 = (table: any[]) =>
-            table.map((row: any[]) => {
-                if (!Array.isArray(row) || row.length < 2) return row;
-                const k = String(row[0]).trim();
-                if (labelMap[k] !== undefined && String(labelMap[k] || "").trim()) {
-                    const next = [...row];
-                    next[1] = labelMap[k];
-                    return next;
-                }
-                return row;
-            });
+    // 全文自动获取：产品概述(产品名/版本/总体描述)、发布时间、文档归档(产品名)
+    const fillAuto = (nodes: any[], info: { overview?: string; releaseDate?: string; archive?: string }): any[] => {
         const fix = (n: any): any => {
-            const tables = n.ref_type === "cover" ? n.tables : (n.tables || []).map((tb: any[]) => overwriteCol1(tb));
-            return { ...n, tables, children: (n.children || []).map(fix) };
+            let body = n.body;
+            const t = stripNum(n.title);
+            if (n.ref_type === "rn_overview" || t === "产品概述") {
+                body = info.overview;
+            } else if (n.ref_type === "rn_release_time" || t === "发布时间") {
+                body = info.releaseDate || "";
+            } else if (n.ref_type === "rn_archive" || t === "文档归档") {
+                if (info.archive) body = info.archive;
+            }
+            return { ...n, body, children: (n.children || []).map(fix) };
         };
         return (nodes || []).map(fix);
     };
 
-    // 文件修订记录首行：修改日期/版本号/修订说明/修订人/批准人（仅填空、不覆盖已填）
+    // 文件修订记录首行（仅填空、不覆盖已填）
     const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; pm?: string; approver?: string }): any[] => {
         const fix = (n: any): any => {
             const isRev = n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
             let tables = n.tables;
             if (isRev && Array.isArray(n.tables) && Array.isArray(n.tables[0])) {
-                const t = n.tables[0].map((r: any[]) => (Array.isArray(r) ? [...r] : r));
-                const cols = (t[0] || []).length || 5;
-                while (t.length < 6) t.push(new Array(cols).fill(""));
-                const row = t[1];
+                const tb = n.tables[0].map((r: any[]) => (Array.isArray(r) ? [...r] : r));
+                const cols = (tb[0] || []).length || 5;
+                while (tb.length < 6) tb.push(new Array(cols).fill(""));
+                const row = tb[1];
                 while (row.length < 5) row.push("");
                 row[0] = info.fileDate || "";
                 if (info.version) row[1] = info.version;
                 if (!String(row[2] || "").trim()) row[2] = "首次发布";
                 row[3] = info.pm || "";
                 if (info.approver) row[4] = info.approver;
-                tables = [t, ...n.tables.slice(1)];
+                tables = [tb, ...n.tables.slice(1)];
             }
             return { ...n, tables, children: (n.children || []).map(fix) };
         };
         return (nodes || []).map(fix);
     };
 
-    // 按产品重新获取并填充标签表（产品信息 + 公司基本信息）及文件修订记录
+    // 移交记录：文件编号按 DHF 自动获取
+    // - 文件移交记录(3.4.2)：表头含「文件编号/文件名称」，按名称列填编号列
+    // - 产品移交记录(3.4.1)：单格形如「编号 文档名」或纯「文档名」，按文档名取 DHF 最新编号重建
+    const fillTransferFiles = (nodes: any[], dhfMap: Record<string, string>, acceptanceDate: string): any[] => {
+        const codeOf = (name: string): string => {
+            const k = String(name || "").trim();
+            if (!k) return "";
+            if (dhfMap[k]) return dhfMap[k];
+            const hit = Object.keys(dhfMap).find((n) => n.includes(k) || k.includes(n));
+            return hit ? dhfMap[hit] : "";
+        };
+        // 把「编号 文档名」/「文档名」单元格按 DHF 重建为「最新编号 文档名」（保留原文档名文案）
+        const resolveCell = (val: any): any => {
+            const s = String(val || "").trim();
+            if (!s) return val;
+            const m = s.match(/^([A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+)\s+(\S.*)$/);
+            if (m) {
+                const name = m[2].trim();
+                const code = codeOf(name);
+                return code ? `${code} ${name}` : val;
+            }
+            if (dhfMap[s]) return `${dhfMap[s]} ${s}`;
+            return val;
+        };
+        const fix = (n: any): any => {
+            const title = stripNum(n.title);
+            const isFileRec = n.ref_type === "rn_transfer_files" || title === "文件移交记录";
+            const isProdRec = n.ref_type === "rn_transfer_product" || title === "产品移交记录";
+            let tables = n.tables;
+            if (isFileRec && Array.isArray(n.tables)) {
+                tables = n.tables.map((tb: any[]) => {
+                    if (!Array.isArray(tb) || !tb.length) return tb;
+                    const header = tb[0] || [];
+                    const isFileTbl = header.some((h: any) => String(h).includes("文件编号")) && header.some((h: any) => String(h).includes("文件名称"));
+                    if (!isFileTbl) return tb;
+                    return tb.map((row: any[], ri: number) => {
+                        if (ri === 0 || !Array.isArray(row) || row.length < 2) return row;
+                        const code = codeOf(row[1]);
+                        if (!code) return row;
+                        const next = [...row];
+                        next[0] = code;
+                        return next;
+                    });
+                });
+            } else if (isProdRec && Array.isArray(n.tables)) {
+                tables = n.tables.map((tb: any[]) => {
+                    if (!Array.isArray(tb)) return tb;
+                    return tb.map((row: any[]) => {
+                        if (!Array.isArray(row)) return row;
+                        const next = row.map((cell: any) => resolveCell(cell));
+                        // 交付时间：取时间线「产品验收记录」日期，取不到则清空
+                        if (next.length > 2 && String(next[1] || "").includes("交付时间")) {
+                            next[2] = acceptanceDate || "";
+                        }
+                        return next;
+                    });
+                });
+            }
+            return { ...n, tables, children: (n.children || []).map(fix) };
+        };
+        return (nodes || []).map(fix);
+    };
+
     const autofill = (productId: number, secs: any[], version: string): Promise<any[]> =>
         new Promise((resolve) => {
             if (!productId) { resolve(secs); return; }
             Promise.all([
                 ApiProduct.get_product({ id: productId }).catch(() => null),
-                ApiCompanyInfo.list_company_info({ page_index: 0, page_size: 1 }).catch(() => null),
                 ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
                 ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
-            ]).then(([pr, ci, tl, mb]: any[]) => {
+                ApiProdDhf.list_prod_dhf({ prod_id: productId, page_index: 0, page_size: 10000 }).catch(() => null),
+            ]).then(([pr, tl, mb, dh]: any[]) => {
                 const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
-                const company = ci && ci.code === Api.C_OK ? ((ci.data?.rows || [])[0] || {}) : {};
                 const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
                 const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
+                const dhfRows = dh && dh.code === Api.C_OK ? ((dh.data && dh.data.rows) || []) : [];
+                const dhfMap: Record<string, string> = {};
+                dhfRows.forEach((d: any) => {
+                    const name = String(d.name || "").trim();
+                    if (name && d.code) dhfMap[name] = String(d.code).trim();
+                });
                 const findRole = (pred: (role: string) => boolean) => {
                     const hit = members.find((m: any) => pred(String(m.role || "")));
                     return hit ? String(hit.name || "").trim() : "";
                 };
-                const labelMap: Record<string, string> = {
-                    "产品型号": prod.type_code || "",
-                    "英文名称": prod.type_code || "",
-                    "完整版本": prod.full_version || "",
-                    "发布版本": prod.release_version || "",
-                    "软件名称": prod.name || "",
-                    "注册人": company.registrant || "",
-                    "住所": company.address || "",
-                    "受托生产企业": company.manufacturer || "",
-                    "生产地址": company.production_address || "",
-                    "生产许可证编号": company.production_license_no || "",
-                    "联系电话": company.contact_phone || "",
-                };
-                let out = fillAuto(secs, labelMap);
+                const releaseDate = computeReleaseDate(tlRows);
+                const acceptanceDate = computeReleaseDate(tlRows, "产品验收记录");
+                let out = fillAuto(secs, {
+                    overview: overviewText(prod.name, prod.release_version, prod.full_version, prod.overall_desc),
+                    releaseDate,
+                    archive: archiveText(prod.name),
+                });
                 out = fillRevision(out, {
-                    fileDate: computeFileDate(tlRows),
+                    fileDate: releaseDate,
                     version,
                     pm: findRole((r) => r.includes("产品经理")),
                     approver: findRole((r) => r.includes("负责人") && r.includes("产品")),
                 });
+                out = fillTransferFiles(out, dhfMap, acceptanceDate);
                 resolve(out);
             }).catch(() => resolve(secs));
         });
@@ -166,7 +276,7 @@ export default () => {
     const load = () => {
         if (!id) return;
         dispatch({ loading: true });
-        Api.get_label_doc({ id }).then((res: any) => {
+        Api.get_release_note({ id }).then((res: any) => {
             if (res.code !== Api.C_OK) {
                 dispatch({ loading: false });
                 message.error(res.msg);
@@ -174,17 +284,22 @@ export default () => {
             }
             const doc = res.data || {};
             const sections = ensureKeys((doc.content && doc.content.sections) || []);
-            autofill(doc.product_id, sections, doc.version || "").then((secs) => {
+            autofill(doc.product_id, sections, doc.version).then((secs) => {
                 dispatch({ loading: false, doc, sections: secs, activeKey: findNode(secs, data.activeKey) ? data.activeKey : firstKey(secs) });
             });
         });
     };
 
-    // 修改产品名称/版本后，重新拉取并填充所有自动获取内容（保留人工编辑的非自动字段）
     const rebindProduct = (newId: number) => {
         const product = (data.products || []).find((p: any) => p.id === newId) || {};
         dispatch({ loading: true, doc: { ...data.doc, product_id: newId, product_name: product.name, product_full_version: product.full_version } });
-        autofill(newId, data.sections, data.doc.version || "").then((secs) => dispatch({ loading: false, sections: secs }));
+        autofill(newId, data.sections, data.doc.version).then((secs) => {
+            dispatch({ loading: false, sections: secs });
+            const rt = findReleaseNode(secs);
+            if (!rt || !String(rt.body || "").trim()) {
+                message.warning("该产品未查询到对应时间线，发布时间已清空");
+            }
+        });
     };
 
     useEffect(() => {
@@ -253,12 +368,10 @@ export default () => {
         if (!id) return;
         dispatch({ saving: true });
         const content = { sections: stripKeys(data.sections) };
-        Api.update_label_doc({ id, content, product_id: data.doc.product_id, version: data.doc.version }).then((res: any) => {
+        Api.update_release_note({ id, content, product_id: data.doc.product_id, version: data.doc.version }).then((res: any) => {
             dispatch({ saving: false });
-            if (res.code === Api.C_OK) {
-                message.success(ts("save_success"));
-                load();
-            } else message.error(res.msg);
+            if (res.code === Api.C_OK) message.success(ts("save_success"));
+            else message.error(res.msg);
         });
     };
 
@@ -266,7 +379,7 @@ export default () => {
         if (!id) return;
         dispatch({ exporting: true });
         try {
-            const res: any = await Api.export_label_doc({ id });
+            const res: any = await Api.export_release_note({ id });
             if (res.code !== Api.C_OK) message.error(res.msg || "导出失败");
         } catch (_e) {
             message.error("导出失败");
@@ -275,14 +388,19 @@ export default () => {
         }
     };
 
+    const numbers = computeNumbers(data.sections);
+
     const renderNav = (nodes: any[], depth: number) =>
-        (nodes || []).map((n: any) => (
+        (nodes || []).map((n: any) => {
+            const num = numbers[n._key];
+            const label = `${num ? num + " " : ""}${stripNum(n.title) || "(未命名)"}`;
+            return (
             <div key={n._key}>
                 <div
                     className={`pdp-nav-item${n._key === data.activeKey ? " active" : ""}`}
                     style={{ paddingLeft: 8 + depth * 14 }}
                     onClick={() => dispatch({ activeKey: n._key })}>
-                    <span className="pdp-nav-title" title={n.title}>{n.title || "(未命名)"}</span>
+                    <span className="pdp-nav-title" title={label}>{label}</span>
                     {!readonly && (
                         <span className="pdp-nav-ops" onClick={(e) => e.stopPropagation()}>
                             <PlusOutlined title="添加子章节" onClick={() => addChild(n._key)} />
@@ -292,13 +410,14 @@ export default () => {
                 </div>
                 {renderNav(n.children || [], depth + 1)}
             </div>
-        ));
+            );
+        });
 
     return (
         <div className="div-v page pdp-detail">
             <div className="div-h pdp-toolbar">
                 <div className="pdp-toolbar-title">
-                    产品标签样稿
+                    产品发布说明
                     {readonly ? (
                         <span className="pdp-meta">
                             {data.doc.product_name ? `　${data.doc.product_name}` : ""}
@@ -334,7 +453,7 @@ export default () => {
                         </Button>
                     )}
                     <Button loading={data.exporting} onClick={doExport}>导出</Button>
-                    <Button onClick={() => navigate("/label_docs")}>{ts("back")}</Button>
+                    <Button onClick={() => navigate("/release_notes")}>{ts("back")}</Button>
                 </Space>
             </div>
 
@@ -343,7 +462,7 @@ export default () => {
                     <div className="pdp-nav">
                         <div className="pdp-nav-head">目录</div>
                         {!readonly && (
-                            <div className="pdp-nav-hint">点章节改名/编辑，右侧 + 加子章节、🗑 删除；标签信息（产品型号/版本/公司信息）自动获取</div>
+                            <div className="pdp-nav-hint">点章节改名/编辑，右侧 + 加子章节、🗑 删除；编号按层级自动生成</div>
                         )}
                         {renderNav(data.sections, 0)}
                         {!readonly && (
@@ -359,18 +478,19 @@ export default () => {
                         ) : (
                             <>
                                 <div className="pdp-field">
-                                    <div className="pdp-label">章节标题</div>
+                                    <div className="pdp-label">章节标题{numbers[active._key] ? `（编号 ${numbers[active._key]} 自动生成）` : ""}</div>
                                     <Input
-                                        value={active.title}
+                                        addonBefore={numbers[active._key] || undefined}
+                                        value={stripNum(active.title)}
                                         disabled={readonly}
-                                        placeholder="如：图1 产品标签样稿"
+                                        placeholder="只填名称，如：发布时间"
                                         onChange={(e) => patchNode(active._key, { title: e.target.value })}
                                     />
                                 </div>
                                 <div className="pdp-field">
-                                    <div className="pdp-label">正文（可选，标签的说明文字）</div>
+                                    <div className="pdp-label">正文</div>
                                     <Input.TextArea
-                                        autoSize={{ minRows: 2, maxRows: 20 }}
+                                        autoSize={{ minRows: 3, maxRows: 20 }}
                                         value={active.body ?? ""}
                                         disabled={readonly}
                                         placeholder="本章节正文内容，可多行"
@@ -378,18 +498,7 @@ export default () => {
                                     />
                                 </div>
 
-                                {active.ref_type === "label_seal" && (
-                                    <div className="pdp-field">
-                                        <div className="pdp-label">封口贴合格标签（固定图，导出自动包含，无需编辑）</div>
-                                        <img
-                                            src="assets/img/qc_pass.png"
-                                            alt="QC PASS"
-                                            style={{ width: 140, border: "1px solid #eee", borderRadius: 4, padding: 4 }}
-                                        />
-                                    </div>
-                                )}
-
-                                {active.ref_type !== "label_seal" && (active.tables || []).map((tb: any[], ti: number) => (
+                                {(active.tables || []).map((tb: any[], ti: number) => (
                                     <div className="pdp-table-block" key={ti}>
                                         <div className="pdp-table-bar">
                                             <span className="pdp-label">表格 {ti + 1}</span>
@@ -406,7 +515,7 @@ export default () => {
                                                 {tb.map((row: any[], r: number) => (
                                                     <tr key={r}>
                                                         {row.map((cell: any, ci: number) => (
-                                                            <td key={ci}>
+                                                            <td key={ci} className={r === 0 ? "head" : ""}>
                                                                 <Input.TextArea
                                                                     className="pdp-cell"
                                                                     autoSize={{ minRows: 1, maxRows: 8 }}
@@ -433,7 +542,7 @@ export default () => {
                                     </div>
                                 ))}
 
-                                {!readonly && active.ref_type !== "label_seal" && (
+                                {!readonly && (
                                     <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
                                         添加表格
                                     </Button>

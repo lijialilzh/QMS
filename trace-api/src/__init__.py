@@ -20,7 +20,7 @@ from .api import web_auth, web_session, api_user, api_role, api_project, api_haz
     api_prod_haz, api_prod_rcm, api_prod_cst, api_srs_req, api_srs_reqd, api_prod_dhf, api_sds_reqd, api_sds_trace, \
     api_srs_type, api_doc_file, api_risk_mgmt_doc, api_cybersec_doc, api_ai_support, \
     api_project_member, api_project_timeline, api_prod_runtime_env, api_prod_device_res, api_pdp_doc, api_pir_doc, \
-    api_vuh_doc, api_version_rule, api_ptr_doc, api_company_info, api_label_doc
+    api_vuh_doc, api_version_rule, api_ptr_doc, api_company_info, api_label_doc, api_release_note, api_pha_doc
 from .utils import read_line
 from .utils.i18n import ts
 from .utils.sql_middleware import SQLAlchemyMiddleware
@@ -88,6 +88,8 @@ def create_app():
     main_router.include_router(api_ptr_doc.router, prefix="/ptr_doc", tags=["产品技术要求"])
     main_router.include_router(api_company_info.router, prefix="/company_info", tags=["公司基本信息"])
     main_router.include_router(api_label_doc.router, prefix="/label_doc", tags=["产品标签样稿"])
+    main_router.include_router(api_release_note.router, prefix="/release_note", tags=["产品发布说明"])
+    main_router.include_router(api_pha_doc.router, prefix="/pha_doc", tags=["初步危害分析清单"])
     main_router.include_router(api_haz.router, prefix="/haz", tags=["HAZ"])
     main_router.include_router(api_rcm.router, prefix="/rcm", tags=["RCM"])
     main_router.include_router(api_cst.router, prefix="/cst", tags=["CST"])

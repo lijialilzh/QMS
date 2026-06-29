@@ -187,16 +187,14 @@ class Server(object):
                 while len(row) < 5:
                     row.append("")
 
-                def set_if(i, val):
-                    if val and not str(row[i] or "").strip():
-                        row[i] = val
-
-                set_if(0, info.get("file_date"))
-                set_if(1, info.get("version"))
+                row[0] = info.get("file_date") or ""
+                if info.get("version"):
+                    row[1] = info.get("version")
                 if not str(row[2] or "").strip():
                     row[2] = "首次发布"
-                set_if(3, info.get("pm"))
-                set_if(4, info.get("approver"))
+                row[3] = info.get("pm") or ""
+                if info.get("approver"):
+                    row[4] = info.get("approver")
         for child in (node.get("children") or []):
             self.__fill_revision(child, info)
 

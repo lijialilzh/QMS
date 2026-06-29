@@ -229,6 +229,16 @@ export default () => {
                         label: ts("menu.label_docs"),
                         perm: "label_doc_view",
                     },
+                    {
+                        key: "/release_notes",
+                        label: ts("menu.release_notes"),
+                        perm: "release_note_view",
+                    },
+                    {
+                        key: "/pha_docs",
+                        label: ts("menu.pha_docs"),
+                        perm: "pha_doc_view",
+                    },
                 ],
             },
             {

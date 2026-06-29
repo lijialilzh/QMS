@@ -55,6 +55,10 @@ import PtrDocs from "./pages/ptr/PtrDocs";
 import PtrDocDetail from "./pages/ptr/PtrDocDetail";
 import LabelDocs from "./pages/label/LabelDocs";
 import LabelDocDetail from "./pages/label/LabelDocDetail";
+import ReleaseNotes from "./pages/release_note/ReleaseNotes";
+import ReleaseNoteDetail from "./pages/release_note/ReleaseNoteDetail";
+import PhaDocs from "./pages/pha/PhaDocs";
+import PhaDocDetail from "./pages/pha/PhaDocDetail";
 import VersionRule from "./pages/version_rule/VersionRule";
 import CompanyInfos from "./pages/basedata/CompanyInfos";
 
@@ -133,6 +137,12 @@ const router = createRouter([
             { path: "/label_docs", element: <LabelDocs /> },
             { path: "/label_docs/edit/:id", element: <LabelDocDetail /> },
             { path: "/label_docs/view/:id", element: <LabelDocDetail /> },
+            { path: "/release_notes", element: <ReleaseNotes /> },
+            { path: "/release_notes/edit/:id", element: <ReleaseNoteDetail /> },
+            { path: "/release_notes/view/:id", element: <ReleaseNoteDetail /> },
+            { path: "/pha_docs", element: <PhaDocs /> },
+            { path: "/pha_docs/edit/:id", element: <PhaDocDetail /> },
+            { path: "/pha_docs/view/:id", element: <PhaDocDetail /> },
 
             {path: "/prod_traces", element: <ProdTraces /> },
             {path: "/prod_comparison", element: <ProdComparison /> },

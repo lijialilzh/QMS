@@ -84,3 +84,9 @@ from .company_info import CompanyInfo  # noqa: E402,F401
 
 # 产品标签样稿（独立文档模块）。详见 docs/function_docs/58_产品标签样稿.md。
 from .label_doc import LabelDoc  # noqa: E402,F401
+
+# 产品发布说明（独立文档模块）。
+from .release_note import ReleaseNote  # noqa: E402,F401
+
+# 初步危害分析清单（独立文档模块）。
+from .pha_doc import PhaDoc  # noqa: E402,F401

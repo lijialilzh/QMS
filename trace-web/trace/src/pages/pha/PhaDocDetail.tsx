@@ -4,29 +4,34 @@ import { useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
-import * as Api from "@/api/ApiLabelDoc";
+import * as Api from "@/api/ApiPhaDoc";
 import * as ApiProduct from "@/api/ApiProduct";
-import * as ApiCompanyInfo from "@/api/ApiCompanyInfo";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
-import * as ApiMember from "@/api/ApiProjectMember";
+import * as ApiProdHaz from "@/api/ApiProdHaz";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
 
-const stripNum = (title: string) => String(title || "").replace(/^\s*\d+(?:\.\d+)*[\.、\s]*/, "").trim();
+const stripNum = (title: string): string => String(title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();
 
-// 时间线里找含「标签」文件输出的最早日期行，作为文件修订记录的修改日期
-const computeFileDate = (rows: any[], keyword = "标签"): string => {
+// 模板内置的基准产品名称，按所选产品名称全文替换
+const BASE_NAME = "肿瘤CT图像随访与评估软件";
+// 封面/修订日期从时间逻辑线匹配的关键字
+const DATE_KEYWORDS = ["初步危害分析", "危害分析", "风险管理"];
+const FMEA_KEYS = ["CFMEA", "DFMEA", "PFMEA"];
+
+// 时间线里找含关键字输出的最新日期行，格式「YYYY年M月D日」
+const computeDate = (rows: any[], keywords: string[]): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
     const matches = (rows || []).filter((r: any) =>
-        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => String(v || "").includes(keyword))
+        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => keywords.some((k) => String(v || "").includes(k)))
     );
     if (!matches.length) return "";
     const key = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
     let best = matches[0];
-    matches.forEach((r: any) => { if (key(r) < key(best)) best = r; });
+    matches.forEach((r: any) => { if (key(r) > key(best)) best = r; });
     return `${num(best.year)}年${num(best.month)}月${num(best.day)}日`;
 };
 
@@ -61,6 +66,129 @@ const removeNode = (nodes: any[], key: string): any[] =>
 
 const firstKey = (nodes: any[]): string => (nodes && nodes[0] ? nodes[0]._key : "");
 
+// 全文替换产品名称
+const replaceName = (nodes: any[], oldName: string, newName: string): any[] => {
+    if (!oldName || !newName || oldName === newName) return nodes;
+    const rep = (s: any) => String(s ?? "").split(oldName).join(newName);
+    const fix = (n: any): any => ({
+        ...n,
+        title: rep(n.title),
+        body: rep(n.body),
+        tables: (n.tables || []).map((tb: any[]) =>
+            Array.isArray(tb) ? tb.map((row: any[]) => (Array.isArray(row) ? row.map((c: any) => (typeof c === "string" ? rep(c) : c)) : row)) : tb
+        ),
+        children: (n.children || []).map(fix),
+    });
+    return (nodes || []).map(fix);
+};
+
+const isFmea = (n: any): boolean => n.ref_type === "pha_fmea" || FMEA_KEYS.some((k) => stripNum(n.title).includes(k));
+
+// A.2/A.3/A.4(CFMEA/DFMEA/PFMEA) 表：按危害编号回填 潜在故障模式/故障的潜在原因/失效的潜在影响/分类
+const fillFmea = (nodes: any[], hazMap: Record<string, any>): any[] => {
+    const fillTb = (tb: any[]): any[] => {
+        if (!Array.isArray(tb) || !tb.length) return tb;
+        let hidx = -1;
+        for (let i = 0; i < tb.length; i++) {
+            const r = tb[i];
+            if (Array.isArray(r) && r.some((c: any) => String(c).includes("危害编号")) && r.some((c: any) => String(c).includes("潜在故障模式"))) {
+                hidx = i;
+                break;
+            }
+        }
+        if (hidx < 0) return tb;
+        const header = tb[hidx];
+        const colOf = (kw: string) => header.findIndex((c: any) => String(c).includes(kw));
+        const codeIdx = colOf("危害编号");
+        const fieldIdx: Record<string, number> = {
+            event: colOf("潜在故障模式"),
+            situation: colOf("故障的潜在原因"),
+            damage: colOf("失效的潜在影响"),
+            category: colOf("分类"),
+        };
+        if (codeIdx < 0) return tb;
+        return tb.map((row: any[], ri: number) => {
+            if (ri <= hidx || !Array.isArray(row) || codeIdx >= row.length) return row;
+            const m = String(row[codeIdx]).toUpperCase().match(/HAZ\d+/);
+            if (!m) return row;
+            const info = hazMap[m[0]];
+            if (!info) return row;
+            const next = [...row];
+            Object.entries(fieldIdx).forEach(([k, ci]) => {
+                if (ci >= 0 && ci < next.length) {
+                    const v = info[k] || "";
+                    if (v) next[ci] = v;
+                }
+            });
+            return next;
+        });
+    };
+    const fix = (n: any): any => ({
+        ...n,
+        tables: isFmea(n) ? (n.tables || []).map(fillTb) : n.tables,
+        children: (n.children || []).map(fix),
+    });
+    return (nodes || []).map(fix);
+};
+
+// 封面/修订记录日期
+const fillDates = (nodes: any[], date: string, version: string): any[] => {
+    const isCover = (n: any) => n.ref_type === "cover" || stripNum(n.title) === "初步危害分析清单";
+    const isRev = (n: any) => n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
+    const coverTbl = (tb: any[]) =>
+        tb.map((row: any[]) => {
+            if (!Array.isArray(row)) return row;
+            if (String(row[0]).trim() === "生效日期") return row; // 生效日期不自动回填
+            const next = [...row];
+            for (let ci = 0; ci < next.length; ci++) {
+                if (String(next[ci]).trim() === "日期" && ci + 1 < next.length) next[ci + 1] = date;
+            }
+            return next;
+        });
+    const revTbl = (tb: any[]) => {
+        const t = tb.map((r: any[]) => (Array.isArray(r) ? [...r] : r));
+        while (t.length < 2) t.push(["", "", "", "", ""]);
+        const row = t[1];
+        while (row.length < 5) row.push("");
+        row[0] = date || "";
+        if (version) row[1] = version;
+        if (!String(row[2] || "").trim()) row[2] = "首次发布";
+        return t;
+    };
+    const fix = (n: any): any => {
+        let tables = n.tables;
+        if (isCover(n) && Array.isArray(n.tables)) tables = n.tables.map(coverTbl);
+        else if (isRev(n) && Array.isArray(n.tables) && Array.isArray(n.tables[0])) tables = [revTbl(n.tables[0]), ...n.tables.slice(1)];
+        return { ...n, tables, children: (n.children || []).map(fix) };
+    };
+    return (nodes || []).map(fix);
+};
+
+const computeNumbers = (nodes: any[]): Record<string, string> => {
+    const map: Record<string, string> = {};
+    let bodyIdx = 0;
+    (nodes || []).forEach((n: any) => {
+        if (n.ref_type === "cover" || n.ref_type === "revision") {
+            map[n._key] = "";
+            walkChildren(n.children || [], "", map);
+            return;
+        }
+        bodyIdx += 1;
+        map[n._key] = String(bodyIdx);
+        walkChildren(n.children || [], String(bodyIdx), map);
+    });
+    return map;
+};
+const walkChildren = (nodes: any[], prefix: string, map: Record<string, string>) => {
+    let idx = 0;
+    (nodes || []).forEach((n: any) => {
+        idx += 1;
+        const num = prefix ? `${prefix}.${idx}` : `${idx}`;
+        map[n._key] = num;
+        walkChildren(n.children || [], num, map);
+    });
+};
+
 export default () => {
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
@@ -78,95 +206,43 @@ export default () => {
         products: [] as any[],
     });
 
-    // 标签表格：按行首标签自动覆盖第 2 列（产品信息 + 公司基本信息），封面表不覆盖
-    const fillAuto = (nodes: any[], labelMap: Record<string, string>): any[] => {
-        const overwriteCol1 = (table: any[]) =>
-            table.map((row: any[]) => {
-                if (!Array.isArray(row) || row.length < 2) return row;
-                const k = String(row[0]).trim();
-                if (labelMap[k] !== undefined && String(labelMap[k] || "").trim()) {
-                    const next = [...row];
-                    next[1] = labelMap[k];
-                    return next;
-                }
-                return row;
-            });
-        const fix = (n: any): any => {
-            const tables = n.ref_type === "cover" ? n.tables : (n.tables || []).map((tb: any[]) => overwriteCol1(tb));
-            return { ...n, tables, children: (n.children || []).map(fix) };
-        };
-        return (nodes || []).map(fix);
-    };
-
-    // 文件修订记录首行：修改日期/版本号/修订说明/修订人/批准人（仅填空、不覆盖已填）
-    const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; pm?: string; approver?: string }): any[] => {
-        const fix = (n: any): any => {
-            const isRev = n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
-            let tables = n.tables;
-            if (isRev && Array.isArray(n.tables) && Array.isArray(n.tables[0])) {
-                const t = n.tables[0].map((r: any[]) => (Array.isArray(r) ? [...r] : r));
-                const cols = (t[0] || []).length || 5;
-                while (t.length < 6) t.push(new Array(cols).fill(""));
-                const row = t[1];
-                while (row.length < 5) row.push("");
-                row[0] = info.fileDate || "";
-                if (info.version) row[1] = info.version;
-                if (!String(row[2] || "").trim()) row[2] = "首次发布";
-                row[3] = info.pm || "";
-                if (info.approver) row[4] = info.approver;
-                tables = [t, ...n.tables.slice(1)];
-            }
-            return { ...n, tables, children: (n.children || []).map(fix) };
-        };
-        return (nodes || []).map(fix);
-    };
-
-    // 按产品重新获取并填充标签表（产品信息 + 公司基本信息）及文件修订记录
-    const autofill = (productId: number, secs: any[], version: string): Promise<any[]> =>
+    const autofill = (productId: number, secs: any[], version: string, oldName: string): Promise<{ sections: any[]; date: string }> =>
         new Promise((resolve) => {
-            if (!productId) { resolve(secs); return; }
+            if (!productId) { resolve({ sections: secs, date: "" }); return; }
             Promise.all([
                 ApiProduct.get_product({ id: productId }).catch(() => null),
-                ApiCompanyInfo.list_company_info({ page_index: 0, page_size: 1 }).catch(() => null),
                 ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
-                ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
-            ]).then(([pr, ci, tl, mb]: any[]) => {
+                ApiProdHaz.list_prod_haz({ prod_id: productId, page_index: 0, page_size: 10000 }).catch(() => null),
+            ]).then(([pr, tl, ph]: any[]) => {
                 const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
-                const company = ci && ci.code === Api.C_OK ? ((ci.data?.rows || [])[0] || {}) : {};
                 const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
-                const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
-                const findRole = (pred: (role: string) => boolean) => {
-                    const hit = members.find((m: any) => pred(String(m.role || "")));
-                    return hit ? String(hit.name || "").trim() : "";
-                };
-                const labelMap: Record<string, string> = {
-                    "产品型号": prod.type_code || "",
-                    "英文名称": prod.type_code || "",
-                    "完整版本": prod.full_version || "",
-                    "发布版本": prod.release_version || "",
-                    "软件名称": prod.name || "",
-                    "注册人": company.registrant || "",
-                    "住所": company.address || "",
-                    "受托生产企业": company.manufacturer || "",
-                    "生产地址": company.production_address || "",
-                    "生产许可证编号": company.production_license_no || "",
-                    "联系电话": company.contact_phone || "",
-                };
-                let out = fillAuto(secs, labelMap);
-                out = fillRevision(out, {
-                    fileDate: computeFileDate(tlRows),
-                    version,
-                    pm: findRole((r) => r.includes("产品经理")),
-                    approver: findRole((r) => r.includes("负责人") && r.includes("产品")),
+                const hazRows = ph && ph.code === Api.C_OK ? ((ph.data && ph.data.rows) || []) : [];
+                const hazMap: Record<string, any> = {};
+                hazRows.forEach((h: any) => {
+                    const code = String(h.code || "").trim().toUpperCase();
+                    if (code) {
+                        hazMap[code] = {
+                            event: String(h.event || "").trim(),
+                            situation: String(h.situation || "").trim(),
+                            damage: String(h.damage || "").trim(),
+                            category: String(h.category || "").trim(),
+                        };
+                    }
                 });
-                resolve(out);
-            }).catch(() => resolve(secs));
+                const newName = String(prod.name || "").trim();
+                let out = replaceName(secs, BASE_NAME, newName);
+                if (oldName && oldName !== newName) out = replaceName(out, oldName, newName);
+                const date = computeDate(tlRows, DATE_KEYWORDS);
+                out = fillDates(out, date, version);
+                out = fillFmea(out, hazMap);
+                resolve({ sections: out, date });
+            }).catch(() => resolve({ sections: secs, date: "" }));
         });
 
     const load = () => {
         if (!id) return;
         dispatch({ loading: true });
-        Api.get_label_doc({ id }).then((res: any) => {
+        Api.get_pha_doc({ id }).then((res: any) => {
             if (res.code !== Api.C_OK) {
                 dispatch({ loading: false });
                 message.error(res.msg);
@@ -174,17 +250,22 @@ export default () => {
             }
             const doc = res.data || {};
             const sections = ensureKeys((doc.content && doc.content.sections) || []);
-            autofill(doc.product_id, sections, doc.version || "").then((secs) => {
+            autofill(doc.product_id, sections, doc.version, doc.product_name).then(({ sections: secs }) => {
                 dispatch({ loading: false, doc, sections: secs, activeKey: findNode(secs, data.activeKey) ? data.activeKey : firstKey(secs) });
             });
         });
     };
 
-    // 修改产品名称/版本后，重新拉取并填充所有自动获取内容（保留人工编辑的非自动字段）
     const rebindProduct = (newId: number) => {
         const product = (data.products || []).find((p: any) => p.id === newId) || {};
+        const oldName = data.doc.product_name;
         dispatch({ loading: true, doc: { ...data.doc, product_id: newId, product_name: product.name, product_full_version: product.full_version } });
-        autofill(newId, data.sections, data.doc.version || "").then((secs) => dispatch({ loading: false, sections: secs }));
+        autofill(newId, data.sections, data.doc.version, oldName).then(({ sections: secs, date }) => {
+            dispatch({ loading: false, sections: secs });
+            if (!date) {
+                message.warning("该产品未查询到对应时间线，日期已清空");
+            }
+        });
     };
 
     useEffect(() => {
@@ -252,13 +333,12 @@ export default () => {
     const doSave = () => {
         if (!id) return;
         dispatch({ saving: true });
-        const content = { sections: stripKeys(data.sections) };
-        Api.update_label_doc({ id, content, product_id: data.doc.product_id, version: data.doc.version }).then((res: any) => {
+        // 保存时把当前产品名归一化回基准名，保证库内模板始终以 BASE_NAME 存储
+        const content = { sections: replaceName(stripKeys(data.sections), data.doc.product_name, BASE_NAME) };
+        Api.update_pha_doc({ id, content, product_id: data.doc.product_id, version: data.doc.version }).then((res: any) => {
             dispatch({ saving: false });
-            if (res.code === Api.C_OK) {
-                message.success(ts("save_success"));
-                load();
-            } else message.error(res.msg);
+            if (res.code === Api.C_OK) message.success(ts("save_success"));
+            else message.error(res.msg);
         });
     };
 
@@ -266,7 +346,7 @@ export default () => {
         if (!id) return;
         dispatch({ exporting: true });
         try {
-            const res: any = await Api.export_label_doc({ id });
+            const res: any = await Api.export_pha_doc({ id });
             if (res.code !== Api.C_OK) message.error(res.msg || "导出失败");
         } catch (_e) {
             message.error("导出失败");
@@ -275,30 +355,36 @@ export default () => {
         }
     };
 
+    const numbers = computeNumbers(data.sections);
+
     const renderNav = (nodes: any[], depth: number) =>
-        (nodes || []).map((n: any) => (
-            <div key={n._key}>
-                <div
-                    className={`pdp-nav-item${n._key === data.activeKey ? " active" : ""}`}
-                    style={{ paddingLeft: 8 + depth * 14 }}
-                    onClick={() => dispatch({ activeKey: n._key })}>
-                    <span className="pdp-nav-title" title={n.title}>{n.title || "(未命名)"}</span>
-                    {!readonly && (
-                        <span className="pdp-nav-ops" onClick={(e) => e.stopPropagation()}>
-                            <PlusOutlined title="添加子章节" onClick={() => addChild(n._key)} />
-                            <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
-                        </span>
-                    )}
+        (nodes || []).map((n: any) => {
+            const num = numbers[n._key];
+            const label = `${num ? num + " " : ""}${stripNum(n.title) || "(未命名)"}`;
+            return (
+                <div key={n._key}>
+                    <div
+                        className={`pdp-nav-item${n._key === data.activeKey ? " active" : ""}`}
+                        style={{ paddingLeft: 8 + depth * 14 }}
+                        onClick={() => dispatch({ activeKey: n._key })}>
+                        <span className="pdp-nav-title" title={label}>{label}</span>
+                        {!readonly && (
+                            <span className="pdp-nav-ops" onClick={(e) => e.stopPropagation()}>
+                                <PlusOutlined title="添加子章节" onClick={() => addChild(n._key)} />
+                                <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
+                            </span>
+                        )}
+                    </div>
+                    {renderNav(n.children || [], depth + 1)}
                 </div>
-                {renderNav(n.children || [], depth + 1)}
-            </div>
-        ));
+            );
+        });
 
     return (
         <div className="div-v page pdp-detail">
             <div className="div-h pdp-toolbar">
                 <div className="pdp-toolbar-title">
-                    产品标签样稿
+                    初步危害分析清单
                     {readonly ? (
                         <span className="pdp-meta">
                             {data.doc.product_name ? `　${data.doc.product_name}` : ""}
@@ -334,7 +420,7 @@ export default () => {
                         </Button>
                     )}
                     <Button loading={data.exporting} onClick={doExport}>导出</Button>
-                    <Button onClick={() => navigate("/label_docs")}>{ts("back")}</Button>
+                    <Button onClick={() => navigate("/pha_docs")}>{ts("back")}</Button>
                 </Space>
             </div>
 
@@ -343,7 +429,7 @@ export default () => {
                     <div className="pdp-nav">
                         <div className="pdp-nav-head">目录</div>
                         {!readonly && (
-                            <div className="pdp-nav-hint">点章节改名/编辑，右侧 + 加子章节、🗑 删除；标签信息（产品型号/版本/公司信息）自动获取</div>
+                            <div className="pdp-nav-hint">点章节改名/编辑，右侧 + 加子章节、🗑 删除；编号按层级自动生成</div>
                         )}
                         {renderNav(data.sections, 0)}
                         {!readonly && (
@@ -359,18 +445,19 @@ export default () => {
                         ) : (
                             <>
                                 <div className="pdp-field">
-                                    <div className="pdp-label">章节标题</div>
+                                    <div className="pdp-label">章节标题{numbers[active._key] ? `（编号 ${numbers[active._key]} 自动生成）` : ""}</div>
                                     <Input
-                                        value={active.title}
+                                        addonBefore={numbers[active._key] || undefined}
+                                        value={stripNum(active.title)}
                                         disabled={readonly}
-                                        placeholder="如：图1 产品标签样稿"
+                                        placeholder="只填名称"
                                         onChange={(e) => patchNode(active._key, { title: e.target.value })}
                                     />
                                 </div>
                                 <div className="pdp-field">
-                                    <div className="pdp-label">正文（可选，标签的说明文字）</div>
+                                    <div className="pdp-label">正文</div>
                                     <Input.TextArea
-                                        autoSize={{ minRows: 2, maxRows: 20 }}
+                                        autoSize={{ minRows: 3, maxRows: 20 }}
                                         value={active.body ?? ""}
                                         disabled={readonly}
                                         placeholder="本章节正文内容，可多行"
@@ -378,18 +465,7 @@ export default () => {
                                     />
                                 </div>
 
-                                {active.ref_type === "label_seal" && (
-                                    <div className="pdp-field">
-                                        <div className="pdp-label">封口贴合格标签（固定图，导出自动包含，无需编辑）</div>
-                                        <img
-                                            src="assets/img/qc_pass.png"
-                                            alt="QC PASS"
-                                            style={{ width: 140, border: "1px solid #eee", borderRadius: 4, padding: 4 }}
-                                        />
-                                    </div>
-                                )}
-
-                                {active.ref_type !== "label_seal" && (active.tables || []).map((tb: any[], ti: number) => (
+                                {(active.tables || []).map((tb: any[], ti: number) => (
                                     <div className="pdp-table-block" key={ti}>
                                         <div className="pdp-table-bar">
                                             <span className="pdp-label">表格 {ti + 1}</span>
@@ -406,7 +482,7 @@ export default () => {
                                                 {tb.map((row: any[], r: number) => (
                                                     <tr key={r}>
                                                         {row.map((cell: any, ci: number) => (
-                                                            <td key={ci}>
+                                                            <td key={ci} className={r === 0 ? "head" : ""}>
                                                                 <Input.TextArea
                                                                     className="pdp-cell"
                                                                     autoSize={{ minRows: 1, maxRows: 8 }}
@@ -433,7 +509,7 @@ export default () => {
                                     </div>
                                 ))}
 
-                                {!readonly && active.ref_type !== "label_seal" && (
+                                {!readonly && (
                                     <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
                                         添加表格
                                     </Button>
