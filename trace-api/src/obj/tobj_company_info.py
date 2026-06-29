@@ -13,3 +13,4 @@ class CompanyInfoForm(BaseModel):
     production_address: Optional[str] = Field(title="生产地址")
     production_license_no: Optional[str] = Field(title="生产许可证编号")
     contact_phone: Optional[str] = Field(title="联系电话")
+    representative: Optional[str] = Field(title="代表人/职位")

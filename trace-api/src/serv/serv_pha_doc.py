@@ -266,9 +266,10 @@ class Server(object):
             obj.product_version = product.full_version
             obj.product_full_version = product.full_version
             obj.product_type_code = product.type_code
-            dhf_no = self.__dhf_file_no(product.id)
-            if dhf_no:
-                obj.file_no = dhf_no
+            if not (obj.file_no or "").strip():
+                dhf_no = self.__dhf_file_no(product.id)
+                if dhf_no:
+                    obj.file_no = dhf_no
         return obj
 
     # ---------------- CRUD ----------------

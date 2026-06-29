@@ -288,6 +288,9 @@ export default () => {
                         rules={[{ required: true, message: sprintf(ts("msg_input"), { label: "文档版本" }) }]}>
                         <Input allowClear />
                     </Form.Item>
+                    <Form.Item label="文件编号" name="file_no">
+                        <Input allowClear placeholder="留空将自动从产品DHF获取" />
+                    </Form.Item>
                     <Form.Item label="变更说明" name="change_log">
                         <Input.TextArea rows={3} allowClear />
                     </Form.Item>

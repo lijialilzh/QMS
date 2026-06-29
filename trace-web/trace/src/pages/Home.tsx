@@ -239,6 +239,11 @@ export default () => {
                         label: ts("menu.pha_docs"),
                         perm: "pha_doc_view",
                     },
+                    {
+                        key: "/cyber_cap_docs",
+                        label: ts("menu.cyber_cap_docs"),
+                        perm: "cyber_cap_doc_view",
+                    },
                 ],
             },
             {

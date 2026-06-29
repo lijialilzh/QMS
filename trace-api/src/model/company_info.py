@@ -15,3 +15,4 @@ class CompanyInfo(Model):
     production_address = Column(String(256), comment="生产地址")
     production_license_no = Column(String(128), comment="生产许可证编号")
     contact_phone = Column(String(64), comment="联系电话")
+    representative = Column(String(128), comment="代表人/职位")

@@ -27,5 +27,5 @@ export const get_pha_doc = async (params: any) => {
 };
 
 export const export_pha_doc = async (params: any) => {
-    return await httpGet("/trace-api/pha_doc/export_pha_doc", params);
+    return await httpGet("/trace-api/pha_doc/export_pha_doc", { ...params, _t: Date.now() });
 };

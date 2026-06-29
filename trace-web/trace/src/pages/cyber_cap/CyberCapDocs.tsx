@@ -6,7 +6,7 @@ import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
-import * as Api from "@/api/ApiReleaseNote";
+import * as Api from "@/api/ApiCyberCapDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import "../risk_mgmt/RiskMgmtDocs.less";
 
@@ -54,7 +54,7 @@ export default () => {
             dispatch({ versionOptions: [] });
             return;
         }
-        Api.list_release_note({ product_id: productId, page_index: 0, page_size: 10000 }).then((res: any) => {
+        Api.list_cyber_cap_doc({ product_id: productId, page_index: 0, page_size: 10000 }).then((res: any) => {
             if (res.code === Api.C_OK && res.data?.rows?.length) {
                 const versions = [...new Set((res.data.rows as any[]).map((row: any) => row.version).filter(Boolean))].sort();
                 dispatch({ versionOptions: versions.map((version: string) => ({ value: version, label: version })) });
@@ -66,7 +66,7 @@ export default () => {
 
     const doSearch = (params: any = {}, pageIndex: any = data.pageIndex, pageSize: any = data.pageSize) => {
         dispatch({ loading: true });
-        Api.list_release_note({ ...params, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
+        Api.list_cyber_cap_doc({ ...params, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
             if (res.code === Api.C_OK) {
                 dispatch({ loading: false, total: res.data.total, rows: res.data.rows || [], pageIndex, pageSize });
             } else {
@@ -84,14 +84,14 @@ export default () => {
     const doAdd = () => {
         addForm.validateFields().then((values) => {
             dispatch({ adding: true });
-            Api.add_release_note({ ...values }).then((res: any) => {
+            Api.add_cyber_cap_doc({ ...values }).then((res: any) => {
                 dispatch({ adding: false });
                 if (res.code === Api.C_OK) {
                     message.success(ts("save_success"));
                     dispatch({ dlgType: null });
                     const newId = res.data?.id;
                     if (newId) {
-                        navigate(`/release_notes/edit/${newId}`);
+                        navigate(`/cyber_cap_docs/edit/${newId}`);
                     } else {
                         doSearch(queryForm.getFieldsValue(), 1, data.pageSize);
                     }
@@ -104,7 +104,7 @@ export default () => {
 
     const doDelete = () => {
         dispatch({ loading: true });
-        Api.delete_release_note({ id: data.targetRow.id }).then((res: any) => {
+        Api.delete_cyber_cap_doc({ id: data.targetRow.id }).then((res: any) => {
             if (res.code === Api.C_OK) {
                 message.success(ts("save_success"));
                 dispatch({ dlgType: null, loading: false });
@@ -125,7 +125,7 @@ export default () => {
         const row = data.targetRow || {};
         if (!row.id) return;
         dispatch({ loading: true });
-        Api.duplicate_release_note({ id: row.id, product_id: data.copyProductId }).then((res: any) => {
+        Api.duplicate_cyber_cap_doc({ id: row.id, product_id: data.copyProductId }).then((res: any) => {
             dispatch({ loading: false });
             if (res.code === Api.C_OK) {
                 dispatch({ dlgType: null });
@@ -144,7 +144,7 @@ export default () => {
         if (data.exportingId === row.id) return;
         dispatch({ exportingId: row.id });
         try {
-            const res: any = await Api.export_release_note({ id: row.id });
+            const res: any = await Api.export_cyber_cap_doc({ id: row.id });
             if (res.code !== Api.C_OK) {
                 message.error(res.msg || "导出失败");
             }
@@ -168,10 +168,10 @@ export default () => {
             className: "risk-doc-action-col",
             render: (_: any, row: any) => (
                 <Space size={4} className="risk-doc-action-space">
-                    <Button type="link" size="small" onClick={() => navigate(`/release_notes/view/${row.id}`)}>
+                    <Button type="link" size="small" onClick={() => navigate(`/cyber_cap_docs/view/${row.id}`)}>
                         {ts("view")}
                     </Button>
-                    <Button type="link" size="small" onClick={() => navigate(`/release_notes/edit/${row.id}`)}>
+                    <Button type="link" size="small" onClick={() => navigate(`/cyber_cap_docs/edit/${row.id}`)}>
                         {ts("edit")}
                     </Button>
                     <Button type="link" size="small" onClick={() => doDuplicate(row)}>
@@ -261,7 +261,7 @@ export default () => {
             <Modal
                 width={620}
                 centered
-                title="新增产品发布说明"
+                title="新增网络安全能力分析"
                 open={data.dlgType === DlgTypes.add}
                 confirmLoading={data.adding}
                 onOk={doAdd}

@@ -1,0 +1,959 @@
+{
+  "sections": [
+    {
+      "title": "健康数据管理",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "A 该器械是否可显示、传输或维护健康数据（包括电子保护健康信息[ePHI]）？",
+          "answer_cell": "I19",
+          "answer": "是",
+          "note_cell": "J19",
+          "note": "__"
+        },
+        {
+          "kind": "label",
+          "label": "B 该器械可维护的健康数据元素类型："
+        },
+        {
+          "kind": "qa",
+          "label": "B.1 人口统计学（例如姓名、地址、位置、唯一识别号）？",
+          "answer_cell": "I21",
+          "answer": "是",
+          "note_cell": "J21",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "B.2 病历（例如病历#、帐户、测试或治疗日期、器械识别号）？",
+          "answer_cell": "I22",
+          "answer": "是",
+          "note_cell": "J22",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "B.3 诊断/治疗（例如照片/射线照片、测试结果或具有识别特征的生理数据）？",
+          "answer_cell": "I23",
+          "answer": "是",
+          "note_cell": "J23",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "B.4 由器械用户/操作员输入的开放式非结构化文本？",
+          "answer_cell": "I24",
+          "answer": "否",
+          "note_cell": "J24",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "B.5 生物识别数据？",
+          "answer_cell": "I25",
+          "answer": "否",
+          "note_cell": "J25",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "B.6 个人财务信息？",
+          "answer_cell": "I26",
+          "answer": "否",
+          "note_cell": "J26",
+          "note": "__"
+        },
+        {
+          "kind": "label",
+          "label": "C 维护健康数据 - 该器械是否可以："
+        },
+        {
+          "kind": "qa",
+          "label": "C.1 将健康数据暂时保存在易失性存储器中（即，直到断电或复位清除）？",
+          "answer_cell": "I28",
+          "answer": "否",
+          "note_cell": "J28",
+          "note": "1"
+        },
+        {
+          "kind": "qa",
+          "label": "C.2 将健康数据持久存储在本地媒体上？",
+          "answer_cell": "I29",
+          "answer": "是",
+          "note_cell": "J29",
+          "note": "1"
+        },
+        {
+          "kind": "qa",
+          "label": "C.3 使用其他系统导入/导出健康数据？",
+          "answer_cell": "I30",
+          "answer": "是",
+          "note_cell": "J30",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "C.4 在电力服务中断期间维护健康数据？",
+          "answer_cell": "I31",
+          "answer": "否",
+          "note_cell": "J31",
+          "note": ""
+        },
+        {
+          "kind": "label",
+          "label": "D 传输、导入/导出健康数据的机制 - 该 器械是否可以："
+        },
+        {
+          "kind": "qa",
+          "label": "D.1 显示健康数据（例如视频显示等）？",
+          "answer_cell": "I33",
+          "answer": "是",
+          "note_cell": "J33",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "D.2 生成包含健康数据的硬拷贝报告或图像？",
+          "answer_cell": "I34",
+          "answer": "是",
+          "note_cell": "J34",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "D.3 从可移动媒体（例如磁盘、DVD、CD-ROM、磁带、CF / SD卡、记忆棒等）中检索健康数据或将健康数据记录其中？",
+          "answer_cell": "I35",
+          "answer": "不适用",
+          "note_cell": "J35",
+          "note": "2"
+        },
+        {
+          "kind": "qa",
+          "label": "D.4 通过专用电缆连接（例如IEEE 1073、串行端口、USB、FireWire等）发送/接收或导入/导出健康数据？",
+          "answer_cell": "I36",
+          "answer": "不适用",
+          "note_cell": "J36",
+          "note": "3"
+        },
+        {
+          "kind": "qa",
+          "label": "D.5 通过有线网络连接（例如LAN、WAN、VPN、内联网、互联网等）发送/接收健康数据？",
+          "answer_cell": "I37",
+          "answer": "是",
+          "note_cell": "J37",
+          "note": "3"
+        },
+        {
+          "kind": "qa",
+          "label": "D.6 通过集成无线网络连接（例如WiFi、蓝牙、红外线等）发送/接收健康数据？",
+          "answer_cell": "I38",
+          "answer": "不适用",
+          "note_cell": "J38",
+          "note": "3"
+        },
+        {
+          "kind": "qa",
+          "label": "D.7 通过扫描导入健康数据？",
+          "answer_cell": "I39",
+          "answer": "不适用",
+          "note_cell": "J39",
+          "note": "3"
+        },
+        {
+          "kind": "qa",
+          "label": "D.8 其他？",
+          "answer_cell": "I40",
+          "answer": "否",
+          "note_cell": "J40",
+          "note": "__"
+        },
+        {
+          "kind": "remark",
+          "label": "健康数据管理备注",
+          "cell": "E41",
+          "text": "1.健康数据会保存在服务器内，服务器不提供远程\n2.本软件不能从可移动媒体中检索健康数据或将健康数据记录在可移动媒体中\n3.本软件在接收健康数据时，将对用户隐私数据进行脱敏"
+        }
+      ]
+    },
+    {
+      "title": "1 自动注销（ALOF）",
+      "desc": "产品在无人值守期间阻止非授权用户访问和使用的能力。",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "1-1 器械是否可以配置为在预定时长的不活动后强制重新授权已登入用户（例如自动登出、工作界面锁定、密码保护的屏幕保护程序）？",
+          "answer_cell": "I57",
+          "answer": "是",
+          "note_cell": "J57",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "1-1.1 自动登出/屏幕锁定用户或管理员之前的不活动时长是否可配置？（在备注中指出时间[固定或可配置范围]。）",
+          "answer_cell": "I58",
+          "answer": "是",
+          "note_cell": "J58",
+          "note": "1"
+        },
+        {
+          "kind": "qa",
+          "label": "1-1.2 用户是否可以手动激活自动登出/屏幕锁定（例如通过快捷键或近接传感器等）？",
+          "answer_cell": "I59",
+          "answer": "是",
+          "note_cell": "J59",
+          "note": "__"
+        },
+        {
+          "kind": "remark",
+          "label": "ALOF备注",
+          "cell": "D60",
+          "text": "1.无人值守60min后自动登出，需要重新登录才能使用软件。"
+        }
+      ]
+    },
+    {
+      "title": "2 审核（AUDT）",
+      "desc": "产品提供用户活动可被审核的能力。",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "2-1 医疗器械是否可以创建稽查轨迹？",
+          "answer_cell": "I63",
+          "answer": "是",
+          "note_cell": "J63",
+          "note": "__"
+        },
+        {
+          "kind": "label",
+          "label": "2-2 指出在稽查日志中记录以下哪些事件："
+        },
+        {
+          "kind": "qa",
+          "label": "2-2.1 登入/登出",
+          "answer_cell": "I65",
+          "answer": "是",
+          "note_cell": "J65",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "2-2.2 显示/报告数据",
+          "answer_cell": "I66",
+          "answer": "是",
+          "note_cell": "J66",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "2-2.3 创建/修改/删除数据",
+          "answer_cell": "I67",
+          "answer": "是",
+          "note_cell": "J67",
+          "note": ""
+        },
+        {
+          "kind": "qa",
+          "label": "2-2.4 从可移动媒体导入/导出数据",
+          "answer_cell": "I68",
+          "answer": "否",
+          "note_cell": "J68",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "2-2.5 从/向外部（例如网络）连接接收/传输数据",
+          "answer_cell": "I69",
+          "answer": "是",
+          "note_cell": "J69",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "2-2.5.1 远程服务活动",
+          "answer_cell": "I70",
+          "answer": "否",
+          "note_cell": "J70",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "2-2.6 其他事件？（在备注部分描述）",
+          "answer_cell": "I71",
+          "answer": "不适用",
+          "note_cell": "J71",
+          "note": "1"
+        },
+        {
+          "kind": "label",
+          "label": "2-3 指出在稽查日志中记录哪些信息用于识别单个事件的信息："
+        },
+        {
+          "kind": "qa",
+          "label": "2-3.1 用户ID",
+          "answer_cell": "I73",
+          "answer": "是",
+          "note_cell": "J73",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "2-3.2 日期/时间",
+          "answer_cell": "I74",
+          "answer": "是",
+          "note_cell": "J74",
+          "note": "__"
+        },
+        {
+          "kind": "remark",
+          "label": "AUDT备注",
+          "cell": "D75",
+          "text": "1.没有其他事件"
+        }
+      ]
+    },
+    {
+      "title": "3 授权（AUTH）",
+      "desc": "产品确定用户已获授权的能力。",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "3-1 器械是否可以通过用户登入要求或其他机制阻止未经授权用户的访问？",
+          "answer_cell": "I78",
+          "answer": "是",
+          "note_cell": "J78",
+          "note": "1"
+        },
+        {
+          "kind": "qa",
+          "label": "3-2 是否可以根据“角色”（例如访客、普通用户、高级用户、管理员等）在应用程序中为用户分配不同的权限级别？",
+          "answer_cell": "I79",
+          "answer": "是",
+          "note_cell": "J79",
+          "note": "2"
+        },
+        {
+          "kind": "qa",
+          "label": "3-3 器械所有者/操作员是否可以获得不受限制的管理权限（例如通过本地root或admin帐户访问操作系统或应用程序）？",
+          "answer_cell": "I80",
+          "answer": "否",
+          "note_cell": "J80",
+          "note": "__"
+        },
+        {
+          "kind": "remark",
+          "label": "AUTH备注",
+          "cell": "D81",
+          "text": "1.通过用户名和密码方式阻止未经授权用户的访问。\n2. 共包括2种角色，不同角色有不同的权限：超级管理员和普通用户。"
+        }
+      ]
+    },
+    {
+      "title": "4 节点鉴别（NAUT）",
+      "desc": "产品鉴别网络节点的能力。",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "4-1 器械是否提供/支持任何节点认证方式，以确保数据的发送方和接收方彼此了解并有权接收传输的信息？",
+          "answer_cell": "I95",
+          "answer": "是",
+          "note_cell": "J95",
+          "note": "__"
+        },
+        {
+          "kind": "remark",
+          "label": "NAUT备注",
+          "cell": "D96",
+          "text": "1. 本软件采用DICOM 协议进行节点认证。"
+        }
+      ]
+    },
+    {
+      "title": "5 人员鉴别（PAUT）",
+      "desc": "产品鉴别授权用户的能力。",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "5-1 器械是否支持至少一个用户的用户/操作员特定用户名和密码？",
+          "answer_cell": "I99",
+          "answer": "是",
+          "note_cell": "J99",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "12-1.1 器械是否支持多个用户的唯一用户/操作员特定ID和密码？",
+          "answer_cell": "I100",
+          "answer": "是",
+          "note_cell": "J100",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "5-2 器械是否可以配置为通过外部验证服务（例如MS Active Directory、NDS、LDAP等）对用户进行验证？",
+          "answer_cell": "I101",
+          "answer": "否",
+          "note_cell": "J101",
+          "note": ""
+        },
+        {
+          "kind": "qa",
+          "label": "5-3 器械是否可以配置为在一定次数的登入尝试失败后锁定用户？",
+          "answer_cell": "I102",
+          "answer": "否",
+          "note_cell": "J102",
+          "note": ""
+        },
+        {
+          "kind": "qa",
+          "label": "5-4 是否可以在安装时/之前更改默认密码？",
+          "answer_cell": "I103",
+          "answer": "否",
+          "note_cell": "J103",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "5-5 此系统中是否使用了任何共享用户ID？",
+          "answer_cell": "I104",
+          "answer": "否",
+          "note_cell": "J104",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "5-6 器械是否可以配置为强制创建符合既定复杂性规则的用户帐户密码？",
+          "answer_cell": "I105",
+          "answer": "是",
+          "note_cell": "J105",
+          "note": "1__"
+        },
+        {
+          "kind": "qa",
+          "label": "5-7 是否可以配置器械以使帐户密码定期失效？",
+          "answer_cell": "I106",
+          "answer": "否",
+          "note_cell": "J106",
+          "note": "__"
+        },
+        {
+          "kind": "remark",
+          "label": "PAUT备注",
+          "cell": "D107",
+          "text": "1.用户密码符合8~20位数字、字母和特殊字符组合"
+        }
+      ]
+    },
+    {
+      "title": "6 连通性（CONN）",
+      "desc": "产品保证连通网络安全可控的能力。",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "6-1 产品是否有保证连通网络安全可控的能力？",
+          "answer_cell": "I110",
+          "answer": "是",
+          "note_cell": "J110",
+          "note": "1"
+        },
+        {
+          "kind": "remark",
+          "label": "CNFS备注",
+          "cell": "D111",
+          "text": "1.网络连接中断时，产品会显示提示信息。"
+        }
+      ]
+    },
+    {
+      "title": "7 物理防护（PLOK）",
+      "desc": "产品提供防止非授权用户访问和使用的物理防护措施的能力。",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "7-1 是否所有器械组件都保持健康数据（可移动媒体除外）物理安全（即，没有工具无法删除）？",
+          "answer_cell": "I114",
+          "answer": "不适用",
+          "note_cell": "J114",
+          "note": "1"
+        },
+        {
+          "kind": "remark",
+          "label": "PLOK备注",
+          "cell": "D115",
+          "text": "1. 本产品为独立软件，不提供物理防护措施。"
+        }
+      ]
+    },
+    {
+      "title": "8 系统加固（SAHD）",
+      "desc": "产品通过固化措施对网络攻击和恶意软件的抵御能力",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "8-1 器械是否采用任何硬化措施？请在备注中注明符合任何行业认可的硬化标准的水平。",
+          "answer_cell": "I118",
+          "answer": "否",
+          "note_cell": "J118",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "8-2 器械是否采用任何机制（例如发行版特定的散列密钥、校验和等）来确保安装的程序/更新是制造商授权的程序或软件更新？",
+          "answer_cell": "I119",
+          "answer": "是",
+          "note_cell": "J119",
+          "note": "_3_"
+        },
+        {
+          "kind": "qa",
+          "label": "8-3 器械是否具有外部通信功能（例如网络、调制解调器等）？",
+          "answer_cell": "I120",
+          "answer": "是",
+          "note_cell": "J120",
+          "note": "1"
+        },
+        {
+          "kind": "qa",
+          "label": "8-4 文件系统是否允许实现文件级访问控制（例如，MS Windows平台的新技术文件系统（NTFS））？",
+          "answer_cell": "I121",
+          "answer": "不适用",
+          "note_cell": "J121",
+          "note": "2"
+        },
+        {
+          "kind": "qa",
+          "label": "8-5 对于用户和应用程序，是否禁用或删除器械预期用途所不需要的所有帐户？",
+          "answer_cell": "I122",
+          "answer": "不适用",
+          "note_cell": "J122",
+          "note": "2"
+        },
+        {
+          "kind": "qa",
+          "label": "8-6 是否禁用器械预期用途所不需要的所有共享资源（例如文件共享）？",
+          "answer_cell": "I123",
+          "answer": "不适用",
+          "note_cell": "J123",
+          "note": "2"
+        },
+        {
+          "kind": "qa",
+          "label": "8-7 是否关闭/禁用器械预期用途所不需要的所有通信端口？",
+          "answer_cell": "I124",
+          "answer": "不适用",
+          "note_cell": "J124",
+          "note": "2"
+        },
+        {
+          "kind": "qa",
+          "label": "8-8 是否删除/禁用器械预期用途所不需要的所有服务（例如，telnet、文件传输协议[FTP]、互联网信息服务器[IIS]等）？",
+          "answer_cell": "I125",
+          "answer": "不适用",
+          "note_cell": "J125",
+          "note": "2"
+        },
+        {
+          "kind": "qa",
+          "label": "8-9 是否删除/禁用器械预期用途所不需要的所有应用程序（COTS应用程序以及包含OS的应用程序，例如MS Internet Explorer等）？",
+          "answer_cell": "I126",
+          "answer": "不适用",
+          "note_cell": "J126",
+          "note": "2"
+        },
+        {
+          "kind": "qa",
+          "label": "8-10 器械是否可以从不受控制或可移动媒体（即内部驱动或内存组件以外的来源）启动？",
+          "answer_cell": "I127",
+          "answer": "不适用",
+          "note_cell": "J127",
+          "note": "2"
+        },
+        {
+          "kind": "qa",
+          "label": "8-11 如果不使用工具，是否可将器械制造商未授权的软件或硬件安装在器械上？",
+          "answer_cell": "I128",
+          "answer": "不适用",
+          "note_cell": "J128",
+          "note": "2"
+        },
+        {
+          "kind": "remark",
+          "label": "SAHD备注",
+          "cell": "D129",
+          "text": "1.提供局域网/广域网通信功能\n2.请提前在服务器上安装符合最终用户要求的杀毒软件和防火墙软件，并进行合理软件设置，保证这些软件的正常运行\n3.软件采用制造商提供序列码验证保护技术保护版权，当未取得验证时，用户将无法使用软件。"
+        }
+      ]
+    },
+    {
+      "title": "9 数据去标识化与匿名化（DIDT）",
+      "desc": "产品直接去除、匿名化数据所含个人信息的能力",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "9-1 器械是否提供去识别健康数据的完整功能？",
+          "answer_cell": "I142",
+          "answer": "否",
+          "note_cell": "J142",
+          "note": "__"
+        },
+        {
+          "kind": "remark",
+          "label": "DIDT备注",
+          "cell": "D143",
+          "text": "本软件运行于局域网/广域网条件下，提供图像阅片功能，不对健康数据进行识别。"
+        }
+      ]
+    },
+    {
+      "title": "10 数据完整性与真实性（IGAU）",
+      "desc": "产品确保数据未以非授权方式更改且来自创建者或提供者的能力",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "10-1 器械是否通过隐式或显式错误检测/纠正技术确保存储数据的完整性？",
+          "answer_cell": "I146",
+          "answer": "否",
+          "note_cell": "J146",
+          "note": "1"
+        },
+        {
+          "kind": "remark",
+          "label": "IGAU备注",
+          "cell": "D147",
+          "text": "1.本软件采用DICOM3.0标准读取数据，会进行数据错误检测，但不提供任何纠正及更改技术。"
+        }
+      ]
+    },
+    {
+      "title": "11 数据备份与灾难恢复（DTBK）",
+      "desc": "产品的数据、硬件或软件受到损坏或破坏后恢复的能力。",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "11-1 器械是否具有完整的数据备份功能（即备份到远程存储或可移动介质，如磁带、磁盘）？",
+          "answer_cell": "I150",
+          "answer": "不适用",
+          "note_cell": "J150",
+          "note": ""
+        },
+        {
+          "kind": "remark",
+          "label": "DTBK备注",
+          "cell": "D151",
+          "text": "1.数据会保存在医院提供的服务器内，数据的灾难恢复和备份计划应由客户根据系统使用案例、临床影响和恢复点目标和恢复时间目标实施。\n2.当出现传输异常、断电、宕机时，重启服务后重新与医院信息系统/影像设备连接并接收数据，图像数据不会丢失，软件能够正常访问\n3.存储在数据库中的数据，工程师可通过命令行进行手动备份和恢复。存储在服务器磁盘的图像数据通过操作系统备份方式实现数据备份。"
+        }
+      ]
+    },
+    {
+      "title": "12 数据存储保密性与完整性（STCF）",
+      "desc": "产品确保未授权访问不会损坏存储媒介所存数据保密性和完整性的能力",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "12-1 器械是否可以加密静态数据？",
+          "answer_cell": "I154",
+          "answer": "否",
+          "note_cell": "J154",
+          "note": "__"
+        },
+        {
+          "kind": "remark",
+          "label": "STCF备注",
+          "cell": "D155",
+          "text": "本产品不提供数据库访问功能"
+        }
+      ]
+    },
+    {
+      "title": "13 数据传输保密性（TXCF）",
+      "desc": "产品确保数据传输保密性的能力。",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "13-1 健康数据是否只能通过点对点专用电缆传输？",
+          "answer_cell": "I158",
+          "answer": "不适用",
+          "note_cell": "J158",
+          "note": "_1_"
+        },
+        {
+          "kind": "qa",
+          "label": "13-2 健康数据是否在通过网络或可移动媒体传输之前加密？ （如果是，请在备注中指明实施哪种加密标准。）",
+          "answer_cell": "I159",
+          "answer": "否",
+          "note_cell": "J159",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "13-3 健康数据传输是否仅限于固定的网络目的地列表？",
+          "answer_cell": "I160",
+          "answer": "是",
+          "note_cell": "J160",
+          "note": "__"
+        },
+        {
+          "kind": "remark",
+          "label": "TXCF备注",
+          "cell": "D161",
+          "text": "1. 本软件通过DICOM3.0标准接收数据."
+        }
+      ]
+    },
+    {
+      "title": "14 数据传输完整性（TXIG）",
+      "desc": "产品确保数据传输完整性的能力。",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "14-1 器械是否支持任何旨在确保数据在传输过程中不被修改的机制？ （如果是，请在备注部分描述如何实现这一目标。）",
+          "answer_cell": "I164",
+          "answer": "是",
+          "note_cell": "J164",
+          "note": "1"
+        },
+        {
+          "kind": "remark",
+          "label": "TXIG备注",
+          "cell": "D165",
+          "text": "1. 本软件通过DICOM标准接收数据，DICOM标准自身会保证传输过程中数据不被修改的机制，并且本软件会滤掉不符合DICOM标准的数据。"
+        }
+      ]
+    },
+    {
+      "title": "15 网络安全补丁升级（CSUP）",
+      "desc": "授权用户安装/升级产品网络安全补丁的能力。",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "15-1 相关OS和器械安全补丁在可用后是否可以应用于器械？",
+          "answer_cell": "I179",
+          "answer": "是",
+          "note_cell": "J179",
+          "note": "1"
+        },
+        {
+          "kind": "qa",
+          "label": "15-1.1 是否可以远程安装安全补丁或其他软件？",
+          "answer_cell": "I180",
+          "answer": "不适用",
+          "note_cell": "J180",
+          "note": "2"
+        },
+        {
+          "kind": "remark",
+          "label": "CSUP备注",
+          "cell": "D181",
+          "text": "1.公司提供软件升级服务\n2.本系统不支持远程安装补丁或其它软件"
+        }
+      ]
+    },
+    {
+      "title": "16 现成软件清单（SBOM）",
+      "desc": "产品为用户提供全部现成软件清单的能力。",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "16-1 产品是否有为用户提供全部现成软件清单的能力",
+          "answer_cell": "I184",
+          "answer": "是",
+          "note_cell": "J184",
+          "note": "__"
+        }
+      ]
+    },
+    {
+      "title": "17 现成软件维护（RDMP）",
+      "desc": "产品在全生命周期中对现成软件提供网络安全维护的能力。",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "17-1 在备注部分，列出提供的或必需的（单独购买和/或交付的）操作系统 - 包括版本号。",
+          "answer_cell": "I188",
+          "answer": "见注",
+          "note_cell": "J188",
+          "note": "1"
+        },
+        {
+          "kind": "qa",
+          "label": "17-2 是否有制造商提供的其他第三方应用程序列表？",
+          "answer_cell": "I189",
+          "answer": "是",
+          "note_cell": "J189",
+          "note": "2"
+        },
+        {
+          "kind": "rdmp",
+          "label": "RDMP备注（自动获取运行环境：服务端/客户端）",
+          "cell": "D190"
+        }
+      ]
+    },
+    {
+      "title": "18 网络安全使用指导（SGUD）",
+      "desc": "产品为用户提供网络安全使用指导的能力。",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "18-1 是否为器械用户记录安全相关功能？",
+          "answer_cell": "I193",
+          "answer": "不适用",
+          "note_cell": "J193",
+          "note": "1"
+        },
+        {
+          "kind": "qa",
+          "label": "18-2 是否有可用于器械/媒体清理的说明（即有关如何永久删除个人或其他敏感数据的说明）？",
+          "answer_cell": "I194",
+          "answer": "不适用",
+          "note_cell": "J194",
+          "note": "1"
+        },
+        {
+          "kind": "remark",
+          "label": "SGUD备注",
+          "cell": "D195",
+          "text": "1.本软件为独立软件，医院相关人员负责服务器系统相关操作"
+        }
+      ]
+    },
+    {
+      "title": "19 网络安全特征配置（CNFS）",
+      "desc": "产品根据用户需求配置网络安全特征的能力。",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "19-1 器械所有者/操作员是否可以重新配置产品安全功能？",
+          "answer_cell": "I198",
+          "answer": "否",
+          "note_cell": "J198",
+          "note": "__"
+        },
+        {
+          "kind": "remark",
+          "label": "CNFS备注",
+          "cell": "D199",
+          "text": "本产品为独立软件，不具备安全功能"
+        }
+      ]
+    },
+    {
+      "title": "20 紧急访问（EMRG）",
+      "desc": "产品在预期紧急情况下允许用户访问和使用的能力。",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "20-1 器械是否包含紧急访问（“紧急破坏”）功能？",
+          "answer_cell": "I202",
+          "answer": "否",
+          "note_cell": "J202",
+          "note": "1"
+        },
+        {
+          "kind": "remark",
+          "label": "EMRG备注",
+          "cell": "D203",
+          "text": "1.数据会保存在医院提供的服务器内，数据的灾难恢复和备份计划应由客户根据系统使用案例、临床影响和恢复点目标和恢复时间目标实施。"
+        }
+      ]
+    },
+    {
+      "title": "21 远程访问与控制（RMOT）",
+      "desc": "产品确保用户远程访问与控制（含远程维护与升级）的网络安全的能力。",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "21-1 器械是否可以远程服务？",
+          "answer_cell": "I217",
+          "answer": "不适用",
+          "note_cell": "J217",
+          "note": "1"
+        },
+        {
+          "kind": "qa",
+          "label": "21-2 器械是否可以限制对指定器械或用户或网络位置（例如，特定IP地址）的远程访问？",
+          "answer_cell": "I218",
+          "answer": "不适用",
+          "note_cell": "J218",
+          "note": "1"
+        },
+        {
+          "kind": "qa",
+          "label": "20-2.1 器械是否可以配置为要求本地用户接受或启动远程访问？",
+          "answer_cell": "I219",
+          "answer": "不适用",
+          "note_cell": "J219",
+          "note": "1"
+        },
+        {
+          "kind": "remark",
+          "label": "OTHR备注",
+          "cell": "D220",
+          "text": "1本软件不提供互联网远程访问服务。"
+        }
+      ]
+    },
+    {
+      "title": "22 恶意软件探测与防护（MLDP）",
+      "desc": "产品有效探测、阻止恶意软件的能力。",
+      "items": [
+        {
+          "kind": "qa",
+          "label": "22-1 器械是否支持使用反恶意软件（或其他反恶意软件机制）？",
+          "answer_cell": "I223",
+          "answer": "是",
+          "note_cell": "J223",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "10-1.1 用户是否可以独立重新配置反恶意软件设置？",
+          "answer_cell": "I224",
+          "answer": "是",
+          "note_cell": "J224",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "10-1.2 器械用户界面是否会出现恶意软件检测通知？",
+          "answer_cell": "I225",
+          "answer": "否",
+          "note_cell": "J225",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "10-1.3 检测到恶意软件时是否只有制造商授权的人员才能修复系统？",
+          "answer_cell": "I226",
+          "answer": "否",
+          "note_cell": "J226",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "22-2 器械所有者是否可以安装或更新反恶意软件？",
+          "answer_cell": "I227",
+          "answer": "是",
+          "note_cell": "J227",
+          "note": "__"
+        },
+        {
+          "kind": "qa",
+          "label": "22-3 器械所有者/操作员（技术上/物理上）是否可以更新制造商安装的反恶意软件上的病毒定义？",
+          "answer_cell": "I228",
+          "answer": "不适用",
+          "note_cell": "J228",
+          "note": "_1_"
+        },
+        {
+          "kind": "remark",
+          "label": "MLDP备注",
+          "cell": "D229",
+          "text": "1. 反恶意软件由用户安装， 制造商不提供反恶意软件"
+        }
+      ]
+    }
+  ],
+  "rdmp_cells": [
+    "D190"
+  ]
+}

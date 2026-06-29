@@ -342,10 +342,11 @@ class Server(object):
             obj.product_version = product.full_version
             obj.product_full_version = product.full_version
             obj.product_type_code = product.type_code
-            # 文件编号从产品 DHF 中按文档名匹配获取
-            dhf_no = self.__dhf_file_no(product.id)
-            if dhf_no:
-                obj.file_no = dhf_no
+            # 文件编号优先用文档已填值，未填时从产品 DHF 中按文档名匹配获取
+            if not (obj.file_no or "").strip():
+                dhf_no = self.__dhf_file_no(product.id)
+                if dhf_no:
+                    obj.file_no = dhf_no
         return obj
 
     # ---------------- CRUD ----------------

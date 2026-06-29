@@ -34,6 +34,7 @@
         "label_docs": "产品标签样稿",
         "release_notes": "产品发布说明",
         "pha_docs": "初步危害分析清单",
+        "cyber_cap_docs": "网络安全能力分析",
         "srs_manage": "SRS管理",
         "srs_req": "需求列表",
         "sds_docs": "软件详细设计",
@@ -162,7 +163,8 @@
         "manufacturer": "受托生产企业",
         "production_address": "生产地址",
         "production_license_no": "生产许可证编号",
-        "contact_phone": "联系电话"
+        "contact_phone": "联系电话",
+        "representative": "代表人/职位"
     },
     "cst": {
         "code": "编号",

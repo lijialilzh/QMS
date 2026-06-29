@@ -21,6 +21,7 @@ const FIELDS: string[] = [
     "production_address",
     "production_license_no",
     "contact_phone",
+    "representative",
 ];
 
 const DetailDlg = ({ data, dispatch, onSaved }: any) => {

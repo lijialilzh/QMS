@@ -90,3 +90,6 @@ from .release_note import ReleaseNote  # noqa: E402,F401
 
 # 初步危害分析清单（独立文档模块）。
 from .pha_doc import PhaDoc  # noqa: E402,F401
+
+# 网络安全能力分析（MDS2，独立文档模块）。
+from .cyber_cap_doc import CyberCapDoc  # noqa: E402,F401

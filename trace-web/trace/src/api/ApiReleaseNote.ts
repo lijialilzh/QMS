@@ -27,5 +27,5 @@ export const get_release_note = async (params: any) => {
 };
 
 export const export_release_note = async (params: any) => {
-    return await httpGet("/trace-api/release_note/export_release_note", params);
+    return await httpGet("/trace-api/release_note/export_release_note", { ...params, _t: Date.now() });
 };
