@@ -22,6 +22,8 @@ from docx.oxml.ns import qn
 from ..model.product import Product
 from ..model.label_doc import LabelDoc
 from ..model.company_info import CompanyInfo
+from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
+from ..model.project_member import ProjectMember
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
 from ..obj.vobj_user import UserObj
@@ -132,14 +134,82 @@ class Server(object):
         for child in (node.get("children") or []):
             self.__fill_node(child, label_map)
 
+    def __compute_revision_info(self, prod_id, doc_version):
+        # 修改日期=时间线中含「标签」的最早日期行；修订人/批准人取参与人员（产品经理/产品部负责人）
+        def to_int(v):
+            digits = re.sub(r"[^\d]", "", str(v or ""))
+            return int(digits) if digits else None
+
+        tl_rows = db.session.execute(
+            select(ProjectTimelineRow).where(ProjectTimelineRow.prod_id == prod_id)
+        ).scalars().all()
+        cell_map = {}
+        if tl_rows:
+            for c in db.session.execute(
+                select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_([r.id for r in tl_rows]))
+            ).scalars().all():
+                cell_map.setdefault(c.row_id, []).append(c.output_result or "")
+        date_rows = [r for r in tl_rows if (r.row_type or "date") == "date" and to_int(r.year) and to_int(r.month)]
+
+        def date_key(r):
+            return to_int(r.year) * 10000 + to_int(r.month) * 100 + (to_int(r.day) or 0)
+
+        file_rows = [r for r in date_rows if any("标签" in str(v or "") for v in cell_map.get(r.id, []))]
+        file_date = ""
+        if file_rows:
+            fr = min(file_rows, key=date_key)
+            file_date = f"{to_int(fr.year)}年{to_int(fr.month)}月{to_int(fr.day)}日"
+
+        members = db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == prod_id)).scalars().all()
+
+        def find_member(pred):
+            for mem in members:
+                if pred(str(mem.role or "")):
+                    return (mem.name or "").strip()
+            return ""
+
+        pm = find_member(lambda r: "产品经理" in r)
+        approver = find_member(lambda r: "负责人" in r and "产品" in r)
+        return {"file_date": file_date, "version": doc_version, "pm": pm, "approver": approver}
+
+    def __fill_revision(self, node, info):
+        # 文件修订记录首行：修改日期/版本号/修订说明/修订人/批准人（仅填空、不覆盖已填）
+        ref = node.get("ref_type")
+        title = self.__strip_num(node.get("title"))
+        if ref == "revision" or title == "文件修订记录":
+            tables = node.get("tables") or []
+            if tables and isinstance(tables[0], list):
+                t = tables[0]
+                cols = len(t[0]) if t and t[0] else 5
+                while len(t) < 6:
+                    t.append([""] * cols)
+                row = t[1]
+                while len(row) < 5:
+                    row.append("")
+
+                def set_if(i, val):
+                    if val and not str(row[i] or "").strip():
+                        row[i] = val
+
+                set_if(0, info.get("file_date"))
+                set_if(1, info.get("version"))
+                if not str(row[2] or "").strip():
+                    row[2] = "首次发布"
+                set_if(3, info.get("pm"))
+                set_if(4, info.get("approver"))
+        for child in (node.get("children") or []):
+            self.__fill_revision(child, info)
+
     def __autofill_for_export(self, content, obj: LabelDocObj):
         sections = (content or {}).get("sections") or []
         if not obj.product_id:
             return content
         product = db.session.execute(select(Product).where(Product.id == obj.product_id)).scalars().first()
         label_map = self.__collect_label_map(product)
+        rev_info = self.__compute_revision_info(obj.product_id, obj.version)
         for node in sections:
             self.__fill_node(node, label_map)
+            self.__fill_revision(node, rev_info)
         return content
 
     # ---------------- CRUD ----------------
@@ -261,6 +331,10 @@ class Server(object):
         section.bottom_margin = Inches(0.8)
         section.left_margin = Inches(0.7)
         section.right_margin = Inches(0.7)
+        # 页眉：文件编号右对齐（参考产品开发计划）
+        header_para = section.header.add_paragraph()
+        header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        docx_util.fonted_txt(header_para, obj.file_no or "")
 
         def write_center_title(text, size=22.0, bold=True):
             p = document.add_paragraph()
@@ -375,34 +449,230 @@ class Server(object):
 
         def render_section(node, level):
             name = self.__strip_num(node.get("title"))
-            # 标签/封面表的首行不作为表头加粗（key-value 形式）
             header = node.get("ref_type") in ("revision",) or not node.get("ref_type")
             add_heading(name, level=level)
             body = node.get("body") or ""
             if body.strip():
                 add_text(body)
-            # 封口贴合格标签：写死固定图，忽略其表格
-            if node.get("ref_type") == "label_seal":
-                add_seal_image()
-            else:
-                for table in (node.get("tables") or []):
-                    add_grid(table, header=header)
+            for table in (node.get("tables") or []):
+                add_grid(table, header=header)
             for child in (node.get("children") or []):
                 render_section(child, level + 1)
 
-        cover = next((s for s in sections if s.get("ref_type") == "cover"), None)
-        body_sections = [s for s in sections if s.get("ref_type") != "cover"]
+        # ---------- 版式辅助（参考产品开发计划 + 图1 方框样式） ----------
+        def add_blank_lines(count):
+            for _ in range(max(0, int(count or 0))):
+                document.add_paragraph("")
 
-        # 封面：居中大标题 + 封面信息表
+        def usable_dxa():
+            sect = document.sections[0]
+            return int((sect.page_width - sect.left_margin - sect.right_margin) / 635)
+
+        def set_table_borders(table, val="single", sz=8, color="000000"):
+            tbl_pr = table._tbl.tblPr
+            borders = tbl_pr.find(qn("w:tblBorders"))
+            if borders is None:
+                borders = OxmlElement("w:tblBorders")
+                tbl_pr.append(borders)
+            for pos in ("top", "left", "bottom", "right", "insideH", "insideV"):
+                el = borders.find(qn(f"w:{pos}"))
+                if el is None:
+                    el = OxmlElement(f"w:{pos}")
+                    borders.append(el)
+                el.set(qn("w:val"), val)
+                el.set(qn("w:sz"), str(sz))
+                el.set(qn("w:color"), color)
+                el.set(qn("w:space"), "0")
+
+        def set_fixed_width(table, widths):
+            total = sum(widths)
+            tbl_pr = table._tbl.tblPr
+            layout = tbl_pr.find(qn("w:tblLayout"))
+            if layout is None:
+                layout = OxmlElement("w:tblLayout")
+                tbl_pr.append(layout)
+            layout.set(qn("w:type"), "fixed")
+            tbl_w = tbl_pr.find(qn("w:tblW"))
+            if tbl_w is None:
+                tbl_w = OxmlElement("w:tblW")
+                tbl_pr.append(tbl_w)
+            tbl_w.set(qn("w:w"), str(total))
+            tbl_w.set(qn("w:type"), "dxa")
+            grid_el = table._tbl.find(qn("w:tblGrid"))
+            if grid_el is not None:
+                for i, gc in enumerate(grid_el.findall(qn("w:gridCol"))):
+                    if i < len(widths):
+                        gc.set(qn("w:w"), str(widths[i]))
+            for row in table.rows:
+                for i, c in enumerate(row.cells):
+                    if i >= len(widths):
+                        continue
+                    tc_pr = c._tc.get_or_add_tcPr()
+                    tc_w = tc_pr.find(qn("w:tcW"))
+                    if tc_w is None:
+                        tc_w = OxmlElement("w:tcW")
+                        tc_pr.append(tc_w)
+                    tc_w.set(qn("w:w"), str(widths[i]))
+                    tc_w.set(qn("w:type"), "dxa")
+
+        def fig_caption(title):
+            write_center_title(title, size=14.0, bold=True)
+
+        def kv_of(node):
+            kv = {}
+            for table in (node.get("tables") or []):
+                for row in table:
+                    if isinstance(row, list) and len(row) >= 2:
+                        kv[str(row[0]).strip()] = str(row[1] or "").strip()
+            return kv
+
+        def add_bracket_para(container, label, value, size=10.5, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
+            p = container.add_paragraph()
+            p.alignment = align
+            p.paragraph_format.line_spacing = 1.4
+            docx_util.fonted_txt(p, f"【{label}】{value}", font_size=size, bold=bold)
+
+        def add_cover_grid(grid):
+            grid = [row for row in (grid or []) if isinstance(row, list)]
+            cols = max((len(row) for row in grid), default=0)
+            if cols <= 0:
+                return
+            table = document.add_table(rows=0, cols=cols)
+            table.style = "Table Grid"
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+            table.autofit = True
+            for row in grid:
+                cells = table.add_row().cells
+                for c_idx in range(cols):
+                    text = row[c_idx] if c_idx < len(row) else ""
+                    set_cell(cells[c_idx], text, bold=(c_idx % 2 == 0), align=WD_ALIGN_PARAGRAPH.CENTER)
+                if (str(row[0]).strip() if row else "") == "生效日期" and cols > 2:
+                    merged = cells[1]
+                    for c_idx in range(2, cols):
+                        merged = merged.merge(cells[c_idx])
+                    set_cell(merged, row[1] if len(row) > 1 else "", align=WD_ALIGN_PARAGRAPH.CENTER)
+            document.add_paragraph()
+
+        def render_label_product(node):
+            # 图1：实线方框，内含 软件名称标题 +【字段】值 + 虚线 UDI 条形码框 + 结尾文案
+            kv = kv_of(node)
+            total = int(usable_dxa() * 0.7)
+            box = document.add_table(rows=1, cols=1)
+            box.alignment = WD_TABLE_ALIGNMENT.CENTER
+            box.autofit = False
+            set_table_borders(box, "single", 12)
+            set_fixed_width(box, [total])
+            cell = box.cell(0, 0)
+            cell.text = ""
+            tp = cell.paragraphs[0]
+            tp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            tp.paragraph_format.line_spacing = 1.6
+            docx_util.fonted_txt(tp, kv.get("软件名称", ""), font_size=15.0, bold=True)
+            # 三行两列字段
+            pair_w = max(total - 200, 400)
+            ptbl = cell.add_table(rows=0, cols=2)
+            ptbl.autofit = False
+            set_table_borders(ptbl, "none", 0)
+            # 清零嵌套表格的缩进与单元格边距，使左列与下方单列字段左对齐
+            tblPr = ptbl._tbl.tblPr
+            ind = OxmlElement("w:tblInd")
+            ind.set(qn("w:w"), "0")
+            ind.set(qn("w:type"), "dxa")
+            tblPr.append(ind)
+            mar = OxmlElement("w:tblCellMar")
+            for side in ("top", "left", "bottom", "right"):
+                el = OxmlElement(f"w:{side}")
+                el.set(qn("w:w"), "0")
+                el.set(qn("w:type"), "dxa")
+                mar.append(el)
+            tblPr.append(mar)
+            for l, r in [("产品型号", "完整版本"), ("成品序列号", "发布版本"), ("生产日期", "使用期限")]:
+                cells = ptbl.add_row().cells
+                set_cell(cells[0], f"【{l}】{kv.get(l, '')}")
+                set_cell(cells[1], f"【{r}】{kv.get(r, '')}")
+            set_fixed_width(ptbl, [pair_w // 2, pair_w - pair_w // 2])
+            # 单列字段
+            for label in ["产品注册证号", "注册人", "住所", "受托生产企业", "生产地址", "生产许可证编号", "联系电话", "UDI"]:
+                add_bracket_para(cell, label, kv.get(label, ""))
+            # 虚线 UDI 条形码占位框
+            cell.add_paragraph()
+            udi = cell.add_table(rows=1, cols=1)
+            udi.alignment = WD_TABLE_ALIGNMENT.CENTER
+            udi.autofit = False
+            set_table_borders(udi, "dashed", 8)
+            set_fixed_width(udi, [int(total * 0.5)])
+            uc = udi.cell(0, 0)
+            uc.text = ""
+            for k in range(3):
+                pp = uc.paragraphs[0] if k == 0 else uc.add_paragraph()
+                pp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                pp.paragraph_format.line_spacing = 1.5
+                docx_util.fonted_txt(pp, "UDI 条形码" if k == 1 else "", font_size=12.0)
+            cell.add_paragraph()
+            fp = cell.add_paragraph()
+            fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            docx_util.fonted_txt(fp, "其他内容详见说明书", font_size=12.0, bold=True)
+            document.add_paragraph()
+
+        def render_label_udisk(node):
+            # 图3：小方框 + 软件名称标题 +【英文名称/完整版本】
+            kv = kv_of(node)
+            total = int(usable_dxa() * 0.6)
+            box = document.add_table(rows=1, cols=1)
+            box.alignment = WD_TABLE_ALIGNMENT.CENTER
+            box.autofit = False
+            set_table_borders(box, "single", 12)
+            set_fixed_width(box, [total])
+            cell = box.cell(0, 0)
+            cell.text = ""
+            tp = cell.paragraphs[0]
+            tp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            tp.paragraph_format.line_spacing = 1.5
+            docx_util.fonted_txt(tp, kv.get("软件名称", ""), font_size=13.0, bold=True)
+            add_bracket_para(cell, "产品型号", kv.get("产品型号", ""), align=WD_ALIGN_PARAGRAPH.CENTER)
+            add_bracket_para(cell, "完整版本", kv.get("完整版本", ""), align=WD_ALIGN_PARAGRAPH.CENTER)
+            document.add_paragraph()
+
+        def render_body_node(node):
+            ref = node.get("ref_type")
+            title = node.get("title") or ""
+            if ref == "label_product":
+                fig_caption(title)
+                render_label_product(node)
+            elif ref == "label_seal":
+                fig_caption(title)
+                add_seal_image()
+            elif ref == "label_udisk":
+                fig_caption(title)
+                render_label_udisk(node)
+            else:
+                render_section(node, 1)
+
+        cover = next((s for s in sections if s.get("ref_type") == "cover"), None)
+        revision = next((s for s in sections if s.get("ref_type") == "revision"), None)
+        body_sections = [s for s in sections if s.get("ref_type") not in ("cover", "revision")]
+
+        # 首页（参考产品开发计划）：留白 + 居中大标题 + 封面信息表
+        add_blank_lines(6)
         cover_title = (self.__strip_num(cover.get("title")) if cover else "") or "产品标签样稿"
         write_center_title(cover_title, size=22.0, bold=True)
-        document.add_paragraph()
+        add_blank_lines(4)
         if cover:
             for table in (cover.get("tables") or []):
-                add_grid(table, header=False)
+                add_cover_grid(table)
 
+        # 第二页（参考产品开发计划）：文件修订记录
+        document.add_page_break()
+        write_center_title("文件修订记录", size=14.0, bold=True)
+        add_blank_lines(2)
+        if revision:
+            for table in (revision.get("tables") or []):
+                add_grid(table, header=True)
+
+        # 第三页起：标签图（图1/图2/图3）与技术要求
+        document.add_page_break()
         for node in body_sections:
-            render_section(node, 1)
+            render_body_node(node)
 
         document.save(output)
         output.seek(0)

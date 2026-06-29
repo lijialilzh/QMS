@@ -7,11 +7,28 @@ import { useData } from "@/common";
 import * as Api from "@/api/ApiLabelDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiCompanyInfo from "@/api/ApiCompanyInfo";
+import * as ApiTimeline from "@/api/ApiProjectTimeline";
+import * as ApiMember from "@/api/ApiProjectMember";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
+
+const stripNum = (title: string) => String(title || "").replace(/^\s*\d+(?:\.\d+)*[\.、\s]*/, "").trim();
+
+// 时间线里找含「标签」文件输出的最早日期行，作为文件修订记录的修改日期
+const computeFileDate = (rows: any[], keyword = "标签"): string => {
+    const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
+    const matches = (rows || []).filter((r: any) =>
+        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => String(v || "").includes(keyword))
+    );
+    if (!matches.length) return "";
+    const key = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
+    let best = matches[0];
+    matches.forEach((r: any) => { if (key(r) < key(best)) best = r; });
+    return `${num(best.year)}年${num(best.month)}月${num(best.day)}日`;
+};
 
 const ensureKeys = (nodes: any[]): any[] =>
     (nodes || []).map((n: any) => ({
@@ -81,16 +98,48 @@ export default () => {
         return (nodes || []).map(fix);
     };
 
-    // 按产品重新获取并填充标签表（产品信息 + 公司基本信息）
-    const autofill = (productId: number, secs: any[]): Promise<any[]> =>
+    // 文件修订记录首行：修改日期/版本号/修订说明/修订人/批准人（仅填空、不覆盖已填）
+    const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; pm?: string; approver?: string }): any[] => {
+        const fix = (n: any): any => {
+            const isRev = n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
+            let tables = n.tables;
+            if (isRev && Array.isArray(n.tables) && Array.isArray(n.tables[0])) {
+                const t = n.tables[0].map((r: any[]) => (Array.isArray(r) ? [...r] : r));
+                const cols = (t[0] || []).length || 5;
+                while (t.length < 6) t.push(new Array(cols).fill(""));
+                const row = t[1];
+                while (row.length < 5) row.push("");
+                const setIf = (i: number, val: any) => { if (val && !String(row[i] || "").trim()) row[i] = val; };
+                setIf(0, info.fileDate);
+                setIf(1, info.version);
+                if (!String(row[2] || "").trim()) row[2] = "首次发布";
+                setIf(3, info.pm);
+                setIf(4, info.approver);
+                tables = [t, ...n.tables.slice(1)];
+            }
+            return { ...n, tables, children: (n.children || []).map(fix) };
+        };
+        return (nodes || []).map(fix);
+    };
+
+    // 按产品重新获取并填充标签表（产品信息 + 公司基本信息）及文件修订记录
+    const autofill = (productId: number, secs: any[], version: string): Promise<any[]> =>
         new Promise((resolve) => {
             if (!productId) { resolve(secs); return; }
             Promise.all([
                 ApiProduct.get_product({ id: productId }).catch(() => null),
                 ApiCompanyInfo.list_company_info({ page_index: 0, page_size: 1 }).catch(() => null),
-            ]).then(([pr, ci]: any[]) => {
+                ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
+                ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
+            ]).then(([pr, ci, tl, mb]: any[]) => {
                 const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
                 const company = ci && ci.code === Api.C_OK ? ((ci.data?.rows || [])[0] || {}) : {};
+                const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
+                const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
+                const findRole = (pred: (role: string) => boolean) => {
+                    const hit = members.find((m: any) => pred(String(m.role || "")));
+                    return hit ? String(hit.name || "").trim() : "";
+                };
                 const labelMap: Record<string, string> = {
                     "产品型号": prod.type_code || "",
                     "英文名称": prod.type_code || "",
@@ -104,7 +153,14 @@ export default () => {
                     "生产许可证编号": company.production_license_no || "",
                     "联系电话": company.contact_phone || "",
                 };
-                resolve(fillAuto(secs, labelMap));
+                let out = fillAuto(secs, labelMap);
+                out = fillRevision(out, {
+                    fileDate: computeFileDate(tlRows),
+                    version,
+                    pm: findRole((r) => r.includes("产品经理")),
+                    approver: findRole((r) => r.includes("负责人") && r.includes("产品")),
+                });
+                resolve(out);
             }).catch(() => resolve(secs));
         });
 
@@ -119,7 +175,7 @@ export default () => {
             }
             const doc = res.data || {};
             const sections = ensureKeys((doc.content && doc.content.sections) || []);
-            autofill(doc.product_id, sections).then((secs) => {
+            autofill(doc.product_id, sections, doc.version || "").then((secs) => {
                 dispatch({ loading: false, doc, sections: secs, activeKey: findNode(secs, data.activeKey) ? data.activeKey : firstKey(secs) });
             });
         });
@@ -129,7 +185,7 @@ export default () => {
     const rebindProduct = (newId: number) => {
         const product = (data.products || []).find((p: any) => p.id === newId) || {};
         dispatch({ loading: true, doc: { ...data.doc, product_id: newId, product_name: product.name, product_full_version: product.full_version } });
-        autofill(newId, data.sections).then((secs) => dispatch({ loading: false, sections: secs }));
+        autofill(newId, data.sections, data.doc.version || "").then((secs) => dispatch({ loading: false, sections: secs }));
     };
 
     useEffect(() => {
