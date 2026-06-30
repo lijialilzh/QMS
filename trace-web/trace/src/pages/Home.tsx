@@ -249,6 +249,11 @@ export default () => {
                         label: ts("menu.research_docs"),
                         perm: "research_doc_view",
                     },
+                    {
+                        key: "/nsr_docs",
+                        label: ts("menu.nsr_docs"),
+                        perm: "nsr_doc_view",
+                    },
                 ],
             },
             {

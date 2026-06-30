@@ -63,6 +63,8 @@ import CyberCapDocs from "./pages/cyber_cap/CyberCapDocs";
 import CyberCapDocDetail from "./pages/cyber_cap/CyberCapDocDetail";
 import ResearchDocs from "./pages/research/ResearchDocs";
 import ResearchDocDetail from "./pages/research/ResearchDocDetail";
+import NsrDocs from "./pages/nsr/NsrDocs";
+import NsrDocDetail from "./pages/nsr/NsrDocDetail";
 import VersionRule from "./pages/version_rule/VersionRule";
 import CompanyInfos from "./pages/basedata/CompanyInfos";
 
@@ -153,6 +155,9 @@ const router = createRouter([
             { path: "/research_docs", element: <ResearchDocs /> },
             { path: "/research_docs/edit/:id", element: <ResearchDocDetail /> },
             { path: "/research_docs/view/:id", element: <ResearchDocDetail /> },
+            { path: "/nsr_docs", element: <NsrDocs /> },
+            { path: "/nsr_docs/edit/:id", element: <NsrDocDetail /> },
+            { path: "/nsr_docs/view/:id", element: <NsrDocDetail /> },
 
             {path: "/prod_traces", element: <ProdTraces /> },
             {path: "/prod_comparison", element: <ProdComparison /> },
