@@ -9,6 +9,7 @@
 
 import base64
 import copy
+import datetime
 import io
 import json
 import logging
@@ -32,6 +33,7 @@ from ..model.srs_doc import SrsDoc, SrsNode
 from ..model.prod_runtime_env import ProdRuntimeEnv
 from ..model.doc_file import DocFile
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
+from ..model.project_member import ProjectMember
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
 from ..obj.vobj_user import UserObj
@@ -48,6 +50,9 @@ logger = logging.getLogger(__name__)
 # 取发布日期时的时间线关键字（命中项取最新日期）
 DATE_KEYWORDS = ["自研软件研究报告", "软件研究报告", "软件发布", "发布"]
 
+# 模板占位产品名（含可能的空格变体），自动获取时全文统一替换为实际产品名
+_TEMPLATE_PRODUCT_NAME_RE = re.compile(r"肿瘤\s*CT\s*图像随访与评估软件")
+
 DEFAULT_RESEARCH_CONTENT = {"productName": "", "sections": []}
 
 _DEFAULT_CONTENT_FILE = os.path.join(
@@ -61,16 +66,57 @@ try:
 except Exception:
     logger.exception("加载自研软件研究报告默认内容资源失败")
 
+# 模板表名（标题 -> 各表表名），用于给旧文档补全表上方显示的表名（未人工编辑时）
+_DEFAULT_TABLE_TITLES = {}
+
+
+def _build_title_map(nodes):
+    for n in nodes or []:
+        if isinstance(n, dict):
+            if n.get("table_titles") and n.get("title"):
+                _DEFAULT_TABLE_TITLES[n["title"]] = n["table_titles"]
+            _build_title_map(n.get("children"))
+
+
+_build_title_map(DEFAULT_RESEARCH_CONTENT.get("sections"))
+
 
 class Server(object):
     # ---------------- 内容归一 ----------------
+    def __fill_template_titles(self, nodes):
+        # 旧文档若节点有表格但缺表名，按标题从模板补全（不覆盖人工已填的表名）
+        for n in nodes or []:
+            if isinstance(n, dict):
+                if n.get("tables") and not n.get("table_titles"):
+                    titles = _DEFAULT_TABLE_TITLES.get(n.get("title"))
+                    if titles:
+                        n["table_titles"] = list(titles)
+                        # 旧文档：正文里若仍残留这些表名行（已上移为表名），移除避免重复
+                        text = n.get("text")
+                        if isinstance(text, str) and text:
+                            title_set = {re.sub(r"\s+", "", t) for t in titles if t}
+                            n["text"] = "\n".join(
+                                ln for ln in text.split("\n")
+                                if re.sub(r"\s+", "", ln.strip()) not in title_set
+                            )
+                self.__fill_template_titles(n.get("children"))
+
     def __normalize_content(self, content):
         result = copy.deepcopy(DEFAULT_RESEARCH_CONTENT)
         if isinstance(content, dict):
             result.update(content)
         result.setdefault("sections", copy.deepcopy(DEFAULT_RESEARCH_CONTENT.get("sections", [])))
         result.setdefault("productName", "")
+        self.__strip_blocks(result.get("sections"))
+        self.__fill_template_titles(result.get("sections"))
         return result
+
+    def __strip_blocks(self, nodes):
+        # blocks 为读取时由 autofill 派生的展示结构，不持久化；保留原始 text/images/tables 以便重算
+        for n in nodes or []:
+            if isinstance(n, dict):
+                n.pop("blocks", None)
+                self.__strip_blocks(n.get("children"))
 
     # ---------------- 自动获取数据源 ----------------
     def __latest_doc(self, model, product_id):
@@ -84,16 +130,29 @@ class Server(object):
     def __strip_name(self, title):
         return re.sub(r"^[0-9．.、\s]+", "", str(title or "")).strip()
 
-    def __node_outline(self, node, depth, lines):
-        # 将一个节点（含其全部子孙）按「标题 + 正文」逐行展开；depth==0 的根节点只取正文不重复标题
+    @staticmethod
+    def __level_number(depth, idx):
+        # 不同层级使用不同序号样式：第一级 (1)(2)(3)，第二级 1)2)3)，第三级及以下 ①②③ / a) 兜底
+        if depth <= 1:
+            return f"({idx})"
+        if depth == 2:
+            return f"{idx})"
+        circled = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
+        return circled[idx - 1] if 1 <= idx <= len(circled) else f"{idx}."
+
+    def __node_outline(self, node, depth, lines, number=""):
+        # 将一个节点（含其全部子孙）按「序号 + 标题 + 正文」逐行展开；
+        # depth==0 的根节点只取正文不重复标题，每一层在其父级下独立编号，且按层级使用不同序号样式。
         title = self.__strip_name(node.get("title"))
         body = str(node.get("body") or "").strip()
         if depth >= 1 and title:
-            lines.append(title)
+            lines.append(f"{number} {title}" if number else title)
         if body:
             lines.append(body)
+        idx = 0
         for child in node.get("children") or []:
-            self.__node_outline(child, depth + 1, lines)
+            idx += 1
+            self.__node_outline(child, depth + 1, lines, self.__level_number(depth + 1, idx))
 
     def __ptr_func_2_1(self, product_id):
         # 技术要求 2.1 功能：正文第 2 章（性能指标）下「功能」子节的完整内容（含各模块及功能点）
@@ -136,6 +195,7 @@ class Server(object):
         picked.sort(key=lambda it: [int(p) for p in it[0].split(".")])
 
         lines = []
+        sub_idx = 0
         for num, n in picked:
             title = self.__strip_name(n.title)
             text = str(n.text or "").strip()
@@ -143,8 +203,9 @@ class Server(object):
                 if text:
                     lines.append(text)
             else:
+                sub_idx += 1
                 if title:
-                    lines.append(title)
+                    lines.append(f"({sub_idx}) {title}")
                 if text:
                     lines.append(text)
         return "\n".join(lines)
@@ -193,6 +254,60 @@ class Server(object):
         y, m, d, _ = max(hits, key=lambda x: x[0] * 10000 + x[1] * 100 + x[2])
         return f"{y}年{m}月{d}日"
 
+    def __dev_amount(self, product_id):
+        # 表5 开发量：
+        #   开发人员数量 = 参与人员中角色含「开发」的人数；
+        #   开发时间 = 时间线中标注「产品开发」阶段的日期行首末跨度（含首尾天数），不是整张时间线首末；
+        #   工作量 = 人数 × 天数。
+        members = db.session.execute(
+            select(ProjectMember).where(ProjectMember.prod_id == product_id)
+        ).scalars().all()
+        headcount = sum(1 for m in members if "开发" in str(m.role or ""))
+
+        rows = db.session.execute(
+            select(ProjectTimelineRow).where(
+                ProjectTimelineRow.prod_id == product_id,
+                ProjectTimelineRow.row_type == "date",
+            )
+        ).scalars().all()
+        row_map = {r.id: r for r in rows}
+        cells = db.session.execute(
+            select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_(list(row_map.keys())))
+        ).scalars().all() if row_map else []
+        # 标注「产品开发」阶段的日期行（单元格中存在独立一行恰为「产品开发」，排除「产品开发计划」等）
+        dev_row_ids = set()
+        for c in cells:
+            for ln in str(c.output_result or "").split("\n"):
+                if ln.strip() == "产品开发":
+                    dev_row_ids.add(c.row_id)
+                    break
+
+        def to_int(v):
+            # 时间线字段可能带单位（如「5月」「25日」「2025年」），只取数字
+            digits = re.sub(r"[^\d]", "", str(v or ""))
+            return int(digits) if digits else None
+
+        def parse_date(r):
+            y, m = to_int(r.year), to_int(r.month)
+            if y is None or m is None:
+                return None
+            try:
+                return datetime.date(y, m, to_int(r.day) or 1)
+            except Exception:
+                return None
+
+        # 优先取「产品开发」阶段；若未标注则回退到全部日期行，保证有值
+        target_rows = [row_map[i] for i in dev_row_ids] if dev_row_ids else rows
+        dates = [d for d in (parse_date(r) for r in target_rows) if d]
+        if len(dates) >= 2:
+            days = (max(dates) - min(dates)).days + 1
+        elif len(dates) == 1:
+            days = 1
+        else:
+            days = 0
+        workload = headcount * days
+        return {"headcount": headcount, "days": days, "workload": workload}
+
     def __doc_file_url(self, product_id, category):
         row = db.session.execute(
             select(DocFile).where(DocFile.product_id == product_id, DocFile.category == category).order_by(DocFile.id)
@@ -225,12 +340,16 @@ class Server(object):
             f"发布日期是{release_date or ''}，版本命名规则和更新历史详见提交文件《版本更新历史》。"
         )
         return {
+            "product_name": (product.name or "").strip(),
+            "release_version": (product.release_version or "").strip(),
+            "full_version": (product.full_version or "").strip(),
             "sw_ident_text": sw_ident_text,
             "overall_desc": (product.overall_desc or "").strip(),
             "ptr_2_1": self.__ptr_func_2_1(product_id),
             "srs_2_3": self.__srs_2_3(product_id),
             "update_text": update_text,
             "runtime": env,
+            "dev_amount": self.__dev_amount(product_id),
             "images": {
                 "img_ui": self.__doc_file_url(product_id, "img_ui"),
                 "img_struct": self.__doc_file_url(product_id, "img_struct"),
@@ -260,6 +379,61 @@ class Server(object):
             ]
         return []
 
+    @staticmethod
+    def __split_image_blocks(text, image_urls, img_category=None):
+        # 统一图文版式，使图与正文位置和原 Word 一致：
+        #   1) 正文中含占位符行「{{IMG}}」时，图片按占位符出现的位置插入（精确锚定）；
+        #   2) 否则按「图N …」图题行定位：文字 → 图片 → 图题(图下居中) → 文字；
+        #   3) 都没有时：正文在前、图片在后。
+        urls = [u for u in (image_urls or []) if u]
+        lines = str(text or "").split("\n")
+        blocks = []
+        buf = []
+
+        def flush():
+            t = "\n".join(buf).strip()
+            if t:
+                blocks.append({"text": t})
+            buf.clear()
+
+        if any(ln.strip() == "{{IMG}}" for ln in lines):
+            ui = 0
+            for ln in lines:
+                s = ln.strip()
+                if s == "{{IMG}}":
+                    flush()
+                    if ui < len(urls):
+                        blocks.append({"type": "image", "url": urls[ui], "img_category": img_category})
+                        ui += 1
+                elif re.match(r"^图\s*\d", s):
+                    flush()
+                    blocks.append({"type": "caption", "text": s})
+                else:
+                    buf.append(ln)
+            flush()
+            for u in urls[ui:]:
+                blocks.append({"type": "image", "url": u, "img_category": img_category})
+            return blocks
+
+        cap_i = next((i for i, ln in enumerate(lines) if re.match(r"^图\s*\d", ln.strip())), None)
+        imgs = [{"type": "image", "url": u, "img_category": img_category} for u in urls]
+        if cap_i is not None:
+            before = "\n".join(lines[:cap_i]).strip()
+            caption = lines[cap_i].strip()
+            after = "\n".join(lines[cap_i + 1:]).strip()
+            if before:
+                blocks.append({"text": before})
+            blocks.extend(imgs)
+            if caption:
+                blocks.append({"type": "caption", "text": caption})
+            if after:
+                blocks.append({"text": after})
+        else:
+            if str(text or "").strip():
+                blocks.append({"text": str(text)})
+            blocks.extend(imgs)
+        return blocks
+
     def __apply_autofill(self, content, auto):
         if not auto:
             return content
@@ -273,6 +447,9 @@ class Server(object):
             for node in nodes or []:
                 rt = node.get("ref_type")
                 cat = node.get("img_category")
+                # 兼容旧文档：缺 ref_type 时按标题兜底识别版本命名规则章节
+                if not rt and self.__strip_name(node.get("title")) == "软件版本命名规则":
+                    rt = "version_rule"
                 if rt == "sw_ident":
                     node["text"] = auto["sw_ident_text"]
                 elif rt == "func_module":
@@ -294,16 +471,95 @@ class Server(object):
                         blocks.append({"type": "table", "table": tbl})
                     node["blocks"] = blocks
                 elif rt in ("rt_hw", "rt_sw", "rt_net"):
-                    node["tables"] = self.__runtime_tables(rt, auto.get("runtime", {}))
+                    # 运行环境：按原文「正文 → 表格」交替排版（每段正文紧跟其对应表格）
+                    tables = self.__runtime_tables(rt, auto.get("runtime", {}))
+                    lines = str(node.get("text") or "").split("\n")
+                    titles = node.get("table_titles") or []
+                    blocks = []
+                    for i, tbl in enumerate(tables):
+                        if i < len(lines) and lines[i].strip():
+                            blocks.append({"text": lines[i].strip()})
+                        blocks.append({"type": "table", "table": tbl, "title": titles[i] if i < len(titles) else ""})
+                    for j in range(len(tables), len(lines)):
+                        if lines[j].strip():
+                            blocks.append({"text": lines[j].strip()})
+                    node["text"] = ""
+                    node["tables"] = []
+                    node["table_titles"] = []
+                    node["blocks"] = blocks
                 elif rt == "update_history":
                     node["text"] = auto["update_text"]
+                elif rt == "version_rule":
+                    # 版本命名规则：发布版本、完整版本按产品实际版本自动获取，其余规则说明保留；
+                    # 版本结构图锚定在「软件完整版本及说明:」之后，与原 Word 位置一致。
+                    rv = auto.get("release_version", "")
+                    fv = auto.get("full_version", "")
+                    out = []
+                    has_img_holder = any(ln.strip() == "{{IMG}}" for ln in str(node.get("text") or "").split("\n"))
+                    for ln in str(node.get("text") or "").split("\n"):
+                        s = ln.strip()
+                        if s.startswith("发布版本") and rv:
+                            out.append(f"发布版本：V{rv}")
+                        elif s.startswith("完整版本") and fv:
+                            out.append(f"完整版本：V{fv}")
+                        else:
+                            out.append(ln)
+                        if not has_img_holder and s.startswith("软件完整版本及说明"):
+                            out.append("{{IMG}}")
+                    node["text"] = "\n".join(out)
                 elif cat:
-                    url = img_url(cat)
-                    node["images"] = [url] if url else []
+                    # 自动获取图类章节：图片来自图表文件管理，按图题切分排版（保留原 text 以幂等重算）
+                    node["blocks"] = self.__split_image_blocks(node.get("text"), [img_url(cat)], cat)
+                # 通用：模板内嵌固定图（base64 存于 images）的章节也统一为「正文 → 图 → 图题 → 正文」
+                if not node.get("blocks") and (node.get("images") or []):
+                    node["blocks"] = self.__split_image_blocks(node.get("text"), node.get("images") or [], None)
+                # 表5 开发量：按表名定位（含「开发量」），仅重算「软件名称/开发人员数量/开发时间/工作量」列，保留代码总行数
+                titles = node.get("table_titles") or []
+                da_idx = next((i for i, t in enumerate(titles) if "开发量" in str(t)), None)
+                da = auto.get("dev_amount")
+                if da_idx is not None and da is not None:
+                    tbls = node.get("tables") or []
+                    if 0 <= da_idx < len(tbls) and len(tbls[da_idx]) >= 2:
+                        data_row = tbls[da_idx][1]
+                        if len(data_row) >= 4:
+                            data_row[0] = auto.get("product_name", "") or data_row[0]
+                            data_row[1] = str(da["headcount"])
+                            data_row[2] = f'{da["days"]}天'
+                            data_row[3] = str(da["workload"])
                 walk(node.get("children"))
 
         walk(content.get("sections"))
+        product_name = (auto.get("product_name") or "").strip()
+        if product_name and re.sub(r"\s", "", product_name) != "肿瘤CT图像随访与评估软件":
+            self.__sync_product_name(content, product_name)
         return content
+
+    def __sync_product_name(self, content, product_name):
+        # 全文统一替换：把模板占位产品名（含空格变体）替换为实际产品名
+        def rep(s):
+            return _TEMPLATE_PRODUCT_NAME_RE.sub(product_name, s) if isinstance(s, str) else s
+
+        def walk(nodes):
+            for n in nodes or []:
+                for k in ("text", "body"):
+                    if isinstance(n.get(k), str):
+                        n[k] = rep(n[k])
+                for tbl in n.get("tables") or []:
+                    for row in tbl:
+                        for i, c in enumerate(row):
+                            if isinstance(c, str):
+                                row[i] = rep(c)
+                for b in n.get("blocks") or []:
+                    for k in ("text", "title"):
+                        if isinstance(b.get(k), str):
+                            b[k] = rep(b[k])
+                    for row in b.get("table") or []:
+                        for i, c in enumerate(row):
+                            if isinstance(c, str):
+                                row[i] = rep(c)
+                walk(n.get("children"))
+
+        walk(content.get("sections"))
 
     # ---------------- 转换 ----------------
     def __to_obj(self, row: ResearchDoc, product: Product = None, with_autofill=True):
@@ -512,6 +768,10 @@ class Server(object):
                         continue
                     if block.get("type") == "image":
                         add_image(block.get("url"))
+                    elif block.get("type") == "caption":
+                        cap = document.add_paragraph()
+                        cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        docx_util.fonted_txt(cap, str(block.get("text") or ""), font_size=10.5)
                     elif block.get("type") == "table":
                         add_plain_table(block.get("table") or [], block.get("title") or "")
                     elif block.get("text"):
@@ -527,13 +787,15 @@ class Server(object):
             for child in sec.get("children", []) or []:
                 add_section(child, level + 1)
 
-        content = self.__normalize_content(obj.content)
+        content = obj.content if isinstance(obj.content, dict) else self.__normalize_content(obj.content)
         sections = content.get("sections", [])
         cover = next((s for s in sections if is_cover(s)), None)
         revision = next((s for s in sections if is_revision(s)), None)
         body = [s for s in sections if not is_cover(s) and not is_revision(s)]
 
-        # 封面
+        # 封面：上方留白，使大标题落在封面页垂直中部
+        for _ in range(10):
+            document.add_paragraph("")
         title_para = document.add_paragraph()
         title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
         title_para.paragraph_format.line_spacing = 1.5

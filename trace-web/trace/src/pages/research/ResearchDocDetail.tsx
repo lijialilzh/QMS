@@ -1,18 +1,19 @@
-import { Button, Input, Space, Spin, Tag, message } from "antd";
-import { PlusOutlined, DeleteOutlined } from "@ant-design/icons";
+import { Button, Input, Space, Spin, Tag, Upload, message } from "antd";
+import { PlusOutlined, DeleteOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
 import * as Api from "@/api/ApiResearchDoc";
 import * as ApiProduct from "@/api/ApiProduct";
+import * as ApiDocFile from "@/api/ApiDocFile";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
 
 const emptyContent = { sections: [], productName: "" };
 
 // 自动获取（只读）章节的 ref_type 集合；cover/revision 属模板表格，可编辑。
-const AUTO_REFS = new Set(["sw_ident", "func_module", "arch_func", "rt_hw", "rt_sw", "rt_net", "update_history"]);
+const AUTO_REFS = new Set(["sw_ident", "func_module", "arch_func", "rt_hw", "rt_sw", "rt_net", "update_history", "version_rule"]);
 const isAutoNode = (node: any) => AUTO_REFS.has(node?.ref_type) || !!node?.img_category;
 
 const assignKeys = (nodes: any[], prefix = ""): any[] => {
@@ -43,21 +44,6 @@ const firstSelectableKey = (nodes: any[]): string => {
     return (nodes && nodes[0] && nodes[0]._key) || "";
 };
 
-// 用最新自动获取结果覆盖当前内容中的自动获取区域（按标题路径匹配）。
-const overlayAuto = (cur: any[], auto: any[]) => {
-    const autoMap = new Map((auto || []).map((n: any) => [n.title, n]));
-    (cur || []).forEach((n: any) => {
-        const a: any = autoMap.get(n.title);
-        if (a && isAutoNode(n)) {
-            n.text = a.text;
-            n.images = a.images;
-            n.tables = a.tables;
-            n.blocks = a.blocks;
-        }
-        if (a) overlayAuto(n.children || [], a.children || []);
-    });
-};
-
 export default () => {
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
@@ -73,6 +59,8 @@ export default () => {
         sections: [] as any[],
         activeKey: "",
         products: [] as any[],
+        homeUploading: false,
+        imgVer: Date.now(),
     });
 
     const load = () => {
@@ -92,6 +80,7 @@ export default () => {
                 loading: false,
                 doc,
                 sections,
+                imgVer: Date.now(),
                 activeKey: findNode(sections, data.activeKey) ? data.activeKey : firstSelectableKey(sections),
             });
         });
@@ -106,10 +95,15 @@ export default () => {
                 message.error(res.msg);
                 return;
             }
-            const next = cloneContent({ sections: data.sections });
-            overlayAuto(next.sections || [], (res.data && res.data.sections) || []);
-            assignKeys(next.sections || []);
-            dispatch({ loading: false, sections: next.sections });
+            // 切换产品：按新产品整体重新获取全部内容（含表5开发量、全文软件名称、版本规则、图等）
+            const sections = (res.data && res.data.sections) || [];
+            assignKeys(sections);
+            dispatch({
+                loading: false,
+                sections,
+                imgVer: Date.now(),
+                activeKey: findNode(sections, data.activeKey) ? data.activeKey : firstSelectableKey(sections),
+            });
         });
     };
 
@@ -153,6 +147,43 @@ export default () => {
         });
     };
 
+    // 上传/替换主界面图：写入该产品「图表文件管理 img_home」，再重新拉取自动获取
+    const uploadHomeImage = (file: File) => {
+        if (!file.type || !file.type.startsWith("image/")) {
+            message.error("请选择图片文件");
+            return false;
+        }
+        const pid = data.doc.product_id;
+        if (!pid) {
+            message.error("缺少产品信息，无法上传");
+            return false;
+        }
+        dispatch({ homeUploading: true });
+        ApiDocFile.list_doc_file("img_home", { product_id: pid, page_index: 0, page_size: 10, _t: Date.now() }).then((res: any) => {
+            const rows = (res.code === ApiDocFile.C_OK && res.data?.rows) || [];
+            const exist = rows[0];
+            const req = exist
+                ? ApiDocFile.update_doc_file("img_home", { id: exist.id, product_id: pid, file })
+                : ApiDocFile.add_doc_file("img_home", { product_id: pid, file });
+            req.then((r: any) => {
+                dispatch({ homeUploading: false });
+                if (r.code === ApiDocFile.C_OK) {
+                    message.success("主界面图已更新");
+                    load();
+                } else {
+                    message.error(r.msg || "上传失败");
+                }
+            }).catch(() => {
+                dispatch({ homeUploading: false });
+                message.error("上传失败");
+            });
+        }).catch(() => {
+            dispatch({ homeUploading: false });
+            message.error("上传失败");
+        });
+        return false;
+    };
+
     const doExport = async () => {
         if (!id) return;
         dispatch({ exporting: true });
@@ -181,12 +212,22 @@ export default () => {
             </div>
         ));
 
-    const renderImages = (urls: string[]) => (
+    const renderImages = (urls: string[], emptyHint?: string) => (
         (urls || []).filter(Boolean).length
             ? (urls || []).filter(Boolean).map((url: string, i: number) => (
-                <img key={i} src={url} alt={`图${i + 1}`} style={{ maxWidth: "100%", height: "auto", display: "block", margin: "8px 0" }} />
+                <img key={i} src={url.startsWith("data:") ? url : `${url}${url.includes("?") ? "&" : "?"}_t=${data.imgVer}`} alt={`图${i + 1}`} style={{ maxWidth: "100%", height: "auto", display: "block", margin: "8px 0" }} />
             ))
-            : <div style={{ color: "#bbb", margin: "8px 0", fontSize: 13 }}>未获取到对应图表，请在「图表文件管理」中按产品上传后重试。</div>
+            : <div style={{ color: "#bbb", margin: "8px 0", fontSize: 13 }}>{emptyHint || "未获取到对应图表，请在「图表文件管理」中按产品上传后重试。"}</div>
+    );
+
+    const renderHomeUpload = (hasImg: boolean) => (
+        !readonly ? (
+            <Upload accept="image/*" showUploadList={false} beforeUpload={(f) => uploadHomeImage(f as File)}>
+                <Button size="small" icon={<UploadOutlined />} loading={data.homeUploading} style={{ marginTop: 8 }}>
+                    {hasImg ? "更换主界面图" : "上传主界面图"}
+                </Button>
+            </Upload>
+        ) : null
     );
 
     const renderReadonlyTable = (rows: any[][], title = "") => {
@@ -287,6 +328,54 @@ export default () => {
         );
     };
 
+    // 表5 开发量：软件名称/开发人员数量/开发时间/工作量 自动计算只读；仅「代码总行数」可手动维护
+    const renderDevAmountTable = (rows: any[][], ti: number, title = "") => {
+        const cols = Math.max(...(rows || []).map((r) => (r || []).length), 0);
+        if (cols <= 0) return null;
+        const header = (rows && rows[0]) || [];
+        return (
+            <>
+                {title ? <div style={{ textAlign: "center", fontWeight: 600, fontSize: 13, margin: "4px 0 6px", color: "#1f2d3d" }}>{title}</div> : null}
+                <table className="pdp-grid">
+                    <tbody>
+                        {(rows || []).map((row: any[], ri: number) => (
+                            <tr key={ri}>
+                                {Array.from({ length: cols }).map((_, ci) => {
+                                    const editableCell = !readonly && ri > 0 && String(header[ci] || "").includes("代码总行数");
+                                    return (
+                                        <td key={ci} className={ri === 0 ? "head" : ""}>
+                                            {editableCell ? (
+                                                <Input.TextArea
+                                                    className="pdp-cell"
+                                                    autoSize={{ minRows: 1, maxRows: 4 }}
+                                                    value={(row && row[ci]) ?? ""}
+                                                    onChange={(e) => updateNode(active._key, (n) => {
+                                                        if (!n.tables[ti][ri]) n.tables[ti][ri] = [];
+                                                        n.tables[ti][ri][ci] = e.target.value;
+                                                    })}
+                                                />
+                                            ) : (
+                                                <div style={{ padding: "4px 8px", whiteSpace: "pre-wrap", fontSize: 13 }}>{(row && row[ci]) ?? ""}</div>
+                                            )}
+                                        </td>
+                                    );
+                                })}
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+                <div style={{ color: "#999", fontSize: 12, marginTop: 4 }}>开发人员数量、开发时间、工作量由参与人员与时间线自动计算（只读）；代码总行数可手动维护。</div>
+            </>
+        );
+    };
+
+    // 非自动获取的图文章节：编辑 blocks 里的文字/图题后，按版式重组回 node.text（图位置用 {{IMG}} 占位保留），图保持只读
+    const setBlockText = (bi: number, val: string) => updateNode(active._key, (n) => {
+        if (!Array.isArray(n.blocks)) return;
+        n.blocks[bi] = { ...n.blocks[bi], text: val };
+        n.text = n.blocks.map((b: any) => (b?.type === "image" ? "{{IMG}}" : (b?.text ?? ""))).join("\n");
+    });
+
     const renderActive = () => {
         if (!active) return <div className="pdp-empty">请选择左侧章节</div>;
         const auto = isAutoNode(active);
@@ -304,8 +393,24 @@ export default () => {
 
                 {blocks.length > 0 ? (
                     blocks.map((b: any, bi: number) => {
-                        if (b?.type === "image") return <div className="pdp-field" key={bi}>{renderImages([b.url])}</div>;
+                        if (b?.type === "image") {
+                            const isHome = b.img_category === "img_home";
+                            return (
+                                <div className="pdp-field" key={bi}>
+                                    {renderImages([b.url], isHome ? "未获取到主界面图，请点击下方按钮上传/更换主界面图。" : undefined)}
+                                    {isHome && renderHomeUpload(!!b.url)}
+                                </div>
+                            );
+                        }
+                        if (b?.type === "caption") {
+                            return editable
+                                ? <div className="pdp-field" key={bi}><Input size="small" value={b.text ?? ""} placeholder="图题（如：图7 …）" style={{ textAlign: "center", maxWidth: 460 }} onChange={(e) => setBlockText(bi, e.target.value)} /></div>
+                                : <div key={bi} style={{ textAlign: "center", fontSize: 13, color: "#444", margin: "4px 0 12px" }}>{b.text}</div>;
+                        }
                         if (b?.type === "table") return <div className="pdp-table-block" key={bi}>{renderReadonlyTable(b.table || [], b.title || "")}</div>;
+                        if (editable) {
+                            return <div className="pdp-field" key={bi}><Input.TextArea autoSize={{ minRows: 2, maxRows: 20 }} value={b?.text ?? ""} placeholder="本段正文内容，可多行" onChange={(e) => setBlockText(bi, e.target.value)} /></div>;
+                        }
                         return b?.text
                             ? <div className="pdp-field" key={bi} style={{ whiteSpace: "pre-wrap", color: "#46586b", fontSize: 13, lineHeight: 1.7 }}>{b.text}</div>
                             : null;
@@ -313,7 +418,6 @@ export default () => {
                 ) : (
                     <>
                         <div className="pdp-field">
-                            <div className="pdp-label">正文</div>
                             {editable ? (
                                 <Input.TextArea
                                     autoSize={{ minRows: 3, maxRows: 20 }}
@@ -329,14 +433,26 @@ export default () => {
                         </div>
 
                         {((active.images && active.images.length) || active.img_category) ? (
-                            <div className="pdp-field">{renderImages(active.images || [])}</div>
+                            <div className="pdp-field">
+                                {renderImages(
+                                    active.images || [],
+                                    active.img_category === "img_home" ? "未获取到主界面图，请点击下方按钮上传/更换主界面图。" : undefined,
+                                )}
+                                {active.img_category === "img_home" && renderHomeUpload((active.images || []).filter(Boolean).length > 0)}
+                            </div>
                         ) : null}
 
-                        {(active.tables || []).map((rows: any[][], ti: number) => (
-                            <div className="pdp-table-block" key={ti}>
-                                {editable ? renderEditableTable(rows, ti) : renderReadonlyTable(rows, (active.table_titles && active.table_titles[ti]) || "")}
-                            </div>
-                        ))}
+                        {(active.tables || []).map((rows: any[][], ti: number) => {
+                            const title = (active.table_titles && active.table_titles[ti]) || "";
+                            const isAuto = title.includes("开发量");
+                            return (
+                                <div className="pdp-table-block" key={ti}>
+                                    {isAuto
+                                        ? renderDevAmountTable(rows, ti, title)
+                                        : (editable ? renderEditableTable(rows, ti) : renderReadonlyTable(rows, title))}
+                                </div>
+                            );
+                        })}
                     </>
                 )}
             </>
