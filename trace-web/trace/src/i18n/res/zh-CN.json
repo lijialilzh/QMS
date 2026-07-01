@@ -37,6 +37,8 @@
         "cyber_cap_docs": "网络安全能力分析",
         "research_docs": "自研软件研究报告",
         "nsr_docs": "自研软件网络安全研究报告",
+        "acc_docs": "产品验收记录",
+        "nsmp_docs": "网络安全维护计划",
         "srs_manage": "SRS管理",
         "srs_req": "需求列表",
         "sds_docs": "软件详细设计",

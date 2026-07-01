@@ -254,6 +254,16 @@ export default () => {
                         label: ts("menu.nsr_docs"),
                         perm: "nsr_doc_view",
                     },
+                    {
+                        key: "/acc_docs",
+                        label: ts("menu.acc_docs"),
+                        perm: "acc_doc_view",
+                    },
+                    {
+                        key: "/nsmp_docs",
+                        label: ts("menu.nsmp_docs"),
+                        perm: "nsmp_doc_view",
+                    },
                 ],
             },
             {

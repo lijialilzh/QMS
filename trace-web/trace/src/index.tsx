@@ -53,6 +53,10 @@ import VuhDocs from "./pages/vuh/VuhDocs";
 import VuhDocDetail from "./pages/vuh/VuhDocDetail";
 import PtrDocs from "./pages/ptr/PtrDocs";
 import PtrDocDetail from "./pages/ptr/PtrDocDetail";
+import AccDocs from "./pages/acc/AccDocs";
+import AccDocDetail from "./pages/acc/AccDocDetail";
+import NsmpDocs from "./pages/nsmp/NsmpDocs";
+import NsmpDocDetail from "./pages/nsmp/NsmpDocDetail";
 import LabelDocs from "./pages/label/LabelDocs";
 import LabelDocDetail from "./pages/label/LabelDocDetail";
 import ReleaseNotes from "./pages/release_note/ReleaseNotes";
@@ -158,6 +162,12 @@ const router = createRouter([
             { path: "/nsr_docs", element: <NsrDocs /> },
             { path: "/nsr_docs/edit/:id", element: <NsrDocDetail /> },
             { path: "/nsr_docs/view/:id", element: <NsrDocDetail /> },
+            { path: "/acc_docs", element: <AccDocs /> },
+            { path: "/acc_docs/edit/:id", element: <AccDocDetail /> },
+            { path: "/acc_docs/view/:id", element: <AccDocDetail /> },
+            { path: "/nsmp_docs", element: <NsmpDocs /> },
+            { path: "/nsmp_docs/edit/:id", element: <NsmpDocDetail /> },
+            { path: "/nsmp_docs/view/:id", element: <NsmpDocDetail /> },
 
             {path: "/prod_traces", element: <ProdTraces /> },
             {path: "/prod_comparison", element: <ProdComparison /> },

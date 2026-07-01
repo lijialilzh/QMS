@@ -99,3 +99,9 @@ from .research_doc import ResearchDoc  # noqa: E402,F401
 
 # 自研软件网络安全研究报告（独立文档模块）。
 from .nsr_doc import NsrDoc  # noqa: E402,F401
+
+# 产品验收记录（独立文档模块）。
+from .acc_doc import AccDoc  # noqa: E402,F401
+
+# 网络安全维护计划（独立文档模块）。
+from .nsmp_doc import NsmpDoc  # noqa: E402,F401
