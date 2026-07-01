@@ -95,6 +95,11 @@ const findNode = (nodes: any[], key: string): any => {
     return null;
 };
 
+const removeNode = (nodes: any[], key: string): any[] =>
+    (nodes || []).filter((n: any) => n._key !== key).map((n: any) => ({ ...n, children: removeNode(n.children || [], key) }));
+
+const newSection = () => ({ title: "新章节", text: "", images: [], tables: [], table_titles: [], children: [] });
+
 const cloneContent = (content: any) => JSON.parse(JSON.stringify(content || emptyContent));
 
 const firstSelectableKey = (nodes: any[]): string => {
@@ -207,6 +212,32 @@ export default () => {
         }
     };
 
+    const addChild = (key: string) => {
+        const next = cloneContent({ sections: data.sections });
+        assignKeys(next.sections || []);
+        const node = findNode(next.sections || [], key);
+        if (!node) return;
+        const idx = (node.children || []).length;
+        node.children = [...(node.children || []), newSection()];
+        assignKeys(next.sections || []);
+        dispatch({ sections: next.sections, activeKey: `${key}-${idx}` });
+    };
+    const addRoot = () => {
+        const next = cloneContent({ sections: data.sections });
+        const idx = (next.sections || []).length;
+        next.sections = [...(next.sections || []), newSection()];
+        assignKeys(next.sections);
+        dispatch({ sections: next.sections, activeKey: `${idx}` });
+    };
+    const delNode = (key: string) => {
+        const next = cloneContent({ sections: data.sections });
+        assignKeys(next.sections || []);
+        const remained = removeNode(next.sections || [], key);
+        assignKeys(remained);
+        const keep = findNode(remained, data.activeKey);
+        dispatch({ sections: remained, activeKey: keep ? data.activeKey : firstSelectableKey(remained) });
+    };
+
     const doSave = () => {
         if (!id) return;
         dispatch({ saving: true });
@@ -250,6 +281,12 @@ export default () => {
                     style={{ paddingLeft: 8 + depth * 14 }}
                     onClick={() => dispatch({ activeKey: n._key })}>
                     <span className="pdp-nav-title" title={n.title}>{n.title || "(未命名)"}</span>
+                    {!readonly && (
+                        <span className="pdp-nav-ops" onClick={(e) => e.stopPropagation()}>
+                            <PlusOutlined title="添加子章节" onClick={() => addChild(n._key)} />
+                            <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
+                        </span>
+                    )}
                 </div>
                 {renderNav(n.children || [], depth + 1)}
             </div>
@@ -275,7 +312,7 @@ export default () => {
             <>
                 {title ? <div style={{ textAlign: "center", fontWeight: 600, fontSize: 13, margin: "4px 0 6px", color: "#1f2d3d" }}>{title}</div> : null}
                 <div style={wide ? { overflowX: "auto", maxWidth: "100%" } : undefined}>
-                    <table className="pdp-grid" style={wide ? { tableLayout: "auto", width: "max-content", minWidth: "100%" } : undefined}>
+                    <table className="pdp-grid" style={{ border: "1px solid #9aa4b0", ...(wide ? { tableLayout: "auto", width: "max-content", minWidth: "100%" } : {}) }}>
                         <tbody>
                             {(rows || []).map((row: any[], ri: number) => (
                                 <tr key={ri}>
@@ -284,7 +321,7 @@ export default () => {
                                         if (sp === 0) return null;
                                         const merged = sp > 1;
                                         return (
-                                            <td key={ci} rowSpan={sp} className={ri === 0 ? "head" : ""} style={{ border: "1px solid #c4ccd4", ...(merged ? { verticalAlign: "middle" } : {}) }}>
+                                            <td key={ci} rowSpan={sp} className={ri === 0 ? "head" : ""} style={{ border: "1px solid #9aa4b0", ...(merged ? { verticalAlign: "middle" } : {}) }}>
                                                 <div style={cellStyle}>{(row && row[ci]) ?? ""}</div>
                                             </td>
                                         );
@@ -350,7 +387,7 @@ export default () => {
                                     if (rs === 0) return null;
                                     const merged = rs > 1;
                                     return (
-                                        <td key={ci} rowSpan={rs} className={ri === 0 ? "head" : ""} style={{ border: "1px solid #c4ccd4", ...(merged ? { verticalAlign: "middle" } : {}) }}>
+                                        <td key={ci} rowSpan={rs} className={ri === 0 ? "head" : ""} style={{ border: "1px solid #9aa4b0", ...(merged ? { verticalAlign: "middle" } : {}) }}>
                                             <Input.TextArea
                                                 className="pdp-cell"
                                                 style={{ textAlign: "left" }}
@@ -404,8 +441,19 @@ export default () => {
             <>
                 <div className="pdp-field">
                     <div className="pdp-label" style={{ fontSize: 15, color: "#1f2d3d" }}>
-                        {active.title}
-                        {auto && <Tag color="blue" style={{ marginLeft: 10, fontWeight: 400 }}>自动获取（只读）</Tag>}
+                        {editable ? (
+                            <Input
+                                value={active.title || ""}
+                                placeholder="章节标题，如：2.6 xxx"
+                                style={{ maxWidth: 480, fontSize: 15, fontWeight: 600 }}
+                                onChange={(e) => updateNode(active._key, (n) => { n.title = e.target.value; })}
+                            />
+                        ) : (
+                            <>
+                                {active.title}
+                                {auto && <Tag color="blue" style={{ marginLeft: 10, fontWeight: 400 }}>自动获取（只读）</Tag>}
+                            </>
+                        )}
                     </div>
                 </div>
 
@@ -522,9 +570,14 @@ export default () => {
                     <div className="pdp-nav">
                         <div className="pdp-nav-head">目录</div>
                         {!readonly && (
-                            <div className="pdp-nav-hint">蓝色「自动获取」章节由系统按产品自动填充，不可编辑；其余章节可直接修改正文与表格。</div>
+                            <div className="pdp-nav-hint">蓝色「自动获取」章节由系统按产品自动填充，不可编辑；其余章节可直接修改正文与表格。右侧 + 加子章节、🗑 删除。</div>
                         )}
                         {renderNav(data.sections, 0)}
+                        {!readonly && (
+                            <Button className="pdp-nav-add" type="dashed" size="small" icon={<PlusOutlined />} onClick={addRoot}>
+                                顶级章节
+                            </Button>
+                        )}
                     </div>
 
                     <div className="pdp-editor">

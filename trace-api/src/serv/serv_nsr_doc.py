@@ -24,6 +24,7 @@ from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from ..model.product import Product
 from ..model.nsr_doc import NsrDoc
 from ..model.srs_doc import SrsDoc
+from ..model.prod_dhf import ProdDhf
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
 from ..obj.vobj_user import UserObj
@@ -517,6 +518,13 @@ class Server(object):
         walk(content.get("sections"))
 
     # ---------------- 转换 ----------------
+    # 从产品 DHF 按文档名匹配文件编号（文件编号未手填时自动获取）
+    def __dhf_file_no(self, prod_id):
+        row = db.session.execute(
+            select(ProdDhf).where(ProdDhf.prod_id == prod_id, ProdDhf.name.like("%网络安全研究报告%"))
+        ).scalars().first()
+        return (row.code or "").strip() if row and row.code else ""
+
     async def __to_obj(self, row: NsrDoc, product: Product = None, with_autofill=True):
         obj = NsrDocObj(**row.dict())
         content = self.__normalize_content(obj.content)
@@ -531,6 +539,10 @@ class Server(object):
             obj.product_version = product.full_version
             obj.product_full_version = product.full_version
             obj.product_type_code = product.type_code
+            if not (obj.file_no or "").strip():
+                dhf_no = self.__dhf_file_no(product.id)
+                if dhf_no:
+                    obj.file_no = dhf_no
         return obj
 
     # ---------------- CRUD ----------------

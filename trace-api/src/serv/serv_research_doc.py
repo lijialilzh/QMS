@@ -32,6 +32,7 @@ from ..model.ptr_doc import PtrDoc
 from ..model.srs_doc import SrsDoc, SrsNode
 from ..model.prod_runtime_env import ProdRuntimeEnv
 from ..model.doc_file import DocFile
+from ..model.prod_dhf import ProdDhf
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..model.project_member import ProjectMember
 from ..obj import Page, Resp
@@ -562,6 +563,13 @@ class Server(object):
         walk(content.get("sections"))
 
     # ---------------- 转换 ----------------
+    # 从产品 DHF 按文档名匹配文件编号（文件编号未手填时自动获取）
+    def __dhf_file_no(self, prod_id):
+        row = db.session.execute(
+            select(ProdDhf).where(ProdDhf.prod_id == prod_id, ProdDhf.name.like("%自研软件研究报告%"))
+        ).scalars().first()
+        return (row.code or "").strip() if row and row.code else ""
+
     def __to_obj(self, row: ResearchDoc, product: Product = None, with_autofill=True):
         obj = ResearchDocObj(**row.dict())
         content = self.__normalize_content(obj.content)
@@ -576,6 +584,10 @@ class Server(object):
             obj.product_version = product.full_version
             obj.product_full_version = product.full_version
             obj.product_type_code = product.type_code
+            if not (obj.file_no or "").strip():
+                dhf_no = self.__dhf_file_no(product.id)
+                if dhf_no:
+                    obj.file_no = dhf_no
         return obj
 
     # ---------------- CRUD ----------------
