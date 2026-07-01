@@ -34,6 +34,7 @@ from ..utils.sql_ctx import db
 from . import msg_err_db
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
+from . import serv_review_util
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +206,10 @@ class Server(object):
     def __to_obj(self, row: RiskMgmtDoc, product: Product = None):
         obj = RiskMgmtDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content)
+        serv_review_util.ensure_review(
+            obj.content, "risk",
+            serv_review_util.review_date(row.product_id, serv_review_util.REVIEW_DEFS["risk"]["name_keywords"]) if row.product_id else "",
+        )
         if product:
             obj.product_name = product.name
             obj.product_version = product.full_version
@@ -1047,6 +1052,11 @@ class Server(object):
                     cells = table.add_row().cells
                     for cidx, value in enumerate([item.get("role", "") or "", item.get("name", "") or ""]):
                         set_cell_text(cells[cidx], value)
+            elif section.get("ref_type") == "review":
+                def _review_set_cell(cell, text, bold=False, align=None):
+                    set_cell_text(cell, text, bold=bold)
+                for t_idx, table_rows in enumerate(section.get("tables", []) or []):
+                    serv_review_util.render_review_grid(document, table_rows, _review_set_cell, merge_col0=(t_idx == 0), merge_full=True)
             elif is_appendix_b(section):
                 add_product_haz_matrix()
             elif is_acceptance_standard_section(section):
@@ -1102,6 +1112,10 @@ class Server(object):
             add_section(section)
 
         export_content = prepare_export_content(obj.content or {})
+        serv_review_util.ensure_review(
+            export_content, "risk",
+            serv_review_util.review_date(obj.product_id, serv_review_util.REVIEW_DEFS["risk"]["name_keywords"]) if obj.product_id else "",
+        )
         export_sections = (export_content or {}).get("sections", [])
         cover_section = find_section(export_sections, is_cover_section)
         revision_section = find_section(export_sections, is_revision_section)

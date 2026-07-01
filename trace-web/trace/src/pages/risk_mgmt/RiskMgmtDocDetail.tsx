@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { sprintf } from "sprintf-js";
 import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
+import ReviewTable from "@/common/ReviewTable";
 import * as Api from "@/api/ApiRiskMgmtDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiProdRcm from "@/api/ApiProdRcm";
@@ -1263,6 +1264,18 @@ export default () => {
         }
         if (isAcceptanceStandardSection(activeSection)) {
             return renderAcceptanceStandard(activeSection);
+        }
+        if (activeSection.ref_type === "review") {
+            return (
+                <div className="risk-mgmt-section-content">
+                    {(Array.isArray(activeSection.tables) ? activeSection.tables : []).map((rows: any[], ti: number) => (
+                        <div className="risk-mgmt-section-table-block" key={ti} style={{ marginBottom: 16 }}>
+                            <div style={{ fontWeight: 600, margin: "6px 0" }}>{ti === 0 ? "评审内容" : "参评人员签字"}</div>
+                            <ReviewTable grid={rows} />
+                        </div>
+                    ))}
+                </div>
+            );
         }
         const tables = Array.isArray(activeSection.tables) ? activeSection.tables : [];
         const activeTitle = String(activeSection.title || "");

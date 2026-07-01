@@ -9,6 +9,7 @@ import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
+import ReviewTable from "@/common/ReviewTable";
 import "./PdpDocDetail.less";
 
 let _seq = 0;
@@ -98,7 +99,7 @@ const computeNumbers = (nodes: any[]): Record<string, string> => {
     const map: Record<string, string> = {};
     let bodyIdx = 0;
     (nodes || []).forEach((n: any) => {
-        if (n.ref_type === "cover" || n.ref_type === "revision") {
+        if (n.ref_type === "cover" || n.ref_type === "revision" || n.ref_type === "review") {
             map[n._key] = "";
             walkChildren(n.children || [], "", map);
             return;
@@ -504,7 +505,16 @@ export default () => {
                                     </div>
                                 )}
 
-                                {(active.tables || []).map((tb: any[], ti: number) => (
+                                {active.ref_type === "review"
+                                    ? (active.tables || []).map((tb: any[], ti: number) => (
+                                        <div className="pdp-table-block" key={ti}>
+                                            <div className="pdp-table-bar">
+                                                <span className="pdp-label">{ti === 0 ? "评审内容" : "参评人员签字"}</span>
+                                            </div>
+                                            <ReviewTable grid={tb} />
+                                        </div>
+                                    ))
+                                    : (active.tables || []).map((tb: any[], ti: number) => (
                                     <div className="pdp-table-block" key={ti}>
                                         <div className="pdp-table-bar">
                                             <span className="pdp-label">表格 {ti + 1}</span>
@@ -548,7 +558,7 @@ export default () => {
                                     </div>
                                 ))}
 
-                                {!readonly && (
+                                {!readonly && active.ref_type !== "review" && (
                                     <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
                                         添加表格
                                     </Button>

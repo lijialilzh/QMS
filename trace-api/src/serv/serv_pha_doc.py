@@ -37,6 +37,7 @@ from ..utils.sql_ctx import db
 from . import msg_err_db
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
+from . import serv_review_util
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,51 @@ DOC_NAME = "初步危害分析清单"
 BASE_NAME = "肿瘤CT图像随访与评估软件"
 # 封面/修订日期从时间逻辑线匹配的关键字（按顺序取命中行里的最新日期）
 DATE_KEYWORDS = ["初步危害分析", "危害分析", "风险管理"]
+# 评审时间从时间线匹配的关键字（需同时命中「评审」）
+REVIEW_DATE_KEYWORDS = ["初步危害分析", "危害分析"]
+
+# 「评审记录」章节模板（内容模板化，评审时间从时间线自动获取）
+REVIEW_CONCLUSION = (
+    "评审结论：\n通过，已经按照ISO14971、GB/T 42062的附录识别了产品的安全特性，"
+    "已知或可预见的危险（源）已识别，网络安全初步危害已识别，初步危害分析表可追溯，"
+    "产品的初步危害分析活动已完成。"
+)
+REVIEW_ITEMS = [
+    "是否按照ISO14971、GB/T 42062的附录识别了产品的安全特性",
+    "已知或可预见的危险（源）是否识别？",
+    "软件功能初步危害是否识别？",
+    "模型相关初步危害是否识别？",
+    "数据标注初步危害是否识别？",
+    "网络安全初步危害是否识别？",
+    "初步危害分析表是否可追溯？",
+]
+REVIEW_PERSONS = [
+    ["研发总监", "沈宏", "", "产品部经理", "夏晨", ""],
+    ["开发负责人", "宁随军", "", "测试负责人", "王小敏", ""],
+    ["RA", "张淑芳", "", "QA", "林金贵", ""],
+    ["临床人员", "齐济", "", "产品经理", "杨静", ""],
+    ["其他参评人员", "", "", "", "", ""],
+    ["批准人员签字/日期", "", "", "", "", ""],
+]
+
+
+def _build_review_section(review_date=""):
+    content_tbl = [["评审内容", "评审项", "评审结论"]]
+    for q in REVIEW_ITEMS:
+        content_tbl.append(["初步危害分析清单", q, "☑通过 □存在问题"])
+    content_tbl.append([REVIEW_CONCLUSION, REVIEW_CONCLUSION, REVIEW_CONCLUSION])
+    person_tbl = [
+        ["参评人员签字"] * 6,
+        [f"评审时间：{review_date}"] * 6,
+        ["人员角色", "姓名", "签字", "人员角色", "姓名", "签字"],
+    ] + [list(r) for r in REVIEW_PERSONS]
+    return {
+        "title": "评审记录",
+        "ref_type": "review",
+        "body": "",
+        "tables": [content_tbl, person_tbl],
+        "children": [],
+    }
 
 _TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "pha_template.json")
 
@@ -250,6 +296,10 @@ class Server(object):
         for node in sections:
             self.__replace_name(node, BASE_NAME, info["name"])
             self.__fill_node(node, info)
+        serv_review_util.ensure_review(
+            content, "pha",
+            serv_review_util.review_date(obj.product_id, serv_review_util.REVIEW_DEFS["pha"]["name_keywords"]),
+        )
         return content
 
     def __dhf_file_no(self, prod_id):
@@ -258,9 +308,66 @@ class Server(object):
         ).scalars().first()
         return (row.code or "").strip() if row and row.code else ""
 
+    # ---------------- 评审记录：评审时间从时间线获取（文档名 + 评审） ----------------
+    def __review_date(self, prod_id):
+        if not prod_id:
+            return ""
+
+        def to_int(v):
+            digits = re.sub(r"[^\d]", "", str(v or ""))
+            return int(digits) if digits else None
+
+        tl_rows = db.session.execute(
+            select(ProjectTimelineRow).where(ProjectTimelineRow.prod_id == prod_id)
+        ).scalars().all()
+        if not tl_rows:
+            return ""
+        cell_map = {}
+        for c in db.session.execute(
+            select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_([r.id for r in tl_rows]))
+        ).scalars().all():
+            cell_map.setdefault(c.row_id, []).append(c.output_result or "")
+        date_rows = [r for r in tl_rows if (r.row_type or "date") == "date" and to_int(r.year) and to_int(r.month)]
+
+        def date_key(r):
+            return to_int(r.year) * 10000 + to_int(r.month) * 100 + (to_int(r.day) or 0)
+
+        def match(r, need_review):
+            vals = cell_map.get(r.id, [])
+            hit_name = any(any(k in str(v or "") for k in REVIEW_DATE_KEYWORDS) for v in vals)
+            hit_review = any("评审" in str(v or "") for v in vals)
+            return hit_name and (hit_review if need_review else True)
+
+        rows = [r for r in date_rows if match(r, True)] or [r for r in date_rows if match(r, False)]
+        if not rows:
+            return ""
+        r = max(rows, key=date_key)
+        return f"{to_int(r.year)}.{to_int(r.month):02d}.{(to_int(r.day) or 1):02d}"
+
+    def __ensure_review(self, content, review_date=""):
+        sections = (content or {}).get("sections")
+        if not isinstance(sections, list):
+            return content
+        node = next((s for s in sections if s.get("ref_type") == "review"), None)
+        if node is None:
+            node = _build_review_section(review_date)
+            sections.append(node)
+            return content
+        # 已存在：刷新评审时间行
+        for tbl in (node.get("tables") or []):
+            for row in tbl:
+                if isinstance(row, list) and row and str(row[0]).startswith("评审时间"):
+                    for i in range(len(row)):
+                        row[i] = f"评审时间：{review_date}"
+        return content
+
     def __to_obj(self, row: PhaDoc, product: Product = None):
         obj = PhaDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content)
+        serv_review_util.ensure_review(
+            obj.content, "pha",
+            serv_review_util.review_date(row.product_id, serv_review_util.REVIEW_DEFS["pha"]["name_keywords"]) if row.product_id else "",
+        )
         if product:
             obj.product_name = product.name
             obj.product_version = product.full_version
@@ -446,7 +553,7 @@ class Server(object):
                 merged = cells[0].merge(cells[len(cells) - 1])
                 set_cell(merged, text, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
 
-        def add_grid(grid, merge_col0=False, merge_banner=False, header_rows=1):
+        def add_grid(grid, merge_col0=False, merge_banner=False, header_rows=1, merge_full_rows=False):
             grid = [row for row in (grid or []) if isinstance(row, list)]
             cols = max((len(row) for row in grid), default=0)
             if cols <= 0:
@@ -459,6 +566,10 @@ class Server(object):
                 cells = table.add_row().cells
                 for c_idx in range(cols):
                     set_cell(cells[c_idx], row[c_idx] if c_idx < len(row) else "", bold=(r_idx < header_rows))
+            if merge_full_rows:
+                # 整行所有单元格内容相同则横向合并为一格（评审时间/评审结论/参评人员签字等）
+                for r_idx in range(len(table.rows)):
+                    merge_row_full(table, r_idx)
             if merge_banner and len(table.rows) > 0:
                 merge_row_full(table, 0)
             if merge_col0:
@@ -502,9 +613,12 @@ class Server(object):
             if (node.get("body") or "").strip():
                 add_text(node.get("body"))
             is_fmea = node.get("ref_type") == "pha_fmea" or any(k in name for k in ("CFMEA", "DFMEA", "PFMEA"))
-            for table in (node.get("tables") or []):
+            is_review = node.get("ref_type") == "review"
+            for t_idx, table in enumerate(node.get("tables") or []):
                 if is_fmea:
                     add_grid(table, merge_col0=True, merge_banner=True, header_rows=2)
+                elif is_review:
+                    serv_review_util.render_review_grid(document, table, set_cell)
                 else:
                     add_grid(table)
             idx = 0
@@ -532,8 +646,13 @@ class Server(object):
                 add_grid(table)
 
         document.add_page_break()
-        for i, node in enumerate(body):
-            render_body_section(node, 1, str(i + 1))
+        seq = 0
+        for node in body:
+            if node.get("ref_type") == "review":
+                render_body_section(node, 1, "")
+            else:
+                seq += 1
+                render_body_section(node, 1, str(seq))
 
         document.save(output)
         output.seek(0)

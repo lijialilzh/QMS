@@ -30,6 +30,7 @@ from ..utils.sql_ctx import db
 from . import msg_err_db
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
+from . import serv_review_util
 
 logger = logging.getLogger(__name__)
 
@@ -284,11 +285,18 @@ class Server(object):
 
         for node in sections:
             fill(node)
+        serv_review_util.ensure_review(
+            content, "pdp", serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS["pdp"]["name_keywords"])
+        )
         return content
 
     def __to_obj(self, row: PdpDoc, product: Product = None):
         obj = PdpDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content)
+        serv_review_util.ensure_review(
+            obj.content, "pdp",
+            serv_review_util.review_date(row.product_id, serv_review_util.REVIEW_DEFS["pdp"]["name_keywords"]) if row.product_id else "",
+        )
         if product:
             obj.product_name = product.name
             obj.product_version = product.full_version
@@ -511,8 +519,12 @@ class Server(object):
             add_body_heading(heading, level=max(1, min(level, 9)))
             if (node.get("body") or "").strip():
                 add_text(node.get("body"))
-            for table in (node.get("tables") or []):
-                add_grid(table)
+            if node.get("ref_type") == "review":
+                for t_idx, table in enumerate(node.get("tables") or []):
+                    serv_review_util.render_review_grid(document, table, set_cell, merge_col0=(t_idx == 0), merge_full=True)
+            else:
+                for table in (node.get("tables") or []):
+                    add_grid(table)
             idx = 0
             for child in (node.get("children") or []):
                 idx += 1
@@ -544,10 +556,15 @@ class Server(object):
         write_center_title("目录", size=16.0, bold=True)
         docx_util.insert_toc_field(document)
 
-        # 正文：另起一页
+        # 正文：另起一页（评审记录章节不编号）
         document.add_page_break()
-        for i, node in enumerate(body):
-            render_body_section(node, 1, str(i + 1))
+        seq = 0
+        for node in body:
+            if node.get("ref_type") == "review":
+                render_body_section(node, 1, "")
+            else:
+                seq += 1
+                render_body_section(node, 1, str(seq))
 
         document.save(output)
         output.seek(0)
