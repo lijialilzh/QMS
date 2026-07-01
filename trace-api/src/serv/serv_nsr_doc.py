@@ -33,7 +33,7 @@ from ..obj.vobj_nsr_doc import NsrDocObj
 from ..utils.i18n import ts
 from ..utils.sql_ctx import db
 from . import msg_err_db
-from .serv_utils import new_version, docx_util
+from .serv_utils import new_version, sync_file_no_version, docx_util
 from .serv_prod_haz import Server as ProdHazServer
 from .serv_srs_doc import Server as SrsDocServer
 
@@ -583,7 +583,7 @@ class Server(object):
             while version in existing:
                 version = new_version(version)
             newdoc = NsrDoc(
-                product_id=target_pid, version=version, file_no=fromdoc.file_no,
+                product_id=target_pid, version=version, file_no=sync_file_no_version((fromdoc.file_no or "").strip() or self.__dhf_file_no(target_pid), version) or None,
                 change_log=fromdoc.change_log, content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
             db.session.add(newdoc)

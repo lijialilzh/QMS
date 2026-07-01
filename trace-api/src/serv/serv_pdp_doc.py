@@ -28,7 +28,7 @@ from ..obj.vobj_pdp_doc import PdpDocObj
 from ..utils.i18n import ts
 from ..utils.sql_ctx import db
 from . import msg_err_db
-from .serv_utils import new_version
+from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
 
 logger = logging.getLogger(__name__)
@@ -336,7 +336,7 @@ class Server(object):
             newdoc = PdpDoc(
                 product_id=target_pid,
                 version=version,
-                file_no=fromdoc.file_no,
+                file_no=sync_file_no_version(fromdoc.file_no, version),
                 change_log=fromdoc.change_log,
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )

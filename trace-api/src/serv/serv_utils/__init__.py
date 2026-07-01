@@ -9,6 +9,19 @@ def new_version(version: str) -> str:
     start, end = match.span(1)
     return version[:start] + str(int(version[start:end]) + 1) + version[end:]
 
+def sync_file_no_version(file_no: str, version: str) -> str:
+    # 将文件编号末尾的版本段（形如 -A0/-A1，字母+数字）同步为当前文档版本。
+    # 仅替换最后一个 "-" 之后、且为“字母+数字”的版本段，避免误伤 -003/-011 这类纯数字序号。
+    if not file_no or not version:
+        return file_no
+    idx = file_no.rfind("-")
+    if idx == -1:
+        return file_no
+    tail = file_no[idx + 1:]
+    if re.match(r"^[A-Za-z]+\d+$", tail):
+        return file_no[:idx + 1] + version
+    return file_no
+
 if __name__ == "__main__":
     print(new_version("1.1.0099"))
     print(new_version("1.1.99"))
