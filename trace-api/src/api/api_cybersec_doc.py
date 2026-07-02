@@ -90,6 +90,12 @@ async def get_cybersec_doc(id: int):
     return await server.get_cybersec_doc(id)
 
 
+@router.get("/preview_cybersec_content", summary="按产品预览自动填充内容", response_model=Resp[Any])
+@try_log(perm=Perms.cybersec_doc_view)
+async def preview_cybersec_content(product_id: int = 0, version: str = ""):
+    return await server.preview_cybersec_content(product_id=product_id, version=version)
+
+
 @router.get("/export_cybersec_doc", summary="导出网络安全报告")
 @try_log(perm=Perms.cybersec_doc_view)
 async def export_cybersec_doc(id: int = 0):

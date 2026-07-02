@@ -1484,21 +1484,37 @@ export default () => {
                                             onChange={(value) => {
                                                 form.setFieldValue("product_id", value);
                                                 const selectedProduct = (data.products || []).find((p: any) => p.id === value);
+                                                const productName = selectedProduct?.name || "";
                                                 dispatch({ selectedProductId: value });
                                                 if (!isAdd) {
                                                     dispatch({
                                                         detail: {
                                                             ...data.detail,
                                                             product_id: value,
-                                                            product_name: selectedProduct?.name || "",
+                                                            product_name: productName,
                                                             product_type_code: selectedProduct?.type_code || "",
                                                             product_full_version: selectedProduct?.full_version || "",
                                                         },
                                                     });
                                                 }
-                                                let content = syncProductNameInContent(data.content || emptyContent, selectedProduct?.name || "");
-                                                content = fillProductTextSections(content, selectedProduct);
-                                                dispatch({ content });
+                                                const version = form.getFieldValue("version") || data.detail?.version || "";
+                                                const fallbackFill = () => {
+                                                    let content = syncProductNameInContent(data.content || emptyContent, productName);
+                                                    content = fillProductTextSections(content, selectedProduct);
+                                                    dispatch({ content });
+                                                };
+                                                // 切换产品即时按新产品重取自动填充内容（阶段活动时间等），不必等保存
+                                                Api.preview_cybersec_content({ product_id: value, version }).then((res: any) => {
+                                                    if (res.code === Api.C_OK && res.data && Array.isArray(res.data.sections)) {
+                                                        let content = syncProductNameInContent(res.data, productName);
+                                                        content = syncFileVersionInCover(content, version);
+                                                        content = fillProductTextSections(content, selectedProduct);
+                                                        const defaultSection = (content.sections || []).find((s: any) => !isCoverSection(s) && !isRevisionSection(s));
+                                                        dispatch({ content, activeSectionKey: defaultSection ? sectionKey(defaultSection) : data.activeSectionKey });
+                                                    } else {
+                                                        fallbackFill();
+                                                    }
+                                                }).catch(fallbackFill);
                                             }}
                                         />
                                     </Form.Item>

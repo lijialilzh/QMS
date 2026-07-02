@@ -24,6 +24,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 
 from ..model.product import Product
+from ..model.project_member import ProjectMember
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..model.cybersec_doc import (
     CybersecDoc,
@@ -53,6 +54,7 @@ from ..utils.i18n import ts
 from ..utils import get_uuid
 from ..utils.sql_ctx import db
 from . import msg_err_db
+from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
 
@@ -208,6 +210,82 @@ class Server(object):
         result.setdefault("productName", "")
         return self.__ensure_front_matter_sections(result)
 
+    def __member_name(self, prod_id, keywords):
+        # 按项目角色关键字匹配项目人员姓名（按优先级取首个命中）
+        if not prod_id:
+            return ""
+        for kw in keywords:
+            member = db.session.execute(
+                select(ProjectMember).where(ProjectMember.prod_id == prod_id, ProjectMember.role.like(f"%{kw}%"))
+                .order_by(ProjectMember.sort_order.asc(), ProjectMember.id.asc())
+            ).scalars().first()
+            if member and (member.name or "").strip():
+                return member.name.strip()
+        return ""
+
+    def __autofill_front_matter(self, content, product_id, version):
+        # 封面（编制部门=研发部、编制/审核/批准人、日期、文件版本）与文件修订记录自动填充（仅填空，不覆盖已填）
+        if not isinstance(content, dict):
+            return content
+        reviser = self.__member_name(product_id, ("产品经理", "项目经理"))
+        auditor = self.__member_name(product_id, ("QA负责人", "质量负责人", "QA"))
+        approver = self.__member_name(product_id, ("产品负责人", "研发负责人", "管理者代表"))
+        rev_date = serv_review_util.review_date(
+            product_id, ["网络安全风险管理报告", "网络安全风险管理", "风险管理报告"]
+        ) if product_id else ""
+        rev_date = rev_date or ""
+        ver = str(version or "")
+        for section in (content.get("sections") or []):
+            if self.__is_cover_section(section):
+                for table in (section.get("tables") or []):
+                    for row in table:
+                        if not isinstance(row, list) or not row:
+                            continue
+                        label = str(row[0]).strip()
+
+                        def set_name(val):
+                            if val and len(row) >= 2 and not str(row[1] or "").strip():
+                                row[1] = val
+
+                        def set_date(val):
+                            if val and len(row) >= 4 and not str(row[3] or "").strip():
+                                row[3] = val
+                        if len(row) >= 4 and str(row[2]).strip() == "文件版本" and ver and not str(row[3] or "").strip():
+                            row[3] = ver
+                        if label == "编制部门":
+                            set_name("研发部")
+                        elif label == "编制人":
+                            set_name(reviser)
+                            set_date(rev_date)
+                        elif label == "审核人":
+                            set_name(auditor)
+                            set_date(rev_date)
+                        elif label == "批准人":
+                            set_name(approver)
+                            set_date(rev_date)
+                        elif label == "生效日期":
+                            set_name(rev_date)
+            elif self.__is_revision_section(section):
+                for table in (section.get("tables") or []):
+                    if not isinstance(table, list) or not table:
+                        continue
+                    if len(table) >= 2 and isinstance(table[1], list) and len(table[1]) >= 5:
+                        row = table[1]
+
+                        def set_if(i, val):
+                            if val and not str(row[i] if i < len(row) else "").strip():
+                                row[i] = val
+                        set_if(0, rev_date)
+                        set_if(1, ver)
+                        if not str(row[2] or "").strip():
+                            row[2] = "首次发布"
+                        set_if(3, reviser)
+                        set_if(4, approver)
+                    col = len(table[0]) if isinstance(table[0], list) and table[0] else 5
+                    while len(table) < 6:
+                        table.append(["" for _ in range(col)])
+        return content
+
     # 「阶段活动」表：各阶段开始/结束时间按关键字匹配项目时间线日期行，取最早=开始、最晚=结束
     def __stage_timeline_dates(self, product_id, keywords):
         if not product_id or not keywords:
@@ -317,7 +395,9 @@ class Server(object):
     def __to_obj(self, row: CybersecDoc, product: Product = None):
         obj = CybersecDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content)
-        obj.content = self.__autofill_stage_activity(obj.content, product.id if product else row.product_id)
+        _pid = product.id if product else row.product_id
+        obj.content = self.__autofill_front_matter(obj.content, _pid, row.version)
+        obj.content = self.__autofill_stage_activity(obj.content, _pid)
         if product:
             obj.product_name = product.name
             obj.product_version = product.full_version
@@ -555,6 +635,13 @@ class Server(object):
         db.session.commit()
         return Resp.resp_ok()
 
+    async def preview_cybersec_content(self, product_id: int = 0, version: str = ""):
+        # 编辑器切换产品时：基于模板按新产品跑一遍自动填充，返回全新 content（供前端整份刷新自动章节）
+        content = self.__normalize_content(None)
+        content = self.__autofill_front_matter(content, product_id, version)
+        content = self.__autofill_stage_activity(content, product_id)
+        return Resp.resp_ok(data=content)
+
     async def get_cybersec_doc(self, id: int):
         sql = select(CybersecDoc, Product).join(Product, CybersecDoc.product_id == Product.id).where(CybersecDoc.id == id)
         row = db.session.execute(sql).first()
@@ -772,6 +859,83 @@ class Server(object):
                         rows.append([tcode, threat.description or "", ctrl.rcm_code or "", ctrl.description or "", source_name])
         return rows
 
+    async def __cyber_trace_body(self, product_id):
+        # 7 威胁缓解措施追溯（导出）：与编辑页同一套数据来源与列序，保证导出=编辑页。
+        # 数据 = 产品最新 SRS 文档的逐需求追溯（list_doc_trace，含 SDS / 各级测试用例 / RCM），
+        #        并用产品 CST 的 rcm_codes 反推「RCM 编号 → 威胁编号」，仅保留同时有 RCM 与威胁的行。
+        if not product_id:
+            return []
+        from .serv_srs_doc import Server as SrsDocServer
+        from ..model.srs_doc import SrsDoc
+        from ..model.prod_cst import ProdCst
+        from ..model.cst import Cst
+
+        rcm_threat = {}
+        cst_rows = db.session.execute(
+            select(ProdCst, Cst).outerjoin(Cst, ProdCst.cst_id == Cst.id).where(ProdCst.prod_id == product_id)
+        ).all()
+        for pc, cst in cst_rows:
+            threat = str(getattr(cst, "code", "") or "").strip()
+            if not threat:
+                continue
+            for rcm in re.findall(r"RCM\d+", str(pc.rcm_codes or "")):
+                arr = rcm_threat.setdefault(rcm, [])
+                if threat not in arr:
+                    arr.append(threat)
+
+        srs_doc = db.session.execute(
+            select(SrsDoc).where(SrsDoc.product_id == product_id).order_by(SrsDoc.id.desc())
+        ).scalars().first()
+        if not srs_doc:
+            return []
+        trace_resp = await SrsDocServer().list_doc_trace(srs_doc.id)
+        trace_rows = getattr(trace_resp, "data", None) or []
+
+        def num(code):
+            m = re.search(r"(\d+)", str(code or ""))
+            return int(m.group(1)) if m else 0
+
+        def norm_rcm(val):
+            if isinstance(val, list):
+                out = []
+                for v in val:
+                    out += re.findall(r"RCM\d+", str(v))
+                return out
+            return re.findall(r"RCM\d+", str(val or ""))
+
+        def join_list(val):
+            if isinstance(val, list):
+                items = [str(v).strip() for v in val if str(v or "").strip()]
+            else:
+                items = [s for s in re.split(r"[,，\s]+", str(val or "")) if s]
+            return "\n".join(items)
+
+        rows = []
+        for tr in trace_rows:
+            rcm_list = sorted(dict.fromkeys(norm_rcm(tr.get("rcm_codes"))), key=num)
+            threats = []
+            for c in rcm_list:
+                for t in rcm_threat.get(c, []):
+                    if t not in threats:
+                        threats.append(t)
+            threats.sort(key=num)
+            if not rcm_list or not threats:
+                continue
+            rows.append([
+                str(tr.get("srs_code") or ""),
+                "是",
+                "\n".join(threats),
+                join_list(tr.get("sds_code")),
+                join_list(tr.get("test_codes") or tr.get("tests_unit")),
+                join_list(tr.get("tests_integ")),
+                join_list(tr.get("tests_sys")),
+                join_list(tr.get("tests_user")),
+                "\n".join(rcm_list),
+                str(tr.get("note") or ""),
+            ])
+        rows.sort(key=lambda r: r[0])
+        return rows
+
     async def export_cybersec_doc(self, output, id: int):
         resp = await self.get_cybersec_doc(id)
         obj: CybersecDocObj = resp.data
@@ -791,6 +955,8 @@ class Server(object):
         header_para = section.header.add_paragraph()
         header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         docx_util.fonted_txt(header_para, obj.file_no or "")
+
+        cyber_trace_body = await self.__cyber_trace_body(obj.product_id)
 
         def normalized_title(value):
             return re.sub(r"\s+", "", str(value or ""))
@@ -987,9 +1153,69 @@ class Server(object):
             ] for r in rows]
             add_header_table(headers, value_rows)
 
-        def add_traceability():
-            headers = ["威胁编号", "威胁描述", "关联RCM编号", "控制措施描述", "来源"]
-            add_header_table(headers, self.__build_traceability_rows(id))
+        TRACE_HEADER = [
+            ["软件需求规格", "是否为RCM", "威胁编号", "软件详细设计", "单元测试用例", "集成测试用例", "系统测试用例", "用户测试用例", "风险控制措施RCMID", "备注"],
+            ["《需求规格说明》", "是否为RCM", "威胁编号", "《软件详细设计》", "《单元测试记录》", "《集成测试记录》", "《系统测试记录》", "《用户测试记录》", "《风险管理报告》（RCMID）", "如果SRS不作为风险控制措施，RCMID将以“/”表示。"],
+            ["《需求规格说明》", "是否为RCM", "威胁编号", "（源代码名称）", "《软件测试报告》", "《软件测试报告》", "《软件测试报告》", "《用户测试报告》", "《风险管理报告》（RCMID）", "如果SRS不作为风险控制措施，RCMID将以“/”表示。"],
+        ]
+
+        def add_traceability(sec):
+            # 表头：优先取导入表（tables[0]）中 SRS 数据行之前的表头行，无则用默认模板 TRACE_HEADER
+            imported = (sec.get("tables") or [])
+            imported0 = imported[0] if imported else []
+            header_rows = []
+            for row in imported0:
+                c0 = str((list(row or []) + [""])[0] or "").strip()
+                if re.match(r"^SRS[-_]", c0, re.I):
+                    break
+                header_rows.append(list(row or []))
+            if not header_rows:
+                header_rows = [list(r) for r in TRACE_HEADER]
+
+            hn = len(header_rows)
+            all_rows = header_rows + [list(r) for r in (cyber_trace_body or [])]
+            width = max([len(r or []) for r in all_rows] or [0])
+            n = len(all_rows)
+            if width <= 0 or n <= 0:
+                return
+
+            def txt(r, c):
+                row = all_rows[r] or []
+                return str(row[c]).strip() if c < len(row) and row[c] is not None else ""
+
+            skip = [[False] * width for _ in range(n)]
+            span = [[(1, 1)] * width for _ in range(n)]
+            for r in range(hn):
+                for c in range(width):
+                    if skip[r][c]:
+                        continue
+                    colspan = 1
+                    while c + colspan < width and txt(r, c + colspan) == "":
+                        skip[r][c + colspan] = True
+                        colspan += 1
+                    rowspan = 1
+                    if txt(r, c) != "":
+                        while r + rowspan < hn and txt(r + rowspan, c) == txt(r, c):
+                            for cc in range(c, c + colspan):
+                                skip[r + rowspan][cc] = True
+                            rowspan += 1
+                    span[r][c] = (colspan, rowspan)
+
+            table = document.add_table(rows=n, cols=width)
+            table.style = "Table Grid"
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+            for r in range(n):
+                for c in range(width):
+                    if skip[r][c]:
+                        continue
+                    colspan, rowspan = span[r][c]
+                    top_left = table.cell(r, c)
+                    merged = top_left.merge(table.cell(r + rowspan - 1, c + colspan - 1)) if (colspan > 1 or rowspan > 1) else top_left
+                    value = txt(r, c)
+                    if r >= hn and value == "":
+                        value = "/"
+                    set_cell_text(merged, value, bold=(r < hn))
+            document.add_paragraph()
 
         def add_section_image(image_url):
             raw_url = str(image_url or "").strip()
@@ -1068,7 +1294,7 @@ class Server(object):
             elif ref_type == "cybersec_controls_scan":
                 add_control_table(CybersecControlScan)
             elif ref_type == "traceability":
-                add_traceability()
+                add_traceability(sec)
             for table_rows in sec.get("tables", []) or []:
                 add_one_table(table_rows, ref_type)
             for child in sec.get("children", []) or []:

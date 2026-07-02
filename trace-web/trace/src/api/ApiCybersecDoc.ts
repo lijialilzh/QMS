@@ -31,6 +31,10 @@ export const get_cybersec_doc = async (params: any) => {
     return await httpGet("/trace-api/cybersec_doc/get_cybersec_doc", params);
 };
 
+export const preview_cybersec_content = async (params: any) => {
+    return await httpGet("/trace-api/cybersec_doc/preview_cybersec_content", params);
+};
+
 export const export_cybersec_doc = async (params: any) => {
     return await httpGet("/trace-api/cybersec_doc/export_cybersec_doc", params);
 };
