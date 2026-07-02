@@ -74,6 +74,12 @@ async def get_risk_mgmt_doc(id: int):
     return await server.get_risk_mgmt_doc(id)
 
 
+@router.get("/preview_risk_mgmt_content", summary="按产品预览自动填充内容", response_model=Resp[Any])
+@try_log(perm=Perms.risk_mgmt_doc_view)
+async def preview_risk_mgmt_content(product_id: int = 0, version: str = ""):
+    return await server.preview_risk_mgmt_content(product_id=product_id, version=version)
+
+
 @router.post("/add_risk_participant", summary="添加风险分析参与人员", response_model=Resp[RiskParticipantForm])
 @try_log(perm=Perms.risk_mgmt_doc_edit)
 async def add_risk_participant(form: RiskParticipantForm):

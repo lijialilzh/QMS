@@ -57,6 +57,8 @@ import AccDocs from "./pages/acc/AccDocs";
 import AccDocDetail from "./pages/acc/AccDocDetail";
 import NsmpDocs from "./pages/nsmp/NsmpDocs";
 import NsmpDocDetail from "./pages/nsmp/NsmpDocDetail";
+import RmpDocs from "./pages/rmp/RmpDocs";
+import RmpDocDetail from "./pages/rmp/RmpDocDetail";
 import LabelDocs from "./pages/label/LabelDocs";
 import LabelDocDetail from "./pages/label/LabelDocDetail";
 import ReleaseNotes from "./pages/release_note/ReleaseNotes";
@@ -168,6 +170,9 @@ const router = createRouter([
             { path: "/nsmp_docs", element: <NsmpDocs /> },
             { path: "/nsmp_docs/edit/:id", element: <NsmpDocDetail /> },
             { path: "/nsmp_docs/view/:id", element: <NsmpDocDetail /> },
+            { path: "/rmp_docs", element: <RmpDocs /> },
+            { path: "/rmp_docs/edit/:id", element: <RmpDocDetail /> },
+            { path: "/rmp_docs/view/:id", element: <RmpDocDetail /> },
 
             {path: "/prod_traces", element: <ProdTraces /> },
             {path: "/prod_comparison", element: <ProdComparison /> },

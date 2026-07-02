@@ -105,3 +105,6 @@ from .acc_doc import AccDoc  # noqa: E402,F401
 
 # 网络安全维护计划（独立文档模块）。
 from .nsmp_doc import NsmpDoc  # noqa: E402,F401
+
+# 风险管理计划（独立文档模块）。
+from .rmp_doc import RmpDoc  # noqa: E402,F401

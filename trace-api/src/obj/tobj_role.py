@@ -178,6 +178,10 @@ class Perms(Enum):
     nsmp_doc_view = PermForm(code="nsmp_doc_view", name="查看", p_code=nsmp_doc.code)
     nsmp_doc_edit = PermForm(code="nsmp_doc_edit", name="编辑", p_code=nsmp_doc.code)
 
+    rmp_doc = PermForm(code="rmp_doc", name="产品文件管理/风险管理计划")
+    rmp_doc_view = PermForm(code="rmp_doc_view", name="查看", p_code=rmp_doc.code)
+    rmp_doc_edit = PermForm(code="rmp_doc_edit", name="编辑", p_code=rmp_doc.code)
+
 
 class RoleForm(BaseModel):
     id: Optional[int] = Field(title="角色ID")
@@ -240,6 +244,7 @@ def get_default_role_perm_codes():
         "nsr_doc", "nsr_doc_view", "nsr_doc_edit",
         "acc_doc", "acc_doc_view", "acc_doc_edit",
         "nsmp_doc", "nsmp_doc_view", "nsmp_doc_edit",
+        "rmp_doc", "rmp_doc_view", "rmp_doc_edit",
     }
     developer_perms = {
         "sds_doc", "sds_doc_view", "sds_doc_edit",

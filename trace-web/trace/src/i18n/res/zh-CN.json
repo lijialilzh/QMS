@@ -39,6 +39,7 @@
         "nsr_docs": "自研软件网络安全研究报告",
         "acc_docs": "产品验收记录",
         "nsmp_docs": "网络安全维护计划",
+        "rmp_docs": "风险管理计划",
         "srs_manage": "SRS管理",
         "srs_req": "需求列表",
         "sds_docs": "软件详细设计",

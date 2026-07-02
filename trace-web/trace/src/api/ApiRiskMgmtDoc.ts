@@ -30,6 +30,10 @@ export const get_risk_mgmt_doc = async (params: any) => {
     return await httpGet("/trace-api/risk_mgmt_doc/get_risk_mgmt_doc", params);
 };
 
+export const preview_risk_mgmt_content = async (params: any) => {
+    return await httpGet("/trace-api/risk_mgmt_doc/preview_risk_mgmt_content", params);
+};
+
 export const export_risk_mgmt_doc = async (params: any) => {
     return await httpGet("/trace-api/risk_mgmt_doc/export_risk_mgmt_doc", params);
 };

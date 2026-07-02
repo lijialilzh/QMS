@@ -1,20 +1,19 @@
-import { Button, Col, Form, Input, Modal, Row, Select, Space, Table, Upload, message } from "antd";
-import { SearchOutlined, UploadOutlined } from "@ant-design/icons";
+import { Button, Col, Form, Input, Modal, Row, Select, Space, Table, message } from "antd";
+import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
-import * as Api from "@/api/ApiRiskMgmtDoc";
+import * as Api from "@/api/ApiRmpDoc";
 import * as ApiProduct from "@/api/ApiProduct";
-import "./RiskMgmtDocs.less";
+import "../risk_mgmt/RiskMgmtDocs.less";
 
 const pageSizeOptions = [20, 50, 100];
 
 enum DlgTypes {
     add = "add",
-    import = "import",
     delete = "delete",
     copy = "copy",
 }
@@ -34,7 +33,6 @@ export default () => {
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
     const [queryForm] = Form.useForm();
-    const [importForm] = Form.useForm();
     const [addForm] = Form.useForm();
     const [data, dispatch] = useData({
         total: 0,
@@ -44,7 +42,6 @@ export default () => {
         targetRow: {},
         products: [],
         versionOptions: [] as { value: string; label: string }[],
-        importFiles: [],
         exportingId: 0,
         editingFileNoId: 0,
         editingFileNoValue: "",
@@ -60,7 +57,7 @@ export default () => {
             dispatch({ versionOptions: [] });
             return;
         }
-        Api.list_risk_mgmt_doc({ product_id: productId, page_index: 0, page_size: 10000 }).then((res: any) => {
+        Api.list_rmp_doc({ product_id: productId, page_index: 0, page_size: 10000 }).then((res: any) => {
             if (res.code === Api.C_OK && res.data?.rows?.length) {
                 const versions = [...new Set((res.data.rows as any[]).map((row: any) => row.version).filter(Boolean))].sort();
                 dispatch({ versionOptions: versions.map((version: string) => ({ value: version, label: version })) });
@@ -72,7 +69,7 @@ export default () => {
 
     const doSearch = (params: any = {}, pageIndex: any = data.pageIndex, pageSize: any = data.pageSize) => {
         dispatch({ loading: true });
-        Api.list_risk_mgmt_doc({ ...params, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
+        Api.list_rmp_doc({ ...params, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
             if (res.code === Api.C_OK) {
                 dispatch({ loading: false, total: res.data.total, rows: res.data.rows || [], pageIndex, pageSize });
             } else {
@@ -90,14 +87,14 @@ export default () => {
     const doAdd = () => {
         addForm.validateFields().then((values) => {
             dispatch({ adding: true });
-            Api.add_risk_mgmt_doc({ ...values }).then((res: any) => {
+            Api.add_rmp_doc({ ...values }).then((res: any) => {
                 dispatch({ adding: false });
                 if (res.code === Api.C_OK) {
                     message.success(ts("save_success"));
                     dispatch({ dlgType: null });
                     const newId = res.data?.id;
                     if (newId) {
-                        navigate(`/risk_mgmt_docs/edit/${newId}`);
+                        navigate(`/rmp_docs/edit/${newId}`);
                     } else {
                         doSearch(queryForm.getFieldsValue(), 1, data.pageSize);
                     }
@@ -110,7 +107,7 @@ export default () => {
 
     const doDelete = () => {
         dispatch({ loading: true });
-        Api.delete_risk_mgmt_doc({ id: data.targetRow.id }).then((res: any) => {
+        Api.delete_rmp_doc({ id: data.targetRow.id }).then((res: any) => {
             if (res.code === Api.C_OK) {
                 message.success(ts("save_success"));
                 dispatch({ dlgType: null, loading: false });
@@ -131,7 +128,7 @@ export default () => {
         const row = data.targetRow || {};
         if (!row.id) return;
         dispatch({ loading: true });
-        Api.duplicate_risk_mgmt_doc({ id: row.id, product_id: data.copyProductId }).then((res: any) => {
+        Api.duplicate_rmp_doc({ id: row.id, product_id: data.copyProductId }).then((res: any) => {
             dispatch({ loading: false });
             if (res.code === Api.C_OK) {
                 dispatch({ dlgType: null });
@@ -150,7 +147,7 @@ export default () => {
         if (data.exportingId === row.id) return;
         dispatch({ exportingId: row.id });
         try {
-            const res: any = await Api.export_risk_mgmt_doc({ id: row.id });
+            const res: any = await Api.export_rmp_doc({ id: row.id });
             if (res.code !== Api.C_OK) {
                 message.error(res.msg || "导出失败");
             }
@@ -162,10 +159,7 @@ export default () => {
     };
 
     const handleStartEditFileNo = (row: any) => {
-        dispatch({
-            editingFileNoId: row.id,
-            editingFileNoValue: row.file_no || "",
-        });
+        dispatch({ editingFileNoId: row.id, editingFileNoValue: row.file_no || "" });
     };
 
     const handleSaveFileNo = async (row: any) => {
@@ -179,7 +173,7 @@ export default () => {
         }
         dispatch({ savingFileNoId: row.id });
         try {
-            const res: any = await Api.update_risk_mgmt_doc({ id: row.id, file_no: nextFileNo });
+            const res: any = await Api.update_rmp_doc({ id: row.id, file_no: nextFileNo });
             if (res.code === Api.C_OK) {
                 const rows = (data.rows || []).map((item: any) => (
                     item.id === row.id ? { ...item, file_no: nextFileNo } : item
@@ -196,35 +190,14 @@ export default () => {
         }
     };
 
-    const doImport = () => {
-        importForm.validateFields().then((values) => {
-            const file = (data.importFiles || [])[0];
-            if (!file) {
-                message.warning("请选择文件");
-                return;
-            }
-            dispatch({ importing: true });
-            Api.import_risk_mgmt_doc_word({ ...values, file }).then((res: any) => {
-                dispatch({ importing: false });
-                if (res.code === Api.C_OK) {
-                    message.success("导入成功");
-                    dispatch({ dlgType: null, importFiles: [] });
-                    doSearch(queryForm.getFieldsValue(), 1, data.pageSize);
-                } else {
-                    message.error(res.msg);
-                }
-            });
-        });
-    };
-
     const columns: any[] = [
-        { title: ts("product.name"), dataIndex: "product_name", width: "17%" },
-        { title: ts("product.version"), dataIndex: "product_full_version", width: "10%" },
-        { title: ts("risk_mgmt_doc.version"), dataIndex: "version", width: "7%" },
+        { title: ts("product.name"), dataIndex: "product_name", width: "18%" },
+        { title: ts("product.version"), dataIndex: "product_full_version", width: "11%" },
+        { title: "文档版本", dataIndex: "version", width: "8%" },
         {
-            title: ts("risk_mgmt_doc.file_no"),
+            title: "文件编号",
             dataIndex: "file_no",
-            width: "20%",
+            width: "16%",
             render: (value: string, row: any) => {
                 const isEditing = data.editingFileNoId === row.id;
                 const isSaving = data.savingFileNoId === row.id;
@@ -252,18 +225,18 @@ export default () => {
                 );
             },
         },
-        { title: ts("risk_mgmt_doc.change_log"), dataIndex: "change_log", width: "6%" },
-        { title: ts("create_time"), dataIndex: "create_time", width: "15%" },
+        { title: "变更说明", dataIndex: "change_log", width: "11%" },
+        { title: ts("create_time"), dataIndex: "create_time", width: "14%" },
         {
             title: ts("action"),
-            width: "26%",
+            width: "24%",
             className: "risk-doc-action-col",
             render: (_: any, row: any) => (
                 <Space size={4} className="risk-doc-action-space">
-                    <Button type="link" size="small" onClick={() => navigate(`/risk_mgmt_docs/view/${row.id}`)}>
+                    <Button type="link" size="small" onClick={() => navigate(`/rmp_docs/view/${row.id}`)}>
                         {ts("view")}
                     </Button>
-                    <Button type="link" size="small" onClick={() => navigate(`/risk_mgmt_docs/edit/${row.id}`)}>
+                    <Button type="link" size="small" onClick={() => navigate(`/rmp_docs/edit/${row.id}`)}>
                         {ts("edit")}
                     </Button>
                     <Button type="link" size="small" onClick={() => doDuplicate(row)}>
@@ -280,9 +253,7 @@ export default () => {
         },
     ].map((col: any) => ({
         ...col,
-        onHeaderCell: () => ({
-            style: { whiteSpace: "nowrap" },
-        }),
+        onHeaderCell: () => ({ style: { whiteSpace: "nowrap" } }),
     }));
 
     return (
@@ -320,13 +291,6 @@ export default () => {
                 </Form>
                 <Space>
                     <Button type="primary" onClick={() => {
-                        importForm.resetFields();
-                        dispatch({ dlgType: DlgTypes.import, importFiles: [] });
-                        loadProducts(data, dispatch);
-                    }}>
-                        导入
-                    </Button>
-                    <Button type="primary" onClick={() => {
                         addForm.resetFields();
                         addForm.setFieldValue("version", "A0");
                         dispatch({ dlgType: DlgTypes.add });
@@ -353,9 +317,7 @@ export default () => {
                     onShowSizeChange: (page, pageSize) => {
                         dispatch({ pageIndex: page, pageSize });
                     },
-                    showTotal: (total: number) => {
-                        return sprintf(ts("total_items"), { total });
-                    },
+                    showTotal: (total: number) => sprintf(ts("total_items"), { total }),
                 }}
                 onChange={(pager) => {
                     doSearch(queryForm.getFieldsValue(), pager.current, pager.pageSize);
@@ -364,7 +326,7 @@ export default () => {
             <Modal
                 width={620}
                 centered
-                title="新增风险管理报告"
+                title="新增风险管理计划"
                 open={data.dlgType === DlgTypes.add}
                 confirmLoading={data.adding}
                 onOk={doAdd}
@@ -386,66 +348,16 @@ export default () => {
                         />
                     </Form.Item>
                     <Form.Item
-                        label={ts("risk_mgmt_doc.version")}
+                        label="文档版本"
                         name="version"
-                        rules={[{ required: true, message: sprintf(ts("msg_input"), { label: ts("risk_mgmt_doc.version") }) }]}>
+                        rules={[{ required: true, message: sprintf(ts("msg_input"), { label: "文档版本" }) }]}>
                         <Input allowClear />
                     </Form.Item>
-                    <Form.Item label={ts("risk_mgmt_doc.file_no")} name="file_no">
+                    <Form.Item label="文件编号" name="file_no">
                         <Input allowClear />
                     </Form.Item>
-                    <Form.Item label={ts("risk_mgmt_doc.change_log")} name="change_log">
+                    <Form.Item label="变更说明" name="change_log">
                         <Input.TextArea rows={3} allowClear />
-                    </Form.Item>
-                </Form>
-            </Modal>
-            <Modal
-                width={680}
-                centered
-                title="导入Word风险管理报告"
-                open={data.dlgType === DlgTypes.import}
-                confirmLoading={data.importing}
-                onOk={doImport}
-                maskClosable={false}
-                onCancel={() => {
-                    dispatch({ dlgType: null, importFiles: [] });
-                    importForm.resetFields();
-                }}>
-                <Form form={importForm} layout="vertical">
-                    <Form.Item
-                        label={ts("product.product")}
-                        name="product_id"
-                        rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
-                        <ProductVersionSelect
-                            products={data.products}
-                            namePlaceholder={ts("product.name")}
-                            versionPlaceholder={ts("product.full_version")}
-                            onChange={(value) => importForm.setFieldValue("product_id", value)}
-                        />
-                    </Form.Item>
-                    <Form.Item
-                        label={ts("risk_mgmt_doc.version")}
-                        name="version"
-                        rules={[{ required: true, message: sprintf(ts("msg_input"), { label: ts("risk_mgmt_doc.version") }) }]}>
-                        <Input allowClear />
-                    </Form.Item>
-                    <Form.Item label={ts("risk_mgmt_doc.change_log")} name="change_log">
-                        <Input.TextArea rows={3} allowClear />
-                    </Form.Item>
-                    <Form.Item label="Word文件" required>
-                        <Upload
-                            accept=".docx"
-                            maxCount={1}
-                            beforeUpload={(file) => {
-                                dispatch({ importFiles: [file] });
-                                return false;
-                            }}
-                            onRemove={() => {
-                                dispatch({ importFiles: [] });
-                            }}
-                            fileList={data.importFiles || []}>
-                            <Button icon={<UploadOutlined />}>{ts("select_file")}</Button>
-                        </Upload>
                     </Form.Item>
                 </Form>
             </Modal>

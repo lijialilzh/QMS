@@ -23,6 +23,11 @@ from ..model.product import Product
 from ..model.haz import Haz
 from ..model.prod_haz import ProdHaz
 from ..model.risk_mgmt_doc import RiskAnalysis, RiskControl, RiskMgmtDoc, RiskParticipant
+from ..model.project_member import ProjectMember
+from ..model.prod_dhf import ProdDhf
+from ..model.ptr_doc import PtrDoc
+from ..model.pha_doc import PhaDoc
+from ..model.project_timeline import ProjectTimelineRow
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
 from ..obj.vobj_user import UserObj
@@ -70,7 +75,9 @@ DEFAULT_RISK_CONTENT = {
         {"title": "2 范围", "children": []},
         {"title": "3 产品描述", "children": [
             {"title": "3.1 产品预期用途", "children": []},
-            {"title": "3.2 产品功能描述", "children": []},
+            {"title": "3.2 产品功能描述", "children": [
+                {"title": "3.2.1 产品功能明细", "ref_type": "prod_func_detail", "children": []},
+            ]},
         ]},
         {"title": "4 评审", "children": [
             {"title": "4.1 评审数据", "children": []},
@@ -99,7 +106,9 @@ DEFAULT_RISK_CONTENT = {
                 {"title": "6.5.1 风险控制方案分析", "children": []},
                 {"title": "6.5.2 风险控制措施的实施", "children": []},
                 {"title": "6.5.3 剩余风险分析和风险/受益分析", "children": []},
-                {"title": "6.5.4 由风险控制措施产生的风险", "children": []},
+                {"title": "6.5.4 由风险控制措施产生的风险", "children": [], "tables": [[
+                    ["RCM编号", "引入的危害", "RCM引入的风险分析", "风险控制措施"],
+                ]]},
             ]},
         ]},
         {"title": "7 风险的可接受性评价", "children": [
@@ -110,7 +119,14 @@ DEFAULT_RISK_CONTENT = {
         {"title": "8 生产和生产后活动", "children": []},
         {"title": "9 结论", "children": []},
         {"title": "10 参考标准", "children": []},
-        {"title": "11 风险管理文件", "children": []},
+        {"title": "11 风险管理文件", "children": [], "tables": [[
+            ["编号", "描述"],
+            ["", "风险管理计划"],
+            ["", "初步危害分析清单"],
+            ["", "风险管理报告"],
+            ["", "自研软件网络安全研究报告"],
+            ["", "网络安全扫描报告"],
+        ]]},
         {"title": "附录A 与安全有关特征的问题识别", "children": []},
         {"title": "附录B 风险分析矩阵", "ref_type": "risk_analysis", "children": []},
     ],
@@ -203,18 +219,545 @@ class Server(object):
         result.setdefault("riskControls", [])
         return self.__ensure_front_matter_sections(result)
 
-    def __to_obj(self, row: RiskMgmtDoc, product: Product = None):
+    def __member_name(self, prod_id, keywords):
+        # 按项目角色关键字匹配项目人员姓名（按优先级取首个命中）
+        for kw in keywords:
+            member = db.session.execute(
+                select(ProjectMember).where(ProjectMember.prod_id == prod_id, ProjectMember.role.like(f"%{kw}%"))
+                .order_by(ProjectMember.sort_order.asc(), ProjectMember.id.asc())
+            ).scalars().first()
+            if member and (member.name or "").strip():
+                return member.name.strip()
+        return ""
+
+    def __autofill_front_matter(self, content, product_id, version):
+        # 封面、文件修订记录自动获取（仅填空，不覆盖已填内容），与「风险管理计划」保持一致
+        if not product_id:
+            return content
+        reviser = self.__member_name(product_id, ("产品经理", "项目经理"))
+        auditor = self.__member_name(product_id, ("QA负责人", "质量负责人", "QA"))
+        approver = self.__member_name(product_id, ("产品负责人", "研发负责人", "管理者代表"))
+        rev_date = serv_review_util.review_date(product_id, serv_review_util.REVIEW_DEFS["risk"]["name_keywords"]) or ""
+        ver = str(version or "")
+        for section in (content.get("sections") or []):
+            if self.__is_cover_section(section):
+                for table in (section.get("tables") or []):
+                    for row in table:
+                        if not isinstance(row, list) or not row:
+                            continue
+                        label = str(row[0]).strip()
+                        if len(row) >= 4 and str(row[2]).strip() == "文件版本" and ver and not str(row[3] or "").strip():
+                            row[3] = ver
+
+                        def set_name(val):
+                            if val and len(row) >= 2 and not str(row[1] or "").strip():
+                                row[1] = val
+
+                        def set_date(val):
+                            if val and len(row) >= 4 and not str(row[3] or "").strip():
+                                row[3] = val
+                        if label == "编制人":
+                            set_name(reviser)
+                            set_date(rev_date)
+                        elif label == "审核人":
+                            set_name(auditor)
+                            set_date(rev_date)
+                        elif label == "批准人":
+                            set_name(approver)
+                            set_date(rev_date)
+                        elif label == "生效日期":
+                            set_name(rev_date)
+            elif self.__is_revision_section(section):
+                for table in (section.get("tables") or []):
+                    if not isinstance(table, list) or not table:
+                        continue
+                    if len(table) >= 2 and isinstance(table[1], list) and len(table[1]) >= 5:
+                        row = table[1]
+
+                        def set_if(i, val):
+                            if val and not str(row[i] if i < len(row) else "").strip():
+                                row[i] = val
+                        set_if(0, rev_date)
+                        set_if(1, ver)
+                        if not str(row[2] or "").strip():
+                            row[2] = "首次发布"
+                        set_if(3, reviser)
+                        set_if(4, approver)
+                    # 默认五行：补足到「表头 + 5 行」
+                    col = len(table[0]) if isinstance(table[0], list) and table[0] else 5
+                    while len(table) < 6:
+                        table.append(["" for _ in range(col)])
+        return content
+
+    def __dhf_code(self, prod_id, keyword):
+        # 从产品 DHF 按名称关键字匹配「编号」
+        row = db.session.execute(
+            select(ProdDhf).where(ProdDhf.prod_id == prod_id, ProdDhf.name.like(f"%{keyword}%"))
+            .order_by(ProdDhf.id.asc())
+        ).scalars().first()
+        return (row.code or "").strip() if row and row.code else ""
+
+    def __fill_risk_mgmt_files(self, content, product_id):
+        # 「11 风险管理文件」表格：无表则补默认描述，编号列按描述从 DHF 自动获取（仅填空）
+        for section in (content.get("sections") or []):
+            if not self.__is_risk_mgmt_files_section(section):
+                continue
+            tables = section.get("tables") or []
+            target = None
+            for table in tables:
+                if table and isinstance(table[0], list) \
+                        and any("编号" in str(c) for c in table[0]) and any("描述" in str(c) for c in table[0]):
+                    target = table
+                    break
+            if target is None:
+                target = [
+                    ["编号", "描述"],
+                    ["", "风险管理计划"],
+                    ["", "初步危害分析清单"],
+                    ["", "风险管理报告"],
+                    ["", "自研软件网络安全研究报告"],
+                    ["", "网络安全扫描报告"],
+                ]
+                tables.append(target)
+                section["tables"] = tables
+            if product_id:
+                for r in target[1:]:
+                    if not isinstance(r, list) or len(r) < 2:
+                        continue
+                    desc = str(r[1] or "").strip()
+                    if desc and not str(r[0] or "").strip():
+                        code = self.__dhf_code(product_id, desc)
+                        if code:
+                            r[0] = code
+            return content
+        return content
+
+    def __is_risk_mgmt_files_section(self, section):
+        title = re.sub(r"\s+", "", str((section or {}).get("title") or ""))
+        return title.startswith("11") and "风险管理文件" in title
+
+    # ---------------- 正文章节自动获取（仅填空，不覆盖已填内容） ----------------
+    @staticmethod
+    def __to_int(value):
+        m = re.search(r"\d+", str(value or ""))
+        return int(m.group()) if m else 0
+
+    @staticmethod
+    def __strip_no(title):
+        return re.sub(r"^[0-9．.、\s]+", "", str(title or "")).strip()
+
+    @staticmethod
+    def __level_number(depth, idx):
+        if depth <= 1:
+            return f"({idx})"
+        if depth == 2:
+            return f"{idx})"
+        circled = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳"
+        return circled[idx - 1] if 1 <= idx <= len(circled) else f"{idx}."
+
+    def __node_outline(self, node, depth, lines, number=""):
+        title = self.__strip_no(node.get("title"))
+        body = str(node.get("body") or "").strip()
+        if depth >= 1 and title:
+            lines.append(f"{number} {title}" if number else title)
+        if body:
+            lines.append(body)
+        idx = 0
+        for child in node.get("children") or []:
+            idx += 1
+            self.__node_outline(child, depth + 1, lines, self.__level_number(depth + 1, idx))
+
+    def __latest_source_doc(self, model, product_id):
+        return db.session.execute(
+            select(model)
+            .where(model.product_id == product_id, ~model.version.like("__deleted%"))
+            .order_by(model.id.desc())
+        ).scalars().first()
+
+    def __ptr_func_2_1(self, product_id):
+        # 技术要求「2.1 性能指标→功能」完整内容（含各模块及功能点）
+        doc = self.__latest_source_doc(PtrDoc, product_id)
+        if not doc or not isinstance(doc.content, dict):
+            return ""
+        sections = doc.content.get("sections") or []
+        body = [s for s in sections if s.get("ref_type") not in ("cover", "appendix")]
+        target = next((s for s in body if self.__strip_no(s.get("title")) == "性能指标"), None)
+        if target is None and len(body) >= 2:
+            target = body[1]
+        if not target:
+            return ""
+        children = target.get("children") or []
+        child = next((c for c in children if self.__strip_no(c.get("title")) == "功能"), None) or (children[0] if children else None)
+        if not child:
+            return ""
+        lines = []
+        self.__node_outline(child, 0, lines)
+        return "\n".join(lines)
+
+    def __pha_appendix_a_table(self, product_id):
+        # 附录A：初步危害分析清单「与安全有关特征的问题识别」ISO 问题表
+        doc = self.__latest_source_doc(PhaDoc, product_id)
+        if not doc or not isinstance(doc.content, dict):
+            return None
+        sections = doc.content.get("sections") or []
+        target = next((s for s in sections if self.__strip_no(s.get("title")) == "与安全有关特征的问题识别"), None)
+        if not target:
+            return None
+
+        def find_table(node):
+            for t in node.get("tables") or []:
+                if t and isinstance(t[0], list):
+                    head = "".join(str(c) for c in t[0])
+                    if "问题" in head and "考虑的内容" in head and "是否适用" in head:
+                        return t
+            for c in node.get("children") or []:
+                found = find_table(c)
+                if found:
+                    return found
+            return None
+
+        return find_table(target)
+
+    def __risk_dist_matrices(self, product_id):
+        # 7.1 风险分布：初始/剩余（发生概率×严重度）5×5 数量矩阵
+        rows = db.session.execute(
+            select(ProdHaz, Haz).outerjoin(Haz, ProdHaz.haz_id == Haz.id)
+            .where(ProdHaz.prod_id == product_id)
+        ).all() if product_id else []
+        # 无 HAZ 数据时也返回全 0 的两张矩阵（而非 None），确保 7.1 始终有表
+        rate_to_row = {"5": 0, "4": 1, "3": 2, "2": 3, "1": 4}
+        sev_to_col = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4}
+
+        def build(rate_attr, degree_attr):
+            counts = [[0] * 5 for _ in range(5)]
+            for prod_haz, haz in rows:
+                r = str(getattr(prod_haz, rate_attr, None) or getattr(haz, rate_attr, None) or "").strip()
+                d = str(getattr(prod_haz, degree_attr, None) or getattr(haz, degree_attr, None) or "").strip().upper()
+                if r in rate_to_row and d in sev_to_col:
+                    counts[rate_to_row[r]][sev_to_col[d]] += 1
+            return counts
+
+        def grid(label, counts):
+            prob_labels = ["经常(5)", "有时(4)", "偶然(3)", "很少(2)", "非常少(1)"]
+            g = [[label, "可忽略(A)", "轻度(B)", "严重(C)", "危重的(D)", "灾难性的(E)"]]
+            for i, pl in enumerate(prob_labels):
+                g.append([pl] + [str(x) for x in counts[i]])
+            return g
+
+        return [
+            grid("初始风险分布（措施前）", build("init_rate", "init_degree")),
+            grid("剩余风险分布（措施后）", build("cur_rate", "cur_degree")),
+        ]
+
+    def __rcm_introduced_rows(self, section, product_id):
+        # 6.5.4 由风险控制措施产生的风险：读取本节 RCM 表，按 RCM 编号匹配 HAZ 推导「引入的危害」
+        tables = section.get("tables") or []
+        table = tables[0] if tables and isinstance(tables[0], list) else []
+        if not table:
+            return []
+        first = table[0] if table and isinstance(table[0], list) else []
+        head_text = "".join(str(c) for c in (first or []))
+        has_header = bool(re.search(r"RCM编号|引入的危害|风险分析|风险控制措施", head_text))
+        data_rows = table[1:] if has_header else table
+
+        def find_col(keywords, fallback):
+            if has_header:
+                for i, h in enumerate(first):
+                    norm = re.sub(r"\s+", "", str(h))
+                    if any(k in norm for k in keywords):
+                        return i
+            return fallback
+
+        rcm_col = find_col(["RCM编号", "RCM"], 0)
+        measure_col = find_col(["风险控制措施", "控制措施"], 3)
+        haz_rows = db.session.execute(
+            select(ProdHaz, Haz).outerjoin(Haz, ProdHaz.haz_id == Haz.id)
+            .where(ProdHaz.prod_id == product_id)
+        ).all() if product_id else []
+
+        def rcm_codes(text):
+            return [x.replace(" ", "") for x in re.findall(r"RCM\s*\d+", str(text or "").upper())]
+
+        def matches(rcm):
+            res = []
+            for prod_haz, haz in haz_rows:
+                related = f"{prod_haz.rcms or getattr(haz, 'rcms', '') or ''}\n{prod_haz.deal or getattr(haz, 'deal', '') or ''}"
+                if rcm in rcm_codes(related):
+                    analysis = prod_haz.situation or getattr(haz, "situation", "") or getattr(haz, "event", "") or getattr(haz, "source", "") or ""
+                    res.append((getattr(haz, "code", "") or "", analysis))
+            return res
+
+        out = []
+        for row in data_rows:
+            if not isinstance(row, list):
+                continue
+            raw = str(row[rcm_col] if rcm_col < len(row) else "")
+            search = raw if raw.strip() else str(row[measure_col] if measure_col < len(row) else "")
+            codes = rcm_codes(search)
+            rcm = codes[0] if codes else ""
+            measure = (row[measure_col] if measure_col < len(row) else "") or (row[rcm_col] if rcm_col < len(row) else "")
+            ms = matches(rcm) if rcm else []
+            if not ms:
+                out.append([raw, "未匹配到HAZ" if rcm else "", "", measure])
+            else:
+                for code, analysis in ms:
+                    out.append([raw, code, analysis, measure])
+        return out
+
+    def __project_time_range(self, product_id):
+        rows = db.session.execute(
+            select(ProjectTimelineRow).where(ProjectTimelineRow.prod_id == product_id)
+        ).scalars().all()
+        rows = [r for r in rows if (r.row_type or "date") == "date" and self.__to_int(r.year) and self.__to_int(r.month)]
+        if not rows:
+            return ""
+
+        def ym(r):
+            return self.__to_int(r.year) * 100 + self.__to_int(r.month)
+
+        s = min(rows, key=ym)
+        e = max(rows, key=ym)
+        return f"{self.__to_int(s.year)}年{self.__to_int(s.month)}月至{self.__to_int(e.year)}年{self.__to_int(e.month)}月"
+
+    SEVERITY_TABLE = [
+        ["严重度", "分类标准", "标记"],
+        ["可忽略", "不便或者暂时不适", "A"],
+        ["轻度", "导致不要求专业医疗介入的暂时伤害或损伤", "B"],
+        ["严重", "导致要求专业医疗介入的暂时伤害或损伤", "C"],
+        ["危重的", "导致永久性损伤或危及生命的危害", "D"],
+        ["灾难性的", "导致患者死亡", "E"],
+    ]
+    PROBABILITY_TABLE = [
+        ["概率", "事件频次/年/单位产品", "标记"],
+        ["经常", "≥10-3", "5"],
+        ["有时", "<10-3和≥10-4", "4"],
+        ["偶然", "<10-4和≥10-5", "3"],
+        ["很少", "<10-5和≥10-6", "2"],
+        ["非常少", "＜10-6", "1"],
+    ]
+
+    def __body_text_defaults(self, pname, time_range):
+        name = pname or "本产品"
+        period = time_range or "产品研发周期内"
+        return {
+            "目的": (
+                f"风险管理的目的是确保{name}的危害得到了定义，评估和评价了相关风险，"
+                "控制了这些风险和在寿命周期中监控这些控制措施的有效性。"
+                "本公司采用的主要方式和程序来自于GB/T 42062、ISO14971和YY/T 1406.1-2016。"
+            ),
+            "审评历史": (
+                "按照评审记录的模板，在风险管理过程中，形成了以下风险相关文件（部分含评审记录）：\n"
+                "《风险管理计划》及评审记录\n《初步危害分析清单》及评审记录\n《网络安全漏洞自评报告》\n"
+                "《自研软件网络安全研究报告》\n《风险管理报告》及评审记录"
+            ),
+            "风险分析方式": (
+                "根据YY/T 0316、ISO14971和风险管理控制程序，对于每个危害发生概率、危害程度的评估、"
+                "综合考虑概率和危害程度的风险等级、风险可接受准则如下所示。"
+            ),
+            "危害识别": (
+                "与合理可预见相关的环境相关的危害：\n正常使用\n不正确的使用\n人为恶意使用\n"
+                "考虑的危害包括：\n对患者的危害\n对操作者的危害\n对信息资产的危害\n"
+                "危害初步原因的考虑应包括:\n用户界面\n患者或者临床用户的忽视\n人因工程\n硬件故障\n软件故障\n集成错误\n环境条件\n网络安全\n"
+                "危害重点考虑的原因应包括：\n网络工具；\n系统部件的集成，包括硬件和软件；\n用户界面，包括命令语言，警告和错误信息；\n"
+                "在用户界面和用户手册中文字翻译的准确性；\n用户预期或非预期情况下数据的保护；\n第三方软件。"
+            ),
+            "与合理可预见相关的环境相关的危害": "与合理可预见相关的环境相关的危害：\n正常使用\n不正确的使用\n人为恶意使用",
+            "考虑的危害包括": "考虑的危害包括：\n对患者的危害\n对操作者的危害\n对信息资产的危害",
+            "危害初步原因的考虑应包括": (
+                "危害初步原因的考虑应包括:\n用户界面\n患者或者临床用户的忽视\n人因工程\n硬件故障\n软件故障\n集成错误\n环境条件\n网络安全"
+            ),
+            "危害重点考虑的原因应包括": (
+                "危害重点考虑的原因应包括：\n网络工具；\n系统部件的集成，包括硬件和软件；\n用户界面，包括命令语言，警告和错误信息；\n"
+                "在用户界面和用户手册中文字翻译的准确性；\n用户预期或非预期情况下数据的保护；\n第三方软件。"
+            ),
+            "风险分析": (
+                f"根据YY/T 0316、ISO14971和风险管理控制程序，{name}的风险分析过程应该定义可能的危险（源），"
+                "评估每个危险情况，评估每个风险的可接受程度，降低风险的方式和评审由于采取风险控制措施带来的风险。"
+                "在所有这些风险已经被分析后，这些程序和结果的记录见本报告。"
+            ),
+            "生产和生产后活动": (
+                "在风险管理计划中，已经描述了生产和生产后信息收集的方式。\n"
+                "通过对执行这些过程中记录的评审，来评审是否引入了风险和开始一个新的风险分析和管理过程。\n"
+                "截至目前搜集到的所有信息，没有新的风险产生。"
+            ),
+            "参考标准": (
+                "YY/T 0664-2020 医疗器械软件 软件生存周期过程\n"
+                "GB/T 42062-2022 医疗器械 风险管理对医疗器械的应用\n"
+                "YY/T 1406.1-2016 医疗器械软件 第1部分：YY/T 0316应用于医疗器械软件的指南\n"
+                "ISO 14971-2019 医疗器械-风险管理对医疗器械的应用\n"
+                "《医疗器械软件注册技术审查指导原则》（2022年第9号）\n"
+                "《医疗器械网络安全注册审查指导原则》（2022年第7号）\n"
+                "《人工智能医疗器械注册审查指导原则》（2022年第8号）\n"
+                "FDA-Content of Premarket Submissions for Device Software Functions"
+            ),
+            "风险控制方案分析": "风险管理小组已经识别合理适用的风险控制措施来降低风险到可接受水平，具体风险控制措施的分析详见附录B。",
+            "风险控制措施的实施": (
+                f"通过对{name}产品风险分析和风险评价的结果的分析，所有的风险控制措施已经被识别并且所有风险控制措施已经在设计中实施。\n"
+                "识别出的所有风险控制措施已经被验证，详见附录B的证据列，包括但不限于《软件测试报告》和《用户测试报告》。"
+                "实施和验证的风险控制措施列表如下所示："
+            ),
+            "剩余风险分析和风险/受益分析": (
+                f"{name}产品的所有单个剩余风险都已经控制在可接受的范围内，剩余风险可以接受，详见附录B，风险/受益分析评价列。"
+            ),
+            "由风险控制措施产生的风险": (
+                "对采用的风险控制措施在评审过程中进行了分析，如果带来了新的风险，则进行分析，由风险控制措施带来的危害列表如下所示："
+            ),
+            "评审数据": (
+                f"{name}的风险管理活动是由公司构成的联合风险管理小组开展的，这是一个跨专业的评审，至少应该包括风险管理小组的全部成员。\n"
+                f"{name}的风险管理活动在{period}进行，风险管理小组按照风险管理计划制定风险分析的范围，对相关风险进行了分析和控制。\n"
+                "风险管理活动的整个结果将包含在本风险管理报告中；风险管理活动在位于中国北京的公司进行。"
+            ),
+            "与安全有关特征的问题识别": (
+                f"参照YY/T 0316的附录C，对{name}的预期用途和安全性特征进行了判定。"
+                f"可能影响{name}安全性的预期用途和判定特征有关问题详见附录A。"
+            ),
+            "已知或可预见的危险（源）识别": (
+                f"对可能影响{name}产品的已知或可预见危险（源）形成因素进行有关分析与判定，详见附录B。"
+            ),
+            "估计每个危险情况的风险": "基于产品需求的危险（源）识别来估计每个危险情况的风险，详见附录B。",
+            "风险评价": f"{name}产品通过对每个风险点进行严重度和发生概率的联合评价，评价的结果详见附录B。",
+            "RCMs实施风险控制措施前/后的风险分布": (
+                "所有已识别的危险情况产生的一个或多个风险已经得到考虑，识别出不可接受的风险点已经通过有效的"
+                "风险控制措施降低风险到可接受水平。表3和表4分别代表风险控制措施前和风险控制措施后的风险矩阵总表。\n"
+                "通过风险水平分布的表格，我们可以确认所有风险都已经被分析和控制到可接受水平。"
+            ),
+            "综合剩余风险评价": (
+                f"通过评审附录B的风险分析的结果和6.5.3的受益分析，{name}的主要风险来源于可用性，网络安全和模型及训练数据的正确性，"
+                "应该注意的是，这些风险是医疗器械软件的共性，无法完全消除。\n"
+                "此外，经过软件的验证和确认，验证了软件的临床功能满足预期用途，且综合剩余风险可接受。\n"
+                f"基于以上计算和评估的总结，风险管理小组相信{name}的综合剩余风险是可接受的。"
+            ),
+            "软件安全级别判定": (
+                f"根据YY/T 0664-2020 医疗器械软件 软件生存周期过程判定，{name}软件的安全级别为 C级。\n"
+                "判断原因：\n"
+                f"{name}用于辅助医师对多时相CT图像进行测量、比较及随访评估。尽管该软件的输出结果并非最终诊断依据，"
+                "但其提供的测量、随访比较及提示可能在临床决策中对医师有所影响。如果软件在这些功能上存在不准确的结果，"
+                "且医师未能识别和纠正这些偏差，可能会导致误判，从而引发漏检、误诊等情况，进而可能导致对患者造成严重伤害。\n"
+                f"综上，根据YY/T 0664-2020的分类准则{name}的软件安全级别为C级。"
+            ),
+            "结论": (
+                "通过评估风险管理文件，风险管理小组认为：\n"
+                "1）风险管理计划已被实施，相关活动经过评审。\n"
+                "2）经过临床评价，单个和综合剩余风险可接受。\n"
+                "3）生产和生产后信息收集和评审活动已被安排。\n"
+                f"{name}的研制阶段已对有关可能的危害及产生的风险进行了估计和评价，针对性地实施了降低风险的技术和管理方面的措施。"
+                "产品测试对上述措施的有效性进行了验证，达到了通用和专用标准的要求。公司对所有剩余风险进行了评价，全部达到可接受的水平。\n"
+                "经过生产及生产后信息收集和评审活动，同类产品未发现不良事件，产品不良事件监测及定期风险评价活动中，暂未发现新增风险。\n"
+                "因此，产品风险管理过程满足标准要求，产品风险满足发行和上市要求。"
+            ),
+        }
+
+    def __autofill_body_sections(self, content, product_id, version, product=None):
+        if not product_id:
+            return content
+        if product is None:
+            product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+        pname = (getattr(product, "name", "") or "").strip() if product else ""
+        overall = (getattr(product, "overall_desc", "") or "").strip() if product else ""
+        time_range = self.__project_time_range(product_id)
+        defaults = self.__body_text_defaults(pname, time_range)
+        lazy = {"ptr": None, "appx_a": None, "dist": None}
+
+        def has_text(node):
+            return bool(str(node.get("text") or node.get("content") or "").strip())
+
+        def is_appendix_a(node):
+            t = re.sub(r"\s+", "", str(node.get("title") or ""))
+            return "附录A" in t and "安全有关特征" in t
+
+        def product_desc():
+            if not product:
+                return ""
+            return (
+                f"产品名称：{getattr(product, 'name', '') or ''}\n"
+                f"产品型号：{getattr(product, 'type_code', '') or ''}\n"
+                f"完整版本：{getattr(product, 'full_version', '') or ''}"
+            )
+
+        def walk(node):
+            title = self.__strip_no(node.get("title"))
+            if title in defaults and not has_text(node):
+                node["text"] = defaults[title]
+            if title == "范围" and not has_text(node) and product and (getattr(product, "scope", "") or "").strip():
+                node["text"] = product.scope.strip()
+            if title == "产品描述" and not has_text(node) and product:
+                node["text"] = product_desc()
+            if title == "产品预期用途" and not has_text(node) and product and (getattr(product, "component", "") or "").strip():
+                node["text"] = product.component.strip()
+            if title == "严重度定义" and not (node.get("tables") or []):
+                node["tables"] = [copy.deepcopy(self.SEVERITY_TABLE)]
+            if title == "发生概率定义" and not (node.get("tables") or []):
+                node["tables"] = [copy.deepcopy(self.PROBABILITY_TABLE)]
+            if title == "产品功能描述":
+                if overall and not has_text(node):
+                    node["text"] = overall
+                children = node.setdefault("children", [])
+                if not any((c or {}).get("ref_type") == "prod_func_detail" for c in children):
+                    children.insert(0, {"title": "3.2.1 产品功能明细", "ref_type": "prod_func_detail", "children": []})
+            if (node or {}).get("ref_type") == "prod_func_detail":
+                if pname:
+                    node["title"] = f"3.2.1 {pname}"
+                if not has_text(node):
+                    if lazy["ptr"] is None:
+                        lazy["ptr"] = self.__ptr_func_2_1(product_id) or ""
+                    if lazy["ptr"]:
+                        node["text"] = lazy["ptr"]
+            if is_appendix_a(node) and not (node.get("tables") or []):
+                if lazy["appx_a"] is None:
+                    lazy["appx_a"] = self.__pha_appendix_a_table(product_id) or []
+                if lazy["appx_a"]:
+                    node["tables"] = [copy.deepcopy(lazy["appx_a"])]
+            tnorm = re.sub(r"\s+", "", str(node.get("title") or ""))
+            if "由风险控制措施产生的风险" in tnorm:
+                tbs = node.get("tables") or []
+                table0 = tbs[0] if tbs and isinstance(tbs[0], list) else None
+                if not table0 or len(table0) <= 1:
+                    node["tables"] = [[
+                        ["RCM编号", "引入的危害", "RCM引入的风险分析", "风险控制措施"],
+                        ["RCM017", "", "", "RCM017.在用户说明书中说明，在软件中无法找到所需图像时的故障排除步骤。"],
+                        ["RCM115", "", "", "RCM115.在用户说明书中增加警告：请在随访前请确认所选病例的ID与医院系统匹配，以免造成错误。"],
+                    ]]
+            if title == "RCMs实施风险控制措施前/后的风险分布" and not (node.get("tables") or []):
+                if lazy["dist"] is None:
+                    lazy["dist"] = self.__risk_dist_matrices(product_id) or []
+                if lazy["dist"]:
+                    node["tables"] = copy.deepcopy(lazy["dist"])
+            for child in node.get("children") or []:
+                walk(child)
+
+        for section in content.get("sections") or []:
+            walk(section)
+        return content
+
+    def __fill_participants(self, content):
+        # 4.2 风险分析参与人员：content.participants 为空时回填主表数据（与编辑页回退一致，保证导出也有内容）
+        if not isinstance(content, dict) or content.get("participants"):
+            return content
+        rows = db.session.execute(select(RiskParticipant).order_by(RiskParticipant.id)).scalars().all()
+        content["participants"] = [{"id": r.id, "role": r.role or "", "name": r.name or ""} for r in rows]
+        return content
+
+    def __to_obj(self, row: RiskMgmtDoc, product: Product = None, with_autofill=True):
         obj = RiskMgmtDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content)
-        serv_review_util.ensure_review(
-            obj.content, "risk",
-            serv_review_util.review_date(row.product_id, serv_review_util.REVIEW_DEFS["risk"]["name_keywords"]) if row.product_id else "",
-        )
+        if with_autofill:
+            serv_review_util.ensure_review(
+                obj.content, "risk",
+                serv_review_util.review_date(row.product_id, serv_review_util.REVIEW_DEFS["risk"]["name_keywords"]) if row.product_id else "",
+            )
+            obj.content = self.__autofill_front_matter(obj.content, row.product_id, row.version)
+            obj.content = self.__fill_risk_mgmt_files(obj.content, row.product_id)
+            obj.content = self.__autofill_body_sections(obj.content, row.product_id, row.version, product)
+            obj.content = self.__fill_participants(obj.content)
         if product:
             obj.product_name = product.name
             obj.product_version = product.full_version
             obj.product_full_version = product.full_version
             obj.product_type_code = product.type_code
+            if not (obj.file_no or "").strip():
+                dhf_no = self.__dhf_code(product.id, "风险管理报告")
+                if dhf_no:
+                    obj.file_no = dhf_no
         return obj
 
     def __fill_list_obj(self, obj, product: Product = None, doc: RiskMgmtDoc = None):
@@ -362,13 +905,13 @@ class Server(object):
                 RiskMgmtDoc.version == form.version,
             )
             if db.session.execute(sql).scalar() > 0:
-                return Resp.resp_err(msg=ts("msg_obj_exist"))
+                return Resp.resp_err(msg=f"版本 {form.version} 已存在，请更换文件版本号")
             row = RiskMgmtDoc(**form.dict(exclude_none=True))
             row.id = None
             row.content = self.__normalize_content(row.content)
             db.session.add(row)
             db.session.commit()
-            return Resp.resp_ok()
+            return Resp.resp_ok(data=RiskMgmtDocForm(id=row.id))
         except Exception:
             logger.exception("")
             db.session.rollback()
@@ -420,10 +963,11 @@ class Server(object):
             # 兜底：确保目标产品下版本唯一
             while version in existing_set:
                 version = new_version(version)
+            base_file_no = (fromdoc.file_no or "").strip() or self.__dhf_code(target_pid, "风险管理报告")
             newdoc = RiskMgmtDoc(
                 product_id=target_pid,
                 version=version,
-                file_no=sync_file_no_version(fromdoc.file_no, version),
+                file_no=sync_file_no_version(base_file_no, version) or None,
                 change_log=fromdoc.change_log,
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
@@ -454,6 +998,17 @@ class Server(object):
             row: RiskMgmtDoc = db.session.execute(select(RiskMgmtDoc).where(RiskMgmtDoc.id == form.id)).scalars().first()
             if not row:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
+            target_pid = form.product_id if form.product_id is not None else row.product_id
+            target_ver = form.version if form.version is not None else row.version
+            dup = db.session.execute(
+                select(func.count(RiskMgmtDoc.id)).where(
+                    RiskMgmtDoc.product_id == target_pid,
+                    RiskMgmtDoc.version == target_ver,
+                    RiskMgmtDoc.id != form.id,
+                )
+            ).scalar()
+            if dup and dup > 0:
+                return Resp.resp_err(msg=f"版本 {target_ver} 已存在，请更换文件版本号")
             for key, value in form.dict(exclude_none=True).items():
                 if key == "id":
                     continue
@@ -482,6 +1037,21 @@ class Server(object):
         doc, product = row
         return Resp.resp_ok(data=self.__to_obj(doc, product))
 
+    async def preview_risk_mgmt_content(self, product_id: int = 0, version: str = ""):
+        # 编辑器切换产品时：基于模板按新产品跑一遍完整自动填充，返回全新 content（供前端整份刷新自动章节）
+        product = None
+        if product_id:
+            product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+        content = self.__normalize_content(None)
+        serv_review_util.ensure_review(
+            content, "risk",
+            serv_review_util.review_date(product_id, serv_review_util.REVIEW_DEFS["risk"]["name_keywords"]) if product_id else "",
+        )
+        content = self.__autofill_front_matter(content, product_id, version)
+        content = self.__fill_risk_mgmt_files(content, product_id)
+        content = self.__autofill_body_sections(content, product_id, version, product)
+        return Resp.resp_ok(data=content)
+
     async def list_risk_mgmt_doc(self, op_user: UserObj = None, product_id: int = 0, version: str = None, page_index: int = 0, page_size: int = 10):
         wheres = []
         if product_id:
@@ -501,7 +1071,7 @@ class Server(object):
             .offset(page_index * page_size)
             .limit(page_size)
         )
-        rows: List[RiskMgmtDocObj] = [self.__to_obj(doc, product) for doc, product in db.session.execute(sql).all()]
+        rows: List[RiskMgmtDocObj] = [self.__to_obj(doc, product, with_autofill=False) for doc, product in db.session.execute(sql).all()]
         return Resp.resp_ok(data=Page(total=total, rows=rows, page_index=page_index, page_size=page_size))
 
     async def add_risk_participant(self, form: RiskParticipantForm):
@@ -924,9 +1494,9 @@ class Server(object):
             paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
             paragraph.paragraph_format.space_before = Pt(0)
             paragraph.paragraph_format.space_after = Pt(0)
-            paragraph.paragraph_format.line_spacing = 1.5
+            paragraph.paragraph_format.line_spacing = 1.3
             docx_util.fonted_txt(paragraph, str(text or ""), font_size=10.5, bold=bold)
-            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
 
         def add_plain_table(rows):
             rows = rows or []
@@ -973,6 +1543,93 @@ class Server(object):
         def add_default_acceptance_image():
             image_path = os.path.join(os.path.dirname(__file__), "assets", "risk_acceptance_matrix.jpg")
             return add_section_image(image_path)
+
+        def shade_cell(cell, hex_color):
+            tc_pr = cell._tc.get_or_add_tcPr()
+            shd = OxmlElement("w:shd")
+            shd.set(qn("w:val"), "clear")
+            shd.set(qn("w:color"), "auto")
+            shd.set(qn("w:fill"), hex_color)
+            tc_pr.append(shd)
+
+        def add_risk_dist_matrix(grid, caption):
+            # 7.1 风险分布：合并表头 + 总计行列 + 红/橙/绿着色 + 图例（配色与编辑页 5.2.3 接受标准一致）
+            RATE_ROWS = [("经常", "5"), ("有时", "4"), ("偶然", "3"), ("很少", "2"), ("非常少", "1")]
+            SEV_LABELS = [("可忽略", "A"), ("轻度", "B"), ("严重", "C"), ("危重的", "D"), ("灾难性的", "E")]
+            RISK_LEVELS = [
+                ["bad", "bad", "bad", "bad", "bad"],
+                ["bad", "bad", "bad", "bad", "bad"],
+                ["ok", "warn", "bad", "bad", "bad"],
+                ["ok", "warn", "warn", "bad", "bad"],
+                ["ok", "ok", "warn", "warn", "warn"],
+            ]
+            LEVEL_FILL = {"bad": "FF0000", "warn": "FFC000", "ok": "92D050"}
+            data_rows = (grid or [])[1:]
+            counts = []
+            for ri in range(5):
+                src = data_rows[ri] if ri < len(data_rows) else []
+                row = []
+                for ci in range(5):
+                    try:
+                        row.append(int(str(src[ci + 1]).strip()))
+                    except (ValueError, IndexError, TypeError):
+                        row.append(0)
+                counts.append(row)
+            col_totals = [sum(counts[ri][ci] for ri in range(5)) for ci in range(5)]
+            grand_total = sum(col_totals)
+
+            if caption:
+                write_center_section_title(caption, font_size=12.0, bold=True)
+            table = document.add_table(rows=11, cols=9)
+            table.style = "Table Grid"
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+            def cell(r, c):
+                return table.cell(r, c)
+
+            # 表头：风险值(2×3) / 严重度(1×5) / 总计(2×1)
+            cell(0, 0).merge(cell(1, 2))
+            set_cell_text(cell(0, 0), "风险值", bold=True)
+            cell(0, 3).merge(cell(0, 7))
+            set_cell_text(cell(0, 3), "严重度", bold=True)
+            cell(0, 8).merge(cell(1, 8))
+            set_cell_text(cell(0, 8), "总计", bold=True)
+            for ci, (label, letter) in enumerate(SEV_LABELS):
+                set_cell_text(cell(1, 3 + ci), f"{label}\n{letter}", bold=True)
+
+            # 数据 5 行
+            cell(2, 0).merge(cell(6, 0))
+            set_cell_text(cell(2, 0), "发生概率", bold=True)
+            for ri, (rate, score) in enumerate(RATE_ROWS):
+                r = 2 + ri
+                set_cell_text(cell(r, 1), rate, bold=True)
+                set_cell_text(cell(r, 2), score, bold=True)
+                for ci in range(5):
+                    target = cell(r, 3 + ci)
+                    set_cell_text(target, str(counts[ri][ci]))
+                    shade_cell(target, LEVEL_FILL[RISK_LEVELS[ri][ci]])
+                set_cell_text(cell(r, 8), str(sum(counts[ri])), bold=True)
+
+            # 总计行
+            cell(7, 0).merge(cell(7, 2))
+            set_cell_text(cell(7, 0), "总计", bold=True)
+            for ci in range(5):
+                set_cell_text(cell(7, 3 + ci), str(col_totals[ci]), bold=True)
+            set_cell_text(cell(7, 8), str(grand_total), bold=True)
+
+            # 图例
+            legends = [
+                ("红色", "FF0000", "不可接受：这类风险本质上不可接受。必须寻求风险降低措施。"),
+                ("橙色", "FFC000", "进一步降低的研究：这类风险必须降低到合理可行的最低限度才可视为可接受。"),
+                ("绿色", "92D050", "可忽略：这类风险实际上可接受，但仍应尽可能寻求风险降低措施。"),
+            ]
+            for li, (word, fill, desc) in enumerate(legends):
+                r = 8 + li
+                set_cell_text(cell(r, 0), word, bold=True)
+                shade_cell(cell(r, 0), fill)
+                cell(r, 1).merge(cell(r, 8))
+                set_cell_text(cell(r, 1), desc)
+            document.add_paragraph()
 
         def set_section_orientation(target_section, landscape=False):
             is_current_landscape = target_section.orientation == WD_ORIENT.LANDSCAPE
@@ -1094,6 +1751,26 @@ class Server(object):
                             set_cell_text(cells[idx], value)
                 for table_rows in section.get("tables", []) or []:
                     add_plain_table(table_rows)
+            elif "由风险控制措施产生的风险" in re.sub(r"\s+", "", str(section.get("title") or "")) \
+                    or "RCM带来的危害" in re.sub(r"\s+", "", str(section.get("title") or "")):
+                rcm_rows = self.__rcm_introduced_rows(section, obj.product_id)
+                table = document.add_table(rows=1, cols=4)
+                table.style = "Table Grid"
+                table.alignment = WD_TABLE_ALIGNMENT.CENTER
+                for idx, header in enumerate(["RCM编号", "引入的危害", "RCM引入的风险分析", "风险控制措施"]):
+                    set_cell_text(table.rows[0].cells[idx], header, bold=True)
+                for r in rcm_rows:
+                    cells = table.add_row().cells
+                    for idx, value in enumerate(r[:4]):
+                        set_cell_text(cells[idx], str(value or ""))
+                document.add_paragraph()
+            elif "风险分布" in normalized_title(section.get("title") or ""):
+                titles = section.get("table_titles") if isinstance(section.get("table_titles"), list) else []
+                dist_tables = section.get("tables", []) or [["初始风险分布（措施前）"], ["剩余风险分布（措施后）"]]
+                for t_idx, table_rows in enumerate(dist_tables):
+                    label = (table_rows[0][0] if (table_rows and table_rows[0]) else "") or ""
+                    caption = (titles[t_idx] if t_idx < len(titles) and titles[t_idx] else f"表{t_idx + 3} {label}").strip()
+                    add_risk_dist_matrix(table_rows, caption)
             else:
                 for table_rows in section.get("tables", []) or []:
                     add_plain_table(table_rows)
@@ -1121,8 +1798,9 @@ class Server(object):
         revision_section = find_section(export_sections, is_revision_section)
         body_sections = [section for section in export_sections if not is_cover_section(section) and not is_revision_section(section)]
 
-        write_center_section_title("风险管理报告", font_size=22.0, bold=False)
-        add_blank_lines(10)
+        add_blank_lines(12)
+        write_center_section_title("风险管理报告", font_size=22.0, bold=True)
+        add_blank_lines(6)
         for table_rows in (cover_section or {}).get("tables", []) or []:
             add_plain_table(table_rows)
 

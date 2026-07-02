@@ -7,6 +7,7 @@
 import logging
 import base64
 import copy
+import datetime
 import io
 import json
 import os
@@ -23,6 +24,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 
 from ..model.product import Product
+from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..model.cybersec_doc import (
     CybersecDoc,
     CybersecThreat,
@@ -206,9 +208,116 @@ class Server(object):
         result.setdefault("productName", "")
         return self.__ensure_front_matter_sections(result)
 
+    # 「阶段活动」表：各阶段开始/结束时间按关键字匹配项目时间线日期行，取最早=开始、最晚=结束
+    def __stage_timeline_dates(self, product_id, keywords):
+        if not product_id or not keywords:
+            return (None, None)
+        rows = db.session.execute(
+            select(ProjectTimelineRow).where(
+                ProjectTimelineRow.prod_id == product_id,
+                ProjectTimelineRow.row_type == "date",
+            )
+        ).scalars().all()
+        if not rows:
+            return (None, None)
+        row_map = {r.id: r for r in rows}
+        cells = db.session.execute(
+            select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_(list(row_map.keys())))
+        ).scalars().all()
+        matched_row_ids = set()
+        for c in cells:
+            txt = str(c.output_result or "")
+            if any(k in txt for k in keywords):
+                matched_row_ids.add(c.row_id)
+
+        def to_int(v):
+            digits = re.sub(r"[^\d]", "", str(v or ""))
+            return int(digits) if digits else None
+
+        def parse_date(r):
+            y, m = to_int(r.year), to_int(r.month)
+            if y is None or m is None:
+                return None
+            try:
+                return datetime.date(y, m, to_int(r.day) or 1)
+            except Exception:
+                return None
+
+        dates = [d for d in (parse_date(row_map[i]) for i in matched_row_ids) if d]
+        if not dates:
+            return (None, None)
+        fmt = lambda d: f"{d.year}年{d.month}月{d.day}日"
+        return (fmt(min(dates)), fmt(max(dates)))
+
+    def __autofill_stage_activity(self, content, product_id):
+        if not isinstance(content, dict):
+            return content
+
+        def find_section(secs):
+            for s in secs or []:
+                if isinstance(s, dict):
+                    title = re.sub(r"\s+", "", str(s.get("title") or ""))
+                    if s.get("ref_type") == "stage_activity" or "阶段活动" in title:
+                        return s
+                    found = find_section(s.get("children"))
+                    if found:
+                        return found
+            return None
+
+        sec = find_section(content.get("sections"))
+        if not sec:
+            return content
+        tables = sec.get("tables") or []
+        if not tables or not isinstance(tables[0], list) or len(tables[0]) < 2:
+            return content
+        table = tables[0]
+        header = table[0] if isinstance(table[0], list) else []
+
+        def col_of(name):
+            for i, c in enumerate(header):
+                if name in re.sub(r"\s+", "", str(c or "")):
+                    return i
+            return -1
+
+        c_start, c_end = col_of("开始"), col_of("结束")
+        if c_start < 0 or c_end < 0:
+            return content
+
+        # 阶段 -> 时间线关键字（按行文本判定阶段；顺序：扫描→SBOM→报告/控制措施→计划/威胁识别/准备）
+        def phase_keywords(row_text):
+            t = re.sub(r"\s+", "", row_text)
+            if "扫描" in t or "绿盟" in t:
+                return ["网络安全扫描"]
+            if "SBOM" in t or "sbom" in t:
+                return ["SBOM"]
+            if "风险管理报告" in t or "控制措施" in t:
+                return ["网络安全风险管理报告"]
+            if "风险管理计划" in t or "威胁识别" in t or "准备" in t or "风险评估" in t:
+                return ["网络安全风险管理计划"]
+            return None
+
+        good_date = re.compile(r"^\d{4}年\d{1,2}月\d{1,2}日$")
+
+        def norm_cell(val, new_val):
+            if new_val:
+                return new_val
+            # 无匹配时清理坏占位符（如「202年0月日」），保留用户已填的规范日期
+            return "" if not good_date.match(str(val or "").strip()) else val
+
+        for row in table[1:]:
+            if not isinstance(row, list) or len(row) <= max(c_start, c_end):
+                continue
+            row_text = " ".join(str(c or "") for c in row)
+            keywords = phase_keywords(row_text)
+            start_str, end_str = self.__stage_timeline_dates(product_id, keywords) if keywords else (None, None)
+            row[c_start] = norm_cell(row[c_start], start_str)
+            row[c_end] = norm_cell(row[c_end], end_str)
+        return content
+
     def __to_obj(self, row: CybersecDoc, product: Product = None):
         obj = CybersecDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content)
+        obj.content = self.__autofill_stage_activity(obj.content, product.id if product else row.product_id)
         if product:
             obj.product_name = product.name
             obj.product_version = product.full_version
@@ -349,7 +458,7 @@ class Server(object):
             row.content = self.__normalize_content(row.content)
             db.session.add(row)
             db.session.commit()
-            return Resp.resp_ok()
+            return Resp.resp_ok(data=CybersecDocForm(id=row.id))
         except Exception:
             logger.exception("")
             db.session.rollback()

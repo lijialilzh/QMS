@@ -264,6 +264,11 @@ export default () => {
                         label: ts("menu.nsmp_docs"),
                         perm: "nsmp_doc_view",
                     },
+                    {
+                        key: "/rmp_docs",
+                        label: ts("menu.rmp_docs"),
+                        perm: "rmp_doc_view",
+                    },
                 ],
             },
             {

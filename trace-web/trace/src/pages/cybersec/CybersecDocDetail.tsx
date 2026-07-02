@@ -1,5 +1,5 @@
-import { Button, Card, Form, Input, Modal, Select, Space, Upload, message } from "antd";
-import { UploadOutlined } from "@ant-design/icons";
+import { Button, Form, Input, Modal, Select, Space, Spin, Upload, message } from "antd";
+import { DeleteOutlined, PlusOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect, useRef } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -231,6 +231,56 @@ const tableIsScoreMatrix = (rows: any[]): boolean => {
     }
     return hasRiskVal && hasSeverity;
 };
+// 风险评估评分矩阵着色（与风险管理报告风险矩阵一致：红=不可接受 橙=进一步降低 绿=可忽略）
+const EXPLO_INDEX: Record<string, number> = { "低1": 0, "较低2": 1, "中3": 2, "较高4": 3, "高5": 4 };
+// 行=可利用性(低1→高5)，列=严重度(可忽略1→灾难性5)；与后端 score_zone_color 分区完全一致（合规红线）
+const SCORE_MATRIX_LEVELS = [
+    ["ok", "ok", "ok", "ok", "ok"],
+    ["ok", "ok", "ok", "warn", "warn"],
+    ["ok", "ok", "ok", "warn", "warn"],
+    ["ok", "warn", "warn", "bad", "bad"],
+    ["ok", "warn", "warn", "bad", "bad"],
+];
+const LEGEND_CLASS: Record<string, string> = { "红色": "acceptance-legend-red", "黄色": "acceptance-legend-warn", "绿色": "acceptance-legend-green" };
+
+const renderScoreMatrixColored = (rows: any[], keySuffix: string) => {
+    const merge = computeAllHeaderMerge(rows);
+    return (
+        <div className="risk-mgmt-acceptance-wrap" key={`score-${keySuffix}`}>
+            <table className="risk-mgmt-acceptance-table cybersec-score-matrix">
+                <tbody>
+                    {(rows || []).map((row: any[], r: number) => (
+                        <tr key={`sr-${r}`}>
+                            {(row || []).map((cell: any, c: number) => {
+                                if (merge.skip[r]?.[c]) return null;
+                                const span = merge.span[r]?.[c];
+                                const c0 = String(row[0] ?? "").trim();
+                                let cls = "";
+                                if (c0 === "可利用性" && c >= 2) {
+                                    const ei = EXPLO_INDEX[String(row[1] ?? "").trim()];
+                                    const si = c - 2;
+                                    if (ei !== undefined && si >= 0 && si < 5) cls = `risk-level-${SCORE_MATRIX_LEVELS[ei][si]}`;
+                                } else if (c === 0 && LEGEND_CLASS[c0]) {
+                                    cls = LEGEND_CLASS[c0];
+                                }
+                                return (
+                                    <td
+                                        key={`sc-${c}`}
+                                        className={cls}
+                                        colSpan={span && span.colspan > 1 ? span.colspan : undefined}
+                                        rowSpan={span && span.rowspan > 1 ? span.rowspan : undefined}>
+                                        {cell}
+                                    </td>
+                                );
+                            })}
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+};
+
 // 单元格按产品 RCM 编号刷新描述：仅当至少一个编号能在产品 RCM 命中时才重写；否则原样保留（不丢数据）
 const refreshRcmCell = (cell: any, map: Map<string, string>): { value: any; changed: boolean } => {
     const text = String(cell ?? "");
@@ -346,49 +396,6 @@ const syncFileVersionInCover = (content: any, version: any) => {
         });
     });
     return nextContent;
-};
-
-const SectionList = ({ sections, depth = 0, activeKey, onSelect, onTitleChange, onAddSibling, onAddChild, onDelete, readOnly }: any) => {
-    return (
-        <>
-            {(sections || []).map((section: any) => (
-                <div key={sectionKey(section)}>
-                    <div
-                        className={`risk-mgmt-section-item ${activeKey === sectionKey(section) ? "active" : ""}`}
-                        style={{ marginLeft: depth * 14 }}
-                        onClick={() => onSelect(section)}>
-                        <div className="risk-mgmt-section-item-main">
-                            {readOnly ? section.title : (
-                                <Input
-                                    value={section.title}
-                                    onClick={(e) => { e.stopPropagation(); onSelect(section); }}
-                                    onChange={(e) => onTitleChange(section, e.target.value)}
-                                />
-                            )}
-                        </div>
-                        {!readOnly && (
-                            <Space size={4} className="risk-mgmt-section-actions" onClick={(e) => e.stopPropagation()}>
-                                <Button size="small" type="link" onClick={() => onAddSibling(section)}>同级</Button>
-                                <Button size="small" type="link" onClick={() => onAddChild(section)}>下级</Button>
-                                <Button size="small" type="link" danger onClick={() => onDelete(section)}>删除</Button>
-                            </Space>
-                        )}
-                    </div>
-                    <SectionList
-                        sections={section.children || []}
-                        depth={depth + 1}
-                        activeKey={activeKey}
-                        onSelect={onSelect}
-                        onTitleChange={onTitleChange}
-                        onAddSibling={onAddSibling}
-                        onAddChild={onAddChild}
-                        onDelete={onDelete}
-                        readOnly={readOnly}
-                    />
-                </div>
-            ))}
-        </>
-    );
 };
 
 const riskLevelOptions = ["不可接受", "可控", "可接受"].map((v) => ({ label: v, value: v }));
@@ -597,18 +604,6 @@ export default () => {
         }
     };
 
-    const initTemplate = () => {
-        const currentProductId = data.selectedProductId || data.detail?.product_id;
-        const currentProduct = (data.products || []).find((p: any) => p.id === currentProductId);
-        const content = fillProductTextSections(cloneTemplateContent(), currentProduct);
-        const defaultSection = (content.sections || []).find((section: any) => !isCoverSection(section) && !isRevisionSection(section));
-        dispatch({ content, activeSectionKey: sectionKey(defaultSection) });
-        // 初始化只重置静态模版（文字/表格/blocks）；动态自动内容（STRIDE、5.2.x、追溯、流程图）重新拉取，避免“都没了”
-        loadReferenceData(currentProductId);
-        loadMatrixData(data.detail?.id);
-        message.success("初始化模版成功，已重新获取自动内容");
-    };
-
     // ---------------- 章节树操作 ----------------
     const allSections = data.content.sections || [];
     const frontMatterSections = allSections.filter((section: any) => isCoverSection(section) || isRevisionSection(section));
@@ -621,7 +616,7 @@ export default () => {
         }
         return null;
     };
-    const activeSection = findSectionByKey(bodySections || [], data.activeSectionKey) || bodySections[0];
+    const activeSection = findSectionByKey(allSections || [], data.activeSectionKey) || bodySections[0];
 
     const selectSection = (section: any) => {
         dispatch({ activeSectionKey: sectionKey(section) });
@@ -798,22 +793,6 @@ export default () => {
     const addRootSection = () => {
         const nextSection = makeNewSection(buildNewSectionTitle(bodySections));
         dispatch({ activeSectionKey: sectionKey(nextSection), content: { ...(data.content || emptyContent), sections: [...(data.content.sections || []), nextSection] } });
-    };
-
-    const addSiblingSection = (targetSection: any) => {
-        const targetKey = sectionKey(targetSection);
-        let nextActiveKey = "";
-        const update = (sections: any[] = [], parent?: any): any[] => {
-            const idx = (sections || []).findIndex((section) => sectionKey(section) === targetKey);
-            if (idx >= 0) {
-                const nextSection = makeNewSection(buildNewSectionTitle(sections, parent));
-                nextActiveKey = sectionKey(nextSection);
-                return [...sections, nextSection];
-            }
-            return (sections || []).map((section) => ({ ...section, children: update(section.children || [], section) }));
-        };
-        const nextSections = update(data.content.sections || []);
-        dispatch({ activeSectionKey: nextActiveKey || data.activeSectionKey, content: { ...(data.content || emptyContent), sections: nextSections } });
     };
 
     const addChildSection = (targetSection: any) => {
@@ -1167,18 +1146,29 @@ export default () => {
         </table>
     );
 
-    const renderFrontMatterSections = () => {
-        const coverSection = frontMatterSections.find((section: any) => isCoverSection(section)) || createCoverSection();
-        const revisionSection = frontMatterSections.find((section: any) => isRevisionSection(section)) || createRevisionSection();
+    const renderFrontMatterPane = (section: any) => {
+        const isCover = isCoverSection(section);
         return (
-            <Card title="封面与文件修订记录" className="risk-mgmt-front-card">
-                <div className="risk-mgmt-front-title">标题</div>
-                <div className="risk-mgmt-front-file-name">网络安全风险管理报告</div>
-                <div className="risk-mgmt-front-title">封面信息</div>
-                {(coverSection.tables || []).map((rows: any[], tableIndex: number) => renderFrontMatterTable(coverSection, tableIndex, rows))}
-                <div className="risk-mgmt-front-title">文件修订记录</div>
-                {(revisionSection.tables || []).map((rows: any[], tableIndex: number) => renderFrontMatterTable(revisionSection, tableIndex, rows))}
-            </Card>
+            <>
+                {isCover && (
+                    <div className="pdp-field">
+                        <div className="pdp-label">文件名</div>
+                        <div className="risk-mgmt-front-file-name">网络安全风险管理报告</div>
+                    </div>
+                )}
+                <div className="pdp-field">
+                    <div className="pdp-label">{isCover ? "封面信息" : "文件修订记录"}</div>
+                    {(section.tables || []).map((rows: any[], tableIndex: number) => renderFrontMatterTable(section, tableIndex, rows))}
+                </div>
+                {isCover && (
+                    <div className="pdp-field">
+                        <div className="pdp-label">变更说明</div>
+                        <Form.Item name="change_log" noStyle>
+                            <Input.TextArea autoSize={{ minRows: 2, maxRows: 8 }} />
+                        </Form.Item>
+                    </div>
+                )}
+            </>
         );
     };
 
@@ -1205,6 +1195,10 @@ export default () => {
                 onAddRow: () => void;
             },
         ) => {
+            // 风险评估评分矩阵：改为与风险管理报告一致的红/黄/绿着色矩阵（静态展示，图例同色块）
+            if (tableIsScoreMatrix(rows)) {
+                return renderScoreMatrixColored(rows, tableKey);
+            }
             // 威胁表：RCM 列若产品 CST 有该威胁的 RCM 则取 CST（只读），否则保留 Word 导入值
             const isThreatTbl = tableHasThreatColumn(rows);
             const { codeCol, rcmCol } = isThreatTbl ? findThreatTableCols(rows) : { codeCol: -1, rcmCol: -1 };
@@ -1409,95 +1403,161 @@ export default () => {
         );
     };
 
+    const coverSection = frontMatterSections.find((section: any) => isCoverSection(section)) || createCoverSection();
+    const revisionSection = frontMatterSections.find((section: any) => isRevisionSection(section)) || createRevisionSection();
+
+    const renderNavItems = (nodes: any[], depth: number): any => (nodes || []).map((section: any) => {
+        const key = sectionKey(section);
+        return (
+            <div key={key}>
+                <div
+                    className={`pdp-nav-item${data.activeSectionKey === key ? " active" : ""}`}
+                    style={{ paddingLeft: 8 + depth * 14 }}
+                    onClick={() => selectSection(section)}>
+                    <span className="pdp-nav-title" title={section.title}>{section.title || "(未命名)"}</span>
+                    {!isView && (
+                        <span className="pdp-nav-ops" onClick={(e) => e.stopPropagation()}>
+                            <PlusOutlined title="添加子章节" onClick={() => addChildSection(section)} />
+                            <DeleteOutlined title="删除章节" onClick={() => deleteSection(section)} />
+                        </span>
+                    )}
+                </div>
+                {renderNavItems(section.children || [], depth + 1)}
+            </div>
+        );
+    });
+
+    const renderRightPane = () => {
+        if (!activeSection) {
+            return <div className="pdp-empty">请选择或新增左侧章节</div>;
+        }
+        if (isCoverSection(activeSection) || isRevisionSection(activeSection)) {
+            return renderFrontMatterPane(activeSection);
+        }
+        return (
+            <>
+                {!isView && (
+                    <div className="pdp-field">
+                        <div className="pdp-label">章节标题</div>
+                        <Input
+                            value={activeSection.title}
+                            placeholder="章节标题"
+                            onChange={(e) => updateSectionTitle(activeSection, e.target.value)}
+                        />
+                    </div>
+                )}
+                {renderActiveSectionContent()}
+            </>
+        );
+    };
+
     const matrixDlgTitleMap: Record<string, string> = {
         threat: "STRIDE 威胁", internal: "内部 RCM", sbom: "SBOM RCM", scan: "网络安全扫描 RCM",
     };
 
     return (
-        <div className="risk-mgmt-detail div-v">
-            <div className="risk-mgmt-detail-toolbar div-h center-v">
-                <Button onClick={() => navigate("/cybersec_docs")}>{ts("back")}</Button>
-                <div className="expand" />
-                {!isView && (
+        <Form
+            form={form}
+            component={false}
+            disabled={isView}
+            onValuesChange={(changed) => {
+                if (Object.prototype.hasOwnProperty.call(changed, "version")) {
+                    dispatch({ content: syncFileVersionInCover(data.content || emptyContent, changed.version) });
+                }
+            }}>
+            <div className="div-v page pdp-detail risk-mgmt-detail">
+                <div className="div-h pdp-toolbar">
+                    <div className="pdp-toolbar-title">
+                        网络安全风险管理报告
+                        <span className="pdp-meta" style={{ display: "inline-flex", alignItems: "center", gap: 8, marginLeft: 12 }}>
+                            {!isView ? (
+                                <span style={{ width: 320, display: "inline-block" }}>
+                                    <Form.Item
+                                        name="product_id"
+                                        noStyle
+                                        rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
+                                        <ProductVersionSelect
+                                            products={data.products}
+                                            value={isAdd ? data.selectedProductId : data.detail?.product_id}
+                                            namePlaceholder={ts("product.name")}
+                                            versionPlaceholder={ts("product.full_version")}
+                                            onChange={(value) => {
+                                                form.setFieldValue("product_id", value);
+                                                const selectedProduct = (data.products || []).find((p: any) => p.id === value);
+                                                dispatch({ selectedProductId: value });
+                                                if (!isAdd) {
+                                                    dispatch({
+                                                        detail: {
+                                                            ...data.detail,
+                                                            product_id: value,
+                                                            product_name: selectedProduct?.name || "",
+                                                            product_type_code: selectedProduct?.type_code || "",
+                                                            product_full_version: selectedProduct?.full_version || "",
+                                                        },
+                                                    });
+                                                }
+                                                let content = syncProductNameInContent(data.content || emptyContent, selectedProduct?.name || "");
+                                                content = fillProductTextSections(content, selectedProduct);
+                                                dispatch({ content });
+                                            }}
+                                        />
+                                    </Form.Item>
+                                </span>
+                            ) : (
+                                <span style={{ whiteSpace: "nowrap" }}>
+                                    {data.detail?.product_name || ""}
+                                    {data.detail?.product_full_version ? ` / ${data.detail.product_full_version}` : ""}
+                                </span>
+                            )}
+                            <span style={{ whiteSpace: "nowrap" }}>报告版本：</span>
+                            <Form.Item
+                                name="version"
+                                noStyle
+                                rules={[{ required: true, message: sprintf(ts("msg_input"), { label: "报告版本" }) }]}>
+                                <Input size="small" style={{ width: 120 }} />
+                            </Form.Item>
+                        </span>
+                    </div>
                     <Space>
-                        <Button onClick={initTemplate}>初始化模版</Button>
-                        <Button type="primary" loading={data.saving} onClick={doSave}>{ts("save")}</Button>
+                        {!isView && (
+                            <Button type="primary" loading={data.saving} onClick={doSave}>{ts("save")}</Button>
+                        )}
+                        {!isAdd && <Button loading={data.exporting} onClick={doExport}>导出</Button>}
+                        <Button onClick={() => navigate("/cybersec_docs")}>{ts("back")}</Button>
                     </Space>
-                )}
-                {!isAdd && <Button loading={data.exporting} onClick={doExport}>导出</Button>}
-            </div>
-            <Form
-                form={form}
-                layout="vertical"
-                disabled={isView}
-                onValuesChange={(changed) => {
-                    if (Object.prototype.hasOwnProperty.call(changed, "version")) {
-                        dispatch({ content: syncFileVersionInCover(data.content || emptyContent, changed.version) });
-                    }
-                }}>
-                <Card title="基础信息" loading={data.loading}>
-                    <div className="risk-mgmt-basic-grid">
-                        <Form.Item
-                            label={ts("product.product")}
-                            name="product_id"
-                            rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
-                            <ProductVersionSelect
-                                products={data.products}
-                                value={isAdd ? data.selectedProductId : data.detail?.product_id}
-                                namePlaceholder={ts("product.name")}
-                                versionPlaceholder={ts("product.full_version")}
-                                onChange={(value) => {
-                                    form.setFieldValue("product_id", value);
-                                    const selectedProduct = (data.products || []).find((p: any) => p.id === value);
-                                    dispatch({ selectedProductId: value });
-                                    if (!isAdd) {
-                                        dispatch({
-                                            detail: {
-                                                ...data.detail,
-                                                product_id: value,
-                                                product_name: selectedProduct?.name || "",
-                                                product_type_code: selectedProduct?.type_code || "",
-                                                product_full_version: selectedProduct?.full_version || "",
-                                            },
-                                        });
-                                    }
-                                    let content = syncProductNameInContent(data.content || emptyContent, selectedProduct?.name || "");
-                                    content = fillProductTextSections(content, selectedProduct);
-                                    dispatch({ content });
-                                }}
-                            />
-                        </Form.Item>
-                        <Form.Item label="文档版本" name="version" rules={[{ required: true, message: sprintf(ts("msg_input"), { label: "文档版本" }) }]}>
-                            <Input />
-                        </Form.Item>
-                    </div>
-                    <Form.Item label="变更说明" name="change_log"><Input.TextArea autoSize /></Form.Item>
-                </Card>
-            </Form>
-            {renderFrontMatterSections()}
-            <div className="risk-mgmt-body">
-                <Card title="目录结构">
-                    <div className="risk-mgmt-section-list">
-                        {!isView && <Button className="risk-mgmt-add-root-section" onClick={addRootSection}>新增一级目录</Button>}
-                        {bodySections.length ? (
-                            <SectionList
-                                sections={bodySections}
-                                activeKey={data.activeSectionKey}
-                                onSelect={selectSection}
-                                onTitleChange={updateSectionTitle}
-                                onAddSibling={addSiblingSection}
-                                onAddChild={addChildSection}
-                                onDelete={deleteSection}
-                                readOnly={isView}
-                            />
-                        ) : <div className="empty">暂无目录结构，请点击初始化模版</div>}
-                    </div>
-                </Card>
-                <div ref={contentCardRef}>
-                    <Card title={activeSection?.title || "章节内容"}>
-                        {renderActiveSectionContent()}
-                    </Card>
                 </div>
+
+                <Spin spinning={data.loading} wrapperClassName="pdp-scroll">
+                    <div className="pdp-layout">
+                        <div className="pdp-nav">
+                            <div className="pdp-nav-head">目录</div>
+                            {!isView && (
+                                <div className="pdp-nav-hint">点章节查看/编辑，右侧 ＋ 加子章节、🗑 删除；封面与文件修订记录在最上方。</div>
+                            )}
+                            {[coverSection, revisionSection].map((section: any) => {
+                                const key = sectionKey(section);
+                                return (
+                                    <div
+                                        key={key}
+                                        className={`pdp-nav-item${data.activeSectionKey === key ? " active" : ""}`}
+                                        onClick={() => selectSection(section)}>
+                                        <span className="pdp-nav-title" title={section.title}>{section.title}</span>
+                                    </div>
+                                );
+                            })}
+                            {renderNavItems(bodySections, 0)}
+                            {!isView && (
+                                <Button className="pdp-nav-add" type="dashed" size="small" icon={<PlusOutlined />} onClick={addRootSection}>
+                                    顶级目录
+                                </Button>
+                            )}
+                        </div>
+
+                        <div className="pdp-editor" ref={contentCardRef}>
+                            {renderRightPane()}
+                        </div>
+                    </div>
+                </Spin>
             </div>
             <Modal
                 width={data.matrixDlg === "threat" ? "70%" : "56%"}
@@ -1537,6 +1597,6 @@ export default () => {
                     )}
                 </Form>
             </Modal>
-        </div>
+        </Form>
     );
 };

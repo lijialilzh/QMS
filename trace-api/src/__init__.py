@@ -21,7 +21,7 @@ from .api import web_auth, web_session, api_user, api_role, api_project, api_haz
     api_srs_type, api_doc_file, api_risk_mgmt_doc, api_cybersec_doc, api_ai_support, \
     api_project_member, api_project_timeline, api_prod_runtime_env, api_prod_device_res, api_pdp_doc, api_pir_doc, \
     api_vuh_doc, api_version_rule, api_ptr_doc, api_company_info, api_label_doc, api_release_note, api_pha_doc, \
-    api_cyber_cap_doc, api_research_doc, api_nsr_doc, api_acc_doc, api_nsmp_doc
+    api_cyber_cap_doc, api_research_doc, api_nsr_doc, api_acc_doc, api_nsmp_doc, api_rmp_doc
 from .utils import read_line
 from .utils.i18n import ts
 from .utils.sql_middleware import SQLAlchemyMiddleware
@@ -96,6 +96,7 @@ def create_app():
     main_router.include_router(api_nsr_doc.router, prefix="/nsr_doc", tags=["自研软件网络安全研究报告"])
     main_router.include_router(api_acc_doc.router, prefix="/acc_doc", tags=["产品验收记录"])
     main_router.include_router(api_nsmp_doc.router, prefix="/nsmp_doc", tags=["网络安全维护计划"])
+    main_router.include_router(api_rmp_doc.router, prefix="/rmp_doc", tags=["风险管理计划"])
     main_router.include_router(api_haz.router, prefix="/haz", tags=["HAZ"])
     main_router.include_router(api_rcm.router, prefix="/rcm", tags=["RCM"])
     main_router.include_router(api_cst.router, prefix="/cst", tags=["CST"])

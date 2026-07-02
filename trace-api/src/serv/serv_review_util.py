@@ -5,7 +5,8 @@
 #   - 各文档模块在正文末尾追加一个「评审记录」章节（内容模板化）。
 #   - 评审时间从产品时间线按「文档名关键字 + 评审」自动获取，格式 yyyy.MM.dd。
 #   - 提供导出 Word 时评审内容表/参评人员表的合并渲染（类别列纵向合并、整行横向合并）。
-# 说明：内容取自各文档对应的《XXX 附：评审记录》模板；勾选统一用「☑通过 □存在问题」。
+# 说明：内容取自各文档对应的《XXX 附：评审记录》模板；勾选统一用「■通过 □存在问题」。
+#      选中标记用实心方块 ■(U+25A0)，与空心 □(U+25A1) 同族且非 emoji，避免 Word 渲染成彩色 emoji。
 
 import re
 
@@ -16,7 +17,7 @@ from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..utils.sql_ctx import db
 
-CHECK = "☑通过 □存在问题"
+CHECK = "■通过 □存在问题"
 
 # 各模块的评审记录模板：items 为 [类别, 评审项] 列表，persons 为参评人员 6 列行
 REVIEW_DEFS = {

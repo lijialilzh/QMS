@@ -13,6 +13,7 @@ import "../risk_mgmt/RiskMgmtDocs.less";
 const pageSizeOptions = [20, 50, 100];
 
 enum DlgTypes {
+    add = "add",
     import = "import",
     delete = "delete",
     copy = "copy",
@@ -34,6 +35,7 @@ export default () => {
     const navigate = useNavigate();
     const [queryForm] = Form.useForm();
     const [importForm] = Form.useForm();
+    const [addForm] = Form.useForm();
     const [data, dispatch] = useData({
         total: 0,
         pageIndex: 1,
@@ -48,6 +50,7 @@ export default () => {
         editingFileNoValue: "",
         savingFileNoId: 0,
         copyProductId: undefined,
+        adding: false,
     });
 
     const productId = Form.useWatch("product_id", queryForm);
@@ -83,6 +86,27 @@ export default () => {
         loadProducts(data, dispatch);
         doSearch({}, 1, data.pageSize);
     }, []);
+
+    const doAdd = () => {
+        addForm.validateFields().then((values) => {
+            dispatch({ adding: true });
+            Api.add_cybersec_doc({ ...values }).then((res: any) => {
+                dispatch({ adding: false });
+                if (res.code === Api.C_OK) {
+                    message.success(ts("save_success"));
+                    dispatch({ dlgType: null });
+                    const newId = res.data?.id;
+                    if (newId) {
+                        navigate(`/cybersec_docs/edit/${newId}`);
+                    } else {
+                        doSearch(queryForm.getFieldsValue(), 1, data.pageSize);
+                    }
+                } else {
+                    message.error(res.msg);
+                }
+            });
+        });
+    };
 
     const doDelete = () => {
         dispatch({ loading: true });
@@ -302,7 +326,12 @@ export default () => {
                     }}>
                         导入
                     </Button>
-                    <Button type="primary" onClick={() => navigate("/cybersec_docs/add")}>
+                    <Button type="primary" onClick={() => {
+                        addForm.resetFields();
+                        addForm.setFieldValue("version", "A0");
+                        dispatch({ dlgType: DlgTypes.add });
+                        loadProducts(data, dispatch);
+                    }}>
                         {ts("add")}
                     </Button>
                 </Space>
@@ -332,6 +361,44 @@ export default () => {
                     doSearch(queryForm.getFieldsValue(), pager.current, pager.pageSize);
                 }}
             />
+            <Modal
+                width={620}
+                centered
+                title="新增网络安全风险管理报告"
+                open={data.dlgType === DlgTypes.add}
+                confirmLoading={data.adding}
+                onOk={doAdd}
+                maskClosable={false}
+                onCancel={() => {
+                    dispatch({ dlgType: null });
+                    addForm.resetFields();
+                }}>
+                <Form form={addForm} layout="vertical">
+                    <Form.Item
+                        label={ts("product.product")}
+                        name="product_id"
+                        rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
+                        <ProductVersionSelect
+                            products={data.products}
+                            namePlaceholder={ts("product.name")}
+                            versionPlaceholder={ts("product.full_version")}
+                            onChange={(value) => addForm.setFieldValue("product_id", value)}
+                        />
+                    </Form.Item>
+                    <Form.Item
+                        label="报告版本"
+                        name="version"
+                        rules={[{ required: true, message: sprintf(ts("msg_input"), { label: "报告版本" }) }]}>
+                        <Input allowClear />
+                    </Form.Item>
+                    <Form.Item label="文件编号" name="file_no">
+                        <Input allowClear />
+                    </Form.Item>
+                    <Form.Item label="变更说明" name="change_log">
+                        <Input.TextArea rows={3} allowClear />
+                    </Form.Item>
+                </Form>
+            </Modal>
             <Modal
                 width={680}
                 centered
