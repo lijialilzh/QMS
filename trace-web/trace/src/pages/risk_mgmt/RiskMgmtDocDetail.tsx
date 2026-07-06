@@ -1071,7 +1071,10 @@ export default () => {
                                     <td>{initRisk.degree}</td>
                                     <td>{initRisk.level}</td>
                                     <td>{row.deal}</td>
-                                    <td>{row.rcms}</td>
+                                    <td>{(() => {
+                                        const codes = extractRcmCodes(row.rcms);
+                                        return codes.length ? codes.map((c: string, i: number) => <div key={i}>{c}</div>) : row.rcms;
+                                    })()}</td>
                                     <td>{row.evidence}</td>
                                     <td>{curRisk.rate}</td>
                                     <td>{curRisk.degree}</td>

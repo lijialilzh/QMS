@@ -1498,6 +1498,26 @@ class Server(object):
             docx_util.fonted_txt(paragraph, str(text or ""), font_size=10.5, bold=bold)
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
 
+        def set_cell_rcm(cell, text, bold=False):
+            # RCM ID 列：每个 RCM 编号独占一行（用换行符 add_break，保证 Word 中真正换行）
+            codes = re.findall(r"RCM\s*\d+", str(text or "").upper())
+            codes = [c.replace(" ", "") for c in codes]
+            uniq = list(dict.fromkeys(codes))
+            if not uniq:
+                set_cell_text(cell, text, bold=bold)
+                return
+            cell.text = ""
+            paragraph = cell.paragraphs[0]
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            paragraph.paragraph_format.space_before = Pt(0)
+            paragraph.paragraph_format.space_after = Pt(0)
+            paragraph.paragraph_format.line_spacing = 1.3
+            for i, code in enumerate(uniq):
+                if i > 0:
+                    paragraph.add_run().add_break()
+                docx_util.fonted_txt(paragraph, code, font_size=10.5, bold=bold)
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
         def add_plain_table(rows):
             rows = rows or []
             col_count = max([len(row or []) for row in rows] or [0])
@@ -1686,7 +1706,10 @@ class Server(object):
                     getattr(haz, "category", "") or "",
                 ]
                 for idx, value in enumerate(values):
-                    set_cell_text(cells[idx], value)
+                    if idx == 9:
+                        set_cell_rcm(cells[idx], value)
+                    else:
+                        set_cell_text(cells[idx], value)
             document.add_paragraph()
 
         def add_section(section: dict, level: int = 1):
