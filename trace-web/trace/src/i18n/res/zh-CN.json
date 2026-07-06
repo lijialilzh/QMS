@@ -18,6 +18,7 @@
         "basedata": "基础数据",
         "version_rule": "版本命名规则",
         "company_infos": "公司基本信息",
+        "person_signs": "人员签名管理",
         "hazs": "HAZ管理",
         "rcms": "RCM管理",
         "csts": "THREAT管理",
@@ -26,6 +27,9 @@
         "manage_prod_info": "文件管理",
         "manage_srs_doc": "产品文件管理",
         "manage_sds_doc": "开发测试文件管理",
+        "dev_files": "开发文件",
+        "test_files": "测试文件",
+        "sd_docs": "软件开发计划",
         "srs_docs": "需求规格说明",
         "pdp_docs": "产品开发计划",
         "pir_docs": "产品立项报告",
@@ -170,6 +174,19 @@
         "production_license_no": "生产许可证编号",
         "contact_phone": "联系电话",
         "representative": "代表人/职位"
+    },
+    "person_sign": {
+        "name": "人员",
+        "position": "人员职务",
+        "seal_img": "预留印鉴",
+        "sign_img": "人员签字",
+        "status": "状态",
+        "upload": "上传",
+        "replace": "更换",
+        "msg_need_image": "请选择图片文件",
+        "msg_img_too_large": "图片过大（不超过3MB）",
+        "msg_read_fail": "图片读取失败",
+        "msg_img_saved": "图片已保存"
     },
     "cst": {
         "code": "编号",

@@ -47,6 +47,8 @@ import CybersecDocs from "./pages/cybersec/CybersecDocs";
 import CybersecDocDetail from "./pages/cybersec/CybersecDocDetail";
 import PdpDocs from "./pages/pdp/PdpDocs";
 import PdpDocDetail from "./pages/pdp/PdpDocDetail";
+import SdDocs from "./pages/sd/SdDocs";
+import SdDocDetail from "./pages/sd/SdDocDetail";
 import PirDocs from "./pages/pir/PirDocs";
 import PirDocDetail from "./pages/pir/PirDocDetail";
 import VuhDocs from "./pages/vuh/VuhDocs";
@@ -73,6 +75,7 @@ import NsrDocs from "./pages/nsr/NsrDocs";
 import NsrDocDetail from "./pages/nsr/NsrDocDetail";
 import VersionRule from "./pages/version_rule/VersionRule";
 import CompanyInfos from "./pages/basedata/CompanyInfos";
+import PersonSigns from "./pages/basedata/PersonSigns";
 
 const DEF_LANG = localStorage.getItem("lang") || I18N.DEF_LANG;
 I18N.init(DEF_LANG);
@@ -98,6 +101,7 @@ const router = createRouter([
             { path: "/csts", element: <Csts /> },
             { path: "/version_rule", element: <VersionRule /> },
             { path: "/company_infos", element: <CompanyInfos /> },
+            { path: "/person_signs", element: <PersonSigns /> },
 
             { path: "/products", element: <Products /> },
             { path: "/prod_dhfs", element: <ProdDhfs /> },
@@ -137,6 +141,9 @@ const router = createRouter([
             { path: "/pdp_docs", element: <PdpDocs /> },
             { path: "/pdp_docs/edit/:id", element: <PdpDocDetail /> },
             { path: "/pdp_docs/view/:id", element: <PdpDocDetail /> },
+            { path: "/sd_docs", element: <SdDocs /> },
+            { path: "/sd_docs/edit/:id", element: <SdDocDetail /> },
+            { path: "/sd_docs/view/:id", element: <SdDocDetail /> },
             { path: "/pir_docs", element: <PirDocs /> },
             { path: "/pir_docs/edit/:id", element: <PirDocDetail /> },
             { path: "/pir_docs/view/:id", element: <PirDocDetail /> },

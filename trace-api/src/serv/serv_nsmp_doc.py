@@ -34,6 +34,7 @@ from ..obj.vobj_nsmp_doc import NsmpDocObj
 from ..utils.i18n import ts
 from ..utils.sql_ctx import db
 from . import msg_err_db
+from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version, docx_util
 
 logger = logging.getLogger(__name__)
@@ -187,9 +188,11 @@ class Server(object):
         for child in (node.get("children") or []):
             self.__fill_node(child, info, version)
 
-    def __apply_autofill(self, content, info, version):
+    def __apply_autofill(self, content, info, version, prod_id=None):
         for node in (content.get("sections") or []):
             self.__fill_node(node, info, version)
+        if prod_id:
+            serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, "nsmp"))
         return content
 
     # ---------------- 文件编号（未手填时从产品 DHF 匹配） ----------------
@@ -204,7 +207,7 @@ class Server(object):
         content = self.__normalize_content(obj.content)
         if with_autofill and row.product_id:
             info = self.__collect_autofill(row.product_id)
-            content = self.__apply_autofill(content, info, obj.version)
+            content = self.__apply_autofill(content, info, obj.version, row.product_id)
         obj.content = content
         if product:
             obj.product_name = product.name
@@ -322,7 +325,7 @@ class Server(object):
     async def nsmp_autofill(self, product_id: int, version: str = ""):
         content = self.__normalize_content(None)
         info = self.__collect_autofill(product_id)
-        content = self.__apply_autofill(content, info, version or "")
+        content = self.__apply_autofill(content, info, version or "", product_id)
         return Resp.resp_ok(data=content)
 
     # ---------------- 导出 Word ----------------

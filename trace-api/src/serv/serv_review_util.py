@@ -81,6 +81,27 @@ REVIEW_DEFS = {
             ["批准人员签字/日期", "", "", "", "", ""],
         ],
     },
+    "sd": {
+        "name_keywords": ["软件开发计划", "开发计划"],
+        "items": [
+            ["文档完整程度", "项目定义清晰"],
+            ["文档完整程度", "有明确且合理的时间计划"],
+            ["文档完整程度", "明确人员要求"],
+            ["文档完整程度", "明确开发要求"],
+            ["文档完整程度", "明确设备资源要求"],
+            ["文档完整程度", "符合设计开发流程"],
+        ],
+        "conclusion": (
+            "评审结论：\n通过，项目定义清晰，明确合理的时间计划、人员要求、设备资源要求，"
+            "设计开发流程符合要求。"
+        ),
+        "persons": [
+            ["产品经理", "杨静", "", "产品开发部经理", "沈宏", ""],
+            ["开发负责人", "宁随军", "", "QA", "林金贵", ""],
+            ["其他参评人员", "", "", "", "", ""],
+            ["批准人员签字/日期", "", "", "", "", ""],
+        ],
+    },
     "srs": {
         "name_keywords": ["需求规格说明", "需求规格"],
         "items": [
@@ -180,6 +201,62 @@ def review_date(prod_id, name_keywords):
         return ""
     r = max(rows, key=date_key)
     return f"{to_int(r.year)}.{to_int(r.month):02d}.{(to_int(r.day) or 1):02d}"
+
+
+# 各文档「封面日期」取值用的时间线关键字（供 review_date 使用）。
+# 规则：编制/审核/批准日期 + 生效日期 统一取该文档在时间线里评审/最后一天的日期。
+COVER_KEYWORDS = {
+    "sd": ["软件开发计划", "开发计划"],
+    "pdp": ["产品开发计划", "开发计划"],
+    "cybersec": ["网络安全风险管理报告", "网络安全风险管理", "风险管理报告"],
+    "risk": ["风险管理报告", "风险管理"],
+    "rmp": ["风险管理计划"],
+    "pha": ["初步危害分析", "危害分析"],
+    "srs": ["需求规格说明", "需求规格"],
+    "sds": ["软件详细设计", "详细设计"],
+    "pir": ["产品立项报告", "立项报告"],
+    "label": ["产品标签样稿", "标签"],
+    "vuh": ["版本更新历史"],
+    "nsmp": ["网络安全维护计划", "维护计划"],
+    "release_note": ["产品发布说明", "发布说明"],
+    "nsr": ["自研软件网络安全研究报告", "网络安全研究报告"],
+    "research": ["自研软件研究报告", "软件研究报告"],
+}
+
+
+def fill_cover_dates(content, rev_date):
+    """统一填充封面表日期（仅填空，不覆盖已填）：
+      - 「编制人/审核人/批准人」行的「日期」列(第4列, index 3) 填 rev_date；
+      - 「生效日期」行的值(第2列, index 1) 填 rev_date。
+    rev_date 为该文档在时间线里的评审/最后一天日期（见 review_date）。
+    通用实现：扫描所有 section 的所有表格，按行首标签匹配，兼容各模块封面结构。"""
+    if not rev_date or not isinstance(content, dict):
+        return content
+    for section in (content.get("sections") or []):
+        if not isinstance(section, dict):
+            continue
+        for table in (section.get("tables") or []):
+            if not isinstance(table, list):
+                continue
+            for row in table:
+                if not isinstance(row, list) or not row:
+                    continue
+                label = str(row[0] or "").strip()
+                if label in ("编制人", "审核人", "批准人"):
+                    if len(row) >= 4 and not str(row[3] or "").strip():
+                        row[3] = rev_date
+                elif label == "生效日期":
+                    if len(row) >= 2 and not str(row[1] or "").strip():
+                        row[1] = rev_date
+    return content
+
+
+def cover_date(prod_id, key):
+    """按模块 key 取封面日期（复用 review_date + COVER_KEYWORDS）。"""
+    kws = COVER_KEYWORDS.get(key)
+    if not prod_id or not kws:
+        return ""
+    return review_date(prod_id, kws)
 
 
 # 整行横向合并的行首标记（这些行内容跨满整行）

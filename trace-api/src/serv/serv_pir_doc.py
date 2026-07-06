@@ -30,6 +30,7 @@ from ..obj.vobj_pir_doc import PirDocObj
 from ..utils.i18n import ts
 from ..utils.sql_ctx import db
 from . import msg_err_db
+from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
 
@@ -116,6 +117,9 @@ class Server(object):
     def __to_obj(self, row: PirDoc, product: Product = None):
         obj = PirDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content)
+        serv_review_util.fill_cover_dates(
+            obj.content, serv_review_util.cover_date(row.product_id, "pir") if row.product_id else ""
+        )
         if product:
             obj.product_name = product.name
             obj.product_version = product.full_version
@@ -180,6 +184,7 @@ class Server(object):
         info = self.__collect_autofill(prod_id, product, obj.version)
         for node in sections:
             self.__fill_node(node, info)
+        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, "pir"))
         return content
 
     def __collect_autofill(self, prod_id, product, doc_version):

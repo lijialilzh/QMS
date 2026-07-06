@@ -21,6 +21,9 @@ const ROLES = [
     "临床",
 ];
 
+// 备注快捷标识：用于标注开发人员前后端及所属模块（仍可自由输入其它备注）
+const NOTE_OPTIONS = ["前端-NeoViewer", "后端-Repacs", "后端-Dlserver", "后端-DP"];
+
 export default () => {
     const { t: ts } = useTranslation();
     const [data, dispatch] = useData({
@@ -192,12 +195,15 @@ export default () => {
             render: (value: any, row: any) => {
                 if (!isEditing(row, "note")) return clickToEdit(row, "note", value);
                 return (
-                    <Input
+                    <AutoComplete
                         autoFocus
+                        defaultOpen
+                        style={{ width: "100%" }}
                         value={data.targetEdit.note}
-                        onChange={(e: any) => dispatch({ targetEdit: { ...data.targetEdit, note: e.target.value } })}
+                        options={NOTE_OPTIONS.map((r) => ({ label: r, value: r }))}
+                        filterOption={false}
+                        onChange={(v: any) => dispatch({ targetEdit: { ...data.targetEdit, note: v } })}
                         onBlur={() => saveCell()}
-                        onPressEnter={() => saveCell()}
                     />
                 );
             },

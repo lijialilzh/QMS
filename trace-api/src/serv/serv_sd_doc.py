@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 # encoding: utf-8
 
-# 产品开发计划服务层，详见 docs/function_docs/52_产品开发计划.md。
+# 软件开发计划服务层，模板参考产品开发计划(serv_pdp_doc)。
 # 整份文档以 content(JSON) 存储；导出复用 docx_util.fonted_txt 生成 Word。
 
 import copy
 import logging
 import re
+from datetime import date, timedelta
 from typing import List
 from sqlalchemy import delete, func, select
 from docx import Document
@@ -17,14 +18,14 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 
 from ..model.product import Product
-from ..model.pdp_doc import PdpDoc
+from ..model.sd_doc import SdDoc
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..model.project_member import ProjectMember
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
 from ..obj.vobj_user import UserObj
-from ..obj.tobj_pdp_doc import PdpDocForm
-from ..obj.vobj_pdp_doc import PdpDocObj
+from ..obj.tobj_sd_doc import SdDocForm
+from ..obj.vobj_sd_doc import SdDocObj
 from ..utils.i18n import ts
 from ..utils.sql_ctx import db
 from . import msg_err_db
@@ -35,17 +36,15 @@ from . import serv_review_util
 logger = logging.getLogger(__name__)
 
 
-# 标准模板默认内容（取自《产品开发计划》模板），新增文档时预填、可改。
-# 采用「目录树」结构：content.sections 为可递归章节树，节点 {title, body, tables, children, ref_type}。
+# 标准模板默认内容（取自《软件开发计划》模板），新增文档时预填、可改。
+# 结构与产品开发计划一致：content.sections 为可递归章节树，节点 {title, body, tables, children, ref_type}。
 # ref_type 仅影响导出/编号：cover=封面（居中大标题、不编号），revision=修订记录（不编号），其余为正文章节。
-# 表格(tables)为二维数组列表，每个表第一行为表头；用户可在前端任意增删章节/行/列。
-
-DEFAULT_PDP_CONTENT = {
+DEFAULT_SD_CONTENT = {
     "sections": [
         {
-            "title": "产品开发计划", "ref_type": "cover", "body": "", "children": [],
+            "title": "软件开发计划", "ref_type": "cover", "body": "", "children": [],
             "tables": [[
-                ["编写部门", "产品部", "文件版本", "A0"],
+                ["编写部门", "产品开发部", "文件版本", "A0"],
                 ["编制人", "", "日期", ""],
                 ["审核人", "", "日期", ""],
                 ["批准人", "", "日期", ""],
@@ -66,78 +65,72 @@ DEFAULT_PDP_CONTENT = {
         {
             "title": "内容简介", "body": "", "tables": [], "children": [
                 {"title": "文档目的", "tables": [], "children": [], "body": (
-                    "为了保证团队按时保质地完成目标，便于团队成员更好地了解情况，使工作开展的各个过程合理有序，"
-                    "有必要以文件化的形式，把产品开发生命周期内的工作任务范围、各项工作的任务分解、团队组织结构、"
-                    "各团队成员的工作责任等内容以书面的方式描述出来，作为团队成员以及干系人之间的共识与约定，"
-                    "产品开发生命周期内的所有活动的行动基础，团队开展和检查产品开发工作的依据。"
+                    "本软件开发计划用于从总体上指导该项目的顺利进行并最终通过评审。"
+                    "本软件开发计划面向产品开发部全部开发工程师和测试工程师。"
                 )},
                 {"title": "文档范围", "tables": [], "children": [], "body": (
-                    "本文档描述了在该产品项目中需要的人员资源、设备资源等，产品开发计划和里程碑的阶段工作任务、"
-                    "时间、交付物、相关人员的角色和职责等。应当保证软件开发和测试的人员及环境与软件开发要求相适宜。"
+                    "本文档描述了在该产品项目中产品开发部需要的人员资源、设备资源等，"
+                    "软件开发计划和里程碑的阶段工作任务、时间、项目交付物。"
                 )},
             ],
         },
         {
-            "title": "产品概况", "body": "", "tables": [], "children": [
-                {"title": "产品简介", "ref_type": "prod_name", "body": "产品名称：", "tables": [], "children": []},
-                {"title": "产品概况", "ref_type": "prod_overview", "body": "", "tables": [], "children": []},
-                {"title": "产品开发周期", "ref_type": "prod_cycle", "body": "", "tables": [], "children": []},
+            "title": "项目概况", "body": "", "tables": [], "children": [
+                {"title": "项目简介", "ref_type": "prod_name", "body": "产品名称：", "tables": [], "children": []},
+                {"title": "项目需求", "body": "详细项目需求请参考《需求规格说明》。", "tables": [], "children": []},
+                {"title": "项目开发时间", "ref_type": "prod_cycle", "body": "", "tables": [], "children": []},
             ],
         },
         {
-            "title": "人员资源", "ref_type": "personnel", "body": "", "children": [],
-            "tables": [[
-                ["人数", "所属部门", "人员编制", "角色/岗位", "职责"],
-                ["1", "产品部", "余航", "产品经理", "负责需求的收集、整理和分析\n对需求基线后的需求变更进行控制\n安排产品资源；\n组织协调工作；\n组织产品开发的实施；\n监督总体进度；\n提供后勤支持。"],
-                ["8", "产品开发部", "宁随军", "软件开发工程师", "按照需求文档进行系统规划和设计；\n设计编码开发。"],
-                ["2", "产品开发部", "宋月", "软件测试工程师", "单元测试、集成测试、系统测试、用户测试"],
-                ["1", "模型部", "王瑜", "算法研究员及算法工程师", "按照需求文档进行算法模块的规划和设计，包括算法概要设计和详细设计；\n设计编码开发；\n数据处理、数据标注规则定义、数据质控等"],
-                ["1", "质量部", "林金贵", "质量工程师", "负责管控风险管理的过程符合风险管理控制程序的规定"],
-                ["1", "生产部", "陈福临", "生产人员", "负责转换阶段的生产工作"],
-                ["1", "/", "杨冰", "临床专家（或者有临床背景的客户经理）", "负责从临床角度和用户的角度评审危害源识别的正确性和风险控制措施的合理性，确保剩余风险可以接受"],
-                ["1", "/", "李佳励", "安全工程师（或者有风险管理背景软件开发工程师）", "负责风险管理文件的撰写"],
-                ["3", "/", "徐学强、刘锦龙、杨冰", "用户测试人员", "负责产品的用户测试相关工作"],
-            ]],
-        },
-        {
-            "title": "设备资源", "body": "", "children": [],
-            "tables": [[
-                ["设备及用途", "设备名称", "数量", "设备说明"],
-                ["操作系统", "Ubuntu24.04、Windows 10", "3", "现有满足"],
-                ["开发语言", "Python、JavaScript、less、html", "4", "现有满足"],
-                ["数据库", "PostgreSQL", "2", "现有满足"],
-                ["开发工具", "VS Code", "1", "现有满足"],
-                ["测试工具", "Chrome、JMeter、Nmap", "3", "现有满足"],
-                ["配置管理工具", "Jira、GitLab、NextCloud、Nas", "4", "现有满足"],
-                ["开发设备", "计算机", "7", "现有满足"],
-                ["测试设备", "计算机", "2", "现有满足"],
-                ["生产设备", "计算机", "1", "现有满足"],
-                ["检验设备", "计算机", "1", "现有满足"],
-            ]],
-        },
-        {
-            "title": "产品开发计划及里程碑", "body": "", "children": [],
-            "tables": [[
-                ["阶段", "活动", "评审部门", "负责部门", "计划完成时间", "主要活动和任务", "阶段性交付物"],
-                ["可行性研究与定义阶段", "市场调研", "研发部、质量部", "产品部", "", "通过调研市场需求明确产品功能定位、预期用途、经济及社会意义，判断产品开发是否可行。", "《产品立项报告》"],
-                ["可行性研究与定义阶段", "策划", "研发部、质量部", "产品部", "", "确定产品开发计划", "《产品开发计划》"],
-                ["可行性研究与定义阶段", "需求调研", "研发部、质量部", "产品部", "", "调研产品需求并进行需求分析", "《需求规格说明》《初步危害分析清单》《软件配置管理计划》"],
-                ["可行性研究与定义阶段", "输入评审", "研发部、质量部", "产品部", "", "评审产品的技术指标、安全要求、法规要求、风险信息、网络安全信息。", "《设计开发输入清单》评审记录（设计开发输入）"],
-                ["产品实现阶段", "产品开发", "/", "产品开发部", "", "实现除模型以外的软件功能", "产品"],
-                ["产品实现阶段", "产品测试", "产品开发部、产品部", "产品开发部", "", "进行软件的单元、集成、系统测试，以保证软件的正常运行。", "《软件测试计划》测试用例、测试记录《软件测试报告》"],
-                ["产品实现阶段", "用户测试", "产品开发部、产品部", "产品开发部", "", "进行产品的用户测试", "《用户测试计划》《用户测试用例》《用户测试记录》《用户测试报告》"],
-                ["产品实现阶段", "输出评审", "研发部、质量部", "研发部", "", "输出保证产品质量的生产、服务相关信息，如：工艺流程图、采购物资明细、图纸、作业指导书、检验规范、技术要求、用户说明书、包装标签的样稿、软件的开发和测试。", "《可追溯性分析报告》《用户说明书》《安装维护手册》《软件配置状态报告》《软件维护计划》《生产工艺流程图》《产品标签样稿》《现场测试规程》《采购要求及产品BOM》《成品检验规程》《产品技术要求》"],
-                ["产品转换阶段", "发布", "研发部、质量部", "产品部", "", "发布测试通过的产品。", "《产品发布说明》"],
-                ["产品转换阶段", "转换", "质量部、研发部、执行部", "质量部", "", "通过确立文件规定、人员培训、设备验证等手段，实现研发阶段到规模化生产阶段。", "《生产作业指导书》《成品检验规程》"],
-            ]],
-        },
-        {
-            "title": "相关计划", "tables": [], "children": [],
+            "title": "开发标准", "tables": [], "children": [],
             "body": (
-                "配置管理、风险管理、维护、产品开发等计划详见以下计划：\n"
-                "《软件配置管理计划》\n《软件维护计划》\n《软件开发计划》\n"
-                "《软件测试计划》\n《用户测试计划》\n《风险管理计划》"
+                "开发过程，参照以下规章制度进行：\n"
+                "《软件开发管理制度》\n《开发环境管理制度》\n"
+                "《第三方工具操作规范》\n《代码管理制度》"
             ),
+        },
+        {
+            "title": "开发方法", "tables": [], "children": [],
+            "body": (
+                "在开发过程中，采用经典的瀑布式开发方法，将开发的过程分为需求分析、设计、编码、测试等阶段。\n"
+                "在设计和编码过程中，主要使用面向对象的分析方法，进行模块划分、功能拆解等。\n"
+                "应当保证软件开发的人员及环境与软件开发要求相适宜。"
+            ),
+        },
+        {
+            "title": "人员资源", "ref_type": "personnel", "body": "人员资源如下表所示。", "children": [],
+            "tables": [[
+                ["编号", "姓名", "所属部门", "角色"],
+                ["1", "沈宏", "产品开发部", "经理"],
+                ["2", "宁随军", "产品开发部", "开发工程师"],
+                ["3", "胡晓光", "产品开发部", "开发工程师"],
+                ["4", "徐帅", "产品开发部", "开发工程师"],
+            ]],
+        },
+        {
+            "title": "软件资源", "body": "开发过程中用到的软件资源如下表所示。", "children": [],
+            "tables": [[
+                ["编号", "资源", "资源名称"],
+                ["1", "操作系统", "Ubuntu24.04"],
+                ["2", "开发语言", "JavaScript，less，Html"],
+            ]],
+        },
+        {
+            "title": "软件开发计划及里程碑", "ref_type": "milestone", "body": "软件开发计划里程碑如下表所示。", "children": [],
+            "tables": [[
+                ["阶段", "任务划分", "负责人", "计划完成时间", "交付物", "使用语言"],
+                ["评审开发计划", "编写评审开发计划", "宁随军", "2025年04月07日", "评审记录", ""],
+                ["基础代码开发", "DP 架构开发", "李鹏", "2025年05月09日", "/", "python"],
+                ["基础代码开发", "Repacs 数据库设计与开发", "成少阳", "2025年05月09日", "/", "python"],
+                ["基础代码开发", "DLServer 架构开发", "杨学峰", "2025年05月09日", "/", "python"],
+                ["基础代码开发", "NeoViewer 架构开发", "王亮、徐帅", "2025年05月09日", "/", "JavaScript、less、Html"],
+                ["模块内开发", "DP 功能实现", "李鹏", "2025年05月26日", "/", "python"],
+                ["模块内开发", "Repacs 接口实现", "成少阳", "2025年05月26日", "/", "python"],
+                ["模块内开发", "DLServer 功能实现", "杨学峰", "2025年05月26日", "/", "python"],
+                ["模块内开发", "NeoViewer 功能实现", "王亮、徐帅", "2025年05月26日", "/", "JavaScript、less、Html"],
+                ["整体联调", "各模块进行联合调试", "全体参与", "2025年05月29日", "代码开发结束", "/"],
+                ["整体联调", "软件整体联调", "全体参与", "2025年05月29日", "生成安装包", "/"],
+            ]],
         },
     ],
 }
@@ -149,7 +142,6 @@ class Server(object):
     def __migrate_cover_table(rows):
         """把旧版 2 列封面表（项目/内容）迁移为新版 4 列结构，保留已填值。"""
         rows = [r for r in (rows or []) if isinstance(r, list)]
-        # 已是新结构：首行 4 列且首格为「编写部门」
         if rows and len(rows[0]) >= 4 and str(rows[0][0]).strip() == "编写部门":
             return rows
         items = [(str(r[0]).strip(), str(r[1]).strip() if len(r) > 1 else "") for r in rows if r]
@@ -161,7 +153,7 @@ class Server(object):
         dates = [v for l, v in items if l == "日期"]
         d = lambda i: dates[i] if i < len(dates) else ""
         return [
-            ["编写部门", val("编写部门") or "产品部", "文件版本", val("文件版本") or "A0"],
+            ["编写部门", val("编写部门") or "产品开发部", "文件版本", val("文件版本") or "A0"],
             ["编制人", val("编制人"), "日期", d(0)],
             ["审核人", val("审核人"), "日期", d(1)],
             ["批准人", val("批准人"), "日期", d(2)],
@@ -181,7 +173,6 @@ class Server(object):
         for table in tables:
             if isinstance(table, list):
                 norm_tables.append([[str(c) if c is not None else "" for c in (row or [])] for row in table if isinstance(row, list)])
-        # 封面表统一迁移为新版 4 列结构
         if result.get("ref_type") == "cover" and norm_tables:
             norm_tables = [self.__migrate_cover_table(norm_tables[0])] + norm_tables[1:]
         result["tables"] = norm_tables
@@ -191,29 +182,31 @@ class Server(object):
 
     def __normalize_content(self, content):
         if not isinstance(content, dict) or not isinstance(content.get("sections"), list):
-            return copy.deepcopy(DEFAULT_PDP_CONTENT)
+            return copy.deepcopy(DEFAULT_SD_CONTENT)
         return {"sections": [self.__normalize_node(s) for s in content["sections"]]}
 
-    def __autofill_for_export(self, content, obj: PdpDocObj):
+    def __autofill_for_export(self, content, obj: SdDocObj):
         """导出时按产品/时间线/参与人员实时填充，保证导出与「新增/编辑」一致（仅填空、不覆盖已填）。"""
         sections = (content or {}).get("sections") or []
         prod_id = obj.product_id
         if not prod_id:
             return content
-        # 产品信息
         product = db.session.execute(select(Product).where(Product.id == prod_id)).scalars().first()
         prod_name = (getattr(product, "name", "") or "").strip()
         overall_desc = (getattr(product, "overall_desc", "") or "").strip()
-        # 时间线
         tl_rows = db.session.execute(
             select(ProjectTimelineRow).where(ProjectTimelineRow.prod_id == prod_id)
         ).scalars().all()
         cell_map = {}
+        dev_row_ids = set()
         if tl_rows:
             for c in db.session.execute(
                 select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_([r.id for r in tl_rows]))
             ).scalars().all():
                 cell_map.setdefault(c.row_id, []).append(c.output_result or "")
+                # 产品开发活动：输出含「产品开发」但排除「产品开发计划」文档
+                if re.search(r"产品开发(?!计划)", str(c.output_result or "")):
+                    dev_row_ids.add(c.row_id)
 
         def to_int(v):
             digits = re.sub(r"[^\d]", "", str(v or ""))
@@ -224,40 +217,138 @@ class Server(object):
         def date_key(r):
             return to_int(r.year) * 10000 + to_int(r.month) * 100 + (to_int(r.day) or 0)
 
+        # 产品开发周期：取「产品开发」活动的最早日期=开始、最晚日期=结束
         cycle = ""
-        if date_rows:
-            start = min(date_rows, key=date_key)
-            out_rows = [r for r in date_rows if any(str(v or "").strip() for v in cell_map.get(r.id, []))]
-            pool = out_rows or date_rows
-            end = max(pool, key=date_key)
-            cycle = f"{to_int(start.year)} 年 {to_int(start.month)} 月~{to_int(end.year)} 年 {to_int(end.month)} 月"
+        dev_rows = [r for r in date_rows if r.id in dev_row_ids]
+        if dev_rows:
+            s = min(dev_rows, key=date_key)
+            e = max(dev_rows, key=date_key)
+            sy, sm, ey, em = to_int(s.year), to_int(s.month), to_int(e.year), to_int(e.month)
+            cycle = f"{sy}年{sm}月~{em}月" if sy == ey else f"{sy}年{sm}月~{ey}年{em}月"
 
-        file_rows = [r for r in date_rows if any("产品开发计划" in str(v or "") for v in cell_map.get(r.id, []))]
+        file_rows = [r for r in date_rows if any("软件开发计划" in str(v or "") for v in cell_map.get(r.id, []))]
         file_date = ""
         if file_rows:
             fr = min(file_rows, key=date_key)
             file_date = f"{to_int(fr.year)}年{to_int(fr.month)}月{to_int(fr.day)}日"
 
-        # 参与人员
         members = db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == prod_id)).scalars().all()
         def find_member(pred):
             for m in members:
                 if pred(str(m.role or "")):
                     return (m.name or "").strip()
             return ""
-        pm = find_member(lambda r: "产品经理" in r)
-        approver = find_member(lambda r: "负责人" in r and "产品" in r)
+        pm = find_member(lambda r: "产品经理" in r or "经理" in r)
+        approver = find_member(lambda r: "负责人" in r)
+        # 备注模块映射：备注 前端-NeoViewer / 后端-DP 等 → 取"-"后模块名(小写) → 参与人员姓名
+        module_map = {}
+        for m in members:
+            note = (m.note or "").strip()
+            nm = (m.name or "").strip()
+            idx = note.rfind("-")
+            if not nm or idx < 0:
+                continue
+            mod = note[idx + 1:].strip().lower()
+            if mod:
+                module_map.setdefault(mod, []).append(nm)
+
+        # 里程碑表自动填充所需：开发结束日、开发计划评审日、开发工程师
+        def fmt_date(r):
+            return f"{to_int(r.year)}年{to_int(r.month)}月{to_int(r.day) or 1}日"
+
+        dev_end = fmt_date(max(dev_rows, key=date_key)) if dev_rows else ""
+
+        # 里程碑阶段日期：以产品开发周期(开始~结束)按比例拆分
+        # 基础代码开发=开始+1/4、模块开发=开始+3/4、整体联调=结束日、封装安装包=结束日+1天
+        ph_base = ph_module = ph_integ = ph_pkg = ""
+        if dev_rows:
+            s_row = min(dev_rows, key=date_key)
+            e_row = max(dev_rows, key=date_key)
+            ds = date(to_int(s_row.year), to_int(s_row.month), to_int(s_row.day) or 1)
+            de = date(to_int(e_row.year), to_int(e_row.month), to_int(e_row.day) or 1)
+            total = (de - ds).days
+
+            def fmt_d(d):
+                return f"{d.year}年{d.month}月{d.day}日"
+
+            ph_base = fmt_d(ds + timedelta(days=int(total * 0.25 + 0.5)))
+            ph_module = fmt_d(ds + timedelta(days=int(total * 0.75 + 0.5)))
+            ph_integ = fmt_d(de)
+            ph_pkg = fmt_d(de + timedelta(days=1))
+
+        def latest_date_for(keys):
+            matched = [r for r in date_rows if any(any(k in str(v or "") for k in keys) for v in cell_map.get(r.id, []))]
+            return fmt_date(max(matched, key=date_key)) if matched else ""
+
+        plan_date = latest_date_for(["软件开发计划"])
+        tpm_name = find_member(lambda r: "TPM" in r.upper())
 
         def strip_num(title):
             return re.sub(r"^\s*\d+(?:\.\d+)*[\.、\s]*", "", str(title or "")).strip()
+
+        def fill_milestone(node):
+            tables = node.get("tables") or []
+            if not tables or not isinstance(tables[0], list) or not tables[0]:
+                return
+            table = tables[0]
+            header = table[0]
+            def col_of(name):
+                for i, h in enumerate(header):
+                    if name in str(h or ""):
+                        return i
+                return -1
+            c_time, c_owner = col_of("计划完成时间"), col_of("负责人")
+            c_stage = col_of("阶段")
+            for row in table[1:]:
+                if not isinstance(row, list):
+                    continue
+                row_text = " ".join(str(c or "") for c in row)
+                is_review = "评审" in row_text and "开发计划" in row_text
+                # 计划完成时间（可判定则覆盖）：评审→评审日；基础/模块/联调按周期比例；封装安装包→结束日+1天
+                if c_time >= 0 and c_time < len(row):
+                    stage = str(row[c_stage]) if 0 <= c_stage < len(row) else row_text
+                    dt = ""
+                    if is_review:
+                        dt = plan_date or dev_end
+                    elif re.search(r"安装包|封装", row_text):
+                        dt = ph_pkg
+                    elif "基础" in stage:
+                        dt = ph_base
+                    elif "模块" in stage:
+                        dt = ph_module
+                    elif "联调" in stage or "整体" in stage:
+                        dt = ph_integ
+                    else:
+                        dt = dev_end
+                    if dt:
+                        row[c_time] = dt
+                # 负责人（可判定则覆盖）：评审行→TPM；任务含模块名→该模块参与人员；联调/整体行→全体参与
+                if c_owner >= 0 and c_owner < len(row):
+                    owner = ""
+                    if is_review:
+                        owner = tpm_name
+                    else:
+                        lower = row_text.lower()
+                        names = []
+                        for k, nms in module_map.items():
+                            if k and k in lower:
+                                for nm in nms:
+                                    if nm and nm not in names:
+                                        names.append(nm)
+                        if names:
+                            owner = "、".join(names)
+                        elif re.search(r"联调|整体|全体", row_text):
+                            owner = "全体参与"
+                    if owner:
+                        row[c_owner] = owner
 
         def fill(node):
             ref = node.get("ref_type")
             title = strip_num(node.get("title"))
             children = node.get("children") or []
             is_overview = ref == "prod_overview" or (title == "产品概况" and not children)
-            is_cycle = ref == "prod_cycle" or (title == "产品开发周期" and not children)
-            if (ref == "prod_name" or title == "产品简介") and prod_name:
+            is_cycle = ref == "prod_cycle" or (title == "项目开发时间" and not children)
+            if (ref == "prod_name" or title == "项目简介") and prod_name:
                 node["body"] = f"产品名称：{prod_name}"
             elif is_overview and overall_desc:
                 node["body"] = overall_desc
@@ -280,26 +371,28 @@ class Server(object):
                         row[2] = "首次发布"
                     set_if(3, pm)
                     set_if(4, approver)
+            if ref == "milestone" or "里程碑" in title:
+                fill_milestone(node)
             for child in children:
                 fill(child)
 
         for node in sections:
             fill(node)
         serv_review_util.ensure_review(
-            content, "pdp", serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS["pdp"]["name_keywords"])
+            content, "sd", serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS["sd"]["name_keywords"])
         )
-        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, "pdp"))
+        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, "sd"))
         return content
 
-    def __to_obj(self, row: PdpDoc, product: Product = None):
-        obj = PdpDocObj(**row.dict())
+    def __to_obj(self, row: SdDoc, product: Product = None):
+        obj = SdDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content)
         serv_review_util.ensure_review(
-            obj.content, "pdp",
-            serv_review_util.review_date(row.product_id, serv_review_util.REVIEW_DEFS["pdp"]["name_keywords"]) if row.product_id else "",
+            obj.content, "sd",
+            serv_review_util.review_date(row.product_id, serv_review_util.REVIEW_DEFS["sd"]["name_keywords"]) if row.product_id else "",
         )
         serv_review_util.fill_cover_dates(
-            obj.content, serv_review_util.cover_date(row.product_id, "pdp") if row.product_id else ""
+            obj.content, serv_review_util.cover_date(row.product_id, "sd") if row.product_id else ""
         )
         if product:
             obj.product_name = product.name
@@ -308,32 +401,32 @@ class Server(object):
             obj.product_type_code = product.type_code
         return obj
 
-    async def add_pdp_doc(self, form: PdpDocForm):
+    async def add_sd_doc(self, form: SdDocForm):
         try:
-            sql = select(func.count(PdpDoc.id)).where(
-                PdpDoc.product_id == form.product_id,
-                PdpDoc.version == form.version,
+            sql = select(func.count(SdDoc.id)).where(
+                SdDoc.product_id == form.product_id,
+                SdDoc.version == form.version,
             )
             if db.session.execute(sql).scalar() > 0:
                 return Resp.resp_err(msg=ts("msg_obj_exist"))
-            row = PdpDoc(**form.dict(exclude_none=True))
+            row = SdDoc(**form.dict(exclude_none=True))
             row.id = None
             row.content = self.__normalize_content(row.content)
             db.session.add(row)
             db.session.commit()
-            return Resp.resp_ok(data=PdpDocForm(id=row.id))
+            return Resp.resp_ok(data=SdDocForm(id=row.id))
         except Exception:
             logger.exception("")
             db.session.rollback()
         return Resp.resp_err(msg=ts(msg_err_db))
 
-    async def duplicate_pdp_doc(self, id: int, product_id: int = None):
+    async def duplicate_sd_doc(self, id: int, product_id: int = None):
         try:
-            fromdoc: PdpDoc = db.session.execute(select(PdpDoc).where(PdpDoc.id == id)).scalars().first()
+            fromdoc: SdDoc = db.session.execute(select(SdDoc).where(SdDoc.id == id)).scalars().first()
             if not fromdoc:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
             target_pid = product_id or fromdoc.product_id
-            all_versions = db.session.execute(select(PdpDoc.version).where(PdpDoc.product_id == target_pid)).scalars().all()
+            all_versions = db.session.execute(select(SdDoc.version).where(SdDoc.product_id == target_pid)).scalars().all()
             existing_set = {v for v in all_versions if v}
             if target_pid == fromdoc.product_id:
                 version = new_version(fromdoc.version)
@@ -345,7 +438,7 @@ class Server(object):
                 version = new_version(max(valid, key=_seq)) if valid else fromdoc.version
             while version in existing_set:
                 version = new_version(version)
-            newdoc = PdpDoc(
+            newdoc = SdDoc(
                 product_id=target_pid,
                 version=version,
                 file_no=sync_file_no_version(fromdoc.file_no, version),
@@ -354,15 +447,15 @@ class Server(object):
             )
             db.session.add(newdoc)
             db.session.commit()
-            return Resp.resp_ok(data=PdpDocForm(id=newdoc.id))
+            return Resp.resp_ok(data=SdDocForm(id=newdoc.id))
         except Exception:
             logger.exception("")
             db.session.rollback()
         return Resp.resp_err(msg=ts(msg_err_db))
 
-    async def update_pdp_doc(self, form: PdpDocForm):
+    async def update_sd_doc(self, form: SdDocForm):
         try:
-            row: PdpDoc = db.session.execute(select(PdpDoc).where(PdpDoc.id == form.id)).scalars().first()
+            row: SdDoc = db.session.execute(select(SdDoc).where(SdDoc.id == form.id)).scalars().first()
             if not row:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
             for key, value in form.dict(exclude_none=True).items():
@@ -378,44 +471,44 @@ class Server(object):
             db.session.rollback()
         return Resp.resp_err(msg=ts(msg_err_db))
 
-    async def delete_pdp_doc(self, id: int):
-        db.session.execute(delete(PdpDoc).where(PdpDoc.id == id))
+    async def delete_sd_doc(self, id: int):
+        db.session.execute(delete(SdDoc).where(SdDoc.id == id))
         db.session.commit()
         return Resp.resp_ok()
 
-    async def get_pdp_doc(self, id: int):
-        sql = select(PdpDoc, Product).join(Product, PdpDoc.product_id == Product.id).where(PdpDoc.id == id)
+    async def get_sd_doc(self, id: int):
+        sql = select(SdDoc, Product).join(Product, SdDoc.product_id == Product.id).where(SdDoc.id == id)
         row = db.session.execute(sql).first()
         if not row:
             return Resp.resp_err(msg=ts("msg_obj_null"))
         doc, product = row
         return Resp.resp_ok(data=self.__to_obj(doc, product))
 
-    async def list_pdp_doc(self, op_user: UserObj = None, product_id: int = 0, version: str = None, page_index: int = 0, page_size: int = 10):
+    async def list_sd_doc(self, op_user: UserObj = None, product_id: int = 0, version: str = None, page_index: int = 0, page_size: int = 10):
         wheres = []
         if product_id:
-            wheres.append(PdpDoc.product_id == product_id)
+            wheres.append(SdDoc.product_id == product_id)
         if version:
-            wheres.append(PdpDoc.version.like(f"%{version}%"))
+            wheres.append(SdDoc.version.like(f"%{version}%"))
         if op_user and op_user.id != 1 and op_user.role_code == Roles.product_manager.value.code:
             wheres.append(Product.create_user_id == op_user.id)
-        sql_total = select(func.count(PdpDoc.id)).join(Product, PdpDoc.product_id == Product.id).where(*wheres)
+        sql_total = select(func.count(SdDoc.id)).join(Product, SdDoc.product_id == Product.id).where(*wheres)
         total = db.session.execute(sql_total).scalar() or 0
         sql = (
-            select(PdpDoc, Product)
-            .join(Product, PdpDoc.product_id == Product.id)
+            select(SdDoc, Product)
+            .join(Product, SdDoc.product_id == Product.id)
             .where(*wheres)
-            .order_by(PdpDoc.id.desc())
+            .order_by(SdDoc.id.desc())
             .offset(page_index * page_size)
             .limit(page_size)
         )
-        rows: List[PdpDocObj] = [self.__to_obj(doc, product) for doc, product in db.session.execute(sql).all()]
+        rows: List[SdDocObj] = [self.__to_obj(doc, product) for doc, product in db.session.execute(sql).all()]
         return Resp.resp_ok(data=Page(total=total, rows=rows, page_index=page_index, page_size=page_size))
 
     # ---------------- 导出 Word ----------------
-    async def export_pdp_doc(self, output, id: int):
-        resp = await self.get_pdp_doc(id)
-        obj: PdpDocObj = resp.data
+    async def export_sd_doc(self, output, id: int):
+        resp = await self.get_sd_doc(id)
+        obj: SdDocObj = resp.data
         if obj is None:
             Document().save(output)
             output.seek(0)
@@ -492,9 +585,7 @@ class Server(object):
                 cells = table.add_row().cells
                 for c_idx in range(cols):
                     text = row[c_idx] if c_idx < len(row) else ""
-                    # 偶数列为标签（编写部门/文件版本/日期等）加粗，奇数列为填写值
                     set_cell(cells[c_idx], text, bold=(c_idx % 2 == 0), align=WD_ALIGN_PARAGRAPH.CENTER)
-                # 「生效日期」行：合并后面的填写格，跨满整行
                 if (str(row[0]).strip() if row else "") == "生效日期" and cols > 2:
                     merged = cells[1]
                     for c_idx in range(2, cols):
@@ -505,7 +596,6 @@ class Server(object):
         def strip_num(title):
             return re.sub(r"^\s*\d+(?:\.\d+)*[\.、\s]*", "", str(title or "")).strip()
 
-        # 标题：用 Heading 样式（便于 Word 目录域识别），各级均加粗
         def add_body_heading(title, level):
             size = {1: 16.0, 2: 14.0, 3: 12.0}.get(level, 11.0)
             p = document.add_heading("", level=max(1, min(level, 9)))
@@ -517,7 +607,6 @@ class Server(object):
             p.paragraph_format.space_after = Pt(0)
             docx_util.fonted_txt(p, title, font_size=size, bold=True)
 
-        # 正文章节：按树自动编号 1 / 1.1 / 1.1.1
         def render_body_section(node, level, number=""):
             name = strip_num(node.get("title"))
             heading = f"{number} {name}".strip() if number else name
@@ -540,15 +629,13 @@ class Server(object):
         revision = next((s for s in sections if s.get("ref_type") == "revision"), None)
         body = [s for s in sections if s.get("ref_type") not in ("cover", "revision")]
 
-        # 封面：上方留白 + 居中大标题 + 留白 + 封面表，使标题落在页面居中位置
         add_blank_lines(6)
-        write_center_title((strip_num(cover.get("title")) if cover else "") or "产品开发计划", size=22.0, bold=True)
+        write_center_title((strip_num(cover.get("title")) if cover else "") or "软件开发计划", size=22.0, bold=True)
         add_blank_lines(4)
         if cover:
             for table in (cover.get("tables") or []):
                 add_cover_grid(table)
 
-        # 文件修订记录：独立页、居中标题
         document.add_page_break()
         write_center_title("文件修订记录", size=14.0, bold=True)
         add_blank_lines(2)
@@ -556,12 +643,10 @@ class Server(object):
             for table in (revision.get("tables") or []):
                 add_grid(table)
 
-        # 目录：独立页、居中标题 + 目录域
         document.add_page_break()
         write_center_title("目录", size=16.0, bold=True)
         docx_util.insert_toc_field(document)
 
-        # 正文：另起一页（评审记录章节不编号）
         document.add_page_break()
         seq = 0
         for node in body:

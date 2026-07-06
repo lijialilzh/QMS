@@ -108,3 +108,9 @@ from .nsmp_doc import NsmpDoc  # noqa: E402,F401
 
 # 风险管理计划（独立文档模块）。
 from .rmp_doc import RmpDoc  # noqa: E402,F401
+
+# 软件开发计划（独立文档模块，模板参考产品开发计划）。
+from .sd_doc import SdDoc  # noqa: E402,F401
+
+# 人员签名管理（基础数据）：人名章记录。
+from .person_sign import PersonSign  # noqa: E402,F401

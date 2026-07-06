@@ -45,15 +45,16 @@ const findFirstLeaf = (menus: any)=>{
     }
 }
 
-const findParentKeyByChild = (menus: any, targetKey: string, parentKey?: string): string | undefined => {
+// 返回从顶级到目标节点父级的所有祖先 key（支持多级子菜单展开）
+const findAncestorKeys = (menus: any, targetKey: string, ancestors: string[] = []): string[] | undefined => {
     for (const menu of menus) {
         if (menu.key === targetKey) {
-            return parentKey;
+            return ancestors;
         }
         if (menu.children) {
-            const key = findParentKeyByChild(menu.children, targetKey, menu.key);
-            if (key) {
-                return key;
+            const keys = findAncestorKeys(menu.children, targetKey, [...ancestors, menu.key]);
+            if (keys) {
+                return keys;
             }
         }
     }
@@ -154,6 +155,11 @@ export default () => {
                         key: "/company_infos",
                         label: ts("menu.company_infos"),
                         perm: "company_info_view",
+                    },
+                    {
+                        key: "/person_signs",
+                        label: ts("menu.person_signs"),
+                        perm: "person_sign_view",
                     },
                 ],
             },
@@ -277,14 +283,31 @@ export default () => {
                 icon: <img src="assets/icon/menu-create.svg" />,
                 children: [
                     {
-                        key: "/sds_docs",
-                        label: ts("menu.sds_docs"),
-                        perm: "sds_doc_view",
+                        key: "dev_files",
+                        label: ts("menu.dev_files"),
+                        children: [
+                            {
+                                key: "/sd_docs",
+                                label: ts("menu.sd_docs"),
+                                perm: "sd_doc_view",
+                            },
+                            {
+                                key: "/sds_docs",
+                                label: ts("menu.sds_docs"),
+                                perm: "sds_doc_view",
+                            },
+                        ],
                     },
                     {
-                        key: "/test_sets",
-                        label: ts("menu.test_sets"),
-                        perm: "test_set_view",
+                        key: "test_files",
+                        label: ts("menu.test_files"),
+                        children: [
+                            {
+                                key: "/test_sets",
+                                label: ts("menu.test_sets"),
+                                perm: "test_set_view",
+                            },
+                        ],
                     },
                 ],
             },
@@ -426,9 +449,9 @@ export default () => {
             const role_perms = new Set(user.role_perms || []);
             const menus = transformMenus(MENUS, role_perms);
             const selectedKey = data.menuSelectedKey ?? data.path;
-            const parentKey = selectedKey ? findParentKeyByChild(menus, selectedKey) : undefined;
-            // 初始化时仅展开当前菜单所属父级，若为一级菜单则全部收起
-            dispatch({ menus, openKeys: parentKey ? [parentKey] : [] });
+            const ancestorKeys = selectedKey ? findAncestorKeys(menus, selectedKey) : undefined;
+            // 初始化时展开当前菜单的全部祖先层级，若为一级菜单则全部收起
+            dispatch({ menus, openKeys: ancestorKeys && ancestorKeys.length ? ancestorKeys : [] });
             if (menus.length > 0) {
                 const leaf = findFirstLeaf(menus) as any;
                 if ((!data.path || data.path === "/") && leaf) {

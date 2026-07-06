@@ -139,8 +139,12 @@ const fillDates = (nodes: any[], date: string, version: string): any[] => {
     const coverTbl = (tb: any[]) =>
         tb.map((row: any[]) => {
             if (!Array.isArray(row)) return row;
-            if (String(row[0]).trim() === "生效日期") return row; // 生效日期不自动回填
             const next = [...row];
+            if (String(row[0]).trim() === "生效日期") {
+                // 生效日期与编制/审核/批准日期统一为同一个时间
+                if (next.length >= 2 && !String(next[1] || "").trim()) next[1] = date;
+                return next;
+            }
             for (let ci = 0; ci < next.length; ci++) {
                 if (String(next[ci]).trim() === "日期" && ci + 1 < next.length) next[ci + 1] = date;
             }

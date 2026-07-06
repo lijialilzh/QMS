@@ -262,7 +262,10 @@ class Server(object):
                     if not isinstance(row, list):
                         continue
                     if row and str(row[0]).strip() == "生效日期":
-                        continue  # 生效日期不自动回填
+                        # 生效日期与编制/审核/批准日期统一为同一个时间
+                        if len(row) >= 2 and not str(row[1] or "").strip():
+                            row[1] = info["cover_date"]
+                        continue
                     for ci in range(len(row)):
                         if str(row[ci]).strip() == "日期" and ci + 1 < len(row):
                             row[ci + 1] = info["cover_date"]

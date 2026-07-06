@@ -66,6 +66,10 @@ class Perms(Enum):
     company_info_view = PermForm(code="company_info_view", name="查看", p_code=company_info.code)
     company_info_edit = PermForm(code="company_info_edit", name="编辑", p_code=company_info.code)
 
+    person_sign = PermForm(code="person_sign", name="基础数据/人员签名管理")
+    person_sign_view = PermForm(code="person_sign_view", name="查看", p_code=person_sign.code)
+    person_sign_edit = PermForm(code="person_sign_edit", name="编辑", p_code=person_sign.code)
+
     product = PermForm(code="product", name="产品管理/产品版本管理")
     product_view = PermForm(code="product_view", name="查看", p_code=product.code)
     product_edit = PermForm(code="product_edit", name="编辑", p_code=product.code)
@@ -133,6 +137,10 @@ class Perms(Enum):
     pdp_doc = PermForm(code="pdp_doc", name="产品文件管理/产品开发计划")
     pdp_doc_view = PermForm(code="pdp_doc_view", name="查看", p_code=pdp_doc.code)
     pdp_doc_edit = PermForm(code="pdp_doc_edit", name="编辑", p_code=pdp_doc.code)
+
+    sd_doc = PermForm(code="sd_doc", name="开发测试文件管理/软件开发计划")
+    sd_doc_view = PermForm(code="sd_doc_view", name="查看", p_code=sd_doc.code)
+    sd_doc_edit = PermForm(code="sd_doc_edit", name="编辑", p_code=sd_doc.code)
 
     pir_doc = PermForm(code="pir_doc", name="产品文件管理/产品立项报告")
     pir_doc_view = PermForm(code="pir_doc_view", name="查看", p_code=pir_doc.code)
@@ -233,6 +241,7 @@ def get_default_role_perm_codes():
         "risk_mgmt_doc", "risk_mgmt_doc_view", "risk_mgmt_doc_edit",
         "cybersec_doc", "cybersec_doc_view", "cybersec_doc_edit",
         "pdp_doc", "pdp_doc_view", "pdp_doc_edit",
+        "sd_doc", "sd_doc_view", "sd_doc_edit",
         "pir_doc", "pir_doc_view", "pir_doc_edit",
         "vuh_doc", "vuh_doc_view", "vuh_doc_edit",
         "ptr_doc", "ptr_doc_view", "ptr_doc_edit",
@@ -248,6 +257,7 @@ def get_default_role_perm_codes():
     }
     developer_perms = {
         "sds_doc", "sds_doc_view", "sds_doc_edit",
+        "sd_doc", "sd_doc_view", "sd_doc_edit",
         "doc_file_flow", "doc_file_flow_view", "doc_file_flow_edit",
         "doc_file_topo", "doc_file_topo_view", "doc_file_topo_edit",
         "doc_file_struct", "doc_file_struct_view", "doc_file_struct_edit",

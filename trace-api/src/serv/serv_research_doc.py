@@ -43,6 +43,7 @@ from ..obj.vobj_research_doc import ResearchDocObj
 from ..utils.i18n import ts
 from ..utils.sql_ctx import db
 from . import msg_err_db
+from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version, docx_util
 from .serv_prod_runtime_env import DEFAULT_RUNTIME_ENV
 
@@ -576,6 +577,8 @@ class Server(object):
         if with_autofill:
             auto = self.__collect_autofill(row.product_id)
             content = self.__apply_autofill(content, auto)
+            if row.product_id:
+                serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(row.product_id, "research"))
         if product:
             content["productName"] = product.name or ""
         obj.content = content
@@ -693,6 +696,7 @@ class Server(object):
         content = self.__normalize_content(None)
         auto = self.__collect_autofill(product_id)
         content = self.__apply_autofill(content, auto)
+        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(product_id, "research"))
         product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
         if product:
             content["productName"] = product.name or ""
