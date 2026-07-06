@@ -62,10 +62,14 @@ export const ReviewTable: React.FC<{ grid: any[]; headerRows?: number }> = ({ gr
                                         </td>
                                     );
                                 }
+                                const val = row[ci] ?? "";
+                                const isSign = typeof val === "string" && val.startsWith("data:image");
                                 return (
                                     <td key={ci} className={head ? "head" : ""}
-                                        style={{ whiteSpace: "pre-wrap", padding: "6px 8px" }}>
-                                        {row[ci] ?? ""}
+                                        style={{ whiteSpace: "pre-wrap", padding: "6px 8px", textAlign: isSign ? "center" : undefined, verticalAlign: "middle" }}>
+                                        {isSign
+                                            ? <img src={val} alt="签字" style={{ height: 36, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block" }} />
+                                            : val}
                                     </td>
                                 );
                             })}

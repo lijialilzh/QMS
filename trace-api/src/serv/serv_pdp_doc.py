@@ -4,9 +4,11 @@
 # 产品开发计划服务层，详见 docs/function_docs/52_产品开发计划.md。
 # 整份文档以 content(JSON) 存储；导出复用 docx_util.fonted_txt 生成 Word。
 
+import base64
 import copy
 import logging
 import re
+from io import BytesIO
 from typing import List
 from sqlalchemy import delete, func, select
 from docx import Document
@@ -289,6 +291,7 @@ class Server(object):
             content, "pdp", serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS["pdp"]["name_keywords"])
         )
         serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, "pdp"))
+        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, "pdp"))
         return content
 
     def __to_obj(self, row: PdpDoc, product: Product = None):
@@ -300,6 +303,9 @@ class Server(object):
         )
         serv_review_util.fill_cover_dates(
             obj.content, serv_review_util.cover_date(row.product_id, "pdp") if row.product_id else ""
+        )
+        serv_review_util.fill_cover_signers(
+            obj.content, serv_review_util.cover_signers(row.product_id, "pdp") if row.product_id else {}
         )
         if product:
             obj.product_name = product.name
@@ -479,6 +485,23 @@ class Server(object):
                     set_cell(cells[c_idx], row[c_idx] if c_idx < len(row) else "", bold=(r_idx == 0))
             document.add_paragraph()
 
+        def set_cover_value_cell(cell, text, bold, align):
+            """封面填写格：若为签名图(data URL) 则渲染图片，否则按文本渲染。"""
+            s = str(text or "")
+            if s.startswith("data:image"):
+                try:
+                    b64 = s.split(",", 1)[1] if "," in s else ""
+                    data = base64.b64decode(b64)
+                    cell.text = ""
+                    para = cell.paragraphs[0]
+                    para.alignment = align
+                    para.add_run().add_picture(BytesIO(data), height=Pt(33))
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    return
+                except Exception:
+                    pass
+            set_cell(cell, text, bold=bold, align=align)
+
         def add_cover_grid(grid):
             grid = [row for row in (grid or []) if isinstance(row, list)]
             cols = max((len(row) for row in grid), default=0)
@@ -493,7 +516,7 @@ class Server(object):
                 for c_idx in range(cols):
                     text = row[c_idx] if c_idx < len(row) else ""
                     # 偶数列为标签（编写部门/文件版本/日期等）加粗，奇数列为填写值
-                    set_cell(cells[c_idx], text, bold=(c_idx % 2 == 0), align=WD_ALIGN_PARAGRAPH.CENTER)
+                    set_cover_value_cell(cells[c_idx], text, bold=(c_idx % 2 == 0), align=WD_ALIGN_PARAGRAPH.CENTER)
                 # 「生效日期」行：合并后面的填写格，跨满整行
                 if (str(row[0]).strip() if row else "") == "生效日期" and cols > 2:
                     merged = cells[1]

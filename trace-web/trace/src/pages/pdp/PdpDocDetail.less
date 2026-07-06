@@ -208,6 +208,42 @@
                 color: #ff4d4f;
             }
         }
+
+        // 封面表：各行统一行高，内容垂直居中，打印更规整
+        .pdp-cover-grid td {
+            height: 56px;
+            vertical-align: middle;
+        }
+
+        .pdp-sign-cell {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 6px 8px;
+            position: relative;
+            min-height: 52px;
+
+            .pdp-sign-img {
+                height: 44px;
+                width: auto;
+                max-width: 100%;
+                object-fit: contain;
+                display: block;
+            }
+
+            .pdp-sign-del {
+                position: absolute;
+                top: 2px;
+                right: 2px;
+                font-size: 11px;
+                color: #c0c8d2;
+                cursor: pointer;
+
+                &:hover {
+                    color: #ff4d4f;
+                }
+            }
+        }
     }
 
     .pdp-add-table {

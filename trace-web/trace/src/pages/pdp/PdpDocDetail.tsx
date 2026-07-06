@@ -8,6 +8,7 @@ import * as Api from "@/api/ApiPdpDoc";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
+import * as ApiPersonSign from "@/api/ApiPersonSign";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import ReviewTable from "@/common/ReviewTable";
 import "./PdpDocDetail.less";
@@ -185,7 +186,31 @@ export default () => {
         return (nodes || []).map(fix);
     };
 
-    // 按产品重新获取并填充所有自动获取内容（产品简介/概况/开发周期 + 文件修订记录）
+    // 封面「编制人/审核人/批准人」签名：编制人=产品经理，审核/批准=夏晨（与后端一致）。
+    // 有签名图放图，无签名图回退姓名；切换产品时按新产品参与人员重新获取，覆盖旧值。
+    const fillCoverSigners = (nodes: any[], pmName: string, signMap: Record<string, string>): any[] => {
+        const resolve = (label: string): string => {
+            const who = label === "编制人" ? pmName : "夏晨";
+            if (!who) return "";
+            return signMap[who] || who;
+        };
+        const fix = (n: any): any => {
+            if (n.ref_type === "cover" && Array.isArray(n.tables) && Array.isArray(n.tables[0])) {
+                const t = n.tables[0].map((r: any[]) => (Array.isArray(r) ? [...r] : r));
+                t.forEach((row: any[]) => {
+                    const label = String(row[0] ?? "").trim();
+                    if (label === "编制人" || label === "审核人" || label === "批准人") {
+                        row[1] = resolve(label);
+                    }
+                });
+                return { ...n, tables: [t, ...n.tables.slice(1)], children: (n.children || []).map(fix) };
+            }
+            return { ...n, children: (n.children || []).map(fix) };
+        };
+        return (nodes || []).map(fix);
+    };
+
+    // 按产品重新获取并填充所有自动获取内容（产品简介/概况/开发周期 + 文件修订记录 + 封面签名）
     const autofill = (productId: number, secs: any[], version: string): Promise<any[]> =>
         new Promise((resolve) => {
             if (!productId) { resolve(secs); return; }
@@ -193,14 +218,19 @@ export default () => {
                 ApiProduct.get_product({ id: productId }).catch(() => null),
                 ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
                 ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
-            ]).then(([pr, tl, mb]: any[]) => {
+                ApiPersonSign.list_person_sign({ page_index: 0, page_size: 1000 }).catch(() => null),
+            ]).then(([pr, tl, mb, ps]: any[]) => {
                 const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
                 const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
                 const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
+                const signRows = ps && ps.code === Api.C_OK ? ((ps.data && ps.data.rows) || []) : [];
+                const signMap: Record<string, string> = {};
+                signRows.forEach((s: any) => { if (s.name && s.sign_img) signMap[String(s.name).trim()] = s.sign_img; });
                 const findRole = (pred: (role: string) => boolean) => {
                     const hit = members.find((m: any) => pred(String(m.role || "")));
                     return hit ? String(hit.name || "").trim() : "";
                 };
+                const pm = findRole((r) => r.includes("产品经理"));
                 let out = autoFillProduct(secs, {
                     name: prod.name,
                     desc: prod.overall_desc,
@@ -209,9 +239,10 @@ export default () => {
                 out = fillRevision(out, {
                     fileDate: computeFileDate(tlRows),
                     version,
-                    pm: findRole((r) => r.includes("产品经理")),
+                    pm,
                     approver: findRole((r) => r.includes("负责人") && r.includes("产品")),
                 });
+                out = fillCoverSigners(out, pm, signMap);
                 resolve(out);
             }).catch(() => resolve(secs));
         });
@@ -271,6 +302,7 @@ export default () => {
 
     // ---- 当前章节的表格操作 ----
     const active = findNode(data.sections, data.activeKey);
+    const isCover = active?.ref_type === "cover";
     const updateTables = (tables: any[]) => patchNode(data.activeKey, { tables });
     const setCell = (ti: number, r: number, ci: number, val: string) => {
         const tables = (active.tables || []).map((tb: any[], i: number) =>
@@ -526,24 +558,42 @@ export default () => {
                                                 </Space>
                                             )}
                                         </div>
-                                        <table className="pdp-grid">
+                                        <table className={`pdp-grid${isCover ? " pdp-cover-grid" : ""}`}>
                                             <tbody>
-                                                {tb.map((row: any[], r: number) => (
-                                                    <tr key={r}>
-                                                        {row.map((cell: any, ci: number) => (
-                                                            <td key={ci} className={r === 0 ? "head" : ""}>
-                                                                <Input.TextArea
-                                                                    className="pdp-cell"
-                                                                    autoSize={{ minRows: 1, maxRows: 8 }}
-                                                                    value={cell ?? ""}
-                                                                    disabled={readonly}
-                                                                    onChange={(e) => setCell(ti, r, ci, e.target.value)}
-                                                                />
+                                                {tb.map((row: any[], r: number) => {
+                                                    // 封面「生效日期」行：值单元格横向合并（跨满余下列），与导出一致
+                                                    const isEff = isCover && String(row[0] ?? "").trim() === "生效日期";
+                                                    const cellNode = (cell: any, ci: number, colSpan?: number) => {
+                                                        const isSign = typeof cell === "string" && cell.startsWith("data:image");
+                                                        return (
+                                                            <td key={ci} className={r === 0 ? "head" : ""} colSpan={colSpan}>
+                                                                {isSign ? (
+                                                                    <div className="pdp-sign-cell">
+                                                                        <img src={cell} className="pdp-sign-img" alt="签名" />
+                                                                        {!readonly && (
+                                                                            <DeleteOutlined className="pdp-sign-del" title="清除签名" onClick={() => setCell(ti, r, ci, "")} />
+                                                                        )}
+                                                                    </div>
+                                                                ) : (
+                                                                    <Input.TextArea
+                                                                        className="pdp-cell"
+                                                                        autoSize={{ minRows: 1, maxRows: 8 }}
+                                                                        value={cell ?? ""}
+                                                                        disabled={readonly}
+                                                                        onChange={(e) => setCell(ti, r, ci, e.target.value)}
+                                                                    />
+                                                                )}
                                                                 {!readonly && r === 0 && tb[0].length > 1 && (
                                                                     <DeleteOutlined className="pdp-col-del" title="删除该列" onClick={() => delCol(ti, ci)} />
                                                                 )}
                                                             </td>
-                                                        ))}
+                                                        );
+                                                    };
+                                                    return (
+                                                    <tr key={r}>
+                                                        {isEff
+                                                            ? [cellNode(row[0], 0), cellNode(row[1], 1, Math.max(1, row.length - 1))]
+                                                            : row.map((cell: any, ci: number) => cellNode(cell, ci))}
                                                         {!readonly && (
                                                             <td className="pdp-row-op">
                                                                 {tb.length > 1 && (
@@ -552,7 +602,8 @@ export default () => {
                                                             </td>
                                                         )}
                                                     </tr>
-                                                ))}
+                                                    );
+                                                })}
                                             </tbody>
                                         </table>
                                     </div>

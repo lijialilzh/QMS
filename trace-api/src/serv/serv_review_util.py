@@ -9,12 +9,17 @@
 #      选中标记用实心方块 ■(U+25A0)，与空心 □(U+25A1) 同族且非 emoji，避免 Word 渲染成彩色 emoji。
 
 import re
+import base64
+from io import BytesIO
 
 from sqlalchemy import select
+from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
+from ..model.project_member import ProjectMember
+from ..model.person_sign import PersonSign
 from ..utils.sql_ctx import db
 
 CHECK = "■通过 □存在问题"
@@ -259,6 +264,74 @@ def cover_date(prod_id, key):
     return review_date(prod_id, kws)
 
 
+def _sign_by_name(name):
+    """按姓名从「人员签名管理(person_sign)」取签名图（sign_img，data URL）。"""
+    name = (name or "").strip()
+    if not name:
+        return ""
+    row = db.session.execute(
+        select(PersonSign).where(PersonSign.name == name)
+    ).scalars().first()
+    return (getattr(row, "sign_img", "") or "") if row else ""
+
+
+# 各文档「封面签名」的签署人配置：label -> (解析方式, 参数)
+#   ("member_role", 角色关键字)：从本产品参与人员中按角色关键字找到姓名，再取其签名；
+#   ("name", 姓名)：直接按姓名取签名（公司层面的固定签署人）。
+# 签名图来源为「基础数据 → 人员签名管理」中的 sign_img。
+COVER_SIGNERS = {
+    # 产品部文件（产品开发计划等）：编制人=产品经理；审核/批准=产品总监 夏晨
+    "pdp": {
+        "编制人": ("member_role", "产品经理"),
+        "审核人": ("name", "夏晨"),
+        "批准人": ("name", "夏晨"),
+    },
+}
+
+
+def cover_signers(prod_id, key="pdp"):
+    """按模块 key 返回封面「编制人/审核人/批准人」应填的签名图 data URL 字典（无图则不含该键）。"""
+    cfg = COVER_SIGNERS.get(key)
+    signers = {}
+    if not prod_id or not cfg:
+        return signers
+    members = db.session.execute(
+        select(ProjectMember).where(ProjectMember.prod_id == prod_id)
+    ).scalars().all()
+    for label, (kind, arg) in cfg.items():
+        name = ""
+        if kind == "member_role":
+            name = next((m.name for m in members if arg in str(m.role or "")), "")
+        elif kind == "name":
+            name = arg
+        name = (name or "").strip()
+        if not name:
+            continue
+        # 有签名图就放图；没有签名图则回退显示姓名文字（保证签署人不为空）
+        signers[label] = _sign_by_name(name) or name
+    return signers
+
+
+def fill_cover_signers(content, signers):
+    """把封面「编制人/审核人/批准人」行的姓名列(第2列, index 1) 填成签名图 data URL（仅填空，不覆盖已填）。
+    通用实现：扫描所有 section 的所有表格，按行首标签匹配，兼容各模块封面结构。"""
+    if not signers or not isinstance(content, dict):
+        return content
+    for section in (content.get("sections") or []):
+        if not isinstance(section, dict):
+            continue
+        for table in (section.get("tables") or []):
+            if not isinstance(table, list):
+                continue
+            for row in table:
+                if not isinstance(row, list) or not row:
+                    continue
+                label = str(row[0] or "").strip()
+                if label in signers and len(row) >= 2 and not str(row[1] or "").strip():
+                    row[1] = signers[label]
+    return content
+
+
 # 整行横向合并的行首标记（这些行内容跨满整行）
 _BANNERS = ("参评人员签字", "评审时间", "评审结论", "批准人员签字")
 
@@ -285,6 +358,14 @@ def build_review_section(key, rev_date=""):
         [f"评审时间：{rev_date}", "", "", "", "", ""],
         ["人员角色", "姓名", "签字", "人员角色", "姓名", "签字"],
     ] + [list(r) for r in d["persons"]]
+    # 「签字」列按「姓名」列自动取签名图（第2列姓名→第3列签字；第5列姓名→第6列签字），仅填空
+    for row in person_tbl[3:]:
+        if not isinstance(row, list) or _is_banner(str(row[0] or "")):
+            continue
+        if len(row) >= 3 and str(row[1] or "").strip() and not str(row[2] or "").strip():
+            row[2] = _sign_by_name(str(row[1]).strip())
+        if len(row) >= 6 and str(row[4] or "").strip() and not str(row[5] or "").strip():
+            row[5] = _sign_by_name(str(row[4]).strip())
     return {
         "title": "评审记录",
         "ref_type": "review",
@@ -322,7 +403,23 @@ def render_review_grid(document, grid, set_cell, header_rows=1, **_ignore):
     for r_idx, row in enumerate(grid):
         cells = table.add_row().cells
         for c_idx in range(cols):
-            set_cell(cells[c_idx], row[c_idx] if c_idx < len(row) else "", bold=(r_idx < header_rows))
+            val = row[c_idx] if c_idx < len(row) else ""
+            s = str(val or "")
+            if s.startswith("data:image"):
+                # 签字列签名图：等比缩放渲染，不变形
+                try:
+                    b64 = s.split(",", 1)[1] if "," in s else ""
+                    pic = base64.b64decode(b64)
+                    cell = cells[c_idx]
+                    cell.text = ""
+                    para = cell.paragraphs[0]
+                    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    para.add_run().add_picture(BytesIO(pic), height=Pt(28))
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    continue
+                except Exception:
+                    pass
+            set_cell(cells[c_idx], val, bold=(r_idx < header_rows))
     rows = table.rows
     n = len(rows)
     # 整行标记行横向合并
