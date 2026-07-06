@@ -320,6 +320,8 @@ class Server(object):
         section.bottom_margin = Inches(0.8)
         section.left_margin = Inches(0.7)
         section.right_margin = Inches(0.7)
+        # 技术要求首页即正文(无独立封面页)：所有页均加页码，从「第 1 页」起
+        docx_util.add_page_number_footer(section, "", skip_first=False)
         def write_center_title(text, size=22.0, bold=False):
             p = document.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER

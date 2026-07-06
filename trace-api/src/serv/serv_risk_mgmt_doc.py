@@ -1309,6 +1309,7 @@ class Server(object):
         header_para = section.header.add_paragraph()
         header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         docx_util.fonted_txt(header_para, obj.file_no or "")
+        docx_util.add_page_number_footer(section, obj.file_no or "")
         risk_rates = {1: "1", 2: "2", 3: "3", 4: "4", 5: "5"}
         risk_degrees = {"A": "A", "B": "B", "C": "C", "D": "D", "E": "E"}
         risk_levels = {"1": "不可接受", "2": "进一步降低的研究", "3": "可忽略"}

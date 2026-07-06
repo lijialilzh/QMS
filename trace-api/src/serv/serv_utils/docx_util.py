@@ -358,6 +358,51 @@ def fonted_txt(node_para, text, font_size=10.5, bold=False):
         run.font.name = font_name
         run._element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
 
+def add_page_number_footer(section, file_no: str = "", skip_first: bool = True):
+    """统一给正式报告类 Word 导出添加页码：
+    - skip_first=True(默认，适用于有独立封面页的文档)：封面页眉页脚与其余页不同，
+      封面不显示页码；页码从 0 起(封面为第0页不显示)，封面之后的第一页正好显示「第 1 页」；
+      若提供 file_no，则同步写入首页页眉(右对齐)，避免封面丢失页眉。
+    - skip_first=False(适用于首页即正文、无独立封面的文档)：所有页均显示页码，从「第 1 页」起。
+    要求 skip_first=True 时调用方已给常规 section.header 写好文件编号(非首页页眉)。"""
+    if OxmlElement is None or qn is None:
+        return
+    align_right = dox_enum.text.WD_ALIGN_PARAGRAPH.RIGHT
+    align_center = dox_enum.text.WD_ALIGN_PARAGRAPH.CENTER
+
+    if skip_first:
+        section.different_first_page_header_footer = True
+
+        if file_no:
+            fp_header = section.first_page_header
+            hp = fp_header.paragraphs[0] if fp_header.paragraphs else fp_header.add_paragraph()
+            hp.alignment = align_right
+            fonted_txt(hp, str(file_no or ""))
+
+        pg_num_type = OxmlElement("w:pgNumType")
+        pg_num_type.set(qn("w:start"), "0")
+        section._sectPr.append(pg_num_type)
+
+    footer = section.footer
+    fp = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+    fp.alignment = align_center
+    fonted_txt(fp, "第 ")
+    page_run = fp.add_run()
+    fld_begin = OxmlElement("w:fldChar")
+    fld_begin.set(qn("w:fldCharType"), "begin")
+    page_instr = OxmlElement("w:instrText")
+    page_instr.set(qn("xml:space"), "preserve")
+    page_instr.text = " PAGE "
+    fld_separate = OxmlElement("w:fldChar")
+    fld_separate.set(qn("w:fldCharType"), "separate")
+    fld_end = OxmlElement("w:fldChar")
+    fld_end.set(qn("w:fldCharType"), "end")
+    page_run._r.append(fld_begin)
+    page_run._r.append(page_instr)
+    page_run._r.append(fld_separate)
+    page_run._r.append(fld_end)
+    fonted_txt(fp, " 页")
+
 logger = logging.getLogger(__name__)
 
 def insert_toc_field(docx: Document, outline_levels: str = "1-4"):

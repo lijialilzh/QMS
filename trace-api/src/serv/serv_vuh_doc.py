@@ -406,6 +406,7 @@ class Server(object):
         header_para = section.header.add_paragraph()
         header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         docx_util.fonted_txt(header_para, obj.file_no or "")
+        docx_util.add_page_number_footer(section, obj.file_no or "")
 
         def write_center_title(text, size=22.0, bold=False):
             p = document.add_paragraph()
