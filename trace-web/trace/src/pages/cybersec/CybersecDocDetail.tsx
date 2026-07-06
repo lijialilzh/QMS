@@ -985,7 +985,7 @@ export default () => {
                                     <td className="cybersec-table-th" rowSpan={2}>威胁描述</td>
                                     <td className="cybersec-table-th" colSpan={4}>缓解前</td>
                                     <td className="cybersec-table-th" colSpan={4}>缓解后</td>
-                                    <td className="cybersec-table-th" rowSpan={2}>缓解措施(RCM)</td>
+                                    <td className="cybersec-table-th cybersec-rcm-col" rowSpan={2}>缓解措施(RCM)</td>
                                 </tr>
                                 <tr>
                                     <td className="cybersec-table-th">CVSS分值</td>
@@ -1010,7 +1010,7 @@ export default () => {
                                         <td>{row.cur_severity ?? ""}</td>
                                         <td>{row.cur_level ?? ""}</td>
                                         <td>{row.cur_accept ?? ""}</td>
-                                        <td>{resolveRcmCodesText(row.rcm_codes, refRcmDescMap)}</td>
+                                        <td className="cybersec-rcm-col">{resolveRcmCodesText(row.rcm_codes, refRcmDescMap)}</td>
                                     </tr>
                                 ))}
                                 {!csts.length && <tr><td colSpan={12}>当前产品暂无对应 THREAT 数据。</td></tr>}

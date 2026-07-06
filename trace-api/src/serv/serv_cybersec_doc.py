@@ -952,9 +952,42 @@ class Server(object):
         update_fields = OxmlElement("w:updateFields")
         update_fields.set(qn("w:val"), "true")
         document.settings.element.append(update_fields)
-        header_para = section.header.add_paragraph()
-        header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        docx_util.fonted_txt(header_para, obj.file_no or "")
+
+        # 首页(封面)页眉页脚与其余页不同：封面不显示页码
+        section.different_first_page_header_footer = True
+
+        # 页眉（含封面）：右对齐文件编号
+        def fill_header(hdr):
+            hp = hdr.paragraphs[0] if hdr.paragraphs else hdr.add_paragraph()
+            hp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            docx_util.fonted_txt(hp, obj.file_no or "")
+        fill_header(section.header)
+        fill_header(section.first_page_header)
+
+        # 页码从 0 起：封面为第0页(不显示)，其后第一页正好显示「第 1 页」
+        pg_num_type = OxmlElement("w:pgNumType")
+        pg_num_type.set(qn("w:start"), "0")
+        section._sectPr.append(pg_num_type)
+
+        # 页脚居中页码：第 X 页（PAGE 域，打开文档后自动计算）；仅非首页显示，封面首页页脚留空
+        footer_para = section.footer.paragraphs[0] if section.footer.paragraphs else section.footer.add_paragraph()
+        footer_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        docx_util.fonted_txt(footer_para, "第 ")
+        page_run = footer_para.add_run()
+        fld_begin = OxmlElement("w:fldChar")
+        fld_begin.set(qn("w:fldCharType"), "begin")
+        page_instr = OxmlElement("w:instrText")
+        page_instr.set(qn("xml:space"), "preserve")
+        page_instr.text = " PAGE "
+        fld_separate = OxmlElement("w:fldChar")
+        fld_separate.set(qn("w:fldCharType"), "separate")
+        fld_end = OxmlElement("w:fldChar")
+        fld_end.set(qn("w:fldCharType"), "end")
+        page_run._r.append(fld_begin)
+        page_run._r.append(page_instr)
+        page_run._r.append(fld_separate)
+        page_run._r.append(fld_end)
+        docx_util.fonted_txt(footer_para, " 页")
 
         cyber_trace_body = await self.__cyber_trace_body(obj.product_id)
 
@@ -1306,8 +1339,9 @@ class Server(object):
         revision_section = next((s for s in export_sections if is_revision_section(s)), None)
         body_sections = [s for s in export_sections if not is_cover_section(s) and not is_revision_section(s)]
 
-        write_center_section_title("网络安全风险管理报告", font_size=22.0, bold=False)
-        add_blank_lines(10)
+        add_blank_lines(12)
+        write_center_section_title("网络安全风险管理报告", font_size=22.0, bold=True)
+        add_blank_lines(6)
         for table_rows in (cover_section or {}).get("tables", []) or []:
             add_plain_table(table_rows)
 
