@@ -51,6 +51,8 @@ import SdDocs from "./pages/sd/SdDocs";
 import SdDocDetail from "./pages/sd/SdDocDetail";
 import CrrDocs from "./pages/crr/CrrDocs";
 import CrrDocDetail from "./pages/crr/CrrDocDetail";
+import DemDocs from "./pages/dem/DemDocs";
+import DemDocDetail from "./pages/dem/DemDocDetail";
 import PirDocs from "./pages/pir/PirDocs";
 import PirDocDetail from "./pages/pir/PirDocDetail";
 import VuhDocs from "./pages/vuh/VuhDocs";
@@ -149,6 +151,9 @@ const router = createRouter([
             { path: "/crr_docs", element: <CrrDocs /> },
             { path: "/crr_docs/edit/:id", element: <CrrDocDetail /> },
             { path: "/crr_docs/view/:id", element: <CrrDocDetail /> },
+            { path: "/dem_docs", element: <DemDocs /> },
+            { path: "/dem_docs/edit/:id", element: <DemDocDetail /> },
+            { path: "/dem_docs/view/:id", element: <DemDocDetail /> },
             { path: "/pir_docs", element: <PirDocs /> },
             { path: "/pir_docs/edit/:id", element: <PirDocDetail /> },
             { path: "/pir_docs/view/:id", element: <PirDocDetail /> },

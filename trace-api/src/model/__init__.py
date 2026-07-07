@@ -115,5 +115,8 @@ from .sd_doc import SdDoc  # noqa: E402,F401
 # 代码审查记录（独立文档模块，开发文件）。
 from .crr_doc import CrrDoc  # noqa: E402,F401
 
+# 开发环境维护说明（独立文档模块，开发文件）。
+from .dem_doc import DemDoc  # noqa: E402,F401
+
 # 人员签名管理（基础数据）：人名章记录。
 from .person_sign import PersonSign  # noqa: E402,F401

@@ -146,6 +146,10 @@ class Perms(Enum):
     crr_doc_view = PermForm(code="crr_doc_view", name="查看", p_code=crr_doc.code)
     crr_doc_edit = PermForm(code="crr_doc_edit", name="编辑", p_code=crr_doc.code)
 
+    dem_doc = PermForm(code="dem_doc", name="开发测试文件管理/开发环境维护说明")
+    dem_doc_view = PermForm(code="dem_doc_view", name="查看", p_code=dem_doc.code)
+    dem_doc_edit = PermForm(code="dem_doc_edit", name="编辑", p_code=dem_doc.code)
+
     pir_doc = PermForm(code="pir_doc", name="产品文件管理/产品立项报告")
     pir_doc_view = PermForm(code="pir_doc_view", name="查看", p_code=pir_doc.code)
     pir_doc_edit = PermForm(code="pir_doc_edit", name="编辑", p_code=pir_doc.code)
@@ -247,6 +251,7 @@ def get_default_role_perm_codes():
         "pdp_doc", "pdp_doc_view", "pdp_doc_edit",
         "sd_doc", "sd_doc_view", "sd_doc_edit",
         "crr_doc", "crr_doc_view", "crr_doc_edit",
+        "dem_doc", "dem_doc_view", "dem_doc_edit",
         "pir_doc", "pir_doc_view", "pir_doc_edit",
         "vuh_doc", "vuh_doc_view", "vuh_doc_edit",
         "ptr_doc", "ptr_doc_view", "ptr_doc_edit",
@@ -264,6 +269,7 @@ def get_default_role_perm_codes():
         "sds_doc", "sds_doc_view", "sds_doc_edit",
         "sd_doc", "sd_doc_view", "sd_doc_edit",
         "crr_doc", "crr_doc_view", "crr_doc_edit",
+        "dem_doc", "dem_doc_view", "dem_doc_edit",
         "doc_file_flow", "doc_file_flow_view", "doc_file_flow_edit",
         "doc_file_topo", "doc_file_topo_view", "doc_file_topo_edit",
         "doc_file_struct", "doc_file_struct_view", "doc_file_struct_edit",
