@@ -205,7 +205,7 @@ DOC_DEPT = {
     "risk": "product", "rmp": "product", "pha": "product",
     # 开发文件：编制人=TPM，审核/批准=研发负责人
     "sd": "dev", "srs": "dev", "sds": "dev", "cybersec": "dev",
-    "nsmp": "dev", "nsr": "dev", "research": "dev",
+    "nsmp": "dev", "nsr": "dev", "research": "dev", "crr": "dev",
 }
 
 
@@ -258,6 +258,7 @@ def review_date(prod_id, name_keywords):
 # 规则：编制/审核/批准日期 + 生效日期 统一取该文档在时间线里评审/最后一天的日期。
 COVER_KEYWORDS = {
     "sd": ["软件开发计划", "开发计划"],
+    "crr": ["代码审查", "代码评审"],
     "pdp": ["产品开发计划", "开发计划"],
     "cybersec": ["网络安全风险管理报告", "网络安全风险管理", "风险管理报告"],
     "risk": ["风险管理报告", "风险管理"],

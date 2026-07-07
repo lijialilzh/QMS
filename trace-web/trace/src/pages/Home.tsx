@@ -292,6 +292,11 @@ export default () => {
                                 perm: "sd_doc_view",
                             },
                             {
+                                key: "/crr_docs",
+                                label: ts("menu.crr_docs"),
+                                perm: "crr_doc_view",
+                            },
+                            {
                                 key: "/sds_docs",
                                 label: ts("menu.sds_docs"),
                                 perm: "sds_doc_view",

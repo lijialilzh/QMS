@@ -30,6 +30,7 @@
         "dev_files": "开发文件",
         "test_files": "测试文件",
         "sd_docs": "软件开发计划",
+        "crr_docs": "代码审查记录",
         "srs_docs": "需求规格说明",
         "pdp_docs": "产品开发计划",
         "pir_docs": "产品立项报告",
