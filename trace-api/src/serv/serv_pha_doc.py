@@ -8,11 +8,13 @@
 #      潜在故障模式/故障的潜在原因/失效的潜在影响/分类。
 #   3) 封面/修订记录日期按产品时间逻辑线更新。
 
+import base64
 import copy
 import json
 import logging
 import os
 import re
+from io import BytesIO
 from typing import List
 from sqlalchemy import delete, func, select
 
@@ -302,7 +304,9 @@ class Server(object):
         serv_review_util.ensure_review(
             content, "pha",
             serv_review_util.review_date(obj.product_id, serv_review_util.REVIEW_DEFS["pha"]["name_keywords"]),
+            obj.product_id,
         )
+        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(obj.product_id, "pha"))
         return content
 
     def __dhf_file_no(self, prod_id):
@@ -370,6 +374,10 @@ class Server(object):
         serv_review_util.ensure_review(
             obj.content, "pha",
             serv_review_util.review_date(row.product_id, serv_review_util.REVIEW_DEFS["pha"]["name_keywords"]) if row.product_id else "",
+            row.product_id,
+        )
+        serv_review_util.fill_cover_signers(
+            obj.content, serv_review_util.cover_signers(row.product_id, "pha") if row.product_id else {}
         )
         if product:
             obj.product_name = product.name
@@ -524,8 +532,20 @@ class Server(object):
             docx_util.save_txt2docx(str(text or ""), document)
 
         def set_cell(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
+            s = str(text or "")
+            if s.startswith("data:image"):
+                try:
+                    b64 = s.split(",", 1)[1] if "," in s else ""
+                    cell.text = ""
+                    para = cell.paragraphs[0]
+                    para.alignment = align
+                    para.add_run().add_picture(BytesIO(base64.b64decode(b64)), height=Pt(33))
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    return
+                except Exception:
+                    pass
             cell.text = ""
-            lines = str(text or "").split("\n")
+            lines = s.split("\n")
             for i, line in enumerate(lines):
                 para = cell.paragraphs[0] if i == 0 else cell.add_paragraph()
                 para.alignment = align

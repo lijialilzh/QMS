@@ -6,18 +6,20 @@
 # 自动获取：1.1 软件信息（产品名称/型号/发布版本/完整版本，安全级别保留模板默认）、全文产品名统一替换；
 #          内置图按「正文 → 图 → 图题 → 正文」版式还原。其余章节模板化（保留模板原文）。
 
+import base64
 import copy
 import json
 import logging
 import os
 import re
+from io import BytesIO
 from typing import List
 
 from sqlalchemy import func, select, delete
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Inches
+from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 
@@ -534,6 +536,7 @@ class Server(object):
             content = self.__apply_autofill(content, auto)
             if row.product_id:
                 serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(row.product_id, "nsr"))
+                serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(row.product_id, "nsr"))
         if product:
             content["productName"] = product.name or ""
         obj.content = content
@@ -652,6 +655,7 @@ class Server(object):
         auto = await self.__collect_autofill(product_id)
         content = self.__apply_autofill(content, auto)
         serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(product_id, "nsr"))
+        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(product_id, "nsr"))
         product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
         if product:
             content["productName"] = product.name or ""
@@ -689,11 +693,23 @@ class Server(object):
             return sec.get("ref_type") == "revision" or normalized(sec.get("title")) == "文件修订记录"
 
         def set_cell_text(cell, text, bold=False):
+            s = str(text or "")
+            if s.startswith("data:image"):
+                try:
+                    b64 = s.split(",", 1)[1] if "," in s else ""
+                    cell.text = ""
+                    paragraph = cell.paragraphs[0]
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    paragraph.add_run().add_picture(BytesIO(base64.b64decode(b64)), height=Pt(33))
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    return
+                except Exception:
+                    pass
             cell.text = ""
             paragraph = cell.paragraphs[0]
             paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
             paragraph.paragraph_format.line_spacing = 1.5
-            docx_util.fonted_txt(paragraph, str(text or ""), font_size=10.5, bold=bold)
+            docx_util.fonted_txt(paragraph, s, font_size=10.5, bold=bold)
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
 
         def add_table_title(title):

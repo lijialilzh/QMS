@@ -525,13 +525,22 @@ export default () => {
                                                     <tr key={r}>
                                                         {row.map((cell: any, ci: number) => (
                                                             <td key={ci} className={r === 0 ? "head" : ""}>
-                                                                <Input.TextArea
-                                                                    className="pdp-cell"
-                                                                    autoSize={{ minRows: 1, maxRows: 8 }}
-                                                                    value={cell ?? ""}
-                                                                    disabled={readonly}
-                                                                    onChange={(e) => setCell(ti, r, ci, e.target.value)}
-                                                                />
+                                                                {typeof cell === "string" && cell.startsWith("data:image") ? (
+                                                                    <span style={{ position: "relative", display: "inline-block" }}>
+                                                                        <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
+                                                                        {!readonly && (
+                                                                            <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />
+                                                                        )}
+                                                                    </span>
+                                                                ) : (
+                                                                    <Input.TextArea
+                                                                        className="pdp-cell"
+                                                                        autoSize={{ minRows: 1, maxRows: 8 }}
+                                                                        value={cell ?? ""}
+                                                                        disabled={readonly}
+                                                                        onChange={(e) => setCell(ti, r, ci, e.target.value)}
+                                                                    />
+                                                                )}
                                                                 {!readonly && r === 0 && tb[0].length > 1 && (
                                                                     <DeleteOutlined className="pdp-col-del" title="删除该列" onClick={() => delCol(ti, ci)} />
                                                                 )}

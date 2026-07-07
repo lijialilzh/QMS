@@ -1130,7 +1130,14 @@ export default () => {
                             const readOnlyCell = isView || isLabelCell || isHeaderCell;
                             return (
                                 <td key={`front-cell-${cellIndex}`} className={isLabelCell || isHeaderCell ? "front-table-header-cell" : ""}>
-                                    {readOnlyCell ? cell : (
+                                    {typeof cell === "string" && cell.startsWith("data:image") ? (
+                                        <span style={{ position: "relative", display: "inline-block" }}>
+                                            <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
+                                            {!readOnlyCell && (
+                                                <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => updateSectionTableCell(sectionKey(section), tableIndex, rowIndex, cellIndex, "")} />
+                                            )}
+                                        </span>
+                                    ) : readOnlyCell ? cell : (
                                         <Input.TextArea
                                             autoSize={{ minRows: 1, maxRows: 4 }}
                                             value={cell}
@@ -1244,7 +1251,14 @@ export default () => {
                                         colSpan={cellSpan?.colspan && cellSpan.colspan > 1 ? cellSpan.colspan : undefined}
                                         rowSpan={cellSpan?.rowspan && cellSpan.rowspan > 1 ? cellSpan.rowspan : undefined}
                                     >
-                                        {isView ? cell : (
+                                        {typeof cell === "string" && cell.startsWith("data:image") ? (
+                                            <span style={{ position: "relative", display: "inline-block" }}>
+                                                <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
+                                                {!isView && (
+                                                    <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => handlers.onCell(rowIndex, cellIndex, "")} />
+                                                )}
+                                            </span>
+                                        ) : isView ? cell : (
                                             <Input.TextArea
                                                 autoSize={{ minRows: 1, maxRows: 8 }}
                                                 value={cell}

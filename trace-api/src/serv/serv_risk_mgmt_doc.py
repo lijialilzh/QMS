@@ -256,14 +256,10 @@ class Server(object):
                         def set_date(val):
                             if val and len(row) >= 4 and not str(row[3] or "").strip():
                                 row[3] = val
-                        if label == "编制人":
-                            set_name(reviser)
-                            set_date(rev_date)
-                        elif label == "审核人":
-                            set_name(auditor)
-                            set_date(rev_date)
-                        elif label == "批准人":
-                            set_name(approver)
+                        # 编制/审核/批准人「姓名」列统一由签名规则填充（见文末 fill_cover_signers），此处仅填日期
+                        if label in ("编制部门", "编写部门"):
+                            set_name("产品部")
+                        elif label in ("编制人", "审核人", "批准人"):
                             set_date(rev_date)
                         elif label == "生效日期":
                             set_name(rev_date)
@@ -287,6 +283,8 @@ class Server(object):
                     col = len(table[0]) if isinstance(table[0], list) and table[0] else 5
                     while len(table) < 6:
                         table.append(["" for _ in range(col)])
+        # 封面「编制/审核/批准人」按部门签名规则填充签名图（仅填空）
+        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(product_id, "risk"))
         return content
 
     def __dhf_code(self, prod_id, keyword):
@@ -744,6 +742,7 @@ class Server(object):
             serv_review_util.ensure_review(
                 obj.content, "risk",
                 serv_review_util.review_date(row.product_id, serv_review_util.REVIEW_DEFS["risk"]["name_keywords"]) if row.product_id else "",
+                row.product_id,
             )
             obj.content = self.__autofill_front_matter(obj.content, row.product_id, row.version)
             obj.content = self.__fill_risk_mgmt_files(obj.content, row.product_id)
@@ -1046,6 +1045,7 @@ class Server(object):
         serv_review_util.ensure_review(
             content, "risk",
             serv_review_util.review_date(product_id, serv_review_util.REVIEW_DEFS["risk"]["name_keywords"]) if product_id else "",
+            product_id,
         )
         content = self.__autofill_front_matter(content, product_id, version)
         content = self.__fill_risk_mgmt_files(content, product_id)
@@ -1490,13 +1490,26 @@ class Server(object):
             return None
 
         def set_cell_text(cell, text, bold=False):
+            s = str(text or "")
+            # 签名图（编制/审核/批准人）：等比嵌入图片，不渲染 base64 文本
+            if s.startswith("data:image"):
+                try:
+                    b64 = s.split(",", 1)[1] if "," in s else ""
+                    cell.text = ""
+                    paragraph = cell.paragraphs[0]
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    paragraph.add_run().add_picture(io.BytesIO(base64.b64decode(b64)), height=Pt(33))
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    return
+                except Exception:
+                    pass
             cell.text = ""
             paragraph = cell.paragraphs[0]
             paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
             paragraph.paragraph_format.space_before = Pt(0)
             paragraph.paragraph_format.space_after = Pt(0)
             paragraph.paragraph_format.line_spacing = 1.3
-            docx_util.fonted_txt(paragraph, str(text or ""), font_size=10.5, bold=bold)
+            docx_util.fonted_txt(paragraph, s, font_size=10.5, bold=bold)
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
 
         def set_cell_rcm(cell, text, bold=False):
@@ -1816,6 +1829,7 @@ class Server(object):
         serv_review_util.ensure_review(
             export_content, "risk",
             serv_review_util.review_date(obj.product_id, serv_review_util.REVIEW_DEFS["risk"]["name_keywords"]) if obj.product_id else "",
+            obj.product_id,
         )
         export_sections = (export_content or {}).get("sections", [])
         cover_section = find_section(export_sections, is_cover_section)

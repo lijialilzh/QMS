@@ -386,12 +386,20 @@ export default () => {
                                                     {tb.map((row: any[], r: number) => {
                                                         const cols = row.length;
                                                         const mergeRow = isFullRow(row);
+                                                        const otherRow = isAppendix && cols > 2
+                                                            && (String(row[0] ?? "").trim().startsWith("其他参会人员")
+                                                                || String(row[0] ?? "").trim().startsWith("其他参评人员"));
                                                         const centerRow = mergeRow
                                                             && (String(row[0] ?? "").trim().startsWith("参评人员签字")
                                                                 || String(row[0] ?? "").trim().startsWith("评审时间"));
                                                         return (
                                                             <tr key={r}>
-                                                                {mergeRow ? (
+                                                                {otherRow ? (
+                                                                    <>
+                                                                        <td className={r === 0 ? "head" : ""} style={{ textAlign: "center", verticalAlign: "middle" }}>{row[0]}</td>
+                                                                        <td colSpan={cols - 1} style={{ textAlign: "center", verticalAlign: "middle" }}>/</td>
+                                                                    </>
+                                                                ) : mergeRow ? (
                                                                     <td className={r === 0 ? "head" : ""} colSpan={cols}>
                                                                         <Input.TextArea
                                                                             className="pdp-cell"
@@ -408,13 +416,22 @@ export default () => {
                                                                         const rowSpan = ci === 0 ? vSpan[r] : undefined;
                                                                         return (
                                                                             <td key={ci} className={r === 0 ? "head" : ""} rowSpan={rowSpan}>
-                                                                                <Input.TextArea
-                                                                                    className="pdp-cell"
-                                                                                    autoSize={{ minRows: 1, maxRows: 8 }}
-                                                                                    value={cell ?? ""}
-                                                                                    disabled={readonly}
-                                                                                    onChange={(e) => setCell(ti, r, ci, e.target.value)}
-                                                                                />
+                                                                                {typeof cell === "string" && cell.startsWith("data:image") ? (
+                                                                                    <span style={{ position: "relative", display: "inline-block" }}>
+                                                                                        <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
+                                                                                        {!readonly && (
+                                                                                            <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />
+                                                                                        )}
+                                                                                    </span>
+                                                                                ) : (
+                                                                                    <Input.TextArea
+                                                                                        className="pdp-cell"
+                                                                                        autoSize={{ minRows: 1, maxRows: 8 }}
+                                                                                        value={cell ?? ""}
+                                                                                        disabled={readonly}
+                                                                                        onChange={(e) => setCell(ti, r, ci, e.target.value)}
+                                                                                    />
+                                                                                )}
                                                                                 {!readonly && r === 0 && tb[0].length > 1 && (
                                                                                     <DeleteOutlined className="pdp-col-del" title="删除该列" onClick={() => delCol(ti, ci)} />
                                                                                 )}

@@ -4,10 +4,12 @@
 # 软件开发计划服务层，模板参考产品开发计划(serv_pdp_doc)。
 # 整份文档以 content(JSON) 存储；导出复用 docx_util.fonted_txt 生成 Word。
 
+import base64
 import copy
 import logging
 import re
 from datetime import date, timedelta
+from io import BytesIO
 from typing import List
 from sqlalchemy import delete, func, select
 from docx import Document
@@ -379,9 +381,10 @@ class Server(object):
         for node in sections:
             fill(node)
         serv_review_util.ensure_review(
-            content, "sd", serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS["sd"]["name_keywords"])
+            content, "sd", serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS["sd"]["name_keywords"]), prod_id
         )
         serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, "sd"))
+        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, "sd"))
         return content
 
     def __to_obj(self, row: SdDoc, product: Product = None):
@@ -390,9 +393,13 @@ class Server(object):
         serv_review_util.ensure_review(
             obj.content, "sd",
             serv_review_util.review_date(row.product_id, serv_review_util.REVIEW_DEFS["sd"]["name_keywords"]) if row.product_id else "",
+            row.product_id,
         )
         serv_review_util.fill_cover_dates(
             obj.content, serv_review_util.cover_date(row.product_id, "sd") if row.product_id else ""
+        )
+        serv_review_util.fill_cover_signers(
+            obj.content, serv_review_util.cover_signers(row.product_id, "sd") if row.product_id else {}
         )
         if product:
             obj.product_name = product.name
@@ -548,8 +555,20 @@ class Server(object):
             docx_util.save_txt2docx(str(text or ""), document)
 
         def set_cell(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
+            s = str(text or "")
+            if s.startswith("data:image"):
+                try:
+                    b64 = s.split(",", 1)[1] if "," in s else ""
+                    cell.text = ""
+                    para = cell.paragraphs[0]
+                    para.alignment = align
+                    para.add_run().add_picture(BytesIO(base64.b64decode(b64)), height=Pt(33))
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    return
+                except Exception:
+                    pass
             cell.text = ""
-            lines = str(text or "").split("\n")
+            lines = s.split("\n")
             for i, line in enumerate(lines):
                 para = cell.paragraphs[0] if i == 0 else cell.add_paragraph()
                 para.alignment = align

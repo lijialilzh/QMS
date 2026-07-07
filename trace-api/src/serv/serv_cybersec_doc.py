@@ -254,14 +254,8 @@ class Server(object):
                             row[3] = ver
                         if label == "编制部门":
                             set_name("研发部")
-                        elif label == "编制人":
-                            set_name(reviser)
-                            set_date(rev_date)
-                        elif label == "审核人":
-                            set_name(auditor)
-                            set_date(rev_date)
-                        elif label == "批准人":
-                            set_name(approver)
+                        # 编制/审核/批准人「姓名」列由签名规则统一填充（见文末 fill_cover_signers），此处仅填日期
+                        elif label in ("编制人", "审核人", "批准人"):
                             set_date(rev_date)
                         elif label == "生效日期":
                             set_name(rev_date)
@@ -284,6 +278,8 @@ class Server(object):
                     col = len(table[0]) if isinstance(table[0], list) and table[0] else 5
                     while len(table) < 6:
                         table.append(["" for _ in range(col)])
+        # 封面「编制/审核/批准人」按部门签名规则填充签名图（仅填空）
+        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(product_id, "cybersec"))
         return content
 
     # 「阶段活动」表：各阶段开始/结束时间按关键字匹配项目时间线日期行，取最早=开始、最晚=结束
@@ -1003,11 +999,24 @@ class Server(object):
             run_end._r.append(fld_end)
 
         def set_cell_text(cell, text, bold=False):
+            s = str(text or "")
+            # 签名图（编制/审核/批准人）：等比嵌入图片，不渲染 base64 文本
+            if s.startswith("data:image"):
+                try:
+                    b64 = s.split(",", 1)[1] if "," in s else ""
+                    cell.text = ""
+                    paragraph = cell.paragraphs[0]
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    paragraph.add_run().add_picture(io.BytesIO(base64.b64decode(b64)), height=Pt(33))
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    return
+                except Exception:
+                    pass
             cell.text = ""
             paragraph = cell.paragraphs[0]
             paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
             paragraph.paragraph_format.line_spacing = 1.5
-            docx_util.fonted_txt(paragraph, str(text or ""), font_size=10.5, bold=bold)
+            docx_util.fonted_txt(paragraph, s, font_size=10.5, bold=bold)
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
 
         def add_plain_table(rows):

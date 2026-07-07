@@ -5,11 +5,13 @@
 # 整份文档以 content(JSON) 的「章节树」存储；产品信息（名称/版本）自动获取注入「维护范围」章节，其余模板化。
 # 导出：标题「网络安全维护计划」→ 封面信息表 → 文件修订记录 → 正文章节（带章节号）。
 
+import base64
 import copy
 import json
 import logging
 import os
 import re
+from io import BytesIO
 from typing import List
 
 from sqlalchemy import delete, func, select
@@ -193,6 +195,7 @@ class Server(object):
             self.__fill_node(node, info, version)
         if prod_id:
             serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, "nsmp"))
+            serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, "nsmp"))
         return content
 
     # ---------------- 文件编号（未手填时从产品 DHF 匹配） ----------------
@@ -355,8 +358,20 @@ class Server(object):
                 docx_util.save_txt2docx(str(text or ""), document)
 
         def set_cell(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
+            s = str(text or "")
+            if s.startswith("data:image"):
+                try:
+                    b64 = s.split(",", 1)[1] if "," in s else ""
+                    cell.text = ""
+                    para = cell.paragraphs[0]
+                    para.alignment = align
+                    para.add_run().add_picture(BytesIO(base64.b64decode(b64)), height=Pt(33))
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    return
+                except Exception:
+                    pass
             cell.text = ""
-            for i, line in enumerate(str(text or "").split("\n")):
+            for i, line in enumerate(s.split("\n")):
                 para = cell.paragraphs[0] if i == 0 else cell.add_paragraph()
                 para.alignment = align
                 para.paragraph_format.line_spacing = 1.3

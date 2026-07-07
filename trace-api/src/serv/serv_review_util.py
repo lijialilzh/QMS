@@ -171,6 +171,52 @@ REVIEW_DEFS = {
 }
 
 
+# 「封面/评审」签署人按部门规则解析（编制人、审核人、批准人）。
+#   ("member_role", 角色关键字)：从本产品参与人员中按角色关键字找到姓名，再取其签名；
+#   ("name", 姓名)：固定姓名（公司层面固定签署人）。
+#   规则来源（用户约定）：
+#     - 产品文件：编制人=产品经理；审核/批准=产品总监(夏晨)
+#     - 开发文件：编制人=TPM；审核/批准=研发负责人
+#     - 测试文件：编制人=测试人员；审核/批准=研发负责人
+DEPT_SIGNERS = {
+    "product": {
+        "编制人": ("member_role", "产品经理"),
+        "审核人": ("name", "夏晨"),
+        "批准人": ("name", "夏晨"),
+    },
+    "dev": {
+        "编制人": ("member_role", "TPM"),
+        "审核人": ("member_role", "研发负责人"),
+        "批准人": ("member_role", "研发负责人"),
+    },
+    "test": {
+        "编制人": ("member_role", "测试人员"),
+        "审核人": ("member_role", "研发负责人"),
+        "批准人": ("member_role", "研发负责人"),
+    },
+}
+DEFAULT_DEPT = "product"
+
+# 各文档模块所属部门（决定封面/评审签署人规则）。如需调整只改此表即可。
+DOC_DEPT = {
+    # 产品线文件：编制人=产品经理，审核/批准=产品总监(夏晨)
+    "pdp": "product", "pir": "product", "label": "product",
+    "release_note": "product", "vuh": "product",
+    "risk": "product", "rmp": "product", "pha": "product",
+    # 开发文件：编制人=TPM，审核/批准=研发负责人
+    "sd": "dev", "srs": "dev", "sds": "dev", "cybersec": "dev",
+    "nsmp": "dev", "nsr": "dev", "research": "dev",
+}
+
+
+def _before_202509(rev_date):
+    """判断评审/文档日期是否在 2025 年 9 月之前（用于测试人员签名统一取宋月的规则）。"""
+    m = re.match(r"(\d{4})\D+(\d{1,2})", str(rev_date or ""))
+    if not m:
+        return False
+    return int(m.group(1)) * 100 + int(m.group(2)) < 202509
+
+
 def review_date(prod_id, name_keywords):
     """从时间线取评审日期（命中「文档名关键字」且优先命中「评审」的行，取最新），格式 yyyy.MM.dd。"""
     if not prod_id:
@@ -275,41 +321,62 @@ def _sign_by_name(name):
     return (getattr(row, "sign_img", "") or "") if row else ""
 
 
-# 各文档「封面签名」的签署人配置：label -> (解析方式, 参数)
-#   ("member_role", 角色关键字)：从本产品参与人员中按角色关键字找到姓名，再取其签名；
-#   ("name", 姓名)：直接按姓名取签名（公司层面的固定签署人）。
-# 签名图来源为「基础数据 → 人员签名管理」中的 sign_img。
-COVER_SIGNERS = {
-    # 产品部文件（产品开发计划等）：编制人=产品经理；审核/批准=产品总监 夏晨
-    "pdp": {
-        "编制人": ("member_role", "产品经理"),
-        "审核人": ("name", "夏晨"),
-        "批准人": ("name", "夏晨"),
-    },
-}
+# 个别模块如需覆盖部门默认规则，可在此登记 key -> {label:(kind,arg)}；留空则一律按部门规则。
+COVER_SIGNERS = {}
 
 
-def cover_signers(prod_id, key="pdp"):
-    """按模块 key 返回封面「编制人/审核人/批准人」应填的签名图 data URL 字典（无图则不含该键）。"""
-    cfg = COVER_SIGNERS.get(key)
+def _signer_config(key):
+    """返回某模块的签署人配置（优先 COVER_SIGNERS 覆盖，否则按部门 DEPT_SIGNERS）。"""
+    if key in COVER_SIGNERS:
+        return COVER_SIGNERS[key]
+    return DEPT_SIGNERS.get(DOC_DEPT.get(key, DEFAULT_DEPT), {})
+
+
+def _resolve_signer_name(spec, members, rev_date=""):
+    """按签署人规则解析姓名。测试人员在 2025.09 之前统一取宋月。"""
+    kind, arg = spec
+    if kind == "name":
+        return arg
+    # member_role：测试人员在 2025.09 之前统一为宋月
+    if ("测试" in str(arg)) and _before_202509(rev_date):
+        return "宋月"
+    return next((m.name for m in members if arg in str(m.role or "")), "")
+
+
+def cover_signers(prod_id, key="pdp", rev_date=""):
+    """按模块 key 返回封面「编制人/审核人/批准人」应填的签名图 data URL 字典（无图则回退姓名）。
+    rev_date 缺省时自动按模块取评审/最后日期（用于测试人员宋月规则）。"""
+    cfg = _signer_config(key)
     signers = {}
     if not prod_id or not cfg:
         return signers
+    if not rev_date:
+        rev_date = cover_date(prod_id, key)
     members = db.session.execute(
         select(ProjectMember).where(ProjectMember.prod_id == prod_id)
     ).scalars().all()
-    for label, (kind, arg) in cfg.items():
-        name = ""
-        if kind == "member_role":
-            name = next((m.name for m in members if arg in str(m.role or "")), "")
-        elif kind == "name":
-            name = arg
-        name = (name or "").strip()
+    for label, spec in cfg.items():
+        name = (_resolve_signer_name(spec, members, rev_date) or "").strip()
         if not name:
             continue
         # 有签名图就放图；没有签名图则回退显示姓名文字（保证签署人不为空）
         signers[label] = _sign_by_name(name) or name
     return signers
+
+
+def review_approver(key, prod_id=None, rev_date=""):
+    """评审记录「批准人」姓名：按部门规则解析（产品=夏晨；开发/测试=研发负责人）。"""
+    spec = _signer_config(key).get("批准人")
+    if not spec:
+        return ""
+    if spec[0] == "name":
+        return spec[1]
+    if not prod_id:
+        return ""
+    members = db.session.execute(
+        select(ProjectMember).where(ProjectMember.prod_id == prod_id)
+    ).scalars().all()
+    return _resolve_signer_name(spec, members, rev_date) or ""
 
 
 def fill_cover_signers(content, signers):
@@ -327,7 +394,8 @@ def fill_cover_signers(content, signers):
                 if not isinstance(row, list) or not row:
                     continue
                 label = str(row[0] or "").strip()
-                if label in signers and len(row) >= 2 and not str(row[1] or "").strip():
+                # 覆盖空值或旧姓名文本；已是签名图则保留（避免重复覆盖用户已放的图）
+                if label in signers and len(row) >= 2 and not str(row[1] or "").startswith("data:image"):
                     row[1] = signers[label]
     return content
 
@@ -341,7 +409,13 @@ def _is_banner(text):
     return any(t.startswith(b) for b in _BANNERS)
 
 
-def build_review_section(key, rev_date=""):
+def _is_other_row(text):
+    """「其他参会人员/其他参评人员」行：标签后单元格合并为一格并填 /。"""
+    t = str(text or "").strip()
+    return t.startswith("其他参会人员") or t.startswith("其他参评人员")
+
+
+def build_review_section(key, rev_date="", prod_id=None):
     d = REVIEW_DEFS.get(key)
     if not d:
         return None
@@ -359,13 +433,37 @@ def build_review_section(key, rev_date=""):
         ["人员角色", "姓名", "签字", "人员角色", "姓名", "签字"],
     ] + [list(r) for r in d["persons"]]
     # 「签字」列按「姓名」列自动取签名图（第2列姓名→第3列签字；第5列姓名→第6列签字），仅填空
+    old_test = _before_202509(rev_date)
     for row in person_tbl[3:]:
         if not isinstance(row, list) or _is_banner(str(row[0] or "")):
             continue
+        # 测试角色：2025.09 之前签名人统一为宋月
+        if old_test:
+            if "测试" in str(row[0] or "") and len(row) >= 2:
+                row[1] = "宋月"
+            if "测试" in str(row[3] or "") and len(row) >= 5:
+                row[4] = "宋月"
         if len(row) >= 3 and str(row[1] or "").strip() and not str(row[2] or "").strip():
             row[2] = _sign_by_name(str(row[1]).strip())
         if len(row) >= 6 and str(row[4] or "").strip() and not str(row[5] or "").strip():
             row[5] = _sign_by_name(str(row[4]).strip())
+    # 「批准人员签字/日期」行：自动填批准人签名图(第2列，无图回退姓名) 与评审日期(第3列)
+    approver = review_approver(key, prod_id, rev_date)
+    for row in person_tbl:
+        if isinstance(row, list) and row and str(row[0] or "").startswith("批准人员签字"):
+            if approver and len(row) >= 2 and not str(row[1] or "").strip():
+                row[1] = _sign_by_name(approver) or approver
+            if len(row) >= 3 and not str(row[2] or "").strip():
+                row[2] = rev_date
+            break
+    # 「其他参会人员/其他参评人员」行：标签后单元格合并为一格并填 /
+    for row in person_tbl:
+        if isinstance(row, list) and row and _is_other_row(row[0]):
+            for i in range(1, len(row)):
+                row[i] = ""
+            if len(row) >= 2:
+                row[1] = "/"
+            break
     return {
         "title": "评审记录",
         "ref_type": "review",
@@ -375,13 +473,69 @@ def build_review_section(key, rev_date=""):
     }
 
 
-def ensure_review(content, key, rev_date=""):
+def autofill_review_person_table(tbl, key="", rev_date="", prod_id=None):
+    """对「已存在的参评人员签字表」就地自动填充（用于评审记录内置于默认内容、不经 build_review_section 的模块，如 rmp）：
+      - 「签字」列按「姓名」列取签名图（仅填空）；测试角色 2025.09 前统一取宋月；
+      - 「批准人员签字/日期」行填批准人签名(按部门) + 评审日期；
+      - 「其他参评人员/其他参会人员」行标签后合并为一格并填 /。
+    仅处理含「参评人员签字」标记的人员表，避免误伤评审内容表。"""
+    if not isinstance(tbl, list):
+        return tbl
+    if not any(isinstance(r, list) and r and str(r[0] or "").startswith("参评人员签字") for r in tbl):
+        return tbl
+    passed_date = bool(rev_date)
+    # 评审日期缺省时，取表内「评审时间」行已有的日期
+    if not rev_date:
+        for row in tbl:
+            if isinstance(row, list) and row and str(row[0] or "").startswith("评审时间"):
+                parts = str(row[0]).split("：", 1)
+                if len(parts) > 1:
+                    rev_date = parts[1].strip()
+                break
+    old_test = _before_202509(rev_date)
+    approver = review_approver(key, prod_id, rev_date) if key else ""
+    for row in tbl:
+        if not isinstance(row, list) or not row:
+            continue
+        lab = str(row[0] or "").strip()
+        if lab.startswith("评审时间"):
+            if passed_date and rev_date:
+                row[0] = f"评审时间：{rev_date}"
+            continue
+        if lab.startswith("批准人员签字"):
+            if approver and len(row) >= 2 and not str(row[1] or "").strip():
+                row[1] = _sign_by_name(approver) or approver
+            if len(row) >= 3 and not str(row[2] or "").strip():
+                row[2] = rev_date
+            continue
+        if _is_banner(lab) or lab == "人员角色":
+            continue
+        if _is_other_row(lab):
+            for i in range(1, len(row)):
+                row[i] = ""
+            if len(row) >= 2:
+                row[1] = "/"
+            continue
+        # 参评人员数据行：测试角色宋月 + 签字列取签名图
+        if old_test:
+            if "测试" in lab and len(row) >= 2:
+                row[1] = "宋月"
+            if len(row) >= 4 and "测试" in str(row[3] or ""):
+                row[4] = "宋月"
+        if len(row) >= 3 and str(row[1] or "").strip() and not str(row[2] or "").strip():
+            row[2] = _sign_by_name(str(row[1]).strip())
+        if len(row) >= 6 and str(row[4] or "").strip() and not str(row[5] or "").strip():
+            row[5] = _sign_by_name(str(row[4]).strip())
+    return tbl
+
+
+def ensure_review(content, key, rev_date="", prod_id=None):
     """在 content.sections 末尾放置「评审记录」章节。内容为模板化，每次按最新格式重建，
     保证样式一致并带最新评审时间（同时清理历史遗留的旧格式）。"""
     sections = (content or {}).get("sections")
     if not isinstance(sections, list):
         return content
-    sec = build_review_section(key, rev_date)
+    sec = build_review_section(key, rev_date, prod_id)
     if not sec:
         return content
     sections[:] = [s for s in sections if s.get("ref_type") != "review"]
@@ -427,7 +581,37 @@ def render_review_grid(document, grid, set_cell, header_rows=1, **_ignore):
         first = rows[r].cells[0].text
         if _is_banner(first) and len(rows[r].cells) > 1:
             merged = rows[r].cells[0].merge(rows[r].cells[-1])
-            set_cell(merged, first, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
+            if first.startswith("批准人员签字"):
+                # 批准人签字行：左对齐，渲染「标签 + 批准人签名图/姓名 + 日期」
+                gr = grid[r] if r < len(grid) else []
+                sign = str(gr[1] or "") if len(gr) > 1 else ""
+                date = str(gr[2] or "") if len(gr) > 2 else ""
+                label = first if first.rstrip().endswith("：") else first + "："
+                set_cell(merged, label, bold=True, align=WD_ALIGN_PARAGRAPH.LEFT)
+                para = merged.paragraphs[0]
+                if sign.startswith("data:image"):
+                    try:
+                        b64 = sign.split(",", 1)[1] if "," in sign else ""
+                        para.add_run("  ")
+                        para.add_run().add_picture(BytesIO(base64.b64decode(b64)), height=Pt(28))
+                    except Exception:
+                        pass
+                elif sign.strip():
+                    rn = para.add_run("  " + sign)
+                    rn.font.size = Pt(10.5)
+                if date.strip():
+                    rd = para.add_run("      " + date)
+                    rd.font.size = Pt(10.5)
+                merged.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            else:
+                set_cell(merged, first, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
+    # 「其他参会人员/其他参评人员」行：标签后单元格合并为一格，居中显示「/」
+    for r in range(n):
+        first = rows[r].cells[0].text
+        if _is_other_row(first) and len(rows[r].cells) > 2:
+            merged = rows[r].cells[1].merge(rows[r].cells[-1])
+            set_cell(merged, "/", align=WD_ALIGN_PARAGRAPH.CENTER)
+            merged.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
     # 首列纵向合并：非空且非标记的单元格向下合并其后的空单元格
     r = 0
     while r < n:

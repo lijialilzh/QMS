@@ -386,8 +386,21 @@ export default () => {
                                     const rs = span ? span[ri][ci] : 1;
                                     if (rs === 0) return null;
                                     const merged = rs > 1;
+                                    const cellVal = (row && row[ci]) ?? "";
+                                    const isSign = typeof cellVal === "string" && cellVal.startsWith("data:image");
                                     return (
                                         <td key={ci} rowSpan={rs} className={ri === 0 ? "head" : ""} style={{ border: "1px solid #9aa4b0", ...(merged ? { verticalAlign: "middle" } : {}) }}>
+                                            {isSign ? (
+                                                <span style={{ position: "relative", display: "inline-block" }}>
+                                                    <img src={cellVal} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
+                                                    <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => updateNode(active._key, (n) => {
+                                                        for (let k = 0; k < rs; k++) {
+                                                            if (!n.tables[ti][ri + k]) n.tables[ti][ri + k] = [];
+                                                            n.tables[ti][ri + k][ci] = "";
+                                                        }
+                                                    })} />
+                                                </span>
+                                            ) : (
                                             <Input.TextArea
                                                 className="pdp-cell"
                                                 style={{ textAlign: "left" }}
@@ -401,6 +414,7 @@ export default () => {
                                                     }
                                                 })}
                                             />
+                                            )}
                                             {ri === 0 && cols > 1 && (
                                                 <DeleteOutlined className="pdp-col-del" title="删除该列" onClick={() => delCol(ti, ci)} />
                                             )}

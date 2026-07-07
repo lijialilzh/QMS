@@ -36,6 +36,7 @@ from ..obj.vobj_rmp_doc import RmpDocObj
 from ..utils.i18n import ts
 from ..utils.sql_ctx import db
 from . import msg_err_db
+from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version, docx_util
 
 logger = logging.getLogger(__name__)
@@ -245,14 +246,8 @@ class Server(object):
                     def set_date(val):
                         if val and len(row) >= 4 and not str(row[3] or "").strip():
                             row[3] = val
-                    if label == "编制人":
-                        set_name(info.get("reviser", ""))
-                        set_date(info.get("rev_date", ""))
-                    elif label == "审核人":
-                        set_name(info.get("auditor", ""))
-                        set_date(info.get("rev_date", ""))
-                    elif label == "批准人":
-                        set_name(info.get("approver", ""))
+                    # 编制/审核/批准人「姓名」列由签名规则统一填充（见 __apply_autofill），此处仅填日期
+                    if label in ("编制人", "审核人", "批准人"):
                         set_date(info.get("rev_date", ""))
                     elif label == "生效日期":
                         set_name(info.get("rev_date", ""))
@@ -276,6 +271,13 @@ class Server(object):
     def __apply_autofill(self, content, info, version):
         for node in (content.get("sections") or []):
             self.__fill_node(node, info, version)
+        # 封面「编制/审核/批准人」按部门签名规则填充签名图（仅填空）
+        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(info.get("prod_id"), "rmp"))
+        # 评审记录（内置于默认内容的「附：评审记录」）：自动填参评人签字、批准人签字/日期、其他参评人员合并/
+        rev = serv_review_util.review_date(info.get("prod_id"), ["风险管理计划"]) if info.get("prod_id") else ""
+        for section in (content.get("sections") or []):
+            for tbl in (section.get("tables") or []):
+                serv_review_util.autofill_review_person_table(tbl, "rmp", rev, info.get("prod_id"))
         return content
 
     # ---------------- 文件编号（未手填时从产品 DHF 匹配） ----------------
@@ -441,8 +443,21 @@ class Server(object):
                 docx_util.save_txt2docx(str(text or ""), document)
 
         def set_cell(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
+            s = str(text or "")
+            # 签名图（编制/审核/批准人）：等比嵌入图片
+            if s.startswith("data:image"):
+                try:
+                    b64 = s.split(",", 1)[1] if "," in s else ""
+                    cell.text = ""
+                    para = cell.paragraphs[0]
+                    para.alignment = align
+                    para.add_run().add_picture(io.BytesIO(base64.b64decode(b64)), height=Pt(33))
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    return
+                except Exception:
+                    pass
             cell.text = ""
-            for i, line in enumerate(str(text or "").split("\n")):
+            for i, line in enumerate(s.split("\n")):
                 para = cell.paragraphs[0] if i == 0 else cell.add_paragraph()
                 para.alignment = align
                 para.paragraph_format.line_spacing = 1.3
@@ -520,14 +535,21 @@ class Server(object):
             for r_idx, row in enumerate(grid):
                 cells = table.add_row().cells
                 first = row[0] if row else ""
+                first_txt = str(first or "").strip()
+                is_other = first_txt.startswith("其他参会人员") or first_txt.startswith("其他参评人员")
                 # 仅评审记录：整行只有第一格有内容时，跨整行合并
-                if merge_full_rows and cols > 1 and str(first or "").strip() and rest_all_empty(row):
+                if merge_full_rows and cols > 1 and first_txt and rest_all_empty(row):
                     merged = cells[0].merge(cells[cols - 1])
-                    txt = str(first or "").strip()
-                    center = txt.startswith("参评人员签字") or txt.startswith("评审时间")
+                    center = first_txt.startswith("参评人员签字") or first_txt.startswith("评审时间")
                     align = WD_ALIGN_PARAGRAPH.CENTER if center else WD_ALIGN_PARAGRAPH.LEFT
                     set_cell(merged, first, bold=(r_idx == 0), align=align)
                     h_merged.append(True)
+                elif merge_full_rows and cols > 2 and is_other:
+                    # 「其他参会人员/其他参评人员」行：标签后单元格合并为一格并居中显示「/」
+                    set_cell(cells[0], first, align=WD_ALIGN_PARAGRAPH.CENTER)
+                    merged = cells[1].merge(cells[cols - 1])
+                    set_cell(merged, "/", align=WD_ALIGN_PARAGRAPH.CENTER)
+                    h_merged.append(False)
                 else:
                     for c_idx in range(cols):
                         set_cell(cells[c_idx], row[c_idx] if c_idx < len(row) else "", bold=(r_idx == 0))

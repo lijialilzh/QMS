@@ -288,7 +288,7 @@ class Server(object):
         for node in sections:
             fill(node)
         serv_review_util.ensure_review(
-            content, "pdp", serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS["pdp"]["name_keywords"])
+            content, "pdp", serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS["pdp"]["name_keywords"]), prod_id
         )
         serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, "pdp"))
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, "pdp"))
@@ -300,6 +300,7 @@ class Server(object):
         serv_review_util.ensure_review(
             obj.content, "pdp",
             serv_review_util.review_date(row.product_id, serv_review_util.REVIEW_DEFS["pdp"]["name_keywords"]) if row.product_id else "",
+            row.product_id,
         )
         serv_review_util.fill_cover_dates(
             obj.content, serv_review_util.cover_date(row.product_id, "pdp") if row.product_id else ""

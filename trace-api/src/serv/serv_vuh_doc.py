@@ -5,10 +5,12 @@
 # 整份文档以 content(JSON) 的「目录树」结构存储；导出结构与产品开发计划一致：
 # 封面→分页→修订记录→分页→目录→分页→正文。
 
+import base64
 import copy
 import logging
 import os
 import re
+from io import BytesIO
 from typing import List
 from sqlalchemy import delete, func, select
 from docx import Document
@@ -84,6 +86,9 @@ class Server(object):
         serv_review_util.fill_cover_dates(
             obj.content, serv_review_util.cover_date(row.product_id, "vuh") if row.product_id else ""
         )
+        serv_review_util.fill_cover_signers(
+            obj.content, serv_review_util.cover_signers(row.product_id, "vuh") if row.product_id else {}
+        )
         if product:
             obj.product_name = product.name
             obj.product_version = product.full_version
@@ -147,6 +152,7 @@ class Server(object):
         for node in sections:
             self.__fill_node(node, info)
         serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, "vuh"))
+        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, "vuh"))
         return content
 
     def __collect_autofill(self, prod_id, product, doc_version):
@@ -432,8 +438,20 @@ class Server(object):
             docx_util.save_txt2docx(str(text or ""), document)
 
         def set_cell(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
+            s = str(text or "")
+            if s.startswith("data:image"):
+                try:
+                    b64 = s.split(",", 1)[1] if "," in s else ""
+                    cell.text = ""
+                    para = cell.paragraphs[0]
+                    para.alignment = align
+                    para.add_run().add_picture(BytesIO(base64.b64decode(b64)), height=Pt(33))
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    return
+                except Exception:
+                    pass
             cell.text = ""
-            lines = str(text or "").split("\n")
+            lines = s.split("\n")
             for i, line in enumerate(lines):
                 para = cell.paragraphs[0] if i == 0 else cell.add_paragraph()
                 para.alignment = align

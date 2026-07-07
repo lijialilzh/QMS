@@ -5,6 +5,10 @@ import React from "react";
 // - 首列非空单元格纵向合并其后的空单元格（类别列）。
 const BANNERS = ["参评人员签字", "评审时间", "评审结论", "批准人员签字"];
 const isBanner = (t: any) => BANNERS.some((b) => String(t ?? "").startsWith(b));
+const isOther = (t: any) => {
+    const s = String(t ?? "").trim();
+    return s.startsWith("其他参会人员") || s.startsWith("其他参评人员");
+};
 
 export const ReviewTable: React.FC<{ grid: any[]; headerRows?: number }> = ({ grid, headerRows = 1 }) => {
     const rows: string[][] = (Array.isArray(grid) ? grid : []).map((r) =>
@@ -34,8 +38,27 @@ export const ReviewTable: React.FC<{ grid: any[]; headerRows?: number }> = ({ gr
                 {rows.map((row, r) => {
                     const head = r < headerRows;
                     if (isBanner(row[0])) {
-                        // 评审结论为长段落，保持左对齐；其余标记行（参评人员签字/评审时间/批准人员签字）居中
+                        // 评审结论为长段落，左对齐；批准人签字行左对齐并渲染签名图/日期；其余标记行居中
                         const isConclusion = String(row[0] ?? "").startsWith("评审结论");
+                        const isApprover = String(row[0] ?? "").startsWith("批准人员签字");
+                        if (isApprover) {
+                            const label = String(row[0] ?? "");
+                            const sign = String(row[1] ?? "");
+                            const date = String(row[2] ?? "");
+                            const isSign = sign.startsWith("data:image");
+                            return (
+                                <tr key={r}>
+                                    <td className={head ? "head" : ""} colSpan={cols}
+                                        style={{ whiteSpace: "pre-wrap", padding: "6px 8px", textAlign: "left", verticalAlign: "middle" }}>
+                                        <span style={{ fontWeight: 600 }}>{label.endsWith("：") ? label : label + "："}</span>
+                                        {isSign
+                                            ? <img src={sign} alt="批准人签字" style={{ height: 36, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle", marginLeft: 8 }} />
+                                            : (sign ? <span style={{ marginLeft: 8 }}>{sign}</span> : null)}
+                                        {date ? <span style={{ marginLeft: 24 }}>{date}</span> : null}
+                                    </td>
+                                </tr>
+                            );
+                        }
                         return (
                             <tr key={r}>
                                 <td className={head ? "head" : ""} colSpan={cols}
@@ -47,6 +70,17 @@ export const ReviewTable: React.FC<{ grid: any[]; headerRows?: number }> = ({ gr
                                     }}>
                                     {row[0]}
                                 </td>
+                            </tr>
+                        );
+                    }
+                    if (isOther(row[0]) && cols > 2) {
+                        // 「其他参会人员/其他参评人员」行：标签后单元格合并为一格并居中显示「/」
+                        return (
+                            <tr key={r}>
+                                <td className={head ? "head" : ""} style={{ whiteSpace: "pre-wrap", verticalAlign: "middle", textAlign: "center", padding: "6px 8px" }}>
+                                    {row[0] || ""}
+                                </td>
+                                <td colSpan={cols - 1} style={{ textAlign: "center", verticalAlign: "middle", padding: "6px 8px" }}>/</td>
                             </tr>
                         );
                     }
