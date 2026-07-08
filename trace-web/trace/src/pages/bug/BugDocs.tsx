@@ -232,7 +232,9 @@ export default () => {
                                                             border: "1px solid #e0e0e0", padding: "4px 8px", verticalAlign: "top",
                                                             whiteSpace: "pre-wrap", maxWidth: 320,
                                                             background: ri === 0 ? "#fafafa" : undefined, fontWeight: ri === 0 ? 600 : undefined,
-                                                        }}>{c}</td>
+                                                        }}>{typeof c === "string" && c.startsWith("data:image")
+                                                            ? <img src={c} alt="签名" style={{ height: 40, objectFit: "contain" }} />
+                                                            : c}</td>
                                                     ))}
                                                 </tr>
                                             ))}
