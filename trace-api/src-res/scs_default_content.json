@@ -1,0 +1,411 @@
+{
+ "sections": [
+  {
+   "title": "软件配置状态报告",
+   "ref_type": "cover",
+   "body": "",
+   "tables": [
+    [
+     [
+      "编制部门",
+      "产品开发部",
+      "文件版本",
+      "A0"
+     ],
+     [
+      "编制人",
+      "",
+      "日    期",
+      ""
+     ],
+     [
+      "审核人",
+      "",
+      "日    期",
+      ""
+     ],
+     [
+      "批准人",
+      "",
+      "日    期",
+      ""
+     ],
+     [
+      "生效日期",
+      "",
+      "",
+      ""
+     ]
+    ]
+   ],
+   "children": [],
+   "images": []
+  },
+  {
+   "title": "文件修订记录",
+   "ref_type": "revision",
+   "body": "",
+   "tables": [
+    [
+     [
+      "修改日期",
+      "版本号",
+      "修订说明",
+      "修订人",
+      "批准人"
+     ],
+     [
+      "",
+      "",
+      "首次发布",
+      "",
+      ""
+     ],
+     [
+      "",
+      "",
+      "",
+      "",
+      ""
+     ],
+     [
+      "",
+      "",
+      "",
+      "",
+      ""
+     ],
+     [
+      "",
+      "",
+      "",
+      "",
+      ""
+     ],
+     [
+      "",
+      "",
+      "",
+      "",
+      ""
+     ]
+    ]
+   ],
+   "children": [],
+   "images": []
+  },
+  {
+   "title": "目的",
+   "body": "软件配置状态报告的目的是保持软件配置项的历史记录可追溯性。",
+   "tables": [],
+   "children": [],
+   "images": []
+  },
+  {
+   "title": "范围",
+   "body": "完整版本号：1.1.0.1\n本软件配置管理状态报告适用于“InferOperate Suite”产品的开发过程和迭代过程。",
+   "tables": [],
+   "children": [],
+   "images": []
+  },
+  {
+   "title": "软件配置状态",
+   "body": "",
+   "tables": [],
+   "children": [
+    {
+     "title": "软件配置项状态(不包括现成软件)",
+     "body": "",
+     "tables": [
+      [
+       [
+        "SCI名字",
+        "SCI类型",
+        "制造商/负责人",
+        "版本号",
+        "存储地点"
+       ],
+       [
+        "python",
+        "/",
+        "Guido van Rossum",
+        "3.11",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "JavaScript",
+        "/",
+        "甲骨文公司",
+        "ES6",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "less",
+        "/",
+        "W3C",
+        "4",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Html",
+        "/",
+        "Tim Berners-Lee",
+        "5",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Chrome",
+        "测试工具",
+        "Google",
+        "137.0.1234.78、 136.0.7103",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "JMeter",
+        "测试工具",
+        "Apache",
+        "5.6.3",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Nmap",
+        "测试工具",
+        "Insecure.com LLC",
+        "7.95",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "VS Code",
+        "前端开发工具",
+        "Microsoft",
+        "1.93.1",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "GitLab",
+        "配置管理工具",
+        "GitLab Inc.",
+        "11.5.3",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Nextcloud",
+        "配置管理工具",
+        "Nextcloud",
+        "16.0.4",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Jira",
+        "配置管理工具",
+        "Atlassian",
+        "7.13.0",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "设计历史文档",
+        "文件",
+        "/",
+        "/",
+        "质量部"
+       ],
+       [
+        "软开源代码",
+        "DP",
+        "infervision",
+        "/",
+        "http://gitlab.quality.info:8081/inferoperate-suite/dataprocessing/tree/1.1.0.1"
+       ],
+       [
+        "软开源代码",
+        "RePACS",
+        "infervision",
+        "/",
+        "http://gitlab.quality.info:8081/inferoperate-suite/repacs/tree/1.1.0.1"
+       ],
+       [
+        "软开源代码",
+        "DLServer",
+        "infervision",
+        "/",
+        "http://gitlab.quality.info:8081/inferoperate-suite/dlserver/tree/1.0.0.0"
+       ],
+       [
+        "软开源代码",
+        "NeoViewer",
+        "infervision",
+        "/",
+        "http://gitlab.quality.info:8081/inferoperate-suite/neoviewer/tree/1.1.0.1"
+       ],
+       [
+        "验证Build",
+        "源代码",
+        "infervision",
+        "/",
+        "http://nextcloud.quality.info:8089 /apps/files/?dir=/InferOperate%20Suite/package&fileid=310113/ InferOperate_Suite-1.1.0.1.zip"
+       ],
+       [
+        "最终构建工具",
+        "构建工具",
+        "infervision",
+        "/",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242/docker-18.06.tar.gz"
+       ]
+      ]
+     ],
+     "children": [],
+     "images": []
+    },
+    {
+     "title": "现成软件配置状态",
+     "body": "注：文件中涉及的编号见各自文档。",
+     "tables": [
+      [
+       [
+        "SCI名字",
+        "制造商/负责人",
+        "版本号",
+        "存储地点"
+       ],
+       [
+        "Ubuntu",
+        "Canonical",
+        "24.04",
+        "/"
+       ],
+       [
+        "Windows",
+        "Microsoft Windows",
+        "10",
+        "/"
+       ],
+       [
+        "Windows",
+        "Microsoft Windows",
+        "11",
+        "/"
+       ],
+       [
+        "Chrome",
+        "Google",
+        "137.0.1234.78、 136.0.7103",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "PostgreSQL",
+        "postgresql.org",
+        "14.2",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "SQLite",
+        "D. Richard Hipp",
+        "3.45.1",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Docker",
+        "Docker Inc",
+        "18.06",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Koa",
+        "TJ Holowaychuk",
+        "2.13.0",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Ant Design (antd)",
+        "AntDesign",
+        "3.26.11",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Ant Design (antd)",
+        "AntDesign",
+        "4.14.0",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Ant Design (antd)",
+        "AntDesign",
+        "4.16.11",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Ant Design (antd)",
+        "AntDesign",
+        "4.18.3",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "React",
+        "Facebook Inc",
+        "16.12.0",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "React",
+        "Facebook Inc",
+        "17.0.1",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "React",
+        "Facebook Inc",
+        "17.0.2",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Redux",
+        "Author:Dan Abramov",
+        "3.7.1",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Redux",
+        "Author:Dan Abramov",
+        "4.0.5",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Redis",
+        "Author:antirez",
+        "6.2.6",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "react-router-dom",
+        "Author:mjackson timdorr",
+        "5.2.0",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "react-router-dom",
+        "Author:mjackson timdorr",
+        "5.1.2",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "react-router-dom",
+        "Author:mjackson timdorr",
+        "5.3.0",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "RabbitMQ",
+        "Pivotal Software",
+        "3.10.2",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ]
+      ]
+     ],
+     "children": [],
+     "images": []
+    }
+   ],
+   "images": []
+  }
+ ]
+}

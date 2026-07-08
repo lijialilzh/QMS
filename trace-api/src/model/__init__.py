@@ -118,5 +118,22 @@ from .crr_doc import CrrDoc  # noqa: E402,F401
 # 开发环境维护说明（独立文档模块，开发文件）。
 from .dem_doc import DemDoc  # noqa: E402,F401
 
+# 开发设备清单（独立文档模块，开发文件）。
+from .deq_doc import DeqDoc  # noqa: E402,F401
+
+# 软件配置管理计划 / 软件配置状态报告（独立文档模块，开发文件）。
+from .scm_doc import ScmDoc  # noqa: E402,F401
+from .scs_doc import ScsDoc  # noqa: E402,F401
+
+# 数据申请单（独立文档模块，开发文件）。
+from .dat_doc import DatDoc  # noqa: E402,F401
+
+# 软件测试计划 / 用户测试计划 / 用户测试报告 / 软件测试报告（测试文件，PDP 风格章节树）。
+from .stp_doc import StpDoc  # noqa: E402,F401
+from .utp_doc import UtpDoc  # noqa: E402,F401
+from .utr_doc import UtrDoc  # noqa: E402,F401
+from .str_doc import StrDoc  # noqa: E402,F401
+from .bug_doc import BugDoc  # noqa: E402,F401
+
 # 人员签名管理（基础数据）：人名章记录。
 from .person_sign import PersonSign  # noqa: E402,F401

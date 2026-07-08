@@ -24,6 +24,7 @@ from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 
 from ..model.product import Product
 from ..model.dem_doc import DemDoc
+from ..model.deq_doc import DeqDoc
 from ..model.prod_dhf import ProdDhf
 from ..model.project_member import ProjectMember
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
@@ -104,6 +105,7 @@ _DESC = (
 )
 
 # 资产表（固定模板：资产编码 + 设备信息）。
+_ASSET_HEADER = ["资产编码", "设备信息", "产品名称", "完整版本"]
 _UBUNTU_INFO = (
     "操作系统： Ubuntu 24.04 LTS（64位）\nCPU：主频：2GHz\n核心数：10核\n"
     "指令集：x86指令集\n内存：64G\n网卡：千兆PCI-E网卡"
@@ -197,7 +199,7 @@ def _check_defaults(kind):
 
 
 def _default_content():
-    assets = [["资产编码", "设备信息", "产品名称", "完整版本"]]
+    assets = [list(_ASSET_HEADER)]
     for code, info in _ASSETS:
         assets.append([code, info, "", ""])
     checks = []
@@ -290,9 +292,48 @@ class Server(object):
             cur = monday + timedelta(days=7)
         return ranges
 
+    def __deq_assets(self, prod_id):
+        """从「开发设备清单」取品牌=组装机/Apple 的设备：返回 [(资产编码, 用途)]（按清单顺序，去重）。"""
+        if not prod_id:
+            return []
+        doc = db.session.execute(
+            select(DeqDoc).where(DeqDoc.product_id == prod_id).order_by(DeqDoc.id.desc())
+        ).scalars().first()
+        if not doc:
+            return []
+        content = doc.content if isinstance(doc.content, dict) else {}
+        rows = content.get("rows") or []
+        out, seen = [], set()
+        for r in (rows[1:] if rows else []):
+            if not isinstance(r, list) or len(r) < 7:
+                continue
+            brand = str(r[3] or "").strip()
+            code = str(r[4] or "").strip()
+            usage = str(r[6] or "").strip()
+            if brand in ("组装机", "Apple") and code and code not in seen:
+                seen.add(code)
+                out.append((code, usage))
+        return out
+
     def __autofill(self, content, prod_id, product=None):
         if not isinstance(content, dict):
             return content
+        # 资产编码/检查表：从「开发设备清单」中品牌=组装机/Apple 的设备自动获取（用途含「共用」=服务器表，否则开发机表）
+        deq_assets = self.__deq_assets(prod_id)
+        if deq_assets:
+            content["assets"] = [list(_ASSET_HEADER)] + [
+                [code, (_MAC_INFO if code.upper().startswith("ISER") else _UBUNTU_INFO), "", ""]
+                for code, _u in deq_assets
+            ]
+            old_checks = {str(ch.get("asset")): ch for ch in (content.get("checks") or []) if isinstance(ch, dict)}
+            content["checks"] = [
+                {
+                    "asset": code,
+                    "kind": ("server" if "共用" in str(usage) else "dev"),
+                    "rows": (old_checks.get(code, {}).get("rows") or []),
+                }
+                for code, usage in deq_assets
+            ]
         # 资产表：首个数据行填产品名称/完整版本
         assets = content.get("assets") or []
         if product and len(assets) >= 2 and isinstance(assets[1], list):

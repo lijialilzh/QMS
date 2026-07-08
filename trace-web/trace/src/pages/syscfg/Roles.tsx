@@ -69,7 +69,7 @@ const matchModuleCodes = (moduleName: string, items: Array<{ code: string; name:
             );
         if (moduleName === "产品文件管理") return code === "srs_doc" || code.startsWith("srs_doc_") || code.startsWith("pdp_doc") || code.startsWith("pir_doc");
         if (moduleName === "开发测试文件管理")
-            return code === "sds_doc" || code.startsWith("sds_doc_") || code.startsWith("sd_doc") || code.startsWith("crr_doc") || code.startsWith("dem_doc") || code.startsWith("test_set") || code.startsWith("test_case");
+            return code === "sds_doc" || code.startsWith("sds_doc_") || code.startsWith("sd_doc") || code.startsWith("crr_doc") || code.startsWith("dem_doc") || code.startsWith("deq_doc") || code.startsWith("scm_doc") || code.startsWith("scs_doc") || code.startsWith("dat_doc") || code.startsWith("stp_doc") || code.startsWith("utp_doc") || code.startsWith("utr_doc") || code.startsWith("str_doc") || code.startsWith("bug_doc") || code.startsWith("test_set") || code.startsWith("test_case");
         if (moduleName === "图表文件管理") return name.startsWith("图表文件/") || code.startsWith("doc_file_");
         if (moduleName === "风险追溯管理") return ["prod_haz", "prod_rcm", "prod_cst", "test_set", "test_case"].some((k) => code.startsWith(k));
         if (moduleName === "风险管理") return code.startsWith("risk_mgmt_doc") || name.startsWith("风险管理/");

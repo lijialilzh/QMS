@@ -1,0 +1,563 @@
+{
+ "sections": [
+  {
+   "title": "软件配置管理计划",
+   "ref_type": "cover",
+   "body": "",
+   "tables": [
+    [
+     [
+      "编制部门",
+      "产品开发部",
+      "文件版本",
+      "A0"
+     ],
+     [
+      "编制人",
+      "",
+      "日    期",
+      ""
+     ],
+     [
+      "审核人",
+      "",
+      "日    期",
+      ""
+     ],
+     [
+      "批准人",
+      "",
+      "日    期",
+      ""
+     ],
+     [
+      "生效日期",
+      "",
+      "",
+      ""
+     ]
+    ]
+   ],
+   "children": [],
+   "images": []
+  },
+  {
+   "title": "文件修订记录",
+   "ref_type": "revision",
+   "body": "",
+   "tables": [
+    [
+     [
+      "修改日期",
+      "版本号",
+      "修订说明",
+      "修订人",
+      "批准人"
+     ],
+     [
+      "",
+      "",
+      "首次发布",
+      "",
+      ""
+     ],
+     [
+      "",
+      "",
+      "",
+      "",
+      ""
+     ],
+     [
+      "",
+      "",
+      "",
+      "",
+      ""
+     ],
+     [
+      "",
+      "",
+      "",
+      "",
+      ""
+     ],
+     [
+      "",
+      "",
+      "",
+      "",
+      ""
+     ]
+    ]
+   ],
+   "children": [],
+   "images": []
+  },
+  {
+   "title": "介绍",
+   "body": "软件配置管理计划描述了产品生命周期内软件配置管理的方法，它包括新产品开发和老产品维护。",
+   "tables": [],
+   "children": [
+    {
+     "title": "目的",
+     "body": "这个文件的目的是定义在软件开发和软件维护过程中配置管理职责，配置管理资源和配置管理过程，包括程序配置管理和文档配置管理。",
+     "tables": [],
+     "children": [],
+     "images": []
+    },
+    {
+     "title": "范围",
+     "body": "产品名称：InferOperate Suite\n软件配置管理计划适用于“InferOperate Suite”产品的开发过程和维护过程，每个项目都应输出软件配置管理计划文件，软件配置管理计划文件是开发过程中的必要文件。",
+     "tables": [],
+     "children": [],
+     "images": []
+    },
+    {
+     "title": "缩写",
+     "body": "SCM 软件配置管理\nSCI 软件配置项",
+     "tables": [],
+     "children": [],
+     "images": []
+    },
+    {
+     "title": "配置管理工具",
+     "body": "推想产品的软件管理配置工具是Git、Nextcloud、Jira。",
+     "tables": [],
+     "children": [],
+     "images": []
+    },
+    {
+     "title": "本文件的更新",
+     "body": "本文件会根据产品的更新而更新来保证所有的软件配置管理内容是最新状态。",
+     "tables": [],
+     "children": [],
+     "images": []
+    },
+    {
+     "title": "角色与职责",
+     "body": "配置负责人：沈宏，职责如下：\n审核和批准软件配置管理计划；\n审核和批准软件配置状态报告；\n召集评估变更；\n提出配置管理的建议和要求；\n配合配置管理员的工作。\n配置管理组成员：产品开发负责人宁随军\n各组项目负责人，职责如下：\n产品开发负责人负责编写软件配置管理计划，其他负责人配合完成配置管理计划的编写；\n负责项目的配置管理工作，包括权限分配、配置项的控制等；\n监督项目组成员规范的执行情况。",
+     "tables": [],
+     "children": [],
+     "images": []
+    },
+    {
+     "title": "SCM文件共享权限",
+     "body": "所有的文件是通过网络共享，网络共享的权限是受限制的。\n对于Nextcloud服务器，只有产品开发部的负责人有各自模块主目录的写权限，其他用户成员拥有主目录只读权限。\n对于Git服务器，产品开发部负责人或其指定工程师具备受保护分支的写权限，其他用户成员对受保护分支仅有只读权限；所有用户拥有对Git服务器普通分支的读写权限。\n对于Jira服务器，测试人员拥有提交Bug、验证Bug、关闭Bug、重新打开Bug权限，开发人员拥有Bug确认与分配、修复Bug权限，产品经理拥有提交Bug、验证Bug、重新打开Bug、升级验证Bug权限。",
+     "tables": [],
+     "children": [],
+     "images": []
+    }
+   ],
+   "images": []
+  },
+  {
+   "title": "软件配置管理活动",
+   "body": "进入到软件开发周期的所有软件配置项都应受控，开发过程中和生产后产品都应通过《软件维护计划》来完成软件配置管理活动。",
+   "tables": [],
+   "children": [
+    {
+     "title": "标识配置",
+     "body": "标识配置管理组成员需要产生SCI清单， 包括现成软件配置项和开发工具SCI，SCI清单需要配置负责人批准，每一个SCI应包括， SCI名字，SCI类型， 制造商/负责人， 版本号和存储地点\n软件配置项清单见下表\n现成软件配置项清单见下表",
+     "tables": [
+      [
+       [
+        "SCI名字",
+        "SCI类型",
+        "制造商/负责人",
+        "版本号",
+        "存储地点"
+       ],
+       [
+        "python",
+        "/",
+        "Guido van Rossum",
+        "3.11",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "JavaScript",
+        "/",
+        "甲骨文公司",
+        "ES6",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "less",
+        "/",
+        "W3C",
+        "4",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Html",
+        "/",
+        "Tim Berners-Lee",
+        "5",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Chrome",
+        "测试工具",
+        "Google",
+        "137.0.1234.78、 136.0.7103",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "JMeter",
+        "测试工具",
+        "Apache",
+        "5.6.3",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Nmap",
+        "测试工具",
+        "Insecure.com LLC",
+        "7.95",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "VS Code",
+        "前端开发工具",
+        "Microsoft",
+        "1.93.1",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "GitLab",
+        "配置管理工具",
+        "GitLab Inc.",
+        "11.5.3",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Nextcloud",
+        "配置管理工具",
+        "Nextcloud",
+        "16.0.4",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Jira",
+        "配置管理工具",
+        "Atlassian",
+        "7.13.0",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "设计历史文档",
+        "文件",
+        "/",
+        "/",
+        "质量部"
+       ],
+       [
+        "软开源代码",
+        "源代码",
+        "Infervision",
+        "/",
+        "http://gitlab.quality.info:8081/inferoperate-suite"
+       ]
+      ],
+      [
+       [
+        "SCI名字",
+        "制造商/负责人",
+        "版本号",
+        "存储地点"
+       ],
+       [
+        "Ubuntu",
+        "Canonical",
+        "24.04",
+        "/"
+       ],
+       [
+        "Windows",
+        "Microsoft Windows",
+        "10",
+        "/"
+       ],
+       [
+        "Windows",
+        "Microsoft Windows",
+        "11",
+        "/"
+       ],
+       [
+        "Chrome",
+        "Google",
+        "137.0.1234.78、 136.0.7103",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "PostgreSQL",
+        "postgresql.org",
+        "14.2",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "SQLite",
+        "D. Richard Hipp",
+        "3.45.1",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Docker",
+        "Docker Inc",
+        "18.06",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Koa",
+        "TJ Holowaychuk",
+        "2.13.0",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Ant Design (antd)",
+        "AntDesign",
+        "3.26.11",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Ant Design (antd)",
+        "AntDesign",
+        "4.14.0",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Ant Design (antd)",
+        "AntDesign",
+        "4.16.11",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Ant Design (antd)",
+        "AntDesign",
+        "4.18.3",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "React",
+        "Facebook Inc",
+        "16.12.0",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "React",
+        "Facebook Inc",
+        "17.0.1",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "React",
+        "Facebook Inc",
+        "17.0.2",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Redux",
+        "Author:Dan Abramov",
+        "3.7.1",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Redux",
+        "Author:Dan Abramov",
+        "4.0.5",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "Redis",
+        "Author:antirez",
+        "6.2.6",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "react-router-dom",
+        "Author:mjackson timdorr",
+        "5.2.0",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "react-router-dom",
+        "Author:mjackson timdorr",
+        "5.1.2",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "react-router-dom",
+        "Author:mjackson timdorr",
+        "5.3.0",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ],
+       [
+        "RabbitMQ",
+        "Pivotal Software",
+        "3.10.2",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242"
+       ]
+      ]
+     ],
+     "children": [],
+     "images": []
+    },
+    {
+     "title": "产品开发部软件构建配置项版本控制",
+     "body": "版本控制方法\n配置项命名规则: X.Y.Z，X、Y、Z的命名规则参照2.3.3\n配置项存储地址如下所示\n注，软件验证之前的配置项必须受控，且需要保存在上面列出的地址。软件验证之前的配置项也应记录在软件配置状态报告内。",
+     "tables": [
+      [
+       [
+        "类别",
+        "类别",
+        "存储路径"
+       ],
+       [
+        "源代码",
+        "DP",
+        "http://gitlab.quality.info:8081/inferoperate-suite/dataprocessing/tree/1.1.0.1"
+       ],
+       [
+        "源代码",
+        "RePACS",
+        "http://gitlab.quality.info:8081/inferoperate-suite/repacs/tree/1.1.0.1"
+       ],
+       [
+        "源代码",
+        "DLServer",
+        "http://gitlab.quality.info:8081/inferoperate-suite/dlserver/tree/1.0.0.0"
+       ],
+       [
+        "源代码",
+        "NeoViewer",
+        "http://gitlab.quality.info:8081/inferoperate-suite/neoviewer/tree/1.1.0.1"
+       ],
+       [
+        "验证Build",
+        "验证Build",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/InferOperate%20Suite/package&fileid=310113/ InferOperate_Suite-1.1.0.1.zip"
+       ],
+       [
+        "最终构建工具",
+        "最终构建工具",
+        "http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242/docker-18.06.tar.gz"
+       ]
+      ]
+     ],
+     "children": [],
+     "images": []
+    },
+    {
+     "title": "发布软件控制",
+     "body": "",
+     "tables": [],
+     "children": [
+      {
+       "title": "软件开发基线",
+       "body": "InferOperate Suite 1.1.0.1产品的开发基线是已发布的InferOperate Suite 1.0.1.0。",
+       "tables": [],
+       "children": [],
+       "images": []
+      },
+      {
+       "title": "软件版本命名规则",
+       "body": "现成软件更新根据对软件不同程度的影响，遵循版本命名规则。",
+       "tables": [],
+       "children": [],
+       "images": []
+      },
+      {
+       "title": "文件中涉及的编号命名规则",
+       "body": "系统设计：SDS-XX(产品代号)XX(模块编号)-XXX(设计编号），如SDS-CT01-001\n系统接口：SDS-IFXX(模块编号)-XX(产品标识)XXX(需求编号)-XXX(接口编号)，如SDS-IF00-CT001-001\n系统测试用例：TSXX(模块编号)-XXX(需求编号)-XXXX(测试编号），如TS01-001-0001\n集成测试用例：TIXX(模块编号)-XXX(需求编号)-XXXX(测试编号)，如TI01-001-0001\n单元测试用例：TUXX(需求模块)-XXX(需求编号)-XXXX(测试编号)，如TU01-001-0001",
+       "tables": [],
+       "children": [],
+       "images": []
+      }
+     ],
+     "images": []
+    },
+    {
+     "title": "变更控制",
+     "body": "",
+     "tables": [],
+     "children": [
+      {
+       "title": "批准变更请求",
+       "body": "按照《设计开发变更控制程序》要求，在开发之前需要批准变更申请单。",
+       "tables": [],
+       "children": [],
+       "images": []
+      },
+      {
+       "title": "实施变更",
+       "body": "接收到批准的变更申请单后，按照《软件维护计划》规定的要求实施变更活动。",
+       "tables": [],
+       "children": [],
+       "images": []
+      },
+      {
+       "title": "源代码的变更",
+       "body": "软件发布后，源代码处于受控状态，如需更改源代码，必须按照《设计开发变更控制程序》的要求，提交变更申请单来更新已发布的《软件概要设计》以及《软件详细设计》。产品开发部负责人指定软件工程师按照《软件概要设计》以及《软件详细设计》修改源代码。\n源代码修改后，须按照《设计开发变更控制程序》提交验证和确认，通过后，重新发布新版软件。",
+       "tables": [],
+       "children": [],
+       "images": []
+      },
+      {
+       "title": "验证变更",
+       "body": "变更验证计划将描述变更的验证方法和验证内容， 验证报告将描述验证结果。",
+       "tables": [],
+       "children": [],
+       "images": []
+      },
+      {
+       "title": "变更的可追溯性",
+       "body": "通过设计开发变更，需求Bug记录表完成变更的追溯性。",
+       "tables": [],
+       "children": [],
+       "images": []
+      }
+     ],
+     "images": []
+    },
+    {
+     "title": "发布过程",
+     "body": "按照《产品发布说明》发布产品，发布的主要过程包括：\n测试过程：\n软件在开发完毕后，须经过单元测试、系统测试、集成测试三个测试阶段。测试完成后需要形成完整的测试报告。该报告必须进行评审，评审通过后测试过程才可以结束。\n发布准备过程：\n准备各类发布文档，包括DHF和DMR。\n正式发布（包括U盘发布）：\n准备工作完成后，由产品经理进行对外发布，并提供产品相关文档。",
+     "tables": [],
+     "children": [],
+     "images": []
+    },
+    {
+     "title": "软件开发环境的建立",
+     "body": "VSCode都是常见的开发工具，具体安装过程指导文件存储地址为：\nVSCode：\n中文安装指导地址：http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=381\nvscode安装手册.docx。\n更多指导：http://www.microsoft.com/help/vscode。\nClamAV是常用的病毒查杀工具，用作日常电脑病毒防护工具。\nClamAV\n参考的安装手册地址：\nhttp://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=381\nclamav安装手册.docx",
+     "tables": [],
+     "children": [],
+     "images": []
+    },
+    {
+     "title": "软件测试环境的建立",
+     "body": "Chrome、 Jmeter和Nmap都是常用的测试工具，使用说明文件存储地址为：\nChrome:\n安装包地址：http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242\n更多指导https://www.google.cn/intl/zh-CN/chrome/\nJMeter：\n中文安装指导地址：安装包地址：http://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242\n更多指导https://jmeter.apache.org/\nNmap是网络探测和安全审核的工具，用作日常网络安全扫描；\nNmap\n参考的安装手册地址：\nhttp://nextcloud.quality.info:8089/apps/files/?dir=/tools&fileid=242\n更多指导https://nmap.org/",
+     "tables": [],
+     "children": [],
+     "images": []
+    },
+    {
+     "title": "配置管理状态报告",
+     "body": "配置管理组成员需要完成软件配置状态报告，这个报告记录在不同版本下的SCI的变化。所有变更历史都记录在软件配置管理状态报告中。",
+     "tables": [],
+     "children": [],
+     "images": []
+    },
+    {
+     "title": "配置审核",
+     "body": "配置负责人需要按照要求完成软件配置状态报告审核， 软件配置状态报告审核主要是过程审核，通过过程审核来保证任何一个变化都是按照软件配置管理控制程序和软件配置管理计划的规定完成，审核通过后，配置负责人批准软件配置状态报告。",
+     "tables": [],
+     "children": [],
+     "images": []
+    }
+   ],
+   "images": []
+  }
+ ]
+}

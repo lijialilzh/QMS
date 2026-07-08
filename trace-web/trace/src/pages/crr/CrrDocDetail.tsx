@@ -5,7 +5,9 @@ import type { CSSProperties } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
+import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiCrrDoc";
+import * as ApiProduct from "@/api/ApiProduct";
 import "../pdp/PdpDocDetail.less";
 
 const CATEGORIES = ["结构", "文档", "变量", "算法操作", "循环和分支"];
@@ -46,6 +48,7 @@ export default () => {
         exporting: false,
         doc: {} as any,
         content: { ...DEFAULT_CONTENT } as any,
+        products: [] as any[],
     });
 
     const load = () => {
@@ -69,6 +72,17 @@ export default () => {
     useEffect(() => {
         load();
     }, [id, location.pathname]);
+
+    useEffect(() => {
+        ApiProduct.list_product({ page_size: 10000 }).then((res: any) => {
+            if (res.code === Api.C_OK) dispatch({ products: res.data?.rows || [] });
+        });
+    }, []);
+
+    const rebindProduct = (newId: number) => {
+        const product = (data.products || []).find((p: any) => p.id === newId) || {};
+        dispatch({ doc: { ...data.doc, product_id: newId, product_name: product.name, product_full_version: product.full_version } });
+    };
 
     const setField = (key: string, value: any) => {
         dispatch({ content: { ...data.content, [key]: value } });
@@ -139,11 +153,33 @@ export default () => {
             <div className="div-h pdp-toolbar">
                 <div className="pdp-toolbar-title">
                     代码审查记录
-                    <span className="pdp-meta">
-                        {data.doc.product_name ? `　${data.doc.product_name}` : ""}
-                        {data.doc.product_full_version ? ` / ${data.doc.product_full_version}` : ""}
-                        {data.doc.version ? `　文档版本：${data.doc.version}` : ""}
-                    </span>
+                    {readonly ? (
+                        <span className="pdp-meta">
+                            {data.doc.product_name ? `　${data.doc.product_name}` : ""}
+                            {data.doc.product_full_version ? ` / ${data.doc.product_full_version}` : ""}
+                            {data.doc.version ? `　文档版本：${data.doc.version}` : ""}
+                        </span>
+                    ) : (
+                        <span className="pdp-meta" style={{ display: "inline-flex", alignItems: "center", gap: 8, marginLeft: 12 }}>
+                            <span style={{ width: 340, display: "inline-block" }}>
+                                <ProductVersionSelect
+                                    products={data.products}
+                                    value={data.doc.product_id}
+                                    allowClear={false}
+                                    namePlaceholder={ts("product.name")}
+                                    versionPlaceholder={ts("product.full_version")}
+                                    onChange={(v) => v && rebindProduct(v)}
+                                />
+                            </span>
+                            <span style={{ whiteSpace: "nowrap" }}>文档版本：</span>
+                            <Input
+                                size="small"
+                                style={{ width: 110 }}
+                                value={data.doc.version || ""}
+                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })}
+                            />
+                        </span>
+                    )}
                 </div>
                 <Space>
                     {!readonly && (

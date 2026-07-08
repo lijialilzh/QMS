@@ -15,14 +15,15 @@ from io import BytesIO
 from sqlalchemy import select
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT, WD_ROW_HEIGHT_RULE
 
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..model.project_member import ProjectMember
 from ..model.person_sign import PersonSign
 from ..utils.sql_ctx import db
 
-CHECK = "■通过 □存在问题"
+# 选中用 ☑(框内对号)，加文本呈现选择符(U+FE0E)避免渲染成彩色 emoji；未选空框 □。
+CHECK = "\u2611\ufe0e通过 □存在问题"
 
 # 各模块的评审记录模板：items 为 [类别, 评审项] 列表，persons 为参评人员 6 列行
 REVIEW_DEFS = {
@@ -138,6 +139,143 @@ REVIEW_DEFS = {
             ["批准人员签字/日期", "", "", "", "", ""],
         ],
     },
+    "scm": {
+        "name_keywords": ["软件配置管理计划", "配置管理计划"],
+        "items": [
+            ["软件配置管理计划", "配置管理职责、资源、过程是否明确？"],
+            ["软件配置管理计划", "配置项标识与清单是否完整？"],
+            ["软件配置管理计划", "版本控制与变更控制是否定义？"],
+            ["软件配置管理计划", "发布过程与配置审核是否明确？"],
+        ],
+        "conclusion": (
+            "评审结论：\n通过，软件配置管理计划中配置管理职责、资源、过程明确，配置项标识与清单完整，"
+            "版本控制与变更控制已定义，发布过程与配置审核明确。"
+        ),
+        "persons": [
+            ["产品开发部经理", "沈宏", "", "产品经理", "杨静", ""],
+            ["开发负责人", "宁随军", "", "QA", "林金贵", ""],
+            ["其他参评人员", "", "", "", "", ""],
+            ["批准人员签字/日期", "", "", "", "", ""],
+        ],
+    },
+    "scs": {
+        "name_keywords": ["软件配置状态报告", "配置管理状态报告", "配置状态报告"],
+        "items": [
+            ["软件配置状态报告", "产品定义是否明确？"],
+            ["软件配置状态报告", "产品范围是否明确？"],
+            ["软件配置状态报告", "配置项版本信息是否清晰？"],
+            ["软件配置状态报告", "配置项可追溯信息是否完整？"],
+        ],
+        "conclusion": (
+            "评审结论：\n通过，软件配置状态报告明确了定义和范围。配置项具备清晰的版本信息和完整的可追溯信息。"
+        ),
+        "persons": [
+            ["产品经理", "杨静", "", "产品开发部经理", "沈宏", ""],
+            ["开发负责人", "宁随军", "", "QA", "林金贵", ""],
+            ["其他参评人员", "", "", "", "", ""],
+            ["批准人员签字/日期", "", "", "", "", ""],
+        ],
+    },
+    "stp": {
+        "name_keywords": ["软件测试计划", "软件测试"],
+        "items": [
+            ["文档完整程度", "测试目的明确"],
+            ["文档完整程度", "报告描述/范围严谨准确"],
+            ["文档完整程度", "确认测试设备信息"],
+            ["文档完整程度", "确认人力资源"],
+            ["文档完整程度", "确认测试工作量"],
+            ["文档完整程度", "每一项功能都具备Case编号"],
+            ["文档完整程度", "测试项输出清单及测试结果清晰明确"],
+            ["文档完整程度", "每项测试都具备测试用例分析"],
+            ["文档完整程度", "缺陷统计及遗留bug分析"],
+            ["文档完整程度", "测试结论合理性"],
+            ["文档完整程度", "是否可追溯"],
+        ],
+        "conclusion": (
+            "评审结论：\n通过，测试目的明确，报告描述/范围严谨准确，均已确认人力资源及测试工作量，"
+            "测试项输出清单及测试结果清晰明确。"
+        ),
+        "persons": [
+            ["产品经理", "吴福乐", "", "产品开发部经理", "沈宏", ""],
+            ["开发负责人", "宁随军", "", "测试负责人", "宋月", ""],
+            ["QA", "林金贵", "", "", "", ""],
+            ["其他参评人员", "", "", "", "", ""],
+            ["批准人员签字/日期", "", "", "", "", ""],
+        ],
+    },
+    "utp": {
+        "name_keywords": ["用户测试计划", "用户测试"],
+        "items": [
+            ["文档完整程度", "测试定义清晰"],
+            ["文档完整程度", "有明确且合理的时间计划"],
+            ["文档完整程度", "明确人员要求"],
+            ["文档完整程度", "明确软硬件设备要求"],
+            ["文档完整程度", "符合测试流程"],
+            ["文档完整程度", "明确测试项通过准则"],
+            ["文档完整程度", "确定测试的管理工具及测试工具"],
+            ["文档完整程度", "明确测试步骤"],
+            ["文档完整程度", "明确测试方法"],
+        ],
+        "conclusion": (
+            "评审结论：\n通过，测试定义清晰，明确且合理的时间计划、人员要求，测试流程符合法规，"
+            "具有清晰的测试项目输入/输出清单。"
+        ),
+        "persons": [
+            ["产品经理", "吴福乐", "", "产品部经理", "夏晨", ""],
+            ["QA", "林金贵", "", "", "", ""],
+            ["其他参评人员", "", "", "", "", ""],
+            ["批准人员签字/日期", "", "", "", "", ""],
+        ],
+    },
+    "utr": {
+        "name_keywords": ["用户测试报告", "用户测试"],
+        "items": [
+            ["文档完整程度", "测试目的明确"],
+            ["文档完整程度", "报告描述/范围严谨准确"],
+            ["文档完整程度", "确认测试设备信息"],
+            ["文档完整程度", "确认人力资源"],
+            ["文档完整程度", "确认测试工作量"],
+            ["文档完整程度", "每一项功能都具备Case编号"],
+            ["文档完整程度", "测试项输出清单及测试结果清晰明确"],
+            ["文档完整程度", "每项测试都具备测试用例分析"],
+            ["文档完整程度", "测试结论合理性"],
+        ],
+        "conclusion": (
+            "评审结论：\n通过，测试目的明确，报告描述/范围严谨准确，均已确认人力资源及测试工作量，"
+            "测试结论与建议均合理。"
+        ),
+        "persons": [
+            ["产品经理", "吴福乐", "", "产品部经理", "夏晨", ""],
+            ["QA", "林金贵", "", "", "", ""],
+            ["其他参评人员", "", "", "", "", ""],
+            ["批准人员签字/日期", "", "", "", "", ""],
+        ],
+    },
+    "str": {
+        "name_keywords": ["软件测试报告"],
+        "items": [
+            ["文档完整程度", "测试定义清晰"],
+            ["文档完整程度", "有明确且合理的时间计划"],
+            ["文档完整程度", "明确人员要求"],
+            ["文档完整程度", "明确软硬件设备要求"],
+            ["文档完整程度", "符合测试流程"],
+            ["文档完整程度", "明确测试项通过准则"],
+            ["文档完整程度", "确定测试的管理工具及测试工具"],
+            ["文档完整程度", "明确测试步骤"],
+            ["文档完整程度", "明确测试方法"],
+        ],
+        "conclusion": (
+            "评审结论：\n通过，测试定义清晰，明确且合理的时间计划，测试流程符合法规，"
+            "具有清晰的测试项目输入/输出清单。"
+        ),
+        "persons": [
+            ["产品经理", "吴福乐", "", "产品开发部经理", "沈宏", ""],
+            ["开发负责人", "宁随军", "", "测试负责人", "宋月", ""],
+            ["QA", "林金贵", "", "", "", ""],
+            ["其他参评人员", "", "", "", "", ""],
+            ["批准人员签字/日期", "", "", "", "", ""],
+        ],
+    },
     "risk": {
         "name_keywords": ["风险管理报告", "风险管理"],
         "items": [
@@ -206,6 +344,9 @@ DOC_DEPT = {
     # 开发文件：编制人=TPM，审核/批准=研发负责人
     "sd": "dev", "srs": "dev", "sds": "dev", "cybersec": "dev",
     "nsmp": "dev", "nsr": "dev", "research": "dev", "crr": "dev",
+    "scm": "dev", "scs": "dev",
+    # 测试文件：编制人=测试人员，审核/批准=研发负责人
+    "stp": "test", "utp": "test", "utr": "test", "str": "test", "bug": "test",
 }
 
 
@@ -254,11 +395,84 @@ def review_date(prod_id, name_keywords):
     return f"{to_int(r.year)}.{to_int(r.month):02d}.{(to_int(r.day) or 1):02d}"
 
 
+def date_range(prod_id, name_keywords):
+    """时间线里命中任一关键字的活动，返回其（最早, 最晚）日期区间，形如 (yyyy.MM.dd, yyyy.MM.dd)。
+    关键字需足够具体以排除其它轨道（如用『单元测试记录』而非『测试记录』以排除『模型测试记录』）。"""
+    if not prod_id or not name_keywords:
+        return ("", "")
+
+    def to_int(v):
+        digits = re.sub(r"[^\d]", "", str(v or ""))
+        return int(digits) if digits else None
+
+    tl_rows = db.session.execute(
+        select(ProjectTimelineRow).where(ProjectTimelineRow.prod_id == prod_id)
+    ).scalars().all()
+    if not tl_rows:
+        return ("", "")
+    cell_map = {}
+    for c in db.session.execute(
+        select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_([r.id for r in tl_rows]))
+    ).scalars().all():
+        cell_map.setdefault(c.row_id, []).append(c.output_result or "")
+
+    def date_key(r):
+        return to_int(r.year) * 10000 + to_int(r.month) * 100 + (to_int(r.day) or 0)
+
+    matched = []
+    for r in tl_rows:
+        if (r.row_type or "date") != "date" or not to_int(r.year) or not to_int(r.month):
+            continue
+        vals = cell_map.get(r.id, [])
+        if any(any(k in str(v or "") for k in name_keywords) for v in vals):
+            matched.append(r)
+    if not matched:
+        return ("", "")
+    lo = min(matched, key=date_key)
+    hi = max(matched, key=date_key)
+
+    def fmt(r):
+        return f"{to_int(r.year)}.{to_int(r.month):02d}.{(to_int(r.day) or 1):02d}"
+
+    return (fmt(lo), fmt(hi))
+
+
+def date_count(prod_id, name_keywords):
+    """时间线里命中任一关键字的『不同日期行』数量（= 实际工作日天数，时间线只在工作日建行，已排除周末/节假日）。"""
+    if not prod_id or not name_keywords:
+        return 0
+
+    def to_int(v):
+        digits = re.sub(r"[^\d]", "", str(v or ""))
+        return int(digits) if digits else None
+
+    tl_rows = db.session.execute(
+        select(ProjectTimelineRow).where(ProjectTimelineRow.prod_id == prod_id)
+    ).scalars().all()
+    if not tl_rows:
+        return 0
+    cell_map = {}
+    for c in db.session.execute(
+        select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_([r.id for r in tl_rows]))
+    ).scalars().all():
+        cell_map.setdefault(c.row_id, []).append(c.output_result or "")
+    days = set()
+    for r in tl_rows:
+        if (r.row_type or "date") != "date" or not to_int(r.year) or not to_int(r.month):
+            continue
+        vals = cell_map.get(r.id, [])
+        if any(any(k in str(v or "") for k in name_keywords) for v in vals):
+            days.add((to_int(r.year), to_int(r.month), to_int(r.day) or 0))
+    return len(days)
+
+
 # 各文档「封面日期」取值用的时间线关键字（供 review_date 使用）。
 # 规则：编制/审核/批准日期 + 生效日期 统一取该文档在时间线里评审/最后一天的日期。
 COVER_KEYWORDS = {
     "sd": ["软件开发计划", "开发计划"],
     "crr": ["代码审查", "代码评审"],
+    "scm": ["软件配置管理计划", "配置管理计划"],
+    "scs": ["软件配置状态报告", "配置管理状态报告", "配置状态报告"],
     "pdp": ["产品开发计划", "开发计划"],
     "cybersec": ["网络安全风险管理报告", "网络安全风险管理", "风险管理报告"],
     "risk": ["风险管理报告", "风险管理"],
@@ -273,6 +487,11 @@ COVER_KEYWORDS = {
     "release_note": ["产品发布说明", "发布说明"],
     "nsr": ["自研软件网络安全研究报告", "网络安全研究报告"],
     "research": ["自研软件研究报告", "软件研究报告"],
+    "stp": ["软件测试计划", "软件测试"],
+    "utp": ["用户测试计划", "用户测试"],
+    "utr": ["用户测试报告", "用户测试"],
+    "str": ["软件测试报告"],
+    "bug": ["Bug管理及回归测试", "回归测试", "Bug管理", "缺陷"],
 }
 
 
@@ -365,6 +584,25 @@ def cover_signers(prod_id, key="pdp", rev_date=""):
     return signers
 
 
+def cover_signer_names(prod_id, key="pdp", rev_date=""):
+    """按模块 key 返回封面「编制人/审核人/批准人」应填的『姓名文本』字典（不取签名图）。
+    用于非 JSON 内容（如上传的 xlsx 封面）按部门规则回填姓名。"""
+    cfg = _signer_config(key)
+    out = {}
+    if not prod_id or not cfg:
+        return out
+    if not rev_date:
+        rev_date = cover_date(prod_id, key)
+    members = db.session.execute(
+        select(ProjectMember).where(ProjectMember.prod_id == prod_id)
+    ).scalars().all()
+    for label, spec in cfg.items():
+        name = (_resolve_signer_name(spec, members, rev_date) or "").strip()
+        if name:
+            out[label] = name
+    return out
+
+
 def review_approver(key, prod_id=None, rev_date=""):
     """评审记录「批准人」姓名：按部门规则解析（产品=夏晨；开发/测试=研发负责人）。"""
     spec = _signer_config(key).get("批准人")
@@ -416,6 +654,40 @@ def _is_other_row(text):
     return t.startswith("其他参会人员") or t.startswith("其他参评人员")
 
 
+# 评审记录「人员角色」→ 产品参与人员角色关键字（按优先级匹配当前产品成员）
+REVIEW_ROLE_KW = {
+    "产品经理": ["产品经理"],
+    "产品开发部经理": ["研发负责人", "产品开发部经理"],
+    "研发总监": ["研发负责人", "研发总监"],
+    "产品部经理": ["产品负责人", "产品部经理", "产品总监"],
+    "开发负责人": ["开发负责人", "TPM"],
+    "QA": ["QA", "质量"],
+    "RA": ["RA", "法规"],
+    "临床人员": ["临床"],
+    "管理者代表": ["管理者代表"],
+}
+
+
+def _resolve_review_name(role_label, members, rev_date):
+    """按评审记录的「人员角色」取当前产品参与人员姓名；匹配不到返回 None（保留模板名）。
+    测试角色按日期规则：2025.09 前=宋月，之后=孙家旭。"""
+    label = str(role_label or "").strip()
+    if not label or _is_banner(label) or label.startswith("其他"):
+        return None
+    if ("测试" in label) and ("用户" not in label):
+        return "宋月" if _before_202509(rev_date) else "孙家旭"
+    if "用户测试" in label:
+        for m in members:
+            if "用户测试" in str(m.role or ""):
+                return (m.name or "").strip()
+        return None
+    for kw in REVIEW_ROLE_KW.get(label, [label]):
+        for m in members:
+            if kw and kw in str(m.role or ""):
+                return (m.name or "").strip()
+    return None
+
+
 def build_review_section(key, rev_date="", prod_id=None):
     d = REVIEW_DEFS.get(key)
     if not d:
@@ -435,11 +707,27 @@ def build_review_section(key, rev_date="", prod_id=None):
     ] + [list(r) for r in d["persons"]]
     # 「签字」列按「姓名」列自动取签名图（第2列姓名→第3列签字；第5列姓名→第6列签字），仅填空
     old_test = _before_202509(rev_date)
+    # 测试文件：评审记录按「人员角色」获取当前产品参与人员姓名（其余模块保持模板名+宋月规则）
+    role_based = key in ("stp", "utp", "utr", "str")
+    rb_members = []
+    if role_based and prod_id:
+        rb_members = db.session.execute(
+            select(ProjectMember).where(ProjectMember.prod_id == prod_id)
+        ).scalars().all()
     for row in person_tbl[3:]:
         if not isinstance(row, list) or _is_banner(str(row[0] or "")):
             continue
-        # 测试角色：2025.09 之前签名人统一为宋月
-        if old_test:
+        if role_based:
+            if len(row) >= 2:
+                nm = _resolve_review_name(row[0], rb_members, rev_date)
+                if nm:
+                    row[1] = nm
+            if len(row) >= 5:
+                nm = _resolve_review_name(row[3] if len(row) >= 4 else "", rb_members, rev_date)
+                if nm:
+                    row[4] = nm
+        elif old_test:
+            # 测试角色：2025.09 之前签名人统一为宋月
             if "测试" in str(row[0] or "") and len(row) >= 2:
                 row[1] = "宋月"
             if "测试" in str(row[3] or "") and len(row) >= 5:
@@ -604,6 +892,9 @@ def render_review_grid(document, grid, set_cell, header_rows=1, **_ignore):
                     rd = para.add_run("      " + date)
                     rd.font.size = Pt(10.5)
                 merged.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            elif first.startswith("评审结论"):
+                # 评审结论为长段落，左对齐
+                set_cell(merged, first, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT)
             else:
                 set_cell(merged, first, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
     # 「其他参会人员/其他参评人员」行：标签后单元格合并为一格，居中显示「/」
@@ -628,4 +919,8 @@ def render_review_grid(document, grid, set_cell, header_rows=1, **_ignore):
             r = r2 + 1
         else:
             r += 1
+    # 加大行高，避免签名图/文字压到单元格边框
+    for _row in table.rows:
+        _row.height = Pt(40)
+        _row.height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
     document.add_paragraph()

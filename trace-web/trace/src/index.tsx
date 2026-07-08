@@ -53,6 +53,23 @@ import CrrDocs from "./pages/crr/CrrDocs";
 import CrrDocDetail from "./pages/crr/CrrDocDetail";
 import DemDocs from "./pages/dem/DemDocs";
 import DemDocDetail from "./pages/dem/DemDocDetail";
+import DeqDocs from "./pages/deq/DeqDocs";
+import DeqDocDetail from "./pages/deq/DeqDocDetail";
+import ScmDocs from "./pages/scm/ScmDocs";
+import ScmDocDetail from "./pages/scm/ScmDocDetail";
+import ScsDocs from "./pages/scs/ScsDocs";
+import ScsDocDetail from "./pages/scs/ScsDocDetail";
+import DatDocs from "./pages/dat/DatDocs";
+import DatDocDetail from "./pages/dat/DatDocDetail";
+import StpDocs from "./pages/stp/StpDocs";
+import StpDocDetail from "./pages/stp/StpDocDetail";
+import UtpDocs from "./pages/utp/UtpDocs";
+import UtpDocDetail from "./pages/utp/UtpDocDetail";
+import UtrDocs from "./pages/utr/UtrDocs";
+import UtrDocDetail from "./pages/utr/UtrDocDetail";
+import StrDocs from "./pages/str/StrDocs";
+import StrDocDetail from "./pages/str/StrDocDetail";
+import BugDocs from "./pages/bug/BugDocs";
 import PirDocs from "./pages/pir/PirDocs";
 import PirDocDetail from "./pages/pir/PirDocDetail";
 import VuhDocs from "./pages/vuh/VuhDocs";
@@ -154,6 +171,31 @@ const router = createRouter([
             { path: "/dem_docs", element: <DemDocs /> },
             { path: "/dem_docs/edit/:id", element: <DemDocDetail /> },
             { path: "/dem_docs/view/:id", element: <DemDocDetail /> },
+            { path: "/deq_docs", element: <DeqDocs /> },
+            { path: "/deq_docs/edit/:id", element: <DeqDocDetail /> },
+            { path: "/deq_docs/view/:id", element: <DeqDocDetail /> },
+            { path: "/scm_docs", element: <ScmDocs /> },
+            { path: "/scm_docs/edit/:id", element: <ScmDocDetail /> },
+            { path: "/scm_docs/view/:id", element: <ScmDocDetail /> },
+            { path: "/scs_docs", element: <ScsDocs /> },
+            { path: "/scs_docs/edit/:id", element: <ScsDocDetail /> },
+            { path: "/scs_docs/view/:id", element: <ScsDocDetail /> },
+            { path: "/dat_docs", element: <DatDocs /> },
+            { path: "/dat_docs/edit/:id", element: <DatDocDetail /> },
+            { path: "/dat_docs/view/:id", element: <DatDocDetail /> },
+            { path: "/stp_docs", element: <StpDocs /> },
+            { path: "/stp_docs/edit/:id", element: <StpDocDetail /> },
+            { path: "/stp_docs/view/:id", element: <StpDocDetail /> },
+            { path: "/utp_docs", element: <UtpDocs /> },
+            { path: "/utp_docs/edit/:id", element: <UtpDocDetail /> },
+            { path: "/utp_docs/view/:id", element: <UtpDocDetail /> },
+            { path: "/utr_docs", element: <UtrDocs /> },
+            { path: "/utr_docs/edit/:id", element: <UtrDocDetail /> },
+            { path: "/utr_docs/view/:id", element: <UtrDocDetail /> },
+            { path: "/str_docs", element: <StrDocs /> },
+            { path: "/str_docs/edit/:id", element: <StrDocDetail /> },
+            { path: "/str_docs/view/:id", element: <StrDocDetail /> },
+            { path: "/bug_docs", element: <BugDocs /> },
             { path: "/pir_docs", element: <PirDocs /> },
             { path: "/pir_docs/edit/:id", element: <PirDocDetail /> },
             { path: "/pir_docs/view/:id", element: <PirDocDetail /> },

@@ -71,6 +71,7 @@ const HomeMenu = ({ className, items, openKeys, selectedKeys, onClick, dispatchF
             <Menu
                 openKeys={openKeys}
                 mode="inline"
+                inlineIndent={16}
                 expandIcon={(props: any) => {
                     return props.isOpen ? <CaretDownOutlined /> : <CaretRightOutlined />;
                 }}
@@ -206,9 +207,9 @@ export default () => {
                 icon: <img src="assets/icon/menu-create.svg" />,
                 children: [
                     {
-                        key: "/srs_docs",
-                        label: ts("menu.srs_docs"),
-                        perm: "srs_doc_view",
+                        key: "/pir_docs",
+                        label: ts("menu.pir_docs"),
+                        perm: "pir_doc_view",
                     },
                     {
                         key: "/pdp_docs",
@@ -216,9 +217,19 @@ export default () => {
                         perm: "pdp_doc_view",
                     },
                     {
-                        key: "/pir_docs",
-                        label: ts("menu.pir_docs"),
-                        perm: "pir_doc_view",
+                        key: "/srs_docs",
+                        label: ts("menu.srs_docs"),
+                        perm: "srs_doc_view",
+                    },
+                    {
+                        key: "/acc_docs",
+                        label: ts("menu.acc_docs"),
+                        perm: "acc_doc_view",
+                    },
+                    {
+                        key: "/release_notes",
+                        label: ts("menu.release_notes"),
+                        perm: "release_note_view",
                     },
                     {
                         key: "/vuh_docs",
@@ -231,14 +242,14 @@ export default () => {
                         perm: "ptr_doc_view",
                     },
                     {
-                        key: "/label_docs",
-                        label: ts("menu.label_docs"),
-                        perm: "label_doc_view",
+                        key: "/research_docs",
+                        label: ts("menu.research_docs"),
+                        perm: "research_doc_view",
                     },
                     {
-                        key: "/release_notes",
-                        label: ts("menu.release_notes"),
-                        perm: "release_note_view",
+                        key: "/rmp_docs",
+                        label: ts("menu.rmp_docs"),
+                        perm: "rmp_doc_view",
                     },
                     {
                         key: "/pha_docs",
@@ -246,34 +257,24 @@ export default () => {
                         perm: "pha_doc_view",
                     },
                     {
-                        key: "/cyber_cap_docs",
-                        label: ts("menu.cyber_cap_docs"),
-                        perm: "cyber_cap_doc_view",
-                    },
-                    {
-                        key: "/research_docs",
-                        label: ts("menu.research_docs"),
-                        perm: "research_doc_view",
-                    },
-                    {
                         key: "/nsr_docs",
                         label: ts("menu.nsr_docs"),
                         perm: "nsr_doc_view",
                     },
                     {
-                        key: "/acc_docs",
-                        label: ts("menu.acc_docs"),
-                        perm: "acc_doc_view",
+                        key: "/cyber_cap_docs",
+                        label: ts("menu.cyber_cap_docs"),
+                        perm: "cyber_cap_doc_view",
+                    },
+                    {
+                        key: "/label_docs",
+                        label: ts("menu.label_docs"),
+                        perm: "label_doc_view",
                     },
                     {
                         key: "/nsmp_docs",
                         label: ts("menu.nsmp_docs"),
                         perm: "nsmp_doc_view",
-                    },
-                    {
-                        key: "/rmp_docs",
-                        label: ts("menu.rmp_docs"),
-                        perm: "rmp_doc_view",
                     },
                 ],
             },
@@ -287,14 +288,24 @@ export default () => {
                         label: ts("menu.dev_files"),
                         children: [
                             {
+                                key: "/scm_docs",
+                                label: ts("menu.scm_docs"),
+                                perm: "scm_doc_view",
+                            },
+                            {
+                                key: "/scs_docs",
+                                label: ts("menu.scs_docs"),
+                                perm: "scs_doc_view",
+                            },
+                            {
                                 key: "/sd_docs",
                                 label: ts("menu.sd_docs"),
                                 perm: "sd_doc_view",
                             },
                             {
-                                key: "/crr_docs",
-                                label: ts("menu.crr_docs"),
-                                perm: "crr_doc_view",
+                                key: "/sds_docs",
+                                label: ts("menu.sds_docs"),
+                                perm: "sds_doc_view",
                             },
                             {
                                 key: "/dem_docs",
@@ -302,9 +313,19 @@ export default () => {
                                 perm: "dem_doc_view",
                             },
                             {
-                                key: "/sds_docs",
-                                label: ts("menu.sds_docs"),
-                                perm: "sds_doc_view",
+                                key: "/crr_docs",
+                                label: ts("menu.crr_docs"),
+                                perm: "crr_doc_view",
+                            },
+                            {
+                                key: "/dat_docs",
+                                label: ts("menu.dat_docs"),
+                                perm: "dat_doc_view",
+                            },
+                            {
+                                key: "/deq_docs",
+                                label: ts("menu.deq_docs"),
+                                perm: "deq_doc_view",
                             },
                         ],
                     },
@@ -312,6 +333,31 @@ export default () => {
                         key: "test_files",
                         label: ts("menu.test_files"),
                         children: [
+                            {
+                                key: "/utp_docs",
+                                label: ts("menu.utp_docs"),
+                                perm: "utp_doc_view",
+                            },
+                            {
+                                key: "/utr_docs",
+                                label: ts("menu.utr_docs"),
+                                perm: "utr_doc_view",
+                            },
+                            {
+                                key: "/stp_docs",
+                                label: ts("menu.stp_docs"),
+                                perm: "stp_doc_view",
+                            },
+                            {
+                                key: "/bug_docs",
+                                label: ts("menu.bug_docs"),
+                                perm: "bug_doc_view",
+                            },
+                            {
+                                key: "/str_docs",
+                                label: ts("menu.str_docs"),
+                                perm: "str_doc_view",
+                            },
                             {
                                 key: "/test_sets",
                                 label: ts("menu.test_sets"),
