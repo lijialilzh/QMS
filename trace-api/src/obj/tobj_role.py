@@ -154,6 +154,10 @@ class Perms(Enum):
     deq_doc_view = PermForm(code="deq_doc_view", name="查看", p_code=deq_doc.code)
     deq_doc_edit = PermForm(code="deq_doc_edit", name="编辑", p_code=deq_doc.code)
 
+    teq_doc = PermForm(code="teq_doc", name="开发测试文件管理/测试设备清单")
+    teq_doc_view = PermForm(code="teq_doc_view", name="查看", p_code=teq_doc.code)
+    teq_doc_edit = PermForm(code="teq_doc_edit", name="编辑", p_code=teq_doc.code)
+
     scm_doc = PermForm(code="scm_doc", name="开发测试文件管理/软件配置管理计划")
     scm_doc_view = PermForm(code="scm_doc_view", name="查看", p_code=scm_doc.code)
     scm_doc_edit = PermForm(code="scm_doc_edit", name="编辑", p_code=scm_doc.code)
@@ -289,6 +293,7 @@ def get_default_role_perm_codes():
         "crr_doc", "crr_doc_view", "crr_doc_edit",
         "dem_doc", "dem_doc_view", "dem_doc_edit",
         "deq_doc", "deq_doc_view", "deq_doc_edit",
+        "teq_doc", "teq_doc_view", "teq_doc_edit",
         "scm_doc", "scm_doc_view", "scm_doc_edit",
         "scs_doc", "scs_doc_view", "scs_doc_edit",
         "dat_doc", "dat_doc_view", "dat_doc_edit",
@@ -316,6 +321,7 @@ def get_default_role_perm_codes():
         "crr_doc", "crr_doc_view", "crr_doc_edit",
         "dem_doc", "dem_doc_view", "dem_doc_edit",
         "deq_doc", "deq_doc_view", "deq_doc_edit",
+        "teq_doc", "teq_doc_view", "teq_doc_edit",
         "scm_doc", "scm_doc_view", "scm_doc_edit",
         "scs_doc", "scs_doc_view", "scs_doc_edit",
         "dat_doc", "dat_doc_view", "dat_doc_edit",
@@ -348,6 +354,7 @@ def get_default_role_perm_codes():
         "prod_rcm", "prod_rcm_view", "prod_rcm_edit",
         "prod_cst", "prod_cst_view", "prod_cst_edit",
         "product", "product_view",
+        "teq_doc", "teq_doc_view", "teq_doc_edit",
         "risk_mgmt_doc", "risk_mgmt_doc_view", "risk_mgmt_doc_edit",
         "cybersec_doc", "cybersec_doc_view", "cybersec_doc_edit",
     }

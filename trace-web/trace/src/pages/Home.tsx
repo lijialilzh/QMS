@@ -359,6 +359,11 @@ export default () => {
                                 perm: "str_doc_view",
                             },
                             {
+                                key: "/teq_docs",
+                                label: ts("menu.teq_docs"),
+                                perm: "teq_doc_view",
+                            },
+                            {
                                 key: "/test_sets",
                                 label: ts("menu.test_sets"),
                                 perm: "test_set_view",

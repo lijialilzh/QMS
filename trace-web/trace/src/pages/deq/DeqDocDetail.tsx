@@ -168,7 +168,7 @@ export default () => {
                                 <col style={{ width: 90 }} />
                                 <col style={{ width: 70 }} />
                                 <col style={{ width: 90 }} />
-                                {!readonly && <col style={{ width: 50 }} />}
+                                {!readonly && <col style={{ width: 60 }} />}
                             </colgroup>
                             <tbody>
                                 {rows.map((row, r) => (
@@ -181,8 +181,8 @@ export default () => {
                                             </td>
                                         ))}
                                         {!readonly && (
-                                            <td style={{ ...tdValue }}>
-                                                {r > 0 && <DeleteOutlined title="删除该行" style={{ color: "#c00", cursor: "pointer" }} onClick={() => delRow(r)} />}
+                                            <td style={r === 0 ? thCell : tdValue}>
+                                                {r === 0 ? "操作" : <DeleteOutlined title="删除该行" style={{ color: "#c00", cursor: "pointer" }} onClick={() => delRow(r)} />}
                                             </td>
                                         )}
                                     </tr>

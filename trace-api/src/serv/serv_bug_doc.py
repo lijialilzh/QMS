@@ -113,27 +113,25 @@ class Server(object):
     @staticmethod
     def __set_cell(xml, coord, value):
         """把封面页里坐标为 coord 的空单元格 <c r=".." s=".."/> 就地改成内联字符串文本。
-        只替换该单元格，其余 XML（含 WPS 截图、其它页）原样保留。"""
+        用富文本运行强制黑色字体（部分日期单元格模板字体为红色，回填内容需为黑色），
+        其余 XML（含截图、其它页）原样保留。"""
         val = escape(str(value))
-        pat = re.compile(r'<c r="' + re.escape(coord) + r'"([^>/]*)/>')
+        # rPr 强制黑色，字体沿用模板的 Times New Roman 12（与原样式一致）
+        run = ('<is><r><rPr><sz val="12"/><color rgb="FF000000"/>'
+               '<rFont val="Times New Roman"/><family val="1"/></rPr>'
+               '<t xml:space="preserve">' + val + '</t></r></is>')
 
         def _repl(m):
             attrs = re.sub(r'\s+t="[^"]*"', '', m.group(1))
-            return ('<c r="' + coord + '"' + attrs + ' t="inlineStr">'
-                    '<is><t xml:space="preserve">' + val + '</t></is></c>')
+            return '<c r="' + coord + '"' + attrs + ' t="inlineStr">' + run + '</c>'
 
+        pat = re.compile(r'<c r="' + re.escape(coord) + r'"([^>/]*)/>')
         new, n = pat.subn(_repl, xml)
         if n:
             return new
         # 兼容非自闭合单元格：替换整段 <c ...>...</c>
         pat2 = re.compile(r'<c r="' + re.escape(coord) + r'"([^>]*)>.*?</c>', re.S)
-
-        def _repl2(m):
-            attrs = re.sub(r'\s+t="[^"]*"', '', m.group(1))
-            return ('<c r="' + coord + '"' + attrs + ' t="inlineStr">'
-                    '<is><t xml:space="preserve">' + val + '</t></is></c>')
-
-        new, _ = pat2.subn(_repl2, xml)
+        new, _ = pat2.subn(_repl, xml)
         return new
 
     def __ensure_filled(self, src_path, values, imgs):
@@ -142,7 +140,7 @@ class Server(object):
         import hashlib
         import json
         img_sig = [(c, hashlib.md5(p).hexdigest()) for c, p in imgs]
-        raw = json.dumps({"t": values, "i": img_sig}, ensure_ascii=False, sort_keys=True)
+        raw = json.dumps({"v": 2, "t": values, "i": img_sig}, ensure_ascii=False, sort_keys=True)
         key = hashlib.md5(raw.encode("utf-8")).hexdigest()
         filled = src_path + ".filled.xlsx"
         keyf = src_path + ".filled.key"

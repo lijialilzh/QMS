@@ -55,6 +55,8 @@ import DemDocs from "./pages/dem/DemDocs";
 import DemDocDetail from "./pages/dem/DemDocDetail";
 import DeqDocs from "./pages/deq/DeqDocs";
 import DeqDocDetail from "./pages/deq/DeqDocDetail";
+import TeqDocs from "./pages/teq/TeqDocs";
+import TeqDocDetail from "./pages/teq/TeqDocDetail";
 import ScmDocs from "./pages/scm/ScmDocs";
 import ScmDocDetail from "./pages/scm/ScmDocDetail";
 import ScsDocs from "./pages/scs/ScsDocs";
@@ -174,6 +176,9 @@ const router = createRouter([
             { path: "/deq_docs", element: <DeqDocs /> },
             { path: "/deq_docs/edit/:id", element: <DeqDocDetail /> },
             { path: "/deq_docs/view/:id", element: <DeqDocDetail /> },
+            { path: "/teq_docs", element: <TeqDocs /> },
+            { path: "/teq_docs/edit/:id", element: <TeqDocDetail /> },
+            { path: "/teq_docs/view/:id", element: <TeqDocDetail /> },
             { path: "/scm_docs", element: <ScmDocs /> },
             { path: "/scm_docs/edit/:id", element: <ScmDocDetail /> },
             { path: "/scm_docs/view/:id", element: <ScmDocDetail /> },

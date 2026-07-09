@@ -1,0 +1,52 @@
+version: 1
+description: 项目强制约束规则 - 以功能文档为唯一标准，防止逻辑篡改、乱改代码、过度重构
+
+# 全局前置指令：所有会话优先读取业务文档，不依赖源码解读逻辑
+global_instructions: |
+  1. 所有开发、修复、调试、优化工作，**必须以项目 docs/function_docs/ 下的功能文档为唯一标准**。
+  2. 禁止脱离文档，仅凭代码反向猜测、重构、新增、修改原有业务逻辑。
+  3. 文档未提及的逻辑、流程、判断、分支，一律保持原样，绝不改动。
+  4. 仅在文档明确指定的文件、函数、代码范围内进行修改。
+  5. 不擅自做代码风格优化、结构重构、逻辑合并、变量重命名。
+
+rules:
+  # 规则1：修改代码前，必须先输出方案，等待人工确认，禁止直接改代码
+  - name: 修改前先输出方案并等待确认
+    condition: edit_request == true
+    action: wait_for_user
+    message: 请先输出【修改目标、改动范围、执行步骤、影响点】，确认后再执行代码修改。
+
+  # 规则2：禁止整文件重写，只允许局部代码片段修改
+  - name: 禁止大篇幅重写文件
+    condition: edit_lines > 400
+    action: reject
+    message: 禁止重写整个/大段文件，仅允许修改局部代码块，请拆分修改。
+
+  # 规则3：单次会话限制文件数量 & 迭代轮次，避免越改越乱
+  - name: 限制单次修改范围与迭代次数
+    condition: modified_files > 2 || current_iteration > 4
+    action: reject
+    message: 超出单次修改限制，请分批次分步处理。
+
+  # 规则4：保护只读目录/公共模块（根据你项目自行增删路径）
+  - name: 禁止修改全局公共、状态、基础组件目录
+    condition: |
+      file_path startsWith "src/store/" ||
+      file_path startsWith "src/common/" ||
+      file_path startsWith "src/utils/base/" ||
+      file_path startsWith "src/api/"
+    action: reject
+    message: 该目录为只读基础模块，禁止修改，请在业务代码内处理逻辑。
+
+  # 规则5：禁止自动联网搜索、额外扩展逻辑
+  - name: 禁止额外联网与扩展需求
+    condition: tool_web_search == true || add_new_logic == true
+    action: reject
+    message: 禁止联网搜索、禁止新增文档以外的业务逻辑。
+
+  # 规则6：严格遵循文档数据规则，擅自变更字段/判断
+  - name: 严格遵守文档数据与判断规则
+    condition: change_data_rule == true || modify_judge_condition == true
+    action: reject
+    message: 数据结构、判断条件、分支逻辑以功能文档为准，禁止擅自变更。
+

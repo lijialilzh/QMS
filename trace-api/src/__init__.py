@@ -22,7 +22,7 @@ from .api import web_auth, web_session, api_user, api_role, api_project, api_haz
     api_project_member, api_project_timeline, api_prod_runtime_env, api_prod_device_res, api_pdp_doc, api_pir_doc, \
     api_vuh_doc, api_version_rule, api_ptr_doc, api_company_info, api_label_doc, api_release_note, api_pha_doc, \
     api_cyber_cap_doc, api_research_doc, api_nsr_doc, api_acc_doc, api_nsmp_doc, api_rmp_doc, api_sd_doc, \
-    api_crr_doc, api_dem_doc, api_deq_doc, api_scm_doc, api_scs_doc, api_dat_doc, api_stp_doc, api_utp_doc, \
+    api_crr_doc, api_dem_doc, api_deq_doc, api_teq_doc, api_scm_doc, api_scs_doc, api_dat_doc, api_stp_doc, api_utp_doc, \
     api_utr_doc, api_str_doc, api_bug_doc, api_person_sign
 from .utils import read_line
 from .utils.i18n import ts
@@ -103,6 +103,7 @@ def create_app():
     main_router.include_router(api_crr_doc.router, prefix="/crr_doc", tags=["代码审查记录"])
     main_router.include_router(api_dem_doc.router, prefix="/dem_doc", tags=["开发环境维护说明"])
     main_router.include_router(api_deq_doc.router, prefix="/deq_doc", tags=["开发设备清单"])
+    main_router.include_router(api_teq_doc.router, prefix="/teq_doc", tags=["测试设备清单"])
     main_router.include_router(api_scm_doc.router, prefix="/scm_doc", tags=["软件配置管理计划"])
     main_router.include_router(api_scs_doc.router, prefix="/scs_doc", tags=["软件配置状态报告"])
     main_router.include_router(api_dat_doc.router, prefix="/dat_doc", tags=["数据申请单"])
