@@ -121,9 +121,6 @@ from .dem_doc import DemDoc  # noqa: E402,F401
 # 开发设备清单（独立文档模块，开发文件）。
 from .deq_doc import DeqDoc  # noqa: E402,F401
 
-# 测试设备清单（独立文档模块，测试文件）。
-from .teq_doc import TeqDoc  # noqa: E402,F401
-
 # 软件配置管理计划 / 软件配置状态报告（独立文档模块，开发文件）。
 from .scm_doc import ScmDoc  # noqa: E402,F401
 from .scs_doc import ScsDoc  # noqa: E402,F401
@@ -137,6 +134,9 @@ from .utp_doc import UtpDoc  # noqa: E402,F401
 from .utr_doc import UtrDoc  # noqa: E402,F401
 from .str_doc import StrDoc  # noqa: E402,F401
 from .bug_doc import BugDoc  # noqa: E402,F401
+from .teq_doc import TeqDoc  # noqa: E402,F401
+from .tem_doc import TemDoc  # noqa: E402,F401
+from .imm_doc import ImmDoc  # noqa: E402,F401
 
 # 人员签名管理（基础数据）：人名章记录。
 from .person_sign import PersonSign  # noqa: E402,F401

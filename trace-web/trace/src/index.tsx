@@ -57,6 +57,10 @@ import DeqDocs from "./pages/deq/DeqDocs";
 import DeqDocDetail from "./pages/deq/DeqDocDetail";
 import TeqDocs from "./pages/teq/TeqDocs";
 import TeqDocDetail from "./pages/teq/TeqDocDetail";
+import TemDocs from "./pages/tem/TemDocs";
+import TemDocDetail from "./pages/tem/TemDocDetail";
+import ImmDocs from "./pages/imm/ImmDocs";
+import ImmDocDetail from "./pages/imm/ImmDocDetail";
 import ScmDocs from "./pages/scm/ScmDocs";
 import ScmDocDetail from "./pages/scm/ScmDocDetail";
 import ScsDocs from "./pages/scs/ScsDocs";
@@ -179,6 +183,12 @@ const router = createRouter([
             { path: "/teq_docs", element: <TeqDocs /> },
             { path: "/teq_docs/edit/:id", element: <TeqDocDetail /> },
             { path: "/teq_docs/view/:id", element: <TeqDocDetail /> },
+            { path: "/tem_docs", element: <TemDocs /> },
+            { path: "/tem_docs/edit/:id", element: <TemDocDetail /> },
+            { path: "/tem_docs/view/:id", element: <TemDocDetail /> },
+            { path: "/imm_docs", element: <ImmDocs /> },
+            { path: "/imm_docs/edit/:id", element: <ImmDocDetail /> },
+            { path: "/imm_docs/view/:id", element: <ImmDocDetail /> },
             { path: "/scm_docs", element: <ScmDocs /> },
             { path: "/scm_docs/edit/:id", element: <ScmDocDetail /> },
             { path: "/scm_docs/view/:id", element: <ScmDocDetail /> },

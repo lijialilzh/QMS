@@ -346,7 +346,7 @@ DOC_DEPT = {
     "nsmp": "dev", "nsr": "dev", "research": "dev", "crr": "dev",
     "scm": "dev", "scs": "dev",
     # 测试文件：编制人=测试人员，审核/批准=研发负责人
-    "stp": "test", "utp": "test", "utr": "test", "str": "test", "bug": "test",
+    "stp": "test", "utp": "test", "utr": "test", "str": "test", "bug": "test", "imm": "test",
 }
 
 
@@ -492,6 +492,7 @@ COVER_KEYWORDS = {
     "utr": ["用户测试报告", "用户测试"],
     "str": ["软件测试报告"],
     "bug": ["Bug管理及回归测试", "回归测试", "Bug管理", "缺陷"],
+    "imm": ["安装维护手册", "安装维护", "MD5"],
 }
 
 

@@ -154,10 +154,6 @@ class Perms(Enum):
     deq_doc_view = PermForm(code="deq_doc_view", name="查看", p_code=deq_doc.code)
     deq_doc_edit = PermForm(code="deq_doc_edit", name="编辑", p_code=deq_doc.code)
 
-    teq_doc = PermForm(code="teq_doc", name="开发测试文件管理/测试设备清单")
-    teq_doc_view = PermForm(code="teq_doc_view", name="查看", p_code=teq_doc.code)
-    teq_doc_edit = PermForm(code="teq_doc_edit", name="编辑", p_code=teq_doc.code)
-
     scm_doc = PermForm(code="scm_doc", name="开发测试文件管理/软件配置管理计划")
     scm_doc_view = PermForm(code="scm_doc_view", name="查看", p_code=scm_doc.code)
     scm_doc_edit = PermForm(code="scm_doc_edit", name="编辑", p_code=scm_doc.code)
@@ -189,6 +185,18 @@ class Perms(Enum):
     bug_doc = PermForm(code="bug_doc", name="开发测试文件管理/Bug管理及回归测试")
     bug_doc_view = PermForm(code="bug_doc_view", name="查看", p_code=bug_doc.code)
     bug_doc_edit = PermForm(code="bug_doc_edit", name="编辑", p_code=bug_doc.code)
+
+    teq_doc = PermForm(code="teq_doc", name="开发测试文件管理/测试设备清单")
+    teq_doc_view = PermForm(code="teq_doc_view", name="查看", p_code=teq_doc.code)
+    teq_doc_edit = PermForm(code="teq_doc_edit", name="编辑", p_code=teq_doc.code)
+
+    tem_doc = PermForm(code="tem_doc", name="开发测试文件管理/测试环境维护说明")
+    tem_doc_view = PermForm(code="tem_doc_view", name="查看", p_code=tem_doc.code)
+    tem_doc_edit = PermForm(code="tem_doc_edit", name="编辑", p_code=tem_doc.code)
+
+    imm_doc = PermForm(code="imm_doc", name="开发测试文件管理/安装维护手册")
+    imm_doc_view = PermForm(code="imm_doc_view", name="查看", p_code=imm_doc.code)
+    imm_doc_edit = PermForm(code="imm_doc_edit", name="编辑", p_code=imm_doc.code)
 
     pir_doc = PermForm(code="pir_doc", name="产品文件管理/产品立项报告")
     pir_doc_view = PermForm(code="pir_doc_view", name="查看", p_code=pir_doc.code)
@@ -293,7 +301,6 @@ def get_default_role_perm_codes():
         "crr_doc", "crr_doc_view", "crr_doc_edit",
         "dem_doc", "dem_doc_view", "dem_doc_edit",
         "deq_doc", "deq_doc_view", "deq_doc_edit",
-        "teq_doc", "teq_doc_view", "teq_doc_edit",
         "scm_doc", "scm_doc_view", "scm_doc_edit",
         "scs_doc", "scs_doc_view", "scs_doc_edit",
         "dat_doc", "dat_doc_view", "dat_doc_edit",
@@ -302,6 +309,9 @@ def get_default_role_perm_codes():
         "utr_doc", "utr_doc_view", "utr_doc_edit",
         "str_doc", "str_doc_view", "str_doc_edit",
         "bug_doc", "bug_doc_view", "bug_doc_edit",
+        "teq_doc", "teq_doc_view", "teq_doc_edit",
+        "tem_doc", "tem_doc_view", "tem_doc_edit",
+        "imm_doc", "imm_doc_view", "imm_doc_edit",
         "pir_doc", "pir_doc_view", "pir_doc_edit",
         "vuh_doc", "vuh_doc_view", "vuh_doc_edit",
         "ptr_doc", "ptr_doc_view", "ptr_doc_edit",
@@ -321,7 +331,6 @@ def get_default_role_perm_codes():
         "crr_doc", "crr_doc_view", "crr_doc_edit",
         "dem_doc", "dem_doc_view", "dem_doc_edit",
         "deq_doc", "deq_doc_view", "deq_doc_edit",
-        "teq_doc", "teq_doc_view", "teq_doc_edit",
         "scm_doc", "scm_doc_view", "scm_doc_edit",
         "scs_doc", "scs_doc_view", "scs_doc_edit",
         "dat_doc", "dat_doc_view", "dat_doc_edit",
@@ -330,6 +339,9 @@ def get_default_role_perm_codes():
         "utr_doc", "utr_doc_view", "utr_doc_edit",
         "str_doc", "str_doc_view", "str_doc_edit",
         "bug_doc", "bug_doc_view", "bug_doc_edit",
+        "teq_doc", "teq_doc_view", "teq_doc_edit",
+        "tem_doc", "tem_doc_view", "tem_doc_edit",
+        "imm_doc", "imm_doc_view", "imm_doc_edit",
         "doc_file_flow", "doc_file_flow_view", "doc_file_flow_edit",
         "doc_file_topo", "doc_file_topo_view", "doc_file_topo_edit",
         "doc_file_struct", "doc_file_struct_view", "doc_file_struct_edit",
@@ -354,7 +366,6 @@ def get_default_role_perm_codes():
         "prod_rcm", "prod_rcm_view", "prod_rcm_edit",
         "prod_cst", "prod_cst_view", "prod_cst_edit",
         "product", "product_view",
-        "teq_doc", "teq_doc_view", "teq_doc_edit",
         "risk_mgmt_doc", "risk_mgmt_doc_view", "risk_mgmt_doc_edit",
         "cybersec_doc", "cybersec_doc_view", "cybersec_doc_edit",
     }
