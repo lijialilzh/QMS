@@ -39,6 +39,12 @@ async def update_imm_doc(form: ImmDocForm):
     return await server.update_imm_doc(form)
 
 
+@router.get("/rebind_product", summary="切换产品并重新获取自动填充内容", response_model=Resp[ImmDocObj])
+@try_log(perm=Perms.imm_doc_edit)
+async def rebind_product(id: int, product_id: int):
+    return await server.rebind_product(id, product_id)
+
+
 @router.delete("/delete_imm_doc", summary="删除安装维护手册", response_model=Resp[Any])
 @try_log(perm=Perms.imm_doc_edit)
 async def delete_imm_doc(id: int):

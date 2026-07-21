@@ -496,13 +496,15 @@ COVER_KEYWORDS = {
 }
 
 
-def fill_cover_dates(content, rev_date):
-    """统一填充封面表日期（仅填空，不覆盖已填）：
+def fill_cover_dates(content, rev_date, force=False):
+    """统一填充封面表日期：
       - 「编制人/审核人/批准人」行的「日期」列(第4列, index 3) 填 rev_date；
       - 「生效日期」行的值(第2列, index 1) 填 rev_date。
     rev_date 为该文档在时间线里的评审/最后一天日期（见 review_date）。
+    force=False（默认）：仅填空，不覆盖已填（保留用户手动编辑）。
+    force=True（切换产品）：强制覆盖，rev_date 为空则置空。
     通用实现：扫描所有 section 的所有表格，按行首标签匹配，兼容各模块封面结构。"""
-    if not rev_date or not isinstance(content, dict):
+    if not isinstance(content, dict):
         return content
     for section in (content.get("sections") or []):
         if not isinstance(section, dict):
@@ -515,11 +517,13 @@ def fill_cover_dates(content, rev_date):
                     continue
                 label = str(row[0] or "").strip()
                 if label in ("编制人", "审核人", "批准人"):
-                    if len(row) >= 4 and not str(row[3] or "").strip():
-                        row[3] = rev_date
+                    if len(row) >= 4:
+                        if force or not str(row[3] or "").strip():
+                            row[3] = rev_date or ""
                 elif label == "生效日期":
-                    if len(row) >= 2 and not str(row[1] or "").strip():
-                        row[1] = rev_date
+                    if len(row) >= 2:
+                        if force or not str(row[1] or "").strip():
+                            row[1] = rev_date or ""
     return content
 
 
@@ -619,11 +623,14 @@ def review_approver(key, prod_id=None, rev_date=""):
     return _resolve_signer_name(spec, members, rev_date) or ""
 
 
-def fill_cover_signers(content, signers):
-    """把封面「编制人/审核人/批准人」行的姓名列(第2列, index 1) 填成签名图 data URL（仅填空，不覆盖已填）。
+def fill_cover_signers(content, signers, force=False):
+    """把封面「编制人/审核人/批准人」行的姓名列(第2列, index 1) 填成签名图 data URL。
+    force=False（默认）：仅填空，不覆盖已填（已是签名图则保留，避免重复覆盖用户已放的图）。
+    force=True（切换产品）：强制覆盖，signers 无对应人则置空。
     通用实现：扫描所有 section 的所有表格，按行首标签匹配，兼容各模块封面结构。"""
-    if not signers or not isinstance(content, dict):
+    if not isinstance(content, dict):
         return content
+    signers = signers or {}
     for section in (content.get("sections") or []):
         if not isinstance(section, dict):
             continue
@@ -634,9 +641,17 @@ def fill_cover_signers(content, signers):
                 if not isinstance(row, list) or not row:
                     continue
                 label = str(row[0] or "").strip()
-                # 覆盖空值或旧姓名文本；已是签名图则保留（避免重复覆盖用户已放的图）
-                if label in signers and len(row) >= 2 and not str(row[1] or "").startswith("data:image"):
-                    row[1] = signers[label]
+                if label not in ("编制人", "审核人", "批准人"):
+                    continue
+                if len(row) < 2:
+                    continue
+                val = signers.get(label, "") if force else signers.get(label)
+                if force:
+                    row[1] = val or ""
+                else:
+                    # 覆盖空值或旧姓名文本；已是签名图则保留（避免重复覆盖用户已放的图）
+                    if val and not str(row[1] or "").startswith("data:image"):
+                        row[1] = val
     return content
 
 
@@ -866,6 +881,22 @@ def render_review_grid(document, grid, set_cell, header_rows=1, **_ignore):
             set_cell(cells[c_idx], val, bold=(r_idx < header_rows))
     rows = table.rows
     n = len(rows)
+    # 表头行横向合并：相邻列内容相同的合并为一格（如"评审内容"两列相同）
+    for r in range(min(header_rows, n)):
+        c = 0
+        while c < cols:
+            cval = str(rows[r].cells[c].text or "").strip()
+            if not cval:
+                c += 1
+                continue
+            c2 = c
+            while c2 + 1 < cols and str(rows[r].cells[c2 + 1].text or "").strip() == cval:
+                c2 += 1
+            if c2 > c:
+                merged = rows[r].cells[c].merge(rows[r].cells[c2])
+                set_cell(merged, cval, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
+                merged.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            c = c2 + 1
     # 整行标记行横向合并
     for r in range(n):
         first = rows[r].cells[0].text
@@ -905,14 +936,21 @@ def render_review_grid(document, grid, set_cell, header_rows=1, **_ignore):
             merged = rows[r].cells[1].merge(rows[r].cells[-1])
             set_cell(merged, "/", align=WD_ALIGN_PARAGRAPH.CENTER)
             merged.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-    # 首列纵向合并：非空且非标记的单元格向下合并其后的空单元格
+    # 首列纵向合并：非空且非标记的单元格向下合并其后的空单元格或相同内容单元格
     r = 0
     while r < n:
         text = rows[r].cells[0].text
         if text.strip() and not _is_banner(text):
             r2 = r
-            while r2 + 1 < n and not rows[r2 + 1].cells[0].text.strip():
-                r2 += 1
+            # 向下合并：后续单元格为空，或与当前单元格内容相同（评审内容表首列相同类别合并）
+            while r2 + 1 < n:
+                nxt = rows[r2 + 1].cells[0].text
+                if _is_banner(nxt):
+                    break
+                if nxt.strip() == text.strip() or not nxt.strip():
+                    r2 += 1
+                else:
+                    break
             if r2 > r:
                 merged = rows[r].cells[0].merge(rows[r2].cells[0])
                 set_cell(merged, text, align=WD_ALIGN_PARAGRAPH.CENTER)

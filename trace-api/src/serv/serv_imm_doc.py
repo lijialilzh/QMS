@@ -26,6 +26,7 @@ from ..model.imm_doc import ImmDoc
 from ..model.prod_dhf import ProdDhf
 from ..model.prod_runtime_env import ProdRuntimeEnv
 from ..model.project_member import ProjectMember
+from ..model.doc_file import DocFile
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
 from ..obj.vobj_user import UserObj
@@ -114,9 +115,10 @@ class Server(object):
     def __replace_type_code(self, node, type_code):
         if not type_code:
             return
-        # 2.2 MD5校验安装包 / 2.4.1 检查安装包 正文中的安装包名称保留模板原样，
-        # 不按当前产品型号自动替换。
-        skip_titles = {"2.2 MD5校验安装包", "2.4.1 检查安装包"}
+        # 2.2 MD5校验安装包 / 2.4.1 检查安装包 正文中的安装包名称保留模板原样；
+        # 4.确认安装包信息 表格中的安装包名称也保留模板原样；
+        # 软件总体描述 / 适用范围 body 取自产品 overall_desc/scope 原值，不应被型号替换污染。
+        skip_titles = {"2.2 MD5校验安装包", "2.4.1 检查安装包", "4.确认安装包信息", "1.4 软件总体描述", "1.4软件总体描述", "1.5 适用范围", "1.5适用范围"}
         space_pat = "InferCare RECIST"
         under_pat = "InferCare_RECIST"
         space_new = f"InferCare {type_code}"
@@ -237,8 +239,9 @@ class Server(object):
                         self.__fill_runtime_node(child, rt)
         return content
 
-    def __fill_revision(self, content, prod_id, version):
-        """文件修订记录首行：修改日期(评审/封面日期)、版本号、首次发布、修订人(TPM)、批准人(研发负责人)。"""
+    def __fill_revision(self, content, prod_id, version, force=False):
+        """文件修订记录首行：修改日期(评审/封面日期)、版本号、首次发布、修订人(TPM)、批准人(研发负责人)。
+        force=True（切换产品）时强制用新产品数据覆盖，无时间线/人员的字段直接置空。"""
         rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
         if not rev_date and prod_id:
             rev_date = serv_review_util.review_date(prod_id, DATE_KEYWORDS)
@@ -258,16 +261,27 @@ class Server(object):
                     t.append([""] * cols)
                 if len(t) >= 2 and isinstance(t[1], list) and len(t[1]) >= 3:
                     row = t[1]
-                    if not str(row[0] or "").strip():
+                    if force:
                         row[0] = rev_date
-                    if version and len(row) >= 2 and not str(row[1] or "").strip():
-                        row[1] = str(version)
-                    if len(row) >= 3 and not str(row[2] or "").strip():
-                        row[2] = "首次发布"
-                    if len(row) >= 4 and reviser and not str(row[3] or "").strip():
-                        row[3] = reviser
-                    if len(row) >= 5 and approver and not str(row[4] or "").strip():
-                        row[4] = approver
+                        if len(row) >= 2:
+                            row[1] = str(version or "")
+                        if len(row) >= 3:
+                            row[2] = "首次发布"
+                        if len(row) >= 4:
+                            row[3] = reviser
+                        if len(row) >= 5:
+                            row[4] = approver
+                    else:
+                        if not str(row[0] or "").strip():
+                            row[0] = rev_date
+                        if version and len(row) >= 2 and not str(row[1] or "").strip():
+                            row[1] = str(version)
+                        if len(row) >= 3 and not str(row[2] or "").strip():
+                            row[2] = "首次发布"
+                        if len(row) >= 4 and reviser and not str(row[3] or "").strip():
+                            row[3] = reviser
+                        if len(row) >= 5 and approver and not str(row[4] or "").strip():
+                            row[4] = approver
             break
         return content
 
@@ -293,15 +307,21 @@ class Server(object):
 
     def __fill_md5_review(self, content, prod_id, product, package_name, md5_value, rev_date):
         prod_name = (getattr(product, "name", "") or "").strip() if product else ""
-        pkg = (package_name or "").strip()
+        # 评审结论里的安装包名称保留模板原样（从 4.确认安装包信息 表格读取，不自动获取/不型号替换）
+        pkg = self.__read_attachment_pkg(content)
         md5 = (md5_value or "").strip()
         test_lead = self.__member_name(prod_id, ("测试负责人", "主测试工程师")) if prod_id else ""
         pm = self.__member_name(prod_id, ("产品经理",)) if prod_id else ""
         for s in (content.get("sections") or []):
             if s.get("ref_type") != "md5_review":
                 continue
+            # 标题显示"附件一 评审结论"，body 清空（正文不显示）
+            s["title"] = "附件一 评审结论"
+            s["body"] = ""
             tables = s.get("tables") or []
             if tables and isinstance(tables[0], list):
+                # 评审内容表：第三列"评审结论"下的"通过"前加复选框勾选（☑通过 □存在问题）
+                check_mark = serv_review_util.CHECK
                 for row in tables[0]:
                     if not isinstance(row, list) or not row:
                         continue
@@ -312,7 +332,8 @@ class Server(object):
                         )
                         for i in range(1, len(row)):
                             row[i] = ""
-                        break
+                    elif len(row) >= 3 and str(row[2] or "").strip() == "通过  □存在问题":
+                        row[2] = check_mark
             if len(tables) > 1 and isinstance(tables[1], list):
                 ptbl = tables[1]
                 for row in ptbl:
@@ -348,7 +369,28 @@ class Server(object):
             break
         return "", ""
 
-    def __autofill(self, content, prod_id, product=None, version=""):
+    def __read_attachment_pkg(self, content):
+        """从 md5_attachment 下「4.确认安装包信息」子节点表格读取安装包名称（保留模板原值）。"""
+        for s in (content.get("sections") or []):
+            if s.get("ref_type") != "md5_attachment":
+                continue
+            for c in (s.get("children") or []):
+                if self.__strip_section_title(str(c.get("title") or "")) != "确认安装包信息":
+                    continue
+                for tbl in (c.get("tables") or []):
+                    if not tbl or not isinstance(tbl[0], list):
+                        continue
+                    header = [str(x).strip() for x in tbl[0][:2]]
+                    if header != ["安装包名称", "MD5值"] or len(tbl) < 2:
+                        continue
+                    row = tbl[1]
+                    if isinstance(row, list) and len(row) > 0:
+                        return str(row[0] or "").strip()
+                break
+            break
+        return ""
+
+    def __autofill(self, content, prod_id, product=None, version="", force=False):
         if not isinstance(content, dict):
             return content
         type_code = (getattr(product, "type_code", "") or "").strip() if product else ""
@@ -368,11 +410,11 @@ class Server(object):
             for s in (content.get("sections") or []):
                 self.__replace_type_code(s, type_code)
         self.__fill_runtime_env(content, prod_id)
-        self.__fill_revision(content, prod_id, version)
+        self.__fill_revision(content, prod_id, version, force=force)
         self.__fill_md5_attachment(content, package_name, md5_value)
         self.__fill_md5_review(content, prod_id, product, package_name, md5_value, rev_date)
-        serv_review_util.fill_cover_dates(content, rev_date)
-        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, DOC_KEY) if prod_id else {})
+        serv_review_util.fill_cover_dates(content, rev_date, force=force)
+        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, DOC_KEY) if prod_id else {}, force=force)
         return content
 
     def __to_obj(self, row: ImmDoc, product: Product = None):
@@ -448,6 +490,101 @@ class Server(object):
                 setattr(row, key, value)
             db.session.commit()
             return Resp.resp_ok()
+        except Exception:
+            logger.exception("")
+            db.session.rollback()
+        return Resp.resp_err(msg=ts(msg_err_db))
+
+    def __fill_product_info(self, content, product):
+        """切换产品时按新产品信息重建自动获取的章节正文（1.1软件说明/1.4总体描述/1.5适用范围/2.确认产品信息/概述）。
+        参考 rmp 模式：按标题定位，用新产品字段强制覆盖，不依赖旧值匹配。"""
+        if not product or not isinstance(content, dict):
+            return content
+        prod_name = (product.name or "").strip()
+        type_code = (product.type_code or "").strip()
+        full_version = (product.full_version or "").strip()
+        release_version = (product.release_version or "").strip()
+        # 制造商取产品 registrant（注册人），为空则显示空，不兜底固定公司名
+        registrant = (product.registrant or "").strip()
+        overall_desc = (product.overall_desc or "").strip()
+        scope = (product.scope or "").strip()
+        # 型号直接用 type_code 原值（字段本身可能已含/不含 InferCare 前缀，不再额外拼接）
+        type_display = type_code
+        # 物理拓扑图：从该产品的 doc_file（img_topo 类别）获取，URL 前缀 /data.trace 供前端静态访问
+        topo_url = ""
+        topo_row = db.session.execute(
+            select(DocFile).where(DocFile.product_id == product.id, DocFile.category == "img_topo").order_by(DocFile.id)
+        ).scalars().first()
+        if topo_row and topo_row.file_url:
+            # file_url 形如 data.trace/img_topo/51.png，转为 /data.trace/img_topo/51.png
+            url = str(topo_row.file_url).strip()
+            if url.startswith("data.trace/"):
+                url = "/" + url
+            topo_url = url
+
+        def rebuild(node):
+            title = str(node.get("title") or "").strip()
+            plain = self.__strip_section_title(title)
+            if plain == "软件说明":
+                node["body"] = (
+                    "软件标识：\n"
+                    f"产品名称：{prod_name}\n"
+                    f"产品型号：{type_display}\n"
+                    f"发布版本：{release_version}\n"
+                    f"完整版本：{full_version}\n"
+                    f"制造商：{registrant}"
+                )
+            elif plain == "软件总体描述":
+                # 自动获取：为空则显示空
+                node["body"] = overall_desc
+            elif plain == "适用范围":
+                # 自动获取：为空则显示空
+                node["body"] = scope
+            elif plain == "确认产品信息":
+                node["body"] = (
+                    f"产品名称：{prod_name}\n"
+                    f"产品型号：{type_display}\n"
+                    f"发布版本：{release_version}\n"
+                    f"完整版本：{full_version}"
+                )
+            elif plain == "概述":
+                node["body"] = (
+                    f"本文档适用于{registrant}正式发布的产品。本软件需要由本公司授权的安装人员进行安装。"
+                    "软件的日常维护也需要由本公司的授权人员进行。\n"
+                    f"本文档第二章介绍了正确安装“{prod_name}”产品的所有步骤，第三章介绍了软件安装完毕后的一些必要的软件配置项，"
+                    f"第四章软件运行前的基本测试流程，第五章介绍了如何检查软件的日志以及软件所在服务器所需的日常维护。"
+                )
+            elif plain == "硬件拓扑":
+                # 物理拓扑图：从 doc_file 获取，无则置空
+                node["body"] = "物理拓扑图"
+                node["images"] = [topo_url] if topo_url else []
+            for c in (node.get("children") or []):
+                rebuild(c)
+
+        for s in (content.get("sections") or []):
+            rebuild(s)
+        return content
+
+    async def rebind_product(self, id: int, product_id: int):
+        """切换产品：重置为默认模板 + 用新产品信息重建自动获取字段 + 强制填充封面/修订/运行环境后保存，返回新 obj。
+        参考 rmp 模式：重置模板避免旧值污染，按新产品字段强制覆盖。"""
+        try:
+            row: ImmDoc = db.session.execute(select(ImmDoc).where(ImmDoc.id == id)).scalars().first()
+            if not row:
+                return Resp.resp_err(msg=ts("msg_obj_null"))
+            product: Product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+            if not product:
+                return Resp.resp_err(msg=ts("msg_obj_null"))
+            # 重置为默认模板（丢弃旧产品污染的内容）
+            content = self.__normalize_content(None)
+            row.product_id = product_id
+            # 先做型号替换/封面/修订/运行环境等自动填充
+            content = self.__autofill(content, product_id, product, row.version, force=True)
+            # 再用新产品字段重建自动获取章节（总体描述/适用范围等用产品原值整体覆盖，避免被型号替换污染）
+            content = self.__fill_product_info(content, product)
+            row.content = content
+            db.session.commit()
+            return Resp.resp_ok(data=self.__to_obj(row, product))
         except Exception:
             logger.exception("")
             db.session.rollback()
@@ -725,6 +862,11 @@ class Server(object):
                 render_body_section(node, 1, str(seq), numbered=True)
 
         elif mode == "md5_attachment":
+            # 页眉显示安装维护手册文件编号
+            header_para = section.header.add_paragraph()
+            header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            docx_util.fonted_txt(header_para, obj.file_no or "")
+            docx_util.add_page_number_footer(section, obj.file_no or "")
             node = next((s for s in sections if s.get("ref_type") == "md5_attachment"), None)
             if node:
                 title = strip_num(node.get("title")) or "安装维护手册附件：MD5值"
@@ -744,15 +886,35 @@ class Server(object):
                 if str(node.get("body_tail") or "").strip():
                     add_text(node.get("body_tail"))
                 for child in (node.get("children") or []):
-                    render_body_section(child, 1, "", numbered=False)
+                    # MD5 附件子节点标题自带编号（1./2./3./4.），保留原标题不 strip_num
+                    child_title = str(child.get("title") or "").strip()
+                    if child_title:
+                        add_body_heading(child_title, level=1)
+                    if str(child.get("body") or "").strip():
+                        add_text(child.get("body"))
+                    caps2 = child.get("table_captions") or []
+                    for t_idx2, table2 in enumerate(child.get("tables") or []):
+                        cap2 = caps2[t_idx2] if t_idx2 < len(caps2) else ""
+                        if str(cap2 or "").strip():
+                            add_text(cap2)
+                        add_grid(table2)
+                    for image_url2 in (child.get("images") or []):
+                        add_image(image_url2)
+                    if str(child.get("body_tail") or "").strip():
+                        add_text(child.get("body_tail"))
 
         elif mode == "md5_review":
+            # 页眉显示安装维护手册文件编号
+            header_para = section.header.add_paragraph()
+            header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+            docx_util.fonted_txt(header_para, obj.file_no or "")
+            docx_util.add_page_number_footer(section, obj.file_no or "")
             node = next((s for s in sections if s.get("ref_type") == "md5_review"), None)
             if node:
-                write_center_title("附件一", size=16.0, bold=True)
+                # 标题"附件一 评审结论"作为章节标题居中显示，不输出正文
+                title_txt = self.__strip_section_title(node.get("title")) or str(node.get("body") or "").strip() or "附件一 评审结论"
+                write_center_title(title_txt, size=16.0, bold=True)
                 add_blank_lines(2)
-                if (node.get("body") or "").strip():
-                    add_text(node.get("body"))
                 for table in (node.get("tables") or []):
                     serv_review_util.render_review_grid(document, table, set_cell)
 

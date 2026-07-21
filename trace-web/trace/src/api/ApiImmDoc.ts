@@ -14,6 +14,10 @@ export const update_imm_doc = async (params: any) => {
     return await httpPost("/trace-api/imm_doc/update_imm_doc", params);
 };
 
+export const rebind_product = async (params: any) => {
+    return await httpGet("/trace-api/imm_doc/rebind_product", params);
+};
+
 export const delete_imm_doc = async (params: any) => {
     return await httpDelete("/trace-api/imm_doc/delete_imm_doc", params);
 };

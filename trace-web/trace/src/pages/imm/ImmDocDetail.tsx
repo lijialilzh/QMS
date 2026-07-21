@@ -1,4 +1,4 @@
-import { Button, Input, Space, Spin, Upload, message } from "antd";
+import { Button, Input, Modal, Space, Spin, Upload, message } from "antd";
 import { PlusOutlined, DeleteOutlined, FileAddOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
@@ -227,6 +227,31 @@ export default () => {
         });
     };
 
+    // 切换产品：提示未保存修改会丢失，确认后调 rebind_product 强制用新产品信息重新填充封面/修订记录。
+    const rebindProduct = (newId: number) => {
+        if (!id || newId === data.doc.product_id) return;
+        Modal.confirm({
+            title: "切换产品",
+            content: "切换产品将重新获取自动填充内容，未保存的修改会丢失，是否继续？",
+            okText: "切换",
+            cancelText: "取消",
+            onOk: () => {
+                dispatch({ saving: true });
+                Api.rebind_product({ id, product_id: newId }).then((res: any) => {
+                    dispatch({ saving: false });
+                    if (res.code === Api.C_OK) {
+                        message.success(ts("save_success"));
+                        const doc = res.data || {};
+                        const sections = ensureKeys((doc.content && doc.content.sections) || []);
+                        dispatch({ doc, sections, activeKey: firstKey(sections) });
+                    } else {
+                        message.error(res.msg);
+                    }
+                });
+            },
+        });
+    };
+
     const doExport = async (kind: "main" | "md5" | "review" = "main") => {
         if (!id) return;
         const key = kind === "md5" ? "exportingMd5" : kind === "review" ? "exportingReview" : "exporting";
@@ -290,17 +315,7 @@ export default () => {
                                     allowClear={false}
                                     namePlaceholder={ts("product.name")}
                                     versionPlaceholder={ts("product.full_version")}
-                                    onChange={(v) => {
-                                        const product = (data.products || []).find((p: any) => p.id === v) || {};
-                                        dispatch({
-                                            doc: {
-                                                ...data.doc,
-                                                product_id: v,
-                                                product_name: product.name,
-                                                product_full_version: product.full_version,
-                                            },
-                                        });
-                                    }}
+                                    onChange={(v) => v && rebindProduct(v)}
                                 />
                             </span>
                             <span style={{ whiteSpace: "nowrap" }}>文档版本：</span>
