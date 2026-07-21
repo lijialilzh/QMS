@@ -39,6 +39,12 @@ async def update_crr_doc(form: CrrDocForm):
     return await server.update_crr_doc(form)
 
 
+@router.get("/rebind_product", summary="切换产品并重新获取产品信息", response_model=Resp[CrrDocObj])
+@try_log(perm=Perms.crr_doc_edit)
+async def rebind_product(id: int, product_id: int):
+    return await server.rebind_product(id, product_id)
+
+
 @router.delete("/delete_crr_doc", summary="删除代码审查记录", response_model=Resp[Any])
 @try_log(perm=Perms.crr_doc_edit)
 async def delete_crr_doc(id: int):

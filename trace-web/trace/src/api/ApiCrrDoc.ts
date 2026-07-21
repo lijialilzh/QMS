@@ -14,6 +14,10 @@ export const update_crr_doc = async (params: any) => {
     return await httpPost("/trace-api/crr_doc/update_crr_doc", params);
 };
 
+export const rebind_product = async (params: any) => {
+    return await httpGet("/trace-api/crr_doc/rebind_product", params);
+};
+
 export const delete_crr_doc = async (params: any) => {
     return await httpDelete("/trace-api/crr_doc/delete_crr_doc", params);
 };

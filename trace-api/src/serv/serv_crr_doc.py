@@ -96,14 +96,16 @@ class Server(object):
         base["code_url"] = str(base.get("code_url") or "").replace("\t", "  ")
         return base
 
-    def __autofill(self, content, prod_id):
-        """按产品参与人员/时间线自动获取（仅填空，不覆盖已填）：
-        检查日期/签字日期←时间线(代码审查)；被审核人←TPM；审核人←研发负责人；审核签字←研发负责人签名章。"""
-        if not prod_id or not isinstance(content, dict):
+    def __autofill(self, content, prod_id, force=False):
+        """按产品参与人员/时间线自动获取：
+        检查日期/签字日期←时间线(代码审查)；被审核人←TPM；审核人←研发负责人；审核签字←研发负责人签名章。
+        force=False（默认）：仅填空，不覆盖已填（保留用户手动编辑）。
+        force=True（切换产品）：强制覆盖，无数据则置空。"""
+        if not isinstance(content, dict):
             return content
         members = db.session.execute(
             select(ProjectMember).where(ProjectMember.prod_id == prod_id)
-        ).scalars().all()
+        ).scalars().all() if prod_id else []
 
         def role_name(*keys):
             for m in members:
@@ -111,20 +113,29 @@ class Server(object):
                     return (m.name or "").strip()
             return ""
 
-        rev_date = serv_review_util.cover_date(prod_id, "crr") or ""
-        # 检查日期：始终从时间线获取（时间线有值即覆盖，保证与时间线同步）
-        if rev_date:
-            content["check_date"] = rev_date
-        if not str(content.get("auditee") or "").strip():
-            content["auditee"] = role_name("TPM")
-        if not str(content.get("auditor") or "").strip():
-            content["auditor"] = role_name("研发负责人")
-        auditor = str(content.get("auditor") or "").strip()
-        # 审核签字：研发负责人签名章（仅在当前非签名图时填充）
-        if not str(content.get("sign_img") or "").startswith("data:image"):
-            content["sign_img"] = (serv_review_util._sign_by_name(auditor) if auditor else "") or ""
-        # 审核日期与检查日期保持一致
-        content["sign_date"] = str(content.get("check_date") or "")
+        rev_date = serv_review_util.cover_date(prod_id, "crr") if prod_id else ""
+        auditee_val = role_name("TPM")
+        auditor_val = role_name("研发负责人")
+        sign_val = (serv_review_util._sign_by_name(auditor_val) if auditor_val else "") or ""
+        if force:
+            # 强制覆盖：用新产品数据替换，无则置空
+            content["check_date"] = rev_date or ""
+            content["auditee"] = auditee_val
+            content["auditor"] = auditor_val
+            content["sign_img"] = sign_val
+            content["sign_date"] = rev_date or ""
+        else:
+            # 仅填空，不覆盖已填
+            if rev_date:
+                content["check_date"] = rev_date
+            if not str(content.get("auditee") or "").strip():
+                content["auditee"] = auditee_val
+            if not str(content.get("auditor") or "").strip():
+                content["auditor"] = auditor_val
+            auditor = str(content.get("auditor") or "").strip()
+            if not str(content.get("sign_img") or "").startswith("data:image"):
+                content["sign_img"] = (serv_review_util._sign_by_name(auditor) if auditor else "") or ""
+            content["sign_date"] = str(content.get("check_date") or "")
         return content
 
     def __to_obj(self, row: CrrDoc, product: Product = None):
@@ -202,6 +213,26 @@ class Server(object):
                 setattr(row, key, value)
             db.session.commit()
             return Resp.resp_ok()
+        except Exception:
+            logger.exception("")
+            db.session.rollback()
+        return Resp.resp_err(msg=ts(msg_err_db))
+
+    async def rebind_product(self, id: int, product_id: int):
+        """切换产品：更新 product_id 并强制用新产品信息重新获取产品信息后保存，返回新 obj。"""
+        try:
+            row: CrrDoc = db.session.execute(select(CrrDoc).where(CrrDoc.id == id)).scalars().first()
+            if not row:
+                return Resp.resp_err(msg=ts("msg_obj_null"))
+            product: Product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+            if not product:
+                return Resp.resp_err(msg=ts("msg_obj_null"))
+            row.product_id = product_id
+            content = self.__normalize_content(row.content)
+            content = self.__autofill(content, product_id, force=True)
+            row.content = content
+            db.session.commit()
+            return Resp.resp_ok(data=self.__to_obj(row, product))
         except Exception:
             logger.exception("")
             db.session.rollback()

@@ -39,6 +39,12 @@ async def update_dem_doc(form: DemDocForm):
     return await server.update_dem_doc(form)
 
 
+@router.get("/rebind_product", summary="切换产品并重新获取产品信息", response_model=Resp[DemDocObj])
+@try_log(perm=Perms.dem_doc_edit)
+async def rebind_product(id: int, product_id: int):
+    return await server.rebind_product(id, product_id)
+
+
 @router.delete("/delete_dem_doc", summary="删除开发环境维护说明", response_model=Resp[Any])
 @try_log(perm=Perms.dem_doc_edit)
 async def delete_dem_doc(id: int):

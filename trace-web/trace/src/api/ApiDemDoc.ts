@@ -14,6 +14,10 @@ export const update_dem_doc = async (params: any) => {
     return await httpPost("/trace-api/dem_doc/update_dem_doc", params);
 };
 
+export const rebind_product = async (params: any) => {
+    return await httpGet("/trace-api/dem_doc/rebind_product", params);
+};
+
 export const delete_dem_doc = async (params: any) => {
     return await httpDelete("/trace-api/dem_doc/delete_dem_doc", params);
 };

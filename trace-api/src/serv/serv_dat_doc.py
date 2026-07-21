@@ -75,25 +75,35 @@ class Server(object):
             ).scalars().first()
         return (row.code or "").strip() if row and row.code else ""
 
-    def __autofill(self, content, prod_id, product=None):
+    def __autofill(self, content, prod_id, product=None, force=False):
+        """产品信息自动获取：project/reason←产品名+版本；日期←时间线(数据申请)；签字←申请人签名章。
+        force=False（默认）：仅填空，不覆盖已填。
+        force=True（切换产品）：强制覆盖，无数据则置空。"""
         if not isinstance(content, dict):
             return content
-        if product:
-            name = (product.name or "").strip()
-            ver = (product.full_version or "").strip()
-            if name and not str(content.get("project") or "").strip():
-                content["project"] = f"{name}（{ver}）" if ver else name
-            if name and not str(content.get("reason") or "").strip():
-                content["reason"] = f"“{name} {ver}”项目测试时应有的数据支持。"
-        # 日期：时间线「数据申请」活动日期
+        name = (product.name or "").strip() if product else ""
+        ver = (product.full_version or "").strip() if product else ""
+        project_val = f"{name}（{ver}）" if ver else name
+        reason_val = f"“{name} {ver}”项目测试时应有的数据支持。" if name else ""
         rev_date = serv_review_util.review_date(prod_id, ["数据申请单", "数据申请"]) if prod_id else ""
-        for k in ("apply_date", "deliver_date", "sign_date"):
-            if rev_date and not str(content.get(k) or "").strip():
-                content[k] = rev_date
-        # 申请人签字：按申请人姓名取签名章
         applicant = str(content.get("applicant") or "").strip()
-        if applicant and not str(content.get("sign_img") or "").startswith("data:image"):
-            content["sign_img"] = serv_review_util._sign_by_name(applicant) or ""
+        sign_val = (serv_review_util._sign_by_name(applicant) if applicant else "") or ""
+        if force:
+            content["project"] = project_val
+            content["reason"] = reason_val
+            for k in ("apply_date", "deliver_date", "sign_date"):
+                content[k] = rev_date or ""
+            content["sign_img"] = sign_val
+        else:
+            if name and not str(content.get("project") or "").strip():
+                content["project"] = project_val
+            if name and not str(content.get("reason") or "").strip():
+                content["reason"] = reason_val
+            for k in ("apply_date", "deliver_date", "sign_date"):
+                if rev_date and not str(content.get(k) or "").strip():
+                    content[k] = rev_date
+            if applicant and not str(content.get("sign_img") or "").startswith("data:image"):
+                content["sign_img"] = sign_val
         return content
 
     def __to_obj(self, row: DatDoc, product: Product = None):
@@ -169,6 +179,26 @@ class Server(object):
                 setattr(row, key, value)
             db.session.commit()
             return Resp.resp_ok()
+        except Exception:
+            logger.exception("")
+            db.session.rollback()
+        return Resp.resp_err(msg=ts(msg_err_db))
+
+    async def rebind_product(self, id: int, product_id: int):
+        """切换产品：更新 product_id 并强制用新产品信息重新获取后保存，返回新 obj。"""
+        try:
+            row: DatDoc = db.session.execute(select(DatDoc).where(DatDoc.id == id)).scalars().first()
+            if not row:
+                return Resp.resp_err(msg=ts("msg_obj_null"))
+            product: Product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+            if not product:
+                return Resp.resp_err(msg=ts("msg_obj_null"))
+            row.product_id = product_id
+            content = self.__normalize_content(row.content)
+            content = self.__autofill(content, product_id, product, force=True)
+            row.content = content
+            db.session.commit()
+            return Resp.resp_ok(data=self.__to_obj(row, product))
         except Exception:
             logger.exception("")
             db.session.rollback()

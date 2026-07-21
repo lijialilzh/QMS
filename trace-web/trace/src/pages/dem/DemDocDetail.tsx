@@ -1,4 +1,4 @@
-import { Button, Checkbox, Input, Space, Spin, message } from "antd";
+import { Button, Checkbox, Input, Modal, Space, Spin, message } from "antd";
 import { useEffect } from "react";
 import type { CSSProperties } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
@@ -99,8 +99,26 @@ export default () => {
     }, []);
 
     const rebindProduct = (newId: number) => {
-        const product = (data.products || []).find((p: any) => p.id === newId) || {};
-        dispatch({ doc: { ...data.doc, product_id: newId, product_name: product.name, product_full_version: product.full_version } });
+        if (!id || newId === data.doc.product_id) return;
+        Modal.confirm({
+            title: "切换产品",
+            content: "切换产品将重新获取产品信息，未保存的修改会丢失，是否继续？",
+            okText: "切换",
+            cancelText: "取消",
+            onOk: () => {
+                dispatch({ saving: true });
+                Api.rebind_product({ id, product_id: newId }).then((res: any) => {
+                    dispatch({ saving: false });
+                    if (res.code === Api.C_OK) {
+                        message.success(ts("save_success"));
+                        const doc = res.data || {};
+                        dispatch({ doc, content: doc.content || { desc: "", assets: [], checks: [] } });
+                    } else {
+                        message.error(res.msg);
+                    }
+                });
+            },
+        });
     };
 
     const clone = () => JSON.parse(JSON.stringify(data.content || {}));

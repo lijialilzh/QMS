@@ -38,6 +38,10 @@ async def duplicate_tem_doc(id: int, product_id: int = None):
 async def update_tem_doc(form: TemDocForm):
     return await server.update_tem_doc(form)
 
+@router.get("/rebind_product", summary="切换产品并重新获取产品信息", response_model=Resp[TemDocObj])
+@try_log(perm=Perms.tem_doc_edit)
+async def rebind_product(id: int, product_id: int):
+    return await server.rebind_product(id, product_id)
 
 @router.delete("/delete_tem_doc", summary="删除测试环境维护记录", response_model=Resp[Any])
 @try_log(perm=Perms.tem_doc_edit)

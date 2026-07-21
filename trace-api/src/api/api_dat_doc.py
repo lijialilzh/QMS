@@ -39,6 +39,12 @@ async def update_dat_doc(form: DatDocForm):
     return await server.update_dat_doc(form)
 
 
+@router.get("/rebind_product", summary="切换产品并重新获取产品信息", response_model=Resp[DatDocObj])
+@try_log(perm=Perms.dat_doc_edit)
+async def rebind_product(id: int, product_id: int):
+    return await server.rebind_product(id, product_id)
+
+
 @router.delete("/delete_dat_doc", summary="删除数据申请单", response_model=Resp[Any])
 @try_log(perm=Perms.dat_doc_edit)
 async def delete_dat_doc(id: int):

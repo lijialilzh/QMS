@@ -14,6 +14,10 @@ export const update_dat_doc = async (params: any) => {
     return await httpPost("/trace-api/dat_doc/update_dat_doc", params);
 };
 
+export const rebind_product = async (params: any) => {
+    return await httpGet("/trace-api/dat_doc/rebind_product", params);
+};
+
 export const delete_dat_doc = async (params: any) => {
     return await httpDelete("/trace-api/dat_doc/delete_dat_doc", params);
 };

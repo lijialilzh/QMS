@@ -299,7 +299,7 @@ class Server(object):
                 out.append((code, usage))
         return out
 
-    def __autofill(self, content, prod_id, product=None):
+    def __autofill(self, content, prod_id, product=None, force=False):
         if not isinstance(content, dict):
             return content
         # 资产编码/检查表：从「测试设备清单」自动获取
@@ -318,16 +318,24 @@ class Server(object):
                 }
                 for code, usage in teq_assets
             ]
+        elif force:
+            # 切换产品但新产品无测试设备清单：清空资产表/检查表
+            content["assets"] = [list(_ASSET_HEADER)]
+            content["checks"] = []
         # 资产表：首个数据行填产品名称/完整版本
         assets = content.get("assets") or []
         if product and len(assets) >= 2 and isinstance(assets[1], list):
             row = assets[1]
             while len(row) < 4:
                 row.append("")
-            if not str(row[2] or "").strip():
+            if force:
                 row[2] = product.name or ""
-            if not str(row[3] or "").strip():
                 row[3] = product.full_version or ""
+            else:
+                if not str(row[2] or "").strip():
+                    row[2] = product.name or ""
+                if not str(row[3] or "").strip():
+                    row[3] = product.full_version or ""
         # 检查人：基于时间线起始日期，2025年9月前 宋月，之后 孙家旭
         start_d, _end_d = self.__dev_test_range(prod_id) if prod_id else (None, None)
         checker_name = "宋月" if serv_review_util._before_202509(start_d) else "孙家旭"
@@ -355,7 +363,7 @@ class Server(object):
                     "date": wk,
                     "marks": marks,
                     "problem": prob if prob.strip() else "无",
-                    "checker": chker if chker.strip() else checker_val,
+                    "checker": checker_val if force else (chker if chker.strip() else checker_val),
                 })
             chk["rows"] = new_rows if weeks else (chk.get("rows") or [])
         return content
@@ -458,6 +466,28 @@ class Server(object):
                 row.file_no = self.__dhf_file_no(row.product_id)
             db.session.commit()
             return Resp.resp_ok()
+        except Exception:
+            logger.exception("")
+            db.session.rollback()
+        return Resp.resp_err(msg=ts(msg_err_db))
+
+    async def rebind_product(self, id: int, product_id: int):
+        """切换产品：更新 product_id 并强制用新产品信息重新获取后保存，返回新 obj。"""
+        try:
+            row: TemDoc = db.session.execute(select(TemDoc).where(TemDoc.id == id)).scalars().first()
+            if not row:
+                return Resp.resp_err(msg=ts("msg_obj_null"))
+            product: Product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+            if not product:
+                return Resp.resp_err(msg=ts("msg_obj_null"))
+            row.product_id = product_id
+            if not (row.file_no or "").strip():
+                row.file_no = self.__dhf_file_no(product_id)
+            content = self.__normalize_content(row.content)
+            content = self.__autofill(content, product_id, product, force=True)
+            row.content = content
+            db.session.commit()
+            return Resp.resp_ok(data=self.__to_obj(row, product))
         except Exception:
             logger.exception("")
             db.session.rollback()
