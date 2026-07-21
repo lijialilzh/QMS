@@ -634,7 +634,7 @@ class Server(object):
         section.left_margin = Inches(0.7)
         section.right_margin = Inches(0.7)
 
-        if mode == "main":
+        if mode in ("main", "all"):
             update_fields = OxmlElement("w:updateFields")
             update_fields.set(qn("w:val"), "true")
             document.settings.element.append(update_fields)
@@ -832,7 +832,7 @@ class Server(object):
                     child_num = ""
                 render_body_section(child, level + 1, child_num, numbered=numbered)
 
-        if mode == "main":
+        if mode in ("main", "all"):
             cover = next((s for s in sections if s.get("ref_type") == "cover"), None)
             revision = next((s for s in sections if s.get("ref_type") == "revision"), None)
             body = [s for s in sections if s.get("ref_type") not in ("cover", "revision", "md5_attachment", "md5_review")]
@@ -861,12 +861,16 @@ class Server(object):
                 seq += 1
                 render_body_section(node, 1, str(seq), numbered=True)
 
-        elif mode == "md5_attachment":
-            # 页眉显示安装维护手册文件编号
-            header_para = section.header.add_paragraph()
-            header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            docx_util.fonted_txt(header_para, obj.file_no or "")
-            docx_util.add_page_number_footer(section, obj.file_no or "")
+            if mode == "all":
+                document.add_page_break()
+
+        if mode in ("md5_attachment", "all"):
+            if mode == "md5_attachment":
+                # 单独导出 MD5 附件时设页眉；all 模式下页眉已在 main 段设置
+                header_para = section.header.add_paragraph()
+                header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                docx_util.fonted_txt(header_para, obj.file_no or "")
+                docx_util.add_page_number_footer(section, obj.file_no or "")
             node = next((s for s in sections if s.get("ref_type") == "md5_attachment"), None)
             if node:
                 title = strip_num(node.get("title")) or "安装维护手册附件：MD5值"
@@ -902,13 +906,16 @@ class Server(object):
                         add_image(image_url2)
                     if str(child.get("body_tail") or "").strip():
                         add_text(child.get("body_tail"))
+                if mode == "all":
+                    document.add_page_break()
 
-        elif mode == "md5_review":
-            # 页眉显示安装维护手册文件编号
-            header_para = section.header.add_paragraph()
-            header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-            docx_util.fonted_txt(header_para, obj.file_no or "")
-            docx_util.add_page_number_footer(section, obj.file_no or "")
+        if mode in ("md5_review", "all"):
+            if mode == "md5_review":
+                # 单独导出评审记录时设页眉；all 模式下页眉已在 main 段设置
+                header_para = section.header.add_paragraph()
+                header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                docx_util.fonted_txt(header_para, obj.file_no or "")
+                docx_util.add_page_number_footer(section, obj.file_no or "")
             node = next((s for s in sections if s.get("ref_type") == "md5_review"), None)
             if node:
                 # 标题"附件一 评审结论"作为章节标题居中显示，不输出正文
@@ -923,7 +930,8 @@ class Server(object):
 
     async def export_imm_doc(self, output, id: int):
         resp = await self.get_imm_doc(id)
-        self.__export_docx(output, resp.data, mode="main")
+        # 列表导出完整版：主文档 + MD5值附件 + 评审记录（分页分隔）
+        self.__export_docx(output, resp.data, mode="all")
 
     async def export_imm_md5_attachment(self, output, id: int):
         resp = await self.get_imm_doc(id)
