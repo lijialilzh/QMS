@@ -91,7 +91,9 @@ class Server(object):
             "sections": [self.__normalize_node(s) for s in content["sections"]],
         }
 
-    def __replace_in_node(self, node, replacer):
+    def __replace_in_node(self, node, replacer, skip_titles=None):
+        if skip_titles and str(node.get("title") or "").strip() in skip_titles:
+            return
         if node.get("body"):
             node["body"] = replacer(node["body"])
         if node.get("body_tail"):
@@ -102,7 +104,7 @@ class Server(object):
                     if isinstance(row[i], str):
                         row[i] = replacer(row[i])
         for c in (node.get("children") or []):
-            self.__replace_in_node(c, replacer)
+            self.__replace_in_node(c, replacer, skip_titles=skip_titles)
 
     def __replace_name(self, node, base, name):
         if not name or base == name:
@@ -112,6 +114,9 @@ class Server(object):
     def __replace_type_code(self, node, type_code):
         if not type_code:
             return
+        # 2.2 MD5校验安装包 / 2.4.1 检查安装包 正文中的安装包名称保留模板原样，
+        # 不按当前产品型号自动替换。
+        skip_titles = {"2.2 MD5校验安装包", "2.4.1 检查安装包"}
         space_pat = "InferCare RECIST"
         under_pat = "InferCare_RECIST"
         space_new = f"InferCare {type_code}"
@@ -122,7 +127,7 @@ class Server(object):
                 return s
             return s.replace(space_pat, space_new).replace(under_pat, under_new)
 
-        self.__replace_in_node(node, repl)
+        self.__replace_in_node(node, repl, skip_titles=skip_titles)
 
     def __member_name(self, prod_id, keywords):
         if not prod_id:
@@ -322,15 +327,37 @@ class Server(object):
             break
         return content
 
+    def __read_md5_attachment(self, content):
+        """从 md5_attachment 章节的表格读取 (package_name, md5_value)。
+        表头为 ["安装包名称", "MD5值"]，取第二行。"""
+        for s in (content.get("sections") or []):
+            if s.get("ref_type") != "md5_attachment":
+                continue
+            for tbl in (s.get("tables") or []):
+                if not tbl or not isinstance(tbl[0], list):
+                    continue
+                header = [str(c).strip() for c in tbl[0][:2]]
+                if header != ["安装包名称", "MD5值"] or len(tbl) < 2:
+                    continue
+                row = tbl[1]
+                if not isinstance(row, list):
+                    continue
+                pkg = str(row[0] or "").strip() if len(row) > 0 else ""
+                md5 = str(row[1] or "").strip() if len(row) > 1 else ""
+                return pkg, md5
+            break
+        return "", ""
+
     def __autofill(self, content, prod_id, product=None, version=""):
         if not isinstance(content, dict):
             return content
         type_code = (getattr(product, "type_code", "") or "").strip() if product else ""
         full_version = (getattr(product, "full_version", "") or "").strip() if product else ""
-        if not str(content.get("package_name") or "").strip() and type_code and full_version:
-            content["package_name"] = f"InferCare_{type_code}-{full_version}.zip"
-        package_name = str(content.get("package_name") or "").strip()
-        md5_value = str(content.get("md5_value") or "").strip()
+        # 安装包名称 / MD5 值以 md5_attachment 附件章节的表格为准（用户在附件里维护）。
+        # 附件表格为空时，兜底按产品型号+版本自动生成安装包名称。
+        package_name, md5_value = self.__read_md5_attachment(content)
+        if not package_name and type_code and full_version:
+            package_name = f"InferCare_{type_code}-{full_version}.zip"
         rev_date = ""
         if prod_id:
             rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) or serv_review_util.review_date(prod_id, DATE_KEYWORDS)
@@ -654,6 +681,11 @@ class Server(object):
                 add_text(node.get("body_tail"))
             idx = 0
             for child in (node.get("children") or []):
+                # "表N xxx" 是表格标题块（被上一章节引用），不作为独立章节编号，
+                # 避免占用章节序号导致后续真实章节号错位。
+                if re.match(r"^\s*表\d+([、.\s　]|$)", str(child.get("title") or "")):
+                    render_body_section(child, level + 1, "", numbered=numbered)
+                    continue
                 idx += 1
                 if numbered and number:
                     child_num = f"{number}.{idx}"

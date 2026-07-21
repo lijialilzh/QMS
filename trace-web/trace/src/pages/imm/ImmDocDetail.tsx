@@ -48,10 +48,18 @@ const firstKey = (nodes: any[]): string => (nodes && nodes[0] ? nodes[0]._key : 
 const stripNum = (title: string): string => String(title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();
 
 // 编号：封面/修订记录/附录不编号；其余正文顶级 1/2/3，子级 1.1...
+// "表N xxx" 这类节点是表格标题块（被上一章节引用），不作为独立章节编号，
+// 避免占用章节序号导致后续真实章节号错位。
 const NO_NUM = new Set(["cover", "revision", "md5_attachment", "md5_review"]);
+const isTableTitle = (title: any): boolean => /^\s*表\d+([、.\s　]|$)/.test(String(title || ""));
 const walkChildren = (nodes: any[], prefix: string, map: Record<string, string>) => {
     let idx = 0;
     (nodes || []).forEach((n: any) => {
+        if (isTableTitle(n.title)) {
+            map[n._key] = "";
+            walkChildren(n.children || [], "", map);
+            return;
+        }
         idx += 1;
         const num = prefix ? `${prefix}.${idx}` : `${idx}`;
         map[n._key] = num;
@@ -88,8 +96,6 @@ export default () => {
         exportingMd5: false,
         exportingReview: false,
         doc: {} as any,
-        md5Value: "",
-        packageName: "",
         sections: [] as any[],
         activeKey: "",
         products: [] as any[],
@@ -111,8 +117,6 @@ export default () => {
                 loading: false,
                 doc,
                 sections,
-                md5Value: content.md5_value || "",
-                packageName: content.package_name || "",
                 activeKey: findNode(sections, data.activeKey) ? data.activeKey : firstKey(sections),
             });
         });
@@ -213,8 +217,6 @@ export default () => {
         dispatch({ saving: true });
         const content = {
             sections: stripKeys(data.sections),
-            md5_value: data.md5Value || "",
-            package_name: data.packageName || "",
         };
         Api.update_imm_doc({ id, content, product_id: data.doc.product_id, version: data.doc.version }).then((res: any) => {
             dispatch({ saving: false });
@@ -340,25 +342,6 @@ export default () => {
                     </div>
 
                     <div className="pdp-editor">
-                        <div className="pdp-field" style={{ marginBottom: 16, padding: "12px 16px", background: "#fafafa", borderRadius: 6 }}>
-                            <div className="pdp-label">安装包 / MD5（全局，导出 MD5 附件与评审记录时使用）</div>
-                            <Space direction="vertical" style={{ width: "100%" }} size={8}>
-                                <Input
-                                    addonBefore="安装包名称"
-                                    value={data.packageName}
-                                    disabled={readonly}
-                                    placeholder="如 InferCare_RECIST-2.0.0.0.zip"
-                                    onChange={(e) => dispatch({ packageName: e.target.value })}
-                                />
-                                <Input
-                                    addonBefore="MD5 值"
-                                    value={data.md5Value}
-                                    disabled={readonly}
-                                    placeholder="32位小写 MD5"
-                                    onChange={(e) => dispatch({ md5Value: e.target.value })}
-                                />
-                            </Space>
-                        </div>
                         {!active ? (
                             <div className="pdp-empty">请选择或新增左侧章节</div>
                         ) : (
