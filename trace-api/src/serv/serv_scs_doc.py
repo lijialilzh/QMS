@@ -77,8 +77,10 @@ class Server(object):
             return copy.deepcopy(DEFAULT_SCS_CONTENT)
         return {"sections": [self.__normalize_node(s) for s in content["sections"]]}
 
-    def __replace_name(self, node, base, name):
+    def __replace_name(self, node, base, name, skip_titles=None):
         if not name or base == name:
+            return
+        if skip_titles and str(node.get("title") or "").strip() in skip_titles:
             return
         if node.get("body"):
             node["body"] = node["body"].replace(base, name)
@@ -88,7 +90,7 @@ class Server(object):
                     if isinstance(row[i], str) and base in row[i]:
                         row[i] = row[i].replace(base, name)
         for c in (node.get("children") or []):
-            self.__replace_name(c, base, name)
+            self.__replace_name(c, base, name, skip_titles=skip_titles)
 
     def __dhf_file_no(self, prod_id):
         if not prod_id:
@@ -102,7 +104,7 @@ class Server(object):
             ).scalars().first()
         return (row.code or "").strip() if row and row.code else ""
 
-    def __fill_revision(self, content, prod_id, version):
+    def __fill_revision(self, content, prod_id, version, force=False):
         rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
         reviser = approver = ""
         if prod_id:
@@ -115,16 +117,18 @@ class Server(object):
             for tbl in (s.get("tables") or []):
                 if isinstance(tbl, list) and len(tbl) >= 2 and isinstance(tbl[1], list) and len(tbl[1]) >= 3:
                     row = tbl[1]
-                    if not str(row[0] or "").strip():
-                        row[0] = rev_date
-                    if version and len(row) >= 2 and not str(row[1] or "").strip():
-                        row[1] = str(version)
-                    if len(row) >= 3 and not str(row[2] or "").strip():
-                        row[2] = "首次发布"
-                    if len(row) >= 4 and reviser and not str(row[3] or "").strip():
-                        row[3] = reviser
-                    if len(row) >= 5 and approver and not str(row[4] or "").strip():
-                        row[4] = approver
+                    if force:
+                        row[0] = rev_date or ""
+                        if len(row) >= 2: row[1] = str(version or "")
+                        if len(row) >= 3: row[2] = "首次发布"
+                        if len(row) >= 4: row[3] = reviser
+                        if len(row) >= 5: row[4] = approver
+                    else:
+                        if not str(row[0] or "").strip(): row[0] = rev_date
+                        if version and len(row) >= 2 and not str(row[1] or "").strip(): row[1] = str(version)
+                        if len(row) >= 3 and not str(row[2] or "").strip(): row[2] = "首次发布"
+                        if len(row) >= 4 and reviser and not str(row[3] or "").strip(): row[3] = reviser
+                        if len(row) >= 5 and approver and not str(row[4] or "").strip(): row[4] = approver
             break
         return content
 

@@ -14,6 +14,10 @@ export const update_scm_doc = async (params: any) => {
     return await httpPost("/trace-api/scm_doc/update_scm_doc", params);
 };
 
+export const rebind_product = async (params: any) => {
+    return await httpGet("/trace-api/scm_doc/rebind_product", params);
+};
+
 export const delete_scm_doc = async (params: any) => {
     return await httpDelete("/trace-api/scm_doc/delete_scm_doc", params);
 };

@@ -76,8 +76,10 @@ class Server(object):
             return copy.deepcopy(DEFAULT_SCM_CONTENT)
         return {"sections": [self.__normalize_node(s) for s in content["sections"]]}
 
-    def __replace_name(self, node, base, name):
+    def __replace_name(self, node, base, name, skip_titles=None):
         if not name or base == name:
+            return
+        if skip_titles and str(node.get("title") or "").strip() in skip_titles:
             return
         if node.get("body"):
             node["body"] = node["body"].replace(base, name)
@@ -87,7 +89,7 @@ class Server(object):
                     if isinstance(row[i], str) and base in row[i]:
                         row[i] = row[i].replace(base, name)
         for c in (node.get("children") or []):
-            self.__replace_name(c, base, name)
+            self.__replace_name(c, base, name, skip_titles=skip_titles)
 
     def __dhf_file_no(self, prod_id):
         if not prod_id:
@@ -101,8 +103,9 @@ class Server(object):
             ).scalars().first()
         return (row.code or "").strip() if row and row.code else ""
 
-    def __fill_revision(self, content, prod_id, version):
-        """文件修订记录首行：修改日期(评审/封面日期)、版本号、首次发布、修订人(TPM)、批准人(研发负责人)。"""
+    def __fill_revision(self, content, prod_id, version, force=False):
+        """文件修订记录首行：修改日期(评审/封面日期)、版本号、首次发布、修订人(TPM)、批准人(研发负责人)。
+        force=True（切换产品）时强制覆盖，无数据则置空。"""
         rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
         reviser = approver = ""
         if prod_id:
@@ -115,33 +118,46 @@ class Server(object):
             for tbl in (s.get("tables") or []):
                 if isinstance(tbl, list) and len(tbl) >= 2 and isinstance(tbl[1], list) and len(tbl[1]) >= 3:
                     row = tbl[1]
-                    if not str(row[0] or "").strip():
-                        row[0] = rev_date
-                    if version and len(row) >= 2 and not str(row[1] or "").strip():
-                        row[1] = str(version)
-                    if len(row) >= 3 and not str(row[2] or "").strip():
-                        row[2] = "首次发布"
-                    if len(row) >= 4 and reviser and not str(row[3] or "").strip():
-                        row[3] = reviser
-                    if len(row) >= 5 and approver and not str(row[4] or "").strip():
-                        row[4] = approver
+                    if force:
+                        row[0] = rev_date or ""
+                        if len(row) >= 2:
+                            row[1] = str(version or "")
+                        if len(row) >= 3:
+                            row[2] = "首次发布"
+                        if len(row) >= 4:
+                            row[3] = reviser
+                        if len(row) >= 5:
+                            row[4] = approver
+                    else:
+                        if not str(row[0] or "").strip():
+                            row[0] = rev_date
+                        if version and len(row) >= 2 and not str(row[1] or "").strip():
+                            row[1] = str(version)
+                        if len(row) >= 3 and not str(row[2] or "").strip():
+                            row[2] = "首次发布"
+                        if len(row) >= 4 and reviser and not str(row[3] or "").strip():
+                            row[3] = reviser
+                        if len(row) >= 5 and approver and not str(row[4] or "").strip():
+                            row[4] = approver
             break
         return content
 
-    def __autofill(self, content, prod_id, product=None, version=""):
+    def __autofill(self, content, prod_id, product=None, version="", force=False):
         if not isinstance(content, dict):
             return content
+        # 这些章节内容为固定模板（编号规则/构建配置/发布过程/测试环境），不替换产品名
+        skip_titles = {"产品开发部软件构建配置项版本控制", "文件中涉及的编号命名规则", "发布过程", "软件测试环境的建立"}
         if product and product.name:
             for s in (content.get("sections") or []):
-                self.__replace_name(s, BASE_NAME, product.name)
-        self.__fill_revision(content, prod_id, version)
+                self.__replace_name(s, BASE_NAME, product.name, skip_titles=skip_titles)
+        self.__fill_revision(content, prod_id, version, force=force)
         serv_review_util.ensure_review(
             content, DOC_KEY,
             serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS[DOC_KEY]["name_keywords"]) if prod_id else "",
             prod_id,
         )
-        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else "")
-        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, DOC_KEY) if prod_id else {})
+        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else "", force=force)
+        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, DOC_KEY) if prod_id else {}, force=force)
         return content
 
     def __to_obj(self, row: ScmDoc, product: Product = None):
@@ -217,6 +233,34 @@ class Server(object):
                 setattr(row, key, value)
             db.session.commit()
             return Resp.resp_ok()
+        except Exception:
+            logger.exception("")
+            db.session.rollback()
+        return Resp.resp_err(msg=ts(msg_err_db))
+
+    async def rebind_product(self, id: int, product_id: int):
+        """切换产品：更新 product_id 并强制用新产品信息重新获取封面/修订/产品信息后保存，返回新 obj。"""
+        try:
+            row: ScmDoc = db.session.execute(select(ScmDoc).where(ScmDoc.id == id)).scalars().first()
+            if not row:
+                return Resp.resp_err(msg=ts("msg_obj_null"))
+            old_product: Product = db.session.execute(select(Product).where(Product.id == row.product_id)).scalars().first() if row.product_id else None
+            product: Product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+            if not product:
+                return Resp.resp_err(msg=ts("msg_obj_null"))
+            content = self.__normalize_content(row.content)
+            # 旧产品名 → 新产品名（基准名已被旧产品替换过，无法再用基准名替换）
+            old_name = (getattr(old_product, "name", "") or "").strip() if old_product else ""
+            new_name = (product.name or "").strip()
+            skip_titles = {"产品开发部软件构建配置项版本控制", "文件中涉及的编号命名规则", "发布过程", "软件测试环境的建立"}
+            if old_name and new_name and old_name != new_name:
+                for s in (content.get("sections") or []):
+                    self.__replace_name(s, old_name, new_name, skip_titles=skip_titles)
+            row.product_id = product_id
+            content = self.__autofill(content, product_id, product, row.version, force=True)
+            row.content = content
+            db.session.commit()
+            return Resp.resp_ok(data=self.__to_obj(row, product))
         except Exception:
             logger.exception("")
             db.session.rollback()

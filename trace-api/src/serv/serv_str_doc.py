@@ -80,8 +80,10 @@ class Server(object):
             return copy.deepcopy(DEFAULT_STR_CONTENT)
         return {"sections": [self.__normalize_node(s) for s in content["sections"]]}
 
-    def __replace_name(self, node, base, name):
+    def __replace_name(self, node, base, name, skip_titles=None):
         if not name or base == name:
+            return
+        if skip_titles and str(node.get("title") or "").strip() in skip_titles:
             return
         if node.get("body"):
             node["body"] = node["body"].replace(base, name)
@@ -91,7 +93,7 @@ class Server(object):
                     if isinstance(row[i], str) and base in row[i]:
                         row[i] = row[i].replace(base, name)
         for c in (node.get("children") or []):
-            self.__replace_name(c, base, name)
+            self.__replace_name(c, base, name, skip_titles=skip_titles)
 
     def __dhf_file_no(self, prod_id):
         if not prod_id:
