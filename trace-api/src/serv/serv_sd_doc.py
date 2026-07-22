@@ -187,8 +187,10 @@ class Server(object):
             return copy.deepcopy(DEFAULT_SD_CONTENT)
         return {"sections": [self.__normalize_node(s) for s in content["sections"]]}
 
-    def __autofill_for_export(self, content, obj: SdDocObj):
-        """导出时按产品/时间线/参与人员实时填充，保证导出与「新增/编辑」一致（仅填空、不覆盖已填）。"""
+    def __autofill_for_export(self, content, obj: SdDocObj, force=False):
+        """导出时按产品/时间线/参与人员实时填充。
+        force=False（默认）：仅填空，不覆盖已填。
+        force=True（切换产品）：强制覆盖时间/参与人员/里程碑/修订/封面，无数据则置空。"""
         sections = (content or {}).get("sections") or []
         prod_id = obj.product_id
         if not prod_id:
@@ -322,8 +324,8 @@ class Server(object):
                         dt = ph_integ
                     else:
                         dt = dev_end
-                    if dt:
-                        row[c_time] = dt
+                    if force or dt:
+                        row[c_time] = dt if not force else (dt or "")
                 # 负责人（可判定则覆盖）：评审行→TPM；任务含模块名→该模块参与人员；联调/整体行→全体参与
                 if c_owner >= 0 and c_owner < len(row):
                     owner = ""
@@ -341,8 +343,8 @@ class Server(object):
                             owner = "、".join(names)
                         elif re.search(r"联调|整体|全体", row_text):
                             owner = "全体参与"
-                    if owner:
-                        row[c_owner] = owner
+                    if force or owner:
+                        row[c_owner] = owner if not force else (owner or "")
 
         def fill(node):
             ref = node.get("ref_type")
@@ -350,11 +352,11 @@ class Server(object):
             children = node.get("children") or []
             is_overview = ref == "prod_overview" or (title == "产品概况" and not children)
             is_cycle = ref == "prod_cycle" or (title == "项目开发时间" and not children)
-            if (ref == "prod_name" or title == "项目简介") and prod_name:
-                node["body"] = f"产品名称：{prod_name}"
-            elif is_overview and overall_desc:
+            if (ref == "prod_name" or title == "项目简介") and (prod_name or force):
+                node["body"] = f"产品名称：{prod_name}" if prod_name else ""
+            elif is_overview and (overall_desc or force):
                 node["body"] = overall_desc
-            elif is_cycle and cycle:
+            elif is_cycle and (cycle or force):
                 node["body"] = cycle
             if ref == "revision" or title == "文件修订记录":
                 tables = node.get("tables") or []
@@ -365,12 +367,14 @@ class Server(object):
                         t.append([""] * cols)
                     row = t[1]
                     def set_if(i, val):
-                        if val and not str(row[i] if i < len(row) else "").strip():
+                        if force:
+                            row[i if i < len(row) else (len(row) - 1)] = val or ""
+                        elif val and not str(row[i] if i < len(row) else "").strip():
                             row[i] = val
                     set_if(0, file_date)
                     set_if(1, obj.version)
-                    if not str(row[2] if len(row) > 2 else "").strip():
-                        row[2] = "首次发布"
+                    if force or not str(row[2] if len(row) > 2 else "").strip():
+                        if len(row) > 2: row[2] = "首次发布"
                     set_if(3, pm)
                     set_if(4, approver)
             if ref == "milestone" or "里程碑" in title:
@@ -383,8 +387,8 @@ class Server(object):
         serv_review_util.ensure_review(
             content, "sd", serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS["sd"]["name_keywords"]), prod_id
         )
-        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, "sd"))
-        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, "sd"))
+        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, "sd"), force=force)
+        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, "sd"), force=force)
         return content
 
     def __to_obj(self, row: SdDoc, product: Product = None):
@@ -473,6 +477,29 @@ class Server(object):
                 setattr(row, key, value)
             db.session.commit()
             return Resp.resp_ok()
+        except Exception:
+            logger.exception("")
+            db.session.rollback()
+        return Resp.resp_err(msg=ts(msg_err_db))
+
+    async def rebind_product(self, id: int, product_id: int):
+        """切换产品：更新 product_id 并强制用新产品信息重新获取时间/参与人员/里程碑/封面/修订后保存，返回新 obj。"""
+        try:
+            row: SdDoc = db.session.execute(select(SdDoc).where(SdDoc.id == id)).scalars().first()
+            if not row:
+                return Resp.resp_err(msg=ts("msg_obj_null"))
+            product: Product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+            if not product:
+                return Resp.resp_err(msg=ts("msg_obj_null"))
+            row.product_id = product_id
+            content = self.__normalize_content(row.content)
+            # 构造临时 obj 供 __autofill_for_export 使用
+            tmp_obj = SdDocObj(**row.dict())
+            tmp_obj.product_id = product_id
+            content = self.__autofill_for_export(content, tmp_obj, force=True)
+            row.content = content
+            db.session.commit()
+            return Resp.resp_ok(data=self.__to_obj(row, product))
         except Exception:
             logger.exception("")
             db.session.rollback()

@@ -39,6 +39,12 @@ async def update_scs_doc(form: ScsDocForm):
     return await server.update_scs_doc(form)
 
 
+@router.get("/rebind_product", summary="切换产品并重新获取产品信息", response_model=Resp[ScsDocObj])
+@try_log(perm=Perms.scs_doc_edit)
+async def rebind_product(id: int, product_id: int):
+    return await server.rebind_product(id, product_id)
+
+
 @router.delete("/delete_scs_doc", summary="删除软件配置状态报告", response_model=Resp[Any])
 @try_log(perm=Perms.scs_doc_edit)
 async def delete_scs_doc(id: int):

@@ -1,4 +1,4 @@
-import { Button, Input, Space, Spin, message } from "antd";
+import { Button, Input, Modal, Space, Spin, message } from "antd";
 import { PlusOutlined, DeleteOutlined, FileAddOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
@@ -346,9 +346,26 @@ export default () => {
     };
 
     const rebindProduct = (newId: number) => {
-        const product = (data.products || []).find((p: any) => p.id === newId) || {};
-        dispatch({ loading: true, doc: { ...data.doc, product_id: newId, product_name: product.name, product_full_version: product.full_version, country: product.country } });
-        autofill(newId, data.sections, data.doc.version).then((secs) => dispatch({ loading: false, sections: secs }));
+        if (!id || newId === data.doc.product_id) return;
+        Modal.confirm({
+            title: "切换产品",
+            content: "切换产品将重新获取自动填充内容，未保存的修改会丢失，是否继续？",
+            okText: "切换",
+            cancelText: "取消",
+            onOk: () => {
+                dispatch({ loading: true });
+                Api.rebind_product({ id, product_id: newId }).then((res: any) => {
+                    if (res.code !== Api.C_OK) { dispatch({ loading: false }); message.error(res.msg); return; }
+                    const doc = res.data || {};
+                    const sections = ensureKeys((doc.content && doc.content.sections) || []);
+                    autofill(newId, sections, doc.version).then((secs) => {
+                        dispatch({ loading: false, doc, sections: secs, activeKey: findNode(secs, data.activeKey) ? data.activeKey : firstKey(secs) });
+                    }).catch(() => {
+                        dispatch({ loading: false, doc, sections, activeKey: findNode(sections, data.activeKey) ? data.activeKey : firstKey(sections) });
+                    });
+                });
+            },
+        });
     };
 
     useEffect(() => {

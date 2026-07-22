@@ -107,8 +107,9 @@ class Server(object):
             ).scalars().first()
         return (row.code or "").strip() if row and row.code else ""
 
-    def __fill_revision(self, content, prod_id, version):
-        """文件修订记录首行：修改日期(评审/封面日期)、版本号、首次发布、修订人(TPM)、批准人(研发负责人)。"""
+    def __fill_revision(self, content, prod_id, version, force=False):
+        """文件修订记录首行：修改日期(评审/封面日期)、版本号、首次发布、修订人(TPM)、批准人(研发负责人)。
+        force=True（切换产品）时强制覆盖，无数据则置空。"""
         rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
         reviser = approver = ""
         if prod_id:
@@ -122,20 +123,22 @@ class Server(object):
             if tables and isinstance(tables[0], list) and tables[0]:
                 t = tables[0]
                 cols = len(t[0]) if isinstance(t[0], list) and t[0] else 5
-                while len(t) < 6:  # 文件修订记录默认表头+5行
+                while len(t) < 6:
                     t.append([""] * cols)
                 if len(t) >= 2 and isinstance(t[1], list) and len(t[1]) >= 3:
                     row = t[1]
-                    if not str(row[0] or "").strip():
-                        row[0] = rev_date
-                    if version and len(row) >= 2 and not str(row[1] or "").strip():
-                        row[1] = str(version)
-                    if len(row) >= 3 and not str(row[2] or "").strip():
-                        row[2] = "首次发布"
-                    if len(row) >= 4 and reviser and not str(row[3] or "").strip():
-                        row[3] = reviser
-                    if len(row) >= 5 and approver and not str(row[4] or "").strip():
-                        row[4] = approver
+                    if force:
+                        row[0] = rev_date or ""
+                        if len(row) >= 2: row[1] = str(version or "")
+                        if len(row) >= 3: row[2] = "首次发布"
+                        if len(row) >= 4: row[3] = reviser
+                        if len(row) >= 5: row[4] = approver
+                    else:
+                        if not str(row[0] or "").strip(): row[0] = rev_date
+                        if version and len(row) >= 2 and not str(row[1] or "").strip(): row[1] = str(version)
+                        if len(row) >= 3 and not str(row[2] or "").strip(): row[2] = "首次发布"
+                        if len(row) >= 4 and reviser and not str(row[3] or "").strip(): row[3] = reviser
+                        if len(row) >= 5 and approver and not str(row[4] or "").strip(): row[4] = approver
             break
         return content
 
@@ -603,7 +606,7 @@ class Server(object):
             walk(s)
         return content
 
-    def __autofill(self, content, prod_id, product=None, version=""):
+    def __autofill(self, content, prod_id, product=None, version="", force=False):
         if not isinstance(content, dict):
             return content
         if product and product.name:
@@ -616,14 +619,14 @@ class Server(object):
         self.__fill_defects(content, prod_id)
         self.__fill_workload(content, prod_id)
         self.__fill_compat(content, prod_id, product)
-        self.__fill_revision(content, prod_id, version)
+        self.__fill_revision(content, prod_id, version, force=force)
         serv_review_util.ensure_review(
             content, DOC_KEY,
             serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS[DOC_KEY]["name_keywords"]) if prod_id else "",
             prod_id,
         )
-        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else "")
-        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, DOC_KEY) if prod_id else {})
+        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else "", force=force)
+        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, DOC_KEY) if prod_id else {}, force=force)
         # 附件(兼容性测试报告)排到评审记录之后
         secs = content.get("sections") or []
         atts = [s for s in secs if s.get("ref_type") == "attachment"]
@@ -704,6 +707,32 @@ class Server(object):
                 setattr(row, key, value)
             db.session.commit()
             return Resp.resp_ok()
+        except Exception:
+            logger.exception("")
+            db.session.rollback()
+        return Resp.resp_err(msg=ts(msg_err_db))
+
+    async def rebind_product(self, id: int, product_id: int):
+        """切换产品：更新 product_id 并强制用新产品信息重新获取封面/修订/产品名后保存，返回新 obj。"""
+        try:
+            row: StrDoc = db.session.execute(select(StrDoc).where(StrDoc.id == id)).scalars().first()
+            if not row:
+                return Resp.resp_err(msg=ts("msg_obj_null"))
+            old_product: Product = db.session.execute(select(Product).where(Product.id == row.product_id)).scalars().first() if row.product_id else None
+            product: Product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+            if not product:
+                return Resp.resp_err(msg=ts("msg_obj_null"))
+            content = self.__normalize_content(row.content)
+            old_name = (getattr(old_product, "name", "") or "").strip() if old_product else ""
+            new_name = (product.name or "").strip()
+            if old_name and new_name and old_name != new_name:
+                for s in (content.get("sections") or []):
+                    self.__replace_name(s, old_name, new_name)
+            row.product_id = product_id
+            content = self.__autofill(content, product_id, product, row.version, force=True)
+            row.content = content
+            db.session.commit()
+            return Resp.resp_ok(data=self.__to_obj(row, product))
         except Exception:
             logger.exception("")
             db.session.rollback()

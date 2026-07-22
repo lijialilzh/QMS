@@ -14,6 +14,10 @@ export const update_sd_doc = async (params: any) => {
     return await httpPost("/trace-api/sd_doc/update_sd_doc", params);
 };
 
+export const rebind_product = async (params: any) => {
+    return await httpGet("/trace-api/sd_doc/rebind_product", params);
+};
+
 export const delete_sd_doc = async (params: any) => {
     return await httpDelete("/trace-api/sd_doc/delete_sd_doc", params);
 };

@@ -39,6 +39,12 @@ async def update_utr_doc(form: UtrDocForm):
     return await server.update_utr_doc(form)
 
 
+@router.get("/rebind_product", summary="切换产品并重新获取产品信息", response_model=Resp[UtrDocObj])
+@try_log(perm=Perms.utr_doc_edit)
+async def rebind_product(id: int, product_id: int):
+    return await server.rebind_product(id, product_id)
+
+
 @router.delete("/delete_utr_doc", summary="删除用户测试报告", response_model=Resp[Any])
 @try_log(perm=Perms.utr_doc_edit)
 async def delete_utr_doc(id: int):

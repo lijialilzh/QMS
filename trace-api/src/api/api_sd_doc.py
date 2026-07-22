@@ -39,6 +39,12 @@ async def update_sd_doc(form: SdDocForm):
     return await server.update_sd_doc(form)
 
 
+@router.get("/rebind_product", summary="切换产品并重新获取产品信息", response_model=Resp[SdDocObj])
+@try_log(perm=Perms.sd_doc_edit)
+async def rebind_product(id: int, product_id: int):
+    return await server.rebind_product(id, product_id)
+
+
 @router.delete("/delete_sd_doc", summary="删除软件开发计划", response_model=Resp[Any])
 @try_log(perm=Perms.sd_doc_edit)
 async def delete_sd_doc(id: int):

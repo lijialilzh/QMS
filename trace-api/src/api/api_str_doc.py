@@ -39,6 +39,12 @@ async def update_str_doc(form: StrDocForm):
     return await server.update_str_doc(form)
 
 
+@router.get("/rebind_product", summary="切换产品并重新获取产品信息", response_model=Resp[StrDocObj])
+@try_log(perm=Perms.str_doc_edit)
+async def rebind_product(id: int, product_id: int):
+    return await server.rebind_product(id, product_id)
+
+
 @router.delete("/delete_str_doc", summary="删除软件测试报告", response_model=Resp[Any])
 @try_log(perm=Perms.str_doc_edit)
 async def delete_str_doc(id: int):

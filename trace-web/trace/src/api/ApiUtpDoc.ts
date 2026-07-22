@@ -14,6 +14,10 @@ export const update_utp_doc = async (params: any) => {
     return await httpPost("/trace-api/utp_doc/update_utp_doc", params);
 };
 
+export const rebind_product = async (params: any) => {
+    return await httpGet("/trace-api/utp_doc/rebind_product", params);
+};
+
 export const delete_utp_doc = async (params: any) => {
     return await httpDelete("/trace-api/utp_doc/delete_utp_doc", params);
 };

@@ -132,22 +132,24 @@ class Server(object):
             break
         return content
 
-    def __autofill(self, content, prod_id, product=None, version=""):
+    def __autofill(self, content, prod_id, product=None, version="", force=False):
         if not isinstance(content, dict):
             return content
         if product and product.name:
             for s in (content.get("sections") or []):
                 self.__replace_name(s, BASE_NAME, product.name)
-        self.__fill_revision(content, prod_id, version)
+        self.__fill_revision(content, prod_id, version, force=force)
         # 从「软件配置管理计划(SCM)」获取两张配置项清单，注入状态报告对应章节
-        self.__pull_sci_from_scm(content, prod_id)
+        # force（切换产品）时跳过，保留模板原值
+        if not force:
+            self.__pull_sci_from_scm(content, prod_id)
         serv_review_util.ensure_review(
             content, DOC_KEY,
             serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS[DOC_KEY]["name_keywords"]) if prod_id else "",
             prod_id,
         )
-        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else "")
-        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, DOC_KEY) if prod_id else {})
+        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else "", force=force)
+        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, DOC_KEY) if prod_id else {}, force=force)
         return content
 
     @staticmethod
@@ -256,6 +258,58 @@ class Server(object):
                 setattr(row, key, value)
             db.session.commit()
             return Resp.resp_ok()
+        except Exception:
+            logger.exception("")
+            db.session.rollback()
+        return Resp.resp_err(msg=ts(msg_err_db))
+
+    async def rebind_product(self, id: int, product_id: int):
+        """切换产品：更新 product_id 并强制用新产品信息重新获取封面/修订/产品名后保存，返回新 obj。"""
+        try:
+            row: ScsDoc = db.session.execute(select(ScsDoc).where(ScsDoc.id == id)).scalars().first()
+            if not row:
+                return Resp.resp_err(msg=ts("msg_obj_null"))
+            old_product: Product = db.session.execute(select(Product).where(Product.id == row.product_id)).scalars().first() if row.product_id else None
+            product: Product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+            if not product:
+                return Resp.resp_err(msg=ts("msg_obj_null"))
+            content = self.__normalize_content(row.content)
+            # 重置含产品名的固定章节为模板原值（恢复基准名 BASE_NAME，避免被旧产品名污染导致后续替换失效）
+            # 同时重置软件配置状态表（3章节）为模板原值，切换产品不做替换
+            tpl = copy.deepcopy(DEFAULT_SCS_CONTENT) if isinstance(DEFAULT_SCS_CONTENT, dict) else {"sections": []}
+            tpl_map = {}
+            fixed_titles = {"软件配置项状态(不包括现成软件)", "现成软件配置状态"}
+            def collect_tpl(node):
+                key = str(node.get("title") or "").strip()
+                if BASE_NAME in str(node.get("body") or "") or any(BASE_NAME in str(r) for tbl in (node.get("tables") or []) for r in tbl) or key in fixed_titles:
+                    tpl_map[key] = {"body": node.get("body", ""), "tables": copy.deepcopy(node.get("tables", []))}
+                for c in (node.get("children") or []):
+                    collect_tpl(c)
+            for s in (tpl.get("sections") or []):
+                collect_tpl(s)
+            def reset_fixed(node):
+                key = str(node.get("title") or "").strip()
+                if key in tpl_map:
+                    node["body"] = tpl_map[key]["body"]
+                    node["tables"] = copy.deepcopy(tpl_map[key]["tables"])
+                for c in (node.get("children") or []):
+                    reset_fixed(c)
+            for s in (content.get("sections") or []):
+                reset_fixed(s)
+            # 重置后，把完整版本号更新为新产品版本
+            new_full_version = (product.full_version or "").strip()
+            def update_version(node):
+                if node.get("body") and "完整版本号" in str(node.get("body")):
+                    node["body"] = re.sub(r"完整版本号：[^\n]*", f"完整版本号：{new_full_version}", str(node["body"]))
+                for c in (node.get("children") or []):
+                    update_version(c)
+            for s in (content.get("sections") or []):
+                update_version(s)
+            row.product_id = product_id
+            content = self.__autofill(content, product_id, product, row.version, force=True)
+            row.content = content
+            db.session.commit()
+            return Resp.resp_ok(data=self.__to_obj(row, product))
         except Exception:
             logger.exception("")
             db.session.rollback()
