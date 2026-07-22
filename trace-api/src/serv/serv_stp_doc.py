@@ -228,14 +228,15 @@ class Server(object):
             walk(s)
         return content
 
-    def __fill_roles(self, content, prod_id):
-        """「角色和职责」表：按行「角色」自动匹配该产品参与人员，填入「人员」列（匹配不到则保留原值）。"""
-        if not prod_id or not isinstance(content, dict):
+    def __fill_roles(self, content, prod_id, force=False):
+        """「角色和职责」表：按行「角色」自动匹配该产品参与人员，填入「人员」列。
+        force=False：匹配不到则保留原值；force=True：强制覆盖，无人员则置空。"""
+        if not isinstance(content, dict):
             return content
-        doc_date = serv_review_util.cover_date(prod_id, DOC_KEY) or ""
+        doc_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
         members = db.session.execute(
             select(ProjectMember).where(ProjectMember.prod_id == prod_id)
-        ).scalars().all()
+        ).scalars().all() if prod_id else []
 
         def kind_of(duty):
             a = str(duty or "")
@@ -288,7 +289,10 @@ class Server(object):
                         role_label = r[ci_r] if ci_r < len(r) else ""
                         duty = r[ci_d] if ci_d < len(r) else ""
                         nm = names_for(role_label, kind_of(duty))
-                        if nm and ci_p < len(r):
+                        if force:
+                            if ci_p < len(r):
+                                r[ci_p] = nm or ""
+                        elif nm and ci_p < len(r):
                             r[ci_p] = nm
             for ch in (node.get("children") or []):
                 walk(ch)
@@ -304,7 +308,7 @@ class Server(object):
             for s in (content.get("sections") or []):
                 self.__replace_name(s, BASE_NAME, product.name)
         self.__fill_test_plan(content, prod_id)
-        self.__fill_roles(content, prod_id)
+        self.__fill_roles(content, prod_id, force=force)
         self.__fill_revision(content, prod_id, version, force=force)
         serv_review_util.ensure_review(
             content, DOC_KEY,
@@ -404,11 +408,42 @@ class Server(object):
             if not product:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
             content = self.__normalize_content(row.content)
-            old_name = (getattr(old_product, "name", "") or "").strip() if old_product else ""
-            new_name = (product.name or "").strip()
-            if old_name and new_name and old_name != new_name:
-                for s in (content.get("sections") or []):
-                    self.__replace_name(s, old_name, new_name)
+            # 重置含产品名/完整版本的固定章节为模板原值（恢复基准名+原版本号，避免被旧产品污染）
+            tpl = copy.deepcopy(DEFAULT_STP_CONTENT) if isinstance(DEFAULT_STP_CONTENT, dict) else {"sections": []}
+            tpl_map = {}
+            def collect_tpl(node):
+                key = str(node.get("title") or "").strip()
+                body = str(node.get("body") or "")
+                caps = node.get("table_captions") or []
+                if BASE_NAME in body or "完整版本" in body or any(BASE_NAME in str(r) for tbl in (node.get("tables") or []) for r in tbl) or any("1.1.0.1" in str(c) for c in caps):
+                    tpl_map[key] = {"body": node.get("body", ""), "tables": copy.deepcopy(node.get("tables", [])), "table_captions": copy.deepcopy(caps)}
+                for c in (node.get("children") or []):
+                    collect_tpl(c)
+            for s in (tpl.get("sections") or []):
+                collect_tpl(s)
+            def reset_fixed(node):
+                key = str(node.get("title") or "").strip()
+                if key in tpl_map:
+                    node["body"] = tpl_map[key]["body"]
+                    node["tables"] = copy.deepcopy(tpl_map[key]["tables"])
+                    if tpl_map[key].get("table_captions"):
+                        node["table_captions"] = copy.deepcopy(tpl_map[key]["table_captions"])
+                for c in (node.get("children") or []):
+                    reset_fixed(c)
+            for s in (content.get("sections") or []):
+                reset_fixed(s)
+            # 完整版本号更新为新产品版本（body + table_captions）
+            new_full_version = (product.full_version or "").strip()
+            def update_version(node):
+                if node.get("body") and "完整版本" in str(node.get("body")):
+                    node["body"] = re.sub(r"完整版本：[^\\n]*", f"完整版本：{new_full_version}", str(node["body"]))
+                caps = node.get("table_captions") or []
+                if caps:
+                    node["table_captions"] = [re.sub(r"\d+\.\d+\.\d+\.\d+", new_full_version, str(c)) if re.search(r"\d+\.\d+\.\d+\.\d+", str(c)) else c for c in caps]
+                for c in (node.get("children") or []):
+                    update_version(c)
+            for s in (content.get("sections") or []):
+                update_version(s)
             row.product_id = product_id
             content = self.__autofill(content, product_id, product, row.version, force=True)
             row.content = content
