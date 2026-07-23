@@ -239,6 +239,8 @@ class Server(object):
             )
             db.session.add(newdoc)
             db.session.commit()
+            if target_pid != fromdoc.product_id:
+                await self.rebind_product(newdoc.id, target_pid)
             return Resp.resp_ok(data=ScsDocForm(id=newdoc.id))
         except Exception:
             logger.exception("")
@@ -273,6 +275,7 @@ class Server(object):
             product: Product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
             if not product:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
+            db.session.execute(delete(ScsDoc).where(ScsDoc.product_id == product_id, ScsDoc.version == row.version, ScsDoc.id != id))
             content = self.__normalize_content(row.content)
             # 重置含产品名的固定章节为模板原值（恢复基准名 BASE_NAME，避免被旧产品名污染导致后续替换失效）
             # 同时重置软件配置状态表（3章节）为模板原值，切换产品不做替换

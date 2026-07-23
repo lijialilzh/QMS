@@ -469,6 +469,8 @@ class Server(object):
             )
             db.session.add(newdoc)
             db.session.commit()
+            if target_pid != fromdoc.product_id:
+                await self.rebind_product(newdoc.id, target_pid)
             return Resp.resp_ok(data=DemDocForm(id=newdoc.id))
         except Exception:
             logger.exception("")
@@ -502,6 +504,7 @@ class Server(object):
             product: Product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
             if not product:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
+            db.session.execute(delete(DemDoc).where(DemDoc.product_id == product_id, DemDoc.version == row.version, DemDoc.id != id))
             row.product_id = product_id
             content = self.__normalize_content(row.content)
             content = self.__autofill(content, product_id, product, force=True)

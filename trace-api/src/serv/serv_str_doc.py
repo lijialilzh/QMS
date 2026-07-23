@@ -22,6 +22,7 @@ from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 
 from ..model.product import Product
 from ..model.str_doc import StrDoc
+from ..model.doc_file import DocFile
 from ..model.prod_dhf import ProdDhf
 from ..model.project_member import ProjectMember
 from ..model.test_set import TestSet
@@ -427,6 +428,12 @@ class Server(object):
                                 r[ci] = str(by_level.get(lv, 0))
 
                     if not stats and not lab.startswith("用例总数"):
+                        # 无 bug 管理数据：清空 Bug 总数/已解决/遗留行的数值
+                        if len(r) > 1:
+                            r[1] = ""
+                        for lv, ci in lvl_col.items():
+                            if ci < len(r):
+                                r[ci] = ""
                         continue
                     if lab.startswith("Bug总数"):
                         fill_row(stats.get("by_level", {}), stats.get("total", 0))
@@ -492,12 +499,15 @@ class Server(object):
             fill(s)
         return content
 
-    def __fill_hr(self, content, prod_id):
-        """人力资源表：按「角色」列自动匹配当前产品参与人员，填「资源数量/具体人员」列(N人/姓名)。"""
-        if not prod_id or not isinstance(content, dict):
+    def __fill_hr(self, content, prod_id, force=False):
+        """人力资源表：按「角色」列自动匹配当前产品参与人员，填「资源数量/具体人员」列(N人/姓名)。
+        force=False：匹配不到保留原值；force=True：强制覆盖，无人员则置空。"""
+        if not isinstance(content, dict):
             return content
-        doc_date = serv_review_util.cover_date(prod_id, DOC_KEY) or ""
-        members = db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == prod_id)).scalars().all()
+        doc_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
+        members = db.session.execute(
+            select(ProjectMember).where(ProjectMember.prod_id == prod_id)
+        ).scalars().all() if prod_id else []
         primary = "宋月" if serv_review_util._before_202509(doc_date) else "孙家旭"
 
         def by_kw(pred):
@@ -541,7 +551,10 @@ class Server(object):
                     if not isinstance(r, list) or not r:
                         continue
                     nm = names_for(r[0], r[ci_d] if ci_d < len(r) else "")
-                    if nm and ci_p < len(r):
+                    if force:
+                        if ci_p < len(r):
+                            r[ci_p] = ("%d人/%s" % (len(nm), "、".join(nm))) if nm else ""
+                    elif nm and ci_p < len(r):
                         r[ci_p] = "%d人/%s" % (len(nm), "、".join(nm))
             for ch in (node.get("children") or []):
                 walk(ch)
@@ -612,8 +625,10 @@ class Server(object):
         if product and product.name:
             for s in (content.get("sections") or []):
                 self.__replace_name(s, BASE_NAME, product.name)
+                # 兼容性测试报告相关章节用 InferCare RECIST 作为产品名占位，也替换为当前产品名
+                self.__replace_name(s, "InferCare RECIST", product.name)
         self.__fill_test_items(content, prod_id)
-        self.__fill_hr(content, prod_id)
+        self.__fill_hr(content, prod_id, force=force)
         self.__fill_refs(content, prod_id)
         self.__fill_conclusion(content, prod_id)
         self.__fill_defects(content, prod_id)
@@ -688,6 +703,8 @@ class Server(object):
             )
             db.session.add(newdoc)
             db.session.commit()
+            if target_pid != fromdoc.product_id:
+                await self.rebind_product(newdoc.id, target_pid)
             return Resp.resp_ok(data=StrDocForm(id=newdoc.id))
         except Exception:
             logger.exception("")
@@ -722,13 +739,95 @@ class Server(object):
             product: Product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
             if not product:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
+            db.session.execute(delete(StrDoc).where(StrDoc.product_id == product_id, StrDoc.version == row.version, StrDoc.id != id))
             content = self.__normalize_content(row.content)
-            old_name = (getattr(old_product, "name", "") or "").strip() if old_product else ""
-            new_name = (product.name or "").strip()
-            if old_name and new_name and old_name != new_name:
-                for s in (content.get("sections") or []):
-                    self.__replace_name(s, old_name, new_name)
+            # 重置含产品名/完整版本的固定章节为模板原值（恢复基准名+原版本号，避免被旧产品污染）
+            tpl = copy.deepcopy(DEFAULT_STR_CONTENT) if isinstance(DEFAULT_STR_CONTENT, dict) else {"sections": []}
+            tpl_map = {}
+            fixed_titles = {"用户端测试"}
+            def collect_tpl(node):
+                key = str(node.get("title") or "").strip()
+                body = str(node.get("body") or "")
+                caps = node.get("table_captions") or []
+                tables = node.get("tables") or []
+                if BASE_NAME in body or "完整版本" in body or "InferCare RECIST" in body or key in fixed_titles or any(BASE_NAME in str(r) for tbl in tables for r in tbl) or any("1.1.0.1" in str(r) for tbl in tables for r in tbl) or any("1.1.0.1" in str(c) for c in caps):
+                    tpl_map[key] = {"body": node.get("body", ""), "tables": copy.deepcopy(tables), "table_captions": copy.deepcopy(caps)}
+                for c in (node.get("children") or []):
+                    collect_tpl(c)
+            for s in (tpl.get("sections") or []):
+                collect_tpl(s)
+            def reset_fixed(node):
+                key = str(node.get("title") or "").strip()
+                if key in tpl_map:
+                    node["body"] = tpl_map[key]["body"]
+                    node["tables"] = copy.deepcopy(tpl_map[key]["tables"])
+                    if tpl_map[key].get("table_captions"):
+                        node["table_captions"] = copy.deepcopy(tpl_map[key]["table_captions"])
+                for c in (node.get("children") or []):
+                    reset_fixed(c)
+            for s in (content.get("sections") or []):
+                reset_fixed(s)
+            # 完整版本号更新为新产品版本（body + tables + table_captions）
+            # 跳过：版本信息表的"最终安装包路径"行（保留模板包名）、用户端测试章节表头（浏览器版本号保留）
+            new_full_version = (product.full_version or "").strip()
+            def update_version(node):
+                node_title = str(node.get("title") or "").strip()
+                if node.get("body") and "完整版本" in str(node.get("body")):
+                    node["body"] = re.sub(r"完整版本：[^\n]*", f"完整版本：{new_full_version}", str(node["body"]))
+                # 用户端测试章节的表格不替换版本号（表头是浏览器版本号，保留模板）
+                if "用户端测试" not in node_title:
+                    for tbl in (node.get("tables") or []):
+                        for r in tbl:
+                            # 版本信息表跳过"最终安装包路径"行（保留模板包名）
+                            if "版本信息" in node_title and any("安装包路径" in str(c) for c in r):
+                                continue
+                            for i in range(len(r)):
+                                if isinstance(r[i], str) and re.search(r"\d+\.\d+\.\d+\.\d+", r[i]):
+                                    r[i] = re.sub(r"\d+\.\d+\.\d+\.\d+", new_full_version, r[i])
+                caps = node.get("table_captions") or []
+                if caps:
+                    node["table_captions"] = [re.sub(r"\d+\.\d+\.\d+\.\d+", new_full_version, str(c)) if re.search(r"\d+\.\d+\.\d+\.\d+", str(c)) else c for c in caps]
+                for c in (node.get("children") or []):
+                    update_version(c)
+            for s in (content.get("sections") or []):
+                update_version(s)
             row.product_id = product_id
+            # 测试分布图：未获取时从该产品 doc_file（img_flow）获取，已获取的保留
+            # 缺陷统计分析分布图：有 bug 管理数据才获取，没 bug 清空
+            from .serv_bug_doc import Server as BugServer
+            has_bug = bool(BugServer().stats_for_product(product_id))
+            def fill_test_chart(nodes):
+                for n in nodes:
+                    title = str(n.get("title") or "").strip()
+                    if title == "测试分布图":
+                        imgs = n.get("images") or []
+                        if not imgs:
+                            row_df = db.session.execute(
+                                select(DocFile).where(DocFile.product_id == product_id, DocFile.category == "img_flow").order_by(DocFile.id)
+                            ).scalars().first()
+                            if row_df and row_df.file_url:
+                                url = str(row_df.file_url).strip()
+                                if url.startswith("data.trace/"):
+                                    url = "/" + url
+                                n["images"] = [url]
+                    elif title == "缺陷统计分析":
+                        # 有 bug 管理数据才生成分布图，没 bug 提示"还未上传Bug管理及回归测试"
+                        if has_bug:
+                            row_df = db.session.execute(
+                                select(DocFile).where(DocFile.product_id == product_id, DocFile.category == "img_flow").order_by(DocFile.id)
+                            ).scalars().first()
+                            if row_df and row_df.file_url:
+                                url = str(row_df.file_url).strip()
+                                if url.startswith("data.trace/"):
+                                    url = "/" + url
+                                n["images"] = [url]
+                            n["body"] = ""
+                        else:
+                            n["images"] = []
+                            n["body"] = "还未上传Bug管理及回归测试"
+                    for c in (n.get("children") or []):
+                        fill_test_chart([c])
+            fill_test_chart(content.get("sections") or [])
             content = self.__autofill(content, product_id, product, row.version, force=True)
             row.content = content
             db.session.commit()

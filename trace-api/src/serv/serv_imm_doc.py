@@ -471,6 +471,9 @@ class Server(object):
             )
             db.session.add(newdoc)
             db.session.commit()
+            # 跨产品复制：用新产品信息强制填充
+            if target_pid != fromdoc.product_id:
+                await self.rebind_product(newdoc.id, target_pid)
             return Resp.resp_ok(data=ImmDocForm(id=newdoc.id))
         except Exception:
             logger.exception("")
@@ -575,6 +578,8 @@ class Server(object):
             product: Product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
             if not product:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
+            # 目标产品已有同版本记录时删除旧记录，避免唯一约束冲突
+            db.session.execute(delete(ImmDoc).where(ImmDoc.product_id == product_id, ImmDoc.version == row.version, ImmDoc.id != id))
             # 重置为默认模板（丢弃旧产品污染的内容）
             content = self.__normalize_content(None)
             row.product_id = product_id
