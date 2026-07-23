@@ -251,36 +251,13 @@ class Server(object):
             if not product:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
             db.session.execute(delete(ScmDoc).where(ScmDoc.product_id == product_id, ScmDoc.version == row.version, ScmDoc.id != id))
-            content = self.__normalize_content(row.content)
-            # 重置含产品名/完整版本的固定章节为模板原值（恢复基准名+原版本号，避免被旧产品污染）
-            tpl = copy.deepcopy(DEFAULT_SCM_CONTENT) if isinstance(DEFAULT_SCM_CONTENT, dict) else {"sections": []}
-            tpl_map = {}
-            fixed_titles = {"产品开发部软件构建配置项版本控制", "文件中涉及的编号命名规则", "发布过程", "软件测试环境的建立"}
-            def collect_tpl(node):
-                key = str(node.get("title") or "").strip()
-                body = str(node.get("body") or "")
-                tables = node.get("tables") or []
-                if BASE_NAME in body or "完整版本" in body or key in fixed_titles or any(BASE_NAME in str(r) for tbl in tables for r in tbl) or any("1.1.0.1" in str(r) for tbl in tables for r in tbl):
-                    tpl_map[key] = {"body": node.get("body", ""), "tables": copy.deepcopy(tables)}
-                for c in (node.get("children") or []):
-                    collect_tpl(c)
-            for s in (tpl.get("sections") or []):
-                collect_tpl(s)
-            def reset_fixed(node):
-                key = str(node.get("title") or "").strip()
-                if key in tpl_map:
-                    node["body"] = tpl_map[key]["body"]
-                    node["tables"] = copy.deepcopy(tpl_map[key]["tables"])
-                for c in (node.get("children") or []):
-                    reset_fixed(c)
-            for s in (content.get("sections") or []):
-                reset_fixed(s)
+            # 重置为默认模板（和 imm 一样，避免旧产品污染），再用新产品信息填充
+            content = copy.deepcopy(DEFAULT_SCM_CONTENT) if isinstance(DEFAULT_SCM_CONTENT, dict) else {"sections": []}
             # 完整版本号更新为新产品版本
             new_full_version = (product.full_version or "").strip()
             def update_version(node):
                 if node.get("body") and "完整版本" in str(node.get("body")):
                     node["body"] = re.sub(r"完整版本：[^\n]*", f"完整版本：{new_full_version}", str(node["body"]))
-                # 其他含旧版本号 1.1.0.1 的 body 也替换（如软件开发基线）
                 if node.get("body") and re.search(r"\d+\.\d+\.\d+\.\d+", str(node.get("body"))):
                     node["body"] = re.sub(r"\d+\.\d+\.\d+\.\d+", new_full_version, str(node["body"]))
                 for c in (node.get("children") or []):
