@@ -199,6 +199,11 @@ export default () => {
                         label: ts("menu.prod_dhfs"),
                         perm: "prod_dhf_view",
                     },
+                    {
+                        key: "/risk_participants",
+                        label: ts("menu.risk_participants"),
+                        perm: "risk_mgmt_doc_view",
+                    },
                 ],
             },
             {
@@ -275,6 +280,11 @@ export default () => {
                         key: "/nsmp_docs",
                         label: ts("menu.nsmp_docs"),
                         perm: "nsmp_doc_view",
+                    },
+                    {
+                        key: "/risk_mgmt_docs",
+                        label: ts("menu.risk_mgmt_docs"),
+                        perm: "risk_mgmt_doc_view",
                     },
                 ],
             },
@@ -443,23 +453,6 @@ export default () => {
                         key: "/srs_doc_trace",
                         label: ts("menu.srs_doc_trace"),
                         perm: "srs_doc_view",
-                    },
-                ],
-            },
-            {
-                key: "/risk_mgmt",
-                label: ts("menu.risk_mgmt"),
-                icon: <img src="assets/icon/menu-create.svg" />,
-                children: [
-                    {
-                        key: "/risk_mgmt_docs",
-                        label: ts("menu.risk_mgmt_docs"),
-                        perm: "risk_mgmt_doc_view",
-                    },
-                    {
-                        key: "/risk_participants",
-                        label: ts("menu.risk_participants"),
-                        perm: "risk_mgmt_doc_view",
                     },
                 ],
             },
