@@ -344,16 +344,6 @@ export default () => {
                         label: ts("menu.test_files"),
                         children: [
                             {
-                                key: "/utp_docs",
-                                label: ts("menu.utp_docs"),
-                                perm: "utp_doc_view",
-                            },
-                            {
-                                key: "/utr_docs",
-                                label: ts("menu.utr_docs"),
-                                perm: "utr_doc_view",
-                            },
-                            {
                                 key: "/stp_docs",
                                 label: ts("menu.stp_docs"),
                                 perm: "stp_doc_view",
@@ -362,11 +352,6 @@ export default () => {
                                 key: "/bug_docs",
                                 label: ts("menu.bug_docs"),
                                 perm: "bug_doc_view",
-                            },
-                            {
-                                key: "/teq_docs",
-                                label: ts("menu.teq_docs"),
-                                perm: "teq_doc_view",
                             },
                             {
                                 key: "/str_docs",
@@ -392,6 +377,21 @@ export default () => {
                                 key: "/ftr_record_docs",
                                 label: ts("menu.ftr_record_docs"),
                                 perm: "ftr_record_doc_view",
+                            },
+                            {
+                                key: "/utp_docs",
+                                label: ts("menu.utp_docs"),
+                                perm: "utp_doc_view",
+                            },
+                            {
+                                key: "/utr_docs",
+                                label: ts("menu.utr_docs"),
+                                perm: "utr_doc_view",
+                            },
+                            {
+                                key: "/teq_docs",
+                                label: ts("menu.teq_docs"),
+                                perm: "teq_doc_view",
                             },
                             {
                                 key: "/test_sets",
