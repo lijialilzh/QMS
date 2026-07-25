@@ -4,7 +4,7 @@
 .home-menu {
     min-width: @menu-w;
     height: 100%;
-    background-color: #124fab;
+    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 55%, #bfdbfe 100%);
     user-select: none;
 
     .logo-div {
@@ -16,11 +16,13 @@
         .logo {
             height: 32px;
             margin-left: 4px;
+            // logo原为深色背景设计（浅色文字），浅蓝侧边栏上用filter转深蓝，与蓝色系统一
+            filter: brightness(0) saturate(100%) invert(20%) sepia(86%) saturate(2000%) hue-rotate(224deg) brightness(88%) contrast(91%);
         }
     }
 
     .ant-menu-item {
-        color: #cccccc !important;
+        color: #1e3a8a !important;
         border-radius: 0 !important;
         transition: none !important;
     }
@@ -29,25 +31,31 @@
         background-color: #00000000 !important;
     }
 
+    // 选中项图标改白色（图标SVG本身是深蓝，选中时用filter反白）
+    .ant-menu-item-selected .ant-menu-item-icon,
+    .ant-menu-item-selected .anticon {
+        filter: brightness(0) invert(1);
+    }
+
     .ant-menu-submenu-title {
-        color: white !important;
+        color: #1e3a8a !important;
         border: none !important;
         border-radius: 0 !important;
     }
 
     .ant-menu-submenu-arrow {
-        color: white;
+        color: #1e3a8a;
     }
 
     .ant-menu-item-selected {
         border: none !important;
-        background: linear-gradient(to right, #124fab, #cccccc);
-        color: #eeeeee !important;
+        background: linear-gradient(to right, #3b82f6, #93c5fd);
+        color: #ffffff !important;
         border-radius: 0 !important;
     }
 
     .ant-menu-item-selected :hover {
-        color: white !important;
+        color: #ffffff !important;
     }
 
     .ant-menu-item-active :active {
@@ -55,7 +63,7 @@
     }
 
     .ant-menu-item-active {
-        background-color: #00000011 !important;
+        background-color: #3b82f622 !important;
     }
 }
 
@@ -65,7 +73,7 @@
     }
     .ant-drawer-body {
         padding: 0 !important;
-        background-color: #124fab;
+        background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 55%, #bfdbfe 100%);
         overflow-x: hidden;
     }
 }

@@ -23,25 +23,38 @@ export default () => {
     };
 
     return (
-        <div className="page div-v">
-            <div className="div-h center-v login-header">
-                <div className="center logo-div">
+        <div className="page div-h login-wrap">
+            {/* 左侧品牌区（信息系统经典布局） */}
+            <div className="login-brand">
+                <div className="login-brand-logo">
                     <img className="logo" src={`assets/img/logo.${i18n.language}.png`}></img>
                 </div>
+                <div className="login-brand-content">
+                    <div className="login-brand-title">{ts("html_title")}</div>
+                    <div className="login-brand-sub">医疗器械软件研发 · 质量管理与追溯系统</div>
+                    <ul className="login-brand-points">
+                        <li>产品全生命周期质量管理与版本基线管控</li>
+                        <li>SRS / SDS 需求与设计全链路双向追溯</li>
+                        <li>风险分析与网络安全管理一体化</li>
+                        <li>测试用例与现场测试记录完整闭环</li>
+                    </ul>
+                </div>
+                <div className="login-brand-footer">© {new Date().getFullYear()} InferVision</div>
             </div>
-            <div className="login-divider"></div>
-            <div className="expand div-hr login-bg" style={{background: 'url("assets/img/bg.png") no-repeat', backgroundSize: 'cover'}}>
-                <div className="login-dimbox center div-v">
-                    <div className="login-title">{ts("html_title")}</div>
-                    <Form onFinish={login}>
-                        <Form.Item className="login-item" name="name" rules={[{ required: true, message: ts("input_username") }]}>
-                            <Input allowClear autoComplete="new-user" prefix={<UserOutlined />} />
+            {/* 右侧登录表单区 */}
+            <div className="login-form-side">
+                <div className="login-form-box">
+                    <div className="login-form-title">欢迎登录</div>
+                    <div className="login-form-hint">请输入您的账号密码</div>
+                    <Form onFinish={login} layout="vertical">
+                        <Form.Item className="login-item" label="用户名" name="name" rules={[{ required: true, message: ts("input_username") }]}>
+                            <Input allowClear autoComplete="new-user" prefix={<UserOutlined />} size="large" />
                         </Form.Item>
-                        <Form.Item className="login-item" name="pwd" rules={[{ required: true, message: ts("input_pwd") }]}>
-                            <Input allowClear autoComplete="new-password" prefix={<LockOutlined />} type="password" />
+                        <Form.Item className="login-item" label="密码" name="pwd" rules={[{ required: true, message: ts("input_pwd") }]}>
+                            <Input allowClear autoComplete="new-password" prefix={<LockOutlined />} type="password" size="large" />
                         </Form.Item>
                         <Form.Item>
-                            <Button type="primary" htmlType="submit" className="login-btn">
+                            <Button type="primary" htmlType="submit" className="login-btn" size="large">
                                 {ts("login")}
                             </Button>
                         </Form.Item>

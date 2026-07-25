@@ -1,70 +1,185 @@
 @import "../index.less";
 @import "../index.app.less";
 
-.login-header {
+// 信息系统经典布局：左侧深色品牌区 + 右侧浅色表单区
+.login-wrap {
     width: 100%;
-    height: 60px;
-    min-height: 60px;
-    background-color: #091140;
-    color: white;
+    height: 100%;
+    overflow: hidden;
+}
 
-    .logo-div {
-        width: @menu-w;
-        height: 60px;
+/* 左侧品牌区 */
+.login-brand {
+    flex: 1 1 68%;
+    min-width: 0;
+    height: 100%;
+    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 55%, #bfdbfe 100%);
+    color: #1e3a8a;
+    display: flex;
+    flex-direction: column;
+    padding: 24px 32px;
+    position: relative;
+    overflow: hidden;
 
-        .logo {
-            height: 32px;
+    &::before {
+        content: "";
+        position: absolute;
+        top: -120px;
+        right: -120px;
+        width: 360px;
+        height: 360px;
+        border-radius: 50%;
+        background: rgba(59, 130, 246, 0.12);
+    }
+    &::after {
+        content: "";
+        position: absolute;
+        bottom: -160px;
+        left: -80px;
+        width: 320px;
+        height: 320px;
+        border-radius: 50%;
+        background: rgba(96, 165, 250, 0.18);
+    }
+}
+
+.login-brand-logo {
+    height: 48px;
+    display: flex;
+    align-items: flex-start;
+    position: relative;
+    z-index: 1;
+
+    .logo {
+        height: 32px;
+        // logo原为深色背景设计（浅色文字），浅蓝背景上用filter转深蓝，与蓝色系统一
+        filter: brightness(0) saturate(100%) invert(20%) sepia(86%) saturate(2000%) hue-rotate(224deg) brightness(88%) contrast(91%);
+    }
+}
+
+.login-brand-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    position: relative;
+    z-index: 1;
+}
+
+.login-brand-title {
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    line-height: 1.3;
+    margin-bottom: 14px;
+}
+
+.login-brand-sub {
+    font-size: 15px;
+    color: #3b5bb8;
+    margin-bottom: 36px;
+    letter-spacing: 1px;
+}
+
+.login-brand-points {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    max-width: 480px;
+
+    li {
+        position: relative;
+        padding-left: 22px;
+        margin-bottom: 14px;
+        font-size: 14px;
+        line-height: 1.7;
+        color: #1e40af;
+
+        &::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 9px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #3b82f6;
         }
     }
 }
 
-.login-divider {
-    background-color: #222222cc;
-    height: 0.5px;
+.login-brand-footer {
+    font-size: 12px;
+    color: #6b83c4;
+    letter-spacing: 1px;
+    position: relative;
+    z-index: 1;
 }
 
-.login-bg {
-    background-size: cover;
+/* 右侧登录表单区 */
+.login-form-side {
+    flex: 1 1 32%;
+    min-width: 0;
+    height: 100%;
+    background: #f8fafc;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
 }
 
-.login-title {
-    margin-bottom: 50px;
+.login-form-box {
     width: 100%;
-    text-align: center;
-    font-size: 30px;
+    max-width: 280px;
+}
+
+.login-form-title {
+    font-size: 26px;
+    font-weight: 700;
+    color: #1e3a8a;
+    margin-bottom: 8px;
+    letter-spacing: 1px;
+}
+
+.login-form-hint {
+    font-size: 14px;
+    color: #6b7280;
+    margin-bottom: 32px;
 }
 
 .login-item {
-    margin-bottom: 30px !important;
+    margin-bottom: 22px \!important;
 }
 
 .login-btn {
     width: 100%;
-}
+    height: 44px;
+    font-size: 15px;
+    letter-spacing: 6px;
+    background-color: #3b82f6;
+    border-color: #3b82f6;
 
-.login-forget {
-    color: #7b88ad;
-    font-size: 12px;
-}
-
-.login-dimbox {
-    width: 100%;
-    height: 100%;
-    min-height: 400px;
-    backdrop-filter: blur(6px);
-    background-color: #06144dbb;
-    color: white;
-    padding-bottom: 100px;
-}
-
-@media screen and (min-width: @lg) {
-    .login-dimbox {
-        width: 600px;
+    &:hover,
+    &:focus {
+        background-color: #2563eb !important;
+        border-color: #2563eb !important;
     }
 }
 
-@media screen and (min-width: @xs) and (max-width: @lg) {
-    .login-dimbox {
-        width: 500px;
+.login-forget {
+    color: #6b7280;
+    font-size: 12px;
+
+    &:hover {
+        color: #3b82f6;
+    }
+}
+
+@media screen and (max-width: @lg) {
+    .login-brand {
+        display: none;
+    }
+    .login-form-side {
+        flex: 1 1 100%;
     }
 }
