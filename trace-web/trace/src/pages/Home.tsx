@@ -374,6 +374,16 @@ export default () => {
                                 perm: "imm_doc_view",
                             },
                             {
+                                key: "/ftr_docs",
+                                label: ts("menu.ftr_docs"),
+                                perm: "ftr_doc_view",
+                            },
+                            {
+                                key: "/ftr_record_docs",
+                                label: ts("menu.ftr_record_docs"),
+                                perm: "ftr_record_doc_view",
+                            },
+                            {
                                 key: "/test_sets",
                                 label: ts("menu.test_sets"),
                                 perm: "test_set_view",

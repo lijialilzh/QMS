@@ -18,6 +18,7 @@ export const LANGS = {
 export const init = (def_lang: string) => {
     i18next.use(initReactI18next).init({
         lng: def_lang,
+        fallbackLng: "zh-CN",
         resources: LANGS,
     });
 };

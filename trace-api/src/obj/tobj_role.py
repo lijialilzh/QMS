@@ -198,6 +198,14 @@ class Perms(Enum):
     imm_doc_view = PermForm(code="imm_doc_view", name="查看", p_code=imm_doc.code)
     imm_doc_edit = PermForm(code="imm_doc_edit", name="编辑", p_code=imm_doc.code)
 
+    ftr_doc = PermForm(code="ftr_doc", name="开发测试文件管理/现场测试规程")
+    ftr_doc_view = PermForm(code="ftr_doc_view", name="查看", p_code=ftr_doc.code)
+    ftr_doc_edit = PermForm(code="ftr_doc_edit", name="编辑", p_code=ftr_doc.code)
+
+    ftr_record_doc = PermForm(code="ftr_record_doc", name="开发测试文件管理/现场测试记录")
+    ftr_record_doc_view = PermForm(code="ftr_record_doc_view", name="查看", p_code=ftr_record_doc.code)
+    ftr_record_doc_edit = PermForm(code="ftr_record_doc_edit", name="编辑", p_code=ftr_record_doc.code)
+
     pir_doc = PermForm(code="pir_doc", name="产品文件管理/产品立项报告")
     pir_doc_view = PermForm(code="pir_doc_view", name="查看", p_code=pir_doc.code)
     pir_doc_edit = PermForm(code="pir_doc_edit", name="编辑", p_code=pir_doc.code)
@@ -312,6 +320,8 @@ def get_default_role_perm_codes():
         "teq_doc", "teq_doc_view", "teq_doc_edit",
         "tem_doc", "tem_doc_view", "tem_doc_edit",
         "imm_doc", "imm_doc_view", "imm_doc_edit",
+        "ftr_doc", "ftr_doc_view", "ftr_doc_edit",
+        "ftr_record_doc", "ftr_record_doc_view", "ftr_record_doc_edit",
         "pir_doc", "pir_doc_view", "pir_doc_edit",
         "vuh_doc", "vuh_doc_view", "vuh_doc_edit",
         "ptr_doc", "ptr_doc_view", "ptr_doc_edit",
@@ -342,6 +352,8 @@ def get_default_role_perm_codes():
         "teq_doc", "teq_doc_view", "teq_doc_edit",
         "tem_doc", "tem_doc_view", "tem_doc_edit",
         "imm_doc", "imm_doc_view", "imm_doc_edit",
+        "ftr_doc", "ftr_doc_view", "ftr_doc_edit",
+        "ftr_record_doc", "ftr_record_doc_view", "ftr_record_doc_edit",
         "doc_file_flow", "doc_file_flow_view", "doc_file_flow_edit",
         "doc_file_topo", "doc_file_topo_view", "doc_file_topo_edit",
         "doc_file_struct", "doc_file_struct_view", "doc_file_struct_edit",

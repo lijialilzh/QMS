@@ -69,6 +69,10 @@ import DatDocs from "./pages/dat/DatDocs";
 import DatDocDetail from "./pages/dat/DatDocDetail";
 import StpDocs from "./pages/stp/StpDocs";
 import StpDocDetail from "./pages/stp/StpDocDetail";
+import FtrDocs from "./pages/ftr/FtrDocs";
+import FtrDocDetail from "./pages/ftr/FtrDocDetail";
+import FtrRecordDocs from "./pages/ftr/FtrRecordDocs";
+import FtrRecordDocDetail from "./pages/ftr/FtrRecordDocDetail";
 import UtpDocs from "./pages/utp/UtpDocs";
 import UtpDocDetail from "./pages/utp/UtpDocDetail";
 import UtrDocs from "./pages/utr/UtrDocs";
@@ -201,6 +205,12 @@ const router = createRouter([
             { path: "/stp_docs", element: <StpDocs /> },
             { path: "/stp_docs/edit/:id", element: <StpDocDetail /> },
             { path: "/stp_docs/view/:id", element: <StpDocDetail /> },
+            { path: "/ftr_docs", element: <FtrDocs /> },
+            { path: "/ftr_docs/edit/:id", element: <FtrDocDetail /> },
+            { path: "/ftr_docs/view/:id", element: <FtrDocDetail /> },
+            { path: "/ftr_record_docs", element: <FtrRecordDocs /> },
+            { path: "/ftr_record_docs/edit/:id", element: <FtrRecordDocDetail /> },
+            { path: "/ftr_record_docs/view/:id", element: <FtrRecordDocDetail /> },
             { path: "/utp_docs", element: <UtpDocs /> },
             { path: "/utp_docs/edit/:id", element: <UtpDocDetail /> },
             { path: "/utp_docs/view/:id", element: <UtpDocDetail /> },

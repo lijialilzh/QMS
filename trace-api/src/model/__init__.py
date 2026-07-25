@@ -118,6 +118,12 @@ from .crr_doc import CrrDoc  # noqa: E402,F401
 # 开发环境维护说明（独立文档模块，开发文件）。
 from .dem_doc import DemDoc  # noqa: E402,F401
 
+# 现场测试规程（独立文档模块，测试文件 VV-006）。
+from .ftr_doc import FtrDoc  # noqa: E402,F401
+
+# 现场测试记录（独立文档模块，测试文件 VV-006）。
+from .ftr_record_doc import FtrRecordDoc  # noqa: E402,F401
+
 # 开发设备清单（独立文档模块，开发文件）。
 from .deq_doc import DeqDoc  # noqa: E402,F401
 

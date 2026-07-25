@@ -85,7 +85,9 @@
         "risk_participants": "风险分析参与人员",
         "risk_controls": "风险控制措施库",
         "cybersec": "网络安全管理",
-        "cybersec_docs": "网络安全风险管理报告"
+        "cybersec_docs": "网络安全风险管理报告",
+        "ftr_docs": "现场测试规程",
+        "ftr_record_docs": "现场测试记录"
     },
     "confirm_reset_pwd": "确认要重置密码吗？",
     "reset_pwd": "重置密码",

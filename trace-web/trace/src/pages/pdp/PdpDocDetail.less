@@ -28,6 +28,26 @@
         }
     }
 
+    // 现场测试记录：文档型表格，需随内容撑开，由外层 .pdp-scroll 滚动
+    // 覆盖 index.ant.less 中 .ant-table-wrapper{height:0} 等全站 flex 滚动规则
+    .ftr-record-table.ant-table-wrapper {
+        height: auto;
+
+        .ant-spin-nested-loading {
+            height: auto;
+        }
+
+        .ant-spin-container {
+            display: block;
+            height: auto;
+        }
+
+        .ant-table {
+            flex: none;
+            overflow: visible;
+        }
+    }
+
     .pdp-layout {
         display: flex;
         height: 100%;
