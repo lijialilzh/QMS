@@ -24,7 +24,7 @@ from .api import web_auth, web_session, api_user, api_role, api_project, api_haz
     api_cyber_cap_doc, api_research_doc, api_nsr_doc, api_acc_doc, api_nsmp_doc, api_rmp_doc, api_sd_doc, \
     api_crr_doc, api_dem_doc, api_deq_doc, api_scm_doc, api_scs_doc, api_dat_doc, api_stp_doc, api_utp_doc, \
     api_utr_doc, api_str_doc, api_bug_doc, api_teq_doc, api_tem_doc, api_imm_doc, api_ftr_doc, api_ftr_record_doc, api_person_sign, \
-    api_doc_integrate
+    api_doc_integrate, api_print_cfg
 from .utils import read_line
 from .utils.i18n import ts
 from .utils.sql_middleware import SQLAlchemyMiddleware
@@ -119,6 +119,7 @@ def create_app():
     main_router.include_router(api_ftr_record_doc.router, prefix="/ftr_record_doc", tags=["现场测试记录"])
     main_router.include_router(api_person_sign.router, prefix="/person_sign", tags=["人员签名管理"])
     main_router.include_router(api_doc_integrate.router, prefix="/doc_integrate", tags=["文档整合导出"])
+    main_router.include_router(api_print_cfg.router, prefix="/print_cfg", tags=["打印服务配置"])
     main_router.include_router(api_haz.router, prefix="/haz", tags=["HAZ"])
     main_router.include_router(api_rcm.router, prefix="/rcm", tags=["RCM"])
     main_router.include_router(api_cst.router, prefix="/cst", tags=["CST"])

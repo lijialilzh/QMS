@@ -129,6 +129,18 @@ export default () => {
                 ],
             },
             {
+                key: "/base_cfg",
+                label: ts("menu.base_cfg"),
+                icon: <img src="assets/icon/menu-create.svg" />,
+                children: [
+                    {
+                        key: "/print_service_cfg",
+                        label: ts("menu.print_service_cfg"),
+                        perm: "print_cfg_view",
+                    },
+                ],
+            },
+            {
                 key: "/basedata",
                 label: ts("menu.basedata"),
                 icon: <img src="assets/icon/menu-create.svg" />,
@@ -484,15 +496,37 @@ export default () => {
                         perm: "product_view",
                     },
                     {
-                        key: "/doc_integrate_export",
+                        key: "doc_integrate_export",
                         label: ts("menu.doc_integrate_export"),
-                        perm: "product_view",
+                        children: [
+                            {
+                                key: "/doc_integrate_export",
+                                label: ts("menu.doc_integrate_export"),
+                                perm: "product_view",
+                            },
+                            {
+                                key: "/doc_export_records",
+                                label: ts("menu.doc_export_records"),
+                                perm: "product_view",
+                            },
+                        ],
                     },
                     {
-                        key: "/doc_one_click_print",
+                        key: "doc_one_click_print",
                         label: ts("menu.doc_one_click_print"),
-                        perm: "product_view",
-                    }
+                        children: [
+                            {
+                                key: "/doc_one_click_print",
+                                label: ts("menu.doc_one_click_print"),
+                                perm: "product_view",
+                            },
+                            {
+                                key: "/doc_print_records",
+                                label: ts("menu.doc_print_records"),
+                                perm: "product_view",
+                            },
+                        ],
+                    },
                 ],
             }
         ];

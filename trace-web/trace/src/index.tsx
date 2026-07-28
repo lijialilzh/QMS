@@ -22,6 +22,7 @@ import Projects from "./pages/syscfg/Projects";
 import ProjectMembers from "./pages/syscfg/ProjectMembers";
 import ProjectTimeline from "./pages/syscfg/ProjectTimeline";
 import ProdRuntimeEnv from "./pages/syscfg/ProdRuntimeEnv";
+import PrintServiceCfg from "./pages/syscfg/PrintServiceCfg";
 import ProdDeviceRes from "./pages/syscfg/ProdDeviceRes";
 import Hazs from "./pages/basedata/Hazs";
 import Rcms from "./pages/basedata/Rcms";
@@ -41,6 +42,9 @@ import SrsDocTrace from "./pages/prod_risk/SrsDocTrace";
 import ProdTraces from "./pages/overview/ProdTraces";
 import ProdComparison from "./pages/overview/ProdComparison";
 import DocIntegrateExport from "./pages/overview/DocIntegrateExport";
+import DocOneClickPrint from "./pages/overview/DocOneClickPrint";
+import DocExportRecords from "./pages/overview/DocExportRecords";
+import DocPrintRecords from "./pages/overview/DocPrintRecords";
 import RiskMgmtDocs from "./pages/risk_mgmt/RiskMgmtDocs";
 import RiskMgmtDocDetail from "./pages/risk_mgmt/RiskMgmtDocDetail";
 import RiskMgmtParticipants from "./pages/risk_mgmt/RiskMgmtParticipants";
@@ -126,6 +130,7 @@ const router = createRouter([
             { path: "/project_members", element: <ProjectMembers /> },
             { path: "/project_timeline", element: <ProjectTimeline /> },
             { path: "/prod_runtime_env", element: <ProdRuntimeEnv /> },
+            { path: "/print_service_cfg", element: <PrintServiceCfg /> },
             { path: "/prod_device_res", element: <ProdDeviceRes /> },
 
             { path: "/hazs", element: <Hazs /> },
@@ -262,7 +267,9 @@ const router = createRouter([
             {path: "/prod_traces", element: <ProdTraces /> },
             {path: "/prod_comparison", element: <ProdComparison /> },
             {path: "/doc_integrate_export", element: <DocIntegrateExport /> },
-            {path: "/doc_one_click_print", element: <DocIntegrateExport /> },
+            {path: "/doc_export_records", element: <DocExportRecords /> },
+            {path: "/doc_one_click_print", element: <DocOneClickPrint /> },
+            {path: "/doc_print_records", element: <DocPrintRecords /> },
         ],
     },
 ]);

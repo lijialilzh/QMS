@@ -10,6 +10,7 @@
 
 import re
 import base64
+import contextvars
 from io import BytesIO
 
 from sqlalchemy import select
@@ -21,6 +22,26 @@ from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..model.project_member import ProjectMember
 from ..model.person_sign import PersonSign
 from ..utils.sql_ctx import db
+
+# 签名开关：导出时若设为 False，封面和评审记录的签名图将被清空（仅保留空单元格）。
+# 默认 True（带签名）。通过 set_export_sign_mode(False) / restore_export_sign_mode() 控制。
+_sign_mode_var: contextvars.ContextVar[bool] = contextvars.ContextVar("_sign_mode_var", default=True)
+
+
+def set_export_sign_mode(with_sign: bool):
+    """设置当前导出请求的签名模式：True=带签名，False=不带签名（清空签名）。返回 token 用于恢复。"""
+    return _sign_mode_var.set(with_sign)
+
+
+def restore_export_sign_mode(token):
+    """恢复签名模式到之前的状态。"""
+    _sign_mode_var.reset(token)
+
+
+def sign_mode_enabled() -> bool:
+    """当前是否启用签名填充。"""
+    return _sign_mode_var.get()
+
 
 # 选中用 ☑(框内对号)，加文本呈现选择符(U+FE0E)避免渲染成彩色 emoji；未选空框 □。
 CHECK = "\u2611\ufe0e通过 □存在问题"
@@ -628,8 +649,24 @@ def fill_cover_signers(content, signers, force=False):
     """把封面「编制人/审核人/批准人」行的姓名列(第2列, index 1) 填成签名图 data URL。
     force=False（默认）：仅填空，不覆盖已填（已是签名图则保留，避免重复覆盖用户已放的图）。
     force=True（切换产品）：强制覆盖，signers 无对应人则置空。
+    当全局签名模式关闭（sign_mode_enabled()==False）时：清空所有签署人单元格（置空）。
     通用实现：扫描所有 section 的所有表格，按行首标签匹配，兼容各模块封面结构。"""
     if not isinstance(content, dict):
+        return content
+    # 不带签名模式：清空封面签署人单元格
+    if not sign_mode_enabled():
+        for section in (content.get("sections") or []):
+            if not isinstance(section, dict):
+                continue
+            for table in (section.get("tables") or []):
+                if not isinstance(table, list):
+                    continue
+                for row in table:
+                    if not isinstance(row, list) or not row:
+                        continue
+                    label = str(row[0] or "").strip()
+                    if label in ("编制人", "审核人", "批准人") and len(row) >= 2:
+                        row[1] = ""
         return content
     signers = signers or {}
     for section in (content.get("sections") or []):
@@ -750,15 +787,15 @@ def build_review_section(key, rev_date="", prod_id=None):
             if "测试" in str(row[3] or "") and len(row) >= 5:
                 row[4] = "宋月"
         if len(row) >= 3 and str(row[1] or "").strip() and not str(row[2] or "").strip():
-            row[2] = _sign_by_name(str(row[1]).strip())
+            row[2] = _sign_by_name(str(row[1]).strip()) if sign_mode_enabled() else ""
         if len(row) >= 6 and str(row[4] or "").strip() and not str(row[5] or "").strip():
-            row[5] = _sign_by_name(str(row[4]).strip())
+            row[5] = _sign_by_name(str(row[4]).strip()) if sign_mode_enabled() else ""
     # 「批准人员签字/日期」行：自动填批准人签名图(第2列，无图回退姓名) 与评审日期(第3列)
     approver = review_approver(key, prod_id, rev_date)
     for row in person_tbl:
         if isinstance(row, list) and row and str(row[0] or "").startswith("批准人员签字"):
             if approver and len(row) >= 2 and not str(row[1] or "").strip():
-                row[1] = _sign_by_name(approver) or approver
+                row[1] = (_sign_by_name(approver) or approver) if sign_mode_enabled() else ""
             if len(row) >= 3 and not str(row[2] or "").strip():
                 row[2] = rev_date
             break
@@ -810,7 +847,7 @@ def autofill_review_person_table(tbl, key="", rev_date="", prod_id=None):
             continue
         if lab.startswith("批准人员签字"):
             if approver and len(row) >= 2 and not str(row[1] or "").strip():
-                row[1] = _sign_by_name(approver) or approver
+                row[1] = (_sign_by_name(approver) or approver) if sign_mode_enabled() else ""
             if len(row) >= 3 and not str(row[2] or "").strip():
                 row[2] = rev_date
             continue
@@ -829,9 +866,9 @@ def autofill_review_person_table(tbl, key="", rev_date="", prod_id=None):
             if len(row) >= 4 and "测试" in str(row[3] or ""):
                 row[4] = "宋月"
         if len(row) >= 3 and str(row[1] or "").strip() and not str(row[2] or "").strip():
-            row[2] = _sign_by_name(str(row[1]).strip())
+            row[2] = _sign_by_name(str(row[1]).strip()) if sign_mode_enabled() else ""
         if len(row) >= 6 and str(row[4] or "").strip() and not str(row[5] or "").strip():
-            row[5] = _sign_by_name(str(row[4]).strip())
+            row[5] = _sign_by_name(str(row[4]).strip()) if sign_mode_enabled() else ""
     return tbl
 
 

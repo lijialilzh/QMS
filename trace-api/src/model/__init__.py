@@ -146,3 +146,9 @@ from .imm_doc import ImmDoc  # noqa: E402,F401
 
 # 人员签名管理（基础数据）：人名章记录。
 from .person_sign import PersonSign  # noqa: E402,F401
+
+# 打印服务配置（基础配置）：IPP打印机连接配置。
+from .print_service_cfg import PrintServiceCfg  # noqa: E402,F401
+
+# 文档导出/打印记录。
+from .doc_record import DocExportRecord, DocPrintRecord  # noqa: E402,F401

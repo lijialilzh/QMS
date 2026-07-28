@@ -70,6 +70,10 @@ class Perms(Enum):
     person_sign_view = PermForm(code="person_sign_view", name="查看", p_code=person_sign.code)
     person_sign_edit = PermForm(code="person_sign_edit", name="编辑", p_code=person_sign.code)
 
+    print_cfg = PermForm(code="print_cfg", name="基础配置/打印服务配置")
+    print_cfg_view = PermForm(code="print_cfg_view", name="查看", p_code=print_cfg.code)
+    print_cfg_edit = PermForm(code="print_cfg_edit", name="编辑", p_code=print_cfg.code)
+
     product = PermForm(code="product", name="产品管理/产品版本管理")
     product_view = PermForm(code="product_view", name="查看", p_code=product.code)
     product_edit = PermForm(code="product_edit", name="编辑", p_code=product.code)

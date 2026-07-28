@@ -1,0 +1,35 @@
+.print-cfg-page {
+    height: 100%;
+}
+
+.print-cfg-toolbar {
+    align-items: center;
+    padding: 12px 20px;
+    border-bottom: 1px solid #e5e7eb;
+    background: #fff;
+}
+
+.print-cfg-body {
+    flex: 1;
+    overflow: auto;
+    padding: 16px 20px;
+    background: #f8fafc;
+}
+
+// 覆盖 index.ant.less 的 .ant-table-wrapper{height:0}，让表格正常显示
+.print-cfg-body {
+    .ant-table-wrapper {
+        height: auto;
+    }
+    .ant-spin-nested-loading {
+        height: auto;
+    }
+    .ant-spin-container {
+        display: block;
+        height: auto;
+    }
+    .ant-table {
+        flex: none;
+        overflow: visible;
+    }
+}

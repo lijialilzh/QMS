@@ -13,9 +13,9 @@ from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 
-from ..obj import Resp
+from ..obj import Resp, Page
 from ..obj.tobj_role import Perms
 from ..utils.sql_ctx import db
 from ..utils.i18n import ts
@@ -143,6 +143,36 @@ _DOC_MODULES = [
 ]
 
 
+# 模块key → 分组中文名映射
+_GROUP_LABELS = {"product_files": "产品文件", "dev_files": "开发文件", "test_files": "测试文件"}
+
+
+def _build_zip_filename(prod, doc_keys: str) -> str:
+    """按"产品名称_完整版本_产品/开发/测试文件_日期.zip"格式生成zip文件名。
+    根据勾选文档涉及的分组，拼出"产品文件/开发文件/测试文件"部分。"""
+    prod_name = (prod.name or "product").replace("/", "_").replace("\\", "_")
+    full_ver = (prod.full_version or "").replace("/", "_")
+    # 解析 doc_keys 里的 module_key，查所属分组
+    groups_hit = []
+    for item in (doc_keys or "").split(","):
+        item = item.strip()
+        if ":" not in item:
+            continue
+        mk = item.split(":", 1)[0]
+        group = next((m[2] for m in _DOC_MODULES if m[0] == mk), None)
+        if group and group not in groups_hit:
+            groups_hit.append(group)
+    # 按固定顺序排列
+    ordered = []
+    for g in ["product_files", "dev_files", "test_files"]:
+        if g in groups_hit:
+            ordered.append(_GROUP_LABELS[g])
+    group_label = "+".join(ordered) if ordered else "文档"
+    date_str = datetime.now().strftime("%Y%m%d")
+    return f"{prod_name}_{full_ver}_{group_label}_{date_str}.zip"
+
+
+
 def _build_doc_name(module_key: str, doc_id: int) -> str:
     """按"文件编号_文件名称_文档版本.docx"格式生成 zip 内文件名，严格遵守。
     缺失字段则跳过该段，保证文件名合法（替换非法字符 / \ : * ? " < > |）。"""
@@ -254,10 +284,9 @@ async def integrate_export(product_id: int, doc_keys: str):
     zip_buf.seek(0)
     zip_size = len(zip_buf.getvalue())
     timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    prod_label = (prod.name or "product").replace("/", "_")
-    raw_filename = f"整合导出-{prod_label}-{prod.full_version}-{timestamp}.zip"
+    raw_filename = _build_zip_filename(prod, doc_keys)
     # RFC 5987: filename* 用 UTF-8 编码，浏览器会正确解码中文；filename 用 ASCII 兜底
-    ascii_filename = f"integrate_export-{prod_label}-{prod.full_version}-{timestamp}.zip"
+    ascii_filename = raw_filename.replace("产品文件", "product_files").replace("开发文件", "dev_files").replace("测试文件", "test_files")
     encoded = urllib.parse.quote(raw_filename)
     disposition = f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{encoded}"
     return StreamingResponse(
@@ -336,14 +365,25 @@ async def integrate_export_progress(product_id: int, doc_keys: str):
         zip_bytes = zip_buf.getvalue()
         token = uuid.uuid4().hex
         timestamp = datetime.now().strftime("%y%m%d.%H%M")
-        prod_label = (prod.name or "product").replace("/", "_")
-        raw_filename = f"整合导出-{prod_label}-{prod.full_version}-{timestamp}.zip"
+        raw_filename = _build_zip_filename(prod, doc_keys)
         _PACK_CACHE[token] = (zip_bytes, raw_filename, time.time() + _PACK_TTL)
         # 清理过期缓存
         now = time.time()
         for k in list(_PACK_CACHE.keys()):
             if _PACK_CACHE[k][2] < now:
                 del _PACK_CACHE[k]
+        # 写导出记录
+        try:
+            from ..model.doc_record import DocExportRecord
+            rec = DocExportRecord(
+                product_id=prod.id, product_name=prod.name, full_version=prod.full_version,
+                doc_count=total, success_count=len(success), fail_count=len(failed),
+                filename=raw_filename, doc_names=", ".join(success[:50]), operator="",
+            )
+            db.session.add(rec)
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
         yield f"data: {json.dumps({'type': 'done', 'token': token, 'success': len(success), 'failed': len(failed), 'filename': raw_filename}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
@@ -393,3 +433,62 @@ async def one_click_print_list(product_id: int, doc_keys: str):
         module_name = next((m[1] for m in _DOC_MODULES if m[0] == module_key), module_key)
         items.append({"module_key": module_key, "module_name": module_name, "doc_id": doc_id, "view_path": view_path})
     return Resp.resp_ok(data={"items": items})
+
+
+# ===== 导出/打印记录 =====
+from ..model.doc_record import DocExportRecord, DocPrintRecord
+
+
+@router.get("/list_export_records", summary="查询导出记录")
+@try_log(perm=Perms.product_view)
+async def list_export_records(page_index: int = 0, page_size: int = 100):
+    total = db.session.execute(select(func.count(DocExportRecord.id))).scalar() or 0
+    rows = db.session.execute(
+        select(DocExportRecord).order_by(DocExportRecord.id.desc())
+        .offset(page_index * page_size).limit(page_size)
+    ).scalars().all()
+    return Resp.resp_ok(data=Page(total=total, rows=[{
+        "id": r.id, "product_name": r.product_name or "", "full_version": r.full_version or "",
+        "doc_count": r.doc_count or 0, "success_count": r.success_count or 0, "fail_count": r.fail_count or 0,
+        "filename": r.filename or "", "doc_names": r.doc_names or "", "operator": r.operator or "", "create_time": str(r.create_time or ""),
+    } for r in rows], page_index=page_index, page_size=page_size))
+
+
+@router.get("/list_print_records", summary="查询打印记录")
+@try_log(perm=Perms.product_view)
+async def list_print_records(page_index: int = 0, page_size: int = 100):
+    total = db.session.execute(select(func.count(DocPrintRecord.id))).scalar() or 0
+    rows = db.session.execute(
+        select(DocPrintRecord).order_by(DocPrintRecord.id.desc())
+        .offset(page_index * page_size).limit(page_size)
+    ).scalars().all()
+    return Resp.resp_ok(data=Page(total=total, rows=[{
+        "id": r.id, "product_name": r.product_name or "", "full_version": r.full_version or "",
+        "doc_count": r.doc_count or 0, "success_count": r.success_count or 0, "fail_count": r.fail_count or 0,
+        "printer_name": r.printer_name or "", "doc_names": r.doc_names or "", "operator": r.operator or "", "create_time": str(r.create_time or ""),
+    } for r in rows], page_index=page_index, page_size=page_size))
+
+
+@router.post("/add_print_record", summary="记录一键打印操作")
+@try_log(perm=Perms.product_view)
+async def add_print_record(form: dict):
+    """前端一键打印完成后调用，写入打印记录。"""
+    from ..model.doc_record import DocPrintRecord
+    try:
+        rec = DocPrintRecord(
+            product_id=int(form.get("product_id") or 0),
+            product_name=form.get("product_name") or "",
+            full_version=form.get("full_version") or "",
+            doc_count=int(form.get("doc_count") or 0),
+            success_count=int(form.get("success_count") or 0),
+            fail_count=int(form.get("fail_count") or 0),
+            printer_name=form.get("printer_name") or "",
+            doc_names=form.get("doc_names") or "",
+            operator=form.get("operator") or "",
+        )
+        db.session.add(rec)
+        db.session.commit()
+        return Resp.resp_ok()
+    except Exception:
+        db.session.rollback()
+        return Resp.resp_err(msg=ts("msg_err_db"))
