@@ -236,8 +236,9 @@ async def list_integrate_docs(product_id: int):
 
 @router.get("/integrate_export", summary="整合导出：勾选文档打包zip")
 @try_log(perm=Perms.product_view)
-async def integrate_export(product_id: int, doc_keys: str):
-    """doc_keys: 逗号分隔的 module_key:id 列表，如 pir_doc:2,pdp_doc:5"""
+async def integrate_export(product_id: int, doc_keys: str, with_sign: bool = True):
+    """doc_keys: 逗号分隔的 module_key:id 列表，如 pir_doc:2,pdp_doc:5
+    with_sign: 是否带签名章（True=带签名，False=不带签名清空封面和评审记录签名）"""
     if not product_id:
         return Resp.resp_err(msg="请选择产品")
     if not doc_keys:
@@ -246,6 +247,9 @@ async def integrate_export(product_id: int, doc_keys: str):
     if not prod:
         return Resp.resp_err(msg="产品不存在")
 
+    # 设置签名模式（contextvar，仅影响本次导出请求）
+    from ..serv.serv_review_util import set_export_sign_mode, restore_export_sign_mode
+    sign_token = set_export_sign_mode(with_sign)
     zip_buf = io.BytesIO()
     success, failed = [], []
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -281,6 +285,8 @@ async def integrate_export(product_id: int, doc_keys: str):
             except Exception as e:
                 failed.append(f"{module_key}:{doc_id}（{str(e)[:50]}）")
 
+    # 恢复签名模式
+    restore_export_sign_mode(sign_token)
     zip_buf.seek(0)
     zip_size = len(zip_buf.getvalue())
     timestamp = datetime.now().strftime("%y%m%d.%H%M")
@@ -308,15 +314,20 @@ _PACK_TTL = 300  # 5分钟
 
 @router.get("/integrate_export_progress", summary="整合导出（SSE进度流）：边打包边推送进度")
 @try_log(perm=Perms.product_view)
-async def integrate_export_progress(product_id: int, doc_keys: str):
+async def integrate_export_progress(product_id: int, doc_keys: str, with_sign: bool = True):
     """SSE 流式推送打包进度，每完成一个文档推送一条进度，最后推送下载token。
     前端用 EventSource 接收，拿到 token 后调 /integrate_download?token=xxx 下载 zip。
+    with_sign: 是否带签名章（True=带签名，False=不带签名清空封面和评审记录签名）。
     """
     if not product_id or not doc_keys:
         return Resp.resp_err(msg="请选择产品并勾选文档")
     prod = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
     if not prod:
         return Resp.resp_err(msg="产品不存在")
+
+    # 设置签名模式（contextvar，仅影响本次导出请求）
+    from ..serv.serv_review_util import set_export_sign_mode, restore_export_sign_mode
+    sign_token = set_export_sign_mode(with_sign)
 
     # 解析文档清单
     doc_list = []

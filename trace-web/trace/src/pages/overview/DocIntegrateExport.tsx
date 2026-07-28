@@ -1,4 +1,4 @@
-import { Button, Collapse, Empty, Modal, Space, Spin, Table, Tag, message } from "antd";
+import { Button, Collapse, Empty, Modal, Radio, Space, Spin, Table, Tag, message } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as ApiProduct from "@/api/ApiProduct";
@@ -34,6 +34,7 @@ export default () => {
     const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
     const cancelPrintRef = useState(false)[0];
     const [activeGroups, setActiveGroups] = useState<string[]>([]);
+    const [withSign, setWithSign] = useState<boolean>(true);
 
     useEffect(() => {
         ApiProduct.list_product({ page_size: 10000 }).then((res: any) => {
@@ -115,7 +116,7 @@ export default () => {
         setPacking(true);
         setPackInfo({ total: keys.length, done: 0, current: "" });
         // 用 EventSource 接收 SSE 进度流
-        const url = ApiIntegrate.integrate_export_progress_url(productId, docKeys);
+        const url = ApiIntegrate.integrate_export_progress_url(productId, docKeys, withSign);
         const es = new EventSource(url);
         es.onmessage = (ev) => {
             try {
@@ -186,7 +187,7 @@ export default () => {
             }
             setPrintInfo({ total: selectedRowKeys.length, done: i, current: displayName, ok: okCount, fail: failCount });
             try {
-                const res: any = await ApiPrint.ipp_print_doc({ module_key: moduleKey, doc_id: Number(docId) });
+                const res: any = await ApiPrint.ipp_print_doc({ module_key: moduleKey, doc_id: Number(docId), with_sign: withSign });
                 if (res.code === ApiPrint.C_OK) okCount++;
                 else failCount++;
             } catch {
@@ -224,6 +225,10 @@ export default () => {
                     )}
                 </div>
                 <Space>
+                    <Radio.Group value={withSign} onChange={(e) => setWithSign(e.target.value)} size="small">
+                        <Radio.Button value={true}>带签名</Radio.Button>
+                        <Radio.Button value={false}>不带签名</Radio.Button>
+                    </Radio.Group>
                     <Button type="primary" loading={exporting} onClick={doExport} disabled={selectedCount === 0}>
                         整合导出（{selectedCount}）
                     </Button>

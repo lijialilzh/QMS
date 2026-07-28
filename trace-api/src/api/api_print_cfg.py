@@ -223,7 +223,7 @@ async def test_print_conn(id: int = 0):
 
 @router.get("/ipp_print_doc", summary="打印单个文档：生成docx后直接发到默认打印机")
 @try_log(perm=Perms.product_view)
-async def ipp_print_doc(module_key: str, doc_id: int):
+async def ipp_print_doc(module_key: str, doc_id: int, with_sign: bool = True):
     from .api_doc_integrate import _SERVERS, _DOC_MODULES, _build_doc_name
     srv = _SERVERS.get(module_key)
     if not srv:
@@ -234,6 +234,9 @@ async def ipp_print_doc(module_key: str, doc_id: int):
     cfg = db.session.execute(select(PrintServiceCfg).where(PrintServiceCfg.is_default == 1)).scalars().first()
     if not cfg:
         return Resp.resp_err(msg="未配置默认打印机，请先在基础配置中设置")
+    # 设置签名模式（contextvar，仅影响本次打印请求）
+    from ..serv.serv_review_util import set_export_sign_mode
+    set_export_sign_mode(with_sign)
     try:
         out = io.BytesIO()
         await method(out, doc_id)

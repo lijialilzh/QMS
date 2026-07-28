@@ -1,4 +1,4 @@
-import { Button, Collapse, Empty, Modal, Space, Spin, Table, Tag, message } from "antd";
+import { Button, Collapse, Empty, Modal, Radio, Space, Spin, Table, Tag, message } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as ApiProduct from "@/api/ApiProduct";
@@ -31,6 +31,7 @@ export default () => {
     const [printInfo, setPrintInfo] = useState({ total: 0, done: 0, current: "", ok: 0, fail: 0 });
     const cancelRef = useRef(false);
     const [activeGroups, setActiveGroups] = useState<string[]>([]);
+    const [withSign, setWithSign] = useState<boolean>(true);
 
     useEffect(() => {
         ApiProduct.list_product({ page_size: 10000 }).then((res: any) => {
@@ -108,7 +109,7 @@ export default () => {
             const displayName = row ? `${row.module_name}${row.version ? " v" + row.version : ""}` : moduleKey;
             setPrintInfo({ total: keys.length, done: i, current: displayName, ok: okCount, fail: failCount });
             try {
-                const res: any = await ApiPrint.ipp_print_doc({ module_key: moduleKey, doc_id: Number(docId) });
+                const res: any = await ApiPrint.ipp_print_doc({ module_key: moduleKey, doc_id: Number(docId), with_sign: withSign });
                 if (res.code === ApiPrint.C_OK) { okCount++; printedNames.push(displayName); }
                 else failCount++;
             } catch { failCount++; }

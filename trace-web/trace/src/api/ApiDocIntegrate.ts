@@ -14,8 +14,8 @@ export const one_click_print_list = async (params: any) => {
 };
 
 // 整合导出 SSE 进度流 URL（EventSource 用）
-export const integrate_export_progress_url = (product_id: number, doc_keys: string) => {
-    return `/trace-api/doc_integrate/integrate_export_progress?product_id=${product_id}&doc_keys=${encodeURIComponent(doc_keys)}`;
+export const integrate_export_progress_url = (product_id: number, doc_keys: string, with_sign: boolean = true) => {
+    return `/trace-api/doc_integrate/integrate_export_progress?product_id=${product_id}&doc_keys=${encodeURIComponent(doc_keys)}&with_sign=${with_sign}`;
 };
 
 // 整合导出下载 URL（按 token 下载 zip）
