@@ -79,6 +79,8 @@
         "prod_overview": "Global View",
         "prod_traces": "Product Association List",
         "prod_comparison": "Content Comparison",
+        "doc_integrate_export": "Integrate Export",
+        "doc_one_click_print": "One-click Print",
         "risk_mgmt": "Risk Management",
         "risk_mgmt_docs": "Risk Management Report",
         "risk_analysis": "Risk Analysis Matrix",

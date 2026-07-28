@@ -79,6 +79,8 @@
         "prod_overview": "全局视图",
         "prod_traces": "产品关联列表",
         "prod_comparison": "内容对比",
+        "doc_integrate_export": "整合导出",
+        "doc_one_click_print": "一键打印",
         "risk_mgmt": "风险管理",
         "risk_mgmt_docs": "风险管理报告",
         "risk_analysis": "风险分析矩阵",
