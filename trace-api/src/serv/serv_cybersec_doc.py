@@ -1337,5 +1337,6 @@ class Server(object):
         document.add_page_break()
         for sec in body_sections:
             add_section(sec)
+        docx_util.fill_toc_cache(document)
         document.save(output)
         output.seek(0)

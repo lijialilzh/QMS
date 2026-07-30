@@ -930,6 +930,7 @@ class Server(object):
                 for table in (node.get("tables") or []):
                     serv_review_util.render_review_grid(document, table, set_cell)
 
+        docx_util.fill_toc_cache(document)
         document.save(output)
         output.seek(0)
 

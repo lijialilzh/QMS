@@ -773,5 +773,6 @@ class Server(object):
                 seq += 1
                 render_body_section(node, 1, str(seq))
 
+        docx_util.fill_toc_cache(document)
         document.save(output)
         output.seek(0)

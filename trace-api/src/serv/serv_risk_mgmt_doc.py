@@ -1856,5 +1856,6 @@ class Server(object):
         set_section_orientation(document.sections[-1], False)
         for index, section in enumerate(body_sections):
             add_top_level_section(section, index == 0)
+        docx_util.fill_toc_cache(document)
         document.save(output)
         output.seek(0)

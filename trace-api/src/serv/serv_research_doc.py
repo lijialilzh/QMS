@@ -849,5 +849,6 @@ class Server(object):
         for sec in body:
             add_section(sec, 1)
 
+        docx_util.fill_toc_cache(document)
         document.save(output)
         output.seek(0)

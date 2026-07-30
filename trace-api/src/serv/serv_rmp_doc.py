@@ -710,5 +710,6 @@ class Server(object):
             document.add_page_break()
             render_section(node, 1, "")
 
+        docx_util.fill_toc_cache(document)
         document.save(output)
         output.seek(0)

@@ -156,8 +156,21 @@ export default () => {
 
     const doExport = () => exportByKeys(selectedRowKeys);
 
-    // 单条导出
-    const doExportOne = (key: string) => exportByKeys([key]);
+    // 单条导出：直接下载 docx（不打包 zip）
+    const doExportOne = (key: string) => {
+        if (!productId) { message.warning("请先选择产品"); return; }
+        const parts = key.split("::");
+        const moduleKey = parts[1];
+        const docId = Number(parts[2]);
+        const url = ApiIntegrate.export_single_doc_url(moduleKey, docId, withSign);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        message.success("正在下载文档...");
+    };
 
     const doPrint = async () => {
         if (!productId) { message.warning("请先选择产品"); return; }

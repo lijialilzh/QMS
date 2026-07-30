@@ -4834,6 +4834,7 @@ class Server(object):
                     __add_blank_lines(docx, 5)
                 first_section = False
 
+            docx_util.fill_toc_cache(docx)
             docx.save(output)
             output.seek(0)
 
@@ -5782,6 +5783,7 @@ class Server(object):
         __fill_template_trace_table(trace_table, normal_rows)
         if change_rows:
             __append_template_trace_table(docx, trace_table, f"{product_full_version or '产品'}变更追溯", change_rows)
+        docx_util.fill_toc_cache(docx)
         docx.save(output)
         output.seek(0)
         

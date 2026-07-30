@@ -571,5 +571,6 @@ class Server(object):
         for i, node in enumerate(body):
             render_body_section(node, 1, str(i + 1))
 
+        docx_util.fill_toc_cache(document)
         document.save(output)
         output.seek(0)

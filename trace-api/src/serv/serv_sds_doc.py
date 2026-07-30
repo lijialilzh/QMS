@@ -3339,6 +3339,7 @@ finally:
                 docx_util.fonted_txt(header_para, sds_doc.file_no)
                 await __writenodes_legacy(sds_doc.content or [], docx, level=0)
 
+            docx_util.fill_toc_cache(docx)
             docx.save(output)
             output.seek(0)
             __refresh_toc_with_libreoffice(output)

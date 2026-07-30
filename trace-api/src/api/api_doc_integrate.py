@@ -292,7 +292,9 @@ async def integrate_export(product_id: int, doc_keys: str, with_sign: bool = Tru
     timestamp = datetime.now().strftime("%y%m%d.%H%M")
     raw_filename = _build_zip_filename(prod, doc_keys)
     # RFC 5987: filename* 用 UTF-8 编码，浏览器会正确解码中文；filename 用 ASCII 兜底
-    ascii_filename = raw_filename.replace("产品文件", "product_files").replace("开发文件", "dev_files").replace("测试文件", "test_files")
+    ascii_filename = raw_filename.encode("ascii", "ignore").decode("ascii") or "export.zip"
+    if not ascii_filename.strip():
+        ascii_filename = "export.zip"
     encoded = urllib.parse.quote(raw_filename)
     disposition = f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{encoded}"
     return StreamingResponse(
@@ -305,11 +307,22 @@ async def integrate_export(product_id: int, doc_keys: str, with_sign: bool = Tru
     )
 
 
-# 内存缓存打包结果（token -> (zip_bytes, filename, expire_ts)），5分钟TTL
+# 临时文件缓存打包结果（多 worker 共享），用 token 作为文件名，5分钟TTL
 import time
 import uuid
-_PACK_CACHE: dict = {}
+import os
+import tempfile
 _PACK_TTL = 300  # 5分钟
+_PACK_DIR = os.path.join(tempfile.gettempdir(), "qms_pack_cache")
+os.makedirs(_PACK_DIR, exist_ok=True)
+
+
+def _pack_path(token: str) -> str:
+    return os.path.join(_PACK_DIR, f"{token}.zip")
+
+
+def _pack_meta_path(token: str) -> str:
+    return os.path.join(_PACK_DIR, f"{token}.meta")
 
 
 @router.get("/integrate_export_progress", summary="整合导出（SSE进度流）：边打包边推送进度")
@@ -371,18 +384,26 @@ async def integrate_export_progress(product_id: int, doc_keys: str, with_sign: b
                 except Exception as e:
                     failed.append(f"{module_key}:{doc_id}")
                     yield f"data: {json.dumps({'type': 'progress', 'idx': idx, 'total': total, 'name': module_name, 'status': 'fail', 'error': str(e)[:50]}, ensure_ascii=False)}\n\n"
-        # 打包完成，缓存 zip，生成 token
+        # 打包完成，写入临时文件（多 worker 共享），生成 token
         zip_buf.seek(0)
         zip_bytes = zip_buf.getvalue()
         token = uuid.uuid4().hex
         timestamp = datetime.now().strftime("%y%m%d.%H%M")
         raw_filename = _build_zip_filename(prod, doc_keys)
-        _PACK_CACHE[token] = (zip_bytes, raw_filename, time.time() + _PACK_TTL)
-        # 清理过期缓存
+        # 写 zip 文件和元数据（文件名）到共享临时目录
+        with open(_pack_path(token), "wb") as f:
+            f.write(zip_bytes)
+        with open(_pack_meta_path(token), "w", encoding="utf-8") as f:
+            f.write(raw_filename)
+        # 清理过期缓存文件
         now = time.time()
-        for k in list(_PACK_CACHE.keys()):
-            if _PACK_CACHE[k][2] < now:
-                del _PACK_CACHE[k]
+        for fn in os.listdir(_PACK_DIR):
+            fp = os.path.join(_PACK_DIR, fn)
+            try:
+                if os.path.getmtime(fp) < now - _PACK_TTL:
+                    os.remove(fp)
+            except Exception:
+                pass
         # 写导出记录
         try:
             from ..model.doc_record import DocExportRecord
@@ -407,11 +428,25 @@ async def integrate_export_progress(product_id: int, doc_keys: str, with_sign: b
 @router.get("/integrate_download", summary="整合导出下载：按token下载已打包的zip")
 async def integrate_download(token: str):
     """前端 SSE 拿到 token 后，用此接口下载 zip。"""
-    if not token or token not in _PACK_CACHE:
+    zip_path = _pack_path(token)
+    meta_path = _pack_meta_path(token)
+    if not token or not os.path.exists(zip_path):
         return Resp.resp_err(msg="下载链接已过期或无效，请重新导出")
-    zip_bytes, raw_filename, expire = _PACK_CACHE.pop(token)
-    ascii_filename = raw_filename.replace("整合导出", "integrate_export")
+    with open(meta_path, "r", encoding="utf-8") as f:
+        raw_filename = f.read().strip()
+    with open(zip_path, "rb") as f:
+        zip_bytes = f.read()
+    # 下载后删除临时文件
+    try:
+        os.remove(zip_path)
+        os.remove(meta_path)
+    except Exception:
+        pass
     encoded = urllib.parse.quote(raw_filename)
+    # ASCII 兜底文件名：移除所有非 ASCII 字符，避免 latin-1 编码失败
+    ascii_filename = raw_filename.encode("ascii", "ignore").decode("ascii") or "export.zip"
+    if not ascii_filename.strip():
+        ascii_filename = "export.zip"
     disposition = f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{encoded}"
     return StreamingResponse(
         content=io.BytesIO(zip_bytes),
@@ -419,6 +454,41 @@ async def integrate_download(token: str):
         headers={
             "Content-Disposition": disposition,
             "Content-Length": str(len(zip_bytes)),
+        },
+    )
+
+
+@router.get("/export_single_doc", summary="单文档导出：直接下载单个docx（带/不带签名）")
+@try_log(perm=Perms.product_view)
+async def export_single_doc(module_key: str, doc_id: int, with_sign: bool = True):
+    """导出单个文档为 docx 并直接下载（不打包 zip）。
+    with_sign: True=带签名，False=不带签名（清空封面和评审记录签名）。"""
+    if not module_key or not doc_id:
+        return Resp.resp_err(msg="参数无效")
+    srv = _SERVERS.get(module_key)
+    if not srv:
+        return Resp.resp_err(msg=f"不支持的文档模块：{module_key}")
+    method = getattr(srv, f"export_{module_key}", None)
+    if not method:
+        return Resp.resp_err(msg=f"模块 {module_key} 无导出方法")
+    # 设置签名模式
+    from ..serv.serv_review_util import set_export_sign_mode
+    set_export_sign_mode(with_sign)
+    try:
+        out = io.BytesIO()
+        await method(out, doc_id)
+        out.seek(0)
+    except Exception as e:
+        return Resp.resp_err(msg=f"生成文档失败：{str(e)[:80]}")
+    safe_name = _build_doc_name(module_key, doc_id)
+    encoded = urllib.parse.quote(safe_name)
+    ascii_filename = safe_name.encode("ascii", "ignore").decode("ascii") or "export.docx"
+    disposition = f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{encoded}"
+    return StreamingResponse(
+        content=out,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={
+            "Content-Disposition": disposition,
         },
     )
 

@@ -160,6 +160,10 @@ export default () => {
                     )}
                 </div>
                 <Space>
+                    <Radio.Group value={withSign} onChange={(e) => setWithSign(e.target.value)} size="small">
+                        <Radio.Button value={true}>带签名</Radio.Button>
+                        <Radio.Button value={false}>不带签名</Radio.Button>
+                    </Radio.Group>
                     <Button type="primary" loading={printing} onClick={doPrint} disabled={selectedRowKeys.length === 0}>
                         一键打印（{selectedRowKeys.length}）
                     </Button>

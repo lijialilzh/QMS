@@ -23,6 +23,11 @@ export const integrate_download_url = (token: string) => {
     return `/trace-api/doc_integrate/integrate_download?token=${token}`;
 };
 
+// 单文档导出 URL（直接下载 docx，带/不带签名）
+export const export_single_doc_url = (module_key: string, doc_id: number, with_sign: boolean = true) => {
+    return `/trace-api/doc_integrate/export_single_doc?module_key=${module_key}&doc_id=${doc_id}&with_sign=${with_sign}`;
+};
+
 // 旧接口保留兼容
 export const integrate_export_url = (product_id: number, doc_keys: string) => {
     return `/trace-api/doc_integrate/integrate_export?product_id=${product_id}&doc_keys=${encodeURIComponent(doc_keys)}`;

@@ -437,6 +437,43 @@ def enable_update_fields_on_open(docx: Document):
     docx.settings.element.append(update_fields)
 
 
+def fill_toc_cache(docx: Document):
+    """在文档保存前，遍历所有 Heading 段落，把标题文本回填到目录域的缓存区。
+    替换目录域里的占位文本（"请打开文档后右键目录..."）为实际的标题列表。
+    这样即使 LibreOffice headless 转换不更新目录域，打印/PDF 也能显示目录内容。
+    同时保留目录域代码，Word 打开时仍可右键更新页码。"""
+    if OxmlElement is None or qn is None:
+        return
+    # 收集所有标题段落（Heading 1-4）
+    headings = []
+    for para in docx.paragraphs:
+        style_name = (para.style.name or "") if para.style else ""
+        if style_name.startswith("Heading"):
+            try:
+                level = int(style_name.replace("Heading", "").replace(" ", "").strip() or "1")
+            except ValueError:
+                level = 1
+            if 1 <= level <= 4:
+                text = para.text.strip()
+                if text:
+                    headings.append((level, text))
+    if not headings:
+        return
+    # 构建目录文本（每级缩进2个空格）
+    toc_lines = []
+    for level, text in headings:
+        indent = "  " * (level - 1)
+        toc_lines.append(f"{indent}{text}")
+    toc_text = "\n".join(toc_lines)
+    # 找到包含占位文本的 run，替换为标题列表
+    # 兼容多种占位文本："请打开文档后右键目录..." 和 "目录将在打开文档后自动更新"
+    for para in docx.paragraphs:
+        for run in para.runs:
+            if run.text and ("请打开文档后" in run.text or "目录将在打开文档后" in run.text):
+                run.text = toc_text
+                return
+
+
 def refresh_docx_toc_with_libreoffice(output_stream) -> bool:
     """用 LibreOffice 刷新目录域，导出文件即可带正确页码。"""
     soffice = shutil.which("soffice") or shutil.which("libreoffice")
