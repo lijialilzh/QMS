@@ -439,9 +439,9 @@ def enable_update_fields_on_open(docx: Document):
 
 def fill_toc_cache(docx: Document):
     """在文档保存前，遍历所有 Heading 段落，把标题文本回填到目录域的缓存区。
-    替换目录域里的占位文本（"请打开文档后右键目录..."）为实际的标题列表。
-    这样即使 LibreOffice headless 转换不更新目录域，打印/PDF 也能显示目录内容。
-    同时保留目录域代码，Word 打开时仍可右键更新页码。"""
+    在 separate 和 end 之间插入带制表位（前导点）+ 页码占位的 run，用换行符分隔。
+    不插入新段落（避免两遍目录），只修改目录域段落内部的 run。
+    Word 打开时仍可右键目录更新为带真实页码的目录。"""
     if OxmlElement is None or qn is None:
         return
     # 收集所有标题段落（Heading 1-4）
@@ -459,19 +459,84 @@ def fill_toc_cache(docx: Document):
                     headings.append((level, text))
     if not headings:
         return
-    # 构建目录文本（每级缩进2个空格）
-    toc_lines = []
-    for level, text in headings:
-        indent = "  " * (level - 1)
-        toc_lines.append(f"{indent}{text}")
-    toc_text = "\n".join(toc_lines)
-    # 找到包含占位文本的 run，替换为标题列表
-    # 兼容多种占位文本："请打开文档后右键目录..." 和 "目录将在打开文档后自动更新"
+    # 找到目录域段落（含 TOC instrText 的段落）
     for para in docx.paragraphs:
-        for run in para.runs:
-            if run.text and ("请打开文档后" in run.text or "目录将在打开文档后" in run.text):
-                run.text = toc_text
-                return
+        p_elem = para._p
+        # 检查是否含 TOC instrText
+        has_toc = False
+        separate_fld = None  # fldChar separate 元素
+        end_fld = None  # fldChar end 元素
+        for fld in p_elem.iter(qn("w:fldChar")):
+            ft = fld.get(qn("w:fldCharType"), "")
+            if ft == "separate":
+                separate_fld = fld
+            elif ft == "end":
+                end_fld = fld
+        for instr in p_elem.iter(qn("w:instrText")):
+            if instr.text and "TOC" in instr.text:
+                has_toc = True
+                break
+        if not has_toc or separate_fld is None or end_fld is None:
+            continue
+        # separate 和 end 之间的 run 是占位文本，需要替换
+        # 找到 separate 所在的 run，然后删除到 end 所在的 run 之间的所有 run
+        sep_run = separate_fld.getparent()  # 所在的 w:r 元素
+        end_run = end_fld.getparent()  # 所在的 w:r 元素
+        # 获取段落的所有子元素
+        children = list(p_elem)
+        sep_idx = children.index(sep_run)
+        end_idx = children.index(end_run)
+        # 删除 separate run 和 end run 之间的元素（占位文本 run）
+        for child in children[sep_idx + 1:end_idx]:
+            p_elem.remove(child)
+        # 在 separate run 后面插入标题条目
+        insert_idx = sep_idx + 1
+        for i, (level, text) in enumerate(headings):
+            # 每个标题前加换行符（第一个不加）
+            if i > 0:
+                br_run = OxmlElement("w:r")
+                br = OxmlElement("w:br")
+                br_run.append(br)
+                p_elem.insert(insert_idx, br_run)
+                insert_idx += 1
+            # 标题文本 run（带缩进）
+            title_run = OxmlElement("w:r")
+            title_t = OxmlElement("w:t")
+            title_t.set(qn("xml:space"), "preserve")
+            indent = "    " * (level - 1)
+            title_t.text = f"{indent}{text}"
+            title_run.append(title_t)
+            p_elem.insert(insert_idx, title_run)
+            insert_idx += 1
+            # 制表符 run
+            tab_run = OxmlElement("w:r")
+            tab = OxmlElement("w:tab")
+            tab_run.append(tab)
+            p_elem.insert(insert_idx, tab_run)
+            insert_idx += 1
+            # 页码占位 run
+            page_run = OxmlElement("w:r")
+            page_t = OxmlElement("w:t")
+            page_t.set(qn("xml:space"), "preserve")
+            page_t.text = "1"
+            page_run.append(page_t)
+            p_elem.insert(insert_idx, page_run)
+            insert_idx += 1
+        # 给目录域段落加制表位（右对齐+前导点）
+        ppr = p_elem.find(qn("w:pPr"))
+        if ppr is None:
+            ppr = OxmlElement("w:pPr")
+            p_elem.insert(0, ppr)
+        tabs = ppr.find(qn("w:tabs"))
+        if tabs is None:
+            tabs = OxmlElement("w:tabs")
+            ppr.append(tabs)
+            tab_def = OxmlElement("w:tab")
+            tab_def.set(qn("w:val"), "right")
+            tab_def.set(qn("w:leader"), "dot")
+            tab_def.set(qn("w:pos"), "8306")
+            tabs.append(tab_def)
+        return
 
 
 def refresh_docx_toc_with_libreoffice(output_stream) -> bool:

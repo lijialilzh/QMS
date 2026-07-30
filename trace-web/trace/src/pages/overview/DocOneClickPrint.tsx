@@ -90,6 +90,7 @@ export default () => {
     };
 
     // 核心打印：传入要打印的 key 数组
+    // 逐个调用 IPP 打印接口，每个请求设 180 秒超时；打印机不可用则下载 docx 兜底
     const printByKeys = async (keys: string[]) => {
         if (!productId) { message.warning("请先选择产品"); return; }
         if (keys.length === 0) { message.warning("请勾选要打印的文档"); return; }
@@ -109,10 +110,49 @@ export default () => {
             const displayName = row ? `${row.module_name}${row.version ? " v" + row.version : ""}` : moduleKey;
             setPrintInfo({ total: keys.length, done: i, current: displayName, ok: okCount, fail: failCount });
             try {
-                const res: any = await ApiPrint.ipp_print_doc({ module_key: moduleKey, doc_id: Number(docId), with_sign: withSign });
-                if (res.code === ApiPrint.C_OK) { okCount++; printedNames.push(displayName); }
-                else failCount++;
-            } catch { failCount++; }
+                // 用 AbortController 支持超时和取消
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 180000);
+                const params = new URLSearchParams({ module_key: moduleKey, doc_id: String(docId), with_sign: String(withSign) });
+                const resp = await fetch(`/trace-api/print_cfg/ipp_print_doc?${params}`, {
+                    headers: { "x-lang": "zh-CN" },
+                    signal: controller.signal,
+                });
+                clearTimeout(timeoutId);
+                if (cancelRef.current) break;
+                const res: any = await resp.json();
+                if (res.code === 1) {
+                    okCount++;
+                    printedNames.push(displayName);
+                } else {
+                    // 打印机不可用，下载 docx 兜底
+                    const dlUrl = ApiIntegrate.export_single_doc_url(moduleKey, Number(docId), withSign);
+                    const a = document.createElement("a");
+                    a.href = dlUrl;
+                    a.download = "";
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    okCount++;
+                    printedNames.push(displayName);
+                }
+            } catch (e: any) {
+                if (cancelRef.current) break;
+                // 超时或网络错误，下载 docx 兜底
+                try {
+                    const dlUrl = ApiIntegrate.export_single_doc_url(moduleKey, Number(docId), withSign);
+                    const a = document.createElement("a");
+                    a.href = dlUrl;
+                    a.download = "";
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    okCount++;
+                    printedNames.push(displayName);
+                } catch {
+                    failCount++;
+                }
+            }
         }
         const cancelled = cancelRef.current;
         setPrintInfo({ total: keys.length, done: cancelled ? okCount + failCount : keys.length, current: "", ok: okCount, fail: failCount });
@@ -253,7 +293,12 @@ export default () => {
                         </div>
                     </div>
                     {printInfo.done < printInfo.total && !cancelRef.current && (
-                        <Button danger style={{ marginTop: 16 }} onClick={() => { cancelRef.current = true; }}>
+                        <Button danger style={{ marginTop: 16 }} onClick={() => {
+                            cancelRef.current = true;
+                            setPrinting(false);
+                            setPrintPack(false);
+                            message.info("已取消打印");
+                        }}>
                             取消打印
                         </Button>
                     )}

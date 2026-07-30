@@ -25,6 +25,8 @@ services:
       DB_URL: postgresql://trace:test@trace-db:5432/trace
     restart: always
     privileged: true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       default:
         aliases:
