@@ -77,6 +77,7 @@ import StpDocDetail from "./pages/stp/StpDocDetail";
 import FtrDocs from "./pages/ftr/FtrDocs";
 import FtrDocDetail from "./pages/ftr/FtrDocDetail";
 import FtrRecordDocs from "./pages/ftr/FtrRecordDocs";
+import TrainRecordDocs from "./pages/train_record/TrainRecordDocs";
 import FtrRecordDocDetail from "./pages/ftr/FtrRecordDocDetail";
 import UtpDocs from "./pages/utp/UtpDocs";
 import UtpDocDetail from "./pages/utp/UtpDocDetail";
@@ -215,6 +216,7 @@ const router = createRouter([
             { path: "/ftr_docs/edit/:id", element: <FtrDocDetail /> },
             { path: "/ftr_docs/view/:id", element: <FtrDocDetail /> },
             { path: "/ftr_record_docs", element: <FtrRecordDocs /> },
+            { path: "/train_record_docs", element: <TrainRecordDocs /> },
             { path: "/ftr_record_docs/edit/:id", element: <FtrRecordDocDetail /> },
             { path: "/ftr_record_docs/view/:id", element: <FtrRecordDocDetail /> },
             { path: "/utp_docs", element: <UtpDocs /> },

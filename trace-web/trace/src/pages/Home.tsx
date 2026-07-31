@@ -391,6 +391,11 @@ export default () => {
                                 perm: "ftr_record_doc_view",
                             },
                             {
+                                key: "/train_record_docs",
+                                label: "培训记录表",
+                                perm: "ftr_record_doc_view",
+                            },
+                            {
                                 key: "/utp_docs",
                                 label: ts("menu.utp_docs"),
                                 perm: "utp_doc_view",
