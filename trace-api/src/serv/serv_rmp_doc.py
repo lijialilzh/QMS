@@ -465,33 +465,18 @@ class Server(object):
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
 
         def set_grid_widths(table, grid, cols):
-            def cell_units(text):
-                m = 0
-                for line in str(text or "").split("\n"):
-                    w = sum(2 if ord(ch) > 127 else 1 for ch in line)
-                    m = max(m, w)
-                return max(m, 2)
-            col_units = []
-            for c in range(cols):
-                u = 2
-                for row in grid:
-                    if c < len(row):
-                        u = max(u, cell_units(row[c]))
-                col_units.append(u)
-            widths = [u * 120 + 440 for u in col_units]
+            # 等宽分配页面可用宽度，避免宽窄不一
             sect = document.sections[0]
             usable = int((sect.page_width - sect.left_margin - sect.right_margin) / 635)
-            total = sum(widths)
-            if total > usable and total > 0:
-                scale = usable / total
-                widths = [max(int(w * scale), 600) for w in widths]
-                total = sum(widths)
+            col_w = max(int(usable / cols), 600)
+            widths = [col_w] * cols
+            total = col_w * cols
             tbl_pr = table._tbl.tblPr
             layout = tbl_pr.find(qn("w:tblLayout"))
             if layout is None:
                 layout = OxmlElement("w:tblLayout")
                 tbl_pr.append(layout)
-            layout.set(qn("w:type"), "fixed")
+            layout.set(qn("w:type"), "autofit")
             tbl_w = tbl_pr.find(qn("w:tblW"))
             if tbl_w is None:
                 tbl_w = OxmlElement("w:tblW")
@@ -530,7 +515,7 @@ class Server(object):
             table = document.add_table(rows=0, cols=cols)
             table.style = "Table Grid"
             table.alignment = WD_TABLE_ALIGNMENT.CENTER
-            table.autofit = False
+            table.autofit = True
             h_merged = []
             for r_idx, row in enumerate(grid):
                 cells = table.add_row().cells

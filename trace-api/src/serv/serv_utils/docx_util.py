@@ -380,7 +380,7 @@ def add_page_number_footer(section, file_no: str = "", skip_first: bool = True):
             fonted_txt(hp, str(file_no or ""))
 
         pg_num_type = OxmlElement("w:pgNumType")
-        pg_num_type.set(qn("w:start"), "0")
+        pg_num_type.set(qn("w:start"), "1")
         section._sectPr.append(pg_num_type)
 
     footer = section.footer
@@ -395,12 +395,14 @@ def add_page_number_footer(section, file_no: str = "", skip_first: bool = True):
     page_instr.text = " PAGE "
     fld_separate = OxmlElement("w:fldChar")
     fld_separate.set(qn("w:fldCharType"), "separate")
-    fld_end = OxmlElement("w:fldChar")
-    fld_end.set(qn("w:fldCharType"), "end")
     page_run._r.append(fld_begin)
     page_run._r.append(page_instr)
     page_run._r.append(fld_separate)
-    page_run._r.append(fld_end)
+    fonted_txt(fp, "1")
+    page_end_run = fp.add_run()
+    fld_end = OxmlElement("w:fldChar")
+    fld_end.set(qn("w:fldCharType"), "end")
+    page_end_run._r.append(fld_end)
     fonted_txt(fp, " 页")
 
 logger = logging.getLogger(__name__)
@@ -409,11 +411,14 @@ def insert_toc_field(docx: Document, outline_levels: str = "1-4"):
     """插入 Word 目录域，打开文档后自动更新标题与页码。"""
     if OxmlElement is None or qn is None:
         return
+    # 设置 updateFields=true，Word 打开时弹"更新域"对话框
+    update_fields = OxmlElement("w:updateFields")
+    update_fields.set(qn("w:val"), "true")
+    docx.settings.element.append(update_fields)
     p = docx.add_paragraph()
     run_begin = p.add_run()
     fld_begin = OxmlElement("w:fldChar")
     fld_begin.set(qn("w:fldCharType"), "begin")
-    fld_begin.set(qn("w:dirty"), "true")
     run_begin._r.append(fld_begin)
     instr = OxmlElement("w:instrText")
     instr.set(qn("xml:space"), "preserve")
