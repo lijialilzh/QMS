@@ -37,6 +37,10 @@ def try_log(error_resp=Resp.resp_fatal(), perm: Union[Perms, List[Perms]] = None
             except Exception:
                 resp = error_resp
                 logger.exception("")
+                try:
+                    db.session.rollback()
+                except Exception:
+                    pass
             finally:
                 is_resp = isinstance(resp, Resp)
                 code = resp.code if is_resp else None

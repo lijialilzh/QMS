@@ -21,6 +21,8 @@ from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from ..model.product import Product
 from ..model.train_record_doc import TrainRecordDoc
 from ..model.prod_dhf import ProdDhf
+from ..model.project_member import ProjectMember
+from ..model.project_timeline import ProjectTimelineRow
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
 from ..obj.vobj_user import UserObj
@@ -107,7 +109,138 @@ class Server(object):
                         for i in range(len(r)):
                             if isinstance(r[i], str) and re.search(r"\d+\.\d+\.\d+\.\d+", r[i]):
                                 r[i] = re.sub(r"\d+\.\d+\.\d+\.\d+", new_fv, r[i])
+        # 自动填充培训时间、人员名单、培训内容中的产品名称/版本
+        self.__autofill_training(content, prod_id, product)
         return content
+
+    def __autofill_training(self, content, prod_id, product=None):
+        """填充培训记录表专属字段：培训内容(产品名称/版本)、培训时间、培训人员名单。"""
+        if not isinstance(content, dict) or not prod_id:
+            return
+        sections = content.get("sections") or []
+        if not sections:
+            return
+        tables = sections[0].get("tables") or []
+        if not tables:
+            return
+        grid = tables[0]
+        if not isinstance(grid, list) or len(grid) < 1:
+            return
+
+        # —— 培训内容（行0）：产品名称 / 版本号 ——
+        pname = (product.name if product else "") or ""
+        pver = (product.full_version if product else "") or ""
+        if pname or pver:
+            parts = []
+            if pname:
+                parts.append(f"产品名称：{pname}")
+            if pver:
+                parts.append(f"版本号：{pver}")
+            parts.append("产品的使用和《用户测试计划》、《用户测试用例》")
+            scope_text = "\n".join(parts)
+            row0 = grid[0]
+            # 内容存在 [1..5]（合并），写入 [1]，其余清空
+            if len(row0) >= 6:
+                row0[1] = scope_text
+                for c in range(2, 6):
+                    row0[c] = ""
+
+        # 确保至少 12 行（兼容旧版 10 行：补空白填写行）
+        if len(grid) == 10:
+            grid.insert(5, ["", "", "", "", "", ""])
+            grid.insert(7, ["", "", "", "", "", ""])
+        while len(grid) < 12:
+            grid.append(["", "", "", "", "", ""])
+
+        # —— 培训时间（行1 [3]）：取项目时间线第一个日期行 ——
+        try:
+            trow = db.session.execute(
+                select(ProjectTimelineRow)
+                .where(ProjectTimelineRow.prod_id == prod_id, ProjectTimelineRow.row_type == "date")
+                .order_by(ProjectTimelineRow.sort_order.asc(), ProjectTimelineRow.id.asc())
+                .limit(1)
+            ).scalars().first()
+            if trow:
+                y = (trow.year or "").strip()
+                m = (trow.month or "").strip()
+                d = (trow.day or "").strip()
+                # 规范化：确保带"年/月/日"后缀
+                if y and not y.endswith("年"):
+                    y = y + "年"
+                if m and not m.endswith("月"):
+                    m = m + "月"
+                if d and not d.endswith("日"):
+                    d = d + "日"
+                date_str = "".join([x for x in [y, m, d] if x])
+                if len(grid[1]) >= 6:
+                    grid[1][2] = date_str
+        except Exception:
+            logger.exception("autofill timeline failed")
+
+        # —— 培训人员名单（行5 [0]）：取该产品「用户测试」职能人员 ——
+        ut_names: list = []
+        try:
+            members = db.session.execute(
+                select(ProjectMember.name)
+                .where(ProjectMember.prod_id == prod_id, ProjectMember.role == "用户测试")
+                .order_by(ProjectMember.sort_order.asc(), ProjectMember.id.asc())
+            ).scalars().all()
+            ut_names = [n for n in members if n and n.strip()]
+            if ut_names:
+                roster = "、".join(ut_names)
+                if len(grid[5]) >= 1:
+                    grid[5][0] = roster
+        except Exception:
+            logger.exception("autofill members failed")
+
+        # —— 授课老师 / 考核人员：取该产品「产品经理」 ——
+        pm_name = ""
+        try:
+            pm_name = (db.session.execute(
+                select(ProjectMember.name)
+                .where(ProjectMember.prod_id == prod_id, ProjectMember.role == "产品经理")
+                .order_by(ProjectMember.sort_order.asc(), ProjectMember.id.asc())
+                .limit(1)
+            ).scalars().first() or "").strip()
+        except Exception:
+            logger.exception("autofill pm failed")
+        # 行3: [2]=授课老师值
+        if pm_name and len(grid[3]) >= 6 and not (grid[3][2] or "").strip():
+            grid[3][2] = pm_name
+        # 行9: [2]=考核人员值
+        if pm_name and len(grid[9]) >= 3 and not (grid[9][2] or "").strip():
+            grid[9][2] = pm_name
+
+        # —— 默认值：培训地点 / 培训人数 / 培训方式 / 培训学时 / 考核方式 / 考核结果 / 培训评价 ——
+        # 行1: [2]=培训时间(已填), [3]=培训地点标签, [4]=培训地点值
+        if len(grid[1]) >= 6 and not (grid[1][4] or "").strip():
+            grid[1][4] = "公司"
+        # 行2: [2]=培训人数值, [3]=培训方式标签, [4]=培训方式值
+        if len(grid[2]) >= 6 and not (grid[2][2] or "").strip() and ut_names:
+            grid[2][2] = str(len(ut_names))
+        if len(grid[2]) >= 6 and not (grid[2][4] or "").strip():
+            grid[2][4] = "现场操作及线上"
+        # 行3: [2]=授课老师值, [3]=培训学时标签, [4]=培训学时值
+        if len(grid[3]) >= 6 and not (grid[3][4] or "").strip():
+            grid[3][4] = "2"
+        # 行7: 培训内容摘要 [0]（产品名称/版本 + 培训说明）
+        if (pname or pver) and len(grid[7]) >= 1 and not (grid[7][0] or "").strip():
+            summary_parts = []
+            if pname:
+                summary_parts.append(f"产品名称：{pname}")
+            if pver:
+                summary_parts.append(f"版本号：{pver}")
+            summary_parts.append("产品的使用、《用户测试计划》、《用户测试用例》的培训")
+            grid[7][0] = "\n".join(summary_parts)
+        # 行8: 考核方式 [2]
+        if len(grid[8]) >= 3 and not (grid[8][2] or "").strip():
+            grid[8][2] = "实操，进行用户测试"
+        # 行10: 考核结果 [2]
+        if len(grid[10]) >= 3 and not (grid[10][2] or "").strip():
+            grid[10][2] = "全部考核通过。\n\n考核人签字：            日期："
+        # 行11: 培训评价 [2]
+        if len(grid[11]) >= 3 and not (grid[11][2] or "").strip():
+            grid[11][2] = "经过培训，测试人员已经了解产品的使用，熟悉《用户测试计划》及《用户测试用例》。\n\n评价人签字：            日期："
 
     def __to_obj(self, row: TrainRecordDoc, product: Product = None):
         obj = TrainRecordDocObj(**row.dict())
@@ -129,6 +262,11 @@ class Server(object):
             row = TrainRecordDoc(**form.dict(exclude_none=True))
             row.id = None
             row.content = self.__normalize_content(row.content)
+            # 自动填充产品名称/版本、培训时间、培训人员名单
+            if form.product_id:
+                product: Product = db.session.execute(select(Product).where(Product.id == form.product_id)).scalars().first()
+                if product:
+                    row.content = self.__autofill(row.content, form.product_id, product, form.version, force=True)
             db.session.add(row)
             db.session.commit()
             return Resp.resp_ok(data=TrainRecordDocForm(id=row.id))
@@ -230,10 +368,14 @@ class Server(object):
             wheres.append(TrainRecordDoc.version.like(f"%{version}%"))
         if op_user and op_user.id != 1 and op_user.role_code == Roles.product_manager.value.code:
             wheres.append(Product.create_user_id == op_user.id)
-        sql_total = select(func.count(TrainRecordDoc.id)).join(Product, TrainRecordDoc.product_id == Product.id).where(*wheres)
+        sql_total = select(func.count(TrainRecordDoc.id)).join(Product, TrainRecordDoc.product_id == Product.id)
+        if wheres:
+            sql_total = sql_total.where(*wheres)
         total = db.session.execute(sql_total).scalar() or 0
-        sql = (select(TrainRecordDoc, Product).join(Product, TrainRecordDoc.product_id == Product.id).where(*wheres)
-               .order_by(TrainRecordDoc.id.desc()).offset(page_index * page_size).limit(page_size))
+        sql = select(TrainRecordDoc, Product).join(Product, TrainRecordDoc.product_id == Product.id)
+        if wheres:
+            sql = sql.where(*wheres)
+        sql = sql.order_by(TrainRecordDoc.id.desc()).offset(page_index * page_size).limit(page_size)
         rows: List[TrainRecordDocObj] = [self.__to_obj(doc, product) for doc, product in db.session.execute(sql).all()]
         return Resp.resp_ok(data=Page(total=total, rows=rows, page_index=page_index, page_size=page_size))
 
@@ -281,8 +423,12 @@ class Server(object):
                 cols = max((len(r) for r in grid), default=0)
                 if cols <= 0:
                     continue
-                # 培训记录表固定 6 列 10 行，按模板合并单元格
-                is_train_table = (cols == 6 and len(grid) == 10)
+                # 培训记录表固定 6 列 12 行，按模板合并单元格
+                is_train_table = (cols == 6 and len(grid) == 12)
+                # 兼容旧版 10 行结构：在行4/5后补两个空行
+                if cols == 6 and len(grid) == 10:
+                    grid = grid[:4] + [grid[4], [""] * 6, grid[5], [""] * 6] + grid[6:]
+                    is_train_table = True
                 table = document.add_table(rows=0, cols=cols)
                 table.style = "Table Grid"
                 table.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -302,27 +448,40 @@ class Server(object):
                         set_cell(cells[0], r[0], bold=True)
                         set_cell(cells[1], r[1])
                     elif r_idx in (1, 2, 3):
-                        # 培训时间/人数/老师：标签3列合并 + 值 + 标签 + 值
-                        cells[0].merge(cells[2])
+                        # 培训时间/人数/老师：标签2列合并 + 值 + 标签 + 值2列合并
+                        cells[0].merge(cells[1])
                         set_cell(cells[0], r[0], bold=True)
-                        set_cell(cells[3], r[3])
-                        set_cell(cells[4], r[4], bold=True)
-                        set_cell(cells[5], r[5])
-                    elif r_idx in (4, 5):
-                        # 培训人员名单/内容摘要：6列合并
+                        set_cell(cells[2], r[2])
+                        set_cell(cells[3], r[3], bold=True)
+                        cells[4].merge(cells[5])
+                        set_cell(cells[4], r[4])
+                    elif r_idx == 4:
+                        # 培训人员名单标签：6列合并
+                        cells[0].merge(cells[5])
+                        set_cell(cells[0], r[0], bold=True)
+                    elif r_idx == 5:
+                        # 培训人员名单填写区：6列合并
                         cells[0].merge(cells[5])
                         set_cell(cells[0], r[0])
-                    elif r_idx in (6, 7):
-                        # 考核方式/人员：标签2列 + 内容4列合并
-                        cells[2].merge(cells[5])
+                    elif r_idx == 6:
+                        # 培训内容摘要标签：6列合并
+                        cells[0].merge(cells[5])
                         set_cell(cells[0], r[0], bold=True)
-                        set_cell(cells[1], r[1], bold=True)
-                        set_cell(cells[2], r[2])
+                    elif r_idx == 7:
+                        # 培训内容摘要填写区：6列合并
+                        cells[0].merge(cells[5])
+                        set_cell(cells[0], r[0])
                     elif r_idx in (8, 9):
-                        # 考核结果/培训评价：标签2列 + 内容4列合并
-                        cells[2].merge(cells[5])
+                        # 考核方式/人员：标签2列合并 + 内容4列合并
+                        cells[0].merge(cells[1])
                         set_cell(cells[0], r[0], bold=True)
-                        set_cell(cells[1], r[1], bold=True)
+                        cells[2].merge(cells[5])
+                        set_cell(cells[2], r[2])
+                    elif r_idx in (10, 11):
+                        # 考核结果/培训评价：标签2列合并 + 内容4列合并
+                        cells[0].merge(cells[1])
+                        set_cell(cells[0], r[0], bold=True)
+                        cells[2].merge(cells[5])
                         set_cell(cells[2], r[2])
 
         document.save(output)

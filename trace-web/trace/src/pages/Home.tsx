@@ -298,6 +298,11 @@ export default () => {
                         label: ts("menu.risk_mgmt_docs"),
                         perm: "risk_mgmt_doc_view",
                     },
+                    {
+                        key: "/train_record_docs",
+                        label: "培训记录表",
+                        perm: "ftr_record_doc_view",
+                    },
                 ],
             },
             {
@@ -388,11 +393,6 @@ export default () => {
                             {
                                 key: "/ftr_record_docs",
                                 label: ts("menu.ftr_record_docs"),
-                                perm: "ftr_record_doc_view",
-                            },
-                            {
-                                key: "/train_record_docs",
-                                label: "培训记录表",
                                 perm: "ftr_record_doc_view",
                             },
                             {
