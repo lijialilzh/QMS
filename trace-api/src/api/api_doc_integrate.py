@@ -19,7 +19,7 @@ from ..obj import Resp, Page
 from ..obj.tobj_role import Perms
 from ..utils.sql_ctx import db
 from ..utils.i18n import ts
-from . import CtxUser, try_log
+from . import CtxUser, CtxPerm, try_log
 
 router = APIRouter()
 
@@ -211,8 +211,18 @@ async def list_integrate_docs(product_id: int):
     prod = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
     if not prod:
         return Resp.resp_err(msg="产品不存在")
-    groups = {"product_files": [], "dev_files": [], "test_files": []}
+    # 按用户权限过滤可见分组
+    user_perms = CtxPerm.get()
+    group_perm_map = {
+        "product_files": "pir_doc_view",
+        "dev_files": "scm_doc_view",
+        "test_files": "stp_doc_view",
+    }
+    visible_groups = [g for g in ["product_files", "dev_files", "test_files"] if g not in group_perm_map or group_perm_map[g] in user_perms]
+    groups = {g: [] for g in visible_groups}
     for module_key, module_name, group, model_cls in _DOC_MODULES:
+        if group not in visible_groups:
+            continue
         rows = db.session.execute(
             select(model_cls).where(model_cls.product_id == product_id).order_by(model_cls.id.desc())
         ).scalars().all()

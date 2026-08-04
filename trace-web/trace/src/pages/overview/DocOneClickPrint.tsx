@@ -54,14 +54,15 @@ export default () => {
 
     // 按分组整理表格行
     const groupedRows = useMemo(() => {
-        const map: Record<string, any[]> = { product_files: [], dev_files: [], test_files: [] };
+        const map: Record<string, any[]> = {};
         if (!data?.groups) return map;
-        for (const gkey of GROUP_ORDER) {
+        for (const gkey of Object.keys(data.groups)) {
+            map[gkey] = [];
             for (const m of (data.groups[gkey] || [])) {
                 for (const d of m.docs) {
                     map[gkey].push({
                         key: `${gkey}::${m.module_key}::${d.id}`,
-                        group: GROUP_TITLES[gkey],
+                        group: GROUP_TITLES[gkey] || gkey,
                         module_name: m.module_name,
                         file_no: d.file_no || "",
                         version: d.version || "",
@@ -74,7 +75,7 @@ export default () => {
         return map;
     }, [data]);
 
-    const totalCount = GROUP_ORDER.reduce((sum, g) => sum + groupedRows[g].length, 0);
+    const totalCount = Object.keys(groupedRows).reduce((sum, g) => sum + groupedRows[g].length, 0);
 
     // 全选/取消某个分组的所有文档
     const toggleGroupAll = (gkey: string, checked: boolean) => {
@@ -218,7 +219,7 @@ export default () => {
                             activeKey={activeGroups}
                             onChange={(keys: any) => setActiveGroups(keys as string[])}
                             className="doc-group-collapse"
-                            items={GROUP_ORDER.map((gkey) => {
+                            items={Object.keys(groupedRows).map((gkey) => {
                                 const rows = groupedRows[gkey];
                                 const groupSelected = rows.filter((r) => selectedRowKeys.includes(r.key));
                                 const allChecked = rows.length > 0 && groupSelected.length === rows.length;

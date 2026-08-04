@@ -21,13 +21,12 @@ enum DlgTypes {
 const SCOPE_MODULES = [
     "仪表盘",
     "系统配置",
+    "基础配置",
     "基础数据",
     "产品管理",
     "产品文件管理",
     "开发测试文件管理",
-    "图表文件管理",
-    "风险追溯管理",
-    "风险管理",
+    "产品图示",
     "全局视图",
 ];
 
@@ -58,21 +57,40 @@ const matchModuleCodes = (moduleName: string, items: Array<{ code: string; name:
                 code.startsWith("user") ||
                 (code.startsWith("project") && !code.startsWith("project_member") && !code.startsWith("project_timeline"))
             );
+        if (moduleName === "基础配置")
+            return code.startsWith("print_cfg") || ["version_rule", "company_info", "person_sign"].some((k) => code.startsWith(k));
         if (moduleName === "基础数据") return name.startsWith("基础数据/") || ["haz", "rcm", "cst"].some((k) => code.startsWith(k));
         if (moduleName === "产品管理")
             return (
                 code.startsWith("product") ||
-                code.startsWith("prod_dhf") ||
-                code.startsWith("vuh_doc") ||
-                code.startsWith("ptr_doc") ||
+                code.startsWith("prod_haz") ||
+                code.startsWith("prod_rcm") ||
+                code.startsWith("prod_cst") ||
                 ["project_member", "project_timeline", "prod_runtime", "prod_device"].some((k) => code.startsWith(k))
             );
-        if (moduleName === "产品文件管理") return code === "srs_doc" || code.startsWith("srs_doc_") || code.startsWith("pdp_doc") || code.startsWith("pir_doc");
+        if (moduleName === "产品文件管理")
+            return (
+                code.startsWith("srs_doc") ||
+                code.startsWith("pdp_doc") ||
+                code.startsWith("pir_doc") ||
+                code.startsWith("acc_doc") ||
+                code.startsWith("release_note") ||
+                code.startsWith("vuh_doc") ||
+                code.startsWith("ptr_doc") ||
+                code.startsWith("research_doc") ||
+                code.startsWith("rmp_doc") ||
+                code.startsWith("pha_doc") ||
+                code.startsWith("nsr_doc") ||
+                code.startsWith("cyber_cap_doc") ||
+                code.startsWith("label_doc") ||
+                code.startsWith("nsmp_doc") ||
+                code.startsWith("risk_mgmt_doc") ||
+                code.startsWith("ftr_record_doc") ||
+                code.startsWith("prod_dhf")
+            );
         if (moduleName === "开发测试文件管理")
-            return code === "sds_doc" || code.startsWith("sds_doc_") || code.startsWith("sd_doc") || code.startsWith("crr_doc") || code.startsWith("dem_doc") || code.startsWith("deq_doc") || code.startsWith("scm_doc") || code.startsWith("scs_doc") || code.startsWith("dat_doc") || code.startsWith("stp_doc") || code.startsWith("utp_doc") || code.startsWith("utr_doc") || code.startsWith("str_doc") || code.startsWith("bug_doc") || code.startsWith("teq_doc") || code.startsWith("tem_doc") || code.startsWith("imm_doc") || code.startsWith("test_set") || code.startsWith("test_case");
-        if (moduleName === "图表文件管理") return name.startsWith("图表文件/") || code.startsWith("doc_file_");
-        if (moduleName === "风险追溯管理") return ["prod_haz", "prod_rcm", "prod_cst", "test_set", "test_case"].some((k) => code.startsWith(k));
-        if (moduleName === "风险管理") return code.startsWith("risk_mgmt_doc") || name.startsWith("风险管理/");
+            return code === "sds_doc" || code.startsWith("sds_doc_") || code.startsWith("sd_doc") || code.startsWith("crr_doc") || code.startsWith("dem_doc") || code.startsWith("deq_doc") || code.startsWith("scm_doc") || code.startsWith("scs_doc") || code.startsWith("dat_doc") || code.startsWith("stp_doc") || code.startsWith("utp_doc") || code.startsWith("utr_doc") || code.startsWith("str_doc") || code.startsWith("bug_doc") || code.startsWith("teq_doc") || code.startsWith("tem_doc") || code.startsWith("imm_doc") || code.startsWith("ftr_doc") || code.startsWith("test_set") || code.startsWith("test_case") || code.startsWith("cybersec_doc");
+        if (moduleName === "产品图示") return name.startsWith("产品图示/") || code.startsWith("doc_file_");
         if (moduleName === "全局视图") return code.startsWith("overview") || name.includes("全局视图");
         return false;
     };

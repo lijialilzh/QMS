@@ -29,7 +29,7 @@ const transformMenus = (menus: any, perms: any) => {
                 ...munu,
                 children,
             };
-        }).filter((munu: any) => munu && (!munu.perm || perms.has(munu.perm)))
+        }).filter((munu: any) => munu && !munu.hidden && (!munu.perm || perms.has(munu.perm)))
     return newMenus;
 };
 
@@ -138,6 +138,20 @@ export default () => {
                         label: ts("menu.print_service_cfg"),
                         perm: "print_cfg_view",
                     },
+                    {
+                        key: "/version_rule",
+                        label: ts("menu.version_rule"),
+                    },
+                    {
+                        key: "/company_infos",
+                        label: ts("menu.company_infos"),
+                        perm: "company_info_view",
+                    },
+                    {
+                        key: "/person_signs",
+                        label: ts("menu.person_signs"),
+                        perm: "person_sign_view",
+                    },
                 ],
             },
             {
@@ -160,20 +174,6 @@ export default () => {
                         label: ts("menu.csts"),
                         perm: "cst_view",
                     },
-                    {
-                        key: "/version_rule",
-                        label: ts("menu.version_rule"),
-                    },
-                    {
-                        key: "/company_infos",
-                        label: ts("menu.company_infos"),
-                        perm: "company_info_view",
-                    },
-                    {
-                        key: "/person_signs",
-                        label: ts("menu.person_signs"),
-                        perm: "person_sign_view",
-                    },
                 ],
             },
             {
@@ -182,39 +182,88 @@ export default () => {
                 icon: <img src="assets/icon/menu-create.svg" />,
                 children: [
                     {
-                        key: "/products",
-                        label: ts("menu.products"),
-                        perm: "product_view",
+                        key: "prod_basic",
+                        label: ts("menu.prod_basic"),
+                        children: [
+                            {
+                                key: "/products",
+                                label: ts("menu.products"),
+                                perm: "product_view",
+                            },
+                            {
+                                key: "/project_members",
+                                label: ts("menu.project_members"),
+                                perm: "project_member_view",
+                            },
+                            {
+                                key: "/project_timeline",
+                                label: ts("menu.project_timeline"),
+                                perm: "project_timeline_view",
+                            },
+                            {
+                                key: "/prod_runtime_env",
+                                label: ts("menu.prod_runtime_env"),
+                                perm: "prod_runtime_view",
+                            },
+                            {
+                                key: "/prod_device_res",
+                                label: ts("menu.prod_device_res"),
+                                perm: "prod_device_view",
+                            },
+                        ],
                     },
                     {
-                        key: "/project_members",
-                        label: ts("menu.project_members"),
-                        perm: "project_member_view",
+                        key: "prod_risk_mgmt",
+                        label: ts("menu.prod_risk_mgmt"),
+                        children: [
+                            {
+                                key: "/risk_participants",
+                                label: ts("menu.risk_participants"),
+                                perm: "risk_mgmt_doc_view",
+                            },
+                            {
+                                key: "/prod_hazs",
+                                label: ts("menu.prod_hazs"),
+                                perm: "prod_haz_view",
+                            },
+                            {
+                                key: "/prod_rcms",
+                                label: ts("menu.prod_rcms"),
+                                perm: "prod_rcm_view",
+                            },
+                            {
+                                key: "/prod_csts",
+                                label: ts("menu.prod_csts"),
+                                perm: "prod_cst_view",
+                            },
+                        ],
+                    },
+                ],
+            },
+            {
+                key: "/doc_file",
+                label: ts("menu.doc_file"),
+                icon: <img src="assets/icon/menu-create.svg" />,
+                children: [
+                    {
+                        key: "/doc_files_topo",
+                        label: ts("menu.doc_files_topo"),
+                        perm: "doc_file_topo_view",
                     },
                     {
-                        key: "/project_timeline",
-                        label: ts("menu.project_timeline"),
-                        perm: "project_timeline_view",
+                        key: "/doc_files_struct",
+                        label: ts("menu.doc_files_struct"),
+                        perm: "doc_file_struct_view",
                     },
                     {
-                        key: "/prod_runtime_env",
-                        label: ts("menu.prod_runtime_env"),
-                        perm: "prod_runtime_view",
+                        key: "/doc_files_ui",
+                        label: ts("menu.doc_files_ui"),
+                        perm: "doc_file_ui_view",
                     },
                     {
-                        key: "/prod_device_res",
-                        label: ts("menu.prod_device_res"),
-                        perm: "prod_device_view",
-                    },
-                    {
-                        key: "/prod_dhfs",
-                        label: ts("menu.prod_dhfs"),
-                        perm: "prod_dhf_view",
-                    },
-                    {
-                        key: "/risk_participants",
-                        label: ts("menu.risk_participants"),
-                        perm: "risk_mgmt_doc_view",
+                        key: "/doc_files_flow",
+                        label: ts("menu.doc_files_flow"),
+                        perm: "doc_file_flow_view",
                     },
                 ],
             },
@@ -224,84 +273,107 @@ export default () => {
                 icon: <img src="assets/icon/menu-create.svg" />,
                 children: [
                     {
-                        key: "/pir_docs",
-                        label: ts("menu.pir_docs"),
-                        perm: "pir_doc_view",
+                        key: "prod_files",
+                        label: ts("menu.prod_files"),
+                        children: [
+                            {
+                                key: "/pir_docs",
+                                label: ts("menu.pir_docs"),
+                                perm: "pir_doc_view",
+                            },
+                            {
+                                key: "/pdp_docs",
+                                label: ts("menu.pdp_docs"),
+                                perm: "pdp_doc_view",
+                            },
+                            {
+                                key: "/srs_docs",
+                                label: ts("menu.srs_docs"),
+                                perm: "srs_doc_view",
+                            },
+                            {
+                                key: "/acc_docs",
+                                label: ts("menu.acc_docs"),
+                                perm: "acc_doc_view",
+                            },
+                            {
+                                key: "/release_notes",
+                                label: ts("menu.release_notes"),
+                                perm: "release_note_view",
+                            },
+                            {
+                                key: "/vuh_docs",
+                                label: ts("menu.vuh_docs"),
+                                perm: "vuh_doc_view",
+                            },
+                            {
+                                key: "/ptr_docs",
+                                label: ts("menu.ptr_docs"),
+                                perm: "ptr_doc_view",
+                            },
+                            {
+                                key: "/research_docs",
+                                label: ts("menu.research_docs"),
+                                perm: "research_doc_view",
+                            },
+                        ],
                     },
                     {
-                        key: "/pdp_docs",
-                        label: ts("menu.pdp_docs"),
-                        perm: "pdp_doc_view",
+                        key: "risk_files",
+                        label: ts("menu.risk_files"),
+                        children: [
+                            {
+                                key: "/rmp_docs",
+                                label: ts("menu.rmp_docs"),
+                                perm: "rmp_doc_view",
+                            },
+                            {
+                                key: "/pha_docs",
+                                label: ts("menu.pha_docs"),
+                                perm: "pha_doc_view",
+                            },
+                            {
+                                key: "/nsr_docs",
+                                label: ts("menu.nsr_docs"),
+                                perm: "nsr_doc_view",
+                            },
+                            {
+                                key: "/cyber_cap_docs",
+                                label: ts("menu.cyber_cap_docs"),
+                                perm: "cyber_cap_doc_view",
+                            },
+                            {
+                                key: "/label_docs",
+                                label: ts("menu.label_docs"),
+                                perm: "label_doc_view",
+                            },
+                            {
+                                key: "/nsmp_docs",
+                                label: ts("menu.nsmp_docs"),
+                                perm: "nsmp_doc_view",
+                            },
+                            {
+                                key: "/risk_mgmt_docs",
+                                label: ts("menu.risk_mgmt_docs"),
+                                perm: "risk_mgmt_doc_view",
+                            },
+                        ],
                     },
                     {
-                        key: "/srs_docs",
-                        label: ts("menu.srs_docs"),
-                        perm: "srs_doc_view",
-                    },
-                    {
-                        key: "/acc_docs",
-                        label: ts("menu.acc_docs"),
-                        perm: "acc_doc_view",
-                    },
-                    {
-                        key: "/release_notes",
-                        label: ts("menu.release_notes"),
-                        perm: "release_note_view",
-                    },
-                    {
-                        key: "/vuh_docs",
-                        label: ts("menu.vuh_docs"),
-                        perm: "vuh_doc_view",
-                    },
-                    {
-                        key: "/ptr_docs",
-                        label: ts("menu.ptr_docs"),
-                        perm: "ptr_doc_view",
-                    },
-                    {
-                        key: "/research_docs",
-                        label: ts("menu.research_docs"),
-                        perm: "research_doc_view",
-                    },
-                    {
-                        key: "/rmp_docs",
-                        label: ts("menu.rmp_docs"),
-                        perm: "rmp_doc_view",
-                    },
-                    {
-                        key: "/pha_docs",
-                        label: ts("menu.pha_docs"),
-                        perm: "pha_doc_view",
-                    },
-                    {
-                        key: "/nsr_docs",
-                        label: ts("menu.nsr_docs"),
-                        perm: "nsr_doc_view",
-                    },
-                    {
-                        key: "/cyber_cap_docs",
-                        label: ts("menu.cyber_cap_docs"),
-                        perm: "cyber_cap_doc_view",
-                    },
-                    {
-                        key: "/label_docs",
-                        label: ts("menu.label_docs"),
-                        perm: "label_doc_view",
-                    },
-                    {
-                        key: "/nsmp_docs",
-                        label: ts("menu.nsmp_docs"),
-                        perm: "nsmp_doc_view",
-                    },
-                    {
-                        key: "/risk_mgmt_docs",
-                        label: ts("menu.risk_mgmt_docs"),
-                        perm: "risk_mgmt_doc_view",
-                    },
-                    {
-                        key: "/train_record_docs",
-                        label: "培训记录表",
-                        perm: "ftr_record_doc_view",
+                        key: "prod_other_files",
+                        label: ts("menu.prod_other_files"),
+                        children: [
+                            {
+                                key: "/train_record_docs",
+                                label: "培训记录表",
+                                perm: "ftr_record_doc_view",
+                            },
+                            {
+                                key: "/prod_dhfs",
+                                label: ts("menu.prod_dhfs"),
+                                perm: "prod_dhf_view",
+                            },
+                        ],
                     },
                 ],
             },
@@ -417,71 +489,21 @@ export default () => {
                             },
                         ],
                     },
-                ],
-            },
-            {
-                key: "/doc_file",
-                label: ts("menu.doc_file"),
-                icon: <img src="assets/icon/menu-create.svg" />,
-                children: [
                     {
-                        key: "/doc_files_topo",
-                        label: ts("menu.doc_files_topo"),
-                        perm: "doc_file_topo_view",
-                    },
-                    {
-                        key: "/doc_files_struct",
-                        label: ts("menu.doc_files_struct"),
-                        perm: "doc_file_struct_view",
-                    },
-                    {
-                        key: "/doc_files_ui",
-                        label: ts("menu.doc_files_ui"),
-                        perm: "doc_file_ui_view",
-                    },
-                    {
-                        key: "/doc_files_flow",
-                        label: ts("menu.doc_files_flow"),
-                        perm: "doc_file_flow_view",
-                    },
-                ],
-            },
-            {
-                key: "/prod_risk",
-                label: ts("menu.prod_risk"),
-                icon: <img src="assets/icon/menu-create.svg" />,
-                children: [
-                    {
-                        key: "/prod_hazs",
-                        label: ts("menu.prod_hazs"),
-                        perm: "prod_haz_view",
-                    },
-                    {
-                        key: "/prod_rcms",
-                        label: ts("menu.prod_rcms"),
-                        perm: "prod_rcm_view",
-                    },
-                    {
-                        key: "/prod_csts",
-                        label: ts("menu.prod_csts"),
-                        perm: "prod_cst_view",
+                        key: "cybersec_files",
+                        label: ts("menu.cybersec"),
+                        children: [
+                            {
+                                key: "/cybersec_docs",
+                                label: ts("menu.cybersec_docs"),
+                                perm: "cybersec_doc_view",
+                            },
+                        ],
                     },
                     {
                         key: "/srs_doc_trace",
                         label: ts("menu.srs_doc_trace"),
                         perm: "srs_doc_view",
-                    },
-                ],
-            },
-            {
-                key: "/cybersec",
-                label: ts("menu.cybersec"),
-                icon: <img src="assets/icon/menu-create.svg" />,
-                children: [
-                    {
-                        key: "/cybersec_docs",
-                        label: ts("menu.cybersec_docs"),
-                        perm: "cybersec_doc_view",
                     },
                 ],
             },
@@ -494,6 +516,7 @@ export default () => {
                         key: "/prod_traces",
                         label: ts("menu.prod_traces"),
                         perm: "product_view",
+                        hidden: true,
                     },
                     {
                         key: "/doc_comparison",
