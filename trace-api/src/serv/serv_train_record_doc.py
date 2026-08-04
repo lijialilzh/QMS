@@ -267,6 +267,9 @@ class Server(object):
                 product: Product = db.session.execute(select(Product).where(Product.id == form.product_id)).scalars().first()
                 if product:
                     row.content = self.__autofill(row.content, form.product_id, product, form.version, force=True)
+                # 从产品DHF获取文件编号
+                if not (row.file_no or "").strip():
+                    row.file_no = self.__dhf_file_no(form.product_id)
             db.session.add(row)
             db.session.commit()
             return Resp.resp_ok(data=TrainRecordDocForm(id=row.id))
@@ -293,9 +296,11 @@ class Server(object):
                 version = new_version(max(valid, key=_seq)) if valid else fromdoc.version
             while version in existing_set:
                 version = new_version(version)
+            # 源文件编号为空时从 DHF 获取
+            src_file_no = fromdoc.file_no or self.__dhf_file_no(target_pid)
             newdoc = TrainRecordDoc(
                 product_id=target_pid, version=version,
-                file_no=sync_file_no_version(fromdoc.file_no, version),
+                file_no=sync_file_no_version(src_file_no, version),
                 change_log=fromdoc.change_log,
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
@@ -340,6 +345,7 @@ class Server(object):
             content = self.__autofill(content, product_id, product, row.version, force=True)
             row.product_id = product_id
             row.content = content
+            row.file_no = self.__dhf_file_no(product_id)
             db.session.commit()
             return Resp.resp_ok(data=self.__to_obj(row, product))
         except Exception:

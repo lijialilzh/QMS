@@ -439,7 +439,7 @@ class Server(object):
             newdoc = TemDoc(
                 product_id=target_pid,
                 version=version,
-                file_no=sync_file_no_version(fromdoc.file_no, version),
+                file_no=sync_file_no_version((fromdoc.file_no or "").strip() or self.__dhf_file_no(target_pid), version) or None,
                 change_log=fromdoc.change_log,
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )

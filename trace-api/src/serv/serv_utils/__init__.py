@@ -19,6 +19,13 @@ def sync_file_no_version(file_no: str, version: str) -> str:
         return file_no
     tail = file_no[idx + 1:]
     if re.match(r"^[A-Za-z]+\d+$", tail):
+        # 文件编号末尾是字母+数字（如 -A0），用版本号中的数字部分替换
+        ver_match = re.search(r"(\d+)(?!.*\d)", version)
+        if ver_match:
+            ver_num = ver_match.group(1)
+            # 保留字母前缀，只替换数字部分
+            letter_part = re.match(r"^[A-Za-z]+", tail).group(0)
+            return file_no[:idx + 1] + letter_part + ver_num
         return file_no[:idx + 1] + version
     return file_no
 

@@ -21,6 +21,7 @@ from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT, WD_R
 
 from ..model.product import Product
 from ..model.crr_doc import CrrDoc
+from ..model.prod_dhf import ProdDhf
 from ..model.project_member import ProjectMember
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
@@ -138,6 +139,19 @@ class Server(object):
             content["sign_date"] = str(content.get("check_date") or "")
         return content
 
+    # ---------------- 文件编号（未手填时从产品 DHF 匹配） ----------------
+    def __dhf_file_no(self, prod_id):
+        if not prod_id:
+            return ""
+        row = db.session.execute(
+            select(ProdDhf).where(ProdDhf.prod_id == prod_id, ProdDhf.name == "代码审查记录").order_by(ProdDhf.id.asc())
+        ).scalars().first()
+        if not row:
+            row = db.session.execute(
+                select(ProdDhf).where(ProdDhf.prod_id == prod_id, ProdDhf.name.like("%代码审查%")).order_by(ProdDhf.id.asc())
+            ).scalars().first()
+        return (row.code or "").strip() if row and row.code else ""
+
     def __to_obj(self, row: CrrDoc, product: Product = None):
         obj = CrrDocObj(**row.dict())
         obj.content = self.__autofill(self.__normalize_content(obj.content), row.product_id)
@@ -188,7 +202,7 @@ class Server(object):
             newdoc = CrrDoc(
                 product_id=target_pid,
                 version=version,
-                file_no=sync_file_no_version(fromdoc.file_no, version),
+                file_no=sync_file_no_version((fromdoc.file_no or "").strip() or self.__dhf_file_no(target_pid), version) or None,
                 change_log=fromdoc.change_log,
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )

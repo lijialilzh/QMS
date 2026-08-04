@@ -21,6 +21,7 @@ from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 
 from ..model.product import Product
 from ..model.sd_doc import SdDoc
+from ..model.prod_dhf import ProdDhf
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..model.project_member import ProjectMember
 from ..obj import Page, Resp
@@ -391,6 +392,19 @@ class Server(object):
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, "sd"), force=force)
         return content
 
+    # ---------------- 文件编号（未手填时从产品 DHF 匹配） ----------------
+    def __dhf_file_no(self, prod_id):
+        if not prod_id:
+            return ""
+        row = db.session.execute(
+            select(ProdDhf).where(ProdDhf.prod_id == prod_id, ProdDhf.name == "软件开发计划").order_by(ProdDhf.id.asc())
+        ).scalars().first()
+        if not row:
+            row = db.session.execute(
+                select(ProdDhf).where(ProdDhf.prod_id == prod_id, ProdDhf.name.like("%软件开发计划%")).order_by(ProdDhf.id.asc())
+            ).scalars().first()
+        return (row.code or "").strip() if row and row.code else ""
+
     def __to_obj(self, row: SdDoc, product: Product = None):
         obj = SdDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content)
@@ -423,6 +437,9 @@ class Server(object):
             row = SdDoc(**form.dict(exclude_none=True))
             row.id = None
             row.content = self.__normalize_content(row.content)
+            # 从产品DHF获取文件编号
+            if not (row.file_no or "").strip() and form.product_id:
+                row.file_no = self.__dhf_file_no(form.product_id)
             db.session.add(row)
             db.session.commit()
             return Resp.resp_ok(data=SdDocForm(id=row.id))
@@ -452,7 +469,7 @@ class Server(object):
             newdoc = SdDoc(
                 product_id=target_pid,
                 version=version,
-                file_no=sync_file_no_version(fromdoc.file_no, version),
+                file_no=sync_file_no_version((fromdoc.file_no or "").strip() or self.__dhf_file_no(target_pid), version) or None,
                 change_log=fromdoc.change_log,
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
