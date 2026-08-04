@@ -79,6 +79,7 @@
         "prod_overview": "全局视图",
         "prod_traces": "产品关联列表",
         "prod_comparison": "内容对比",
+        "doc_comparison": "文档内容比对",
         "doc_integrate_export": "整合导出",
         "doc_one_click_print": "一键打印",
         "doc_export_records": "导出记录",
@@ -93,7 +94,8 @@
         "cybersec": "网络安全管理",
         "cybersec_docs": "网络安全风险管理报告",
         "ftr_docs": "现场测试规程",
-        "ftr_record_docs": "现场测试记录"
+        "ftr_record_docs": "现场测试记录",
+        "train_record_docs": "培训记录表"
     },
     "confirm_reset_pwd": "确认要重置密码吗？",
     "reset_pwd": "重置密码",

@@ -496,11 +496,6 @@ export default () => {
                         perm: "product_view",
                     },
                     {
-                        key: "/prod_comparison",
-                        label: ts("menu.prod_comparison"),
-                        perm: "product_view",
-                    },
-                    {
                         key: "/doc_comparison",
                         label: "文档内容比对",
                         perm: "product_view",

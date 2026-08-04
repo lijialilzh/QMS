@@ -37,8 +37,6 @@ export default () => {
             if (res.code === ApiProduct.C_OK) {
                 const rows = res.data?.rows || [];
                 setProducts(rows);
-                // 自动选中第一个产品并加载文档
-                if (rows.length > 0) loadDocs(rows[0].id);
             }
         });
     }, []);
@@ -211,8 +209,10 @@ export default () => {
 
             <Spin spinning={loading}>
                 <div className="doc-integrate-body">
-                    {totalCount === 0 && !loading ? (
-                        <Empty description="请选择产品查看文档清单" />
+                    {!productId && !loading ? (
+                        <Empty description="请选择对应产品打印操作" image={Empty.PRESENTED_IMAGE_SIMPLE} style={{ marginTop: 80 }} />
+                    ) : totalCount === 0 && !loading ? (
+                        <Empty description="该产品暂无文档" />
                     ) : (
                         <Collapse
                             activeKey={activeGroups}

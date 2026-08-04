@@ -79,6 +79,7 @@
         "prod_overview": "Global View",
         "prod_traces": "Product Association List",
         "prod_comparison": "Content Comparison",
+        "doc_comparison": "Document Content Comparison",
         "doc_integrate_export": "Integrate Export",
         "doc_one_click_print": "One-click Print",
         "doc_export_records": "Export Records",
@@ -93,7 +94,8 @@
         "cybersec": "Cybersecurity Mgmt",
         "cybersec_docs": "Cybersecurity Risk Mgmt Report",
         "ftr_docs": "On-site Test Procedure",
-        "ftr_record_docs": "On-site Test Record"
+        "ftr_record_docs": "On-site Test Record",
+        "train_record_docs": "Training Record"
     },
     "confirm_reset_pwd": "Confirm to reset password?",
     "reset_pwd": "重置密码",
