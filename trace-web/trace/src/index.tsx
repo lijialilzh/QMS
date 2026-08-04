@@ -41,6 +41,7 @@ import ProdDhfs from "./pages/prod_risk/ProdDhfs";
 import SrsDocTrace from "./pages/prod_risk/SrsDocTrace";
 import ProdTraces from "./pages/overview/ProdTraces";
 import ProdComparison from "./pages/overview/ProdComparison";
+import DocComparison from "./pages/overview/DocComparison";
 import DocIntegrateExport from "./pages/overview/DocIntegrateExport";
 import DocOneClickPrint from "./pages/overview/DocOneClickPrint";
 import DocExportRecords from "./pages/overview/DocExportRecords";
@@ -271,6 +272,7 @@ const router = createRouter([
 
             {path: "/prod_traces", element: <ProdTraces /> },
             {path: "/prod_comparison", element: <ProdComparison /> },
+            {path: "/doc_comparison", element: <DocComparison /> },
             {path: "/doc_integrate_export", element: <DocIntegrateExport /> },
             {path: "/doc_export_records", element: <DocExportRecords /> },
             {path: "/doc_one_click_print", element: <DocOneClickPrint /> },

@@ -32,7 +32,6 @@ export default () => {
     const [printInfo, setPrintInfo] = useState({ total: 0, done: 0, current: "", ok: 0, fail: 0 });
     const [data, setData] = useState<any>(null);
     const [selectedRowKeys, setSelectedRowKeys] = useState<string[]>([]);
-    const cancelPrintRef = useState(false)[0];
     const [activeGroups, setActiveGroups] = useState<string[]>([]);
     const [withSign, setWithSign] = useState<boolean>(true);
 
@@ -93,13 +92,6 @@ export default () => {
         } else {
             setSelectedRowKeys((prev) => prev.filter((k) => !groupKeys.includes(k)));
         }
-    };
-
-    const buildDocKeys = () => {
-        return selectedRowKeys.map((k) => {
-            const parts = k.split("::");
-            return `${parts[1]}:${parts[2]}`;
-        }).join(",");
     };
 
     const selectedCount = selectedRowKeys.length;

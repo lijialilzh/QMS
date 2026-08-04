@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiIntegrate from "@/api/ApiDocIntegrate";
-import * as ApiPrint from "@/api/ApiPrintCfg";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "./DocIntegrateExport.less";
 

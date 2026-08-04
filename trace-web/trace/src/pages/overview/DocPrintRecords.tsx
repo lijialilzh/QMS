@@ -1,11 +1,9 @@
 import { Button, Space, Table, Tag, Tooltip, message } from "antd";
 import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
 import * as ApiIntegrate from "@/api/ApiDocIntegrate";
 import "./DocRecords.less";
 
 export default () => {
-    const { t: ts } = useTranslation();
     const [rows, setRows] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
 

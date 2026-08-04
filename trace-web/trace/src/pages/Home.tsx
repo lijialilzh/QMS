@@ -501,6 +501,11 @@ export default () => {
                         perm: "product_view",
                     },
                     {
+                        key: "/doc_comparison",
+                        label: "文档内容比对",
+                        perm: "product_view",
+                    },
+                    {
                         key: "doc_integrate_export",
                         label: ts("menu.doc_integrate_export"),
                         children: [

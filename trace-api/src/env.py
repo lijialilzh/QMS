@@ -5,7 +5,7 @@
 from os import getenv
 from dotenv import find_dotenv, load_dotenv
 
-load_dotenv(find_dotenv(), override=True, verbose=True)
+load_dotenv(find_dotenv(), override=False, verbose=True)
 
 ADMIN_NAME = getenv("ADMIN_NAME", "master")
 ADMIN_PWD = getenv("ADMIN_PWD", "test")

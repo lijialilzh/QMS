@@ -1,4 +1,4 @@
-import { Button, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Table, Tag, message } from "antd";
+import { Button, Form, Input, InputNumber, Modal, Select, Space, Table, Tag, message } from "antd";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import * as ApiPrint from "@/api/ApiPrintCfg";
@@ -69,15 +69,6 @@ export default () => {
                 message.success(ts("save_success"));
                 setDlgType(null);
                 setTimeout(() => load(), 100);
-            } else message.error(res.msg);
-        });
-    };
-
-    const onSetDefault = (row: any) => {
-        ApiPrint.set_default_print_cfg({ id: row.id }).then((res: any) => {
-            if (res.code === ApiPrint.C_OK) {
-                message.success("已设为默认打印机");
-                load();
             } else message.error(res.msg);
         });
     };

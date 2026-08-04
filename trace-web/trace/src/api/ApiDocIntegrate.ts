@@ -1,4 +1,4 @@
-import { httpGet } from "./http";
+import { httpGet, httpPost } from "./http";
 import { C_OK } from "./ApiUser";
 
 export { C_OK };
