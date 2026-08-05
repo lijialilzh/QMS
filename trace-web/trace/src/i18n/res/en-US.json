@@ -98,6 +98,7 @@
         "risk_controls": "Risk Control Measures",
         "cybersec": "Cybersecurity Mgmt",
         "cybersec_docs": "Cybersecurity Risk Mgmt Report",
+        "cybersec_plan_docs": "Cybersecurity Risk Mgmt Plan",
         "ftr_docs": "On-site Test Procedure",
         "ftr_record_docs": "On-site Test Record",
         "train_record_docs": "Training Record"

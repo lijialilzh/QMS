@@ -498,6 +498,11 @@ export default () => {
                                 label: ts("menu.cybersec_docs"),
                                 perm: "cybersec_doc_view",
                             },
+                            {
+                                key: "/cybersec_plan_docs",
+                                label: ts("menu.cybersec_plan_docs"),
+                                perm: "cybersec_plan_doc_view",
+                            },
                         ],
                     },
                     {

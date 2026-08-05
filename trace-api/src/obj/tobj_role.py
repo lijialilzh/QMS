@@ -138,6 +138,10 @@ class Perms(Enum):
     cybersec_doc_view = PermForm(code="cybersec_doc_view", name="查看", p_code=cybersec_doc.code)
     cybersec_doc_edit = PermForm(code="cybersec_doc_edit", name="编辑", p_code=cybersec_doc.code)
 
+    cybersec_plan_doc = PermForm(code="cybersec_plan_doc", name="开发测试文件管理/网络安全管理/网络安全风险管理计划")
+    cybersec_plan_doc_view = PermForm(code="cybersec_plan_doc_view", name="查看", p_code=cybersec_plan_doc.code)
+    cybersec_plan_doc_edit = PermForm(code="cybersec_plan_doc_edit", name="编辑", p_code=cybersec_plan_doc.code)
+
     pdp_doc = PermForm(code="pdp_doc", name="产品文件管理/产品开发计划")
     pdp_doc_view = PermForm(code="pdp_doc_view", name="查看", p_code=pdp_doc.code)
     pdp_doc_edit = PermForm(code="pdp_doc_edit", name="编辑", p_code=pdp_doc.code)
@@ -364,6 +368,7 @@ def get_default_role_perm_codes():
     # 网络安全管理权限
     cybersec_perms = {
         "cybersec_doc", "cybersec_doc_view", "cybersec_doc_edit",
+        "cybersec_plan_doc", "cybersec_plan_doc_view", "cybersec_plan_doc_edit",
     }
 
     # 产品经理：产品管理可编辑 + 产品文件管理 + 图表文件管理 + 风险追溯管理

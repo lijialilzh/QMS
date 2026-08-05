@@ -60,6 +60,7 @@ DOC_TYPES = {
     "research": {"table": "research_doc", "name": "自研软件研究报告", "group": "风险管理"},
     "risk_mgmt": {"table": "risk_mgmt_doc", "name": "风险管理报告", "group": "风险管理"},
     "cybersec": {"table": "cybersec_doc", "name": "网络安全管理", "group": "风险管理"},
+    "cybersec_plan": {"table": "cybersec_plan_doc", "name": "网络安全风险管理计划", "group": "风险管理"},
 }
 
 

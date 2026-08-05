@@ -89,7 +89,7 @@ const matchModuleCodes = (moduleName: string, items: Array<{ code: string; name:
                 code.startsWith("prod_dhf")
             );
         if (moduleName === "开发测试文件管理")
-            return code === "sds_doc" || code.startsWith("sds_doc_") || code.startsWith("sd_doc") || code.startsWith("crr_doc") || code.startsWith("dem_doc") || code.startsWith("deq_doc") || code.startsWith("scm_doc") || code.startsWith("scs_doc") || code.startsWith("dat_doc") || code.startsWith("stp_doc") || code.startsWith("utp_doc") || code.startsWith("utr_doc") || code.startsWith("str_doc") || code.startsWith("bug_doc") || code.startsWith("teq_doc") || code.startsWith("tem_doc") || code.startsWith("imm_doc") || code.startsWith("ftr_doc") || code.startsWith("test_set") || code.startsWith("test_case") || code.startsWith("cybersec_doc");
+            return code === "sds_doc" || code.startsWith("sds_doc_") || code.startsWith("sd_doc") || code.startsWith("crr_doc") || code.startsWith("dem_doc") || code.startsWith("deq_doc") || code.startsWith("scm_doc") || code.startsWith("scs_doc") || code.startsWith("dat_doc") || code.startsWith("stp_doc") || code.startsWith("utp_doc") || code.startsWith("utr_doc") || code.startsWith("str_doc") || code.startsWith("bug_doc") || code.startsWith("teq_doc") || code.startsWith("tem_doc") || code.startsWith("imm_doc") || code.startsWith("ftr_doc") || code.startsWith("test_set") || code.startsWith("test_case") || code.startsWith("cybersec_doc") || code.startsWith("cybersec_plan_doc");
         if (moduleName === "产品图示") return name.startsWith("产品图示/") || code.startsWith("doc_file_");
         if (moduleName === "全局视图") return code.startsWith("overview") || name.includes("全局视图");
         return false;

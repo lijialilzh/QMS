@@ -24,7 +24,8 @@ from .api import web_auth, web_session, api_user, api_role, api_project, api_haz
     api_cyber_cap_doc, api_research_doc, api_nsr_doc, api_acc_doc, api_nsmp_doc, api_rmp_doc, api_sd_doc, \
     api_crr_doc, api_dem_doc, api_deq_doc, api_scm_doc, api_scs_doc, api_dat_doc, api_stp_doc, api_utp_doc, \
     api_utr_doc, api_str_doc, api_bug_doc, api_teq_doc, api_tem_doc, api_imm_doc, api_ftr_doc, api_ftr_record_doc, api_train_record_doc, api_person_sign, \
-    api_doc_integrate, api_print_cfg, api_doc_compare
+    api_doc_integrate, api_print_cfg, api_doc_compare, \
+    api_cybersec_plan_doc
 from .utils import read_line
 from .utils.i18n import ts
 from .utils.sql_middleware import SQLAlchemyMiddleware
@@ -153,6 +154,7 @@ def create_app():
     main_router.include_router(api_prod_cst.router, prefix="/prod_cst", tags=["产品CST"])
     main_router.include_router(api_risk_mgmt_doc.router, prefix="/risk_mgmt_doc", tags=["风险管理"])
     main_router.include_router(api_cybersec_doc.router, prefix="/cybersec_doc", tags=["网络安全管理"])
+    main_router.include_router(api_cybersec_plan_doc.router, prefix="/cybersec_plan_doc", tags=["网络安全管理"])
     main_router.include_router(api_ai_support.router, prefix="/ai_support", tags=["AI客服"])
 
     app.include_router(main_router, prefix=context_path)

@@ -49,6 +49,9 @@ from .cybersec_doc import (  # noqa: E402,F401
     CybersecControlScan,
 )
 
+# 2.2 独立模块：网络安全风险管理计划。详见 docs/function_docs/46_网络安全风险管理计划.md。
+from .cybersec_plan_doc import CybersecPlanDoc  # noqa: E402,F401
+
 # CST(总表) 与 RCM(总表) 多对多关联。详见 docs/function_docs/41_网络安全威胁CST管理.md。
 from .cst_rcm import CstRcm  # noqa: E402,F401
 

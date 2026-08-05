@@ -82,7 +82,7 @@ services:
     depends_on:
       - trace-api
     ports:
-      - "5178:80"
+      - "5177:80"
 
 volumes:
   trace_db_data:

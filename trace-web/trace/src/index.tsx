@@ -50,6 +50,8 @@ import RiskMgmtDocDetail from "./pages/risk_mgmt/RiskMgmtDocDetail";
 import RiskMgmtParticipants from "./pages/risk_mgmt/RiskMgmtParticipants";
 import CybersecDocs from "./pages/cybersec/CybersecDocs";
 import CybersecDocDetail from "./pages/cybersec/CybersecDocDetail";
+import CybersecPlanDocs from "./pages/cybersec_plan/CybersecPlanDocs";
+import CybersecPlanDocDetail from "./pages/cybersec_plan/CybersecPlanDocDetail";
 import PdpDocs from "./pages/pdp/PdpDocs";
 import PdpDocDetail from "./pages/pdp/PdpDocDetail";
 import SdDocs from "./pages/sd/SdDocs";
@@ -177,6 +179,11 @@ const router = createRouter([
             { path: "/cybersec_docs/add", element: <CybersecDocDetail /> },
             { path: "/cybersec_docs/edit/:id", element: <CybersecDocDetail /> },
             { path: "/cybersec_docs/view/:id", element: <CybersecDocDetail /> },
+
+            { path: "/cybersec_plan_docs", element: <CybersecPlanDocs /> },
+            { path: "/cybersec_plan_docs/add", element: <CybersecPlanDocDetail /> },
+            { path: "/cybersec_plan_docs/edit/:id", element: <CybersecPlanDocDetail /> },
+            { path: "/cybersec_plan_docs/view/:id", element: <CybersecPlanDocDetail /> },
             { path: "/pdp_docs", element: <PdpDocs /> },
             { path: "/pdp_docs/edit/:id", element: <PdpDocDetail /> },
             { path: "/pdp_docs/view/:id", element: <PdpDocDetail /> },
