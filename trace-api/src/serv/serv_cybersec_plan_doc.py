@@ -8,6 +8,7 @@
 
 import copy
 import io
+import base64
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ from sqlalchemy import delete, func, select
 from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
@@ -28,6 +30,8 @@ from ..model.company_info import CompanyInfo
 from ..model.project_member import ProjectMember
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..model.prod_runtime_env import ProdRuntimeEnv
+from ..model.doc_file import DocFile
+from ..model.prod_dhf import ProdDhf
 from ..obj import Page, Resp
 from ..obj.tobj_cybersec_plan_doc import CybersecPlanDocForm
 from ..obj.vobj_cybersec_plan_doc import CybersecPlanDocObj
@@ -37,6 +41,7 @@ from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version, docx_util
 from .serv_prod_runtime_env import DEFAULT_RUNTIME_ENV
+from .serv_doc_file import pick_doc_image_file_row
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +73,12 @@ class Server(object):
     # ---------------- 归一化（与报告一致，用 text 字段） ----------------
     def __normalize_node(self, node):
         if not isinstance(node, dict):
-            return {"title": str(node or ""), "text": "", "tables": [], "children": []}
+            return {"title": str(node or ""), "text": "", "text_before": "", "text_after": "", "tables": [], "children": []}
         result = dict(node)
         result["title"] = str(result.get("title") or "")
         result["text"] = str(result.get("text") or "")
+        result["text_before"] = str(result.get("text_before") or "")
+        result["text_after"] = str(result.get("text_after") or "")
         if "body" in result and not result.get("text"):
             result["text"] = str(result.get("body") or "")
         tables = result.get("tables")
@@ -81,6 +88,22 @@ class Server(object):
                 if isinstance(table, list):
                     norm_tables.append([[str(c) if c is not None else "" for c in (row or [])] for row in table if isinstance(row, list)])
         result["tables"] = norm_tables
+        blocks = result.get("blocks")
+        if isinstance(blocks, list):
+            norm_blocks = []
+            for blk in blocks:
+                if not isinstance(blk, dict):
+                    continue
+                btype = blk.get("type")
+                if btype == "text":
+                    norm_blocks.append({"type": "text", "text": str(blk.get("text") or "")})
+                elif btype == "table":
+                    tbl = blk.get("table") or blk.get("rows") or []
+                    norm_tbl = [[str(c) if c is not None else "" for c in (row or [])] for row in tbl if isinstance(row, list)]
+                    norm_blocks.append({"type": "table", "table": norm_tbl})
+            result["blocks"] = norm_blocks
+        else:
+            result.pop("blocks", None)
         children = result.get("children")
         result["children"] = [self.__normalize_node(c) for c in children] if isinstance(children, list) else []
         return result
@@ -341,9 +364,10 @@ class Server(object):
                     continue
                 name = self.__member_name(product_id, keywords)
                 if is_dept_col:
-                    # 部门列：填部门名称 + 人员姓名
+                    # 部门列：只填部门名称
                     dept = dept_map.get(role, "")
-                    row[name_col] = f"{dept} {name}".strip() if name else dept
+                    if dept:
+                        row[name_col] = dept
                 else:
                     # 姓名列：直接填姓名
                     if name:
@@ -527,6 +551,15 @@ class Server(object):
         content = self.__autofill_runtime_env(content, product_id)
         return content
 
+    def __dhf_file_no(self, prod_id):
+        """从产品DHF中查找名称包含「网络安全风险管理计划」的记录，返回其编号"""
+        if not prod_id:
+            return ""
+        row = db.session.execute(
+            select(ProdDhf).where(ProdDhf.prod_id == prod_id, ProdDhf.name.like("%网络安全风险管理计划%"))
+        ).scalars().first()
+        return (row.code or "").strip() if row and row.code else ""
+
     # ---------------- 文档 CRUD ----------------
     def add_cybersec_plan_doc(self, form: CybersecPlanDocForm):
         content = form.content or copy.deepcopy(DEFAULT_CONTENT)
@@ -553,10 +586,11 @@ class Server(object):
         if not row:
             return Resp.resp_err(msg=ts("msg_obj_null"))
         target_pid = target_product_id or row.product_id
-        new_ver = new_version(target_pid, CybersecPlanDoc, row.version)
+        new_ver = new_version(row.version)
+        base_file_no = (row.file_no or "").strip() or self.__dhf_file_no(target_pid)
         new_row = CybersecPlanDoc(
             product_id=target_pid, version=new_ver,
-            file_no=sync_file_no_version(row.file_no or "", new_ver),
+            file_no=sync_file_no_version(base_file_no, new_ver) or base_file_no,
             change_log=row.change_log or "", content=copy.deepcopy(row.content),
         )
         db.session.add(new_row)
@@ -611,8 +645,9 @@ class Server(object):
         product = db.session.execute(select(Product).where(Product.id == row.product_id)).scalars().first()
         content = self.__normalize_content(row.content)
         content = self.__autofill(content, row.product_id, row.version)
+        file_no = (row.file_no or "").strip() or self.__dhf_file_no(row.product_id)
         obj = CybersecPlanDocObj(
-            id=row.id, product_id=row.product_id, version=row.version, file_no=row.file_no,
+            id=row.id, product_id=row.product_id, version=row.version, file_no=file_no,
             change_log=row.change_log, content=content,
             product_name=(product.name if product else ""),
             product_version=(product.release_version if product else ""),
@@ -639,8 +674,9 @@ class Server(object):
         objs = []
         for r in rows:
             p = prod_map.get(r.product_id)
+            file_no = (r.file_no or "").strip() or self.__dhf_file_no(r.product_id)
             objs.append(CybersecPlanDocObj(
-                id=r.id, product_id=r.product_id, version=r.version, file_no=r.file_no, change_log=r.change_log,
+                id=r.id, product_id=r.product_id, version=r.version, file_no=file_no, change_log=r.change_log,
                 product_name=(p.name if p else ""), product_version=(p.release_version if p else ""),
                 product_full_version=(p.full_version if p else ""), product_type_code=(p.type_code if p else ""),
                 create_time=r.create_time,
@@ -678,7 +714,233 @@ class Server(object):
         docx_util.fonted_txt(header_para, row.file_no or "")
         docx_util.add_page_number_footer(section, row.file_no or "")
 
-        for s in sections:
-            docx_util.add_section(document, s, 0)
+        product_version = (product.full_version if product else "") or ""
 
+        def normalized_title(value):
+            return re.sub(r"\s+", "", str(value or ""))
+
+        def is_cover_section(sec):
+            return sec.get("ref_type") == "cover" or normalized_title(sec.get("title")) == DOC_TITLE
+
+        def is_revision_section(sec):
+            return sec.get("ref_type") == "revision" or normalized_title(sec.get("title")) == "文件修订记录"
+
+        def write_center_section_title(title, font_size=16.0, bold=True):
+            p = document.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.paragraph_format.line_spacing = 1.5
+            docx_util.fonted_txt(p, title, font_size=font_size, bold=bold)
+
+        def add_blank_lines(count):
+            for _ in range(max(0, int(count or 0))):
+                document.add_paragraph("")
+
+        def insert_toc_field():
+            p = document.add_paragraph()
+            run_begin = p.add_run()
+            fld_begin = OxmlElement("w:fldChar")
+            fld_begin.set(qn("w:fldCharType"), "begin")
+            fld_begin.set(qn("w:dirty"), "true")
+            instr = OxmlElement("w:instrText")
+            instr.set(qn("xml:space"), "preserve")
+            instr.text = ' TOC \\o "1-3" \\h \\z \\u '
+            fld_separate = OxmlElement("w:fldChar")
+            fld_separate.set(qn("w:fldCharType"), "separate")
+            run_end = p.add_run()
+            fld_end = OxmlElement("w:fldChar")
+            fld_end.set(qn("w:fldCharType"), "end")
+            run_begin._r.append(fld_begin)
+            run_begin._r.append(instr)
+            run_begin._r.append(fld_separate)
+            p.add_run("目录将在打开文档后自动更新")
+            run_end._r.append(fld_end)
+
+        def set_cell_text(cell, text, bold=False):
+            s = str(text or "")
+            if s.startswith("data:image"):
+                try:
+                    b64 = s.split(",", 1)[1] if "," in s else ""
+                    cell.text = ""
+                    paragraph = cell.paragraphs[0]
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    paragraph.add_run().add_picture(io.BytesIO(base64.b64decode(b64)), height=Pt(33))
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    return
+                except Exception:
+                    pass
+            cell.text = ""
+            paragraph = cell.paragraphs[0]
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            paragraph.paragraph_format.line_spacing = 1.5
+            docx_util.fonted_txt(paragraph, s, font_size=10.5, bold=bold)
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
+
+        def add_plain_table(rows):
+            rows = rows or []
+            col_count = max([len(r or []) for r in rows] or [0])
+            if col_count <= 0:
+                return
+            table = document.add_table(rows=0, cols=col_count)
+            table.style = "Table Grid"
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+            table.autofit = True
+            for ri, rrow in enumerate(rows):
+                cells = table.add_row().cells
+                for idx in range(col_count):
+                    set_cell_text(cells[idx], rrow[idx] if idx < len(rrow or []) else "", bold=(ri == 0))
+            document.add_paragraph()
+
+        def set_cell_bg(cell, color_hex):
+            tc_pr = cell._tc.get_or_add_tcPr()
+            shd = OxmlElement("w:shd")
+            shd.set(qn("w:val"), "clear")
+            shd.set(qn("w:color"), "auto")
+            shd.set(qn("w:fill"), color_hex)
+            tc_pr.append(shd)
+
+        def is_matrix_table(rows):
+            for r in rows or []:
+                v = str((r or [""])[0] or "").strip()
+                if v in ("红色", "黄色", "绿色"):
+                    return True
+            return False
+
+        def add_matrix_table(rows):
+            """风险矩阵表：表头/数据行正常；红色/黄色/绿色行第1列标签+第2列合并剩余列；分数单元格按值着色"""
+            rows = rows or []
+            col_count = max([len(r or []) for r in rows] or [0])
+            if col_count <= 0:
+                return
+            label_colors = {"红色": "FF0000", "黄色": "FFFF00", "绿色": "00B050"}
+            table = document.add_table(rows=0, cols=col_count)
+            table.style = "Table Grid"
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+            table.autofit = True
+            for ri, rrow in enumerate(rows):
+                label_cell = str((rrow or [""])[0] or "").strip()
+                is_label_row = label_cell in ("红色", "黄色", "绿色")
+                cells = table.add_row().cells
+                if is_label_row:
+                    # 第1列标签（着色）
+                    set_cell_text(cells[0], rrow[0] if 0 < len(rrow or []) else "", bold=True)
+                    set_cell_bg(cells[0], label_colors.get(label_cell, "FFFFFF"))
+                    # 第2列合并剩余列
+                    if col_count > 1:
+                        merged = cells[1]
+                        for ci in range(2, col_count):
+                            merged = merged.merge(cells[ci])
+                        set_cell_text(merged, rrow[1] if 1 < len(rrow or []) else "")
+                else:
+                    first_cell = (rows[0] or [""])[0] if (rows and len(rows[0] or []) > 0) else ""
+                    is_header = ri == 0 or (ri == 1 and len(str(first_cell or "").strip()) == 0 and len(rows[0] or []) == 1)
+                    for idx in range(col_count):
+                        set_cell_text(cells[idx], rrow[idx] if idx < len(rrow or []) else "", bold=is_header)
+                        # 分数单元格着色（第3列起，数字1~25）
+                        if idx >= 2:
+                            num_str = str(rrow[idx] if idx < len(rrow or []) else "").strip()
+                            try:
+                                num = int(num_str)
+                                if num > 0:
+                                    if num <= 5:
+                                        set_cell_bg(cells[idx], "00B050")
+                                    elif num <= 12:
+                                        set_cell_bg(cells[idx], "FFFF00")
+                                    else:
+                                        set_cell_bg(cells[idx], "FF0000")
+                            except (ValueError, TypeError):
+                                pass
+            document.add_paragraph()
+
+        def add_section_image_by_category(category):
+            """从图表文件管理获取图片并插入文档"""
+            try:
+                img_row = pick_doc_image_file_row(row.product_id, category, row.version or "", product_version)
+                if img_row and img_row.file_url:
+                    docx_util.save_img2docx(img_row.file_url, document, mw=520, mh=520)
+                    return True
+            except Exception:
+                logger.exception("cybersec_plan_export_image_failed")
+            return False
+
+        # 图题关键词 -> 图表文件管理分类
+        caption_cats = [("物理拓扑图", "img_topo"), ("体系结构图", "img_struct")]
+
+        def render_text_with_anchors(text):
+            """逐行渲染正文；遇到「图N xxx」图题行且能匹配到分类时，在该行后插入对应图片"""
+            buf = []
+
+            def flush():
+                if buf:
+                    docx_util.save_txt2docx("\n".join(buf), document)
+                    buf.clear()
+
+            for ln in str(text or "").split("\n"):
+                buf.append(ln)
+                s = ln.strip()
+                if re.match(r"^图\s*\d", s):
+                    cat = next((c for kw, c in caption_cats if kw in s), None)
+                    if cat:
+                        flush()
+                        add_section_image_by_category(cat)
+            flush()
+
+        def add_section(sec: dict, level: int = 1):
+            title = sec.get("title", "")
+            if title and not is_cover_section(sec) and not is_revision_section(sec):
+                docx_util.save_title2docx(title, document, level=max(1, min(level, 9)))
+            # 有序内容块（text/table 交错）：按块顺序输出，忽略平铺 text/tables
+            blocks = sec.get("blocks")
+            if isinstance(blocks, list) and blocks:
+                for block in blocks:
+                    if not isinstance(block, dict):
+                        continue
+                    if block.get("type") == "table":
+                        tbl_rows = block.get("table") or []
+                        add_matrix_table(tbl_rows) if is_matrix_table(tbl_rows) else add_plain_table(tbl_rows)
+                    elif block.get("type") == "text":
+                        txt = str(block.get("text") or "")
+                        if txt:
+                            render_text_with_anchors(txt)
+                for child in sec.get("children", []) or []:
+                    add_section(child, level + 1)
+                return
+            # 普通正文（按锚点嵌图）
+            text = str(sec.get("text") or "")
+            if text:
+                render_text_with_anchors(text)
+            # 表格
+            for table_rows in sec.get("tables", []) or []:
+                add_plain_table(table_rows)
+            for child in sec.get("children", []) or []:
+                add_section(child, level + 1)
+
+        cover_section = next((s for s in sections if is_cover_section(s)), None)
+        revision_section = next((s for s in sections if is_revision_section(s)), None)
+        body_sections = [s for s in sections if not is_cover_section(s) and not is_revision_section(s)]
+
+        # 封面
+        add_blank_lines(12)
+        write_center_section_title(DOC_TITLE, font_size=22.0, bold=True)
+        add_blank_lines(6)
+        for table_rows in (cover_section or {}).get("tables", []) or []:
+            add_plain_table(table_rows)
+
+        # 修订记录
+        document.add_page_break()
+        write_center_section_title("文件修订记录", font_size=14.0, bold=True)
+        add_blank_lines(2)
+        for table_rows in (revision_section or {}).get("tables", []) or []:
+            add_plain_table(table_rows)
+
+        # 目录
+        document.add_page_break()
+        write_center_section_title("目录", font_size=16.0, bold=True)
+        insert_toc_field()
+
+        # 正文
+        document.add_page_break()
+        for sec in body_sections:
+            add_section(sec)
+        docx_util.fill_toc_cache(document)
         document.save(output)
+        output.seek(0)

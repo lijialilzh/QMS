@@ -67,9 +67,7 @@ async def cybersec_plan_autofill(product_id: int, version: str = ""):
 @try_log(perm=Perms.cybersec_plan_doc_view)
 async def export_cybersec_plan_doc(id: int):
     output = io.BytesIO()
-    result = server.export_cybersec_plan_doc(output, id)
-    if result.code != Resp.C_OK:
-        return result
+    server.export_cybersec_plan_doc(output, id)
     output.seek(0)
     return StreamingResponse(
         output,
