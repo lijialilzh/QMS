@@ -179,6 +179,28 @@ class Server(object):
         if result.get("ref_type") == "cover" and norm_tables:
             norm_tables = [self.__migrate_cover_table(norm_tables[0])] + norm_tables[1:]
         result["tables"] = norm_tables
+        # 兼容旧数据：如果有 blocks（之前改造残留），把 blocks 中的 table/text 提取回 tables/body
+        blocks = result.get("blocks")
+        if isinstance(blocks, list) and blocks and not result["body"] and not norm_tables:
+            parts = []
+            tbls = []
+            for blk in blocks:
+                if not isinstance(blk, dict):
+                    continue
+                btype = blk.get("type")
+                if btype == "text" and blk.get("text"):
+                    parts.append(str(blk["text"]))
+                elif btype == "table" and blk.get("table"):
+                    tbl = blk["table"]
+                    tbls.append([[str(c) if c is not None else "" for c in (row or [])] for row in tbl if isinstance(row, list)])
+                    parts.append("见下表")
+            if parts:
+                result["body"] = "\n".join(parts)
+            if tbls:
+                result["tables"] = tbls
+            result.pop("blocks", None)
+        elif "blocks" in result:
+            result.pop("blocks", None)
         children = result.get("children")
         result["children"] = [self.__normalize_node(c) for c in children] if isinstance(children, list) else []
         return result
@@ -677,13 +699,15 @@ class Server(object):
             name = strip_num(node.get("title"))
             heading = f"{number} {name}".strip() if number else name
             add_body_heading(heading, level=max(1, min(level, 9)))
-            if (node.get("body") or "").strip():
-                add_text(node.get("body"))
             if node.get("ref_type") == "review":
                 for t_idx, table in enumerate(node.get("tables") or []):
                     serv_review_util.render_review_grid(document, table, set_cell, merge_col0=(t_idx == 0), merge_full=True)
             else:
-                for table in (node.get("tables") or []):
+                body_text = str(node.get("body") or "")
+                tables = node.get("tables") or []
+                if body_text.strip():
+                    add_text(body_text)
+                for table in tables:
                     add_grid(table)
             idx = 0
             for child in (node.get("children") or []):

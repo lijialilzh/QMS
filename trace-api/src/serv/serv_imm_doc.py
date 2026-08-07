@@ -76,6 +76,34 @@ class Server(object):
             if isinstance(table, list):
                 norm_tables.append([[str(c) if c is not None else "" for c in (row or [])] for row in table if isinstance(row, list)])
         result["tables"] = norm_tables
+        # 兼容旧数据：如果有 blocks（之前改造残留），把 blocks 中的 table/text/image 提取回 tables/body/images
+        blocks = result.get("blocks")
+        if isinstance(blocks, list) and blocks and not result["body"] and not norm_tables:
+            parts = []
+            tbls = []
+            imgs_b = []
+            for blk in blocks:
+                if not isinstance(blk, dict):
+                    continue
+                btype = blk.get("type")
+                if btype == "text" and blk.get("text"):
+                    parts.append(str(blk["text"]))
+                elif btype == "table" and blk.get("table"):
+                    tbl = blk["table"]
+                    tbls.append([[str(c) if c is not None else "" for c in (row or [])] for row in tbl if isinstance(row, list)])
+                    parts.append("见下表")
+                elif btype == "image" and blk.get("url"):
+                    imgs_b.append(str(blk.get("url") or ""))
+                    parts.append("见下图")
+            if parts:
+                result["body"] = "\n".join(parts)
+            if tbls:
+                result["tables"] = tbls
+            if imgs_b:
+                result["images"] = imgs_b
+            result.pop("blocks", None)
+        elif "blocks" in result:
+            result.pop("blocks", None)
         imgs = result.get("images")
         result["images"] = [str(x) for x in imgs if isinstance(x, str) and x] if isinstance(imgs, list) else []
         children = result.get("children")
@@ -409,6 +437,9 @@ class Server(object):
         if type_code:
             for s in (content.get("sections") or []):
                 self.__replace_type_code(s, type_code)
+        # 自动获取产品信息（1.1软件说明/1.4总体描述/1.5适用范围/2.确认产品信息/概述）
+        if product:
+            self.__fill_product_info(content, product)
         self.__fill_runtime_env(content, prod_id)
         self.__fill_revision(content, prod_id, version, force=force)
         self.__fill_md5_attachment(content, package_name, md5_value)
@@ -809,16 +840,51 @@ class Server(object):
             heading = f"{number} {name}".strip() if number else name
             if heading:
                 add_body_heading(heading, level=max(1, min(level, 9)))
-            if (node.get("body") or "").strip():
-                add_text(node.get("body"))
+            body_text = str(node.get("body") or "")
+            tables = node.get("tables") or []
             caps = node.get("table_captions") or []
-            for t_idx, table in enumerate(node.get("tables") or []):
+            images = node.get("images") or []
+            def _emit_table(t_idx):
                 cap = caps[t_idx] if t_idx < len(caps) else ""
                 if str(cap or "").strip():
                     add_text(cap)
-                add_grid(table)
-            for image_url in (node.get("images") or []):
-                add_image(image_url)
+                add_grid(tables[t_idx])
+            # 按"见下表"/"表N"/"见下图"/"图N"切分 body，交错输出正文段、表格和图片
+            if ((("见下表" in body_text) or re.search(r"(?m)^表\s*\d", body_text)) and tables) or ((("见下图" in body_text) or re.search(r"(?m)^图\s*\d", body_text)) and images):
+                lines = body_text.split("\n")
+                buf = []
+                tbl_idx = 0
+                img_idx = 0
+                def flush_text():
+                    t = "\n".join(buf).strip()
+                    if t:
+                        add_text(t)
+                    buf.clear()
+                for ln in lines:
+                    if ("见下表" in ln.strip() or re.match(r"^表\s*\d", ln.strip())) and tbl_idx < len(tables):
+                        buf.append(ln)  # 保留"见下表"/"表N"行作为正文
+                        flush_text()
+                        _emit_table(tbl_idx)
+                        tbl_idx += 1
+                    elif ("见下图" in ln.strip() or re.match(r"^图\s*\d", ln.strip())) and img_idx < len(images):
+                        buf.append(ln)  # 保留"见下图"/"图N"行作为正文
+                        flush_text()
+                        add_image(images[img_idx])
+                        img_idx += 1
+                    else:
+                        buf.append(ln)
+                flush_text()
+                for i in range(tbl_idx, len(tables)):
+                    _emit_table(i)
+                for i in range(img_idx, len(images)):
+                    add_image(images[i])
+            else:
+                if body_text.strip():
+                    add_text(body_text)
+                for t_idx in range(len(tables)):
+                    _emit_table(t_idx)
+                for image_url in images:
+                    add_image(image_url)
             if str(node.get("body_tail") or "").strip():
                 add_text(node.get("body_tail"))
             idx = 0

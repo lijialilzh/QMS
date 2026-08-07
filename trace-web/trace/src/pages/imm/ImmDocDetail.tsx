@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
+import { splitBodyTables, reassembleBody } from "@/common/DocBlocks";
 import * as Api from "@/api/ApiImmDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
@@ -371,167 +372,312 @@ export default () => {
                                         onChange={(e) => patchNode(active._key, { title: e.target.value })}
                                     />
                                 </div>
-                                <div className="pdp-field">
-                                    <div className="pdp-label">正文</div>
-                                    <Input.TextArea
-                                        autoSize={{ minRows: 3, maxRows: 24 }}
-                                        value={active.body ?? ""}
-                                        disabled={readonly}
-                                        placeholder="本章节正文内容，可多行"
-                                        onChange={(e) => patchNode(active._key, { body: e.target.value })}
-                                    />
-                                </div>
-
-                                {isMd5Review
-                                    ? (active.tables || []).map((tb: any[], ti: number) => (
-                                        <div className="pdp-table-block" key={ti}>
-                                            <div className="pdp-table-bar">
-                                                <span className="pdp-label">{ti === 0 ? "评审内容" : "参评人员签字"}</span>
-                                            </div>
-                                            <ReviewTable grid={tb} />
-                                        </div>
-                                    ))
-                                    : (active.tables || []).map((tb: any[], ti: number) => {
-                                    const isAppendix = active.ref_type === "appendix";
-                                    // 整行合并：整行只有第一格有内容
-                                    const isFullRow = (row: any[]) => isAppendix && row.length > 1
-                                        && String(row?.[0] ?? "").trim() !== ""
-                                        && row.slice(1).every((c: any) => String(c ?? "").trim() === "");
-                                    // 第一列连续相同非空项纵向合并（跳过表头与整行合并的行）
-                                    const vSpan: Record<number, number> = {};
-                                    const vSkip = new Set<number>();
-                                    if (isAppendix) {
-                                        let r = 1;
-                                        while (r < tb.length) {
-                                            const val = String(tb[r]?.[0] ?? "").trim();
-                                            if (isFullRow(tb[r]) || !val) { r++; continue; }
-                                            let j = r + 1;
-                                            while (j < tb.length && !isFullRow(tb[j]) && String(tb[j]?.[0] ?? "").trim() === val) j++;
-                                            if (j - 1 > r) { vSpan[r] = j - r; for (let k = r + 1; k < j; k++) vSkip.add(k); }
-                                            r = j;
-                                        }
+                                {(() => {
+                                    const images: string[] = Array.isArray(active.images) ? active.images : [];
+                                    const segments = splitBodyTables(active.body, active.tables, images);
+                                    const hasInterleave = (segments.some((s) => s.type === "table") || segments.some((s) => s.type === "image")) && segments.some((s) => s.type === "text") && !isMd5Review;
+                                    if (hasInterleave) {
+                                        return segments.map((seg, si) => {
+                                            if (seg.type === "text") {
+                                                return (
+                                                    <div className="pdp-field" key={si}>
+                                                        <div className="pdp-label">正文 {si + 1}</div>
+                                                        <Input.TextArea
+                                                            autoSize={{ minRows: 3, maxRows: 24 }}
+                                                            value={seg.text}
+                                                            disabled={readonly}
+                                                            placeholder="本段正文内容，可多行"
+                                                            onChange={(e) => {
+                                                                const newBody = reassembleBody(segments, si, e.target.value);
+                                                                patchNode(active._key, { body: newBody });
+                                                            }}
+                                                        />
+                                                    </div>
+                                                );
+                                            }
+                                            if (seg.type === "image") {
+                                                const ii = seg.imageIndex;
+                                                const url = images[ii];
+                                                if (!url) return null;
+                                                return (
+                                                    <div key={si} style={{ margin: "8px 0", textAlign: "center" }}>
+                                                        <img src={url} alt="" style={{ maxWidth: "100%", border: "1px solid #eee" }} />
+                                                    </div>
+                                                );
+                                            }
+                                            const ti = seg.tableIndex;
+                                            const tb = (active.tables || [])[ti];
+                                            if (!tb) return null;
+                                            const isAppendix = active.ref_type === "appendix";
+                                            // 整行合并：整行只有第一格有内容
+                                            const isFullRow = (row: any[]) => isAppendix && row.length > 1
+                                                && String(row?.[0] ?? "").trim() !== ""
+                                                && row.slice(1).every((c: any) => String(c ?? "").trim() === "");
+                                            // 第一列连续相同非空项纵向合并（跳过表头与整行合并的行）
+                                            const vSpan: Record<number, number> = {};
+                                            const vSkip = new Set<number>();
+                                            if (isAppendix) {
+                                                let r = 1;
+                                                while (r < tb.length) {
+                                                    const val = String(tb[r]?.[0] ?? "").trim();
+                                                    if (isFullRow(tb[r]) || !val) { r++; continue; }
+                                                    let j = r + 1;
+                                                    while (j < tb.length && !isFullRow(tb[j]) && String(tb[j]?.[0] ?? "").trim() === val) j++;
+                                                    if (j - 1 > r) { vSpan[r] = j - r; for (let k = r + 1; k < j; k++) vSkip.add(k); }
+                                                    r = j;
+                                                }
+                                            }
+                                            return (
+                                                <div className="pdp-table-block" key={si}>
+                                                    <div className="pdp-table-bar">
+                                                        <span className="pdp-label">表格 {ti + 1}</span>
+                                                        {!readonly && (
+                                                            <Space size={4}>
+                                                                <Button size="small" onClick={() => addRow(ti)}>＋行</Button>
+                                                                <Button size="small" onClick={() => addCol(ti)}>＋列</Button>
+                                                                <Button size="small" danger onClick={() => delTable(ti)}>删除此表</Button>
+                                                            </Space>
+                                                        )}
+                                                    </div>
+                                                    <table className="pdp-grid">
+                                                        <tbody>
+                                                            {tb.map((row: any[], r: number) => {
+                                                                const cols = row.length;
+                                                                const mergeRow = isFullRow(row);
+                                                                const otherRow = isAppendix && cols > 2
+                                                                    && (String(row[0] ?? "").trim().startsWith("其他参会人员")
+                                                                        || String(row[0] ?? "").trim().startsWith("其他参评人员"));
+                                                                const centerRow = mergeRow
+                                                                    && (String(row[0] ?? "").trim().startsWith("参评人员签字")
+                                                                        || String(row[0] ?? "").trim().startsWith("评审时间"));
+                                                                return (
+                                                                    <tr key={r}>
+                                                                        {otherRow ? (
+                                                                            <>
+                                                                                <td className={r === 0 ? "head" : ""} style={{ textAlign: "center", verticalAlign: "middle" }}>{row[0]}</td>
+                                                                                <td colSpan={cols - 1} style={{ textAlign: "center", verticalAlign: "middle" }}>/</td>
+                                                                            </>
+                                                                        ) : mergeRow ? (
+                                                                            <td className={r === 0 ? "head" : ""} colSpan={cols}>
+                                                                                <Input.TextArea
+                                                                                    className="pdp-cell"
+                                                                                    autoSize={{ minRows: 1, maxRows: 8 }}
+                                                                                    value={row[0] ?? ""}
+                                                                                    disabled={readonly}
+                                                                                    style={centerRow ? { textAlign: "center" } : undefined}
+                                                                                    onChange={(e) => setCell(ti, r, 0, e.target.value)}
+                                                                                />
+                                                                            </td>
+                                                                        ) : (
+                                                                            row.map((cell: any, ci: number) => {
+                                                                                if (ci === 0 && vSkip.has(r)) return null;
+                                                                                const rowSpan = ci === 0 ? vSpan[r] : undefined;
+                                                                                return (
+                                                                                    <td key={ci} className={r === 0 ? "head" : ""} rowSpan={rowSpan}>
+                                                                                        {typeof cell === "string" && cell.startsWith("data:image") ? (
+                                                                                            <span style={{ position: "relative", display: "inline-block" }}>
+                                                                                                <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
+                                                                                                {!readonly && (
+                                                                                                    <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />
+                                                                                                )}
+                                                                                            </span>
+                                                                                        ) : (
+                                                                                            <Input.TextArea
+                                                                                                className="pdp-cell"
+                                                                                                autoSize={{ minRows: 1, maxRows: 8 }}
+                                                                                                value={cell ?? ""}
+                                                                                                disabled={readonly}
+                                                                                                onChange={(e) => setCell(ti, r, ci, e.target.value)}
+                                                                                            />
+                                                                                        )}
+                                                                                        {!readonly && r === 0 && tb[0].length > 1 && (
+                                                                                            <DeleteOutlined className="pdp-col-del" title="删除该列" onClick={() => delCol(ti, ci)} />
+                                                                                        )}
+                                                                                    </td>
+                                                                                );
+                                                                            })
+                                                                        )}
+                                                                        {!readonly && (
+                                                                            <td className="pdp-row-op">
+                                                                                {tb.length > 1 && (
+                                                                                    <DeleteOutlined title="删除该行" onClick={() => delRow(ti, r)} />
+                                                                                )}
+                                                                            </td>
+                                                                        )}
+                                                                    </tr>
+                                                                );
+                                                            })}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            );
+                                        });
                                     }
                                     return (
-                                        <div className="pdp-table-block" key={ti}>
-                                            <div className="pdp-table-bar">
-                                                <span className="pdp-label">表格 {ti + 1}</span>
-                                                {!readonly && (
-                                                    <Space size={4}>
-                                                        <Button size="small" onClick={() => addRow(ti)}>＋行</Button>
-                                                        <Button size="small" onClick={() => addCol(ti)}>＋列</Button>
-                                                        <Button size="small" danger onClick={() => delTable(ti)}>删除此表</Button>
-                                                    </Space>
-                                                )}
+                                        <>
+                                            <div className="pdp-field">
+                                                <div className="pdp-label">正文</div>
+                                                <Input.TextArea
+                                                    autoSize={{ minRows: 3, maxRows: 24 }}
+                                                    value={active.body ?? ""}
+                                                    disabled={readonly}
+                                                    placeholder="本章节正文内容，可多行"
+                                                    onChange={(e) => patchNode(active._key, { body: e.target.value })}
+                                                />
                                             </div>
-                                            <table className="pdp-grid">
-                                                <tbody>
-                                                    {tb.map((row: any[], r: number) => {
-                                                        const cols = row.length;
-                                                        const mergeRow = isFullRow(row);
-                                                        const otherRow = isAppendix && cols > 2
-                                                            && (String(row[0] ?? "").trim().startsWith("其他参会人员")
-                                                                || String(row[0] ?? "").trim().startsWith("其他参评人员"));
-                                                        const centerRow = mergeRow
-                                                            && (String(row[0] ?? "").trim().startsWith("参评人员签字")
-                                                                || String(row[0] ?? "").trim().startsWith("评审时间"));
-                                                        return (
-                                                            <tr key={r}>
-                                                                {otherRow ? (
-                                                                    <>
-                                                                        <td className={r === 0 ? "head" : ""} style={{ textAlign: "center", verticalAlign: "middle" }}>{row[0]}</td>
-                                                                        <td colSpan={cols - 1} style={{ textAlign: "center", verticalAlign: "middle" }}>/</td>
-                                                                    </>
-                                                                ) : mergeRow ? (
-                                                                    <td className={r === 0 ? "head" : ""} colSpan={cols}>
-                                                                        <Input.TextArea
-                                                                            className="pdp-cell"
-                                                                            autoSize={{ minRows: 1, maxRows: 8 }}
-                                                                            value={row[0] ?? ""}
-                                                                            disabled={readonly}
-                                                                            style={centerRow ? { textAlign: "center" } : undefined}
-                                                                            onChange={(e) => setCell(ti, r, 0, e.target.value)}
-                                                                        />
-                                                                    </td>
-                                                                ) : (
-                                                                    row.map((cell: any, ci: number) => {
-                                                                        if (ci === 0 && vSkip.has(r)) return null;
-                                                                        const rowSpan = ci === 0 ? vSpan[r] : undefined;
-                                                                        return (
-                                                                            <td key={ci} className={r === 0 ? "head" : ""} rowSpan={rowSpan}>
-                                                                                {typeof cell === "string" && cell.startsWith("data:image") ? (
-                                                                                    <span style={{ position: "relative", display: "inline-block" }}>
-                                                                                        <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
-                                                                                        {!readonly && (
-                                                                                            <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />
-                                                                                        )}
-                                                                                    </span>
-                                                                                ) : (
+                                            {isMd5Review
+                                                ? (active.tables || []).map((tb: any[], ti: number) => (
+                                                    <div className="pdp-table-block" key={ti}>
+                                                        <div className="pdp-table-bar">
+                                                            <span className="pdp-label">{ti === 0 ? "评审内容" : "参评人员签字"}</span>
+                                                        </div>
+                                                        <ReviewTable grid={tb} />
+                                                    </div>
+                                                ))
+                                                : (active.tables || []).map((tb: any[], ti: number) => {
+                                                const isAppendix = active.ref_type === "appendix";
+                                                // 整行合并：整行只有第一格有内容
+                                                const isFullRow = (row: any[]) => isAppendix && row.length > 1
+                                                    && String(row?.[0] ?? "").trim() !== ""
+                                                    && row.slice(1).every((c: any) => String(c ?? "").trim() === "");
+                                                // 第一列连续相同非空项纵向合并（跳过表头与整行合并的行）
+                                                const vSpan: Record<number, number> = {};
+                                                const vSkip = new Set<number>();
+                                                if (isAppendix) {
+                                                    let r = 1;
+                                                    while (r < tb.length) {
+                                                        const val = String(tb[r]?.[0] ?? "").trim();
+                                                        if (isFullRow(tb[r]) || !val) { r++; continue; }
+                                                        let j = r + 1;
+                                                        while (j < tb.length && !isFullRow(tb[j]) && String(tb[j]?.[0] ?? "").trim() === val) j++;
+                                                        if (j - 1 > r) { vSpan[r] = j - r; for (let k = r + 1; k < j; k++) vSkip.add(k); }
+                                                        r = j;
+                                                    }
+                                                }
+                                                return (
+                                                    <div className="pdp-table-block" key={ti}>
+                                                        <div className="pdp-table-bar">
+                                                            <span className="pdp-label">表格 {ti + 1}</span>
+                                                            {!readonly && (
+                                                                <Space size={4}>
+                                                                    <Button size="small" onClick={() => addRow(ti)}>＋行</Button>
+                                                                    <Button size="small" onClick={() => addCol(ti)}>＋列</Button>
+                                                                    <Button size="small" danger onClick={() => delTable(ti)}>删除此表</Button>
+                                                                </Space>
+                                                            )}
+                                                        </div>
+                                                        <table className="pdp-grid">
+                                                            <tbody>
+                                                                {tb.map((row: any[], r: number) => {
+                                                                    const cols = row.length;
+                                                                    const mergeRow = isFullRow(row);
+                                                                    const otherRow = isAppendix && cols > 2
+                                                                        && (String(row[0] ?? "").trim().startsWith("其他参会人员")
+                                                                            || String(row[0] ?? "").trim().startsWith("其他参评人员"));
+                                                                    const centerRow = mergeRow
+                                                                        && (String(row[0] ?? "").trim().startsWith("参评人员签字")
+                                                                            || String(row[0] ?? "").trim().startsWith("评审时间"));
+                                                                    return (
+                                                                        <tr key={r}>
+                                                                            {otherRow ? (
+                                                                                <>
+                                                                                    <td className={r === 0 ? "head" : ""} style={{ textAlign: "center", verticalAlign: "middle" }}>{row[0]}</td>
+                                                                                    <td colSpan={cols - 1} style={{ textAlign: "center", verticalAlign: "middle" }}>/</td>
+                                                                                </>
+                                                                            ) : mergeRow ? (
+                                                                                <td className={r === 0 ? "head" : ""} colSpan={cols}>
                                                                                     <Input.TextArea
                                                                                         className="pdp-cell"
                                                                                         autoSize={{ minRows: 1, maxRows: 8 }}
-                                                                                        value={cell ?? ""}
+                                                                                        value={row[0] ?? ""}
                                                                                         disabled={readonly}
-                                                                                        onChange={(e) => setCell(ti, r, ci, e.target.value)}
+                                                                                        style={centerRow ? { textAlign: "center" } : undefined}
+                                                                                        onChange={(e) => setCell(ti, r, 0, e.target.value)}
                                                                                     />
-                                                                                )}
-                                                                                {!readonly && r === 0 && tb[0].length > 1 && (
-                                                                                    <DeleteOutlined className="pdp-col-del" title="删除该列" onClick={() => delCol(ti, ci)} />
-                                                                                )}
-                                                                            </td>
-                                                                        );
-                                                                    })
-                                                                )}
-                                                                {!readonly && (
-                                                                    <td className="pdp-row-op">
-                                                                        {tb.length > 1 && (
-                                                                            <DeleteOutlined title="删除该行" onClick={() => delRow(ti, r)} />
-                                                                        )}
-                                                                    </td>
-                                                                )}
-                                                            </tr>
-                                                        );
-                                                    })}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    );
-                                })}
+                                                                                </td>
+                                                                            ) : (
+                                                                                row.map((cell: any, ci: number) => {
+                                                                                    if (ci === 0 && vSkip.has(r)) return null;
+                                                                                    const rowSpan = ci === 0 ? vSpan[r] : undefined;
+                                                                                    return (
+                                                                                        <td key={ci} className={r === 0 ? "head" : ""} rowSpan={rowSpan}>
+                                                                                            {typeof cell === "string" && cell.startsWith("data:image") ? (
+                                                                                                <span style={{ position: "relative", display: "inline-block" }}>
+                                                                                                    <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
+                                                                                                    {!readonly && (
+                                                                                                        <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />
+                                                                                                    )}
+                                                                                                </span>
+                                                                                            ) : (
+                                                                                                <Input.TextArea
+                                                                                                    className="pdp-cell"
+                                                                                                    autoSize={{ minRows: 1, maxRows: 8 }}
+                                                                                                    value={cell ?? ""}
+                                                                                                    disabled={readonly}
+                                                                                                    onChange={(e) => setCell(ti, r, ci, e.target.value)}
+                                                                                                />
+                                                                                            )}
+                                                                                            {!readonly && r === 0 && tb[0].length > 1 && (
+                                                                                                <DeleteOutlined className="pdp-col-del" title="删除该列" onClick={() => delCol(ti, ci)} />
+                                                                                            )}
+                                                                                        </td>
+                                                                                    );
+                                                                                })
+                                                                            )}
+                                                                            {!readonly && (
+                                                                                <td className="pdp-row-op">
+                                                                                    {tb.length > 1 && (
+                                                                                        <DeleteOutlined title="删除该行" onClick={() => delRow(ti, r)} />
+                                                                                    )}
+                                                                                </td>
+                                                                            )}
+                                                                        </tr>
+                                                                    );
+                                                                })}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                );
+                                            })}
 
-                                {!isMd5Review && (
-                                <div className="pdp-field">
-                                    <div className="pdp-label">正文图片</div>
-                                    {images.map((url: string, imgIndex: number) => (
-                                        <div key={imgIndex} style={{ marginBottom: 8 }}>
-                                            <img src={url} alt="" style={{ maxWidth: "100%", border: "1px solid #eee" }} />
-                                            {!readonly && (
-                                                <Space size={4} style={{ marginTop: 4 }}>
+                                            {!isMd5Review && (
+                                            <div className="pdp-field">
+                                                <div className="pdp-label">正文图片</div>
+                                                {images.map((url: string, imgIndex: number) => (
+                                                    <div key={imgIndex} style={{ marginBottom: 8 }}>
+                                                        <img src={url} alt="" style={{ maxWidth: "100%", border: "1px solid #eee" }} />
+                                                        {!readonly && (
+                                                            <Space size={4} style={{ marginTop: 4 }}>
+                                                                <Upload
+                                                                    accept="image/*"
+                                                                    showUploadList={false}
+                                                                    beforeUpload={(file) => uploadImage(file as File, imgIndex)}>
+                                                                    <Button size="small" icon={<UploadOutlined />}>更换</Button>
+                                                                </Upload>
+                                                                <Button size="small" danger onClick={() => delImage(imgIndex)}>删除</Button>
+                                                            </Space>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                                {!readonly && (
                                                     <Upload
                                                         accept="image/*"
                                                         showUploadList={false}
-                                                        beforeUpload={(file) => uploadImage(file as File, imgIndex)}>
-                                                        <Button size="small" icon={<UploadOutlined />}>更换</Button>
+                                                        beforeUpload={(file) => uploadImage(file as File)}>
+                                                        <Button size="small" icon={<UploadOutlined />} style={{ margin: "4px 0" }}>上传图片</Button>
                                                     </Upload>
-                                                    <Button size="small" danger onClick={() => delImage(imgIndex)}>删除</Button>
-                                                </Space>
+                                                )}
+                                            </div>
                                             )}
-                                        </div>
-                                    ))}
-                                    {!readonly && (
-                                        <Upload
-                                            accept="image/*"
-                                            showUploadList={false}
-                                            beforeUpload={(file) => uploadImage(file as File)}>
-                                            <Button size="small" icon={<UploadOutlined />} style={{ margin: "4px 0" }}>上传图片</Button>
-                                        </Upload>
-                                    )}
-                                </div>
-                                )}
 
-                                {!readonly && !isMd5Review && (
-                                    <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
-                                        添加表格
-                                    </Button>
-                                )}
+                                            {!readonly && !isMd5Review && (
+                                                <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
+                                                    添加表格
+                                                </Button>
+                                            )}
+                                        </>
+                                    );
+                                })()}
                             </>
                         )}
                     </div>

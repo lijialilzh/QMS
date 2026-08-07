@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
+import { splitBodyTables, reassembleBody } from "@/common/DocBlocks";
 import * as Api from "@/api/ApiStpDoc";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiProduct from "@/api/ApiProduct";
@@ -610,16 +611,208 @@ export default () => {
                                         onChange={(e) => patchNode(active._key, { title: e.target.value })}
                                     />
                                 </div>
-                                <div className="pdp-field">
-                                    <div className="pdp-label">正文</div>
-                                    <Input.TextArea
-                                        autoSize={{ minRows: 3, maxRows: 20 }}
-                                        value={active.body ?? ""}
-                                        disabled={readonly}
-                                        placeholder="本章节正文内容，可多行"
-                                        onChange={(e) => patchNode(active._key, { body: e.target.value })}
-                                    />
-                                </div>
+                                {(() => {
+                                    const images: string[] = Array.isArray(active.images) ? active.images : [];
+                                    const segments = splitBodyTables(active.body, active.tables, images);
+                                    const hasInterleave = (segments.some((s) => s.type === "table") || segments.some((s) => s.type === "image")) && segments.some((s) => s.type === "text");
+                                    if (hasInterleave && active.ref_type !== "review") {
+                                        // 交错模式：正文段和表格/图片按顺序展示，正文段可编辑，写回 body
+                                        return segments.map((seg, si) => {
+                                            if (seg.type === "text") {
+                                                return (
+                                                    <div className="pdp-field" key={si}>
+                                                        <div className="pdp-label">正文 {si + 1}</div>
+                                                        <Input.TextArea
+                                                            autoSize={{ minRows: 3, maxRows: 20 }}
+                                                            value={seg.text}
+                                                            disabled={readonly}
+                                                            placeholder="本段正文内容，可多行"
+                                                            onChange={(e) => {
+                                                                const newBody = reassembleBody(segments, si, e.target.value);
+                                                                patchNode(active._key, { body: newBody });
+                                                            }}
+                                                        />
+                                                    </div>
+                                                );
+                                            }
+                                            if (seg.type === "image") {
+                                                const ii = seg.imageIndex;
+                                                const url = images[ii];
+                                                if (!url) return null;
+                                                return (
+                                                    <div key={si} style={{ margin: "8px 0", textAlign: "center" }}>
+                                                        <img src={url} alt="" style={{ maxWidth: "100%", border: "1px solid #eee" }} />
+                                                    </div>
+                                                );
+                                            }
+                                            // table
+                                            const ti = seg.tableIndex;
+                                            const tb = (active.tables || [])[ti];
+                                            if (!tb) return null;
+                                            return (
+                                                <div className="pdp-table-block" key={si}>
+                                                    <div className="pdp-table-bar">
+                                                        <span className="pdp-label">表格 {ti + 1}</span>
+                                                        {!readonly && (
+                                                            <Space size={4}>
+                                                                <Button size="small" onClick={() => addRow(ti)}>＋行</Button>
+                                                                <Button size="small" onClick={() => addCol(ti)}>＋列</Button>
+                                                                <Button size="small" danger onClick={() => delTable(ti)}>删除此表</Button>
+                                                            </Space>
+                                                        )}
+                                                    </div>
+                                                    <Input.TextArea
+                                                        autoSize={{ minRows: 1, maxRows: 6 }}
+                                                        value={(active.table_captions && active.table_captions[ti]) || ""}
+                                                        disabled={readonly}
+                                                        placeholder="表格上方说明/表名（显示在此表上方，可空）"
+                                                        style={{ marginBottom: 6, fontSize: 13 }}
+                                                        onChange={(e) => setCaption(ti, e.target.value)}
+                                                    />
+                                                    <table className="pdp-grid">
+                                                        <tbody>
+                                                            {tb.map((row: any[], r: number) => (
+                                                                <tr key={r}>
+                                                                    {row.map((cell: any, ci: number) => (
+                                                                        <td key={ci} className={r === 0 ? "head" : ""}>
+                                                                            {typeof cell === "string" && cell.startsWith("data:image") ? (
+                                                                                <span style={{ position: "relative", display: "inline-block" }}>
+                                                                                    <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
+                                                                                    {!readonly && (
+                                                                                        <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />
+                                                                                    )}
+                                                                                </span>
+                                                                            ) : (
+                                                                                <Input.TextArea
+                                                                                    className="pdp-cell"
+                                                                                    autoSize={{ minRows: 1, maxRows: 8 }}
+                                                                                    value={cell ?? ""}
+                                                                                    disabled={readonly}
+                                                                                    onChange={(e) => setCell(ti, r, ci, e.target.value)}
+                                                                                />
+                                                                            )}
+                                                                            {!readonly && r === 0 && tb[0].length > 1 && (
+                                                                                <DeleteOutlined className="pdp-col-del" title="删除该列" onClick={() => delCol(ti, ci)} />
+                                                                            )}
+                                                                        </td>
+                                                                    ))}
+                                                                    {!readonly && (
+                                                                        <td className="pdp-row-op">
+                                                                            {tb.length > 1 && (
+                                                                                <DeleteOutlined title="删除该行" onClick={() => delRow(ti, r)} />
+                                                                            )}
+                                                                        </td>
+                                                                    )}
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            );
+                                        });
+                                    }
+                                    // 非交错模式：原有的正文 + 表格顺序展示
+                                    return (
+                                        <>
+                                            <div className="pdp-field">
+                                                <div className="pdp-label">正文</div>
+                                                <Input.TextArea
+                                                    autoSize={{ minRows: 3, maxRows: 20 }}
+                                                    value={active.body ?? ""}
+                                                    disabled={readonly}
+                                                    placeholder="本章节正文内容，可多行"
+                                                    onChange={(e) => patchNode(active._key, { body: e.target.value })}
+                                                />
+                                            </div>
+                                            {active.ref_type === "review"
+                                                ? (active.tables || []).map((tb: any[], ti: number) => (
+                                                    <div className="pdp-table-block" key={ti}>
+                                                        <div className="pdp-table-bar">
+                                                            <span className="pdp-label">{ti === 0 ? "评审内容" : "参评人员签字"}</span>
+                                                        </div>
+                                                        <ReviewTable grid={tb} />
+                                                    </div>
+                                                ))
+                                                : (active.tables || []).map((tb: any[], ti: number) => (
+                                                    <div className="pdp-table-block" key={ti}>
+                                                        <div className="pdp-table-bar">
+                                                            <span className="pdp-label">表格 {ti + 1}</span>
+                                                            {!readonly && (
+                                                                <Space size={4}>
+                                                                    <Button size="small" onClick={() => addRow(ti)}>＋行</Button>
+                                                                    <Button size="small" onClick={() => addCol(ti)}>＋列</Button>
+                                                                    <Button size="small" danger onClick={() => delTable(ti)}>删除此表</Button>
+                                                                </Space>
+                                                            )}
+                                                        </div>
+                                                        <Input.TextArea
+                                                            autoSize={{ minRows: 1, maxRows: 6 }}
+                                                            value={(active.table_captions && active.table_captions[ti]) || ""}
+                                                            disabled={readonly}
+                                                            placeholder="表格上方说明/表名（显示在此表上方，可空）"
+                                                            style={{ marginBottom: 6, fontSize: 13 }}
+                                                            onChange={(e) => setCaption(ti, e.target.value)}
+                                                        />
+                                                        <table className="pdp-grid">
+                                                            <tbody>
+                                                                {tb.map((row: any[], r: number) => (
+                                                                    <tr key={r}>
+                                                                        {row.map((cell: any, ci: number) => (
+                                                                            <td key={ci} className={r === 0 ? "head" : ""}>
+                                                                                {typeof cell === "string" && cell.startsWith("data:image") ? (
+                                                                                    <span style={{ position: "relative", display: "inline-block" }}>
+                                                                                        <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
+                                                                                        {!readonly && (
+                                                                                            <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />
+                                                                                        )}
+                                                                                    </span>
+                                                                                ) : (
+                                                                                    <Input.TextArea
+                                                                                        className="pdp-cell"
+                                                                                        autoSize={{ minRows: 1, maxRows: 8 }}
+                                                                                        value={cell ?? ""}
+                                                                                        disabled={readonly}
+                                                                                        onChange={(e) => setCell(ti, r, ci, e.target.value)}
+                                                                                    />
+                                                                                )}
+                                                                                {!readonly && r === 0 && tb[0].length > 1 && (
+                                                                                    <DeleteOutlined className="pdp-col-del" title="删除该列" onClick={() => delCol(ti, ci)} />
+                                                                                )}
+                                                                            </td>
+                                                                        ))}
+                                                                        {!readonly && (
+                                                                            <td className="pdp-row-op">
+                                                                                {tb.length > 1 && (
+                                                                                    <DeleteOutlined title="删除该行" onClick={() => delRow(ti, r)} />
+                                                                                )}
+                                                                            </td>
+                                                                        )}
+                                                                    </tr>
+                                                                ))}
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                ))}
+                                            {!readonly && active.ref_type !== "review" && (
+                                                <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
+                                                    添加表格
+                                                </Button>
+                                            )}
+                                            {active.ref_type !== "review" && (active.tables || []).length > 0 && (
+                                                <div className="pdp-field">
+                                                    <div className="pdp-label">表格后正文</div>
+                                                    <Input.TextArea
+                                                        autoSize={{ minRows: 1, maxRows: 12 }}
+                                                        value={active.body_tail ?? ""}
+                                                        disabled={readonly}
+                                                        placeholder="最后一张表之后的正文（可空）"
+                                                        onChange={(e) => patchNode(active._key, { body_tail: e.target.value })}
+                                                    />
+                                                </div>
+                                            )}
+                                        </>
+                                    );
+                                })()}
 
                                 {(active.ref_type === "personnel" || stripNum(active.title) === "人员资源") && !readonly && (
                                     <div className="pdp-pull-bar">
@@ -629,95 +822,6 @@ export default () => {
                                         <span className="pdp-pull-hint">
                                             按当前产品{data.doc.product_full_version ? `（${data.doc.product_full_version}）` : ""}从「产品参与人员」同步全部人员（编号/姓名/角色，保留已填所属部门）
                                         </span>
-                                    </div>
-                                )}
-
-                                {active.ref_type === "review"
-                                    ? (active.tables || []).map((tb: any[], ti: number) => (
-                                        <div className="pdp-table-block" key={ti}>
-                                            <div className="pdp-table-bar">
-                                                <span className="pdp-label">{ti === 0 ? "评审内容" : "参评人员签字"}</span>
-                                            </div>
-                                            <ReviewTable grid={tb} />
-                                        </div>
-                                    ))
-                                    : (active.tables || []).map((tb: any[], ti: number) => (
-                                    <div className="pdp-table-block" key={ti}>
-                                        <div className="pdp-table-bar">
-                                            <span className="pdp-label">表格 {ti + 1}</span>
-                                            {!readonly && (
-                                                <Space size={4}>
-                                                    <Button size="small" onClick={() => addRow(ti)}>＋行</Button>
-                                                    <Button size="small" onClick={() => addCol(ti)}>＋列</Button>
-                                                    <Button size="small" danger onClick={() => delTable(ti)}>删除此表</Button>
-                                                </Space>
-                                            )}
-                                        </div>
-                                        <Input.TextArea
-                                            autoSize={{ minRows: 1, maxRows: 6 }}
-                                            value={(active.table_captions && active.table_captions[ti]) || ""}
-                                            disabled={readonly}
-                                            placeholder="表格上方说明/表名（显示在此表上方，可空）"
-                                            style={{ marginBottom: 6, fontSize: 13 }}
-                                            onChange={(e) => setCaption(ti, e.target.value)}
-                                        />
-                                        <table className="pdp-grid">
-                                            <tbody>
-                                                {tb.map((row: any[], r: number) => (
-                                                    <tr key={r}>
-                                                        {row.map((cell: any, ci: number) => (
-                                                            <td key={ci} className={r === 0 ? "head" : ""}>
-                                                                {typeof cell === "string" && cell.startsWith("data:image") ? (
-                                                                    <span style={{ position: "relative", display: "inline-block" }}>
-                                                                        <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
-                                                                        {!readonly && (
-                                                                            <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />
-                                                                        )}
-                                                                    </span>
-                                                                ) : (
-                                                                    <Input.TextArea
-                                                                        className="pdp-cell"
-                                                                        autoSize={{ minRows: 1, maxRows: 8 }}
-                                                                        value={cell ?? ""}
-                                                                        disabled={readonly}
-                                                                        onChange={(e) => setCell(ti, r, ci, e.target.value)}
-                                                                    />
-                                                                )}
-                                                                {!readonly && r === 0 && tb[0].length > 1 && (
-                                                                    <DeleteOutlined className="pdp-col-del" title="删除该列" onClick={() => delCol(ti, ci)} />
-                                                                )}
-                                                            </td>
-                                                        ))}
-                                                        {!readonly && (
-                                                            <td className="pdp-row-op">
-                                                                {tb.length > 1 && (
-                                                                    <DeleteOutlined title="删除该行" onClick={() => delRow(ti, r)} />
-                                                                )}
-                                                            </td>
-                                                        )}
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                ))}
-
-                                {!readonly && active.ref_type !== "review" && (
-                                    <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
-                                        添加表格
-                                    </Button>
-                                )}
-
-                                {active.ref_type !== "review" && (active.tables || []).length > 0 && (
-                                    <div className="pdp-field">
-                                        <div className="pdp-label">表格后正文</div>
-                                        <Input.TextArea
-                                            autoSize={{ minRows: 1, maxRows: 12 }}
-                                            value={active.body_tail ?? ""}
-                                            disabled={readonly}
-                                            placeholder="最后一张表之后的正文（可空）"
-                                            onChange={(e) => patchNode(active._key, { body_tail: e.target.value })}
-                                        />
                                     </div>
                                 )}
                             </>

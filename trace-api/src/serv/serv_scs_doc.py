@@ -68,6 +68,28 @@ class Server(object):
             if isinstance(table, list):
                 norm_tables.append([[str(c) if c is not None else "" for c in (row or [])] for row in table if isinstance(row, list)])
         result["tables"] = norm_tables
+        # 兼容旧数据：如果有 blocks（之前改造残留），把 blocks 中的 table/text 提取回 tables/body
+        blocks = result.get("blocks")
+        if isinstance(blocks, list) and blocks and not result["body"] and not norm_tables:
+            parts = []
+            tbls = []
+            for blk in blocks:
+                if not isinstance(blk, dict):
+                    continue
+                btype = blk.get("type")
+                if btype == "text" and blk.get("text"):
+                    parts.append(str(blk["text"]))
+                elif btype == "table" and blk.get("table"):
+                    tbl = blk["table"]
+                    tbls.append([[str(c) if c is not None else "" for c in (row or [])] for row in tbl if isinstance(row, list)])
+                    parts.append("见下表")
+            if parts:
+                result["body"] = "\n".join(parts)
+            if tbls:
+                result["tables"] = tbls
+            result.pop("blocks", None)
+        elif "blocks" in result:
+            result.pop("blocks", None)
         children = result.get("children")
         result["children"] = [self.__normalize_node(c) for c in children] if isinstance(children, list) else []
         return result
@@ -138,6 +160,16 @@ class Server(object):
         if product and product.name:
             for s in (content.get("sections") or []):
                 self.__replace_name(s, BASE_NAME, product.name)
+            # 更新完整版本号
+            new_full_version = (product.full_version or "").strip()
+            if new_full_version:
+                def _update_version(node):
+                    if node.get("body") and "完整版本" in str(node.get("body")):
+                        node["body"] = re.sub(r"完整版本：[^\n]*", f"完整版本：{new_full_version}", str(node["body"]))
+                    for c in (node.get("children") or []):
+                        _update_version(c)
+                for s in (content.get("sections") or []):
+                    _update_version(s)
         self.__fill_revision(content, prod_id, version, force=force)
         # 从「软件配置管理计划(SCM)」获取两张配置项清单，注入状态报告对应章节
         # force（切换产品）时跳过，保留模板原值
@@ -480,14 +512,38 @@ class Server(object):
             name = strip_num(node.get("title"))
             heading = f"{number} {name}".strip() if number else name
             add_body_heading(heading, level=max(1, min(level, 9)))
-            if (node.get("body") or "").strip():
-                add_text(node.get("body"))
             if node.get("ref_type") == "review":
                 for t_idx, table in enumerate(node.get("tables") or []):
                     serv_review_util.render_review_grid(document, table, set_cell, merge_col0=(t_idx == 0), merge_full=True)
             else:
-                for table in (node.get("tables") or []):
-                    add_grid(table)
+                body_text = str(node.get("body") or "")
+                tables = node.get("tables") or []
+                # 按"见下表"/"表N"切分 body，交错输出正文段和表格
+                if (("见下表" in body_text) or re.search(r"(?m)^表\s*\d", body_text)) and tables:
+                    lines = body_text.split("\n")
+                    buf = []
+                    tbl_idx = 0
+                    def flush_text():
+                        t = "\n".join(buf).strip()
+                        if t:
+                            add_text(t)
+                        buf.clear()
+                    for ln in lines:
+                        if ("见下表" in ln.strip() or re.match(r"^表\s*\d", ln.strip())) and tbl_idx < len(tables):
+                            buf.append(ln)  # 保留"见下表"/"表N"行作为正文
+                            flush_text()
+                            add_grid(tables[tbl_idx])
+                            tbl_idx += 1
+                        else:
+                            buf.append(ln)
+                    flush_text()
+                    for i in range(tbl_idx, len(tables)):
+                        add_grid(tables[i])
+                else:
+                    if body_text.strip():
+                        add_text(body_text)
+                    for table in tables:
+                        add_grid(table)
             idx = 0
             for child in (node.get("children") or []):
                 idx += 1
