@@ -228,7 +228,11 @@ async def ipp_print_doc(module_key: str, doc_id: int, with_sign: bool = True):
     srv = _SERVERS.get(module_key)
     if not srv:
         return Resp.resp_err(msg=f"不支持的文档模块：{module_key}")
-    method = getattr(srv, f"export_{module_key}", None)
+    # 追溯分析：方法名 export_doc_trace
+    if module_key == "srs_doc_trace":
+        method = getattr(srv, "export_doc_trace", None)
+    else:
+        method = getattr(srv, f"export_{module_key}", None)
     if not method:
         return Resp.resp_err(msg=f"模块 {module_key} 无导出方法")
     cfg = db.session.execute(select(PrintServiceCfg).where(PrintServiceCfg.is_default == 1)).scalars().first()

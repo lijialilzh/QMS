@@ -7,16 +7,20 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as ApiPrint from "@/api/ApiPrintCfg";
 import "./DocIntegrateExport.less";
 
-const GROUP_ORDER = ["product_files", "dev_files", "test_files"] as const;
+const GROUP_ORDER = ["product_files", "dev_files", "test_files", "cybersec_files", "trace_files"] as const;
 const GROUP_TITLES: Record<string, string> = {
     product_files: "产品文件",
     dev_files: "开发文件",
     test_files: "测试文件",
+    cybersec_files: "网络安全文件",
+    trace_files: "追溯文件",
 };
 const GROUP_COLORS: Record<string, string> = {
     product_files: "blue",
     dev_files: "green",
     test_files: "orange",
+    cybersec_files: "purple",
+    trace_files: "cyan",
 };
 
 export default () => {

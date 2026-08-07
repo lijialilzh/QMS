@@ -575,7 +575,7 @@ class Server(object):
         except Exception as e:
             db.session.rollback()
             if "Duplicate" in str(e) or "UNIQUE" in str(e):
-                return Resp.resp_err(msg=ts("msg_data_exist"))
+                return Resp.resp_err(msg=ts("msg_obj_exist"))
             logger.exception("")
             return Resp.resp_err()
         db.session.commit()
@@ -599,7 +599,7 @@ class Server(object):
         except Exception as e:
             db.session.rollback()
             if "Duplicate" in str(e) or "UNIQUE" in str(e):
-                return Resp.resp_err(msg=ts("msg_data_exist"))
+                return Resp.resp_err(msg=ts("msg_obj_exist"))
             logger.exception("")
             return Resp.resp_err()
         db.session.commit()
@@ -624,7 +624,7 @@ class Server(object):
         except Exception as e:
             db.session.rollback()
             if "Duplicate" in str(e) or "UNIQUE" in str(e):
-                return Resp.resp_err(msg=ts("msg_data_exist"))
+                return Resp.resp_err(msg=ts("msg_obj_exist"))
             logger.exception("")
             return Resp.resp_err()
         db.session.commit()

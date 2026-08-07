@@ -57,6 +57,8 @@ from ..model.train_record_doc import TrainRecordDoc
 from ..model.utp_doc import UtpDoc
 from ..model.utr_doc import UtrDoc
 from ..model.teq_doc import TeqDoc
+from ..model.cybersec_doc import CybersecDoc
+from ..model.cybersec_plan_doc import CybersecPlanDoc
 
 # serv 导入
 from ..serv.serv_pir_doc import Server as SrvPir
@@ -92,6 +94,8 @@ from ..serv.serv_train_record_doc import Server as SrvTrainRecord
 from ..serv.serv_utp_doc import Server as SrvUtp
 from ..serv.serv_utr_doc import Server as SrvUtr
 from ..serv.serv_teq_doc import Server as SrvTeq
+from ..serv.serv_cybersec_doc import Server as SrvCybersec
+from ..serv.serv_cybersec_plan_doc import Server as SrvCybersecPlan
 
 # (module_key, module_name, group, model_cls, serv_instance, export_method_name, ext)
 # bug_doc 无导出方法，跳过
@@ -104,7 +108,9 @@ _SERVERS = {
     "dem_doc": SrvDem(), "crr_doc": SrvCrr(), "dat_doc": SrvDat(), "deq_doc": SrvDeq(),
     "stp_doc": SrvStp(), "str_doc": SrvStr(), "tem_doc": SrvTem(), "imm_doc": SrvImm(),
     "ftr_doc": SrvFtr(), "ftr_record_doc": SrvFtrRecord(), "train_record_doc": SrvTrainRecord(), "utp_doc": SrvUtp(), "utr_doc": SrvUtr(),
-    "teq_doc": SrvTeq(),
+    "teq_doc": SrvTeq,
+    "cybersec_doc": SrvCybersec(), "cybersec_plan_doc": SrvCybersecPlan(),
+    "srs_doc_trace": SrvSrs(),
 }
 
 # (module_key, module_name, group, model_cls)
@@ -142,12 +148,15 @@ _DOC_MODULES = [
     ("utp_doc", "用户测试计划", "test_files", UtpDoc),
     ("utr_doc", "用户测试报告", "test_files", UtrDoc),
     ("teq_doc", "测试设备清单", "test_files", TeqDoc),
+    ("cybersec_doc", "网络安全风险管理报告", "cybersec_files", CybersecDoc),
+    ("cybersec_plan_doc", "网络安全风险管理计划", "cybersec_files", CybersecPlanDoc),
+    ("srs_doc_trace", "追溯分析", "trace_files", SrsDoc),
     # bug_doc 无导出方法，暂不纳入整合导出
 ]
 
 
 # 模块key → 分组中文名映射
-_GROUP_LABELS = {"product_files": "产品文件", "dev_files": "开发文件", "test_files": "测试文件"}
+_GROUP_LABELS = {"product_files": "产品文件", "dev_files": "开发文件", "test_files": "测试文件", "cybersec_files": "网络安全文件", "trace_files": "追溯文件"}
 
 
 def _build_zip_filename(prod, doc_keys: str) -> str:
@@ -167,7 +176,7 @@ def _build_zip_filename(prod, doc_keys: str) -> str:
             groups_hit.append(group)
     # 按固定顺序排列
     ordered = []
-    for g in ["product_files", "dev_files", "test_files"]:
+    for g in ["product_files", "dev_files", "test_files", "cybersec_files", "trace_files"]:
         if g in groups_hit:
             ordered.append(_GROUP_LABELS[g])
     group_label = "+".join(ordered) if ordered else "文档"
@@ -217,11 +226,34 @@ async def list_integrate_docs(product_id: int):
         "product_files": "pir_doc_view",
         "dev_files": "scm_doc_view",
         "test_files": "stp_doc_view",
+        "cybersec_files": "cybersec_doc_view",
+        "trace_files": "srs_doc_view",
     }
-    visible_groups = [g for g in ["product_files", "dev_files", "test_files"] if g not in group_perm_map or group_perm_map[g] in user_perms]
+    visible_groups = [g for g in ["product_files", "dev_files", "test_files", "cybersec_files", "trace_files"] if g not in group_perm_map or group_perm_map[g] in user_perms]
     groups = {g: [] for g in visible_groups}
     for module_key, module_name, group, model_cls in _DOC_MODULES:
         if group not in visible_groups:
+            continue
+        # 追溯分析：基于 SRS 文档列表，每个 SRS 文档对应一份追溯分析（排除软删占位）
+        if module_key == "srs_doc_trace":
+            rows = db.session.execute(
+                select(SrsDoc).where(SrsDoc.product_id == product_id)
+                .where(~SrsDoc.version.like("__deleted_srs__%"))
+                .order_by(SrsDoc.id.desc())
+            ).scalars().all()
+            items = []
+            for r in rows:
+                items.append({
+                    "id": r.id,
+                    "module_key": module_key,
+                    "module_name": module_name,
+                    "group": group,
+                    "version": getattr(r, "version", "") or "",
+                    "file_no": getattr(r, "file_no", "") or "",
+                    "change_log": getattr(r, "change_log", "") or "",
+                    "create_time": str(getattr(r, "create_time", "") or ""),
+                })
+            groups[group].append({"module_key": module_key, "module_name": module_name, "docs": items})
             continue
         rows = db.session.execute(
             select(model_cls).where(model_cls.product_id == product_id).order_by(model_cls.id.desc())
@@ -279,8 +311,11 @@ async def integrate_export(product_id: int, doc_keys: str, with_sign: bool = Tru
             if not srv:
                 failed.append(f"{module_key}:{doc_id}（不支持导出）")
                 continue
-            method_name = f"export_{module_key}"
-            method = getattr(srv, method_name, None)
+            # 追溯分析：方法名 export_doc_trace，输出 xlsx
+            if module_key == "srs_doc_trace":
+                method = getattr(srv, "export_doc_trace", None)
+            else:
+                method = getattr(srv, f"export_{module_key}", None)
             if not method:
                 failed.append(f"{module_key}:{doc_id}（无导出方法）")
                 continue
@@ -288,7 +323,8 @@ async def integrate_export(product_id: int, doc_keys: str, with_sign: bool = Tru
                 out = io.BytesIO()
                 await method(out, doc_id)
                 out.seek(0)
-                safe_name = _build_doc_name(module_key, doc_id)
+                ext = "xlsx" if module_key == "srs_doc_trace" else "docx"
+                safe_name = _build_doc_name(module_key, doc_id).replace(".docx", f".{ext}")
                 # zipfile 默认 cp437 编码中文乱码，用 ZipInfo 显式设置 UTF-8 标志
                 zi = zipfile.ZipInfo(safe_name, date_time=datetime.now().timetuple()[:6])
                 zi.flag_bits |= 0x800  # UTF-8 文件名标志
@@ -378,7 +414,11 @@ async def integrate_export_progress(product_id: int, doc_keys: str, with_sign: b
             for idx, (module_key, doc_id) in enumerate(doc_list, 1):
                 module_name = next((m[1] for m in _DOC_MODULES if m[0] == module_key), module_key)
                 srv = _SERVERS.get(module_key)
-                method = getattr(srv, f"export_{module_key}", None) if srv else None
+                # 追溯分析：方法名 export_doc_trace，输出 xlsx
+                if module_key == "srs_doc_trace":
+                    method = getattr(srv, "export_doc_trace", None) if srv else None
+                else:
+                    method = getattr(srv, f"export_{module_key}", None) if srv else None
                 if not srv or not method:
                     failed.append(f"{module_key}:{doc_id}")
                     yield f"data: {json.dumps({'type': 'progress', 'idx': idx, 'total': total, 'name': module_name, 'status': 'skip'}, ensure_ascii=False)}\n\n"
@@ -387,7 +427,9 @@ async def integrate_export_progress(product_id: int, doc_keys: str, with_sign: b
                     out = io.BytesIO()
                     await method(out, doc_id)
                     out.seek(0)
-                    safe_name = _build_doc_name(module_key, doc_id)
+                    # 追溯分析输出 xlsx，其他输出 docx
+                    ext = "xlsx" if module_key == "srs_doc_trace" else "docx"
+                    safe_name = _build_doc_name(module_key, doc_id).replace(".docx", f".{ext}")
                     zi = zipfile.ZipInfo(safe_name, date_time=datetime.now().timetuple()[:6])
                     zi.flag_bits |= 0x800
                     zi.compress_type = zipfile.ZIP_DEFLATED
@@ -481,7 +523,11 @@ async def export_single_doc(module_key: str, doc_id: int, with_sign: bool = True
     srv = _SERVERS.get(module_key)
     if not srv:
         return Resp.resp_err(msg=f"不支持的文档模块：{module_key}")
-    method = getattr(srv, f"export_{module_key}", None)
+    # 追溯分析：方法名 export_doc_trace，输出 xlsx
+    if module_key == "srs_doc_trace":
+        method = getattr(srv, "export_doc_trace", None)
+    else:
+        method = getattr(srv, f"export_{module_key}", None)
     if not method:
         return Resp.resp_err(msg=f"模块 {module_key} 无导出方法")
     # 设置签名模式
@@ -493,13 +539,15 @@ async def export_single_doc(module_key: str, doc_id: int, with_sign: bool = True
         out.seek(0)
     except Exception as e:
         return Resp.resp_err(msg=f"生成文档失败：{str(e)[:80]}")
-    safe_name = _build_doc_name(module_key, doc_id)
+    ext = "xlsx" if module_key == "srs_doc_trace" else "docx"
+    safe_name = _build_doc_name(module_key, doc_id).replace(".docx", f".{ext}")
     encoded = urllib.parse.quote(safe_name)
-    ascii_filename = safe_name.encode("ascii", "ignore").decode("ascii") or "export.docx"
+    ascii_filename = safe_name.encode("ascii", "ignore").decode("ascii") or f"export.{ext}"
+    media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if module_key == "srs_doc_trace" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     disposition = f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{encoded}"
     return StreamingResponse(
         content=out,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        media_type=media_type,
         headers={
             "Content-Disposition": disposition,
         },
@@ -523,8 +571,11 @@ async def one_click_print_list(product_id: int, doc_keys: str):
         except ValueError:
             continue
         # 各模块的查看页路由 path（与前端路由一致）
-        view_path = f"/{module_key}/view/{doc_id}"
         module_name = next((m[1] for m in _DOC_MODULES if m[0] == module_key), module_key)
+        # 追溯分析是 Excel，不支持打印预览，跳过
+        if module_key == "srs_doc_trace":
+            continue
+        view_path = f"/{module_key}/view/{doc_id}"
         items.append({"module_key": module_key, "module_name": module_name, "doc_id": doc_id, "view_path": view_path})
     return Resp.resp_ok(data={"items": items})
 
