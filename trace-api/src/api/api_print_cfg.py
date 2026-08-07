@@ -4,6 +4,7 @@
 # 打印服务配置接口层：支持多台打印机配置（列表CRUD），配置IPP/TCP9100打印机，支持测试连接和一键打印。
 
 import io
+import asyncio
 from typing import Any
 from fastapi import APIRouter
 
@@ -243,7 +244,9 @@ async def ipp_print_doc(module_key: str, doc_id: int, with_sign: bool = True):
     set_export_sign_mode(with_sign)
     try:
         out = io.BytesIO()
-        await method(out, doc_id)
+        result = method(out, doc_id)
+        if asyncio.iscoroutine(result):
+            await result
         doc_bytes = out.getvalue()
     except Exception as e:
         return Resp.resp_err(msg=f"生成文档失败：{str(e)[:80]}")

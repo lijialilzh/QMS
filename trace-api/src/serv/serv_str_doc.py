@@ -904,7 +904,7 @@ class Server(object):
         return Resp.resp_ok(data=Page(total=total, rows=rows, page_index=page_index, page_size=page_size))
 
     # ---------------- 导出 Word（PDP 风格章节树） ----------------
-    async def export_str_doc(self, output, id: int):
+    async def export_str_doc(self, output, id: int, mode: str = "full"):
         resp = await self.get_str_doc(id)
         obj = resp.data
         if obj is None:
@@ -1183,7 +1183,14 @@ class Server(object):
 
         cover = next((s for s in sections if s.get("ref_type") == "cover"), None)
         revision = next((s for s in sections if s.get("ref_type") == "revision"), None)
-        body = [s for s in sections if s.get("ref_type") not in ("cover", "revision")]
+        all_body = [s for s in sections if s.get("ref_type") not in ("cover", "revision")]
+        # mode: "full"=全部, "main"=仅主体(不含兼容性附件), "compat"=仅兼容性测试附件
+        if mode == "compat":
+            body = [s for s in all_body if s.get("ref_type") == "attachment"]
+        elif mode == "main":
+            body = [s for s in all_body if s.get("ref_type") != "attachment"]
+        else:
+            body = all_body
 
         add_blank_lines(6)
         write_center_title((strip_num(cover.get("title")) if cover else "") or DOC_NAME, size=22.0, bold=True)

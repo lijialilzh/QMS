@@ -562,24 +562,30 @@ class Server(object):
 
     # ---------------- 文档 CRUD ----------------
     def add_cybersec_plan_doc(self, form: CybersecPlanDocForm):
-        content = form.content or copy.deepcopy(DEFAULT_CONTENT)
-        content = self.__normalize_content(content)
-        content = self.__autofill(content, form.product_id, form.version)
-        row = CybersecPlanDoc(
-            product_id=form.product_id, version=form.version, file_no=form.file_no or "",
-            change_log=form.change_log or "", content=content,
-        )
-        db.session.add(row)
         try:
-            db.session.flush()
-        except Exception as e:
-            db.session.rollback()
-            if "Duplicate" in str(e) or "UNIQUE" in str(e):
+            # 前置查重：同产品下相同版本已存在则拒绝
+            cnt = db.session.execute(
+                select(func.count(CybersecPlanDoc.id)).where(
+                    CybersecPlanDoc.product_id == form.product_id,
+                    CybersecPlanDoc.version == form.version,
+                )
+            ).scalar()
+            if cnt > 0:
                 return Resp.resp_err(msg=ts("msg_obj_exist"))
+            content = form.content or copy.deepcopy(DEFAULT_CONTENT)
+            content = self.__normalize_content(content)
+            content = self.__autofill(content, form.product_id, form.version)
+            row = CybersecPlanDoc(
+                product_id=form.product_id, version=form.version, file_no=form.file_no or "",
+                change_log=form.change_log or "", content=content,
+            )
+            db.session.add(row)
+            db.session.commit()
+            return Resp.resp_ok(data=CybersecPlanDocForm(id=row.id, product_id=row.product_id, version=row.version))
+        except Exception:
             logger.exception("")
-            return Resp.resp_err()
-        db.session.commit()
-        return Resp.resp_ok(data=CybersecPlanDocForm(id=row.id, product_id=row.product_id, version=row.version))
+            db.session.rollback()
+        return Resp.resp_err(msg=ts("msg_err_db"))
 
     def duplicate_cybersec_plan_doc(self, id: int, target_product_id: int = None):
         row = db.session.execute(select(CybersecPlanDoc).where(CybersecPlanDoc.id == id)).scalars().first()

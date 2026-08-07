@@ -66,10 +66,11 @@ async def get_str_doc(id: int):
 
 @router.get("/export_str_doc", summary="导出软件测试报告")
 @try_log(perm=Perms.str_doc_view)
-async def export_str_doc(id: int = 0):
+async def export_str_doc(id: int = 0, mode: str = "full"):
     output = io.BytesIO()
-    await server.export_str_doc(output, id)
+    await server.export_str_doc(output, id, mode=mode)
     timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"软件测试报告-{timestamp}.docx")
+    suffix = "-兼容性测试" if mode == "compat" else ""
+    filename = urllib.parse.quote(f"软件测试报告{suffix}-{timestamp}.docx")
     return StreamingResponse(content=output, media_type="application/octet-stream",
                              headers={"Content-Disposition": f"attachment; filename={filename}"})

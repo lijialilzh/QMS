@@ -666,11 +666,11 @@ export default () => {
         });
     };
 
-    const doExport = async () => {
+    const doExport = async (mode: string = "full") => {
         if (!id) return;
         dispatch({ exporting: true });
         try {
-            const res: any = await Api.export_str_doc({ id });
+            const res: any = await Api.export_str_doc({ id, mode });
             if (res.code !== Api.C_OK) message.error(res.msg || "导出失败");
         } catch (_e) {
             message.error("导出失败");
@@ -743,7 +743,8 @@ export default () => {
                             {ts("save")}
                         </Button>
                     )}
-                    <Button loading={data.exporting} onClick={doExport}>导出</Button>
+                    <Button loading={data.exporting} onClick={() => doExport("main")}>导出软件测试报告</Button>
+                    <Button loading={data.exporting} onClick={() => doExport("compat")}>导出软件测试报告-兼容性测试</Button>
                     <Button onClick={() => navigate("/str_docs")}>{ts("back")}</Button>
                 </Space>
             </div>

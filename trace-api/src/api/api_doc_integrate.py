@@ -6,6 +6,7 @@
 
 import io
 import json
+import asyncio
 import urllib.parse
 import zipfile
 from datetime import datetime
@@ -321,7 +322,9 @@ async def integrate_export(product_id: int, doc_keys: str, with_sign: bool = Tru
                 continue
             try:
                 out = io.BytesIO()
-                await method(out, doc_id)
+                result = method(out, doc_id)
+                if asyncio.iscoroutine(result):
+                    await result
                 out.seek(0)
                 ext = "xlsx" if module_key == "srs_doc_trace" else "docx"
                 safe_name = _build_doc_name(module_key, doc_id).replace(".docx", f".{ext}")
@@ -425,7 +428,9 @@ async def integrate_export_progress(product_id: int, doc_keys: str, with_sign: b
                     continue
                 try:
                     out = io.BytesIO()
-                    await method(out, doc_id)
+                    result = method(out, doc_id)
+                    if asyncio.iscoroutine(result):
+                        await result
                     out.seek(0)
                     # 追溯分析输出 xlsx，其他输出 docx
                     ext = "xlsx" if module_key == "srs_doc_trace" else "docx"
@@ -535,7 +540,9 @@ async def export_single_doc(module_key: str, doc_id: int, with_sign: bool = True
     set_export_sign_mode(with_sign)
     try:
         out = io.BytesIO()
-        await method(out, doc_id)
+        result = method(out, doc_id)
+        if asyncio.iscoroutine(result):
+            await result
         out.seek(0)
     except Exception as e:
         return Resp.resp_err(msg=f"生成文档失败：{str(e)[:80]}")
