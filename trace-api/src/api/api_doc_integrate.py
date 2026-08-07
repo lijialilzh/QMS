@@ -394,6 +394,10 @@ async def integrate_export_progress(product_id: int, doc_keys: str, with_sign: b
     from ..serv.serv_review_util import set_export_sign_mode, restore_export_sign_mode
     sign_token = set_export_sign_mode(with_sign)
 
+    # 在 SSE 生成器外部获取当前用户（ContextVar 在异步生成器中可能丢失）
+    _op_user = CtxUser.get()
+    _op_name = (_op_user.nick_name or _op_user.name or "") if _op_user else ""
+
     # 解析文档清单
     doc_list = []
     for item in doc_keys.split(","):
@@ -470,7 +474,7 @@ async def integrate_export_progress(product_id: int, doc_keys: str, with_sign: b
             rec = DocExportRecord(
                 product_id=prod.id, product_name=prod.name, full_version=prod.full_version,
                 doc_count=total, success_count=len(success), fail_count=len(failed),
-                filename=raw_filename, doc_names=", ".join(success[:50]), operator="",
+                filename=raw_filename, doc_names=", ".join(success[:50]), operator=_op_name,
             )
             db.session.add(rec)
             db.session.commit()
@@ -552,6 +556,32 @@ async def export_single_doc(module_key: str, doc_id: int, with_sign: bool = True
     ascii_filename = safe_name.encode("ascii", "ignore").decode("ascii") or f"export.{ext}"
     media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if module_key == "srs_doc_trace" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     disposition = f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{encoded}"
+    # 写导出记录（单文档导出也记录）
+    try:
+        _op_user = CtxUser.get()
+        _op_name = (_op_user.nick_name or _op_user.name or "") if _op_user else ""
+        _model_cls = next((m[3] for m in _DOC_MODULES if m[0] == module_key), None)
+        _prod_id = 0
+        _prod_name = ""
+        _full_ver = ""
+        if _model_cls:
+            _row = db.session.execute(select(_model_cls).where(_model_cls.id == doc_id)).scalars().first()
+            if _row:
+                _prod_id = getattr(_row, "product_id", 0) or 0
+                _prod = db.session.execute(select(Product).where(Product.id == _prod_id)).scalars().first()
+                if _prod:
+                    _prod_name = _prod.name or ""
+                    _full_ver = _prod.full_version or ""
+        from ..model.doc_record import DocExportRecord
+        rec = DocExportRecord(
+            product_id=_prod_id, product_name=_prod_name, full_version=_full_ver,
+            doc_count=1, success_count=1, fail_count=0,
+            filename=safe_name, doc_names=safe_name, operator=_op_name,
+        )
+        db.session.add(rec)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
     return StreamingResponse(
         content=out,
         media_type=media_type,
@@ -559,9 +589,6 @@ async def export_single_doc(module_key: str, doc_id: int, with_sign: bool = True
             "Content-Disposition": disposition,
         },
     )
-
-
-@router.get("/one_click_print_list", summary="一键打印：返回选中文档的打印URL清单")
 @try_log(perm=Perms.product_view)
 async def one_click_print_list(product_id: int, doc_keys: str):
     """返回选中文档的可打印视图URL清单，前端逐个打开新窗口打印。"""
@@ -594,9 +621,13 @@ from ..model.doc_record import DocExportRecord, DocPrintRecord
 @router.get("/list_export_records", summary="查询导出记录")
 @try_log(perm=Perms.product_view)
 async def list_export_records(page_index: int = 0, page_size: int = 100):
-    total = db.session.execute(select(func.count(DocExportRecord.id))).scalar() or 0
+    _op_user = CtxUser.get()
+    _op_name = (_op_user.nick_name or _op_user.name or "") if _op_user else ""
+    _is_admin = (_op_user and _op_user.id == 1)
+    _where = [] if _is_admin else [DocExportRecord.operator == _op_name]
+    total = db.session.execute(select(func.count(DocExportRecord.id)).where(*_where)).scalar() or 0
     rows = db.session.execute(
-        select(DocExportRecord).order_by(DocExportRecord.id.desc())
+        select(DocExportRecord).where(*_where).order_by(DocExportRecord.id.desc())
         .offset(page_index * page_size).limit(page_size)
     ).scalars().all()
     return Resp.resp_ok(data=Page(total=total, rows=[{
@@ -609,9 +640,13 @@ async def list_export_records(page_index: int = 0, page_size: int = 100):
 @router.get("/list_print_records", summary="查询打印记录")
 @try_log(perm=Perms.product_view)
 async def list_print_records(page_index: int = 0, page_size: int = 100):
-    total = db.session.execute(select(func.count(DocPrintRecord.id))).scalar() or 0
+    _op_user = CtxUser.get()
+    _op_name = (_op_user.nick_name or _op_user.name or "") if _op_user else ""
+    _is_admin = (_op_user and _op_user.id == 1)
+    _where = [] if _is_admin else [DocPrintRecord.operator == _op_name]
+    total = db.session.execute(select(func.count(DocPrintRecord.id)).where(*_where)).scalar() or 0
     rows = db.session.execute(
-        select(DocPrintRecord).order_by(DocPrintRecord.id.desc())
+        select(DocPrintRecord).where(*_where).order_by(DocPrintRecord.id.desc())
         .offset(page_index * page_size).limit(page_size)
     ).scalars().all()
     return Resp.resp_ok(data=Page(total=total, rows=[{
@@ -627,6 +662,8 @@ async def add_print_record(form: dict):
     """前端一键打印完成后调用，写入打印记录。"""
     from ..model.doc_record import DocPrintRecord
     try:
+        _op_user = CtxUser.get()
+        _op_name = (_op_user.nick_name or _op_user.name or "") if _op_user else ""
         rec = DocPrintRecord(
             product_id=int(form.get("product_id") or 0),
             product_name=form.get("product_name") or "",
@@ -636,7 +673,7 @@ async def add_print_record(form: dict):
             fail_count=int(form.get("fail_count") or 0),
             printer_name=form.get("printer_name") or "",
             doc_names=form.get("doc_names") or "",
-            operator=form.get("operator") or "",
+            operator=_op_name,
         )
         db.session.add(rec)
         db.session.commit()
