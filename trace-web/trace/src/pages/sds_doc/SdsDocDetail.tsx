@@ -13,7 +13,135 @@ import * as ApiSrsDoc from "@/api/ApiSrsDoc";
 import * as ApiSdsReqd from "@/api/ApiSdsReqd";
 import * as ApiSdsTrace from "@/api/ApiSdsTrace";
 import * as ApiDocFile from "@/api/ApiDocFile";
+import * as ApiMember from "@/api/ApiProjectMember";
+import * as ApiTimeline from "@/api/ApiProjectTimeline";
+import * as ApiPersonSign from "@/api/ApiPersonSign";
 import TreeStructure, { TreeNode } from "./components/TreeStructure";
+
+const SDS_COVER_DATE_KEYWORDS = ["软件详细设计", "详细设计"];
+
+const SDS_APPROVAL_HEADERS = [
+    { code: "label1", name: "" },
+    { code: "value1", name: "" },
+    { code: "label2", name: "" },
+    { code: "value2", name: "" },
+];
+
+const getSdsTableText = (node: TreeNode) => {
+    const table = node.table;
+    if (!table?.rows?.length) return "";
+    const headerTxt = (table.headers || []).map((h: any) => h?.name || "").join(" ");
+    const rowTxt = (table.rows || []).map((row: any) => Object.values(row || {}).join(" ")).join(" ");
+    return `${headerTxt} ${rowTxt}`;
+};
+
+const isSdsCoverTableNode = (node: TreeNode) => {
+    const txt = getSdsTableText(node);
+    return ["编制科室", "编制部门", "文件版本", "编制人", "审核人", "批准人", "生效日期"]
+        .filter((k) => txt.includes(k)).length >= 3;
+};
+
+const isSdsChangeLogTableNode = (node: TreeNode) => {
+    const txt = getSdsTableText(node);
+    return ["修改日期", "版本号", "修订说明", "修订人", "批准人"].filter((k) => txt.includes(k)).length >= 3;
+};
+
+const normalizeSdsApprovalRows = (node: TreeNode) => {
+    const headers = node.table?.headers || [];
+    const rows = node.table?.rows || [];
+    const first = rows[0] || {};
+    if (headers.some((header: any) => header.code === "label1")) {
+        return rows;
+    }
+    const getVal = (code: string) => (first as any)[code] || "";
+    return [
+        { label1: "编制部门", value1: getVal("dept"), label2: "文件版本", value2: getVal("version") },
+        { label1: "编制人", value1: getVal("author"), label2: "日期", value2: "" },
+        { label1: "审核人", value1: getVal("reviewer"), label2: "日期", value2: "" },
+        { label1: "批准人", value1: getVal("approver"), label2: "日期", value2: "" },
+        { label1: "生效日期", value1: getVal("effective_date"), label2: "", value2: "" },
+    ];
+};
+
+const computeSdsCoverDate = (rows: any[]): string => {
+    const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10) || 0;
+    const dateKey = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
+    const cellVals = (r: any) => Object.values(r.cells || {});
+    const match = (r: any, needReview: boolean) => {
+        if ((r.row_type || "date") !== "date" || !num(r.year) || !num(r.month)) return false;
+        const vals = cellVals(r);
+        const hitName = vals.some((v: any) => SDS_COVER_DATE_KEYWORDS.some((k) => String(v || "").includes(k)));
+        const hitReview = vals.some((v: any) => String(v || "").includes("评审"));
+        return hitName && (needReview ? hitReview : true);
+    };
+    const pool = (rows || []).filter((r) => match(r, true));
+    const candidates = pool.length ? pool : (rows || []).filter((r) => match(r, false));
+    if (!candidates.length) return "";
+    const best = candidates.reduce((a, b) => (dateKey(b) > dateKey(a) ? b : a));
+    return `${num(best.year)}.${String(num(best.month)).padStart(2, "0")}.${String(num(best.day) || 1).padStart(2, "0")}`;
+};
+
+type CoverRevisionAutofillInfo = {
+    coverDate: string;
+    version: string;
+    resolveSigner: (label: string) => string;
+    reviser: string;
+    approver: string;
+};
+
+const applySdsCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAutofillInfo): { nodes: TreeNode[]; changed: boolean } => {
+    let changed = false;
+    const setIf = (row: Record<string, string>, key: string, val: string) => {
+        if (val && !String(row[key] ?? "").trim()) {
+            row[key] = val;
+            changed = true;
+        }
+    };
+    const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+        const children = walk((node.children || []) as TreeNode[]);
+        let nextNode: TreeNode = { ...node, children };
+        if (nextNode.table && isSdsCoverTableNode(nextNode)) {
+            const rows = normalizeSdsApprovalRows(nextNode).map((r: any) => ({ ...r }));
+            if (rows.length) {
+                if (info.version && String(rows[0].value2 ?? "") !== info.version) {
+                    rows[0].value2 = info.version;
+                    changed = true;
+                }
+                setIf(rows[0], "value1", "研发部");
+            }
+            (["编制人", "审核人", "批准人"] as const).forEach((label, idx) => {
+                const row = rows[idx + 1];
+                if (!row) return;
+                const sig = info.resolveSigner(label);
+                if (sig && !String(row.value1 ?? "").startsWith("data:image") && !String(row.value1 ?? "").trim()) {
+                    row.value1 = sig;
+                    changed = true;
+                }
+                setIf(row, "value2", info.coverDate);
+            });
+            if (rows[4]) {
+                setIf(rows[4], "value1", info.coverDate);
+            }
+            nextNode = { ...nextNode, table: { ...nextNode.table!, headers: SDS_APPROVAL_HEADERS, rows } };
+        } else if (nextNode.table && isSdsChangeLogTableNode(nextNode)) {
+            const rows = [...(nextNode.table.rows || [])].map((r: any) => ({ ...r }));
+            while (rows.length < 1) rows.push({});
+            const row = rows[0] || {};
+            setIf(row, "change_date", info.coverDate);
+            if (info.version) setIf(row, "version_no", info.version);
+            if (!String(row.change_desc ?? "").trim()) {
+                row.change_desc = "首次发布";
+                changed = true;
+            }
+            setIf(row, "changer", info.reviser);
+            setIf(row, "approver", info.approver);
+            rows[0] = row;
+            nextNode = { ...nextNode, table: { ...nextNode.table, rows } };
+        }
+        return nextNode;
+    });
+    return { nodes: walk(nodes), changed };
+};
 
 /** 详细设计页：antd Input/TextArea 字号来自 theme token.inputFontSize（= token.fontSize），需在此统一为 13 */
 const SDS_DOC_DETAIL_THEME = {
@@ -3040,6 +3168,47 @@ export default () => {
             dispatch({ treeStructure: logResult.nodes });
         }
     }, [displayDocVersion, data.treeStructure]);
+
+    useEffect(() => {
+        if (!displayProductId || !(data.treeStructure as TreeNode[] || []).length) return;
+        let cancelled = false;
+        Promise.all([
+            ApiTimeline.list_timeline({ prod_id: displayProductId }).catch(() => null),
+            ApiMember.list_project_member({ prod_id: displayProductId, page_index: 0, page_size: 1000 }).catch(() => null),
+            ApiPersonSign.list_person_sign({ page_index: 0, page_size: 1000 }).catch(() => null),
+        ]).then(([tl, mb, ps]: any[]) => {
+            if (cancelled) return;
+            const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
+            const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
+            const signRows = ps && ps.code === Api.C_OK ? ((ps.data && ps.data.rows) || []) : [];
+            const signMap: Record<string, string> = {};
+            signRows.forEach((s: any) => {
+                if (s.name && s.sign_img) signMap[String(s.name).trim()] = s.sign_img;
+            });
+            const findRole = (pred: (role: string) => boolean) => {
+                const hit = members.find((m: any) => pred(String(m.role || "")));
+                return hit ? String(hit.name || "").trim() : "";
+            };
+            const tpm = findRole((r) => r.includes("TPM"));
+            const devLead = findRole((r) => r.includes("研发负责人"));
+            const resolveSigner = (label: string) => {
+                const who = label === "编制人" ? tpm : label === "审核人" || label === "批准人" ? devLead : "";
+                return who ? (signMap[who] || who) : "";
+            };
+            const result = applySdsCoverRevisionAutofill(data.treeStructure as TreeNode[], {
+                coverDate: computeSdsCoverDate(tlRows),
+                version: String(displayDocVersion || ""),
+                resolveSigner,
+                reviser: tpm,
+                approver: devLead,
+            });
+            if (result.changed) {
+                treeStructureRef.current = result.nodes;
+                dispatch({ treeStructure: result.nodes });
+            }
+        });
+        return () => { cancelled = true; };
+    }, [displayProductId, displayDocVersion, data.treeStructure]);
 
     const renderApprovalTable = (node: TreeNode, keyPrefix: string) => {
         const columns = approvalHeaders.map((header: any, index: number) => ({
