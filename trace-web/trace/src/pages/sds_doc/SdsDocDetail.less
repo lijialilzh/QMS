@@ -34,17 +34,41 @@
 
     .detail-content {
         flex: 1;
-        padding: 24px;
+        padding: 16px;
         display: flex;
         flex-direction: column;
         overflow-y: auto;
         overflow-x: hidden;
+    }
 
-        .page-actions {
-            margin-bottom: 24px;
-            padding-bottom: 16px;
-            border-bottom: 1px solid #e8e8e8;
-            flex-shrink: 0;
+    .sds-toolbar-form {
+        flex-shrink: 0;
+
+        .sds-toolbar {
+            gap: 12px;
+            padding: 8px 16px;
+            background: #ffffff;
+            border-bottom: 1px solid #eef0f3;
+            flex-wrap: wrap;
+            row-gap: 6px;
+        }
+
+        .sds-toolbar-item {
+            margin-right: 0;
+            margin-bottom: 0;
+        }
+
+        .sds-toolbar-meta {
+            display: inline-flex;
+            align-items: center;
+
+            .form-display-label {
+                color: rgba(0, 0, 0, 0.65);
+            }
+            .form-display-value {
+                color: rgba(0, 0, 0, 0.85);
+                font-weight: 600;
+            }
         }
     }
 
@@ -71,13 +95,9 @@
         background-color: #ffffff;
         border: 1px solid #d9d9d9;
         border-radius: 6px;
-        padding: 24px;
-        margin-top: 24px;
+        padding: 12px;
+        margin-top: 0;
         flex-shrink: 0;
-
-        &:first-child {
-            margin-top: 0;
-        }
 
         // 目录结构区域自然展开
         &.doc-section-flex {
@@ -117,16 +137,106 @@
             padding: 16px;
             min-height: 100px;
             color: #999999;
-            margin-bottom: 16px;
+            margin-top: 16px;
 
             &.has-content {
                 color: #333333;
             }
         }
 
-        // 覆盖公共 .ant-table-wrapper { height: 0 }，使设计列表和需求追溯表能正常显示
         .ant-table-wrapper {
-            height: auto;
+            height: auto !important;
+        }
+        .ant-spin-nested-loading,
+        .ant-spin-container {
+            height: auto !important;
+        }
+        .ant-table {
+            flex: none;
+            overflow-y: visible;
+        }
+    }
+
+    .extracted-doc-section {
+        .extracted-item-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #46586b;
+            margin: 0 0 6px;
+        }
+
+        .extracted-file-name {
+            border: 1px solid #d9d9d9;
+            border-radius: 6px;
+            padding: 8px 12px;
+            background: #fafafa;
+        }
+
+        .extracted-empty {
+            color: #999;
+            padding: 6px 0;
+        }
+
+        .srs-cover-table,
+        .srs-change-log-table {
+            .ant-table {
+                border: none;
+            }
+
+            .ant-table-cell {
+                border-color: #e8edf2 !important;
+                padding: 4px 8px !important;
+            }
+
+            .ant-table-thead > tr > th.ant-table-cell {
+                background: #f5f8fc !important;
+                color: #46586b;
+                font-weight: 600;
+            }
+
+            .ant-table-thead > tr > th.ant-table-cell::before {
+                display: none !important;
+            }
+
+            .ant-table-tbody > tr:hover > td.ant-table-cell {
+                background: transparent !important;
+            }
+
+            .ant-input,
+            .ant-input-textarea textarea {
+                border: none !important;
+                box-shadow: none !important;
+                background: transparent !important;
+                padding: 2px 4px !important;
+            }
+        }
+
+        .srs-approval-table .ant-table-thead {
+            display: none;
+        }
+
+        .srs-extracted-edit-table.srs-cover-table,
+        .srs-extracted-edit-table.srs-change-log-table {
+            .ant-table-thead > tr > th.ant-table-cell,
+            .ant-table-tbody > tr > td.ant-table-cell {
+                height: 38px !important;
+                line-height: 1.5 !important;
+                padding-top: 3px !important;
+                padding-bottom: 3px !important;
+                vertical-align: middle !important;
+            }
+
+            .ant-table-tbody > tr > td.ant-table-cell .ant-input {
+                height: 28px !important;
+                line-height: 28px !important;
+            }
+
+            .ant-table-tbody > tr > td.ant-table-cell .ant-input-textarea textarea {
+                min-height: 28px !important;
+                line-height: 1.5 !important;
+                padding-top: 3px !important;
+                padding-bottom: 3px !important;
+            }
         }
     }
 
@@ -141,27 +251,28 @@
         }
     }
 
-    .extracted-doc-section {
-        .extracted-item-title {
-            font-weight: 600;
-            margin: 14px 0 8px;
-        }
+    // 左目录单章编辑：操作按钮不换行、正文独占一行且与标题左对齐
+    &:not(.read-only) {
+        .tree-structure-container.srs-tree-layout {
+            .srs-tree-editor .node-row {
+                .node-actions {
+                    flex: 0 0 auto !important;
+                    white-space: nowrap !important;
+                }
 
-        .extracted-file-name {
-            border: 1px solid #d9d9d9;
-            border-radius: 6px;
-            padding: 8px 12px;
-            background: #fafafa;
-        }
-
-        .extracted-empty {
-            color: #999;
-            padding: 6px 0;
+                .node-text-area {
+                    order: 20 !important;
+                    flex: 1 1 100% !important;
+                    min-width: 0 !important;
+                    margin-left: 0 !important;
+                    align-self: stretch !important;
+                }
+            }
         }
     }
 }
 
-// 弹框内表格覆盖全局 .ant-table-wrapper { height: 0 }
+// 弹框内表格覆盖全局
 .reqd-list-modal,
 .trace-list-modal {
     .ant-table-wrapper {

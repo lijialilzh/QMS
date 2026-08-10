@@ -1,5 +1,5 @@
 import "./TreeStructure.less";
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { Button, Input, Space, Popconfirm, Upload, Table, message, Empty, Tooltip, Image } from "antd";
 import { PlusOutlined, DeleteOutlined, TableOutlined, EditOutlined, UploadOutlined, FileOutlined, CaretRightOutlined, CaretDownOutlined, CloseOutlined } from "@ant-design/icons";
 import { numberToChinese } from "@/common";
@@ -87,6 +87,12 @@ interface TreeNodeItemProps {
     onFetchSrsTrace?: () => void;  // 获取SRS追溯
     traceSynced?: boolean;
     readOnlyChapterOffset?: number;
+    /** 左目录单章编辑：不在右侧重复渲染子章节（子章节由目录切换） */
+    renderChildren?: boolean;
+    /** 左目录单章编辑：隐藏同级/子级新增按钮（目录区统一新增） */
+    disableHierarchyActions?: boolean;
+    /** 左目录单章编辑：隐藏「一级菜单」等级前缀 */
+    hideLevelPrefix?: boolean;
 }
 
 function isUuidLike(text: string): boolean {
@@ -119,6 +125,30 @@ function shouldAssignChapterNo(node: TreeNode): boolean {
 function isImageNodeOnly(node: TreeNode): boolean {
     const hasTable = !!(node.table && Array.isArray(node.table.headers) && node.table.headers.length > 0);
     return !!node.img_url && !node.text && !hasTable && (!node.children || node.children.length === 0);
+}
+
+function isImportedImageNode(node: TreeNode): boolean {
+    const title = String(node.title || "").trim();
+    return /^导入图片\d*$/.test(title) && isImageNodeOnly(node);
+}
+
+/** 左目录排除：图题/导入图片等内容型子节点，不是真实章节 */
+function isEmbeddedImageNode(node: TreeNode): boolean {
+    const title = String(node.title || node.label || "").trim();
+    if (isImportedImageNode(node)) return true;
+    if (!isImageNodeOnly(node)) return false;
+    return (
+        /^导入图片\d*$/.test(title)
+        || /^图\s*\d+/i.test(title)
+        || /程序逻辑|流程图|结构图|拓扑图/.test(title)
+    );
+}
+
+function isEmbeddedTableNode(node: TreeNode): boolean {
+    const title = String(node.title || "").trim();
+    const hasTable = hasRenderableTable(node.table);
+    const noExtra = !node.img_url && !String(node.text || "").trim() && (!node.children || node.children.length === 0);
+    return /^导入表格\d*$/.test(title) && hasTable && noExtra;
 }
 
 function hasTableInSubtree(node: TreeNode | undefined): boolean {
@@ -311,6 +341,33 @@ function extractSdsCodeFromNodeText(text?: string): { code: string; nextText: st
     return { code: "", nextText: raw };
 }
 
+function normalizeSdsCodeValue(code?: string): string {
+    return String(code || "").replace(/\s+/g, "").toUpperCase();
+}
+
+/** SDS 编号已在专用输入框展示时，从正文中去掉重复的编号行 */
+function stripRedundantSdsCodeFromText(text?: string, sdsCode?: string): string {
+    const raw = String(text || "");
+    const code = normalizeSdsCodeValue(sdsCode);
+    if (!raw) return raw;
+    let next = extractSdsCodeFromNodeText(raw).nextText;
+    if (!code) return next;
+    const lines = next.replace(/\r/g, "").split("\n");
+    const filtered = lines.filter((line) => {
+        const trimmed = String(line || "").trim();
+        if (!trimmed) return true;
+        const compact = trimmed.replace(/\s+/g, "").toUpperCase();
+        if (compact === code) return false;
+        const designMatch = trimmed.match(/^设计编号\s*[：:]\s*(.*)$/);
+        if (designMatch) {
+            const designCode = normalizeSdsCodeValue(extractSdsCodeToken(designMatch[1]) || designMatch[1]);
+            if (designCode === code) return false;
+        }
+        return true;
+    });
+    return filtered.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+|\n+$/g, "");
+}
+
 function isSyntheticTableCaption(value?: string): boolean {
     const txt = String(value || "").trim().toLowerCase();
     if (!txt) return false;
@@ -427,7 +484,7 @@ function shiftChapterMajor(chapter: string, offset: number): string {
     return `${nextMajor}${m[2] || ""}`;
 }
 
-const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onSdsCodeChange, onImageChange, onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, readOnlyChapterOffset = 0 }: TreeNodeItemProps) => {
+const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onSdsCodeChange, onImageChange, onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false }: TreeNodeItemProps) => {
     const { t: ts } = useTranslation();
     const [fileList, setFileList] = useState<UploadFile[]>([]);
     const [uploadLoading, setUploadLoading] = useState(false);
@@ -786,14 +843,17 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const fallbackDbHeadingForOwnTable = readOnly && hasTable && !ownTableCaption
         ? (dbHeadingCandidates.length > 0 ? dbHeadingCandidates[dbHeadingCandidates.length - 1] : "")
         : "";
+    const baseNodeText = resolvedSdsCode
+        ? stripRedundantSdsCodeFromText(node.text, resolvedSdsCode)
+        : (node.text || "");
     const displayNodeText = readOnly
         ? (tableTargetCount > 0
             ? tableBodyLines
                 .filter((line) => !(fallbackDbHeadingForOwnTable && line === fallbackDbHeadingForOwnTable))
                 .join("\n")
-            : (node.text || ""))
-        : (node.text || "");
-    const editDisplayNodeText = tableTargetCount > 0 ? tableCaptionPack.body : (node.text || "");
+            : baseNodeText)
+        : baseNodeText;
+    const editDisplayNodeText = tableTargetCount > 0 ? tableCaptionPack.body : baseNodeText;
     const interfaceOutputSplit = (() => {
         if (!(readOnly && isInterfaceSubSection && (hasTable || inlineTableChildren.length > 0) && String(displayNodeText || "").trim())) return null;
         if (isReviewStyleTable(node.table)) return null;
@@ -1232,7 +1292,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   ) : (
                       <span className="node-expand-placeholder" />
                   )}
-                  {!readOnly && (
+                  {!readOnly && !disableHierarchyActions && (
                     <Tooltip title={ts('sds_doc.add_sibling_before') || '在前面添加同级节点'}>
                       <Button
                         type="text"
@@ -1245,14 +1305,14 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   )}
                   {readOnly ? (
                       <span className="node-title-prefix">{displayChapterFromDoc || ""}</span>
-                  ) : (
+                  ) : !hideLevelPrefix ? (
                       <span
                           className="node-title-prefix"
                           style={compactWithImage ? { ...chapterTextStyle, marginRight: 8 } : chapterTextStyle}
                       >
                           {numberToChinese(level + 1)}{ts('level_menu')}
                       </span>
-                  )}
+                  ) : null}
                   {readOnly ? (
                       <div className="node-title">{displayTitle}</div>
                   ) : (
@@ -1407,7 +1467,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                       compactStyle={compactWithImage ? { marginRight: 6, height: 28, padding: "0 8px", fontSize: 13 } : undefined}
                       ts={ts}
                   />
-                  {!readOnly && (
+                  {!readOnly && !disableHierarchyActions && (
                     <Tooltip title={ts('sds_doc.add_sibling_after') || '在后面添加同级节点'}>
                       <Button
                         type="text"
@@ -1421,7 +1481,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   {!readOnly && (
                   <Space className="node-actions" size={compactWithImage ? 4 : 8}>
                       {
-                        level < 2 && (
+                        !disableHierarchyActions && level < 2 && (
                         <Button
                           size="small"
                           icon={<PlusOutlined />}
@@ -1780,7 +1840,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   ), `aligned-inline-table-${child.id}-${idx}`);
               })}
           </div>
-            {showExpandedBody && (() => {
+            {showExpandedBody && renderChildren !== false && (() => {
                 const childrenForRender: TreeNode[] = finalVisibleChildren;
                 return childrenForRender.map((child) => {
                 const childTitle = String(child.title || "").trim();
@@ -1856,15 +1916,28 @@ interface TreeStructureProps {
     onOpenTraceList?: () => void;  // 打开需求追溯表弹框
     onFetchSrsTrace?: () => void;
     traceSynced?: boolean;
+    extraNavSections?: { key: string; title: string; content: ReactNode }[];
+    onAddRoot?: () => void;
 }
 
-export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = [], onNodeDelete, readOnly, readOnlyRootWrapper = true, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced }: TreeStructureProps) => {
+export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = [], onNodeDelete, readOnly, readOnlyRootWrapper = true, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, extraNavSections = [], onAddRoot }: TreeStructureProps) => {
     const { t: ts } = useTranslation();
     const [nodes, setNodes] = useState<TreeNode[]>(value);
     const [tableModalVisible, setTableModalVisible] = useState(false);
     const [currentNodeId, setCurrentNodeId] = useState<number | null>(null);
     const [initialTableData, setInitialTableData] = useState<TableDataWithHeaders | undefined>(undefined);
     const [tableCellsBackup, setTableCellsBackup] = useState<TableData["cells"] | undefined>(undefined);
+    const [activeNodeId, setActiveNodeId] = useState<string | number | null>(null);
+    const [navCollapsedIds, setNavCollapsedIds] = useState<Set<string>>(new Set());
+    const toggleNavCollapse = (id: string | number) => {
+        setNavCollapsedIds((prev) => {
+            const next = new Set(prev);
+            const key = String(id);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+        });
+    };
     const hydrateSdsCodeFallback = (nodeList: TreeNode[]): TreeNode[] => {
         return (nodeList || []).map((node) => {
             const nextChildren = hydrateSdsCodeFallback(node.children || []);
@@ -1883,8 +1956,19 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                             text: fallback.nextText || nextNode.text,
                         };
                     } else if (directCode) {
-                        nextNode = { ...nextNode, sds_code: directCode };
+                        nextNode = {
+                            ...nextNode,
+                            sds_code: directCode,
+                            text: stripRedundantSdsCodeFromText(nextNode.text, directCode),
+                        };
                     }
+                }
+                const resolvedCode = String(nextNode.sds_code ?? "").trim();
+                if (resolvedCode) {
+                    nextNode = {
+                        ...nextNode,
+                        text: stripRedundantSdsCodeFromText(nextNode.text, resolvedCode),
+                    };
                 }
             }
             return nextNode;
@@ -1978,6 +2062,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
         }));
 
         updateNodes(newNodes);
+        return newNode.id;
     };
 
     const handleAddSibling = (targetId: number, position: 'before' | 'after', _defaultTitle: string) => {
@@ -2345,73 +2430,233 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
         return firstVisibleMajor > 1 ? firstVisibleMajor - 1 : 0;
     })();
 
+    const useNavLayout = extraNavSections.length > 0;
+    const extraKeyPrefix = "__extra_";
+    const findNavNodeById = (list: TreeNode[], id: string | number | null): TreeNode | null => {
+        if (id === null || id === undefined) return null;
+        for (const item of list || []) {
+            if (String(item.id) === String(id)) return item;
+            const inChild = findNavNodeById(item.children || [], id);
+            if (inChild) return inChild;
+        }
+        return null;
+    };
+    const isNavChapter = (n: TreeNode): boolean => {
+        if (isEmbeddedImageNode(n) || isEmbeddedTableNode(n)) return false;
+        if (n.ref_type === "sds_reqds" || n.ref_type === "sds_traces") return false;
+        return true;
+    };
+    const canAddChildInNav = (node: TreeNode, depth: number): boolean => (
+        !readOnly &&
+        depth < 2 &&
+        node.ref_type !== "sds_reqds" &&
+        node.ref_type !== "sds_traces" &&
+        !isDocImageRefType(node.ref_type)
+    );
+    const handleAddChildFromNav = (parentId: number) => {
+        const newId = handleAdd(parentId);
+        setNavCollapsedIds((prev) => {
+            const next = new Set(prev);
+            next.delete(String(parentId));
+            return next;
+        });
+        if (newId !== undefined && newId !== null) {
+            setActiveNodeId(newId);
+        }
+    };
+    const activeExtra = extraNavSections.find((s) => String(activeNodeId) === `${extraKeyPrefix}${s.key}`) || null;
+    const defaultActiveNode = visibleNodes[0] || null;
+    const activeNode = activeExtra
+        ? null
+        : (findNavNodeById(visibleNodes, activeNodeId) || (activeNodeId === null && extraNavSections.length > 0 ? null : defaultActiveNode));
+    const fallbackToFirstExtra = activeNodeId === null && !activeExtra && extraNavSections.length > 0;
+    const effectiveExtra = activeExtra || (fallbackToFirstExtra ? extraNavSections[0] : null);
+    const effectiveNode = effectiveExtra ? null : (activeNode || defaultActiveNode);
+    const renderNav = (list: TreeNode[], depth: number): JSX.Element[] => (
+        (list || []).filter(isNavChapter).map((node) => {
+            const kids = (node.children || []).filter(isNavChapter);
+            const hasKids = kids.length > 0;
+            const collapsed = navCollapsedIds.has(String(node.id));
+            const isActive = !!effectiveNode && String(node.id) === String(effectiveNode.id);
+            return (
+                <div key={`nav-${node.id}`}>
+                    <div
+                        className={`srs-nav-item${isActive ? " active" : ""}`}
+                        style={{ paddingLeft: 8 + depth * 14 }}
+                        onClick={() => setActiveNodeId(node.id)}
+                    >
+                        {hasKids ? (
+                            <span
+                                className="srs-nav-caret"
+                                onClick={(e) => { e.stopPropagation(); toggleNavCollapse(node.id); }}
+                            >
+                                {collapsed ? <CaretRightOutlined /> : <CaretDownOutlined />}
+                            </span>
+                        ) : (
+                            <span className="srs-nav-caret-placeholder" />
+                        )}
+                        <span className="srs-nav-title" title={node.title || ""}>{node.title || ts("please_input_title")}</span>
+                        {canAddChildInNav(node, depth) && (
+                            <Tooltip title={ts("sds_doc.add_sub_chapter") || ts("srs_doc.add_sub_chapter") || "添加子章节"}>
+                                <PlusOutlined
+                                    className="srs-nav-add-child"
+                                    onClick={(e) => { e.stopPropagation(); handleAddChildFromNav(node.id); }}
+                                />
+                            </Tooltip>
+                        )}
+                    </div>
+                    {hasKids && !collapsed && renderNav(kids, depth + 1)}
+                </div>
+            );
+        })
+    );
+
+    const renderLegacyTree = () => {
+        let rootChapterCounter = 0;
+        return visibleNodes.map((node) => {
+            const nodeTitle = String(node.title || "").trim();
+            const nodeHasTable = hasRenderableTable(node.table);
+            const nodeIsPureTableCarrier = !!(
+                nodeHasTable &&
+                !node.img_url &&
+                !String(node.text || "").trim() &&
+                (!node.children || node.children.length === 0)
+            );
+            const nodeHasTableDesc = hasTableInSubtree(node);
+            const nodeIsTableCaptionCarrier = !!(
+                nodeHasTableDesc &&
+                isLikelyTableCaptionLine(nodeTitle) &&
+                !/数据库\s*[:：]?$/.test(String(nodeTitle || "").trim()) &&
+                !String(node.text || "").trim()
+            );
+            const hasMeaningfulTitle = readOnly
+                ? !!String(nodeTitle || "").trim()
+                : (!nodeIsPureTableCarrier && !nodeIsTableCaptionCarrier && shouldAssignChapterNo(node));
+            const rootChapterNo = hasMeaningfulTitle ? `${++rootChapterCounter}` : "";
+            const rootItemProps = {
+                node,
+                level: 0,
+                chapterNo: rootChapterNo,
+                docId,
+                readOnly,
+                onAdd: handleAdd,
+                onAddSibling: handleAddSibling,
+                onDelete: handleDelete,
+                onTitleChange: handleTitleChange,
+                onSdsCodeChange: handleSdsCodeChange,
+                onImageChange: handleImageChange,
+                onContentChange: handleContentChange,
+                onAddTable: handleAddTable,
+                onImportTable: handleImportTable,
+                onEditTable: handleEditTable,
+                onDeleteTable: handleDeleteTable,
+                onOpenReqdList,
+                onOpenTraceList,
+                onFetchSrsTrace,
+                traceSynced,
+                readOnlyChapterOffset: effectiveReadOnlyChapterOffset,
+            };
+            return readOnly && !readOnlyRootWrapper ? (
+                <TreeNodeItem key={node.id} {...rootItemProps} />
+            ) : (
+                <div className="tree-node-item-wrapper" key={node.id}>
+                    <TreeNodeItem {...rootItemProps} />
+                </div>
+            );
+        });
+    };
+
     return (
         <>
             <div
-                className={`tree-structure-container ${readOnly ? "read-only-mode" : ""}${
+                className={`tree-structure-container${useNavLayout ? " srs-tree-layout" : ""}${readOnly ? " read-only-mode" : ""}${
                     readOnly && !readOnlyRootWrapper ? " read-only-flat-roots" : ""
                 }`}
             >
-                {visibleNodes.length === 0 ? (
+                {useNavLayout ? (
+                    visibleNodes.length === 0 && extraNavSections.length === 0 ? (
+                        <Empty
+                            image={Empty.PRESENTED_IMAGE_SIMPLE}
+                            description={ts("sds_doc.empty_directory_structure")}
+                            className="tree-structure-empty"
+                        />
+                    ) : (
+                        <>
+                            <div className="srs-tree-nav">
+                                <div className="srs-tree-nav-head">{ts("sds_doc.directory_structure") || ts("srs_doc.directory") || "目录"}</div>
+                                <div className="srs-tree-nav-body">
+                                    {extraNavSections.map((sec) => {
+                                        const isActive = !!effectiveExtra && effectiveExtra.key === sec.key;
+                                        return (
+                                            <div
+                                                key={`nav-extra-${sec.key}`}
+                                                className={`srs-nav-item${isActive ? " active" : ""}`}
+                                                style={{ paddingLeft: 8 }}
+                                                onClick={() => setActiveNodeId(`${extraKeyPrefix}${sec.key}`)}
+                                            >
+                                                <span className="srs-nav-caret-placeholder" />
+                                                <span className="srs-nav-title" title={sec.title}>{sec.title}</span>
+                                            </div>
+                                        );
+                                    })}
+                                    {renderNav(visibleNodes, 0)}
+                                    {!readOnly && onAddRoot && (
+                                        <Button
+                                            type="dashed"
+                                            size="small"
+                                            icon={<PlusOutlined />}
+                                            className="srs-nav-add-root"
+                                            onClick={() => onAddRoot()}
+                                        >
+                                            {ts("sds_doc.add_root_menu") || ts("srs_doc.add_root_menu") || "添加根章节"}
+                                        </Button>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="srs-tree-editor">
+                                {effectiveExtra ? (
+                                    <div key={`extra-${effectiveExtra.key}`}>{effectiveExtra.content}</div>
+                                ) : effectiveNode ? (
+                                    <div className="tree-node-item-wrapper" key={effectiveNode.id}>
+                                        <TreeNodeItem
+                                            node={effectiveNode}
+                                            level={0}
+                                            docId={docId}
+                                            readOnly={readOnly}
+                                            renderChildren={false}
+                                            disableHierarchyActions
+                                            hideLevelPrefix
+                                            onAdd={handleAdd}
+                                            onAddSibling={handleAddSibling}
+                                            onDelete={handleDelete}
+                                            onTitleChange={handleTitleChange}
+                                            onSdsCodeChange={handleSdsCodeChange}
+                                            onImageChange={handleImageChange}
+                                            onContentChange={handleContentChange}
+                                            onAddTable={handleAddTable}
+                                            onImportTable={handleImportTable}
+                                            onEditTable={handleEditTable}
+                                            onDeleteTable={handleDeleteTable}
+                                            onOpenReqdList={onOpenReqdList}
+                                            onOpenTraceList={onOpenTraceList}
+                                            onFetchSrsTrace={onFetchSrsTrace}
+                                            traceSynced={traceSynced}
+                                            readOnlyChapterOffset={effectiveReadOnlyChapterOffset}
+                                        />
+                                    </div>
+                                ) : (
+                                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={ts("please_select")} />
+                                )}
+                            </div>
+                        </>
+                    )
+                ) : visibleNodes.length === 0 ? (
                     <Empty
                         image={Empty.PRESENTED_IMAGE_SIMPLE}
                         description={ts("sds_doc.empty_directory_structure")}
                         className="tree-structure-empty"
                     />
-                ) : (() => {
-                    let rootChapterCounter = 0;
-                    return visibleNodes.map((node) => {
-                        const nodeTitle = String(node.title || "").trim();
-                        const nodeHasTable = hasRenderableTable(node.table);
-                        const nodeIsPureTableCarrier = !!(
-                            nodeHasTable &&
-                            !node.img_url &&
-                            !String(node.text || "").trim() &&
-                            (!node.children || node.children.length === 0)
-                        );
-                        const nodeHasTableDesc = hasTableInSubtree(node);
-                        const nodeIsTableCaptionCarrier = !!(
-                            nodeHasTableDesc &&
-                            isLikelyTableCaptionLine(nodeTitle) &&
-                            !/数据库\s*[:：]?$/.test(String(nodeTitle || "").trim()) &&
-                            !String(node.text || "").trim()
-                        );
-                        const hasMeaningfulTitle = readOnly
-                            ? !!String(nodeTitle || "").trim()
-                            : (!nodeIsPureTableCarrier && !nodeIsTableCaptionCarrier && shouldAssignChapterNo(node));
-                        const rootChapterNo = hasMeaningfulTitle ? `${++rootChapterCounter}` : "";
-                        const rootItemProps = {
-                            node,
-                            level: 0,
-                            chapterNo: rootChapterNo,
-                            docId,
-                            readOnly,
-                            onAdd: handleAdd,
-                            onAddSibling: handleAddSibling,
-                            onDelete: handleDelete,
-                            onTitleChange: handleTitleChange,
-                            onSdsCodeChange: handleSdsCodeChange,
-                            onImageChange: handleImageChange,
-                            onContentChange: handleContentChange,
-                            onAddTable: handleAddTable,
-                            onImportTable: handleImportTable,
-                            onEditTable: handleEditTable,
-                            onDeleteTable: handleDeleteTable,
-                            onOpenReqdList,
-                            onOpenTraceList,
-                            onFetchSrsTrace,
-                            traceSynced,
-                            readOnlyChapterOffset: effectiveReadOnlyChapterOffset,
-                        };
-                        return readOnly && !readOnlyRootWrapper ? (
-                            <TreeNodeItem key={node.id} {...rootItemProps} />
-                        ) : (
-                            <div className="tree-node-item-wrapper" key={node.id}>
-                                <TreeNodeItem {...rootItemProps} />
-                            </div>
-                        );
-                    });
-                })()}
+                ) : renderLegacyTree()}
             </div>
 
             {/* 添加/编辑表格弹框 */}

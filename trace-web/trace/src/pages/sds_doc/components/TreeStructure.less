@@ -33,6 +33,238 @@
         padding: 32px 0;
     }
 
+    &.srs-tree-layout {
+        display: flex;
+        align-items: flex-start;
+        gap: 16px;
+        background: transparent;
+        padding: 0;
+        border-radius: 0;
+    }
+
+    .srs-tree-editor {
+        flex: 1 1 auto;
+        min-width: 0;
+        background: #fff;
+        border: 1px solid #eef0f3;
+        border-radius: 8px;
+        padding: 12px 16px;
+
+        .tree-node-item-wrapper {
+            border: none;
+            padding: 0;
+            margin-bottom: 0;
+
+            > div {
+                margin-left: 0 !important;
+            }
+        }
+
+        .tree-node-item {
+            padding: 0;
+            margin-bottom: 0;
+            border: none;
+            background: transparent !important;
+        }
+
+        .tree-node-item.level-0 {
+            background: transparent;
+            border: none;
+            padding: 0;
+        }
+
+        // 单章编辑：标题/编码/上传/操作按钮同一行，正文 textarea 独占下一行
+        .node-row {
+            align-items: center;
+            flex-wrap: wrap;
+            row-gap: 8px;
+            overflow-x: visible;
+
+            .node-expand-placeholder,
+            .node-expand-btn {
+                display: none !important;
+                width: 0 !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+
+            .node-add-sibling-btn {
+                flex-shrink: 0;
+            }
+
+            .node-title-prefix {
+                order: 2;
+                flex: 0 0 auto;
+                margin-right: 8px;
+            }
+
+            .node-title {
+                order: 3;
+                flex: 1 1 180px;
+                min-width: 140px;
+                max-width: none;
+                margin-right: 8px;
+            }
+
+            .node-sds-code {
+                order: 4;
+                flex: 0 0 130px;
+                max-width: 160px;
+                margin-right: 8px;
+            }
+
+            .node-file-ref {
+                order: 5;
+                flex: 0 0 auto;
+            }
+
+            .node-pic:not(.node-pic-inline) {
+                order: 6;
+                flex: 0 0 auto;
+                margin: 0 8px 0 0;
+            }
+
+            .node-srsreq-btn {
+                order: 7;
+                flex-shrink: 0;
+            }
+
+            .node-actions {
+                order: 8;
+                flex: 0 0 auto;
+                margin-left: auto;
+                white-space: nowrap;
+            }
+
+            .node-text-area {
+                order: 20 !important;
+                flex: 1 1 100% !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+                margin: 8px 0 0 0 !important;
+                margin-left: 0 !important;
+                align-self: stretch !important;
+            }
+
+            .node-pic-readonly.node-pic-editable {
+                order: 9;
+                flex: 0 0 auto;
+            }
+
+            &.node-row-has-image {
+                .node-text-area {
+                    order: 20 !important;
+                    flex: 1 1 100% !important;
+                    max-width: 100% !important;
+                    margin-left: 0 !important;
+                    margin-top: 8px !important;
+                }
+
+                .node-pic:not(.node-pic-inline) {
+                    order: 6;
+                    flex: 0 0 auto;
+                }
+
+                .node-actions {
+                    order: 8;
+                    margin-left: auto;
+                }
+            }
+        }
+
+        .node-row-follow {
+            .node-expand-placeholder {
+                display: none;
+            }
+        }
+    }
+
+    .srs-tree-nav {
+        flex: 0 0 260px;
+        width: 260px;
+        max-height: 70vh;
+        overflow: auto;
+        border: 1px solid #eef0f3;
+        border-radius: 8px;
+        background: #fafafa;
+
+        .srs-tree-nav-head {
+            padding: 10px 12px;
+            font-weight: 600;
+            font-size: 13px;
+            border-bottom: 1px solid #e8e8e8;
+            background: #f0f0f0;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+
+        .srs-tree-nav-body {
+            padding: 6px 0;
+        }
+
+        .srs-nav-item {
+            display: flex;
+            align-items: center;
+            padding: 6px 8px;
+            cursor: pointer;
+            font-size: 13px;
+            line-height: 1.4;
+            border-left: 2px solid transparent;
+
+            &:hover {
+                background: #f0f7ff;
+            }
+
+            &.active {
+                background: #e6f4ff;
+                border-left-color: #1890ff;
+                font-weight: 600;
+            }
+
+            .srs-nav-caret,
+            .srs-nav-caret-placeholder {
+                width: 18px;
+                flex-shrink: 0;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                color: #8c8c8c;
+            }
+
+            .srs-nav-caret {
+                cursor: pointer;
+            }
+
+            .srs-nav-title {
+                flex: 1 1 auto;
+                min-width: 0;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .srs-nav-add-child {
+                flex-shrink: 0;
+                margin-left: 6px;
+                color: #1890ff;
+                opacity: 0;
+                transition: opacity 0.15s;
+            }
+
+            &:hover .srs-nav-add-child,
+            &.active .srs-nav-add-child {
+                opacity: 1;
+            }
+        }
+
+        .srs-nav-add-root {
+            margin: 8px 8px 4px;
+            width: calc(100% - 16px);
+        }
+    }
+
     .tree-node-item-wrapper {
       border: 1px solid #d9d9d9;
       padding: 12px;
@@ -502,6 +734,31 @@
     &.read-only-mode.read-only-flat-roots {
         .tree-node-item.level-0 {
             margin-bottom: 12px;
+        }
+    }
+
+    // 左目录单章编辑：须在 .tree-node-item 通用样式之后，覆盖占位符/正文缩进
+    &.srs-tree-layout .srs-tree-editor {
+        .tree-node-item .node-row {
+            .node-expand-placeholder,
+            .node-expand-btn,
+            .node-add-sibling-btn {
+                display: none !important;
+                width: 0 !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+
+            .node-text-area {
+                order: 20 !important;
+                flex: 1 1 100% !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+                margin: 8px 0 0 0 !important;
+                margin-left: 0 !important;
+                align-self: stretch !important;
+            }
         }
     }
 }

@@ -1,6 +1,6 @@
 import "./SdsDocDetail.less";
-import { ConfigProvider, Form, Input, Button, message, Select, Row, Col, Modal, Space, Table, Spin } from "antd";
-import { ArrowLeftOutlined, EditOutlined, DownloadOutlined, FileAddOutlined, PlusOutlined } from "@ant-design/icons";
+import { ConfigProvider, Form, Input, Button, message, Select, Modal, Space, Table, Spin } from "antd";
+import { ArrowLeftOutlined, EditOutlined, DownloadOutlined, FileAddOutlined } from "@ant-design/icons";
 import { useEffect, useRef } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -418,13 +418,36 @@ export default () => {
         const nextText = remained.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+|\n+$/g, "");
         return { code: extractedCode, nextText };
     };
+    const stripRedundantSdsCodeFromText = (text?: string, sdsCode?: string): string => {
+        const raw = String(text || "");
+        const code = String(sdsCode || "").replace(/\s+/g, "").toUpperCase();
+        if (!raw) return raw;
+        let next = extractSdsCodeFromText(raw).nextText;
+        if (!code) return next;
+        const lines = next.replace(/\r/g, "").split("\n");
+        const filtered = lines.filter((line) => {
+            const trimmed = String(line || "").trim();
+            if (!trimmed) return true;
+            const compact = trimmed.replace(/\s+/g, "").toUpperCase();
+            if (compact === code) return false;
+            const designMatch = trimmed.match(/^设计编号\s*[：:]\s*(.*)$/);
+            if (designMatch) {
+                const designCode = String(extractSdsCodeToken(designMatch[1]) || designMatch[1] || "")
+                    .replace(/\s+/g, "")
+                    .toUpperCase();
+                if (designCode === code) return false;
+            }
+            return true;
+        });
+        return filtered.join("\n").replace(/\n{3,}/g, "\n\n").replace(/^\n+|\n+$/g, "");
+    };
     // 将后端数据转换为前端格式
     const parseTreeNode = (node: any): TreeNode => {
         const fallbackFromText = extractSdsCodeFromText(node.text);
         const hasExplicitSdsCodeField = node.sds_code !== undefined;
         const explicitSdsCode = String(node.sds_code ?? "").trim();
         const resolvedSdsCode = explicitSdsCode || fallbackFromText.code || "";
-        const shouldStripCodeLineFromText = !!fallbackFromText.code && !explicitSdsCode;
+        const shouldStripCodeLineFromText = !!resolvedSdsCode;
         const hasValidHeaders = !!(
             node.table &&
             node.table.headers !== null &&
@@ -464,7 +487,12 @@ export default () => {
             ...((hasExplicitSdsCodeField || !!fallbackFromText.code) && { sds_code: resolvedSdsCode }),
             ...(node.ref_type !== undefined && { ref_type: node.ref_type }),
             img_url: node.img_url || "",
-            text: (shouldStripCodeLineFromText ? fallbackFromText.nextText : (node.text || "")),
+            text: shouldStripCodeLineFromText
+                ? stripRedundantSdsCodeFromText(
+                    explicitSdsCode ? (node.text || "") : fallbackFromText.nextText,
+                    resolvedSdsCode
+                )
+                : (node.text || ""),
             // 处理 table：有表头且存在行或单元格结构时保留（避免 rows 为空时误丢合并单元格表格）
             table: (hasValidHeaders && hasRowOrCellContent) ? node.table : {},
             children: (node.children || []).map((child: any) => parseTreeNode(child))
@@ -1515,7 +1543,8 @@ export default () => {
                             delete (nextNode as any).sds_code;
                         }
                         if (matchedCode && matchedRow && !isInFixedTemplateZone(node)) {
-                            nextNode.text = nextNode.text || composeReqDescription(matchedRow);
+                            const cleanedText = stripRedundantSdsCodeFromText(node.text, matchedCode);
+                            nextNode.text = cleanedText || composeReqDescription(matchedRow);
                             nextNode.sds_code = matchedCode;
                             nextNode.title = withCurrentReqTitle(node, matchedRow);
                         }
@@ -1559,7 +1588,14 @@ export default () => {
                     return { ...node, children };
                 }
                 const matchedCode = codeByTitle.get(normalizeReqTitle(node.title));
-                return matchedCode ? { ...node, sds_code: matchedCode, children } : { ...node, children };
+                return matchedCode
+                    ? {
+                        ...node,
+                        sds_code: matchedCode,
+                        text: stripRedundantSdsCodeFromText(node.text, matchedCode),
+                        children,
+                    }
+                    : { ...node, children };
             });
             const rootsWithCodes = pruneAndRefreshReqdNodes(hydrateExistingReqdNodes(roots));
 
@@ -1728,9 +1764,10 @@ export default () => {
                         levelNodes.push(target);
                     } else if (isLeaf && !(target as any).sds_code) {
                         (target as any).sds_code = code;
-                        target.text = composeReqDescription(row) || target.text || "";
+                        target.text = composeReqDescription(row) || stripRedundantSdsCodeFromText(target.text, code) || "";
                     } else if (isLeaf) {
-                        target.text = composeReqDescription(row) || target.text || "";
+                        const cleanedText = stripRedundantSdsCodeFromText(target.text, code);
+                        target.text = composeReqDescription(row) || cleanedText || target.text || "";
                     }
                     levelNodes = (target.children || []) as TreeNode[];
                 });
@@ -2864,7 +2901,6 @@ export default () => {
     const hiddenNodeIds = treeRoots
         .filter((node) => isCatalogNode(node) || subtreeMatches(node, isCoverNode) || subtreeMatches(node, isChangeLogNode))
         .flatMap((node) => collectSubtreeIds(node));
-    const coverTitle = stripChapterPrefix(coverRoot?.title) || "软件详细设计";
 
     const updateExtractedTableCell = (targetNodeId: number, rowIndex: number, colCode: string, value: string) => {
         const updateNode = (nodes: TreeNode[]): TreeNode[] => {
@@ -3012,6 +3048,9 @@ export default () => {
             key: `${keyPrefix}-col-${header.code}`,
             render: (text: string, _record: any, rowIndex: number) => {
                 const isLabel = index === 0 || index === 2;
+                if (typeof text === "string" && text.startsWith("data:image")) {
+                    return <img src={text} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />;
+                }
                 if (isReadOnly || isLabel) return text || "";
                 return (
                     <Input.TextArea
@@ -3026,6 +3065,7 @@ export default () => {
         return (
             <Table
                 key={`${keyPrefix}-${node.id}`}
+                className={`srs-cover-table srs-approval-table${!isReadOnly ? " srs-extracted-edit-table" : ""}`}
                 dataSource={dataSource}
                 columns={columns}
                 pagination={false}
@@ -3039,6 +3079,13 @@ export default () => {
         if (!node.table?.headers || !node.table?.rows) return null;
         if (isCoverTable(node)) {
             return renderApprovalTable(node, keyPrefix);
+        }
+        const isChangeRecordTable = isChangeLogTable(node);
+        const normalizedRows = [...(node.table.rows || [])];
+        if (isChangeRecordTable) {
+            while (normalizedRows.length < 5) {
+                normalizedRows.push({});
+            }
         }
         const columns = node.table.headers.map((header: any, index: number) => ({
             title: header.name || `列${index + 1}`,
@@ -3055,10 +3102,11 @@ export default () => {
                 );
             },
         }));
-        const dataSource = (node.table.rows || []).map((row: any, index: number) => ({ key: `${keyPrefix}-row-${index}`, ...row }));
+        const dataSource = normalizedRows.map((row: any, index: number) => ({ key: `${keyPrefix}-row-${index}`, ...row }));
         return (
             <Table
                 key={`${keyPrefix}-${node.id}`}
+                className={`${isChangeRecordTable ? "srs-change-log-table" : "srs-cover-table"}${!isReadOnly ? " srs-extracted-edit-table" : ""}`}
                 dataSource={dataSource}
                 columns={columns}
                 pagination={false}
@@ -3069,123 +3117,89 @@ export default () => {
         );
     };
 
+    const coverExtraNavSections = [
+        {
+            key: "cover",
+            title: "封面",
+            content: (
+                <div className="extracted-doc-section">
+                    <div className="extracted-item-title">软件详细设计</div>
+                    {coverRoots.length > 0
+                        ? coverRoots
+                            .flatMap((root) => collectTableNodes(root))
+                            .filter((node) => isCoverTable(node))
+                            .map((node, idx) => renderExtractedTable(node, `cover-${idx}`))
+                        : <div className="extracted-empty">暂无</div>}
+                </div>
+            ),
+        },
+        {
+            key: "changelog",
+            title: "文件修订记录",
+            content: (
+                <div className="extracted-doc-section">
+                    <div className="extracted-item-title">文件修订记录</div>
+                    {changeLogRoots.length > 0
+                        ? changeLogRoots
+                            .flatMap((root) => collectTableNodes(root))
+                            .filter((node) => isChangeLogTable(node))
+                            .map((node, idx) => renderExtractedTable(node, `change-${idx}`))
+                        : <div className="extracted-empty">暂无</div>}
+                </div>
+            ),
+        },
+        {
+            key: "change_desc",
+            title: ts("sds_doc.version_change_description"),
+            content: (
+                <div className="extracted-doc-section">
+                    <div className="doc-section-header">
+                        <div className="change-desc-title">
+                            {ts("sds_doc.version_change_description")}
+                        </div>
+                        {!isReadOnly && (
+                            <Button
+                                type="primary"
+                                icon={<EditOutlined />}
+                                onClick={handleEditChangeDesc}>
+                                {ts("sds_doc.edit_change_description")}
+                            </Button>
+                        )}
+                    </div>
+                    <div className={`doc-desc-content ${data.changeDescription ? "has-content" : ""}`}>
+                        {data.changeDescription || ts("sds_doc.no_change_description")}
+                    </div>
+                </div>
+            ),
+        },
+    ];
+
     return (
         <ConfigProvider theme={SDS_DOC_DETAIL_THEME}>
         <div
             className={`page div-v sds-doc-detail ${isReadOnly ? 'read-only' : ''}`}
             data-sds-build="sds-font-fix-20260421-1"
         >
-            <div className="div-h center-v page-actions searchbar">
-                <Button
-                    icon={<ArrowLeftOutlined />}
-                    onClick={() => navigate("/sds_docs")}>
-                    {ts("back")}
-                </Button>
-                <div className="expand"></div>
-                {!isReadOnly && (
-                <Space>
-                    <Button
-                        type="primary"
-                        icon={<DownloadOutlined />}
-                        loading={data.exporting}
-                        onClick={handleExport}
-                        disabled={!data.isEdit}>
-                        {ts("export")}
-                    </Button>
-                    <Button
-                        type="primary"
-                        icon={<FileAddOutlined />}
-                        onClick={handleInitTemplate}>
-                        {ts("sds_doc.init_template")}
-                    </Button>
-                    <Button
-                        type="primary"
-                        size="large"
-                        loading={data.saving}
-                        onClick={handleSaveTreeStructure}>
-                        {ts("save")}
-                    </Button>
-                </Space>
-                )}
-            </div>
-            <div className="div-v detail-content">
-                <Form
-                    className="detail-form"
-                    form={editForm}
-                    onFinish={doSave}
-                    layout="horizontal"
-                    labelAlign="left">
+            <Form
+                className="sds-toolbar-form"
+                form={editForm}
+                onFinish={doSave}
+                layout="inline">
+                <div className="div-h center-v sds-toolbar">
                     <Form.Item hidden name="id">
                         <Input allowClear />
                     </Form.Item>
                     {(data.isEdit || isReadOnly) && !data.requireRebindSrs ? (
-                        <Row gutter={24} className="form-display-row">
-                            <Col span={6}>
-                                {isReadOnly ? (
-                                    <>
-                                        <span className="form-display-label">{ts("sds_doc.current_product")}：</span>
-                                        <span className="form-display-value">{productLabel || "-"}</span>
-                                    </>
-                                ) : (
-                                    <Form.Item
-                                        label={ts("sds_doc.current_product")}
-                                        name="product_id"
-                                        rules={[{ required: true, message: "" }]}>
-                                        <ProductVersionSelect
-                                            products={data.products}
-                                            allowClear
-                                            namePlaceholder={ts("product.name")}
-                                            versionPlaceholder={ts("product.full_version")}
-                                            onChange={(value) => {
-                                                editForm.setFieldValue("product_id", value);
-                                                editForm.setFieldsValue({ srsdoc_id: undefined });
-                                                dispatch({ srsDocList: [] });
-                                                if (value) loadSrsDocList(value);
-                                            }}
-                                        />
-                                    </Form.Item>
-                                )}
-                            </Col>
-                            <Col span={6}>
-                                {isReadOnly ? (
-                                    <>
-                                        <span className="form-display-label">{ts("sds_doc.req_doc")}：</span>
-                                        <span className="form-display-value">{srsdocLabel || "-"}</span>
-                                    </>
-                                ) : (
-                                    <Form.Item
-                                        label={ts("sds_doc.req_doc")}
-                                        name="srsdoc_id"
-                                        rules={[{ required: true, message: "" }]}>
-                                        <Select
-                                            placeholder={ts("sds_doc.please_select_req_doc")}
-                                            showSearch
-                                            allowClear
-                                            optionFilterProp="label"
-                                            disabled={!data.srsDocList.length}
-                                            style={{ width: 200 }}
-                                            options={data.srsDocList.map((item: any) => ({
-                                                label: `${item.version || item.full_version || ''}`,
-                                                value: item.id
-                                            }))}
-                                        />
-                                    </Form.Item>
-                                )}
-                            </Col>
-                            <Col span={6}>
+                        <>
+                            {isReadOnly ? (
+                                <span className="sds-toolbar-meta">
+                                    <span className="form-display-label">{ts("sds_doc.current_product")}：</span>
+                                    <span className="form-display-value">{productLabel || "-"}</span>
+                                </span>
+                            ) : (
                                 <Form.Item
-                                    label={ts("sds_doc.current_version")}
-                                    name="version"
-                                    rules={[{ required: !isReadOnly, message: "" }]}>
-                                    <Input allowClear placeholder={ts("sds_doc.please_input_version")} disabled={isReadOnly} style={{ width: 200 }} />
-                                </Form.Item>
-                            </Col>
-                        </Row>
-                    ) : (
-                        <Row gutter={24}>
-                            <Col span={6}>
-                                <Form.Item
-                                    label={ts("sds_doc.product")}
+                                    className="sds-toolbar-item"
+                                    label={ts("sds_doc.current_product")}
                                     name="product_id"
                                     rules={[{ required: true, message: "" }]}>
                                     <ProductVersionSelect
@@ -3201,9 +3215,15 @@ export default () => {
                                         }}
                                     />
                                 </Form.Item>
-                            </Col>
-                            <Col span={6}>
+                            )}
+                            {isReadOnly ? (
+                                <span className="sds-toolbar-meta">
+                                    <span className="form-display-label">{ts("sds_doc.req_doc")}：</span>
+                                    <span className="form-display-value">{srsdocLabel || "-"}</span>
+                                </span>
+                            ) : (
                                 <Form.Item
+                                    className="sds-toolbar-item"
                                     label={ts("sds_doc.req_doc")}
                                     name="srsdoc_id"
                                     rules={[{ required: true, message: "" }]}>
@@ -3213,98 +3233,118 @@ export default () => {
                                         allowClear
                                         optionFilterProp="label"
                                         disabled={!data.srsDocList.length}
+                                        style={{ width: 160 }}
                                         options={data.srsDocList.map((item: any) => ({
-                                            label: `${item.version || item.full_version || ''}`,
-                                            value: item.id
+                                            label: `${item.version || item.full_version || ""}`,
+                                            value: item.id,
                                         }))}
                                     />
                                 </Form.Item>
-                            </Col>
-                            <Col span={6}>
-                                <Form.Item
-                                    label={ts("sds_doc.version_label")}
-                                    name="version"
-                                    rules={[{ required: true, message: "" }]}>
-                                    <Input allowClear placeholder={ts("sds_doc.please_input_version")} style={{ width: 200 }} />
-                                </Form.Item>
-                            </Col>
-                        </Row>
+                            )}
+                            <Form.Item
+                                className="sds-toolbar-item"
+                                label={(data.isEdit || isReadOnly) ? ts("sds_doc.current_version") : ts("sds_doc.version_label")}
+                                name="version"
+                                rules={[{ required: !isReadOnly, message: "" }]}>
+                                <Input allowClear placeholder={ts("sds_doc.please_input_version")} disabled={isReadOnly} style={{ width: 130 }} />
+                            </Form.Item>
+                        </>
+                    ) : (
+                        <>
+                            <Form.Item
+                                className="sds-toolbar-item"
+                                label={ts("sds_doc.product")}
+                                name="product_id"
+                                rules={[{ required: true, message: "" }]}>
+                                <ProductVersionSelect
+                                    products={data.products}
+                                    allowClear
+                                    namePlaceholder={ts("product.name")}
+                                    versionPlaceholder={ts("product.full_version")}
+                                    onChange={(value) => {
+                                        editForm.setFieldValue("product_id", value);
+                                        editForm.setFieldsValue({ srsdoc_id: undefined });
+                                        dispatch({ srsDocList: [] });
+                                        if (value) loadSrsDocList(value);
+                                    }}
+                                />
+                            </Form.Item>
+                            <Form.Item
+                                className="sds-toolbar-item"
+                                label={ts("sds_doc.req_doc")}
+                                name="srsdoc_id"
+                                rules={[{ required: true, message: "" }]}>
+                                <Select
+                                    placeholder={ts("sds_doc.please_select_req_doc")}
+                                    showSearch
+                                    allowClear
+                                    optionFilterProp="label"
+                                    disabled={!data.srsDocList.length}
+                                    style={{ width: 160 }}
+                                    options={data.srsDocList.map((item: any) => ({
+                                        label: `${item.version || item.full_version || ""}`,
+                                        value: item.id,
+                                    }))}
+                                />
+                            </Form.Item>
+                            <Form.Item
+                                className="sds-toolbar-item"
+                                label={ts("sds_doc.version_label")}
+                                name="version"
+                                rules={[{ required: true, message: "" }]}>
+                                <Input allowClear placeholder={ts("sds_doc.please_input_version")} style={{ width: 130 }} />
+                            </Form.Item>
+                        </>
                     )}
-                </Form>
-
-                <div className="doc-section extracted-doc-section">
-                    <div className="doc-section-header">
-                        <div className="doc-section-title">封面</div>
-                    </div>
-                    <div className="extracted-item-title">标题</div>
-                    <div className="extracted-file-name">{coverTitle || "-"}</div>
-                    <div className="extracted-item-title">封面信息</div>
-                    {coverRoots.length > 0
-                        ? coverRoots
-                            .flatMap((root) => collectTableNodes(root))
-                            .filter((node) => isCoverTable(node))
-                            .map((node, idx) => renderExtractedTable(node, `cover-${idx}`))
-                        : <div className="extracted-empty">暂无</div>}
-                    <div className="extracted-item-title">文件修订记录</div>
-                    {changeLogRoots.length > 0
-                        ? changeLogRoots
-                            .flatMap((root) => collectTableNodes(root))
-                            .filter((node) => isChangeLogTable(node))
-                            .map((node, idx) => renderExtractedTable(node, `change-${idx}`))
-                        : <div className="extracted-empty">暂无</div>}
+                    <div className="expand"></div>
+                    {!isReadOnly && (
+                        <Space>
+                            <Button
+                                type="primary"
+                                icon={<DownloadOutlined />}
+                                loading={data.exporting}
+                                onClick={handleExport}
+                                disabled={!data.isEdit}>
+                                {ts("export")}
+                            </Button>
+                            <Button
+                                type="primary"
+                                icon={<FileAddOutlined />}
+                                onClick={handleInitTemplate}>
+                                {ts("sds_doc.init_template")}
+                            </Button>
+                            <Button
+                                type="primary"
+                                loading={data.saving}
+                                onClick={handleSaveTreeStructure}>
+                                {ts("save")}
+                            </Button>
+                        </Space>
+                    )}
+                    <Button
+                        className="sds-toolbar-back"
+                        icon={<ArrowLeftOutlined />}
+                        onClick={() => navigate("/sds_docs")}>
+                        {ts("back")}
+                    </Button>
                 </div>
-
-                {/* 版本变更说明区域 */}
-                <div className="doc-section">
-                    <div className="doc-section-header">
-                        <div className="change-desc-title">
-                            {ts("sds_doc.version_change_description")}
-                        </div>
-                        {!isReadOnly && (
-                        <Button
-                            type="primary"
-                            icon={<EditOutlined />}
-                            onClick={handleEditChangeDesc}>
-                            {ts("sds_doc.edit_change_description")}
-                        </Button>
-                        )}
-                    </div>
-                    <div className={`doc-desc-content ${data.changeDescription ? "has-content" : ""}`}>
-                        {data.changeDescription || ts("sds_doc.no_change_description")}
-                    </div>
-                </div>
-
-                {/* 设计列表区域 - 已改为弹框，由目录节点 ref_type=sds_reqds 的按钮打开 */}
-                {/* <div className="doc-section">...</div> */}
-
-                {/* 需求追溯表区域 - 已改为弹框，由目录节点 ref_type=sds_traces 的按钮打开 */}
-                {/* <div className="doc-section">...</div> */}
-
-                {/* 目录结构区域 */}
+            </Form>
+            <div className="div-v detail-content">
                 <div className="doc-section doc-section-flex">
-                    <div className="doc-section-header">
-                        <div className="doc-section-title">
-                            {ts("sds_doc.directory_structure")}
+                    {!isReadOnly && (
+                        <div className="doc-section-header">
+                            <div className="doc-section-title">{ts("sds_doc.directory_structure")}</div>
+                            <div className="doc-section-buttons">
+                                <Button
+                                    type="primary"
+                                    loading={data.traceSyncing}
+                                    onClick={() => fetchSrsTrace()}
+                                >
+                                    获取SRS追溯
+                                </Button>
+                            </div>
                         </div>
-                        {!isReadOnly && (
-                        <div className="doc-section-buttons">
-                            <Button
-                                type="primary"
-                                loading={data.traceSyncing}
-                                onClick={() => fetchSrsTrace()}
-                                style={{ marginRight: 8 }}
-                            >
-                                获取SRS追溯
-                            </Button>
-                            <Button
-                                type="primary"
-                                icon={<PlusOutlined />}
-                                onClick={handleAddRootNode}>
-                                {ts("sds_doc.add_root_menu")}
-                            </Button>
-                        </div>
-                        )}
-                    </div>
+                    )}
                     <Spin spinning={data.traceSyncing} tip="正在同步 SRS 追溯与章节…">
                     <TreeStructure
                         key={`sds-tree-${params.id || "new"}-${data.traceTreeRefreshKey || 0}`}
@@ -3315,6 +3355,8 @@ export default () => {
                         }}
                         docId={params.id ? parseInt(params.id) : undefined}
                         hiddenNodeIds={hiddenNodeIds}
+                        extraNavSections={coverExtraNavSections}
+                        onAddRoot={isReadOnly ? undefined : handleAddRootNode}
                         onNodeDelete={isReadOnly ? undefined : handleNodeDelete}
                         readOnly={isReadOnly}
                         readOnlyChapterOffset={0}
