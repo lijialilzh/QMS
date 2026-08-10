@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: test
       TZ: Asia/Shanghai
     ports:
-      - "55432:5432"
+      - "127.0.0.1:55432:5432"
     volumes:
       - trace_db_data:/var/lib/postgresql/data
 
@@ -82,7 +82,7 @@ services:
     depends_on:
       - trace-api
     ports:
-      - "5177:80"
+      - "0.0.0.0:5178:80"
 
 volumes:
   trace_db_data:

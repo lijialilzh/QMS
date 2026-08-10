@@ -345,6 +345,8 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
     if (colCount < 1) return []; // 列数为0时，返回空列配置
 
     const editableColumns: ColumnsType<TableRowData> = Array.from({ length: colCount }, (_, colIndex) => ({
+      ...(colCount === 2 && colIndex === 0 ? { width: 150 } : {}),
+      ...(colCount === 2 && colIndex === 1 ? { className: "editable-table-content-col" } : {}),
       title: isLockedHeaderRow ? (
         <div className="editable-table-locked-cell">
           {customHeaders[colIndex]?.name || `${ts('srs_doc.column')} ${colIndex + 1}`}
@@ -371,7 +373,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
           );
         }
         return isRcmAssistRow(record, colIndex) ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <div className="editable-table-rcm-cell">
             <Select
               mode="multiple"
               allowClear
@@ -379,6 +381,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
               optionFilterProp="label"
               placeholder={ts("srs_doc.select_rcm_code") || "选择RCM"}
               options={rcmOptions}
+              popupClassName="srs-rcm-select-dropdown"
               value={getSelectedRcmIdsByText(text ?? "")}
               onChange={(vals) => {
                 const nextText = mergeRcmContent(text ?? "", (vals || []) as number[]);
@@ -386,13 +389,12 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
               }}
               disabled={locked || !rcmOptions.length}
               style={{ width: "100%" }}
-              size="small"
             />
             <Input.TextArea
               value={text ?? ''}
               onChange={(e) => handleCellEdit(record.key, colIndex, e.target.value)}
               placeholder={ts('srs_doc.please_input_content')}
-              autoSize={{ minRows: 2, maxRows: 8 }}
+              autoSize={{ minRows: 1, maxRows: 8 }}
               style={{ resize: 'none' }}
               disabled={locked}
             />
@@ -415,7 +417,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
         title: "操作",
         key: "operation",
         width: 96,
-        fixed: "right",
+        className: "editable-table-op-col",
         render: (_: unknown, record: TableRowData) => (
           <Space size={4} className="editable-table-row-actions">
             <Button
@@ -547,11 +549,28 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       title={initialData ? ts('srs_doc.edit_table') : ts('srs_doc.add_table')}
       open={open}
       onCancel={handleCancel}
-      footer={null}
-      width={1000}
+      footer={tableData.length > 0 ? (
+        <Space>
+          <Button onClick={handleCancel} disabled={submitting}>
+            {ts('cancel')}
+          </Button>
+          <Button type="primary" onClick={handleConfirm} loading={submitting}>
+            {ts('srs_doc.save_table')}
+          </Button>
+        </Space>
+      ) : null}
+      width={760}
       destroyOnClose
+      className="editable-table-modal"
+      styles={{
+        body: {
+          padding: 0,
+          maxHeight: 'calc(100vh - 200px)',
+          overflow: 'auto',
+        },
+      }}
     >
-      <div className="editable-table-generator" style={{ padding: '20px' }}>
+      <div className="editable-table-generator">
       {showReqTableHint && !initialData && (
         <Alert
           type="info"
@@ -569,100 +588,88 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       <Form
         form={form}
         layout="vertical"
-        style={{ marginBottom: '20px' }}
+        className="editable-table-config-form"
         onValuesChange={handleFormValuesChange}
       >
-        <Form.Item
-          name="tableName"
-          label="表名"
-        >
-          <Input placeholder="请输入表名" />
-        </Form.Item>
+        <div className="editable-table-meta-row">
+          <Form.Item
+            name="tableName"
+            label="表名"
+            className="editable-table-meta-name"
+          >
+            <Input placeholder="请输入表名" />
+          </Form.Item>
 
-        <div style={{ display: 'flex', gap: '16px' }}>
           <Form.Item
             name="rowCount"
             label={ts('srs_doc.row_count')}
+            className="editable-table-meta-count"
             rules={[{ required: true, message: ts('srs_doc.please_input_row_count') }]}
           >
             <InputNumber
               min={1}
-              max={50} // 限制最大行数，避免性能问题
-              style={{ width: '120px' }}
+              max={50}
             />
           </Form.Item>
 
           <Form.Item
             name="colCount"
             label={ts('srs_doc.col_count')}
+            className="editable-table-meta-count"
             rules={[{ required: true, message: ts('srs_doc.please_input_col_count') }]}
           >
             <InputNumber
               min={1}
-              max={20} // 限制最大列数，避免表格过宽
-              style={{ width: '120px' }}
+              max={20}
             />
           </Form.Item>
         </div>
 
         <Form.Item
+          className="editable-table-header-item"
           label={ts('srs_doc.table_header')}
           extra={<span style={{ color: '#999', fontSize: '12px' }}>{ts('srs_doc.table_header_hint')}</span>}
         >
-          <Input
-            value={headerInput}
-            onChange={(e) => setHeaderInput(e.target.value)}
-            placeholder={ts('srs_doc.table_header_placeholder')}
-          />
-        </Form.Item>
-
-        <Form.Item>
-          <Space>
+          <div className="editable-table-header-input-row">
+            <Input
+              value={headerInput}
+              onChange={(e) => setHeaderInput(e.target.value)}
+              placeholder={ts('srs_doc.table_header_placeholder')}
+            />
             <Button type="primary" onClick={generateTable} disabled={submitting}>
               {ts('srs_doc.generate_table_preview')}
             </Button>
-            {/* <Button onClick={resetTable} danger>
-              {ts('srs_doc.reset')}
-            </Button> */}
-          </Space>
+          </div>
         </Form.Item>
       </Form>
 
       {/* 第二步：渲染生成的可编辑表格 */}
       {tableData.length > 0 && (
         <>
-          <span style={{ fontSize: '16px' }}>{ts('srs_doc.table_preview')}</span>
-          <Table
-            dataSource={tableData}
-            columns={buildTableColumns()}
-            bordered // 显示表格边框，更清晰
-            pagination={false} // 关闭分页（如需分页可开启，需额外处理数据）
-            scroll={{ x: 'max-content' }} // 横向滚动，适配多列场景
-            size="middle"
-          />
-          
+        <div className="editable-table-preview">
+          <div className="editable-table-preview-title">{ts('srs_doc.table_preview')}</div>
+          <div className="editable-table-preview-scroll">
+            <Table
+              dataSource={tableData}
+              columns={buildTableColumns()}
+              bordered
+              pagination={false}
+              tableLayout="fixed"
+              size="small"
+            />
+          </div>
+
           {submitError ? (
             <Alert
               type="error"
               showIcon
               closable
               message={submitError}
-              style={{ marginTop: 16 }}
+              style={{ marginTop: 8 }}
               onClose={() => setSubmitError("")}
             />
           ) : null}
-
-          {/* 第三步：操作按钮 */}
-          <div style={{ marginTop: '20px', textAlign: 'right' }}>
-            <Space>
-              <Button onClick={handleCancel} disabled={submitting}>
-                {ts('cancel')}
-              </Button>
-              <Button type="primary" onClick={handleConfirm} loading={submitting}>
-                {ts('srs_doc.save_table')}
-              </Button>
-            </Space>
-          </div>
+        </div>
         </>
       )}
       </div>

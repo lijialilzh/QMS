@@ -12,6 +12,182 @@
         padding: 32px 0;
     }
 
+    // 左目录 + 右单章 布局（仅样式层，不改动数据结构）
+    &.srs-tree-layout {
+        display: flex;
+        align-items: flex-start;
+        gap: 16px;
+        background: transparent;
+        padding: 0;
+        border-radius: 0;
+    }
+
+    // 右侧编辑区做成单一白色面板，与左目录一致，去掉内层灰卡片
+    .srs-tree-editor {
+        flex: 1 1 auto;
+        min-width: 0;
+        background: #fff;
+        border: 1px solid #eef0f3;
+        border-radius: 8px;
+        padding: 12px 16px;
+
+        .tree-node-item-wrapper {
+            border: none;
+            padding: 0;
+            margin-bottom: 0;
+        }
+
+        .tree-node-item.level-0 {
+            background: transparent;
+            border: none;
+            padding: 0;
+        }
+
+        // 单章编辑：无子章节，去掉展开占位符，标题左边缘与正文框对齐
+        .node-row .node-expand-placeholder {
+            display: none;
+        }
+
+        // 含需求编号的行：收窄标题，避免标题撑满把需求编号顶到右侧（编辑/只读统一）
+        .node-row:has(.node-srs-code) {
+            .node-title {
+                flex: 0 0 120px !important;
+                min-width: 120px !important;
+                max-width: 120px !important;
+                margin-right: 8px !important;
+            }
+        }
+
+        // 图片章节：图片与上传按钮各自独占一行，竖向堆叠（对齐研究报告观感）
+        // 拆分版式：intro(图上) → 图片 → 上传 → caption(图下居中) → body(说明)
+        .node-row > .node-img-intro {
+            flex: 1 1 100%;
+            order: 14;
+            margin-top: 8px;
+            min-width: 0;
+        }
+
+        .node-row > .node-pic-block {
+            flex: 1 1 100%;
+            order: 15;
+            margin-top: 8px;
+            text-align: center;
+        }
+
+        .node-row > .node-pic {
+            flex: 1 1 100%;
+            order: 16;
+            margin: 6px 0 0;
+        }
+
+        .node-row > .node-img-caption {
+            flex: 1 1 100%;
+            order: 17;
+            margin-top: 6px;
+            text-align: center;
+            min-width: 0;
+
+            &.ant-input {
+                max-width: 460px;
+                margin-left: auto;
+                margin-right: auto;
+                text-align: center;
+            }
+        }
+
+        .node-row > .node-img-body {
+            flex: 1 1 100%;
+            order: 18;
+            margin-top: 8px;
+            min-width: 0;
+        }
+    }
+
+    .srs-tree-nav {
+        flex: 0 0 260px;
+        width: 260px;
+        max-height: 70vh;
+        overflow: auto;
+        border: 1px solid #eef0f3;
+        border-radius: 8px;
+        background: #fafafa;
+
+        .srs-tree-nav-head {
+            padding: 10px 12px;
+            font-weight: 600;
+            font-size: 13px;
+            border-bottom: 1px solid #e8e8e8;
+            background: #f0f0f0;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+
+        .srs-tree-nav-body {
+            padding: 6px 0;
+        }
+
+        .srs-nav-item {
+            display: flex;
+            align-items: center;
+            padding: 6px 8px;
+            cursor: pointer;
+            font-size: 13px;
+            line-height: 1.4;
+            border-left: 2px solid transparent;
+
+            &:hover {
+                background: #f0f7ff;
+            }
+
+            &.active {
+                background: #e6f4ff;
+                border-left-color: #1890ff;
+                font-weight: 600;
+            }
+
+            .srs-nav-caret,
+            .srs-nav-caret-placeholder {
+                width: 18px;
+                flex-shrink: 0;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                color: #8c8c8c;
+            }
+
+            .srs-nav-caret {
+                cursor: pointer;
+            }
+
+            .srs-nav-title {
+                flex: 1 1 auto;
+                min-width: 0;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .srs-nav-add-child {
+                flex-shrink: 0;
+                margin-left: 6px;
+                color: #1890ff;
+                opacity: 0;
+                transition: opacity 0.15s;
+            }
+
+            &:hover .srs-nav-add-child,
+            &.active .srs-nav-add-child {
+                opacity: 1;
+            }
+        }
+
+        .srs-nav-add-root {
+            margin: 8px;
+            width: calc(100% - 16px);
+        }
+    }
+
     .tree-node-item-wrapper {
       border: 1px solid #d9d9d9;
       padding: 12px;
@@ -51,8 +227,8 @@
     }
 
     .tree-node-item {
-        padding: 12px;
-        margin-bottom: 8px;
+        padding: 8px 10px;
+        margin-bottom: 6px;
         border: 1px solid #e8e8e8;
         border-radius: 4px;
         background-color: #ffffff;
@@ -68,14 +244,14 @@
             font-weight: 400;
         }
 
-        // 还原章节输入框宽度：避免 with-rcm 把标题框拉满整行
+        // 标题输入框加宽自适应（带 RCM 的行也放开固定宽度）
         &.level-0 .node-row .node-title.with-rcm,
         &.level-1 .node-row .node-title.with-rcm,
         &.level-0 .node-row .node-title.with-rcm-text,
         &.level-1 .node-row .node-title.with-rcm-text {
-            flex: 0 0 220px;
+            flex: 1 1 260px;
             min-width: 220px;
-            max-width: 220px;
+            max-width: none;
             white-space: nowrap;
             word-break: normal;
             overflow-wrap: normal;
@@ -98,7 +274,9 @@
         .node-row {
             display: flex;
             align-items: center;
-            overflow-x: auto;
+            overflow-x: visible;
+            flex-wrap: wrap;
+            row-gap: 6px;
 
             &.has-rcm {
                 align-items: flex-start;
@@ -125,40 +303,20 @@
                 flex-shrink: 0;
             }
 
-            .node-add-sibling-btn {
-                margin-right: 4px;
-                padding: 0 4px;
-                color: #1890ff;
-                flex-shrink: 0;
-            }
-
-            .node-title-prefix {
-              white-space: nowrap;
-              margin-right: 24px;
-            }
-
             .node-title {
-                flex: 0 0 200px;
-                min-width: 200px;
-                max-width: 200px;
+                flex: 1 1 260px;
+                min-width: 220px;
+                max-width: none;
                 margin-right: 10px;
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
 
-                &.with-rcm {
-                    flex: 0 0 200px;
-                    min-width: 200px;
-                    max-width: 200px;
-                    white-space: nowrap;
-                    overflow: hidden;
-                    text-overflow: ellipsis;
-                }
-
+                &.with-rcm,
                 &.with-rcm-text {
-                    flex: 0 0 200px;
-                    min-width: 200px;
-                    max-width: 200px;
+                    flex: 1 1 260px;
+                    min-width: 220px;
+                    max-width: none;
                     white-space: nowrap;
                     overflow: hidden;
                     text-overflow: ellipsis;
@@ -185,10 +343,10 @@
             }
 
             .node-rcm-select {
-                flex: 0 0 210px;
-                width: 210px;
-                min-width: 210px;
-                max-width: 210px;
+                flex: 0 1 240px;
+                width: 240px;
+                min-width: 200px;
+                max-width: 240px;
                 margin-right: 10px;
 
                 // 查看态 RCM 字号与正文保持一致
@@ -205,21 +363,35 @@
                 .ant-select-item-option-content,
                 .ant-tag {
                     font-size: 13px !important;
-                    line-height: 1.5 !important;
+                    // 不用 1.5：会把 RCM 标签撑得比左侧 Input 更高
+                    line-height: 22px !important;
+                    font-family: "Times New Roman", "SimSun", "Songti SC", serif !important;
+                }
+
+                // 多选框变高后下拉箭头会垂直居中浮在中间、与滚动条重叠，显突兀；隐藏它（点框体即可展开）
+                .ant-select-arrow {
+                    display: none !important;
+                }
+
+                // 箭头隐藏后，选择区右内边距收回，标签排布更整齐
+                .ant-select-selector {
+                    padding-right: 8px !important;
                 }
             }
 
             // NOTE: 不在这里覆盖 antd 的 .ant-select-selector 等内部样式
 
+            // 正文框仿研究报告：独占整行、加大高度
             .node-text-area {
-                margin-right: 12px;
-                flex: 1 1 auto;
+                flex: 1 1 100%;
+                order: 20;
+                margin: 8px 0 0;
                 min-width: 0;
             }
 
             &.has-rcm-text .node-text-area {
-                flex: 1 1 360px;
-                min-width: 260px;
+                flex: 1 1 100%;
+                min-width: 0;
             }
 
             .node-content {
@@ -227,9 +399,13 @@
                 font-size: 13px;
                 line-height: 1.5;
                 font-family: "Times New Roman", "SimSun", "Songti SC", serif;
-                white-space: pre-line;
+                white-space: pre-wrap;
                 word-break: break-word;
                 overflow-wrap: anywhere;
+            }
+
+            .node-text-area textarea {
+                white-space: pre-wrap !important;
             }
 
             .node-pic {
@@ -290,6 +466,12 @@
                 margin-right: 8px;
                 flex-shrink: 0;
             }
+
+            // 标题行操作按钮（表格/导入表格/删除）右对齐
+            .node-actions {
+                margin-left: auto;
+                flex-shrink: 0;
+            }
         }
 
         .node-table {
@@ -297,6 +479,23 @@
             padding-top: 12px;
             border-top: 1px solid #e8e8e8;
             max-width: 100%;
+
+            &.node-table--functional-kv {
+                .ant-table {
+                    table-layout: fixed !important;
+                }
+
+                .ant-table colgroup col:first-child {
+                    width: 120px !important;
+                }
+
+                .ant-table-thead > tr > th:first-child,
+                .ant-table-tbody > tr > td:first-child {
+                    width: 120px !important;
+                    min-width: 120px !important;
+                    max-width: 120px !important;
+                }
+            }
 
             .node-table-header {
                 display: flex;
@@ -341,6 +540,24 @@
 
             .srs-code-col.ant-table-cell {
                 white-space: nowrap;
+            }
+
+            .functional-kv-field-col.ant-table-cell {
+                width: 120px;
+                max-width: 120px;
+                white-space: nowrap;
+            }
+
+            // 无表头两列表（功能描述 KV 表）左列固定窄宽，避免保存后识别失败导致 50/50 均分
+            .ant-table-wrapper:not(:has(.ant-table-thead)) {
+                .ant-table colgroup col:first-child {
+                    width: 120px !important;
+                }
+
+                .ant-table-tbody > tr > td:first-child {
+                    width: 120px;
+                    max-width: 120px;
+                }
             }
         }
     }

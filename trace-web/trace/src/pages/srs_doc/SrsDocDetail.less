@@ -32,17 +32,49 @@
         }
     }
 
+    // 顶部工具栏：产品/版本 + 操作按钮，单行紧凑（对齐自研软件研究报告样式）
+    .srs-toolbar-form {
+        flex-shrink: 0;
+
+        .srs-toolbar {
+            gap: 12px;
+            padding: 8px 16px;
+            background: #ffffff;
+            border-bottom: 1px solid #eef0f3;
+            flex-wrap: wrap;
+            row-gap: 6px;
+        }
+
+        .srs-toolbar-item {
+            margin-right: 0;
+            margin-bottom: 0;
+        }
+
+        .srs-toolbar-meta {
+            display: inline-flex;
+            align-items: center;
+
+            .form-display-label {
+                color: rgba(0, 0, 0, 0.65);
+            }
+            .form-display-value {
+                color: rgba(0, 0, 0, 0.85);
+                font-weight: 600;
+            }
+        }
+    }
+
     .detail-content {
         flex: 1;
-        padding: 24px;
+        padding: 16px;
         display: flex;
         flex-direction: column;
         overflow-y: auto;
         overflow-x: hidden;
 
         .page-actions {
-            margin-bottom: 24px;
-            padding-bottom: 16px;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
             border-bottom: 1px solid #e8e8e8;
             flex-shrink: 0;
         }
@@ -52,7 +84,7 @@
         background-color: #ffffff;
         border: 1px solid #d9d9d9;
         border-radius: 6px;
-        padding: 24px;
+        padding: 12px 16px;
         max-width: 100%;
         flex-shrink: 0;
 
@@ -71,8 +103,8 @@
         background-color: #ffffff;
         border: 1px solid #d9d9d9;
         border-radius: 6px;
-        padding: 24px;
-        margin-top: 24px;
+        padding: 12px;
+        margin-top: 12px;
         flex-shrink: 0;
 
         // 目录结构区域自然展开
@@ -123,8 +155,10 @@
 
     .extracted-doc-section {
         .extracted-item-title {
+            font-size: 13px;
             font-weight: 600;
-            margin: 14px 0 8px;
+            color: #46586b;
+            margin: 0 0 6px;
         }
 
         .extracted-file-name {
@@ -137,6 +171,48 @@
         .extracted-empty {
             color: #999;
             padding: 6px 0;
+        }
+
+        // 封面 / 文件修订记录：对齐自研软件研究报告 pdp-grid 观感
+        .srs-cover-table,
+        .srs-change-log-table {
+            .ant-table {
+                border: none;
+            }
+
+            .ant-table-cell {
+                border-color: #e8edf2 !important;
+                padding: 4px 8px !important;
+            }
+
+            .ant-table-thead > tr > th.ant-table-cell {
+                background: #f5f8fc !important;
+                color: #46586b;
+                font-weight: 600;
+            }
+
+            // 去掉 antd 表头竖分隔线与行 hover 高亮
+            .ant-table-thead > tr > th.ant-table-cell::before {
+                display: none !important;
+            }
+
+            .ant-table-tbody > tr:hover > td.ant-table-cell {
+                background: transparent !important;
+            }
+
+            // 单元格内输入框无边框，直接在格子里编辑（同研究报告 pdp-cell）
+            .ant-input,
+            .ant-input-textarea textarea {
+                border: none !important;
+                box-shadow: none !important;
+                background: transparent !important;
+                padding: 2px 4px !important;
+            }
+        }
+
+        // 审批表（封面）无真实列名，隐藏空表头行
+        .srs-approval-table .ant-table-thead {
+            display: none;
         }
 
         // 仅 SRS 新增/编辑页：封面与文件修订记录表行高 36px
@@ -194,23 +270,87 @@
         }
     }
 
-    // 仅编辑态：RCM + 内容 + 操作列固定同一行，不换行
+    // 仅编辑态：带 RCM 的行分三行——标题行 / RCM+操作按钮同一行 / 正文整行
     &:not(.read-only) {
         .tree-structure-container {
             .tree-node-item {
                 .node-row.has-rcm,
                 .node-row.has-rcm-text {
                     display: flex !important;
-                    flex-wrap: nowrap !important;
+                    flex-wrap: wrap !important;
                     align-items: flex-start !important;
-                    overflow-x: auto;
-                }
+                    overflow-x: visible;
 
-                .node-row.has-rcm .node-text-area,
-                .node-row.has-rcm-text .node-text-area {
-                    flex: 1 1 520px !important;
-                    min-width: 420px !important;
-                    align-self: flex-start !important;
+                    // 第1行：标题 + 需求编号 + RCM 下拉框 + 操作按钮（四者同一行）
+                    .node-title {
+                        order: 1;
+                        // 标题收窄，需求编号左移贴近标题
+                        flex: 0 0 120px !important;
+                        min-width: 120px !important;
+                        max-width: 120px !important;
+                        margin-right: 8px !important;
+                    }
+                    .node-srs-code {
+                        order: 2;
+                        flex: 0 1 auto !important;
+                        min-width: 0 !important;
+                        max-width: 220px !important;
+                    }
+                    .node-rcm-select {
+                        order: 3;
+                        // 占据中间剩余宽度，标签在框内换行；不把按钮挤到下一行
+                        flex: 1 1 0 !important;
+                        width: auto !important;
+                        max-width: none !important;
+                        min-width: 140px !important;
+                        margin-right: 8px !important;
+
+                        // 与左侧标题 Input（32px）齐平：内边距+标签合计不超过 32；多行限高滚动
+                        .ant-select-selector {
+                            min-height: 32px !important;
+                            max-height: 88px !important;
+                            overflow-y: auto !important;
+                            align-items: center !important;
+                            padding: 3px 4px !important;
+                        }
+
+                        .ant-select-selection-overflow {
+                            align-items: center;
+                            gap: 8px;
+                            row-gap: 4px;
+                        }
+
+                        .ant-select-selection-overflow-item {
+                            align-self: center;
+                        }
+
+                        .ant-select-selection-item {
+                            height: 24px !important;
+                            line-height: 22px !important;
+                            margin: 0 !important;
+                            padding: 0 !important;
+                        }
+
+                        .ant-tag {
+                            margin: 0 !important;
+                            padding: 0 7px !important;
+                            line-height: 22px !important;
+                            height: 24px !important;
+                            font-size: 12px !important;
+                        }
+                    }
+                    .node-actions {
+                        order: 4;
+                        flex: 0 0 auto !important;
+                        margin-left: 8px !important;
+                    }
+                    // 第2行：正文整行
+                    .node-text-area {
+                        order: 20 !important;
+                        flex: 1 1 100% !important;
+                        min-width: 0 !important;
+                        align-self: stretch !important;
+                    }
                 }
 
                 .node-row .node-actions {
@@ -220,6 +360,14 @@
                 }
             }
         }
+    }
+}
+
+// RCM 下拉弹层挂在 body 上，单独统一 Times New Roman
+.srs-rcm-select-dropdown {
+    .ant-select-item-option-content {
+        font-family: "Times New Roman", "SimSun", "Songti SC", serif !important;
+        font-size: 13px !important;
     }
 }
 

@@ -1,5 +1,5 @@
 import "./SrsDocDetail.less";
-import { Form, Input, Button, message, Row, Col, Modal, Space, Table } from "antd";
+import { Form, Input, Button, message, Modal, Space, Table } from "antd";
 import { ArrowLeftOutlined, EditOutlined, DownloadOutlined, FileAddOutlined, PlusOutlined } from "@ant-design/icons";
 import { useEffect, useMemo, useRef } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
@@ -13,6 +13,9 @@ import * as ApiProdRcm from "@/api/ApiProdRcm";
 import * as ApiSrsReq from "@/api/ApiSrsReq";
 import * as ApiSrsReqd from "@/api/ApiSrsReqd";
 import * as ApiSrsType from "@/api/ApiSrsType";
+import * as ApiMember from "@/api/ApiProjectMember";
+import * as ApiTimeline from "@/api/ApiProjectTimeline";
+import * as ApiPersonSign from "@/api/ApiPersonSign";
 import TreeStructure, {
     TreeNode,
     syncTreeWithOtherReqState,
@@ -25,6 +28,130 @@ import TreeStructure, {
     validateChangeReqDataRows,
 } from "./components/TreeStructure";
 import EditableTableGenerator, { TableDataWithHeaders } from "./components/EditableTableGenerator";
+
+const SRS_COVER_DATE_KEYWORDS = ["需求规格说明", "需求规格"];
+
+const SRS_APPROVAL_HEADERS = [
+    { code: "label1", name: "" },
+    { code: "value1", name: "" },
+    { code: "label2", name: "" },
+    { code: "value2", name: "" },
+];
+
+const getSrsTableText = (node: TreeNode) => {
+    const table = node.table;
+    if (!table?.rows?.length) return "";
+    const headerTxt = (table.headers || []).map((h) => h.name || "").join(" ");
+    const rowTxt = (table.rows || []).map((row) => Object.values(row || {}).join(" ")).join(" ");
+    return `${headerTxt} ${rowTxt}`;
+};
+
+const isSrsApprovalTableNode = (node: TreeNode) => {
+    const txt = getSrsTableText(node);
+    return ["编制科室", "编制部门", "文件版本", "编制人", "审核人", "批准人", "生效日期"].filter((k) => txt.includes(k)).length >= 5;
+};
+
+const isSrsChangeLogTableNode = (node: TreeNode) => {
+    const txt = getSrsTableText(node);
+    return ["修改日期", "版本号", "修订说明", "修订人", "批准人"].every((k) => txt.includes(k));
+};
+
+const normalizeSrsApprovalRows = (node: TreeNode) => {
+    const headers = node.table?.headers || [];
+    const rows = node.table?.rows || [];
+    const first = rows[0] || {};
+    if (headers.some((header: any) => header.code === "label1")) {
+        return rows;
+    }
+    const getVal = (code: string) => (first as any)[code] || "";
+    return [
+        { label1: "编制部门", value1: getVal("dept"), label2: "文件版本", value2: getVal("version") },
+        { label1: "编制人", value1: getVal("author"), label2: "日期", value2: "" },
+        { label1: "审核人", value1: getVal("reviewer"), label2: "日期", value2: "" },
+        { label1: "批准人", value1: getVal("approver"), label2: "日期", value2: "" },
+        { label1: "生效日期", value1: getVal("effective_date"), label2: "", value2: "" },
+    ];
+};
+
+const computeSrsCoverDate = (rows: any[]): string => {
+    const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10) || 0;
+    const dateKey = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
+    const cellVals = (r: any) => Object.values(r.cells || {});
+    const match = (r: any, needReview: boolean) => {
+        if ((r.row_type || "date") !== "date" || !num(r.year) || !num(r.month)) return false;
+        const vals = cellVals(r);
+        const hitName = vals.some((v: any) => SRS_COVER_DATE_KEYWORDS.some((k) => String(v || "").includes(k)));
+        const hitReview = vals.some((v: any) => String(v || "").includes("评审"));
+        return hitName && (needReview ? hitReview : true);
+    };
+    const pool = (rows || []).filter((r) => match(r, true));
+    const candidates = pool.length ? pool : (rows || []).filter((r) => match(r, false));
+    if (!candidates.length) return "";
+    const best = candidates.reduce((a, b) => (dateKey(b) > dateKey(a) ? b : a));
+    return `${num(best.year)}.${String(num(best.month)).padStart(2, "0")}.${String(num(best.day) || 1).padStart(2, "0")}`;
+};
+
+type CoverRevisionAutofillInfo = {
+    coverDate: string;
+    version: string;
+    resolveSigner: (label: string) => string;
+    reviser: string;
+    approver: string;
+};
+
+const applyCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAutofillInfo): { nodes: TreeNode[]; changed: boolean } => {
+    let changed = false;
+    const setIf = (row: Record<string, string>, key: string, val: string) => {
+        if (val && !String(row[key] ?? "").trim()) {
+            row[key] = val;
+            changed = true;
+        }
+    };
+    const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+        const children = walk((node.children || []) as TreeNode[]);
+        let nextNode: TreeNode = { ...node, children };
+        if (nextNode.table && isSrsApprovalTableNode(nextNode)) {
+            const rows = normalizeSrsApprovalRows(nextNode).map((r: any) => ({ ...r }));
+            if (rows.length) {
+                if (info.version && String(rows[0].value2 ?? "") !== info.version) {
+                    rows[0].value2 = info.version;
+                    changed = true;
+                }
+                setIf(rows[0], "value1", "产品部");
+            }
+            (["编制人", "审核人", "批准人"] as const).forEach((label, idx) => {
+                const row = rows[idx + 1];
+                if (!row) return;
+                const sig = info.resolveSigner(label);
+                if (sig && !String(row.value1 ?? "").startsWith("data:image") && !String(row.value1 ?? "").trim()) {
+                    row.value1 = sig;
+                    changed = true;
+                }
+                setIf(row, "value2", info.coverDate);
+            });
+            if (rows[4]) {
+                setIf(rows[4], "value1", info.coverDate);
+            }
+            nextNode = { ...nextNode, table: { ...nextNode.table!, headers: SRS_APPROVAL_HEADERS, rows } };
+        } else if (nextNode.table && isSrsChangeLogTableNode(nextNode)) {
+            const rows = [...(nextNode.table.rows || [])].map((r: any) => ({ ...r }));
+            while (rows.length < 1) rows.push({});
+            const row = rows[0] || {};
+            setIf(row, "change_date", info.coverDate);
+            if (info.version) setIf(row, "version_no", info.version);
+            if (!String(row.change_desc ?? "").trim()) {
+                row.change_desc = "首次发布";
+                changed = true;
+            }
+            setIf(row, "changer", info.reviser);
+            setIf(row, "approver", info.approver);
+            rows[0] = row;
+            nextNode = { ...nextNode, table: { ...nextNode.table, rows } };
+        }
+        return nextNode;
+    });
+    return { nodes: walk(nodes), changed };
+};
 
 export default () => {
     const { t: ts } = useTranslation();
@@ -99,12 +226,24 @@ export default () => {
     const isFunctionalKvTable = (table?: any): boolean => {
         if (!table || !Array.isArray(table.headers) || !Array.isArray(table.rows)) return false;
         if (table.headers.length !== 2 || table.rows.length < 3) return false;
-        const fieldLabels = new Set(["需求编号", "需求名称", "需求概述", "主参加者", "前置条件", "触发器", "工作流", "事件流", "后置条件", "异常情况", "约束"]);
+        const fieldLabels = new Set(["需求编号", "需求名称", "需求概述", "需求描述", "主参加者", "前置条件", "触发器", "工作流", "事件流", "后置条件", "异常情况", "约束"]);
         const leftCode = table.headers[0]?.code;
+        const getLeftText = (row: any) => {
+            if (!row) return "";
+            if (leftCode && row[leftCode] != null && String(row[leftCode]).trim() !== "") return String(row[leftCode]);
+            if (row.field != null && String(row.field).trim() !== "") return String(row.field);
+            if (row.attr != null && String(row.attr).trim() !== "") return String(row.attr);
+            return "";
+        };
         const fieldHits = (table.rows || [])
-            .map((row: any) => normalizeCellText(row?.[leftCode]))
+            .map((row: any) => normalizeCellText(getLeftText(row)))
             .filter((txt: string) => fieldLabels.has(txt)).length;
-        return fieldHits >= 3;
+        const h1 = normalizeCellText(table.headers[0]?.name);
+        const h2 = normalizeCellText(table.headers[1]?.name);
+        if (fieldHits >= 3) return true;
+        if (fieldLabels.has(h1) && !!h2) return true;
+        if (h1.includes("字段") && h2.includes("内容") && fieldHits >= 2) return true;
+        return false;
     };
     const extractSrsCodeFromTable = (table?: any): string => {
         const values = [
@@ -190,6 +329,12 @@ export default () => {
         .replace(/^(\d+(?:\.\d+)*\.?)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
         .replace(/[：:\s.．]/g, "")
         .trim();
+    const repairScopeListLineBreaks = (text?: string): string => (
+        String(text || "")
+            // 适用范围段落后常见「。4)」粘连，补回换行（如 1.2 范围第 4 项）
+            .replace(/。(\s*)(\d+[)）])/g, "。\n$2")
+            .replace(/；(\s*)(\d+[)）])/g, "；\n$2")
+    );
     const replaceScopeInText = (text: string, scope: string): string => {
         const raw = String(text || "");
         if (!raw.trim() || !scope) return raw;
@@ -205,13 +350,14 @@ export default () => {
         const nextItem = rest.match(
             /(^|[\n\s。；;，,])((?:[0-9０-９]+|[a-zA-Z])[)）.．、](?:\s*|(?=[\u4e00-\u9fff])))/m
         );
+        const gapBeforeNext = (nextItem && /[\n\r]/.test(String(nextItem[1] || ""))) ? "\n" : "";
         const valueEnd = (nextItem && typeof nextItem.index === "number")
             ? (valueStart + nextItem.index + String(nextItem[1] || "").length)
             : normalized.length;
         const current = normalized.slice(valueStart, valueEnd).trim();
-        if (current === scope) return raw;
-        const nextText = `${normalized.slice(0, valueStart)}${scope}${normalized.slice(valueEnd)}`;
-        return nextText === normalized ? raw : nextText;
+        if (current === scope) return repairScopeListLineBreaks(raw);
+        const nextText = `${normalized.slice(0, valueStart)}${scope}${gapBeforeNext}${normalized.slice(valueEnd)}`;
+        return repairScopeListLineBreaks(nextText === normalized ? raw : nextText);
     };
     const applyProductScopeToTree = (nodes: TreeNode[], product?: any): { nodes: TreeNode[]; changed: boolean } => {
         if (!Array.isArray(nodes) || !product) return { nodes, changed: false };
@@ -225,6 +371,12 @@ export default () => {
             if (replacedText !== String(nextNode.text || "")) {
                 nextNode.text = replacedText;
                 changed = true;
+            } else if (/范围/.test(String(node.title || ""))) {
+                const repairedText = repairScopeListLineBreaks(String(nextNode.text || ""));
+                if (repairedText !== String(nextNode.text || "")) {
+                    nextNode.text = repairedText;
+                    changed = true;
+                }
             } else if ((title === "范围" || title === "适用范围") && !String(nextNode.text || "").trim() && scope) {
                 nextNode.text = scope;
                 changed = true;
@@ -1539,7 +1691,7 @@ export default () => {
         };
         collectActiveCodes(cloned);
         const buildDetailTable = (detail: any) => ({
-            show_header: 1,
+            show_header: 0,
             ...(detail.req_detail_key ? { req_detail_key: detail.req_detail_key } : {}),
             headers: [
                 { code: "field", name: "字段" },
@@ -2089,6 +2241,47 @@ export default () => {
     }, [displayDocVersion, data.treeStructure]);
 
     useEffect(() => {
+        if (!displayProductId || !(data.treeStructure as TreeNode[] || []).length) return;
+        let cancelled = false;
+        Promise.all([
+            ApiTimeline.list_timeline({ prod_id: displayProductId }).catch(() => null),
+            ApiMember.list_project_member({ prod_id: displayProductId, page_index: 0, page_size: 1000 }).catch(() => null),
+            ApiPersonSign.list_person_sign({ page_index: 0, page_size: 1000 }).catch(() => null),
+        ]).then(([tl, mb, ps]: any[]) => {
+            if (cancelled) return;
+            const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
+            const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
+            const signRows = ps && ps.code === Api.C_OK ? ((ps.data && ps.data.rows) || []) : [];
+            const signMap: Record<string, string> = {};
+            signRows.forEach((s: any) => {
+                if (s.name && s.sign_img) signMap[String(s.name).trim()] = s.sign_img;
+            });
+            const findRole = (pred: (role: string) => boolean) => {
+                const hit = members.find((m: any) => pred(String(m.role || "")));
+                return hit ? String(hit.name || "").trim() : "";
+            };
+            const tpm = findRole((r) => r.includes("TPM"));
+            const devLead = findRole((r) => r.includes("研发负责人"));
+            const resolveSigner = (label: string) => {
+                const who = label === "编制人" ? tpm : label === "审核人" || label === "批准人" ? devLead : "";
+                return who ? (signMap[who] || who) : "";
+            };
+            const result = applyCoverRevisionAutofill(data.treeStructure as TreeNode[], {
+                coverDate: computeSrsCoverDate(tlRows),
+                version: String(displayDocVersion || ""),
+                resolveSigner,
+                reviser: tpm,
+                approver: devLead,
+            });
+            if (result.changed) {
+                treeStructureRef.current = result.nodes;
+                dispatch({ treeStructure: result.nodes });
+            }
+        });
+        return () => { cancelled = true; };
+    }, [displayProductId, displayDocVersion, data.treeStructure]);
+
+    useEffect(() => {
         if (params.id || data.loading || !(data.treeStructure as TreeNode[] || []).length) return;
         const { nodes, changed } = ensureStandardTemplateChildren(data.treeStructure as TreeNode[]);
         if (changed) {
@@ -2121,7 +2314,9 @@ export default () => {
             // 保留 srs_code：后端有该字段（含空字符串）则带上，用于“有该字段就显示输入框”
             ...(node.srs_code !== undefined && { srs_code: node.srs_code }),
             ...(node.rcm_codes !== undefined && { rcm_codes: node.rcm_codes }),
-            text: node.text || "",
+            text: /范围/.test(String(node.title || ""))
+                ? repairScopeListLineBreaks(node.text || "")
+                : (node.text || ""),
             ...(node.ref_type !== undefined && { ref_type: node.ref_type }),
             ...(node.img_url !== undefined && { img_url: node.img_url ?? "" }),
             // label 不展示，但需保留以便上传时传给后端
@@ -4124,6 +4319,9 @@ export default () => {
             key: `${keyPrefix}-col-${header.code}`,
             render: (text: string, _record: any, rowIndex: number) => {
                 const isLabel = index === 0 || index === 2;
+                if (typeof text === "string" && text.startsWith("data:image")) {
+                    return <img src={text} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />;
+                }
                 if (isReadOnly || isLabel) return text || "";
                 return (
                     <Input.TextArea
@@ -4138,7 +4336,7 @@ export default () => {
         return (
             <Table
                 key={`${keyPrefix}-${node.id}`}
-                className={`srs-cover-table${!isReadOnly ? " srs-extracted-edit-table" : ""}`}
+                className={`srs-cover-table srs-approval-table${!isReadOnly ? " srs-extracted-edit-table" : ""}`}
                 dataSource={dataSource}
                 columns={columns}
                 pagination={false}
@@ -4189,6 +4387,64 @@ export default () => {
             />
         );
     };
+
+    // 封面 / 文件修订记录：作为左目录顶部两个入口，右侧渲染其内容（编辑逻辑不变）
+    const coverExtraNavSections = [
+        {
+            key: "cover",
+            title: "封面",
+            content: (
+                <div className="extracted-doc-section">
+                    <div className="extracted-item-title">需求规格说明</div>
+                    {approvalRoots.length > 0
+                        ? approvalRoots
+                            .flatMap((root) => collectTableNodes(root))
+                            .filter((node) => isApprovalTable(node))
+                            .map((node, idx) => renderExtractedTable(node, `approval-${idx}`))
+                        : <div className="extracted-empty">暂无</div>}
+                </div>
+            ),
+        },
+        {
+            key: "changelog",
+            title: "文件修订记录",
+            content: (
+                <div className="extracted-doc-section">
+                    <div className="extracted-item-title">文件修订记录</div>
+                    {changeLogRoots.length > 0
+                        ? changeLogRoots
+                            .flatMap((root) => collectTableNodes(root))
+                            .filter((node) => isChangeLogTable(node))
+                            .map((node, idx) => renderExtractedTable(node, `change-${idx}`))
+                        : <div className="extracted-empty">暂无</div>}
+                </div>
+            ),
+        },
+        {
+            key: "change_desc",
+            title: ts("srs_doc.version_change_description"),
+            content: (
+                <div className="extracted-doc-section">
+                    <div className="doc-section-header">
+                        <div className="change-desc-title">
+                            {ts("srs_doc.version_change_description")}
+                        </div>
+                        {!isReadOnly && (
+                            <Button
+                                type="primary"
+                                icon={<EditOutlined />}
+                                onClick={handleEditChangeDesc}>
+                                {ts("srs_doc.edit_change_description")}
+                            </Button>
+                        )}
+                    </div>
+                    <div className={`doc-desc-content ${data.changeDescription ? "has-content" : ""}`}>
+                        {data.changeDescription || ts("srs_doc.no_change_description")}
+                    </div>
+                </div>
+            ),
+        },
+    ];
 
     // 展开/折叠SRS表、需求列表（已改为弹框，此处保留供注释块恢复用）
     // const handleToggleSrsTable = () => { ... };
@@ -4333,46 +4589,12 @@ export default () => {
 
     return (
         <div className={`page div-v srs-doc-detail ${isReadOnly ? 'read-only' : ''}`}>
-            <div className="div-h center-v page-actions searchbar">
-                <Button
-                    icon={<ArrowLeftOutlined />}
-                    onClick={() => navigate("/srs_docs")}>
-                    {ts("back")}
-                </Button>
-                <div className="expand"></div>
-                {!isReadOnly && (
-                <Space>
-                    <Button
-                        type="primary"
-                        icon={<DownloadOutlined />}
-                        loading={data.exporting}
-                        onClick={handleExport}
-                        disabled={!data.isEdit}>
-                        {ts("export")}
-                    </Button>
-                    <Button
-                        type="primary"
-                        icon={<FileAddOutlined />}
-                        onClick={handleInitTemplate}>
-                        {ts("srs_doc.init_template")}
-                    </Button>
-                    <Button
-                        type="primary"
-                        size="large"
-                        loading={data.saving}
-                        onClick={handleSaveTreeStructure}>
-                        {ts("save")}
-                    </Button>
-                </Space>
-                )}
-            </div>
-            <div className="div-v detail-content">
-                <Form 
-                    className="detail-form"
-                    form={editForm} 
-                    onFinish={doSave}
-                    layout="horizontal"
-                    labelAlign="left">
+            <Form
+                className="srs-toolbar-form"
+                form={editForm}
+                onFinish={doSave}
+                layout="inline">
+                <div className="div-h center-v srs-toolbar">
                     <Form.Item hidden name="id">
                         <Input allowClear />
                     </Form.Item>
@@ -4382,105 +4604,67 @@ export default () => {
                     <Form.Item hidden name="file_no">
                         <Input allowClear />
                     </Form.Item>
-                    {(data.isEdit || isReadOnly) ? (
-                        <Row gutter={24} className="form-display-row">
-                            <Col span={8}>
-                                {isReadOnly ? (
-                                    <>
-                                        <span className="form-display-label">{ts("srs_doc.current_product")}：</span>
-                                        <span className="form-display-value">{productLabel || "-"}</span>
-                                    </>
-                                ) : (
-                                    <Form.Item
-                                        label={ts("srs_doc.current_product")}
-                                        name="product_id"
-                                        rules={[{ required: true, message: "" }]}>
-                                        <ProductVersionSelect
-                                            products={data.products}
-                                            allowClear
-                                            namePlaceholder={ts("product.name")}
-                                            versionPlaceholder={ts("product.full_version")}
-                                            onChange={(value) => editForm.setFieldValue("product_id", value)}
-                                        />
-                                    </Form.Item>
-                                )}
-                            </Col>
-                            <Col span={8}>
-                                <Form.Item
-                                    label={ts("srs_doc.current_version")}
-                                    name="version"
-                                    rules={[{ required: !isReadOnly, message: "" }]}>
-                                    <Input allowClear placeholder={ts("srs_doc.please_input_version")} disabled={isReadOnly} style={{ width: 200 }} />
-                                </Form.Item>
-                            </Col>
-                        </Row>
+                    {isReadOnly ? (
+                        <span className="srs-toolbar-meta">
+                            <span className="form-display-label">{ts("srs_doc.current_product")}：</span>
+                            <span className="form-display-value">{productLabel || "-"}</span>
+                        </span>
                     ) : (
-                        <Row gutter={24}>
-                            <Col span={8}>
-                                <Form.Item
-                                    label={ts("srs_doc.product")}
-                                    name="product_id"
-                                    rules={[{ required: true, message: "" }]}>
-                                    <ProductVersionSelect
-                                        products={data.products}
-                                        allowClear
-                                        namePlaceholder={ts("product.name")}
-                                        versionPlaceholder={ts("product.full_version")}
-                                        onChange={(value) => editForm.setFieldValue("product_id", value)}
-                                    />
-                                </Form.Item>
-                            </Col>
-                            <Col span={8}>
-                                <Form.Item
-                                    label={ts("srs_doc.version_label")}
-                                    name="version"
-                                    rules={[{ required: true, message: "" }]}>
-                                    <Input allowClear placeholder={ts("srs_doc.please_input_version")} style={{ width: 200 }} />
-                                </Form.Item>
-                            </Col>
-                        </Row>
+                        <Form.Item
+                            className="srs-toolbar-item"
+                            label={data.isEdit ? ts("srs_doc.current_product") : ts("srs_doc.product")}
+                            name="product_id"
+                            rules={[{ required: true, message: "" }]}>
+                            <ProductVersionSelect
+                                products={data.products}
+                                allowClear
+                                namePlaceholder={ts("product.name")}
+                                versionPlaceholder={ts("product.full_version")}
+                                onChange={(value) => editForm.setFieldValue("product_id", value)}
+                            />
+                        </Form.Item>
                     )}
-                </Form>
-
-                {/* 版本变更说明区域 */}
-                <div className="doc-section">
-                    <div className="doc-section-header">
-                        <div className="change-desc-title">
-                            {ts("srs_doc.version_change_description")}
-                        </div>
-                        {!isReadOnly && (
-                        <Button 
-                            type="primary" 
-                            icon={<EditOutlined />}
-                            onClick={handleEditChangeDesc}>
-                            {ts("srs_doc.edit_change_description")}
+                    <Form.Item
+                        className="srs-toolbar-item"
+                        label={(data.isEdit || isReadOnly) ? ts("srs_doc.current_version") : ts("srs_doc.version_label")}
+                        name="version"
+                        rules={[{ required: !isReadOnly, message: "" }]}>
+                        <Input allowClear placeholder={ts("srs_doc.please_input_version")} disabled={isReadOnly} style={{ width: 130 }} />
+                    </Form.Item>
+                    <div className="expand"></div>
+                    {!isReadOnly && (
+                    <Space>
+                        <Button
+                            type="primary"
+                            icon={<DownloadOutlined />}
+                            loading={data.exporting}
+                            onClick={handleExport}
+                            disabled={!data.isEdit}>
+                            {ts("export")}
                         </Button>
-                        )}
-                    </div>
-                    <div className={`doc-desc-content ${data.changeDescription ? "has-content" : ""}`}>
-                        {data.changeDescription || ts("srs_doc.no_change_description")}
-                    </div>
+                        <Button
+                            type="primary"
+                            icon={<FileAddOutlined />}
+                            onClick={handleInitTemplate}>
+                            {ts("srs_doc.init_template")}
+                        </Button>
+                        <Button
+                            type="primary"
+                            loading={data.saving}
+                            onClick={handleSaveTreeStructure}>
+                            {ts("save")}
+                        </Button>
+                    </Space>
+                    )}
+                    <Button
+                        className="srs-toolbar-back"
+                        icon={<ArrowLeftOutlined />}
+                        onClick={() => navigate("/srs_docs")}>
+                        {ts("back")}
+                    </Button>
                 </div>
-
-                <div className="doc-section extracted-doc-section">
-                    <div className="doc-section-header">
-                        <div className="doc-section-title">封面</div>
-                    </div>
-                    <div className="extracted-item-title">需求规格说明</div>
-                    {approvalRoots.length > 0
-                        ? approvalRoots
-                            .flatMap((root) => collectTableNodes(root))
-                            .filter((node) => isApprovalTable(node))
-                            .map((node, idx) => renderExtractedTable(node, `approval-${idx}`))
-                        : <div className="extracted-empty">暂无</div>}
-                    <div className="extracted-item-title">文件修订记录</div>
-                    {changeLogRoots.length > 0
-                        ? changeLogRoots
-                            .flatMap((root) => collectTableNodes(root))
-                            .filter((node) => isChangeLogTable(node))
-                            .map((node, idx) => renderExtractedTable(node, `change-${idx}`))
-                        : <div className="extracted-empty">暂无</div>}
-                </div>
+            </Form>
+            <div className="div-v detail-content">
 
                 {/* SRS表区域 - 已改为弹框 */}
                 {/* <div className="doc-section">
@@ -4521,18 +4705,6 @@ export default () => {
                 </div> */}
 
                 <div className="doc-section doc-section-flex">
-                    {!isReadOnly && (
-                        <div className="doc-section-header">
-                            <div className="doc-section-buttons">
-                            <Button
-                                type="primary"
-                                icon={<PlusOutlined />}
-                                onClick={handleAddRootNode}>
-                                {ts("srs_doc.add_root_menu")}
-                            </Button>
-                        </div>
-                    </div>
-                    )}
                         <TreeStructure
                             value={data.treeStructure}
                             onChange={isReadOnly ? undefined : (value) => {
@@ -4544,6 +4716,8 @@ export default () => {
                             docVersion={displayDocVersion}
                             productVersion={displayProductVersion}
                             hiddenNodeIds={hiddenNodeIds}
+                            extraNavSections={coverExtraNavSections}
+                            onAddRoot={isReadOnly ? undefined : handleAddRootNode}
                             onNodeDelete={isReadOnly ? undefined : handleNodeDelete}
                             readOnly={isReadOnly}
                             rcmOptions={data.rcmOptions}

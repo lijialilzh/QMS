@@ -1,7 +1,233 @@
-// 覆盖全局样式，让表格正常显示
+// 功能描述/表格编辑弹框：对齐 SRS 主页样式（Times New Roman + pdp-grid 观感）
+.editable-table-modal {
+    .ant-modal-title {
+        font-size: 13px !important;
+        font-family: "Times New Roman", "SimSun", "Songti SC", serif !important;
+    }
+
+    .ant-modal-header {
+        padding: 10px 16px;
+        margin-bottom: 0;
+    }
+
+    .ant-modal-content {
+        max-height: calc(100vh - 48px);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .ant-modal-body {
+        flex: 1;
+        min-height: 0;
+    }
+
+    .ant-modal-footer {
+        flex-shrink: 0;
+        margin-top: 0;
+        padding: 10px 16px;
+        border-top: 1px solid #eef0f3;
+    }
+}
+
 .editable-table-generator {
+    font-size: 13px;
+    font-family: "Times New Roman", "SimSun", "Songti SC", serif;
+    padding: 8px 12px 12px;
+
+    > .ant-form,
+    > .ant-alert {
+        flex-shrink: 0;
+    }
+
+    .ant-form {
+        margin-bottom: 4px !important;
+    }
+
+    .ant-form-item {
+        margin-bottom: 4px;
+    }
+
+    .ant-form-item-label {
+        padding-bottom: 2px !important;
+
+        > label {
+            height: auto;
+        }
+    }
+
+    .ant-form-item-extra {
+        margin-top: 2px;
+        min-height: auto;
+        line-height: 1.4;
+    }
+
+    // 表名 + 行数 + 列数：同一行紧凑排列
+    .editable-table-meta-row {
+        display: flex;
+        align-items: flex-end;
+        gap: 8px;
+        flex-wrap: nowrap;
+        margin-bottom: 0;
+
+        .editable-table-meta-name {
+            flex: 1 1 auto;
+            min-width: 0;
+            margin-bottom: 0;
+        }
+
+        .editable-table-meta-count {
+            flex: 0 0 auto;
+            margin-bottom: 0;
+
+            .ant-input-number {
+                width: 88px;
+            }
+        }
+    }
+
+    .editable-table-header-item {
+        margin-bottom: 0;
+
+        .editable-table-header-input-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+
+            .ant-input {
+                flex: 1 1 auto;
+                min-width: 0;
+            }
+
+            .ant-btn {
+                flex: 0 0 auto;
+                white-space: nowrap;
+            }
+        }
+    }
+
+    .ant-btn,
+    .ant-input,
+    .ant-input-textarea textarea,
+    .ant-input-number,
+    .ant-input-number-input,
+    .ant-select-selector,
+    .ant-select-selection-item,
+    .ant-form-item-label > label,
+    .ant-table,
+    .ant-table-cell,
+    .ant-alert,
+    .ant-modal-title {
+        font-size: 13px !important;
+        font-family: "Times New Roman", "SimSun", "Songti SC", serif !important;
+    }
+
     .ant-table-wrapper {
         height: auto !important;
+    }
+
+    // 预览表：对齐主页封面/修订表观感
+    .ant-table {
+        border: none;
+    }
+
+    .ant-table-cell {
+        border-color: #e8edf2 !important;
+        padding: 2px 8px !important;
+        vertical-align: top;
+    }
+
+    .ant-table-tbody > tr > td.ant-table-cell {
+        padding-top: 2px !important;
+        padding-bottom: 2px !important;
+        overflow: visible;
+        word-break: break-word;
+    }
+
+    // 内容列：左对齐，随内容撑开行高
+    .editable-table-content-col {
+        overflow: visible;
+        word-break: break-word;
+        text-align: left !important;
+
+        .ant-input,
+        .ant-input-textarea,
+        .editable-table-rcm-cell,
+        .editable-table-locked-cell {
+            max-width: 100%;
+            text-align: left;
+        }
+
+        .ant-input-textarea textarea {
+            text-align: left !important;
+        }
+    }
+
+    .editable-table-op-col {
+        white-space: nowrap;
+    }
+
+    .ant-table-thead > tr > th.ant-table-cell {
+        background: #f5f8fc !important;
+        color: #46586b;
+        font-weight: 600;
+    }
+
+    .ant-table-thead > tr > th.ant-table-cell::before {
+        display: none !important;
+    }
+
+    .ant-table-tbody > tr:hover > td.ant-table-cell {
+        background: transparent !important;
+    }
+
+    // 单元格内输入框无边框，直接在格子里编辑
+    .ant-table-tbody .ant-input,
+    .ant-table-tbody .ant-input-textarea textarea,
+    .ant-table-thead .ant-input {
+        border: none !important;
+        box-shadow: none !important;
+        background: transparent !important;
+        padding: 2px 4px !important;
+    }
+
+    .ant-table-tbody .ant-select-selector {
+        border-color: #e8edf2 !important;
+        font-family: "Times New Roman", "SimSun", "Songti SC", serif !important;
+        min-height: 28px !important;
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+        padding: 0 4px !important;
+    }
+
+    // RCM 行：收紧行线与选择框、选择框与正文之间的间距
+    .editable-table-rcm-cell {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin: 0;
+        padding: 0;
+
+        .ant-select {
+            margin: 0;
+        }
+
+        .ant-select-selector {
+            align-items: center !important;
+            overflow: visible !important;
+        }
+
+        .ant-input-textarea textarea {
+            padding-top: 2px !important;
+            padding-bottom: 2px !important;
+            overflow-y: hidden !important;
+        }
+    }
+
+    .ant-table-tbody .ant-tag {
+        font-family: "Times New Roman", "SimSun", "Songti SC", serif !important;
+        font-size: 12px !important;
     }
 
     .editable-table-row-actions {
@@ -9,10 +235,32 @@
     }
 
     .editable-table-locked-cell {
-        min-height: 24px;
-        padding: 4px 0;
-        color: rgba(0, 0, 0, 0.45);
+        min-height: auto;
+        padding: 2px 0;
+        color: rgba(0, 0, 0, 0.65);
         white-space: pre-line;
         word-break: break-word;
+        text-align: left;
+        font-family: "Times New Roman", "SimSun", "Songti SC", serif;
+        font-size: 13px;
+        line-height: 1.5;
+    }
+
+    .editable-table-preview {
+        margin-top: 4px;
+    }
+
+    .editable-table-preview-title {
+        flex-shrink: 0;
+        margin-bottom: 4px;
+        font-size: 13px;
+        font-weight: 600;
+        color: #46586b;
+    }
+
+    .editable-table-preview-scroll {
+        .ant-table-wrapper {
+            height: auto !important;
+        }
     }
 }

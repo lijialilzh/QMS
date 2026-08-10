@@ -1,8 +1,8 @@
 import "./TreeStructure.less";
 import { useState, useEffect, useRef } from "react";
+import type { ReactNode } from "react";
 import { Button, Input, Space, Popconfirm, Table, Empty, Tooltip, Select, Tag, Upload, message, Image } from "antd";
 import { PlusOutlined, DeleteOutlined, TableOutlined, EditOutlined, FileOutlined, UploadOutlined, CaretRightOutlined, CaretDownOutlined } from "@ant-design/icons";
-import { numberToChinese } from "@/common";
 import { useTranslation } from "react-i18next";
 import EditableTableGenerator, { TableDataWithHeaders } from "./EditableTableGenerator";
 import type { ColumnsType } from "antd/es/table";
@@ -155,10 +155,12 @@ const KV_FIELD_LABELS = new Set([
     "需求编号",
     "需求名称",
     "需求概述",
+    "需求描述",
     "主参加者",
     "前置条件",
     "触发器",
     "工作流",
+    "事件流",
     "后置条件",
     "异常情况",
     "约束",
@@ -1320,18 +1322,55 @@ function extractSrsCodeFromTable(table?: TableData | null): string {
     return "";
 }
 
+function getFunctionalKvLeftText(row: any, leftCode?: string): string {
+    if (!row) return "";
+    if (leftCode && row[leftCode] != null && String(row[leftCode]).trim() !== "") {
+        return String(row[leftCode]);
+    }
+    for (const key of ["field", "attr"]) {
+        if (row[key] != null && String(row[key]).trim() !== "") {
+            return String(row[key]);
+        }
+    }
+    return "";
+}
+
+function countFunctionalKvFieldHits(table: TableData): number {
+    const leftCode = table.headers?.[0]?.code;
+    const hits = new Set<string>();
+    (table.rows || []).forEach((row) => {
+        const text = normalizeCellText(getFunctionalKvLeftText(row, leftCode));
+        if (KV_FIELD_LABELS.has(text)) {
+            hits.add(text);
+        }
+    });
+    return hits.size;
+}
+
 function isFunctionalKvTable(table?: TableData | null): boolean {
     if (!table || !Array.isArray(table.headers) || !Array.isArray(table.rows)) return false;
     if (table.headers.length !== 2 || table.rows.length < 3) return false;
     const h1 = normalizeCellText(table.headers[0]?.name);
     const h2 = normalizeCellText(table.headers[1]?.name);
-    const fieldHits = table.rows
-        .map((row) => normalizeCellText(String(row?.[table.headers![0].code] || "")))
-        .filter((txt) => KV_FIELD_LABELS.has(txt)).length;
+    const fieldHits = countFunctionalKvFieldHits(table);
     // 命中多个“需求详情字段”时，按 Word 里的“左列字段+右列内容”无表头表格渲染
     if (fieldHits >= 3) return true;
     // 兜底：第一行常被误解析成表头（如“需求编号 | SRS-XXX”）
-    return KV_FIELD_LABELS.has(h1) && !!h2;
+    if (KV_FIELD_LABELS.has(h1) && !!h2) return true;
+    // 弹框保存后常见表头为“字段 | 内容”
+    if (h1.includes("字段") && h2.includes("内容") && fieldHits >= 2) return true;
+    return false;
+}
+
+function shouldNarrowFunctionalFirstColumn(table?: TableData | null): boolean {
+    if (!table || !Array.isArray(table.headers) || table.headers.length !== 2) return false;
+    if (isFunctionalKvTable(table)) return true;
+    if (table.show_header === 0) return true;
+    const h1 = normalizeCellText(table.headers[0]?.name);
+    const h2 = normalizeCellText(table.headers[1]?.name);
+    if (h1.includes("字段") && h2.includes("内容")) return true;
+    if (countFunctionalKvFieldHits(table) >= 2) return true;
+    return !!(extractSrsCodeFromTable(table) && countFunctionalKvFieldHits(table) >= 1);
 }
 
 function isReqDetailProtectedTable(table?: TableData | null): boolean {
@@ -1416,19 +1455,32 @@ function removeOtherReqMarker(rawText: string | undefined): string {
     return filtered.join("\n");
 }
 
-function extractImageCaptionAndBody(rawText: string | undefined): { caption: string; body: string } {
+/** 图片章节正文拆分：图上 intro（如「如图1所示：」）/ 图下 caption（如「图1 xxx」）/ 图下 body（说明） */
+function extractImageTextParts(rawText: string | undefined): { intro: string; caption: string; body: string } {
     const lines = String(rawText || "").replace(/\r/g, "").split("\n");
+    let captionIdx = -1;
     let caption = "";
-    const bodyLines: string[] = [];
-    lines.forEach((line) => {
-        const trimmed = line.trim();
-        if (!caption && /^图\s*\d+/.test(trimmed)) {
+    for (let i = 0; i < lines.length; i++) {
+        const trimmed = lines[i].trim();
+        if (/^图\s*\d+/.test(trimmed)) {
+            captionIdx = i;
             caption = trimmed;
-            return;
+            break;
         }
-        bodyLines.push(line);
-    });
-    return { caption, body: bodyLines.join("\n") };
+    }
+    if (captionIdx < 0) {
+        return { intro: "", caption: "", body: String(rawText || "") };
+    }
+    const intro = lines.slice(0, captionIdx).join("\n").replace(/\n+$/g, "");
+    const body = lines.slice(captionIdx + 1).join("\n").replace(/^\n+/g, "");
+    return { intro, caption, body };
+}
+
+function joinImageTextParts(intro: string, caption: string, body: string): string {
+    return [intro, caption, body]
+        .map((s) => String(s ?? "").replace(/\s+$/g, ""))
+        .filter((s) => s.length > 0)
+        .join("\n");
 }
 
 interface TreeNodeItemProps {
@@ -1467,6 +1519,8 @@ interface TreeNodeItemProps {
     existingChangeTableTitles?: string[];
     hideLevelPrefix?: boolean;
     disableHierarchyActions?: boolean;
+    // 单章编辑：为 false 时只渲染当前节点自身，不递归渲染子章节（子章节走左目录导航）
+    renderChildren?: boolean;
 }
 
 const TreeNodeItem = ({
@@ -1498,8 +1552,8 @@ const TreeNodeItem = ({
     reqDetails,
     srsReqLoading,
     existingChangeTableTitles = [],
-    hideLevelPrefix = false,
     disableHierarchyActions = false,
+    renderChildren = true,
 }: TreeNodeItemProps) => {
     const { t: ts } = useTranslation();
     const [fileList, setFileList] = useState<UploadFile[]>([]);
@@ -1756,17 +1810,19 @@ const TreeNodeItem = ({
         { field: ts("srs_doc.constraint") || "约束", value: detail?.constraint },
     ].map((row) => ({ ...row, value: normalizeReqDetailNumberedText(row.value, row.field) })).filter((row) => String(row.value || "").trim()));
     const renderReqDetailTable = (detail: any, key: string) => (
-        <div className="node-table" key={key}>
+        <div className="node-table node-table--functional-kv" key={key}>
             <Table
                 size="small"
                 bordered
                 pagination={false}
+                tableLayout="fixed"
                 rowKey="field"
                 dataSource={reqDetailRows(detail)}
                 columns={[
-                    { title: "字段", dataIndex: "field", width: 160 },
+                    { title: "字段", dataIndex: "field", width: 120, className: "functional-kv-field-col" },
                     { title: "内容", dataIndex: "value", render: (t: string) => <span style={{ whiteSpace: "pre-line", wordBreak: "break-word" }}>{t || "-"}</span> },
                 ]}
+                showHeader={false}
             />
         </div>
     );
@@ -1868,15 +1924,26 @@ const TreeNodeItem = ({
         !hasChangeReqTableInSubtree(node.children || [])
     );
     const shouldMoveOtherReqMarker = readOnly && hasOtherReqMarker && otherReqTableIndex >= 0;
-    const imageCaptionData = extractImageCaptionAndBody(node.text);
+    const imageTextParts = extractImageTextParts(node.text);
     const hasDisplayedImage = !!displayImageUrl;
+    // 有图且能识别「图N …」图题时，按 Word 版式拆分：图上 intro / 图下 caption / 图下 body
+    const useImageSplitLayout = hasDisplayedImage && !!imageTextParts.caption;
     const displayNodeText = (() => {
         let text = shouldMoveOtherReqMarker ? removeOtherReqMarker(node.text) : (node.text || "");
-        if (readOnly && hasDisplayedImage && imageCaptionData.caption) {
-            text = imageCaptionData.body;
+        if (useImageSplitLayout) {
+            text = [imageTextParts.intro, imageTextParts.body].filter(Boolean).join("\n");
         }
         return text;
     })();
+    const updateImageTextPart = (part: "intro" | "caption" | "body", value: string) => {
+        const next = {
+            intro: imageTextParts.intro,
+            caption: imageTextParts.caption,
+            body: imageTextParts.body,
+            [part]: value,
+        };
+        onContentChange(node.id, joinImageTextParts(next.intro, next.caption, next.body), isLockedOtherReqChapter);
+    };
     const buildSafeSrsMainCells = (table?: TableData | null): TableData["cells"] | undefined => {
         if (!table || !isReqMainTable(table) || !Array.isArray(table.headers) || !Array.isArray(table.rows) || table.rows.length === 0) {
             return table?.cells;
@@ -1973,6 +2040,7 @@ const TreeNodeItem = ({
             return [];
         }
         const hideHeader = table.show_header === 0 || isFunctionalKvTable(table);
+        const narrowFirstCol = shouldNarrowFunctionalFirstColumn(table);
         const tableCells = buildSafeSrsMainCells(table) || [];
         // 无表头两列表格优先按“数据行”渲染，避免合并单元格分支吞掉首行（需求编号/SRS）
         const hasMergedCells = !hideHeader && Array.isArray(tableCells) && tableCells.length > 1;
@@ -1982,9 +2050,16 @@ const TreeNodeItem = ({
                 title: hideHeader ? "" : header.name,
                 dataIndex: header.code,
                 key: `col_${index}`,
-                className: codeCol ? "srs-code-col" : "",
+                className: [
+                    codeCol ? "srs-code-col" : "",
+                    narrowFirstCol && index === 0 ? "functional-kv-field-col" : "",
+                ].filter(Boolean).join(" ") || undefined,
             };
-            if (codeCol) {
+            if (narrowFirstCol && index === 0) {
+                col.width = 120;
+                col.onHeaderCell = () => ({ style: { width: 120, minWidth: 120, maxWidth: 120 } });
+                col.onCell = () => ({ style: { width: 120, minWidth: 120, maxWidth: 120 } });
+            } else if (codeCol) {
                 col.width = 190;
                 col.ellipsis = true;
             }
@@ -2087,10 +2162,10 @@ const TreeNodeItem = ({
     };
 
     return (
-        <div style={{ marginLeft: level * 32 }}>
+        <div style={{ marginLeft: level * 20 }}>
           <div className={`tree-node-item level-${level}`}>
               <div className={`node-row${hasRcm ? " has-rcm" : ""}${hasRcmText ? " has-rcm-text" : ""}`}>
-                  {hasVisibleChildren ? (
+                  {hasVisibleChildren && renderChildren ? (
                       <Button
                           type="text"
                           size="small"
@@ -2100,20 +2175,6 @@ const TreeNodeItem = ({
                       />
                   ) : (
                       <span className="node-expand-placeholder" />
-                  )}
-                  {!readOnly && !disableHierarchyActions && !isLockedReqHierarchyNode && (
-                    <Tooltip title={ts('srs_doc.add_sibling_before') || '在前面添加同级节点'}>
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<PlusOutlined />}
-                        className="node-add-sibling-btn"
-                        onClick={() => onAddSibling(node.id, 'before', node.title)}
-                      />
-                    </Tooltip>
-                  )}
-                  {!readOnly && !hideLevelPrefix && (
-                      <span className="node-title-prefix">{numberToChinese(level + 1)}{ts('level_menu')}</span>
                   )}
                   {readOnly || isLockedReqHierarchyNode || isLockedChapterMeta ? (
                       <div className={`node-title${hasRcm ? " with-rcm" : ""}${hasRcmText ? " with-rcm-text" : ""}`}>{node.title || "-"}</div>
@@ -2164,6 +2225,7 @@ const TreeNodeItem = ({
                                   optionFilterProp="label"
                                   placeholder={ts("srs_doc.select_rcm_code") || "选择RCM"}
                                   options={rcmSelectOptions}
+                                  popupClassName="srs-rcm-select-dropdown"
                                   value={(() => {
                                       const codes = Array.isArray(node.rcm_codes) ? node.rcm_codes.filter(Boolean) : [];
                                       const normalizedCodes = codes.map((code) => normalizeRcmCode(code));
@@ -2192,13 +2254,12 @@ const TreeNodeItem = ({
                                           <span>{opt?.data?.label}</span>
                                       </Tooltip>
                                   )}
-                                  size="small"
                                   style={{ width: "100%", minWidth: 0 }}
                               />
                           )}
                       </div>
                   )}
-                  {!isSrsReqRefNode && (
+                  {!isSrsReqRefNode && !useImageSplitLayout && (
                       canEditNodeContent ? (
                           <Input.TextArea
                               className="node-content node-text-area"
@@ -2206,8 +2267,8 @@ const TreeNodeItem = ({
                               onChange={(e) => onContentChange(node.id, e.target.value, isLockedOtherReqChapter)}
                               placeholder={ts('srs_doc.please_input_content')}
                               size="small"
-                              rows={1}
-                              autoSize={{ minRows: 1, maxRows: 6 }}
+                              rows={3}
+                              autoSize={{ minRows: 3, maxRows: 20 }}
                               disabled={readOnly}
                           />
                       ) : (
@@ -2216,6 +2277,23 @@ const TreeNodeItem = ({
                                   ? removeOtherReqMarker(splitText.intro || "")
                                   : (isLockedOtherReqChapter ? editableNodeText : displayNodeText)}
                           </div>
+                      )
+                  )}
+                  {/* 图片章节拆分：图上方 intro（如「如图1所示：」） */}
+                  {useImageSplitLayout && (
+                      canEditNodeContent ? (
+                          <Input.TextArea
+                              className="node-content node-img-intro"
+                              value={imageTextParts.intro}
+                              onChange={(e) => updateImageTextPart("intro", e.target.value)}
+                              placeholder="如图N所示："
+                              size="small"
+                              autoSize={{ minRows: 1, maxRows: 6 }}
+                          />
+                      ) : (
+                          imageTextParts.intro ? (
+                              <div className="node-content node-img-intro">{imageTextParts.intro}</div>
+                          ) : null
                       )
                   )}
                   {isImgRefType(node.ref_type) && !isProductBoundDocImageNode && (
@@ -2239,12 +2317,7 @@ const TreeNodeItem = ({
                       </div>
                   )}
                   {level <= 2 && displayImageUrl && (
-                      <div>
-                          {readOnly && hasDisplayedImage && !!imageCaptionData.caption && (
-                              <div className="node-content" style={{ marginBottom: 6, textAlign: "center", fontSize: 13, fontWeight: 400 }}>
-                                  {imageCaptionData.caption}
-                              </div>
-                          )}
+                      <div className="node-pic-block">
                           <div className="node-pic node-pic-readonly">
                               <Image
                                   key={displayImageUrl}
@@ -2269,6 +2342,36 @@ const TreeNodeItem = ({
                           </Button>
                       </Upload>
                   )}
+                  {/* 图片章节拆分：图下方居中图题 + 说明正文 */}
+                  {useImageSplitLayout && (
+                      <>
+                          {canEditNodeContent ? (
+                              <Input
+                                  className="node-content node-img-caption"
+                                  value={imageTextParts.caption}
+                                  onChange={(e) => updateImageTextPart("caption", e.target.value)}
+                                  placeholder="图N 图题"
+                                  size="small"
+                              />
+                          ) : (
+                              <div className="node-content node-img-caption">{imageTextParts.caption}</div>
+                          )}
+                          {canEditNodeContent ? (
+                              <Input.TextArea
+                                  className="node-content node-img-body"
+                                  value={imageTextParts.body}
+                                  onChange={(e) => updateImageTextPart("body", e.target.value)}
+                                  placeholder={ts('srs_doc.please_input_content')}
+                                  size="small"
+                                  autoSize={{ minRows: 2, maxRows: 20 }}
+                              />
+                          ) : (
+                              imageTextParts.body ? (
+                                  <div className="node-content node-img-body">{imageTextParts.body}</div>
+                              ) : null
+                          )}
+                      </>
+                  )}
                   {node.ref_type === 'srs_reqds' && onOpenReqList && (
                       <Button type="primary" size="small" className="node-srsreq-btn" onClick={onOpenReqList}>
                           {ts('srs_doc.req_detailed_list')}
@@ -2278,27 +2381,7 @@ const TreeNodeItem = ({
                       <Tag color="geekblue" style={{padding: '5px'}}>{ts('srs_doc.req_list')}</Tag>
                   )} */}
                   {!readOnly && !disableHierarchyActions && !isLockedReqHierarchyNode && (
-                    <Tooltip title={ts('srs_doc.add_sibling_after') || '在后面添加同级节点'}>
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<PlusOutlined />}
-                        className="node-add-sibling-btn"
-                        onClick={() => onAddSibling(node.id, 'after', node.title)}
-                      />
-                    </Tooltip>
-                  )}
-                  {!readOnly && !disableHierarchyActions && !isLockedReqHierarchyNode && (
                   <Space className="node-actions" size={8}>
-                      {
-                        level < 2 && (
-                        <Button
-                          size="small"
-                          icon={<PlusOutlined />}
-                          onClick={() => onAdd(node.id)}>
-                          {ts('add')}{numberToChinese(level + 2)}{ts('level_menu')}
-                        </Button>)
-                      }
                       {!(isProductBoundDocImageNode || (node.ref_type && (isImgRefType(node.ref_type) || node.ref_type === 'srs_reqs' || node.ref_type === 'srs_reqs_2'))) && (
                       <Button
                           size="small"
@@ -2335,7 +2418,7 @@ const TreeNodeItem = ({
               {/* 显示普通章节表格：按节点内 + 导入子表顺序展示 */}
               {!(isProductBoundDocImageNode || (node.ref_type && (isImgRefType(node.ref_type) || node.ref_type === 'srs_reqs' || node.ref_type === 'srs_reqs_2'))) &&
                 orderedNormalTables.map((tbl, idx) => (
-                    <div className="node-table" key={tbl.key}>
+                    <div className={`node-table${shouldNarrowFunctionalFirstColumn(tbl.table) ? " node-table--functional-kv" : ""}`} key={tbl.key}>
                         {shouldMoveOtherReqMarker && idx === otherReqTableIndex && (
                             <div className="node-content" style={{ marginBottom: 8, whiteSpace: "pre-line", fontSize: 13, fontWeight: 400 }}>
                                 其他需求列表
@@ -2581,7 +2664,7 @@ const TreeNodeItem = ({
                   </div>
               )}
           </div>
-            {expanded && visibleChildren.map((child) => (
+            {renderChildren && expanded && visibleChildren.map((child) => (
                 <TreeNodeItem
                     key={child.id}
                     node={child}
@@ -2646,9 +2729,13 @@ interface TreeStructureProps {
     srsReqLoading?: boolean;
     onNodesSnapshot?: (nodes: TreeNode[]) => void;
     enableStandardReqAutoSync?: boolean;
+    // 左目录顶部的额外入口（如封面、文件修订记录），选中后右侧渲染其 content
+    extraNavSections?: { key: string; title: string; content: ReactNode }[];
+    // 左目录底部“添加根章节”按钮的回调（由父组件提供，复用其新增根节点逻辑）
+    onAddRoot?: () => void;
 }
 
-export default ({ value = [], onChange, docId, productId, docVersion, productVersion, hiddenNodeIds = [], readOnly, rcmOptions, onNodeDelete, onOpenSrsTable, onOpenReqList, onEditSrsChangeTable, onDeleteSrsChangeTable, onSaveReqDetailTable, onSaveSrsReqTable, onSaveOtherReqTable, onSaveSrsChangeReqTable, srsReqPreview, reqDetails, srsReqLoading, onNodesSnapshot, enableStandardReqAutoSync = false }: TreeStructureProps) => {
+export default ({ value = [], onChange, docId, productId, docVersion, productVersion, hiddenNodeIds = [], readOnly, rcmOptions, onNodeDelete, onOpenSrsTable, onOpenReqList, onEditSrsChangeTable, onDeleteSrsChangeTable, onSaveReqDetailTable, onSaveSrsReqTable, onSaveOtherReqTable, onSaveSrsChangeReqTable, srsReqPreview, reqDetails, srsReqLoading, onNodesSnapshot, enableStandardReqAutoSync = false, extraNavSections = [], onAddRoot }: TreeStructureProps) => {
     const { t: ts } = useTranslation();
     const [nodes, setNodes] = useState<TreeNode[]>(value);
     // 注意：srsReqPreview 在父组件里是每次渲染都新建的字面量对象 ({main, other, changes})，
@@ -2669,6 +2756,21 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
     const [initialTableData, setInitialTableData] = useState<TableDataWithHeaders | undefined>(undefined);
     const [tableCellsBackup, setTableCellsBackup] = useState<TableData["cells"] | undefined>(undefined);
     const [lockedTableRowLabels, setLockedTableRowLabels] = useState<string[]>([]);
+    // 左目录 + 右单章 布局：当前选中的节点 id 与目录折叠集合（仅展示层，不影响数据）
+    const [activeNodeId, setActiveNodeId] = useState<string | number | null>(null);
+    const [navCollapsedIds, setNavCollapsedIds] = useState<Set<string>>(new Set());
+    const toggleNavCollapse = (id: string | number) => {
+        setNavCollapsedIds((prev) => {
+            const next = new Set(prev);
+            const key = String(id);
+            if (next.has(key)) {
+                next.delete(key);
+            } else {
+                next.add(key);
+            }
+            return next;
+        });
+    };
 
     const syncRcmCodesFromText = (nodeList: TreeNode[]): TreeNode[] => {
         return (nodeList || []).map((node) => {
@@ -2744,7 +2846,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             ? rows.map((row) => ({ ...row, [REQ_DETAIL_KEY_FIELD]: reqDetailKey }))
             : rows;
         return {
-            show_header: 1,
+            show_header: 0,
             ...(reqDetailKey ? { req_detail_key: reqDetailKey } : {}),
             headers: [
                 { code: leftCode, name: "字段" },
@@ -3900,6 +4002,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         }));
 
         updateNodes(newNodes);
+        return newNode.id;
     };
 
     const handleAddSibling = (targetId: number, position: 'before' | 'after', _defaultTitle: string) => {
@@ -4598,6 +4701,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             const mergedCells = rebuildMergedCells();
             tableFormat = {
                 name: String(tableData.tableName || "").trim(),
+                show_header: 0,
                 // 存储完整的表头对象（包含code和name）
                 headers: tableData.headers.map(header => ({
                     code: header.code,
@@ -4606,6 +4710,9 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                 rows: rows,
                 cells: mergedCells,
             };
+            if (!isFunctionalKvTable(tableFormat)) {
+                delete (tableFormat as any).show_header;
+            }
             if (tableCellsBackup && !mergedCells) {
                 message.warning("表格结构已变化，合并单元格已按新结构重建。");
             }
@@ -5914,51 +6021,192 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
     );
     const existingChangeTableTitles = collectChangeTableTitles(visibleNodes);
 
+    // 仅用于左目录导航：按 id 在可见树中查找节点（不改动任何数据）
+    const findNavNodeById = (list: TreeNode[], id: string | number | null): TreeNode | null => {
+        if (id === null || id === undefined) return null;
+        for (const item of list || []) {
+            if (String(item.id) === String(id)) return item;
+            const inChild = findNavNodeById(item.children || [], id);
+            if (inChild) return inChild;
+        }
+        return null;
+    };
+    // 额外入口（封面/文件修订记录）：key 以 __extra_ 前缀标识
+    const extraKeyPrefix = "__extra_";
+    const activeExtra = extraNavSections.find((s) => String(activeNodeId) === `${extraKeyPrefix}${s.key}`) || null;
+    // 默认选中：优先第一个额外入口（封面），否则第一个章节
+    const defaultActiveNode = visibleNodes[0] || null;
+    const activeNode = activeExtra
+        ? null
+        : (findNavNodeById(visibleNodes, activeNodeId) || (activeNodeId === null && extraNavSections.length > 0 ? null : defaultActiveNode));
+    // 没有任何选中时（activeNodeId 为 null），若存在额外入口则默认落在第一个额外入口
+    const fallbackToFirstExtra = activeNodeId === null && !activeExtra && extraNavSections.length > 0;
+    const effectiveExtra = activeExtra || (fallbackToFirstExtra ? extraNavSections[0] : null);
+    const effectiveNode = effectiveExtra ? null : (activeNode || defaultActiveNode);
+
+    // 目录里能否给该节点加子章节：与右侧"添加下一级"按钮的显示条件保持一致
+    // （非只读、树深 < 2 支持到三级、排除自动需求组与需求/图片等特殊节点）
+    const canAddChildInNav = (node: TreeNode, depth: number): boolean => (
+        !readOnly &&
+        depth < 2 &&
+        node.label !== "__auto_req_group" &&
+        node.label !== "__auto_req_detail" &&
+        node.ref_type !== "srs_reqs" &&
+        node.ref_type !== "srs_reqs_2" &&
+        node.ref_type !== "srs_reqds" &&
+        !isImgRefType(node.ref_type)
+    );
+    // 目录里新增子章节：复用 handleAdd，并自动展开父节点、选中新节点
+    const handleAddChildFromNav = (parentId: number) => {
+        const newId = handleAdd(parentId);
+        setNavCollapsedIds((prev) => {
+            const next = new Set(prev);
+            next.delete(String(parentId));
+            return next;
+        });
+        if (newId !== undefined && newId !== null) {
+            setActiveNodeId(newId);
+        }
+    };
+
+    // 左目录只展示真实章节：排除嵌入表格/图片、需求列表等内容型子节点
+    const isNavChapter = (n: TreeNode): boolean => (
+        !isEmbeddedImageNode(n) &&
+        !isEmbeddedTableNode(n) &&
+        n.ref_type !== "srs_reqs" &&
+        n.ref_type !== "srs_reqs_2" &&
+        n.ref_type !== "srs_reqds"
+    );
+
+    // 递归渲染左目录：展开到子章节都可点击，选中后右侧编辑该章节
+    const renderNav = (list: TreeNode[], depth: number): JSX.Element[] => (
+        (list || []).filter(isNavChapter).map((node) => {
+            const kids = (node.children || []).filter(isNavChapter);
+            const hasKids = kids.length > 0;
+            const collapsed = navCollapsedIds.has(String(node.id));
+            const isActive = !!effectiveNode && String(node.id) === String(effectiveNode.id);
+            return (
+                <div key={`nav-${node.id}`}>
+                    <div
+                        className={`srs-nav-item${isActive ? " active" : ""}`}
+                        style={{ paddingLeft: 8 + depth * 14 }}
+                        onClick={() => setActiveNodeId(node.id)}
+                    >
+                        {hasKids ? (
+                            <span
+                                className="srs-nav-caret"
+                                onClick={(e) => { e.stopPropagation(); toggleNavCollapse(node.id); }}
+                            >
+                                {collapsed ? <CaretRightOutlined /> : <CaretDownOutlined />}
+                            </span>
+                        ) : (
+                            <span className="srs-nav-caret-placeholder" />
+                        )}
+                        <span className="srs-nav-title" title={node.title || ""}>{node.title || ts('please_input_title')}</span>
+                        {canAddChildInNav(node, depth) && (
+                            <Tooltip title={ts('srs_doc.add_sub_chapter') || '添加子章节'}>
+                                <PlusOutlined
+                                    className="srs-nav-add-child"
+                                    onClick={(e) => { e.stopPropagation(); handleAddChildFromNav(node.id); }}
+                                />
+                            </Tooltip>
+                        )}
+                    </div>
+                    {hasKids && !collapsed && renderNav(kids, depth + 1)}
+                </div>
+            );
+        })
+    );
+
     return (
         <>
-            <div className="tree-structure-container">
-                {visibleNodes.length === 0 ? (
+            <div className="tree-structure-container srs-tree-layout">
+                {visibleNodes.length === 0 && extraNavSections.length === 0 ? (
                     <Empty
                         image={Empty.PRESENTED_IMAGE_SIMPLE}
                         description={ts("srs_doc.empty_directory_structure")}
                         className="tree-structure-empty"
                     />
-                ) : visibleNodes.map((node) => (
-                  <div key={`content-node-${node.id}`}>
-                      <div className="tree-node-item-wrapper" key={node.id}>
-                        <TreeNodeItem
-                            node={node}
-                            level={0}
-                            docId={docId}
-                            productId={productId}
-                            docVersion={docVersion}
-                    productVersion={productVersion}
-                            readOnly={readOnly}
-                            rcmOptions={rcmOptions}
-                            onRcmSelectChange={handleRcmSelectChange}
-                            onAdd={handleAdd}
-                            onAddSibling={handleAddSibling}
-                            onDelete={handleDelete}
-                            onTitleChange={handleTitleChange}
-                            onSrsCodeChange={handleSrsCodeChange}
-                            onImageChange={handleImageChange}
-                            onContentChange={handleContentChange}
-                            onAddTable={handleAddTable}
-                            onImportTable={handleImportTable}
-                            onEditTable={handleEditTable}
-                            onDeleteTable={handleDeleteTable}
-                            onOpenSrsTable={onOpenSrsTable}
-                            onOpenReqList={onOpenReqList}
-                            onEditSrsChangeTable={onEditSrsChangeTable}
-                            onDeleteSrsChangeTable={onDeleteSrsChangeTable}
-                            srsReqPreview={srsReqPreview}
-                            reqDetails={reqDetails}
-                            srsReqLoading={srsReqLoading}
-                            existingChangeTableTitles={existingChangeTableTitles}
-                        />
-                      </div>
-                  </div>
-                ))}
+                ) : (
+                    <>
+                        <div className="srs-tree-nav">
+                            <div className="srs-tree-nav-head">{ts('srs_doc.directory') || '目录'}</div>
+                            <div className="srs-tree-nav-body">
+                                {extraNavSections.map((sec) => {
+                                    const isActive = !!effectiveExtra && effectiveExtra.key === sec.key;
+                                    return (
+                                        <div
+                                            key={`nav-extra-${sec.key}`}
+                                            className={`srs-nav-item${isActive ? " active" : ""}`}
+                                            style={{ paddingLeft: 8 }}
+                                            onClick={() => setActiveNodeId(`${extraKeyPrefix}${sec.key}`)}
+                                        >
+                                            <span className="srs-nav-caret-placeholder" />
+                                            <span className="srs-nav-title" title={sec.title}>{sec.title}</span>
+                                        </div>
+                                    );
+                                })}
+                                {renderNav(visibleNodes, 0)}
+                                {!readOnly && onAddRoot && (
+                                    <Button
+                                        type="dashed"
+                                        size="small"
+                                        icon={<PlusOutlined />}
+                                        className="srs-nav-add-root"
+                                        onClick={() => onAddRoot()}
+                                    >
+                                        {ts('srs_doc.add_root_menu') || '添加根章节'}
+                                    </Button>
+                                )}
+                            </div>
+                        </div>
+                        <div className="srs-tree-editor">
+                            {effectiveExtra ? (
+                                <div key={`extra-${effectiveExtra.key}`}>{effectiveExtra.content}</div>
+                            ) : effectiveNode ? (
+                                <div className="tree-node-item-wrapper" key={effectiveNode.id}>
+                                    <TreeNodeItem
+                                        node={effectiveNode}
+                                        level={0}
+                                        renderChildren={false}
+                                        docId={docId}
+                                        productId={productId}
+                                        docVersion={docVersion}
+                                        productVersion={productVersion}
+                                        readOnly={readOnly}
+                                        rcmOptions={rcmOptions}
+                                        onRcmSelectChange={handleRcmSelectChange}
+                                        onAdd={handleAdd}
+                                        onAddSibling={handleAddSibling}
+                                        onDelete={handleDelete}
+                                        onTitleChange={handleTitleChange}
+                                        onSrsCodeChange={handleSrsCodeChange}
+                                        onImageChange={handleImageChange}
+                                        onContentChange={handleContentChange}
+                                        onAddTable={handleAddTable}
+                                        onImportTable={handleImportTable}
+                                        onEditTable={handleEditTable}
+                                        onDeleteTable={handleDeleteTable}
+                                        onOpenSrsTable={onOpenSrsTable}
+                                        onOpenReqList={onOpenReqList}
+                                        onEditSrsChangeTable={onEditSrsChangeTable}
+                                        onDeleteSrsChangeTable={onDeleteSrsChangeTable}
+                                        srsReqPreview={srsReqPreview}
+                                        reqDetails={reqDetails}
+                                        srsReqLoading={srsReqLoading}
+                                        existingChangeTableTitles={existingChangeTableTitles}
+                                    />
+                                </div>
+                            ) : (
+                                <Empty
+                                    image={Empty.PRESENTED_IMAGE_SIMPLE}
+                                    description={ts("srs_doc.empty_directory_structure")}
+                                    className="tree-structure-empty"
+                                />
+                            )}
+                        </div>
+                    </>
+                )}
             </div>
 
             {/* 添加/编辑表格弹框 */}
