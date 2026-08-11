@@ -13,15 +13,31 @@ const pageSizeOptions = [20, 50, 100];
 
 enum DlgTypes {
     delete = "delete",
+    add = "add",
     import = "import",
     copy = "copy",
 }
+
+const doSearchProducts = (data: any, dispatch: any) => {
+    if (data.products.length === 0) {
+        dispatch({ loadingProducts: true });
+        ApiProduct.list_product({ page_size: 1000 }).then((res: any) => {
+            if (res.code === ApiProduct.C_OK) {
+                dispatch({ loadingProducts: false, products: res.data.rows || [] });
+            } else {
+                message.error(res.msg);
+                dispatch({ loadingProducts: false });
+            }
+        });
+    }
+};
 
 export default () => {
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
     const [queryForm] = Form.useForm();
     const [importForm] = Form.useForm();
+    const [addForm] = Form.useForm();
     const [data, dispatch] = useData({
         total: 0,
         pageIndex: 1,
@@ -37,6 +53,8 @@ export default () => {
         savingFileNoId: 0,
         exportingId: 0,
         copyProductId: undefined,
+        adding: false,
+        loadingProducts: false,
     });
 
     const handleStartEditFileNo = (row: any) => {
@@ -162,6 +180,41 @@ export default () => {
         });
     };
 
+    const openAddModal = () => {
+        addForm.resetFields();
+        addForm.setFieldValue("version", "A0");
+        doSearchProducts(data, dispatch);
+        dispatch({ dlgType: DlgTypes.add });
+    };
+
+    const doAdd = () => {
+        addForm.validateFields().then((values) => {
+            dispatch({ adding: true });
+            Api.add_srs_doc({
+                ...values,
+                version: String(values.version || "").trim(),
+            }).then((res: any) => {
+                dispatch({ adding: false });
+                if (res.code === Api.C_OK) {
+                    message.success(ts("save_success"));
+                    dispatch({ dlgType: null });
+                    addForm.resetFields();
+                    const newId = res.data?.id;
+                    if (newId) {
+                        navigate(`/srs_docs/edit/${newId}`);
+                    } else {
+                        doSearch(queryForm.getFieldsValue(), 1, data.pageSize);
+                    }
+                } else {
+                    message.error(res.msg);
+                }
+            }).catch(() => {
+                dispatch({ adding: false });
+                message.error(ts("save_failed"));
+            });
+        });
+    };
+
     const handleCopy = (row: any) => {
         dispatch({ dlgType: DlgTypes.copy, targetRow: row, copyProductId: row.product_id });
     };
@@ -245,10 +298,6 @@ export default () => {
                     </span>
                 );
             },
-        },
-        {
-            title: "文件夹名称",
-            dataIndex: "folder_name",
         },
         {
             title: ts("srs_doc.change_log"),
@@ -337,7 +386,7 @@ export default () => {
                     <Button type="primary" onClick={() => dispatch({ dlgType: DlgTypes.import })}>
                         导入
                     </Button>
-                    <Button type="primary" onClick={() => navigate("/srs_docs/add")}>
+                    <Button type="primary" onClick={openAddModal}>
                         {ts("add")}
                     </Button>
                 </Space>
@@ -367,6 +416,44 @@ export default () => {
                     doSearch(form, pager.current, pager.pageSize);
                 }}
             />
+            <Modal
+                width={620}
+                centered
+                title="新增需求规格说明"
+                open={data.dlgType === DlgTypes.add}
+                confirmLoading={data.adding}
+                onOk={doAdd}
+                maskClosable={false}
+                onCancel={() => {
+                    dispatch({ dlgType: null });
+                    addForm.resetFields();
+                }}>
+                <Form form={addForm} layout="vertical">
+                    <Form.Item
+                        label={ts("product.product")}
+                        name="product_id"
+                        rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
+                        <ProductVersionSelect
+                            products={data.products}
+                            namePlaceholder={ts("product.name")}
+                            versionPlaceholder={ts("product.full_version")}
+                            onChange={(value) => addForm.setFieldValue("product_id", value)}
+                        />
+                    </Form.Item>
+                    <Form.Item
+                        label={ts("srs_doc.version_label")}
+                        name="version"
+                        rules={[{ required: true, message: sprintf(ts("msg_input"), { label: ts("srs_doc.version_label") }) }]}>
+                        <Input allowClear />
+                    </Form.Item>
+                    <Form.Item label={ts("srs_doc.file_no")} name="file_no">
+                        <Input allowClear />
+                    </Form.Item>
+                    <Form.Item label={ts("srs_doc.change_log")} name="change_log">
+                        <Input.TextArea rows={3} allowClear />
+                    </Form.Item>
+                </Form>
+            </Modal>
             <Modal
                 centered
                 title={ts("action")}

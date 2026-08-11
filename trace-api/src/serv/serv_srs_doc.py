@@ -3116,7 +3116,7 @@ class Server(object):
                 folder_name=form.folder_name,
                 change_log=form.change_log,
                 n_id=0,
-                file_no=form.file_no,
+                file_no=serv_review_util.resolve_doc_file_no(form.product_id, form.file_no, form.version, "srs"),
             )
             db.session.add(row)
             db.session.flush()
@@ -3156,7 +3156,7 @@ class Server(object):
             product_id=target_pid,
             version=version,
             folder_name=fromdoc.folder_name,
-            file_no=self.__sync_file_no_version(fromdoc.file_no, version),
+            file_no=serv_review_util.resolve_doc_file_no(target_pid, fromdoc.file_no, version, "srs"),
             change_log=fromdoc.change_log,
             n_id=0,
         )
@@ -3310,7 +3310,7 @@ class Server(object):
             row: SrsDoc = db.session.execute(sql).scalars().first()
             if not row:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
-            row.file_no = (file_no or "").strip() or None
+            row.file_no = serv_review_util.resolve_doc_file_no(row.product_id, file_no, "", "srs") or None
             db.session.commit()
             return Resp.resp_ok()
         except Exception:
@@ -3586,7 +3586,15 @@ class Server(object):
         #             node.rcm_codes = rcms
         if with_tree and tree and row.product_id:
             tree = self.__autofill_tree_cover_revision(tree, row.product_id, row.version)
-        return Resp.resp_ok(data=SrsDocObj(**row.dict(), product_name=product_name, product_version=product_version, content=tree))
+        doc_data = row.dict()
+        if not (doc_data.get("file_no") or "").strip():
+            doc_data["file_no"] = serv_review_util.resolve_doc_file_no(row.product_id, row.file_no, row.version, "srs") or doc_data.get("file_no")
+        return Resp.resp_ok(data=SrsDocObj(
+            **doc_data,
+            product_name=product_name,
+            product_version=product_version,
+            content=tree,
+        ))
 
     async def list_srs_doc(self, op_user: UserObj, product_id: int = 0, version: str = None, page_index: int = 0, page_size: int = 10):
         page_index = page_index if page_index >= 0 else 0
@@ -3613,6 +3621,8 @@ class Server(object):
             if row_prd:
                 obj.product_name = row_prd.name
                 obj.product_version = row_prd.full_version
+            if not (obj.file_no or "").strip():
+                obj.file_no = serv_review_util.resolve_doc_file_no(row.product_id, row.file_no, row.version, "srs")
             objs.append(obj)
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
 

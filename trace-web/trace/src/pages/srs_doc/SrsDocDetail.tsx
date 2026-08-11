@@ -196,6 +196,7 @@ export default () => {
         showReqListModal: false, // 需求列表弹框
         docProductId: undefined as number | undefined,
         docVersion: "" as string,
+        treeRefreshKey: 0,
     });
 
     const normalizeReqText = (value: any): string => {
@@ -273,6 +274,35 @@ export default () => {
             }));
         };
         return addIdsToNodes(standardNodes as any[]);
+    };
+
+    const needsStandardTemplate = (nodes: TreeNode[]): boolean => {
+        const list = nodes || [];
+        if (list.length === 0) return true;
+        const hasMainChapter = (items: TreeNode[]): boolean =>
+            (items || []).some((node) => {
+                const title = String(node.title || "").trim();
+                if (/^1[\s.．、]/.test(title) || /介绍/.test(title) || /^2[\s.．、]/.test(title)) {
+                    return true;
+                }
+                return hasMainChapter((node.children || []) as TreeNode[]);
+            });
+        return !hasMainChapter(list);
+    };
+
+    const resolveProductById = async (productId?: number) => {
+        if (!productId) return undefined;
+        const cached = (data.products as any[]).find((p: any) => p.id === productId);
+        if (cached) return cached;
+        const res: any = await ApiProduct.list_product({ page_index: 0, page_size: 1000 });
+        if (res.code !== ApiProduct.C_OK) return undefined;
+        const rows = res.data?.rows || [];
+        dispatch({ products: rows });
+        return rows.find((p: any) => p.id === productId);
+    };
+
+    const buildStandardTreeForDoc = (product?: any): TreeNode[] => {
+        return applyProductScopeToTree(buildStandardNodesWithIds(), product).nodes;
     };
 
     const cloneTree = (nodes: TreeNode[]): TreeNode[] => JSON.parse(JSON.stringify(nodes || []));
@@ -2597,9 +2627,16 @@ export default () => {
                     const targetRow = res.data;
                     
                     const parsedContentRaw = (targetRow.content || []).map((node: any) => parseTreeNode(node));
+                    let shouldInitStandard = false;
+                    let ensuredContentRaw = parsedContentRaw;
+                    if (!isReadOnly && needsStandardTemplate(parsedContentRaw)) {
+                        const product = await resolveProductById(targetRow.product_id);
+                        ensuredContentRaw = buildStandardTreeForDoc(product);
+                        shouldInitStandard = true;
+                    }
                     const loadProduct = (data.products as any[]).find((p: any) => p.id === targetRow.product_id);
                     const remappedContent = await remapProductBoundDocImages(
-                        parsedContentRaw,
+                        ensuredContentRaw,
                         targetRow.product_id,
                         targetRow.version,
                         loadProduct?.full_version || targetRow.product_version,
@@ -2630,9 +2667,26 @@ export default () => {
                         srsOtherReqData: srsTableState.srsOtherReqData,
                         srsChangeTables: srsTableState.srsChangeTables,
                         srsTableLoading: false,
+                        treeRefreshKey: shouldInitStandard ? Date.now() : data.treeRefreshKey,
                     });
                     treeStructureRef.current = parsedContent;
                     initialEditTreeRef.current = cloneTree(parsedContent);
+                    if (shouldInitStandard && !isReadOnly) {
+                        const docId = targetRow.id || parseInt(String(id), 10);
+                        const cleanedContent = parsedContent.map((node: any) => cleanTreeNode(node, docId, 0));
+                        Api.update_srs_doc({
+                            id: docId,
+                            product_id: targetRow.product_id,
+                            version: targetRow.version,
+                            folder_name: targetRow.folder_name || "",
+                            file_no: targetRow.file_no || "",
+                            change_log: targetRow.change_log || "",
+                            content: cleanedContent,
+                            n_id: targetRow.n_id || 0,
+                        }).catch((error: any) => {
+                            console.error("静默保存需求规格说明目录失败:", error);
+                        });
+                    }
                     loadReqListData();
                 } else {
                     message.error(res.msg);
@@ -4705,7 +4759,13 @@ export default () => {
                 </div> */}
 
                 <div className="doc-section doc-section-flex">
+                    {!isReadOnly && (
+                        <div className="doc-section-header">
+                            <div className="doc-section-title">{ts("srs_doc.directory_structure") || ts("srs_doc.directory") || "目录结构"}</div>
+                        </div>
+                    )}
                         <TreeStructure
+                            key={`srs-tree-${params.id || "new"}-${data.treeRefreshKey || 0}`}
                             value={data.treeStructure}
                             onChange={isReadOnly ? undefined : (value) => {
                                 treeStructureRef.current = value as TreeNode[];

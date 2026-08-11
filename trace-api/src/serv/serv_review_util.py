@@ -21,6 +21,7 @@ from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT, WD_R
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..model.project_member import ProjectMember
 from ..model.person_sign import PersonSign
+from ..model.prod_dhf import ProdDhf
 from ..utils.sql_ctx import db
 
 # 签名开关：导出时若设为 False，封面和评审记录的签名图将被清空（仅保留空单元格）。
@@ -501,6 +502,7 @@ COVER_KEYWORDS = {
     "pha": ["初步危害分析", "危害分析"],
     "srs": ["需求规格说明", "需求规格"],
     "sds": ["软件详细设计", "详细设计"],
+    "hld": ["软件概要设计", "概要设计"],
     "pir": ["产品立项报告", "立项报告"],
     "label": ["产品标签样稿", "标签"],
     "vuh": ["版本更新历史"],
@@ -516,6 +518,94 @@ COVER_KEYWORDS = {
     "imm": ["安装维护手册", "安装维护", "MD5"],
     "ftr": ["现场测试规程", "现场测试"],
 }
+
+
+# DHF 名称模糊匹配时需排除的片段（避免「需求规格」误命中「需求规格附件」等）
+DHF_NAME_EXCLUDES = {
+    "srs": ("附件", "附录"),
+    "sds": ("附件", "附录"),
+    "hld": ("附件", "附录"),
+}
+
+
+def _dhf_name_excluded(name, exclude_fragments=()):
+    txt = str(name or "").strip()
+    return any(frag and frag in txt for frag in (exclude_fragments or ()))
+
+
+def _dhf_match_score(name, keyword):
+    txt = str(name or "").strip()
+    kw = str(keyword or "").strip()
+    if txt == kw:
+        return 0
+    if txt.endswith("说明") and kw in txt:
+        return 1
+    if "说明" in txt and kw in txt:
+        return 2
+    return 10
+
+
+def _normalize_dhf_code(code):
+    """编号字段偶发混入括号说明，只保留编码本体。"""
+    txt = str(code or "").strip()
+    if not txt:
+        return ""
+    for sep in ("(", "（"):
+        if sep in txt:
+            txt = txt.split(sep, 1)[0].strip()
+    return txt
+
+
+def dhf_file_no(prod_id, name_keywords=None, exclude_fragments=()):
+    """从产品 DHF 清单按文件名称关键字匹配文件编号 code。"""
+    if not prod_id:
+        return ""
+    keywords = sorted(
+        [str(k or "").strip() for k in (name_keywords or []) if str(k or "").strip()],
+        key=len,
+        reverse=True,
+    )
+    if not keywords:
+        return ""
+    excludes = tuple(exclude_fragments or ())
+    for kw in keywords:
+        row = db.session.execute(
+            select(ProdDhf).where(ProdDhf.prod_id == prod_id, ProdDhf.name == kw).order_by(ProdDhf.id.asc())
+        ).scalars().first()
+        if row and (row.code or "").strip() and not _dhf_name_excluded(row.name, excludes):
+            return _normalize_dhf_code(row.code)
+
+        rows = db.session.execute(
+            select(ProdDhf).where(ProdDhf.prod_id == prod_id, ProdDhf.name.like(f"%{kw}%")).order_by(ProdDhf.id.asc())
+        ).scalars().all()
+        candidates = []
+        for item in rows:
+            if not (item.code or "").strip() or _dhf_name_excluded(item.name, excludes):
+                continue
+            candidates.append((_dhf_match_score(item.name, kw), item))
+        if candidates:
+            candidates.sort(key=lambda pair: (pair[0], pair[1].id or 0))
+            return _normalize_dhf_code(candidates[0][1].code)
+    return ""
+
+
+def resolve_doc_file_no(prod_id, file_no="", version="", doc_key=""):
+    """未填写 file_no 时从产品 DHF 匹配；并按 version 同步末尾版本段。"""
+    from .serv_utils import sync_file_no_version
+
+    base = _normalize_dhf_code((file_no or "").strip())
+    if not base and prod_id:
+        base = dhf_file_no(
+            prod_id,
+            COVER_KEYWORDS.get(doc_key, []),
+            DHF_NAME_EXCLUDES.get(doc_key, ()),
+        )
+    if not base:
+        return None
+    if version:
+        synced = sync_file_no_version(base, version)
+        return _normalize_dhf_code(synced or base)
+    return base
 
 
 def fill_cover_dates(content, rev_date, force=False):

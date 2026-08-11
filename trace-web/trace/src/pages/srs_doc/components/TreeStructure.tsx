@@ -96,6 +96,60 @@ function isEmbeddedTableNode(node: TreeNode): boolean {
     return isImportedTableNode(node);
 }
 
+/** 与 SDS/IMM 一致：去掉标题里已有章节号前缀，编辑时只填名称 */
+function stripNavChapterPrefix(title: string): string {
+    return String(title || "")
+        .replace(/^\s*\d+(?:\.\d+)*(?:[、.\s　]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+        .trim();
+}
+
+function isNavTableTitleNode(node: TreeNode): boolean {
+    const title = String(node.title || node.label || "").trim();
+    return /^\s*表\d+([、.\s　]|$)/.test(title);
+}
+
+function isNavChapterNodeForMap(n: TreeNode): boolean {
+    if (isEmbeddedImageNode(n) || isEmbeddedTableNode(n)) return false;
+    if (n.ref_type === "srs_reqs" || n.ref_type === "srs_reqs_2" || n.ref_type === "srs_reqds") return false;
+    if (n.label === "__auto_req_group" || n.label === "__auto_req_detail") return false;
+    return true;
+}
+
+function isNavUnnumberedNode(node: TreeNode): boolean {
+    return isNavTableTitleNode(node);
+}
+
+function computeNavChapterNumberMap(list: TreeNode[]): Map<string, string> {
+    const map = new Map<string, string>();
+    const walkChildren = (nodes: TreeNode[], prefix: string) => {
+        let idx = 0;
+        (nodes || []).filter(isNavChapterNodeForMap).forEach((node) => {
+            if (isNavUnnumberedNode(node)) {
+                map.set(String(node.id), "");
+                walkChildren(node.children || [], prefix);
+                return;
+            }
+            idx += 1;
+            const num = prefix ? `${prefix}.${idx}` : `${idx}`;
+            map.set(String(node.id), num);
+            walkChildren(node.children || [], num);
+        });
+    };
+    let bodyIdx = 0;
+    (list || []).filter(isNavChapterNodeForMap).forEach((node) => {
+        if (isNavUnnumberedNode(node)) {
+            map.set(String(node.id), "");
+            walkChildren(node.children || [], "");
+            return;
+        }
+        bodyIdx += 1;
+        const num = String(bodyIdx);
+        map.set(String(node.id), num);
+        walkChildren(node.children || [], num);
+    });
+    return map;
+}
+
 function isImportedTableCarrierTitle(title?: string): boolean {
     return /^导入表格\d*$/.test(String(title || "").trim());
 }
@@ -1519,6 +1573,8 @@ interface TreeNodeItemProps {
     existingChangeTableTitles?: string[];
     hideLevelPrefix?: boolean;
     disableHierarchyActions?: boolean;
+    useNavChapterEditor?: boolean;
+    autoNavChapterNo?: string;
     // 单章编辑：为 false 时只渲染当前节点自身，不递归渲染子章节（子章节走左目录导航）
     renderChildren?: boolean;
 }
@@ -1553,6 +1609,8 @@ const TreeNodeItem = ({
     srsReqLoading,
     existingChangeTableTitles = [],
     disableHierarchyActions = false,
+    useNavChapterEditor = false,
+    autoNavChapterNo = "",
     renderChildren = true,
 }: TreeNodeItemProps) => {
     const { t: ts } = useTranslation();
@@ -2161,8 +2219,10 @@ const TreeNodeItem = ({
         return rows;
     };
 
+    const navTitleValue = stripNavChapterPrefix(String(node.title || ""));
+
     return (
-        <div style={{ marginLeft: level * 20 }}>
+        <div style={{ marginLeft: renderChildren ? level * 20 : 0 }}>
           <div className={`tree-node-item level-${level}`}>
               <div className={`node-row${hasRcm ? " has-rcm" : ""}${hasRcmText ? " has-rcm-text" : ""}`}>
                   {hasVisibleChildren && renderChildren ? (
@@ -2176,12 +2236,15 @@ const TreeNodeItem = ({
                   ) : (
                       <span className="node-expand-placeholder" />
                   )}
+                  {useNavChapterEditor && !readOnly && (
+                      <span className="node-title-prefix">{autoNavChapterNo || ""}</span>
+                  )}
                   {readOnly || isLockedReqHierarchyNode || isLockedChapterMeta ? (
                       <div className={`node-title${hasRcm ? " with-rcm" : ""}${hasRcmText ? " with-rcm-text" : ""}`}>{node.title || "-"}</div>
                   ) : (
                       <Input
                           className={`node-title${hasRcm ? " with-rcm" : ""}${hasRcmText ? " with-rcm-text" : ""}`}
-                          value={node.title}
+                          value={useNavChapterEditor ? navTitleValue : node.title}
                           onChange={(e) => onTitleChange(node.id, e.target.value)}
                           placeholder={ts('please_input_title')}
                           disabled={readOnly}
@@ -4108,6 +4171,14 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
 
         const newNodes = deleteNode(nodes, id);
         updateNodes(newNodes);
+    };
+
+    const handleDeleteFromNav = async (id: number) => {
+        const deletingActive = String(activeNodeId) === String(id);
+        await handleDelete(id);
+        if (deletingActive) {
+            setActiveNodeId(null);
+        }
     };
 
     const findNodeById = (nodeList: TreeNode[], targetId: number): TreeNode | undefined => {
@@ -6069,7 +6140,6 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         }
     };
 
-    // 左目录只展示真实章节：排除嵌入表格/图片、需求列表等内容型子节点
     const isNavChapter = (n: TreeNode): boolean => (
         !isEmbeddedImageNode(n) &&
         !isEmbeddedTableNode(n) &&
@@ -6078,6 +6148,10 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         n.ref_type !== "srs_reqds"
     );
 
+    const navChapterNumberMap = extraNavSections.length > 0
+        ? computeNavChapterNumberMap(visibleNodes)
+        : new Map<string, string>();
+
     // 递归渲染左目录：展开到子章节都可点击，选中后右侧编辑该章节
     const renderNav = (list: TreeNode[], depth: number): JSX.Element[] => (
         (list || []).filter(isNavChapter).map((node) => {
@@ -6085,6 +6159,8 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             const hasKids = kids.length > 0;
             const collapsed = navCollapsedIds.has(String(node.id));
             const isActive = !!effectiveNode && String(node.id) === String(effectiveNode.id);
+            const chapterNum = navChapterNumberMap.get(String(node.id)) || "";
+            const navLabel = `${chapterNum ? `${chapterNum} ` : ""}${stripNavChapterPrefix(node.title) || "(未命名)"}`;
             return (
                 <div key={`nav-${node.id}`}>
                     <div
@@ -6102,14 +6178,23 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                         ) : (
                             <span className="srs-nav-caret-placeholder" />
                         )}
-                        <span className="srs-nav-title" title={node.title || ""}>{node.title || ts('please_input_title')}</span>
-                        {canAddChildInNav(node, depth) && (
-                            <Tooltip title={ts('srs_doc.add_sub_chapter') || '添加子章节'}>
-                                <PlusOutlined
-                                    className="srs-nav-add-child"
-                                    onClick={(e) => { e.stopPropagation(); handleAddChildFromNav(node.id); }}
+                        <span className="srs-nav-title" title={navLabel}>{navLabel}</span>
+                        {!readOnly && (
+                            <span className="srs-nav-ops" onClick={(e) => e.stopPropagation()}>
+                                {canAddChildInNav(node, depth) && (
+                                    <Tooltip title={ts('srs_doc.add_sub_chapter') || '添加子章节'}>
+                                        <PlusOutlined
+                                            className="srs-nav-add-child"
+                                            onClick={() => handleAddChildFromNav(node.id)}
+                                        />
+                                    </Tooltip>
+                                )}
+                                <DeleteOutlined
+                                    className="srs-nav-delete-child"
+                                    title={ts("delete") || "删除章节"}
+                                    onClick={() => handleDeleteFromNav(node.id)}
                                 />
-                            </Tooltip>
+                            </span>
                         )}
                     </div>
                     {hasKids && !collapsed && renderNav(kids, depth + 1)}
@@ -6130,7 +6215,10 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                 ) : (
                     <>
                         <div className="srs-tree-nav">
-                            <div className="srs-tree-nav-head">{ts('srs_doc.directory') || '目录'}</div>
+                            <div className="srs-tree-nav-head">{ts("srs_doc.directory_structure") || ts("srs_doc.directory") || "目录"}</div>
+                            {!readOnly && (
+                                <div className="srs-tree-nav-hint">封面/修订记录不参与编号；正文章节自动编号。</div>
+                            )}
                             <div className="srs-tree-nav-body">
                                 {extraNavSections.map((sec) => {
                                     const isActive = !!effectiveExtra && effectiveExtra.key === sec.key;
@@ -6169,6 +6257,10 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                                         node={effectiveNode}
                                         level={0}
                                         renderChildren={false}
+                                        disableHierarchyActions
+                                        hideLevelPrefix
+                                        useNavChapterEditor={!readOnly}
+                                        autoNavChapterNo={navChapterNumberMap.get(String(effectiveNode.id)) || ""}
                                         docId={docId}
                                         productId={productId}
                                         docVersion={docVersion}

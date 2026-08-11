@@ -61,7 +61,7 @@ from .serv_srs_doc import Server as ServSrsDoc
 from .serv_sds_srs_trace_sync import SdsSrsTraceSyncMixin
 
 from ..obj import Page, Resp
-from . import msg_err_db, save_file
+from . import msg_err_db, save_file, serv_review_util
 
 logger = logging.getLogger(__name__)
 
@@ -1279,7 +1279,12 @@ class Server(SdsSrsTraceSyncMixin, object):
             return c1 > 0 or c2 > 0
         while _sds_version_exists(version):
             version = new_version(version)
-        next_file_no = srsdoc_serv._Server__sync_file_no_version(getattr(fromdoc, "file_no", None), version)
+        next_file_no = serv_review_util.resolve_doc_file_no(
+            real_product_id,
+            getattr(fromdoc, "file_no", None),
+            version,
+            "sds",
+        )
         newdoc = SdsDoc(srsdoc_id=real_srsdoc_id, product_id=real_product_id, version=version, change_log=fromdoc.change_log, n_id=0, file_no=next_file_no)
         try:
             db.session.add(newdoc)
@@ -1317,7 +1322,7 @@ class Server(SdsSrsTraceSyncMixin, object):
             if not product_id and form.srsdoc_id:
                 srs = db.session.execute(select(SrsDoc).where(SrsDoc.id == form.srsdoc_id)).scalars().first()
                 product_id = (srs.product_id if srs else 0) or 0
-            row = SdsDoc(srsdoc_id=form.srsdoc_id, product_id=product_id, version=form.version, change_log=form.change_log, n_id=0, file_no=form.file_no)
+            row = SdsDoc(srsdoc_id=form.srsdoc_id, product_id=product_id, version=form.version, change_log=form.change_log, n_id=0, file_no=serv_review_util.resolve_doc_file_no(product_id, form.file_no, form.version, "sds"))
             db.session.add(row)
             db.session.flush()
             word_imported = preserve_word_structure or self._is_word_imported_doc(form.content or [])
@@ -1673,6 +1678,8 @@ class Server(SdsSrsTraceSyncMixin, object):
         data["product_name"] = row_prd.name if row_prd else ""
         data["product_version"] = row_prd.full_version if row_prd else ""
         data["srs_version"] = "" if is_srs_deleted else (row_srs.version if row_srs else "")
+        if not (data.get("file_no") or "").strip():
+            data["file_no"] = serv_review_util.resolve_doc_file_no(data["product_id"], row.file_no, row.version, "sds")
         data["content"] = tree
         return Resp.resp_ok(data=SdsDocObj(**data))
 
@@ -1703,6 +1710,8 @@ class Server(SdsSrsTraceSyncMixin, object):
                 obj.product_version = row_prd.full_version
             if row_srs:
                 obj.srs_version = "" if (row_srs.version or "").startswith(DELETED_SRS_VERSION_PREFIX) else row_srs.version
+            if not (obj.file_no or "").strip():
+                obj.file_no = serv_review_util.resolve_doc_file_no(obj.product_id or row.product_id, row.file_no, row.version, "sds")
             objs.append(obj)
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
 

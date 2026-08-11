@@ -1480,6 +1480,39 @@ export default () => {
         return ensureFrontMatterTables(addIdsToNodes(standardNodes as any[]));
     };
 
+    const needsStandardTemplate = (nodes: TreeNode[]): boolean => {
+        const list = nodes || [];
+        if (list.length === 0) return true;
+        const hasMainChapter = (items: TreeNode[]): boolean =>
+            (items || []).some((node) => {
+                const title = String(node.title || "").trim();
+                if (/^1[\s.．、]/.test(title) || /介绍/.test(title) || /^2[\s.．、]/.test(title)) {
+                    return true;
+                }
+                return hasMainChapter((node.children || []) as TreeNode[]);
+            });
+        return !hasMainChapter(list);
+    };
+
+    const resolveProductById = async (productId?: number) => {
+        if (!productId) return undefined;
+        const cached = (data.products as any[]).find((p: any) => p.id === productId);
+        if (cached) return cached;
+        const res: any = await ApiProduct.list_product({ page_index: 0, page_size: 1000 });
+        if (res.code !== ApiProduct.C_OK) return undefined;
+        const rows = res.data?.rows || [];
+        dispatch({ products: rows });
+        return rows.find((p: any) => p.id === productId);
+    };
+
+    const buildStandardTreeForDoc = async (productId: number, version: string, product?: any): Promise<TreeNode[]> => {
+        let nodesWithIds = applyProductScopeToTree(buildStandardNodesWithIds(), product).nodes;
+        nodesWithIds = rebindFlowImageToFlowChild(nodesWithIds);
+        nodesWithIds = normalizeImageRefTypes(nodesWithIds);
+        nodesWithIds = await remapRefTypeImagesByProduct(nodesWithIds, productId, version);
+        return nodesWithIds;
+    };
+
     const normalizeReqCode = (value?: string) => String(value || "").trim().toUpperCase().replace(/\s+/g, "");
     const toSdsCode = (srsCode?: string) => {
         const code = normalizeReqCode(srsCode);
@@ -2033,7 +2066,9 @@ export default () => {
                     || title.includes("设计与需求追溯表")
                     || title.includes("设计与需求追溯列表")
                     || !!(node.table as any)?.trace_synced;
-                if (isTraceNode && (node.table as any)?.trace_synced) {
+                const table = (node.table || {}) as any;
+                const hasTraceRows = Array.isArray(table.rows) && table.rows.length > 0;
+                if (isTraceNode && ((node.table as any)?.trace_synced || hasTraceRows)) {
                     synced = true;
                 }
                 walk((node.children || []) as TreeNode[]);
@@ -2148,10 +2183,21 @@ export default () => {
 
                     // 解析树状结构数据
                     const parsedTreeRaw = (targetRow.content || []).map((node: any) => parseTreeNode(node));
-                    const ensuredContent = await applyLoadedDocTree(targetRow);
+                    let ensuredContent = await applyLoadedDocTree(targetRow);
+                    let shouldInitStandard = false;
+                    if (!isReadOnly && needsStandardTemplate(ensuredContent)) {
+                        const product = await resolveProductById(targetRow.product_id);
+                        ensuredContent = await buildStandardTreeForDoc(
+                            targetRow.product_id,
+                            targetRow.version,
+                            product,
+                        );
+                        shouldInitStandard = true;
+                    }
                     const shouldPersistSyncedContent =
                         !isReadOnly &&
-                        JSON.stringify(parsedTreeRaw || []) !== JSON.stringify(ensuredContent || []);
+                        (shouldInitStandard ||
+                            JSON.stringify(parsedTreeRaw || []) !== JSON.stringify(ensuredContent || []));
 
                     dispatch({
                         loading: false,
@@ -2531,6 +2577,7 @@ export default () => {
                 const traceTable = {
                     ...(table as any),
                     extra_tables: changeExtraTables,
+                    trace_synced: true,
                 };
                 return {
                     ...node,

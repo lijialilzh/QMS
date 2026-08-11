@@ -123,6 +123,14 @@
             z-index: 1;
         }
 
+        .srs-tree-nav-hint {
+            font-size: 11px;
+            color: #9aa6b2;
+            line-height: 1.5;
+            padding: 6px 12px 4px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
         .srs-tree-nav-body {
             padding: 6px 0;
         }
@@ -138,12 +146,20 @@
 
             &:hover {
                 background: #f0f7ff;
+
+                .srs-nav-ops {
+                    opacity: 1;
+                }
             }
 
             &.active {
                 background: #e6f4ff;
                 border-left-color: #1890ff;
                 font-weight: 600;
+
+                .srs-nav-ops {
+                    opacity: 1;
+                }
             }
 
             .srs-nav-caret,
@@ -168,23 +184,67 @@
                 text-overflow: ellipsis;
             }
 
-            .srs-nav-add-child {
+            .srs-nav-ops {
                 flex-shrink: 0;
                 margin-left: 6px;
-                color: #1890ff;
-                opacity: 0;
+                display: inline-flex;
+                align-items: center;
+                gap: 10px;
+                color: #8a97a6;
+                opacity: 0.5;
                 transition: opacity 0.15s;
-            }
 
-            &:hover .srs-nav-add-child,
-            &.active .srs-nav-add-child {
-                opacity: 1;
+                .srs-nav-add-child,
+                .srs-nav-delete-child {
+                    cursor: pointer;
+                }
+
+                .srs-nav-add-child:hover {
+                    color: #1677ff;
+                }
+
+                .srs-nav-delete-child:hover {
+                    color: #ff4d4f;
+                }
             }
         }
 
         .srs-nav-add-root {
-            margin: 8px;
+            margin: 8px 8px 4px;
             width: calc(100% - 16px);
+        }
+    }
+
+    &.srs-tree-layout .srs-tree-editor {
+        .tree-node-item .node-row {
+            .node-expand-placeholder,
+            .node-expand-btn,
+            .node-add-sibling-btn {
+                display: none !important;
+                width: 0 !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+
+            .node-title-prefix {
+                white-space: nowrap;
+                margin-right: 8px;
+                font-size: 13px !important;
+                line-height: 1.5;
+                font-weight: 400;
+                font-family: "Times New Roman", "SimSun", "Songti SC", serif !important;
+            }
+
+            .node-text-area {
+                order: 20 !important;
+                flex: 1 1 100% !important;
+                width: 100% !important;
+                max-width: 100% !important;
+                min-width: 0 !important;
+                margin: 8px 0 0 0 !important;
+                margin-left: 0 !important;
+                align-self: stretch !important;
+            }
         }
     }
 
@@ -559,6 +619,42 @@
                     max-width: 120px;
                 }
             }
+        }
+    }
+}
+
+.srs-doc-detail:not(.read-only) .tree-structure-container:not(.read-only-mode) {
+    font-size: 13px;
+    font-family: "Times New Roman", "SimSun", "Songti SC", serif;
+
+    .tree-node-item.level-0 .node-row,
+    .tree-node-item.level-1 .node-row,
+    .tree-node-item .node-row {
+        .node-title-prefix,
+        .node-title,
+        .node-srs-code,
+        .node-content,
+        .ant-btn,
+        input.ant-input,
+        input.ant-input.ant-input-sm,
+        textarea.ant-input,
+        textarea.ant-input.ant-input-sm {
+            font: 400 13px/1.5 "Times New Roman", "SimSun", "Songti SC", "STSong", serif !important;
+            letter-spacing: 0 !important;
+        }
+
+        input.ant-input,
+        input.ant-input.ant-input-sm {
+            height: 28px !important;
+            padding-top: 3px !important;
+            padding-bottom: 3px !important;
+        }
+
+        textarea.ant-input,
+        textarea.ant-input.ant-input-sm {
+            min-height: 28px !important;
+            padding-top: 3px !important;
+            padding-bottom: 3px !important;
         }
     }
 }

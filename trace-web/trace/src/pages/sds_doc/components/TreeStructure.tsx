@@ -176,7 +176,9 @@ function isEmbeddedTableNode(node: TreeNode): boolean {
 
 /** 与 IMM 一致：去掉标题里已有章节号前缀，编辑时只填名称 */
 function stripNavChapterPrefix(title: string): string {
-    return String(title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();
+    return String(title || "")
+        .replace(/^\s*\d+(?:\.\d+)*(?:[、.\s　]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+        .trim();
 }
 
 /** 表 N 标题块不占章节序号（与 IMM isTableTitle 一致） */

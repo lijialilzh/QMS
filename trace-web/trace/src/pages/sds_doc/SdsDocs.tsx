@@ -15,7 +15,6 @@ const pageSizeOptions = [20, 50, 100];
 enum DlgTypes {
     delete = "delete",
     add = "add",
-    edit = "edit",
     import = "import",
     copy = "copy",
 }
@@ -34,103 +33,12 @@ const doSearchProducts = (data: any, dispatch: any) => {
     }
 };
 
-const DetailDlg = ({ data, dispatch, onSaved }: any) => {
-    const { t: ts } = useTranslation();
-    const [editForm] = Form.useForm();
-
-    const doEdit = () => {
-        editForm.validateFields().then((values) => {
-            dispatch({ loading: true });
-            const fn_request = data.dlgType === DlgTypes.edit ? Api.update_sds_doc : Api.add_sds_doc;
-            fn_request(values).then((res: any) => {
-                if (res.code === Api.C_OK) {
-                    onSaved();
-                    dispatch({ loading: false, dlgType: null });
-                    message.success(res.msg);
-                } else {
-                    dispatch({ loading: false });
-                    message.error(res.msg);
-                }
-            });
-        });
-    };
-
-    useEffect(() => {
-        if (data.dlgType === DlgTypes.add || data.dlgType === DlgTypes.edit) {
-            editForm.resetFields();
-            doSearchProducts(data, dispatch);
-            if (data.dlgType === DlgTypes.edit) {
-                dispatch({ loading: true });
-                Api.get_sds_doc({ id: data.targetRow.id }).then((res: any) => {
-                    if (res.code === Api.C_OK) {
-                        const targetRow = res.data;
-                        editForm.setFieldsValue(targetRow);
-                        dispatch({ loading: false, targetRow });
-                    } else {
-                        message.error(res.msg);
-                        dispatch({ loading: false });
-                    }
-                });
-            }
-        }
-    }, [data.dlgType, data.targetRow.id]);
-
-    return (
-        <Modal
-            width={"50%"}
-            centered
-            title={data.dlgType === DlgTypes.add ? ts("add") : ts("edit")}
-            open={data.dlgType === DlgTypes.add || data.dlgType === DlgTypes.edit}
-            maskClosable={false}
-            confirmLoading={data.loading}
-            onOk={doEdit}
-            onCancel={() => dispatch({ dlgType: null })}>
-            <div className="div-v">
-                <Form form={editForm} className="expand" onFinish={(_values) => {}}>
-                    <Form.Item hidden name="id">
-                        <Input allowClear value={data.targetRow.id} />
-                    </Form.Item>
-                    <Row gutter={24}>
-                        <Col span={12}>
-                            <Form.Item
-                                label={ts("product.product")}
-                                rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}
-                                name="product_id">
-                                <ProductVersionSelect
-                                    products={data.products}
-                                    allowClear
-                                    namePlaceholder={ts("product.name")}
-                                    versionPlaceholder={ts("product.full_version")}
-                                    onChange={(value) => editForm.setFieldValue("product_id", value)}
-                                />
-                            </Form.Item>
-                        </Col>
-                        <Col span={12}>
-                            <Form.Item
-                                label={ts("sds_doc.version")}
-                                rules={[{ required: true, message: sprintf(ts("msg_input"), { label: ts("sds_doc.version") }) }]}
-                                name="version">
-                                <Input allowClear />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-                    <Row gutter={24}>
-                        <Col span={24}>
-                            <Form.Item label={ts("sds_doc.change_log")} name="change_log">
-                                <Input.TextArea allowClear />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-                </Form>
-            </div>
-        </Modal>
-    );
-};
 export default () => {
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
     const [queryForm] = Form.useForm();
     const [importForm] = Form.useForm();
+    const [addForm] = Form.useForm();
     const [data, dispatch] = useData({
         total: 0,
         pageIndex: 1,
@@ -142,12 +50,14 @@ export default () => {
         products: [],
         versionOptions: [] as { value: string; label: string }[],
         importSrsDocList: [] as any[],
+        addSrsDocList: [] as any[],
         importFiles: [],
         editingFileNoId: 0,
         editingFileNoValue: "",
         savingFileNoId: 0,
         exportingId: 0,
         copyProductId: undefined,
+        adding: false,
     });
 
     const handleStartEditFileNo = (row: any) => {
@@ -295,6 +205,66 @@ export default () => {
         }).catch(() => {
             dispatch({ importSrsDocList: [] });
             message.error("加载需求文档列表失败");
+        });
+    };
+
+    const loadAddSrsDocList = (productId: number) => {
+        ApiSrsDoc.list_srs_doc({ product_id: productId, page_index: 0, page_size: 1000 }).then((res: any) => {
+            if (res.code === Api.C_OK) {
+                dispatch({ addSrsDocList: res.data?.rows || [] });
+            } else {
+                dispatch({ addSrsDocList: [] });
+                message.error(res.msg || "加载需求文档列表失败");
+            }
+        }).catch(() => {
+            dispatch({ addSrsDocList: [] });
+            message.error("加载需求文档列表失败");
+        });
+    };
+
+    const addProductId = Form.useWatch("product_id", addForm);
+    useEffect(() => {
+        if (!addProductId) {
+            addForm.setFieldValue("srsdoc_id", undefined);
+            dispatch({ addSrsDocList: [] });
+            return;
+        }
+        loadAddSrsDocList(addProductId);
+    }, [addProductId]);
+
+    const openAddModal = () => {
+        addForm.resetFields();
+        addForm.setFieldValue("version", "A0");
+        doSearchProducts(data, dispatch);
+        dispatch({ addSrsDocList: [], dlgType: DlgTypes.add });
+    };
+
+    const doAdd = () => {
+        addForm.validateFields().then((values) => {
+            dispatch({ adding: true });
+            Api.add_sds_doc({
+                ...values,
+                version: String(values.version || "").trim(),
+            }).then((res: any) => {
+                dispatch({ adding: false });
+                if (res.code === Api.C_OK) {
+                    message.success(ts("save_success"));
+                    dispatch({ dlgType: null });
+                    addForm.resetFields();
+                    dispatch({ addSrsDocList: [] });
+                    const newId = res.data?.id;
+                    if (newId) {
+                        navigate(`/sds_docs/edit/${newId}`);
+                    } else {
+                        doSearch(queryForm.getFieldsValue(), 1, data.pageSize);
+                    }
+                } else {
+                    message.error(res.msg);
+                }
+            }).catch(() => {
+                dispatch({ adding: false });
+                message.error(ts("save_failed"));
+            });
         });
     };
 
@@ -470,7 +440,7 @@ export default () => {
                     <Button type="primary" onClick={() => dispatch({ dlgType: DlgTypes.import })}>
                         导入
                     </Button>
-                    <Button type="primary" onClick={() => navigate("/sds_docs/add")}>
+                    <Button type="primary" onClick={openAddModal}>
                         {ts("add")}
                     </Button>
                 </Space>
@@ -500,6 +470,69 @@ export default () => {
                     doSearch(form, pager.current, pager.pageSize);
                 }}
             />
+            <Modal
+                width={620}
+                centered
+                title="新增软件详细设计"
+                open={data.dlgType === DlgTypes.add}
+                confirmLoading={data.adding}
+                onOk={doAdd}
+                maskClosable={false}
+                onCancel={() => {
+                    dispatch({ dlgType: null });
+                    addForm.resetFields();
+                    dispatch({ addSrsDocList: [] });
+                }}>
+                <Form form={addForm} layout="vertical">
+                    <Form.Item
+                        label={ts("product.product")}
+                        name="product_id"
+                        rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
+                        <ProductVersionSelect
+                            products={data.products}
+                            namePlaceholder={ts("product.name")}
+                            versionPlaceholder={ts("product.full_version")}
+                            onChange={(value) => {
+                                addForm.setFieldValue("product_id", value);
+                                addForm.setFieldValue("srsdoc_id", undefined);
+                                if (value) {
+                                    loadAddSrsDocList(value);
+                                } else {
+                                    dispatch({ addSrsDocList: [] });
+                                }
+                            }}
+                        />
+                    </Form.Item>
+                    <Form.Item
+                        label={ts("sds_doc.req_doc")}
+                        name="srsdoc_id"
+                        rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("sds_doc.req_doc") }) }]}>
+                        <Select
+                            placeholder={ts("sds_doc.please_select_req_doc")}
+                            showSearch
+                            allowClear
+                            optionFilterProp="label"
+                            disabled={!data.addSrsDocList.length}
+                            options={data.addSrsDocList.map((item: any) => ({
+                                label: `${item.version || item.full_version || ""}`,
+                                value: item.id,
+                            }))}
+                        />
+                    </Form.Item>
+                    <Form.Item
+                        label={ts("sds_doc.version")}
+                        name="version"
+                        rules={[{ required: true, message: sprintf(ts("msg_input"), { label: ts("sds_doc.version") }) }]}>
+                        <Input allowClear />
+                    </Form.Item>
+                    <Form.Item label={ts("sds_doc.file_no")} name="file_no">
+                        <Input allowClear />
+                    </Form.Item>
+                    <Form.Item label={ts("sds_doc.change_log")} name="change_log">
+                        <Input.TextArea rows={3} allowClear />
+                    </Form.Item>
+                </Form>
+            </Modal>
             <Modal
                 centered
                 title={ts("action")}
@@ -611,16 +644,6 @@ export default () => {
                     </div>
                 </div>
             </Modal>
-            <DetailDlg
-                data={data}
-                dispatch={dispatch}
-                onSaved={() => {
-                    if (data.dlgType === DlgTypes.add) {
-                        queryForm.resetFields();
-                    }
-                    doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
-                }}
-            />
         </div>
     );
 };

@@ -30,6 +30,7 @@ from ..obj.vobj_user import UserObj
 from ..utils.i18n import ts
 from ..utils.sql_ctx import db
 from . import msg_err_db
+from . import serv_review_util
 from .serv_srs_doc import Server as ServSrsDoc
 from .serv_utils import new_version, sync_file_no_version
 
@@ -267,7 +268,7 @@ class Server(object):
                 version=form.version,
                 change_log=form.change_log,
                 n_id=0,
-                file_no=form.file_no,
+                file_no=serv_review_util.resolve_doc_file_no(form.product_id, form.file_no, form.version, "hld"),
             )
             db.session.add(row)
             db.session.flush()
@@ -301,7 +302,7 @@ class Server(object):
         newdoc = HldDoc(
             product_id=target_pid,
             version=version,
-            file_no=sync_file_no_version(fromdoc.file_no, version),
+            file_no=serv_review_util.resolve_doc_file_no(target_pid, fromdoc.file_no, version, "hld"),
             change_log=fromdoc.change_log,
             n_id=0,
         )
@@ -434,8 +435,11 @@ class Server(object):
             if row.product_id:
                 prod_imgs = self.__query_imgs(row.product_id)
                 self.__hydrate_tree_product_images(tree, prod_imgs)
+        doc_data = row.dict()
+        if not (doc_data.get("file_no") or "").strip():
+            doc_data["file_no"] = serv_review_util.resolve_doc_file_no(row.product_id, row.file_no, row.version, "hld") or doc_data.get("file_no")
         return Resp.resp_ok(data=HldDocObj(
-            **row.dict(),
+            **doc_data,
             product_name=row_prod.name if row_prod else "",
             product_version=row_prod.full_version if row_prod else "",
             content=tree,
@@ -469,6 +473,8 @@ class Server(object):
             if row_prd:
                 obj.product_name = row_prd.name
                 obj.product_version = row_prd.full_version
+            if not (obj.file_no or "").strip():
+                obj.file_no = serv_review_util.resolve_doc_file_no(row.product_id, row.file_no, row.version, "hld")
             objs.append(obj)
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
 
