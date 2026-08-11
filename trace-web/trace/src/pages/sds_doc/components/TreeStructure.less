@@ -73,7 +73,7 @@
             padding: 0;
         }
 
-        // 单章编辑：标题/编码/上传/操作按钮同一行，正文 textarea 独占下一行
+        // 单章编辑：第一行仅标题/编码/上传/操作按钮；正文 textarea 与内嵌图在下一行
         .node-row {
             align-items: center;
             flex-wrap: wrap;
@@ -171,11 +171,127 @@
                     margin-left: auto;
                 }
             }
+
+            &.nav-row-with-auto-image {
+                flex-wrap: wrap;
+                align-items: center;
+                row-gap: 8px;
+
+                .node-title {
+                    flex: 0 1 180px;
+                }
+
+                .node-sds-code {
+                    order: 4;
+                    flex: 0 0 130px;
+                }
+
+                // 2.1/2.3 自动图 + 第3/4/5章内嵌图：紧跟编码输入框
+                .node-pic-block--header-auto-image {
+                    order: 5;
+                    margin-left: 0;
+                    margin-right: 8px;
+                    flex: 0 0 auto;
+
+                    .node-pic-readonly {
+                        width: 120px;
+                        height: 90px;
+                        min-width: 120px;
+                        min-height: 90px;
+                        max-width: 120px;
+                        max-height: 90px;
+                    }
+
+                    .ant-image,
+                    .ant-image-img,
+                    img {
+                        width: 100% !important;
+                        height: 100% !important;
+                        object-fit: contain !important;
+                    }
+                }
+
+                .node-srsreq-btn {
+                    order: 7;
+                }
+
+                .node-actions {
+                    order: 8;
+                    margin-left: auto;
+                }
+            }
         }
 
         .node-row-follow {
             .node-expand-placeholder {
                 display: none;
+            }
+        }
+
+        // 第7章等：正文分段输入框独占整行，与表格同宽
+        .node-row-follow.node-row-content-below,
+        .node-row-follow:has(.node-content-below-title) {
+            width: 100%;
+            flex-wrap: nowrap;
+            align-items: stretch;
+
+            .node-content-below-title {
+                flex: 1 1 100%;
+                width: 100%;
+                min-width: 0;
+                max-width: 100%;
+
+                .node-text-area,
+                .node-text-area.ant-input-textarea-affix-wrapper,
+                textarea.ant-input {
+                    width: 100% !important;
+                    max-width: 100% !important;
+                    flex: 1 1 100% !important;
+                    margin-left: 0 !important;
+                    margin-right: 0 !important;
+                    box-sizing: border-box;
+                }
+            }
+        }
+
+        // 单章编辑内嵌图：限制展示尺寸，点击仍可 Preview 看大图
+        .node-pic-block {
+            margin-top: 8px;
+
+            &.node-pic-block--embedded-flow {
+                max-width: 420px;
+
+                .node-pic-readonly {
+                    width: 100%;
+                    max-width: 420px;
+                    height: 240px;
+                    max-height: 240px;
+                    min-width: 200px;
+                    min-height: 160px;
+                }
+            }
+
+            &.node-pic-block--embedded-figure {
+                max-width: 160px;
+
+                .node-pic-readonly {
+                    width: 120px;
+                    height: 120px;
+                    min-width: 120px;
+                    min-height: 120px;
+                    max-width: 120px;
+                    max-height: 120px;
+                }
+            }
+
+            .node-pic-readonly {
+                .ant-image,
+                .ant-image-img,
+                img {
+                    width: 100% !important;
+                    height: 100% !important;
+                    object-fit: contain !important;
+                }
             }
         }
     }
@@ -759,6 +875,11 @@
                 margin-left: 0 !important;
                 align-self: stretch !important;
             }
+        }
+
+        .node-row-follow .node-content-below-title .node-text-area {
+            order: 0 !important;
+            margin-top: 0 !important;
         }
     }
 }

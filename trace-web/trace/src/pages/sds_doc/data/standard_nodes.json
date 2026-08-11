@@ -133,10 +133,17 @@
         "n_id": 0,
         "p_id": 0,
         "title": "3. DataProcessing",
-        "sds_code": "",
         "img_url": "",
         "text": "",
-        "table": {},
+        "table": {
+            "name": null,
+            "show_header": 1,
+            "headers": null,
+            "rows": null,
+            "cells": null,
+            "extra_tables": null,
+            "trace_synced": null
+        },
         "children": [
             {
                 "doc_id": 0,
@@ -144,9 +151,18 @@
                 "p_id": 0,
                 "title": "3.1. 总体描述",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "DataProcessing用于和医院的浏览器上传或通过接口导入对接，支持DICOM3.0标准，被动接收医院信息系统/影像设备发送的Dicom图像数据到本软件中，是本软件图像数据的入口。DataProcessing具有请求和数据校验功能，对于非DICOM3.0传输标准的请求会予以拒绝，对非DICOM3.0文件标准的文件会予以拒绝。DataProcessing也是整个处理任务的发起者，通过将处理后的数据发送到RePACS模块提供的指定的处理任务接口，启动整个处理模块的工作。",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -154,9 +170,38 @@
                 "p_id": 0,
                 "title": "3.2. 功能",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "DataProcessing提供标准DICOM图像接收服务，即DICOM3.0标准中的C-STORE SCP服务。",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "title": "图 3\tDP 工作流",
+                        "img_url": "/data.trace/sds_node_img/import_sds/a68202356f82-80ee-11f1-5e52-5b1ee76e.png",
+                        "text": "",
+                        "table": {
+                            "name": null,
+                            "show_header": 1,
+                            "headers": null,
+                            "rows": null,
+                            "cells": null,
+                            "extra_tables": null,
+                            "trace_synced": null
+                        },
+                        "children": [],
+                        "sds_code": ""
+                    }
+                ],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -164,9 +209,18 @@
                 "p_id": 0,
                 "title": "3.3. 性能",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "暂无",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -174,9 +228,38 @@
                 "p_id": 0,
                 "title": "3.4. 模块结构",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "DP模块主要由信息拉取组件，处理组件和数据发送组件三部分构成。\n如上结构图所示，DP模块内部的三个组件是依次串联而成的。\n信息拉取组件，是用来接收由医院信息系统/影像设备推送来的DICOM图像数据；\n处理组件，是用来对拉取组件获取的数据，根据配置文件中配置的规则，进行数据过滤和筛选；\n数据发送组件，是接收处理组件筛选后的序列，并且用HTTP/HTTPS的POST请求，将数据发送到RePACS提供的处理任务的接口中。",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "title": "图 4\tDP 模块结构图",
+                        "img_url": "/data.trace/sds_node_img/import_sds/a68202356f82-80ee-11f1-5e52-5b1eef52.png",
+                        "text": "",
+                        "table": {
+                            "name": null,
+                            "show_header": 1,
+                            "headers": null,
+                            "rows": null,
+                            "cells": null,
+                            "extra_tables": null,
+                            "trace_synced": null
+                        },
+                        "children": [],
+                        "sds_code": ""
+                    }
+                ],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -185,8 +268,37 @@
                 "title": "3.5. 程序逻辑",
                 "img_url": "",
                 "text": "",
-                "table": {},
-                "children": []
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "title": "图 5\tDP 程序逻辑",
+                        "img_url": "/data.trace/sds_node_img/import_sds/a68202356f82-80ee-11f1-5e52-5b1ef81c.png",
+                        "text": "",
+                        "table": {
+                            "name": null,
+                            "show_header": 1,
+                            "headers": null,
+                            "rows": null,
+                            "cells": null,
+                            "extra_tables": null,
+                            "trace_synced": null
+                        },
+                        "children": [],
+                        "sds_code": ""
+                    }
+                ],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -194,9 +306,18 @@
                 "p_id": 0,
                 "title": "3.6. 输入项",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "符合DICOM3.0标准要求。该服务基于TCP/IP协议，在指定端口监听来自浏览器上传或通过接口导入的患者图像数据的数据接入请求。",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -204,9 +325,18 @@
                 "p_id": 0,
                 "title": "3.7. 输出项",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "将处理后的序列发送至RePACS提供的图像接收和数据处理任务接口。",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -214,9 +344,18 @@
                 "p_id": 0,
                 "title": "3.8. 接口",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "调用创建处理任务的接口，接口信息见5.7章节。",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -224,9 +363,18 @@
                 "p_id": 0,
                 "title": "3.9. 限制条件",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "无",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -234,21 +382,38 @@
                 "p_id": 0,
                 "title": "3.10. 尚未解决的问题",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "无",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [],
+                "sds_code": ""
             }
-        ]
+        ],
+        "sds_code": "SDS-RCN300-004"
     },
     {
         "doc_id": 0,
         "n_id": 0,
         "p_id": 0,
         "title": "4. DLServer",
-        "sds_code": "",
         "img_url": "",
         "text": "",
-        "table": {},
+        "table": {
+            "name": null,
+            "show_header": 1,
+            "headers": null,
+            "rows": null,
+            "cells": null,
+            "extra_tables": null,
+            "trace_synced": null
+        },
         "children": [
             {
                 "doc_id": 0,
@@ -256,9 +421,18 @@
                 "p_id": 0,
                 "title": "4.1. 总体描述",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "DLServer提供数据处理后端服务，用于图像识别与相关运算资源调用。DLServer 通过HTTP/HTTPS协议调用RePACS实现处理任务的获取与结果的反馈。",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -266,9 +440,38 @@
                 "p_id": 0,
                 "title": "4.2. 功能",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "功能清单：",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "title": "图 6\tDLServer 工作流",
+                        "img_url": "/data.trace/sds_node_img/import_sds/a68202356f82-80ee-11f1-5e52-5b1efe20.png",
+                        "text": "",
+                        "table": {
+                            "name": null,
+                            "show_header": 1,
+                            "headers": null,
+                            "rows": null,
+                            "cells": null,
+                            "extra_tables": null,
+                            "trace_synced": null
+                        },
+                        "children": [],
+                        "sds_code": ""
+                    }
+                ],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -276,9 +479,18 @@
                 "p_id": 0,
                 "title": "4.3. 性能",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "在符合运行环境下，单并发：\n1. 一套总大小177 MB的医学图像，从接收传输图像开始，至产品处理完成的时间≤15分钟。",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -287,8 +499,37 @@
                 "title": "4.4. 模块结构",
                 "img_url": "",
                 "text": "",
-                "table": {},
-                "children": []
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "title": "图 7\tDLServer 模块结构图",
+                        "img_url": "/data.trace/sds_node_img/import_sds/a68202356f82-80ee-11f1-5e52-5b1f032a.png",
+                        "text": "",
+                        "table": {
+                            "name": null,
+                            "show_header": 1,
+                            "headers": null,
+                            "rows": null,
+                            "cells": null,
+                            "extra_tables": null,
+                            "trace_synced": null
+                        },
+                        "children": [],
+                        "sds_code": ""
+                    }
+                ],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -297,8 +538,37 @@
                 "title": "4.5. 程序逻辑",
                 "img_url": "",
                 "text": "",
-                "table": {},
-                "children": []
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "title": "图 8\tDLServer 程序逻辑",
+                        "img_url": "/data.trace/sds_node_img/import_sds/a68202356f82-80ee-11f1-5e52-5b1f094c.png",
+                        "text": "",
+                        "table": {
+                            "name": null,
+                            "show_header": 1,
+                            "headers": null,
+                            "rows": null,
+                            "cells": null,
+                            "extra_tables": null,
+                            "trace_synced": null
+                        },
+                        "children": [],
+                        "sds_code": ""
+                    }
+                ],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -306,9 +576,18 @@
                 "p_id": 0,
                 "title": "4.6. 输入项",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "包含两项输入：\n1.参数文件;\n2.处理任务清单;",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -316,9 +595,18 @@
                 "p_id": 0,
                 "title": "4.7. 输出项",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "将处理结果发给RePACS进行保存。",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -326,9 +614,18 @@
                 "p_id": 0,
                 "title": "4.8. 接口",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "调用获取处理任务、保存处理结果、任务状态更新接口，接口信息见5.7章节。",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -336,9 +633,608 @@
                 "p_id": 0,
                 "title": "4.9. 限制条件",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "DLServer 处理过程中使用的Dicom图像文件，需要满足下表中的要求。",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "title": "导入表格5",
+                        "img_url": "",
+                        "text": "",
+                        "table": {
+                            "name": null,
+                            "show_header": 1,
+                            "headers": [
+                                {
+                                    "code": "col_1",
+                                    "name": "Tag Address"
+                                },
+                                {
+                                    "code": "col_2",
+                                    "name": "Tag Name"
+                                },
+                                {
+                                    "code": "col_3",
+                                    "name": "Tag Usage"
+                                }
+                            ],
+                            "rows": [
+                                {
+                                    "col_1": "(0x02, 0x10)",
+                                    "col_2": "Transfer Syntax UID",
+                                    "col_3": "标明数据的编码方式"
+                                },
+                                {
+                                    "col_1": "(0x10,0x30)",
+                                    "col_2": "Patient’s Birthday",
+                                    "col_3": "标明年龄数据"
+                                },
+                                {
+                                    "col_1": "(0x08,0x20)",
+                                    "col_2": "Study Date",
+                                    "col_3": "标明检查日期数据"
+                                },
+                                {
+                                    "col_1": "(0x10, 0x20)",
+                                    "col_2": "Patient’s ID",
+                                    "col_3": "病人ID，用于结果分类"
+                                },
+                                {
+                                    "col_1": "(0x20, 0x0D)",
+                                    "col_2": "Study Instance UID",
+                                    "col_3": "Study ID，用于结果分类"
+                                },
+                                {
+                                    "col_1": "(0x20, 0x0E)",
+                                    "col_2": "Series Instance UID",
+                                    "col_3": "Series ID，用于结果分类"
+                                },
+                                {
+                                    "col_1": "(0x20, 0x12)",
+                                    "col_2": "Acquisition Number",
+                                    "col_3": "用于确保图像序列都是单次扫描生成"
+                                },
+                                {
+                                    "col_1": "(0x20, 0x13)",
+                                    "col_2": "Instance Number",
+                                    "col_3": "单张图像在序列中的编号，用于配对前端渲染信息"
+                                },
+                                {
+                                    "col_1": "(0x20, 0x32)",
+                                    "col_2": "Image Position (Patient)",
+                                    "col_3": "单张图片的空间坐标，用于进行层厚等空间参数运算"
+                                },
+                                {
+                                    "col_1": "(0x20, 0x37)",
+                                    "col_2": "Image Orientation (Patient)",
+                                    "col_3": "用于标明图像的方向信息"
+                                },
+                                {
+                                    "col_1": "(0x28, 0x02)",
+                                    "col_2": "Samples per Pixel",
+                                    "col_3": "用于确认图像矩阵的维度信息"
+                                },
+                                {
+                                    "col_1": "(0x28, 0x10)",
+                                    "col_2": "Rows",
+                                    "col_3": ""
+                                },
+                                {
+                                    "col_1": "(0x28, 0x11)",
+                                    "col_2": "Columns",
+                                    "col_3": ""
+                                },
+                                {
+                                    "col_1": "(0x28, 0x30)",
+                                    "col_2": "Pixel Spacing",
+                                    "col_3": "记录图像矩阵的物理空间信息，用于预测过程中的体积等参数运算"
+                                },
+                                {
+                                    "col_1": "(0x28, 0x100)",
+                                    "col_2": "Bits Allocated",
+                                    "col_3": "记录像素矩阵中每个像素点所占bits，用于图像读取"
+                                },
+                                {
+                                    "col_1": "(0x28, 0x103)",
+                                    "col_2": "Pixel Representation",
+                                    "col_3": "记录像素矩阵中每个像素点编码格式，用于图像读取"
+                                },
+                                {
+                                    "col_1": "(0x28, 0x1052)",
+                                    "col_2": "Rescale Intercept",
+                                    "col_3": "用于图像窗宽窗位调整"
+                                },
+                                {
+                                    "col_1": "(0x28, 0x1053)",
+                                    "col_2": "Rescale Slope",
+                                    "col_3": ""
+                                },
+                                {
+                                    "col_1": "(0x7FE0, 0x10)",
+                                    "col_2": "Pixel Data",
+                                    "col_3": "记录图像矩阵"
+                                }
+                            ],
+                            "cells": [
+                                [
+                                    {
+                                        "value": "Tag Address",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Tag Name",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Tag Usage",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "(0x02, 0x10)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Transfer Syntax UID",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "标明数据的编码方式",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "(0x10,0x30)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Patient’s Birthday",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "标明年龄数据",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "(0x08,0x20)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Study Date",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "标明检查日期数据",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "(0x10, 0x20)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Patient’s ID",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "病人ID，用于结果分类",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "(0x20, 0x0D)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Study Instance UID",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Study ID，用于结果分类",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "(0x20, 0x0E)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Series Instance UID",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Series ID，用于结果分类",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "(0x20, 0x12)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Acquisition Number",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "用于确保图像序列都是单次扫描生成",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "(0x20, 0x13)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Instance Number",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "单张图像在序列中的编号，用于配对前端渲染信息",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "(0x20, 0x32)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Image Position (Patient)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "单张图片的空间坐标，用于进行层厚等空间参数运算",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "(0x20, 0x37)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Image Orientation (Patient)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "用于标明图像的方向信息",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "(0x28, 0x02)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Samples per Pixel",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "用于确认图像矩阵的维度信息",
+                                        "row_span": 3,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "(0x28, 0x10)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Rows",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "",
+                                        "row_span": 0,
+                                        "col_span": 0,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "(0x28, 0x11)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Columns",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "",
+                                        "row_span": 0,
+                                        "col_span": 0,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "(0x28, 0x30)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Pixel Spacing",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "记录图像矩阵的物理空间信息，用于预测过程中的体积等参数运算",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "(0x28, 0x100)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Bits Allocated",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "记录像素矩阵中每个像素点所占bits，用于图像读取",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "(0x28, 0x103)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Pixel Representation",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "记录像素矩阵中每个像素点编码格式，用于图像读取",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "(0x28, 0x1052)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Rescale Intercept",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "用于图像窗宽窗位调整",
+                                        "row_span": 2,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "(0x28, 0x1053)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Rescale Slope",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "",
+                                        "row_span": 0,
+                                        "col_span": 0,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "(0x7FE0, 0x10)",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "Pixel Data",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    },
+                                    {
+                                        "value": "记录图像矩阵",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "middle"
+                                    }
+                                ]
+                            ],
+                            "extra_tables": null,
+                            "trace_synced": null
+                        },
+                        "children": [],
+                        "sds_code": ""
+                    }
+                ],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -346,18 +1242,28 @@
                 "p_id": 0,
                 "title": "4.10. 尚未解决的问题",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "无",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [],
+                "sds_code": ""
             }
-        ]
+        ],
+        "sds_code": "SDS-RCN300-006"
     },
     {
         "doc_id": 0,
         "n_id": 0,
         "p_id": 0,
         "title": "5. RePACS",
-        "sds_code": "",
+        "sds_code": "SDS-RCN300-005",
         "img_url": "",
         "text": "",
         "table": {},
@@ -368,9 +1274,18 @@
                 "p_id": 0,
                 "title": "5.1. 总体描述",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "RePACS 是数据存储后端服务。RePACS 提供 DICOM 图像数据。RePACS 提供基于HTTP/HTTPS协议的API，由前端组件或其他后端组件调用。",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -378,9 +1293,203 @@
                 "p_id": 0,
                 "title": "5.2. 功能",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "RePACS 的主要功能为数据存储和查询。\n功能清单：\n衔接处理任务流程：",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "title": "导入表格6",
+                        "img_url": "",
+                        "text": "",
+                        "table": {
+                            "name": null,
+                            "show_header": 1,
+                            "headers": [
+                                {
+                                    "code": "col_1",
+                                    "name": "Function"
+                                },
+                                {
+                                    "code": "col_2",
+                                    "name": "Design Number"
+                                }
+                            ],
+                            "rows": [
+                                {
+                                    "col_1": "保存已接收的图像",
+                                    "col_2": "SDS-RCN303"
+                                },
+                                {
+                                    "col_1": "发送处理请求",
+                                    "col_2": "SDS-RCN303"
+                                },
+                                {
+                                    "col_1": "查询已保存的图像",
+                                    "col_2": "SDS-RCN303"
+                                },
+                                {
+                                    "col_1": "保存处理结果",
+                                    "col_2": "SDS-RCN303"
+                                },
+                                {
+                                    "col_1": "查询处理结果",
+                                    "col_2": "SDS-RCN303"
+                                }
+                            ],
+                            "cells": [
+                                [
+                                    {
+                                        "value": "Function",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "Design Number",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "保存已接收的图像",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "SDS-RCN303",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "发送处理请求",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "SDS-RCN303",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "查询已保存的图像",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "SDS-RCN303",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "保存处理结果",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "SDS-RCN303",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "查询处理结果",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "SDS-RCN303",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ]
+                            ],
+                            "extra_tables": null,
+                            "trace_synced": null
+                        },
+                        "children": [],
+                        "sds_code": ""
+                    },
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "title": "图 9 RePACS 功能定位",
+                        "img_url": "/data.trace/sds_node_img/import_sds/a68202356f82-80ee-11f1-5e52-5b1f0f82.png",
+                        "text": "",
+                        "table": {
+                            "name": null,
+                            "show_header": 1,
+                            "headers": null,
+                            "rows": null,
+                            "cells": null,
+                            "extra_tables": null,
+                            "trace_synced": null
+                        },
+                        "children": [],
+                        "sds_code": ""
+                    },
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "title": "图 10 RePACS 功能流程",
+                        "img_url": "/data.trace/sds_node_img/import_sds/a68202356f82-80ee-11f1-5e52-5b1f1496.png",
+                        "text": "",
+                        "table": {
+                            "name": null,
+                            "show_header": 1,
+                            "headers": null,
+                            "rows": null,
+                            "cells": null,
+                            "extra_tables": null,
+                            "trace_synced": null
+                        },
+                        "children": [],
+                        "sds_code": ""
+                    }
+                ],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -388,9 +1497,18 @@
                 "p_id": 0,
                 "title": "5.3. 性能",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "在符合运行环境下，一套总大小177 MB的医学图像，单并发：\n1.从接收传输图像开始，至产品处理完成的时间≤15分钟。\n2.进入患者详情页面，点击任意病灶进入阅片页面开始，至图像加载完成时间≤10s。\n3.用户点击登录之后，成功登录软件，进入患者列表的时间≤2s。\n4.用户点击退出之后，退出软件，跳转至登录页面的时间≤2s。\n5.用户输入搜索条件，出现检索结果的时间≤2s。",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -399,8 +1517,37 @@
                 "title": "5.4. 模块结构",
                 "img_url": "",
                 "text": "",
-                "table": {},
-                "children": []
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "title": "图 11 RePACS 模型结构图",
+                        "img_url": "/data.trace/sds_node_img/import_sds/a68202356f82-80ee-11f1-5e52-5b1f1b26.png",
+                        "text": "",
+                        "table": {
+                            "name": null,
+                            "show_header": 1,
+                            "headers": null,
+                            "rows": null,
+                            "cells": null,
+                            "extra_tables": null,
+                            "trace_synced": null
+                        },
+                        "children": [],
+                        "sds_code": ""
+                    }
+                ],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -408,9 +1555,38 @@
                 "p_id": 0,
                 "title": "5.5. 程序逻辑",
                 "img_url": "",
-                "text": "",
-                "table": {},
-                "children": []
+                "text": "RePACS 初始化后在指定的端口（默认 3333）监听 TCP 连接，TCP 连接建立后接收 HTTP/HTTPS 请求，收到请求之后 RePACS 将请求解析为 JSON 数据对象，若该请求格式正确，则调用注册的方法执行查询，并将发送查询结果作为响应数据发送响应到客户端；若请求格式错误，则发送 400 响应到客户端。",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": null,
+                    "rows": null,
+                    "cells": null,
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": [
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "title": "图 12 RePACS 程序逻辑",
+                        "img_url": "/data.trace/sds_node_img/import_sds/a68202356f82-80ee-11f1-5e52-5b1f21ca.png",
+                        "text": "",
+                        "table": {
+                            "name": null,
+                            "show_header": 1,
+                            "headers": null,
+                            "rows": null,
+                            "cells": null,
+                            "extra_tables": null,
+                            "trace_synced": null
+                        },
+                        "children": [],
+                        "sds_code": ""
+                    }
+                ],
+                "sds_code": ""
             },
             {
                 "doc_id": 0,
@@ -28953,14 +30129,292 @@
         "p_id": 0,
         "title": "7. 法规符合性要求(网络安全)",
         "img_url": "",
-        "text": "",
+        "text": "SDS-RCN300-009\n(1)总体描述\n保护患者数据安全，支持产品的安全性设计。\n(2)功能设计\n本产品总体上采用B S架构开发，服务端运行在由最终用户提供的服务器上，医生通过浏览器使用产品提供的各项功能。本产品采用TCP协议开发，部署完成后，提供下列TCP服务。\n为了加强网络安全，本产品部署时，要求最终用户必须提供Web应用防火墙（WAF）。借助WAF的安全证书管理和反向代理功能来实现医生通过浏览器基于HTTP/HTTPS协议访问本产品。具体HTTPS访问的实现方案：\n在服务器上安装本产品，确认产品能够正常工作。\n获取服务器的IP地址，以及本产品提供服务的端口号\n在服务器上安装WAF\n最终用户申请或者制作符合WAF要求的安装证书，并将证书安装到WAF中\n最终用户申请满足其要求的域名，并在WAF中正确配置域名\n将WAF配置成反向代理模式，并工作在HTTPS模式下，将域名指向本产品\n通过域名访问本产品，能够看到登录页面并成功登录，即表示HTTPS配置成功\n备注：\n实际部署时，用户可根据自己的网络运行环境，对WAF进行正确的参数配置。\n本产品的图像接收功能运行在TCP/IP加密模式下，通过加密的DICOM传输协议将图像传输给本产品。本产品中接收DICOM图像的服务作为传输协议的服务端，支持基于TLS协议的加密DICOM图像传输。由用户所在机构提供TLS协议所需要的CA证书和key，并将CA证书和key按照使用说明书进行正确配置。用户所在机构的PACS，作为发送DICOM图像的客户端，也需要支持基于TLS的DICOM传输协议。\n本产品本身只需要3200、11111两个TCP端口。\n服务器：\n服务器需要具备安全网关（SafetyGateway）。SafeGateway指的是一组位于服务器与外部网络之间的软件系统，它充当着服务器的安全屏障，对进出服务器的网络流量进行监测、过滤和控制，以保护服务器免受各种网络安全威胁。SafeGateway软件套件需要由用户自行购买和安装。包含防火墙软件、防病毒软件、Web 应用防火墙（Web Application Firewall，简称WAF）。软件要求如下：\n防火墙软件\n提供访问控制能力，能够根据预设的规则，对不同来源和目的的网络流量进行过滤，允许合法流量通过，阻止未经授权的访问。\n提供网络状态检测能力，对网络连接的状态进行监测，通过检查数据包的上下文信息，如 TCP 连接的建立、维持和终止状态，来判断流量是否合法。这样可以有效防范基于会话劫持、端口扫描等攻击手段\n提供入侵检测&防御能力，对SQL 注入、XSS 攻击、DDoS 攻击等常见的网络攻击行为进行检测，并及时发出警报\n提供安全审计和日志管理。对服务器的所有网络访问活动进行详细的审计，记录包括访问时间、源 IP 地址、目标 IP 地址、访问的服务和端口等信息，以便管理员对服务器的安全状况进行分析和追溯。具备完善的日志管理功能，能够存储大量的日志数据，并提供方便的日志查询和分析工具，帮助管理员及时发现异常行为和安全事件，为安全决策提供依据\n防病毒软件\n提供病毒防护能力，对进出服务器的网络流量进行病毒扫描，能够检测并清除各种病毒、木马、蠕虫等恶意软件，防止其进入服务器系统，避免服务器受到恶意软件的感染和破坏\n提供恶意软件分析能力，通过对恶意软件的活动模式、通信特征等进行分析，及时发现新型或变种的恶意软件，提高防护的准确性和有效性\n提供安全审计和日志管理。提供完善的病毒检测和防护日志，可对病毒防护情况进行分析和追溯。\nWeb 应用防火墙（Web Application Firewall），简称WAF。WAF是一种专门用于保护 Web 应用程序免受各种网络攻击的安全设备或软件。WAF 通过监测、过滤和阻止进出 Web 应用程序的 HTTP/HTTPS 流量，来识别和防范诸如 SQL 注入、跨站脚本攻击（XSS）、文件包含漏洞、命令注入等常见的 Web 应用安全漏洞。用户选择WAF时，必须满足下列技术要求：\n支持HTTPS和HTTP协议\n支持方向代理模式，接收客户端请求并转发到后端服务器，并隐藏后端服务器的真实 IP 地址，来增强安全性\n支持常见安全证书crt和key的格式，例如RSA算法、AES算法、P12（PKCS12）格式的crt证书等\n支持高频访问限制、高频攻击限制、高频错误限制\n支持定义白名单、黑名单\n支持攻击检测和防御，至少包括：DDOS、SQL注入、XSS、文件上传、文件包含、命令注入、代码注入、反序列化、CSRF、SSRF\n防护日志、防护报告、防护通知\n产品安装部署后，需要检查SafetyGateway的安装和配置，部署建议包括：\n【防火墙软件部署要求】\n开启访问控制功能。针对INPUT网络请求，本产品需要防火墙允许对443（HTTPS需要的端口）、11111两个端口的所有网络INPUT请求。服务器上其他TCP的端口和所有的UDP端口的INPUT请求，都和本产品无关，建议进行屏蔽。\n开启入侵检测和入侵防御\n按照用户IT科室的要求维护和升级防火墙软件\n定期或按照用户IT科室的要求对防火墙进行安全审计\n【防病毒软件部署要求】\n开启病毒防护\n开启恶意软件分析\n本产品默认安装在服务器的系统盘上。首次部署防病毒软件或对防病毒软件进行维护或升级后，需要使用防病毒软件对服务器系统盘进行全盘扫描。扫描结束后，如果发现和本产品有关的病毒扫描记录，请及时和厂商的售后服务人员联系来寻求解决方案。\n按照用户IT科室的要求维护和升级防病毒软件\n定期或按照用户IT科室的要求对防病毒日志进行检查和安全审计\n【WAF软件部署要求】\n将本产品接入用户的域名，导入安全证书，开启HTTPS访问。\n开启高频访问限制。根据用户的安全要求和IT科室的经验，设置合适的高频访问、高频攻击、高频错误的参数\n开启攻击检测和防御\n根据用户对内部机构、人员、权限的管理要求，设置WAF的黑名单或白名单\n开启防护告警。\n按照用户IT科室的要求维护和升级WAF软件\n定期或按照用户IT科室的要求对WAF的日志进行安全审计\n服务器安装部署完成后，从服务器外部只能访问443和11111两个TCP端口。\n(3)数据流图\n以下是系统数据流的关键点：\n用户端和服务器之间的信息传递使用\tHTTP/HTTPS协议。\n产品采用B/S架构开发，安装部署在服务器上。\n产品服务器：具备支持肿瘤CT图像随访与评估软件111运行软硬件基础环境。\n安装工程师：负责产品的安装、调试、日常维护。\n用户：使用本产品的科室医生或医生代表。\n患者：指进行CT影像扫描、提供Dicom影像文件、需要从医生那里获取医学影像检查建议的人。\n详细流程可见下图",
         "table": {},
         "children": [
             {
                 "doc_id": 0,
                 "n_id": 0,
                 "p_id": 0,
-                "title": "7.1. 网络安全流程图",
+                "title": "导入表格74",
+                "img_url": "",
+                "text": "",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": [
+                        {
+                            "code": "col_1",
+                            "name": "端口号"
+                        },
+                        {
+                            "code": "col_2",
+                            "name": "端口类型"
+                        },
+                        {
+                            "code": "col_3",
+                            "name": "协议"
+                        },
+                        {
+                            "code": "col_4",
+                            "name": "功能"
+                        }
+                    ],
+                    "rows": [
+                        {
+                            "col_1": "3200",
+                            "col_2": "TCP",
+                            "col_3": "HTTP/HTTPS协议",
+                            "col_4": "通过在浏览器上访问http://IP:3200可以使用本产品的功能"
+                        },
+                        {
+                            "col_1": "11111",
+                            "col_2": "TCP",
+                            "col_3": "DICOM传输协议\nTLS协议",
+                            "col_4": "接收DICOM图像"
+                        }
+                    ],
+                    "cells": [
+                        [
+                            {
+                                "value": "端口号",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "端口类型",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "协议",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "功能",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "3200",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "TCP",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "HTTP/HTTPS协议",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "通过在浏览器上访问http://IP:3200可以使用本产品的功能",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "11111",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "TCP",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "DICOM传输协议\nTLS协议",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "接收DICOM图像",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            }
+                        ]
+                    ],
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "导入表格75",
+                "img_url": "",
+                "text": "",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": [
+                        {
+                            "code": "col_1",
+                            "name": "端口号"
+                        },
+                        {
+                            "code": "col_2",
+                            "name": "端口类型"
+                        },
+                        {
+                            "code": "col_3",
+                            "name": "协议"
+                        },
+                        {
+                            "code": "col_4",
+                            "name": "功能"
+                        }
+                    ],
+                    "rows": [
+                        {
+                            "col_1": "443",
+                            "col_2": "TCP",
+                            "col_3": "HTTP/HTTPS协议",
+                            "col_4": "通过在浏览器上访问域名进入本产品的登录页"
+                        },
+                        {
+                            "col_1": "11111",
+                            "col_2": "TCP",
+                            "col_3": "DICOM传输协议\nTLS协议",
+                            "col_4": "接收DICOM图像"
+                        }
+                    ],
+                    "cells": [
+                        [
+                            {
+                                "value": "端口号",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "端口类型",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "协议",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "功能",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "443",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "TCP",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "HTTP/HTTPS协议",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "通过在浏览器上访问域名进入本产品的登录页",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "11111",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "TCP",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "DICOM传输协议\nTLS协议",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "接收DICOM图像",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            }
+                        ]
+                    ],
+                    "extra_tables": null,
+                    "trace_synced": null
+                },
+                "children": []
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "title": "图 13\t网络安全流程图",
                 "sds_code": "",
                 "ref_type": "img_flow",
                 "img_url": "",
@@ -28968,7 +30422,8 @@
                 "table": {},
                 "children": []
             }
-        ]
+        ],
+        "sds_code": "SDS-RCN300-009"
     },
     {
         "doc_id": 0,

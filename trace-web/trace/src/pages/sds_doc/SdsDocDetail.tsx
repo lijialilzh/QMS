@@ -298,7 +298,7 @@ export default () => {
                 const mappedUrl = fileMaps.get(refType);
                 // 网络安全流程图严格使用详细设计树内图片，避免被图表文件管理旧记录覆盖
                 const finalUrl = refType === "img_flow"
-                    ? (currentUrl || "")
+                    ? (currentUrl || mappedUrl || "")
                     : (mappedUrl || currentUrl || "");
                 return {
                     ...node,
@@ -1610,12 +1610,17 @@ export default () => {
             };
             const isInFixedTemplateZone = (node: TreeNode) => {
                 const minor = getHeadingSectionMinor(node.title);
-                return minor != null && minor <= 5;
+                // 产品模块标准二级章节 3.1~3.10 / 4.1~4.10 等：保留模板默认值，不被需求同步覆盖或剪枝
+                return minor != null && minor <= 10;
             };
             const fixedSdsChapterTitles = new Set([
                 "总体描述",
                 "功能",
                 "性能",
+                "模块结构",
+                "程序逻辑",
+                "输入项",
+                "输出项",
                 "数据结构",
                 "接口",
                 "neoviewer",
@@ -2644,18 +2649,20 @@ export default () => {
     };
 
     const handleInitTemplate = () => {
+        const load = async () => {
+            await handleLoadStandardNode();
+        };
         if (params.id && data.isEdit) {
-            const originalTree = cloneTree(initialEditTreeRef.current || []);
-            if (!originalTree.length) {
-                message.warning("暂无可恢复的初始内容，请刷新页面后重试");
-                return;
-            }
-            treeStructureRef.current = originalTree;
-            dispatch({ treeStructure: originalTree });
-            message.success("已恢复到进入编辑页时的内容");
+            Modal.confirm({
+                title: ts("sds_doc.init_template"),
+                content: "将用标准模板（含默认值）覆盖当前目录结构，未保存的修改会丢失。是否继续？",
+                okText: ts("confirm") || "确定",
+                cancelText: ts("cancel") || "取消",
+                onOk: load,
+            });
             return;
         }
-        handleLoadStandardNode();
+        void load();
     };
 
     const handleAddRootNode = () => {
@@ -2677,16 +2684,20 @@ export default () => {
     };
 
     // 加载标准结构
-    const handleLoadStandardNode = () => {
+    const handleLoadStandardNode = async () => {
         if (!editForm.getFieldValue("product_id")) {
             message.warning(ts("sds_doc.please_select_product_and_version"));
             return;
         }
 
-        const nodesWithIds = applyProductScopeToTree(buildStandardNodesWithIds(), currentProduct).nodes;
-        // dispatch({ treeStructure: [...data.treeStructure, ...nodesWithIds] });
+        const productId = editForm.getFieldValue("product_id");
+        const version = editForm.getFieldValue("version");
+        let nodesWithIds = applyProductScopeToTree(buildStandardNodesWithIds(), currentProduct).nodes;
+        nodesWithIds = rebindFlowImageToFlowChild(nodesWithIds);
+        nodesWithIds = normalizeImageRefTypes(nodesWithIds);
+        nodesWithIds = await remapRefTypeImagesByProduct(nodesWithIds, productId, version);
         treeStructureRef.current = nodesWithIds;
-        dispatch({ treeStructure: nodesWithIds });
+        dispatch({ treeStructure: nodesWithIds, traceTreeRefreshKey: Date.now() });
         message.success(ts("sds_doc.load_standard_structure_success"));
     };
 
