@@ -883,62 +883,6 @@
 
     // 左目录单章编辑：须在 .tree-node-item 通用样式之后，覆盖占位符/正文缩进
     &.srs-tree-layout .srs-tree-editor {
-        .nav-chapter-title-field {
-            margin-bottom: 12px;
-
-            .nav-chapter-title-label {
-                font-size: 13px;
-                font-weight: 600;
-                color: #2b3a4b;
-                margin-bottom: 6px;
-            }
-
-            .nav-chapter-title-input-wrap {
-                display: flex;
-                align-items: stretch;
-                width: 100%;
-                border: 1px solid #d9d9d9;
-                border-radius: 6px;
-                overflow: hidden;
-                background: #fff;
-
-                &:focus-within {
-                    border-color: #4096ff;
-                    box-shadow: 0 0 0 2px rgba(5, 145, 255, 0.1);
-                }
-            }
-
-            .nav-chapter-title-prefix {
-                flex: 0 0 auto;
-                display: inline-flex;
-                align-items: center;
-                padding: 0 11px;
-                background: #fafafa;
-                border-right: 1px solid #d9d9d9;
-                color: #595959;
-                font-size: 13px;
-                white-space: nowrap;
-            }
-
-            .nav-chapter-title-input {
-                flex: 1 1 auto;
-                min-width: 0;
-                border: none !important;
-                outline: none !important;
-                box-shadow: none !important;
-                height: 32px;
-                padding: 4px 11px;
-                font-size: 13px;
-            }
-        }
-
-        .tree-node-item.nav-chapter-editor .node-row.node-row-nav-editor {
-            .node-title,
-            .node-title-prefix {
-                display: none !important;
-            }
-        }
-
         .tree-node-item .node-row {
             .node-expand-placeholder,
             .node-expand-btn,

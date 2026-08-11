@@ -21,15 +21,15 @@ except Exception:
 from ..model.doc_file import DocFile
 from ..model.hld_doc import HldDoc, HldNode
 from ..model.product import Product, UserProd
-from ..obj import Page, Resp
+from ..model.sds_doc import SdsDoc
+from ..obj import Page, Resp, c_ok
 from ..obj.tobj_hld_doc import HldDocForm, HldNodeForm
 from ..obj.tobj_srs_doc import Table
 from ..obj.vobj_hld_doc import HldDocObj
 from ..obj.vobj_user import UserObj
-from ..utils import get_uuid
 from ..utils.i18n import ts
 from ..utils.sql_ctx import db
-from . import msg_err_db, save_file
+from . import msg_err_db
 from .serv_srs_doc import Server as ServSrsDoc
 from .serv_utils import new_version, sync_file_no_version
 
@@ -47,6 +47,64 @@ def _normalize_hld_img_url(url: Optional[str]) -> Optional[str]:
     if path.startswith("/data.trace/"):
         return path
     return s
+
+
+_HLD_MIME_BY_EXT = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+    ".webp": "image/webp",
+}
+
+
+def _guess_hld_image_mime(path_or_name: str, fallback: str = "image/png") -> str:
+    ext = os.path.splitext(str(path_or_name or ""))[1].lower()
+    return _HLD_MIME_BY_EXT.get(ext, fallback)
+
+
+def _bytes_to_hld_data_url(bys: bytes, mime: str = "image/png") -> str:
+    return f"data:{mime};base64,{base64.b64encode(bys).decode('ascii')}"
+
+
+def _resolve_hld_local_img_path(url: str) -> Optional[str]:
+    raw = str(url or "").strip()
+    if not raw or raw.startswith("data:"):
+        return None
+    clean = raw.split("?", 1)[0].strip()
+    if clean.startswith("/"):
+        clean = clean.lstrip("/")
+    candidates = [clean]
+    if clean.startswith("data.trace/"):
+        candidates.append(clean)
+    else:
+        candidates.append(os.path.join("data.trace", clean))
+    for candidate in candidates:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _coerce_hld_img_url_to_data(url: Optional[str]) -> Optional[str]:
+    """HLD 图片统一存库：img_url 使用 data URL，兼容历史本地路径。"""
+    if not url:
+        return url
+    s = str(url).strip()
+    if s.startswith("data:image/"):
+        return _normalize_hld_img_url(s)
+    local_path = _resolve_hld_local_img_path(s)
+    if not local_path:
+        return _normalize_hld_img_url(s)
+    try:
+        with open(local_path, "rb") as fs:
+            bys = fs.read()
+        if not bys:
+            return _normalize_hld_img_url(s)
+        return _bytes_to_hld_data_url(bys, _guess_hld_image_mime(local_path))
+    except Exception:
+        logger.exception("coerce hld img url failed: %s", s)
+        return _normalize_hld_img_url(s)
 
 
 class Server(object):
@@ -115,7 +173,7 @@ class Server(object):
                     if key == "table":
                         value = self._serialize_table(value)
                     if key == "img_url":
-                        value = _normalize_hld_img_url(value)
+                        value = _coerce_hld_img_url_to_data(value)
                     setattr(row, key, value)
                 row.priority = idx
                 node.n_id = row.n_id
@@ -151,6 +209,12 @@ class Server(object):
                 if parent:
                     parent.children.append(obj)
         return roots
+
+    def __coerce_tree_img_urls_to_data(self, nodes: List[HldNodeForm]):
+        for node in nodes or []:
+            if getattr(node, "img_url", None):
+                node.img_url = _coerce_hld_img_url_to_data(node.img_url)
+            self.__coerce_tree_img_urls_to_data(getattr(node, "children", None) or [])
 
     def __query_imgs(self, product_id: int):
         subquery = select(DocFile.category, func.max(DocFile.id).label("max_id"))
@@ -409,16 +473,25 @@ class Server(object):
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
 
     async def add_doc_file(self, doc_id: int, file, ref_type: str = None):
-        size, path = await save_file("hld_node_img", doc_id, file)
+        if not file:
+            return Resp.resp_err(msg="未收到图片文件")
+        bys = await file.read()
+        if not bys:
+            return Resp.resp_err(msg="图片文件为空")
+        filename = getattr(file, "filename", "") or "image.png"
+        mime = getattr(file, "content_type", None) or _guess_hld_image_mime(filename)
+        if not str(mime).startswith("image/"):
+            mime = _guess_hld_image_mime(filename)
+        data_url = _bytes_to_hld_data_url(bys, mime)
         self.__upsert_product_doc_image(
             doc_id,
             str(ref_type or "").strip(),
-            getattr(file, "filename", "") or "",
-            size,
-            path,
+            filename,
+            len(bys),
+            data_url,
         )
         db.session.commit()
-        return Resp.resp_ok(data=path)
+        return Resp.resp_ok(data=data_url)
 
     @staticmethod
     def _biz_title(value: str) -> str:
@@ -533,35 +606,13 @@ class Server(object):
         walk(nodes or [])
 
     def __persist_data_url_images(self, nodes: List[HldNodeForm]):
-        ext_map = {
-            "image/png": "png",
-            "image/jpeg": "jpg",
-            "image/jpg": "jpg",
-            "image/gif": "gif",
-            "image/bmp": "bmp",
-            "image/webp": "webp",
-        }
+        """图片以 data URL 存入 hld_node.img_url / doc_file.file_url，不再写入本地目录。"""
 
         def walk(node_list: List[HldNodeForm]):
             for node in node_list or []:
                 img_url = (getattr(node, "img_url", None) or "").strip()
-                if img_url.startswith("data:"):
-                    matched = re.match(r"^data:([^;]+);base64,(.+)$", img_url, re.S)
-                    if matched:
-                        mime = (matched.group(1) or "").lower()
-                        b64 = matched.group(2) or ""
-                        ext = ext_map.get(mime, "png")
-                        try:
-                            bys = base64.b64decode(b64)
-                            path = os.path.join("data.trace", "hld_node_img", "import_hld", f"{get_uuid()}.{ext}")
-                            os.makedirs(os.path.dirname(path), exist_ok=True)
-                            with open(path, "wb") as fs:
-                                fs.write(bys)
-                            node.img_url = path
-                        except Exception:
-                            node.img_url = None
-                    else:
-                        node.img_url = None
+                if img_url:
+                    node.img_url = _coerce_hld_img_url_to_data(img_url)
                 walk(getattr(node, "children", None) or [])
 
         walk(nodes or [])
@@ -587,6 +638,14 @@ class Server(object):
 
         def file_size_of(url: str) -> int:
             path = str(url or "").strip()
+            if path.startswith("data:image/"):
+                matched = re.match(r"^data:[^;]+;base64,(.+)$", path, re.S)
+                if matched:
+                    try:
+                        return len(base64.b64decode(matched.group(1) or ""))
+                    except Exception:
+                        return 0
+                return 0
             if path.startswith("/"):
                 path = path[1:]
             try:
@@ -649,7 +708,7 @@ class Server(object):
                 content=hld_content,
             )
             resp = await self.add_hld_doc(form)
-            if resp.code == 200 and resp.data and resp.data.id:
+            if resp.code == c_ok and resp.data and resp.data.id:
                 product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
                 product_version = getattr(product, "full_version", "") or getattr(product, "name", "") or ""
                 srsdoc_serv._Server__auto_sync_product_doc_images(
@@ -679,7 +738,7 @@ class Server(object):
             file_no = (snapshot.file_no or "").strip()
         else:
             resp = await self.get_hld_doc(id, with_tree=True)
-            if resp.code != 200 or not resp.data:
+            if resp.code != c_ok or not resp.data:
                 return
             doc_obj = resp.data
             file_no = (doc_obj.file_no or "").strip()
@@ -724,3 +783,84 @@ class Server(object):
                 docx_util.fonted_txt(section.header.paragraphs[0], file_no)
         docx_util.add_page_number_footer(docx.sections[0], file_no=file_no, skip_first=True)
         docx.save(output)
+
+    @staticmethod
+    def __table_header_name(table, idx: int = 0) -> str:
+        tbl = Server._parse_table(table)
+        if not tbl or not tbl.headers or len(tbl.headers) <= idx:
+            return ""
+        return str(tbl.headers[idx].name or "").strip()
+
+    @staticmethod
+    def __detect_field_library(parent_titles: List[str]) -> str:
+        chain = " ".join(parent_titles or [])
+        if "库2" in chain or "库 2" in chain:
+            return "lib2"
+        return "lib1"
+
+    async def sync_hld_from_sds(self, op_user: UserObj, product_id: int, version: str):
+        if not product_id:
+            return Resp.resp_err(msg="请选择产品")
+        version = str(version or "").strip()
+        if not version:
+            return Resp.resp_err(msg="请填写版本")
+        sds_row: SdsDoc = db.session.execute(
+            select(SdsDoc)
+            .where(SdsDoc.product_id == product_id, SdsDoc.version == version)
+            .order_by(desc(SdsDoc.create_time))
+        ).scalars().first()
+        if not sds_row:
+            return Resp.resp_err(msg="未找到同版本详细设计文档")
+        from .serv_sds_doc import Server as SdsServer
+
+        sds_resp = await SdsServer().get_sds_doc(sds_row.id, with_tree=True)
+        if sds_resp.code != c_ok or not sds_resp.data:
+            return Resp.resp_err(msg="读取详细设计失败")
+        interface_table = None
+        field_tables = []
+        interface_details = []
+
+        def walk(nodes, parent_titles: List[str] = None):
+            nonlocal interface_table
+            parent_titles = parent_titles or []
+            for node in nodes or []:
+                title = str(getattr(node, "title", "") or "").strip()
+                chain = parent_titles + ([title] if title else [])
+                tbl = self._parse_table(getattr(node, "table", None))
+                if tbl and tbl.headers:
+                    h0 = self.__table_header_name(tbl, 0)
+                    if h0 == "接口设计编号" and interface_table is None:
+                        interface_table = self._serialize_table(tbl)
+                    elif h0 in ("字段ID", "Field ID"):
+                        field_tables.append({
+                            "title": title,
+                            "library": self.__detect_field_library(parent_titles),
+                            "table": self._serialize_table(tbl),
+                        })
+                detail_name = self.__parse_interface_detail_title(title)
+                detail_text = str(getattr(node, "text", "") or "").strip()
+                if detail_name and detail_text:
+                    interface_details.append({
+                        "name": detail_name,
+                        "source_title": title,
+                        "text": detail_text,
+                    })
+                walk(getattr(node, "children", None) or [], chain)
+
+        walk(sds_resp.data.content or [])
+        return Resp.resp_ok(data={
+            "sds_doc_id": sds_row.id,
+            "interface_table": interface_table,
+            "interface_details": interface_details,
+            "field_tables": field_tables,
+        })
+
+    @staticmethod
+    def __parse_interface_detail_title(title: str) -> Optional[str]:
+        title = str(title or "").strip()
+        if not title:
+            return None
+        m = re.match(r"^\d+(?:\.\d+)+\s+(.+接口)\s*$", title)
+        if not m:
+            return None
+        return m.group(1).strip()

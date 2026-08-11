@@ -102,6 +102,13 @@ interface TreeNodeItemProps {
     uploadDocFile?: (formData: FormData) => Promise<any>;
 }
 
+function resolveImageSrc(url?: string): string {
+    const raw = String(url || "").trim();
+    if (!raw) return "";
+    if (raw.startsWith("data:") || raw.startsWith("http://") || raw.startsWith("https://")) return raw;
+    return `${window.location.origin}/${raw.replace(/^\//, "")}`;
+}
+
 function isUuidLike(text: string): boolean {
     const value = String(text || "").trim();
     if (!value) return false;
@@ -178,6 +185,18 @@ function isNavTableTitleNode(node: TreeNode): boolean {
     return /^\s*表\d+([、.\s　]|$)/.test(title);
 }
 
+/** 库表字段表（Field ID / 字段ID 表头）不占章节序号，仅作表名展示 */
+function isNavDbFieldTableNode(node: TreeNode): boolean {
+    const headers = node.table?.headers;
+    if (!headers || !Array.isArray(headers) || headers.length === 0) return false;
+    const h0 = String(headers[0]?.name || "").trim();
+    return h0 === "Field ID" || h0 === "字段ID";
+}
+
+function isNavUnnumberedNode(node: TreeNode): boolean {
+    return isNavTableTitleNode(node) || isNavDbFieldTableNode(node);
+}
+
 function isNavChapterNode(n: TreeNode): boolean {
     if (isEmbeddedImageNode(n) || isEmbeddedTableNode(n)) return false;
     if (n.ref_type === "sds_reqds" || n.ref_type === "sds_traces") return false;
@@ -189,9 +208,9 @@ function computeNavChapterNumberMap(list: TreeNode[]): Map<string, string> {
     const walkChildren = (nodes: TreeNode[], prefix: string) => {
         let idx = 0;
         (nodes || []).filter(isNavChapterNode).forEach((node) => {
-            if (isNavTableTitleNode(node)) {
+            if (isNavUnnumberedNode(node)) {
                 map.set(String(node.id), "");
-                walkChildren(node.children || [], "");
+                walkChildren(node.children || [], prefix);
                 return;
             }
             idx += 1;
@@ -202,7 +221,7 @@ function computeNavChapterNumberMap(list: TreeNode[]): Map<string, string> {
     };
     let bodyIdx = 0;
     (list || []).filter(isNavChapterNode).forEach((node) => {
-        if (isNavTableTitleNode(node)) {
+        if (isNavUnnumberedNode(node)) {
             map.set(String(node.id), "");
             walkChildren(node.children || [], "");
             return;
@@ -565,7 +584,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                 uid: '-1',
                 name: 'image.png',
                 status: 'done',
-                url: `${window.location.origin}/${node.img_url}`,
+                url: resolveImageSrc(node.img_url),
             }]);
         } else {
             setFileList([]);
@@ -1242,7 +1261,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     );
     let childChapterCounter = 0;
     const inlineImageUrlForText = (readOnly && displayImageUrl)
-        ? (displayImageUrl.startsWith('http') ? displayImageUrl : `${window.location.origin}/${displayImageUrl.replace(/^\//, '')}`)
+        ? resolveImageSrc(displayImageUrl)
         : "";
     const hasInlineImageSplit = !!(readOnly && (interfaceOutputSplit || complianceTcpSplit || chapter7TableSplit));
     const hasCaptionInBefore = /^图\s*\d+/m.test(String(displayTextBeforeTable || ""));
@@ -1404,27 +1423,9 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
 
     return (
         <div style={{ marginLeft: level * 32 }}>
-          <div className={`tree-node-item level-${level}${useNavChapterEditor && !readOnly ? " nav-chapter-editor" : ""}`}>
-              {useNavChapterEditor && !readOnly && (
-                  <div className="nav-chapter-title-field">
-                      <div className="nav-chapter-title-label">
-                          章节标题{autoNavChapterNo ? `（编号 ${autoNavChapterNo} 自动生成）` : ""}
-                      </div>
-                      <div className="nav-chapter-title-input-wrap">
-                          {autoNavChapterNo ? <span className="nav-chapter-title-prefix">{autoNavChapterNo}</span> : null}
-                          <input
-                              className="nav-chapter-title-input node-input-native"
-                              type="text"
-                              value={navTitleValue}
-                              onChange={(e) => onTitleChange(node.id, e.target.value)}
-                              placeholder="只填名称，如：风险管理定义"
-                              disabled={readOnly || isTraceReqNode || isLockedModuleChapter}
-                          />
-                      </div>
-                  </div>
-              )}
+          <div className={`tree-node-item level-${level}`}>
               {!hideNodeRow && (
-              <div className={`node-row${navImageInHeaderRow ? ' nav-row-with-auto-image' : ''} ${!readOnly && hasDisplayImage && !stackContentBelowTitle ? " node-row-has-image" : ""}${useNavChapterEditor && !readOnly ? " node-row-nav-editor" : ""}`}>
+              <div className={`node-row${navImageInHeaderRow ? ' nav-row-with-auto-image' : ''} ${!readOnly && hasDisplayImage && !stackContentBelowTitle ? " node-row-has-image" : ""}`}>
                   {hasToggle ? (
                       <Button
                           type="text"
@@ -1449,6 +1450,13 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   )}
                   {readOnly ? (
                       <span className="node-title-prefix">{displayChapterFromDoc || ""}</span>
+                  ) : useNavChapterEditor ? (
+                      <span
+                          className="node-title-prefix"
+                          style={compactWithImage ? { ...chapterTextStyle, marginRight: 8 } : chapterTextStyle}
+                      >
+                          {autoNavChapterNo || ""}
+                      </span>
                   ) : !hideLevelPrefix ? (
                       <span
                           className="node-title-prefix"
@@ -1459,12 +1467,12 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   ) : null}
                   {readOnly ? (
                       <div className="node-title">{displayTitle}</div>
-                  ) : useNavChapterEditor ? null : (
+                  ) : (
                       <input
                           className="node-title node-input-native"
                           type="text"
                           style={titleInputStyle as React.CSSProperties}
-                          value={editDisplayTitle}
+                          value={useNavChapterEditor ? navTitleValue : editDisplayTitle}
                           onChange={(e) => onTitleChange(node.id, e.target.value)}
                           placeholder={ts('please_input_title')}
                           disabled={readOnly || isTraceReqNode || isLockedModuleChapter}
@@ -1487,7 +1495,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                       <div className="node-pic-block node-pic-block--header-auto-image">
                           <div className="node-pic node-pic-readonly node-pic-inline">
                               <Image
-                                  src={displayImageUrl.startsWith('http') ? displayImageUrl : `${window.location.origin}/${displayImageUrl.replace(/^\//, '')}`}
+                                  src={resolveImageSrc(displayImageUrl)}
                                   alt={displayTitle || 'image'}
                                   preview={true}
                               />
@@ -1544,7 +1552,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                       <div className={`node-pic-block ${navEmbeddedImageBlockClass}`}>
                           <div className="node-pic node-pic-readonly node-pic-inline">
                               <Image
-                                  src={displayImageUrl.startsWith('http') ? displayImageUrl : `${window.location.origin}/${displayImageUrl.replace(/^\//, '')}`}
+                                  src={resolveImageSrc(displayImageUrl)}
                                   alt={String(navEmbeddedFigureChild?.title || navEmbeddedDocImageChild?.title || displayTitle || 'image')}
                                   preview={true}
                               />
@@ -1566,7 +1574,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           } : undefined}
                       >
                           <Image
-                              src={displayImageUrl.startsWith('http') ? displayImageUrl : `${window.location.origin}/${displayImageUrl.replace(/^\//, '')}`}
+                              src={resolveImageSrc(displayImageUrl)}
                               alt={displayTitle || 'image'}
                               preview={true}
                           />
@@ -1733,7 +1741,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                   <div className={`node-pic-block ${navEmbeddedImageBlockClass}`}>
                                       <div className="node-pic node-pic-readonly node-pic-inline">
                                           <Image
-                                              src={displayImageUrl.startsWith('http') ? displayImageUrl : `${window.location.origin}/${displayImageUrl.replace(/^\//, '')}`}
+                                              src={resolveImageSrc(displayImageUrl)}
                                               alt={String(navEmbeddedFigureChild?.title || navEmbeddedDocImageChild?.title || displayTitle || 'image')}
                                               preview={true}
                                           />
@@ -1754,7 +1762,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       }}
                                   >
                                       <Image
-                                          src={displayImageUrl.startsWith('http') ? displayImageUrl : `${window.location.origin}/${displayImageUrl.replace(/^\//, '')}`}
+                                          src={resolveImageSrc(displayImageUrl)}
                                           alt={displayTitle || 'image'}
                                           preview={true}
                                       />
@@ -2131,7 +2139,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         <div className={`node-pic-block ${navEmbeddedImageBlockClass}`}>
                             <div className="node-pic node-pic-readonly node-pic-inline">
                                 <Image
-                                    src={displayImageUrl.startsWith('http') ? displayImageUrl : `${window.location.origin}/${displayImageUrl.replace(/^\//, '')}`}
+                                    src={resolveImageSrc(displayImageUrl)}
                                     alt={String(navEmbeddedFigureChild?.title || navEmbeddedDocImageChild?.title || displayTitle || 'image')}
                                     preview={true}
                                 />

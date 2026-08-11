@@ -39,6 +39,10 @@ export const get_hld_doc = async (params: any) => {
     return await httpGet("/trace-api/hld_doc/get_hld_doc", params);
 };
 
+export const sync_hld_from_sds = async (params: { product_id: number; version: string }) => {
+    return await httpGet("/trace-api/hld_doc/sync_hld_from_sds", params);
+};
+
 export const export_hld_doc = async (params: any) => {
     return await httpGet("/trace-api/hld_doc/export_hld_doc", params);
 };

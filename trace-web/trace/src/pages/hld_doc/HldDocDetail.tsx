@@ -14,6 +14,7 @@ import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
 import TreeStructure, { TreeNode } from "../sds_doc/components/TreeStructure";
+import { applySdsSyncToTree, hasSdsSyncData, needsLegacyInterfaceRepair, stripLegacyInterfaceText } from "./hldSdsSync";
 
 const HLD_COVER_DATE_KEYWORDS = ["软件概要设计", "概要设计"];
 
@@ -164,6 +165,7 @@ export default () => {
     const withCacheBuster = (url?: string, seed?: string | number) => {
         const base = normalizeImgUrl(url);
         if (!base) return "";
+        if (base.startsWith("data:")) return base;
         const token = String(seed ?? Date.now());
         return `${base}${base.includes("?") ? "&" : "?"}_v=${encodeURIComponent(token)}`;
     };
@@ -219,6 +221,10 @@ export default () => {
     const isReadOnly = location.pathname.includes("/hld_docs/view/");
     const [editForm] = Form.useForm();
     const treeStructureRef = useRef<TreeNode[]>([]);
+    const lastProductContextRef = useRef<{ productId?: number; version: string }>({ version: "" });
+    const productContextReadyRef = useRef(false);
+    const productSyncModalOpenRef = useRef(false);
+    const productContextRevertingRef = useRef(false);
     const [data, dispatch] = useData({
         loading: false,
         isEdit: false,
@@ -245,8 +251,8 @@ export default () => {
 
     const productId = Form.useWatch("product_id", editForm);
     const docVersion = Form.useWatch("version", editForm);
-    const displayProductId = (data.isEdit || isReadOnly) ? (data.docProductId ?? productId) : productId;
-    const displayDocVersion = (data.isEdit || isReadOnly) ? (data.docVersion ?? docVersion) : docVersion;
+    const displayProductId = productId ?? data.docProductId;
+    const displayDocVersion = String(docVersion ?? data.docVersion ?? "").trim();
     const currentProduct = (data.products as any[]).find((p: any) => p.id === displayProductId);
     const productLabel = currentProduct ? `${currentProduct.name}-${currentProduct.full_version}` : "";
 
@@ -327,15 +333,6 @@ export default () => {
         });
         return { nodes: walk(nodes), changed };
     };
-    useEffect(() => {
-        const scopeResult = applyProductScopeToTree(data.treeStructure as TreeNode[], currentProduct);
-        const basicResult = applyProductBasicInfoToTree(scopeResult.nodes as TreeNode[], currentProduct);
-        if (scopeResult.changed || basicResult.changed) {
-            treeStructureRef.current = basicResult.nodes;
-            dispatch({ treeStructure: basicResult.nodes });
-        }
-    }, [displayProductId, currentProduct?.scope, currentProduct?.name, currentProduct?.type_code, data.treeStructure]);
-
     const hasRenderableTable = (table: any): boolean => {
         if (!table || !Array.isArray(table.headers) || table.headers.length === 0) return false;
         const hasRows = Array.isArray(table.rows) && table.rows.length > 0;
@@ -626,16 +623,64 @@ export default () => {
             img_url: node.img_url || "",
             text: node.text || "",
             table: tableValue,
-            children: (node.children || []).map((child: any) => cleanTreeNode(child, docId, cleaned.n_id)),
+            children: [],
         };
+        if (node.children && Array.isArray(node.children)) {
+            cleaned.children = node.children.map((child: any) => cleanTreeNode(child, docId, cleaned.n_id));
+        }
         return cleaned;
+    };
+
+    const syncTreeFromSds = async (
+        productId: number,
+        version: string,
+        nodes: TreeNode[],
+        options?: { silent?: boolean },
+    ): Promise<TreeNode[]> => {
+        if (!productId || !String(version || "").trim()) return nodes;
+        const silent = !!options?.silent;
+        try {
+            const res: any = await Api.sync_hld_from_sds({ product_id: productId, version: String(version).trim() });
+            if (res.code !== Api.C_OK) {
+                if (!silent) message.warning(res?.msg || "未找到同版本详细设计，接口/库表未同步");
+                return stripLegacyInterfaceText(nodes);
+            }
+            if (!hasSdsSyncData(res.data)) {
+                if (!silent) message.warning("详细设计中暂无接口汇总表或库表数据");
+                return stripLegacyInterfaceText(nodes);
+            }
+            return applySdsSyncToTree(nodes, res.data);
+        } catch (error) {
+            console.error("从详细设计同步失败:", error);
+            if (!silent) message.warning("从详细设计同步失败，已保留当前目录结构");
+            return nodes;
+        }
+    };
+
+    const applyProductContextToTree = async (
+        nodes: TreeNode[],
+        targetProductId: number,
+        targetVersion: string,
+        product?: any,
+        options?: { silent?: boolean },
+    ): Promise<TreeNode[]> => {
+        if (!targetProductId || !String(targetVersion || "").trim() || !Array.isArray(nodes) || nodes.length === 0) {
+            return nodes;
+        }
+        let next = applyProductScopeToTree(nodes, product).nodes;
+        next = applyProductBasicInfoToTree(next, product).nodes;
+        next = await remapRefTypeImagesByProduct(next, targetProductId, targetVersion);
+        next = await syncTreeFromSds(targetProductId, targetVersion, next, options);
+        return next;
     };
 
     const buildStandardTreeForDoc = async (productId: number, version: string, product?: any): Promise<TreeNode[]> => {
         let nodesWithIds = applyProductScopeToTree(buildStandardNodesWithIds(), product).nodes;
         nodesWithIds = rebindFlowImageToFlowChild(nodesWithIds);
         nodesWithIds = normalizeImageRefTypes(nodesWithIds);
-        return await remapRefTypeImagesByProduct(nodesWithIds, productId, version);
+        nodesWithIds = await remapRefTypeImagesByProduct(nodesWithIds, productId, version);
+        nodesWithIds = await syncTreeFromSds(productId, version, nodesWithIds);
+        return nodesWithIds;
     };
 
     const needsStandardTemplate = (nodes: TreeNode[]): boolean => {
@@ -663,73 +708,258 @@ export default () => {
         return rows.find((p: any) => p.id === productId);
     };
 
-    const applyLoadedDocTree = async (targetRow: any): Promise<TreeNode[]> => {
+    const formatProductLabel = (pid?: number) => {
+        if (!pid) return "-";
+        const hit = (data.products as any[]).find((p: any) => p.id === pid);
+        return hit ? `${hit.name}-${hit.full_version}` : String(pid);
+    };
+
+    const tryPromptProductContextSync = (pid?: number, ver?: string) => {
+        if (isReadOnly || productContextRevertingRef.current) return;
+        if (!productContextReadyRef.current || productSyncModalOpenRef.current) return;
+
+        const normalizedPid = pid ?? undefined;
+        const normalizedVer = String(ver || "").trim();
+        const last = lastProductContextRef.current;
+        const pidSame = (last.productId ?? undefined) === normalizedPid;
+        const verSame = String(last.version || "") === normalizedVer;
+        if (pidSame && verSame) return;
+
+        const commitContext = (nextPid?: number, nextVer?: string) => {
+            lastProductContextRef.current = {
+                productId: nextPid,
+                version: String(nextVer || "").trim(),
+            };
+        };
+
+        const revertForm = () => {
+            productContextRevertingRef.current = true;
+            editForm.setFieldsValue({
+                product_id: last.productId,
+                version: last.version,
+            });
+            window.setTimeout(() => {
+                productContextRevertingRef.current = false;
+            }, 0);
+        };
+
+        const runSync = async (targetPid: number, targetVer: string) => {
+            const treeNodes = (treeStructureRef.current || data.treeStructure || []) as TreeNode[];
+            dispatch({ loading: true });
+            try {
+                const product = await resolveProductById(targetPid);
+                const synced = await applyProductContextToTree(treeNodes, targetPid, targetVer, product);
+                treeStructureRef.current = synced;
+                dispatch({
+                    treeStructure: synced,
+                    treeRefreshKey: Date.now(),
+                    docProductId: targetPid,
+                    docVersion: targetVer,
+                });
+                commitContext(targetPid, targetVer);
+                message.success(ts("hld_doc.sync_on_product_change_success"));
+            } catch (error) {
+                console.error("切换产品同步失败:", error);
+                message.error(ts("msg_req_fail"));
+                revertForm();
+            } finally {
+                dispatch({ loading: false });
+                productSyncModalOpenRef.current = false;
+            }
+        };
+
+        if (!normalizedPid || !normalizedVer) {
+            if (!normalizedPid && !normalizedVer) commitContext(undefined, "");
+            return;
+        }
+
+        const treeNodes = (treeStructureRef.current || data.treeStructure || []) as TreeNode[];
+        if (!treeNodes.length) {
+            commitContext(normalizedPid, normalizedVer);
+            return;
+        }
+
+        productSyncModalOpenRef.current = true;
+
+        const oldLabel = formatProductLabel(last.productId);
+        const newLabel = formatProductLabel(normalizedPid);
+        const versionChanged = String(last.version || "") !== normalizedVer;
+        const productChanged = (last.productId ?? undefined) !== normalizedPid;
+        const isFirstSelection = last.productId == null && !last.version;
+        const changeHint = isFirstSelection
+            ? ts("hld_doc.sync_on_product_change_first", { to: newLabel, version: normalizedVer })
+            : productChanged && versionChanged
+                ? ts("hld_doc.sync_on_product_change_both", { from: oldLabel, to: newLabel, version: normalizedVer })
+                : productChanged
+                    ? ts("hld_doc.sync_on_product_change_product", { from: oldLabel, to: newLabel })
+                    : ts("hld_doc.sync_on_product_change_version", { from: last.version, to: normalizedVer });
+
+        Modal.confirm({
+            title: ts("hld_doc.sync_on_product_change_title"),
+            content: (
+                <>
+                    <div>{changeHint}</div>
+                    <div style={{ marginTop: 8 }}>{ts("hld_doc.sync_on_product_change_warning")}</div>
+                </>
+            ),
+            okText: ts("confirm") || "确定",
+            cancelText: ts("cancel") || "取消",
+            maskClosable: false,
+            onOk: () => runSync(normalizedPid, normalizedVer),
+            onCancel: () => {
+                revertForm();
+                productSyncModalOpenRef.current = false;
+            },
+        });
+    };
+
+    const handleProductIdFieldChange = (value?: number) => {
+        editForm.setFieldValue("product_id", value);
+        const ver = String(editForm.getFieldValue("version") || "").trim();
+        if (!value) return;
+        if (!ver) {
+            message.info(ts("hld_doc.please_fill_version_before_sync"));
+            return;
+        }
+        tryPromptProductContextSync(value, ver);
+    };
+
+    const handleDocVersionFieldCommit = () => {
+        const pid = editForm.getFieldValue("product_id") as number | undefined;
+        const ver = String(editForm.getFieldValue("version") || "").trim();
+        if (!pid || !ver) return;
+        tryPromptProductContextSync(pid, ver);
+    };
+
+    const renderProductVersionSelect = () => (
+        <ProductVersionSelect
+            products={data.products}
+            allowClear
+            namePlaceholder={ts("product.name")}
+            versionPlaceholder={ts("product.full_version")}
+            onChange={handleProductIdFieldChange}
+        />
+    );
+
+    const renderDocVersionInput = (disabled?: boolean, width = 130) => (
+        <Input
+            allowClear
+            placeholder={ts("hld_doc.please_input_version")}
+            disabled={disabled}
+            style={{ width }}
+            onBlur={handleDocVersionFieldCommit}
+            onPressEnter={handleDocVersionFieldCommit}
+        />
+    );
+
+    const applyLoadedDocTree = async (targetRow: any): Promise<{ nodes: TreeNode[]; autoRepaired: boolean }> => {
         const parsedTree = (targetRow.content || []).map((node: any) => parseTreeNode(node));
         const parsedTreeForView = isReadOnly ? parsedTree : normalizeEditRootChapterNumbers(parsedTree);
         const flowReboundTree = rebindFlowImageToFlowChild(parsedTreeForView);
         const normalizedRefTree = normalizeImageRefTypes(flowReboundTree);
         const parsedContent = isReadOnly ? bindTableCaptionsForPersist(normalizedRefTree) : normalizedRefTree;
-        const remappedContent = await remapRefTypeImagesByProduct(parsedContent, targetRow.product_id, targetRow.version);
-        return ensureFrontMatterTables(remappedContent as TreeNode[]);
+        let remappedContent = await remapRefTypeImagesByProduct(parsedContent, targetRow.product_id, targetRow.version);
+        remappedContent = ensureFrontMatterTables(remappedContent as TreeNode[]);
+        const needRepair = !isReadOnly && needsLegacyInterfaceRepair(remappedContent as TreeNode[]);
+        if (needRepair) {
+            const before = JSON.stringify(remappedContent);
+            remappedContent = await syncTreeFromSds(targetRow.product_id, targetRow.version, remappedContent as TreeNode[]);
+            const autoRepaired = before !== JSON.stringify(remappedContent);
+            if (autoRepaired) {
+                message.info(ts("hld_doc.auto_sync_interface_layout"));
+            }
+            return { nodes: remappedContent as TreeNode[], autoRepaired };
+        }
+        return { nodes: remappedContent as TreeNode[], autoRepaired: false };
     };
 
     useEffect(() => {
         const id = params.id;
-        if (id) {
-            dispatch({ loading: true, isEdit: !isReadOnly });
-            Api.get_hld_doc({ id }).then(async (res: any) => {
-                if (res.code === Api.C_OK) {
-                    const targetRow = res.data;
-                    editForm.setFieldsValue({
-                        id: targetRow.id,
-                        product_id: targetRow.product_id,
-                        version: targetRow.version,
-                        file_no: targetRow.file_no,
-                    });
-                    const parsedTreeRaw = (targetRow.content || []).map((node: any) => parseTreeNode(node));
-                    let ensuredContent = await applyLoadedDocTree(targetRow);
-                    let shouldInitStandard = false;
-                    if (!isReadOnly && needsStandardTemplate(ensuredContent)) {
-                        const product = await resolveProductById(targetRow.product_id);
-                        ensuredContent = await buildStandardTreeForDoc(targetRow.product_id, targetRow.version, product);
-                        shouldInitStandard = true;
-                    }
-                    const shouldPersist = !isReadOnly && (shouldInitStandard || JSON.stringify(parsedTreeRaw || []) !== JSON.stringify(ensuredContent || []));
-                    dispatch({
-                        loading: false,
-                        changeDescription: targetRow.change_log || "",
-                        docNId: targetRow.n_id || 0,
-                        treeStructure: ensuredContent,
-                        docProductId: targetRow.product_id,
-                        docVersion: targetRow.version ?? "",
-                        treeRefreshKey: Date.now(),
-                    });
-                    treeStructureRef.current = ensuredContent;
-                    if (shouldPersist) {
-                        const docId = targetRow.id || parseInt(String(id), 10);
+        let cancelled = false;
+        if (!id) {
+            editForm.resetFields();
+            const initialTree = buildStandardNodesWithIds();
+            dispatch({ isEdit: false, treeStructure: initialTree, treeRefreshKey: Date.now() });
+            treeStructureRef.current = initialTree;
+            lastProductContextRef.current = { version: "" };
+            productContextReadyRef.current = true;
+            productSyncModalOpenRef.current = false;
+            return () => { cancelled = true; };
+        }
+        dispatch({ loading: true, isEdit: !isReadOnly });
+        productContextReadyRef.current = false;
+        productSyncModalOpenRef.current = false;
+        (async () => {
+            try {
+                const res: any = await Api.get_hld_doc({ id });
+                if (cancelled) return;
+                if (res.code !== Api.C_OK || !res.data) {
+                    message.error(res?.msg || ts("msg_req_fail"));
+                    return;
+                }
+                const targetRow = res.data;
+                editForm.setFieldsValue({
+                    id: targetRow.id,
+                    product_id: targetRow.product_id,
+                    version: targetRow.version,
+                    file_no: targetRow.file_no,
+                });
+                const loadResult = await applyLoadedDocTree(targetRow);
+                let ensuredContent = loadResult.nodes;
+                let shouldInitStandard = false;
+                const shouldSaveRepaired = loadResult.autoRepaired;
+                if (!isReadOnly && needsStandardTemplate(ensuredContent)) {
+                    const product = await resolveProductById(targetRow.product_id);
+                    if (cancelled) return;
+                    ensuredContent = await buildStandardTreeForDoc(targetRow.product_id, targetRow.version, product);
+                    shouldInitStandard = true;
+                }
+                dispatch({
+                    loading: false,
+                    changeDescription: targetRow.change_log || "",
+                    docNId: targetRow.n_id || 0,
+                    treeStructure: ensuredContent,
+                    docProductId: targetRow.product_id,
+                    docVersion: targetRow.version ?? "",
+                    treeRefreshKey: Date.now(),
+                });
+                treeStructureRef.current = ensuredContent;
+                lastProductContextRef.current = {
+                    productId: targetRow.product_id,
+                    version: String(targetRow.version || "").trim(),
+                };
+                productContextReadyRef.current = true;
+                productSyncModalOpenRef.current = false;
+                if (!isReadOnly && (shouldInitStandard || shouldSaveRepaired)) {
+                    const docId = targetRow.id || parseInt(String(id), 10);
+                    try {
+                        const contentPayload = (ensuredContent as TreeNode[]).map((node) => cleanTreeNode(node, docId, 0));
                         Api.update_hld_doc({
                             id: docId,
                             product_id: targetRow.product_id,
                             version: targetRow.version,
                             file_no: targetRow.file_no,
                             change_log: targetRow.change_log || "",
-                            content: (ensuredContent as TreeNode[]).map((node) => cleanTreeNode(node, docId, 0)),
+                            content: contentPayload,
                             n_id: targetRow.n_id || 0,
-                        }).catch((error: any) => console.error("静默保存概要设计同步目录失败:", error));
+                        }).catch((error: any) => console.error("静默保存概要设计目录失败:", error));
+                    } catch (error) {
+                        console.error("构建概要设计目录保存数据失败:", error);
                     }
-                } else {
-                    message.error(res.msg);
-                    dispatch({ loading: false });
-                    navigate("/hld_docs");
                 }
-            });
-        } else {
-            editForm.resetFields();
-            const initialTree = buildStandardNodesWithIds();
-            dispatch({ isEdit: false, treeStructure: initialTree, treeRefreshKey: Date.now() });
-            treeStructureRef.current = initialTree;
-        }
-    }, [params.id]);
+            } catch (error) {
+                if (!cancelled) {
+                    console.error("加载概要设计失败:", error);
+                    message.error(ts("msg_req_fail"));
+                }
+            } finally {
+                if (!cancelled) {
+                    dispatch({ loading: false });
+                }
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [params.id, isReadOnly]);
 
     const handleEditChangeDesc = () => dispatch({ showChangeDescModal: true, tempChangeDescription: data.changeDescription });
     const handleSaveChangeDesc = () => {
@@ -761,6 +991,24 @@ export default () => {
         treeStructureRef.current = nodesWithIds;
         dispatch({ treeStructure: nodesWithIds, treeRefreshKey: Date.now() });
         message.success(ts("hld_doc.load_standard_structure_success"));
+    };
+
+    const handleSyncFromSds = async () => {
+        const pid = editForm.getFieldValue("product_id");
+        const version = editForm.getFieldValue("version");
+        if (!pid || !String(version || "").trim()) {
+            message.warning(ts("hld_doc.please_select_product_and_version"));
+            return;
+        }
+        dispatch({ loading: true });
+        try {
+            const syncedTree = await syncTreeFromSds(pid, version, (treeStructureRef.current || data.treeStructure || []) as TreeNode[]);
+            treeStructureRef.current = syncedTree;
+            dispatch({ treeStructure: syncedTree, treeRefreshKey: Date.now() });
+            message.success(ts("hld_doc.sync_from_sds_success"));
+        } finally {
+            dispatch({ loading: false });
+        }
     };
 
     const handleInitTemplate = () => {
@@ -869,14 +1117,14 @@ export default () => {
                             version: targetRow.version,
                             file_no: targetRow.file_no,
                         });
-                        const ensuredContent = await applyLoadedDocTree(targetRow);
+                        const loadResult = await applyLoadedDocTree(targetRow);
                         dispatch({
                             changeDescription: targetRow.change_log || "",
                             docNId: targetRow.n_id || 0,
-                            treeStructure: ensuredContent,
+                            treeStructure: loadResult.nodes,
                             treeRefreshKey: Date.now(),
                         });
-                        treeStructureRef.current = ensuredContent;
+                        treeStructureRef.current = loadResult.nodes;
                     }
                 }
             } else {
@@ -1186,12 +1434,7 @@ export default () => {
                                         </span>
                                     ) : (
                                         <Form.Item className="hld-toolbar-item" label={ts("hld_doc.current_product")} name="product_id" rules={[{ required: true, message: ts("hld_doc.please_select_product_required") }]}>
-                                            <ProductVersionSelect
-                                                products={data.products}
-                                                allowClear
-                                                namePlaceholder={ts("product.name")}
-                                                versionPlaceholder={ts("product.full_version")}
-                                            />
+                                            {renderProductVersionSelect()}
                                         </Form.Item>
                                     )}
                                     <Form.Item
@@ -1199,21 +1442,16 @@ export default () => {
                                         label={(data.isEdit || isReadOnly) ? ts("hld_doc.current_version") : ts("hld_doc.version_label")}
                                         name="version"
                                         rules={[{ required: !isReadOnly, message: ts("hld_doc.version_required") }]}>
-                                        <Input allowClear placeholder={ts("hld_doc.please_input_version")} disabled={isReadOnly} style={{ width: 130 }} />
+                                        {renderDocVersionInput(isReadOnly)}
                                     </Form.Item>
                                 </>
                             ) : (
                                 <>
                                     <Form.Item className="hld-toolbar-item" label={ts("hld_doc.product")} name="product_id" rules={[{ required: true, message: ts("hld_doc.please_select_product_required") }]}>
-                                        <ProductVersionSelect
-                                            products={data.products}
-                                            allowClear
-                                            namePlaceholder={ts("product.name")}
-                                            versionPlaceholder={ts("product.full_version")}
-                                        />
+                                        {renderProductVersionSelect()}
                                     </Form.Item>
                                     <Form.Item className="hld-toolbar-item" label={ts("hld_doc.version_label")} name="version" rules={[{ required: true, message: ts("hld_doc.version_required") }]}>
-                                        <Input allowClear placeholder={ts("hld_doc.please_input_version")} style={{ width: 130 }} />
+                                        {renderDocVersionInput()}
                                     </Form.Item>
                                 </>
                             )}
@@ -1244,6 +1482,9 @@ export default () => {
                                     <div className="doc-section-buttons">
                                         <Button type="primary" onClick={handleLoadStandardNode}>
                                             {ts("hld_doc.load_standard_structure")}
+                                        </Button>
+                                        <Button onClick={handleSyncFromSds}>
+                                            {ts("hld_doc.sync_from_sds")}
                                         </Button>
                                         <Button onClick={handleAddRootNode}>{ts("hld_doc.add_root_menu")}</Button>
                                     </div>

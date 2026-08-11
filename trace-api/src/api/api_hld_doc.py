@@ -76,6 +76,13 @@ async def get_hld_doc(id: int):
     return await server.get_hld_doc(id, with_tree=True)
 
 
+@router.get("/sync_hld_from_sds", summary="从详细设计读取接口与库表", response_model=Resp[Any])
+@try_log(perm=Perms.hld_doc_view)
+async def sync_hld_from_sds(product_id: int, version: str):
+    op_user = CtxUser.get()
+    return await server.sync_hld_from_sds(op_user, product_id=product_id, version=version)
+
+
 @router.post("/add_doc_file", summary="添加文档图片", response_model=Resp[str])
 @try_log(perm=Perms.hld_doc_edit)
 async def add_doc_file(
