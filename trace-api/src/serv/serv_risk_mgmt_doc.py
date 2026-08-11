@@ -1723,7 +1723,7 @@ class Server(object):
                     if idx == 9:
                         set_cell_rcm(cells[idx], value)
                     else:
-                        set_cell_text(cells[idx], value)
+                    set_cell_text(cells[idx], value)
             document.add_paragraph()
 
         def add_section(section: dict, level: int = 1):

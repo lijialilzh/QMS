@@ -2671,7 +2671,7 @@ export default () => {
             doc_id: params.id ? parseInt(params.id) : 0,
             n_id: 0, // 新节点，后端生成
             p_id: 0, // 根节点，无父节点
-            title: "",
+            title: "新章节",
             img_url: undefined,
             text: "",
             table: {},

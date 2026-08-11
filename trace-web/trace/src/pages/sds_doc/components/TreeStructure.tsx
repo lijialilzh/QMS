@@ -95,6 +95,11 @@ interface TreeNodeItemProps {
     hideLevelPrefix?: boolean;
     /** 左目录单章编辑：父章节内嵌表格（如第7章端口表，切到 7.1 时仍展示） */
     navParentInlineTables?: TreeNode[];
+    /** 左目录单章编辑：IMM 风格自动章节号（只填名称，编号展示用） */
+    useNavChapterEditor?: boolean;
+    autoNavChapterNo?: string;
+    /** 可选：文档图片上传 API（HLD 等复用组件时传入，默认 SDS） */
+    uploadDocFile?: (formData: FormData) => Promise<any>;
 }
 
 function isUuidLike(text: string): boolean {
@@ -142,14 +147,13 @@ function isEmbeddedImageCaptionNode(node: TreeNode): boolean {
     return /^图\s*\d+/i.test(title) || /^导入图片\d*$/.test(title);
 }
 
-/** 左目录排除：图题/导入图片等内容型子节点，不是真实章节 */
+/** 左目录排除：图题/导入图片等内容型子节点，不是真实章节（与 IMM 模板一致：图 N 不单独占目录项） */
 function isEmbeddedImageNode(node: TreeNode): boolean {
     const title = String(node.title || node.label || "").trim();
     // 网络安全流程图(img_flow)是正文内嵌图，不是目录章节（与 2.1/2.3 自动图章节区分）
     if (node.ref_type === "img_flow") return true;
-    // 带章节编号的目录项（如 2.1. 物理拓扑图）不是内容型图节点
+    // 带章节编号的目录项（如 2.1 物理拓扑）保留为章节
     if (/^\d+(?:\.\d+)+\.?\s/.test(title)) return false;
-    if (isDocImageRefType(node.ref_type)) return false;
     if (isEmbeddedImageCaptionNode(node)) return true;
     if (isImportedImageNode(node)) return true;
     if (!isImageNodeOnly(node)) return false;
@@ -161,6 +165,54 @@ function isEmbeddedTableNode(node: TreeNode): boolean {
     const hasTable = hasRenderableTable(node.table);
     const noExtra = !node.img_url && !String(node.text || "").trim() && (!node.children || node.children.length === 0);
     return /^导入表格\d*$/.test(title) && hasTable && noExtra;
+}
+
+/** 与 IMM 一致：去掉标题里已有章节号前缀，编辑时只填名称 */
+function stripNavChapterPrefix(title: string): string {
+    return String(title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();
+}
+
+/** 表 N 标题块不占章节序号（与 IMM isTableTitle 一致） */
+function isNavTableTitleNode(node: TreeNode): boolean {
+    const title = String(node.title || node.label || "").trim();
+    return /^\s*表\d+([、.\s　]|$)/.test(title);
+}
+
+function isNavChapterNode(n: TreeNode): boolean {
+    if (isEmbeddedImageNode(n) || isEmbeddedTableNode(n)) return false;
+    if (n.ref_type === "sds_reqds" || n.ref_type === "sds_traces") return false;
+    return true;
+}
+
+function computeNavChapterNumberMap(list: TreeNode[]): Map<string, string> {
+    const map = new Map<string, string>();
+    const walkChildren = (nodes: TreeNode[], prefix: string) => {
+        let idx = 0;
+        (nodes || []).filter(isNavChapterNode).forEach((node) => {
+            if (isNavTableTitleNode(node)) {
+                map.set(String(node.id), "");
+                walkChildren(node.children || [], "");
+                return;
+            }
+            idx += 1;
+            const num = prefix ? `${prefix}.${idx}` : `${idx}`;
+            map.set(String(node.id), num);
+            walkChildren(node.children || [], num);
+        });
+    };
+    let bodyIdx = 0;
+    (list || []).filter(isNavChapterNode).forEach((node) => {
+        if (isNavTableTitleNode(node)) {
+            map.set(String(node.id), "");
+            walkChildren(node.children || [], "");
+            return;
+        }
+        bodyIdx += 1;
+        const num = String(bodyIdx);
+        map.set(String(node.id), num);
+        walkChildren(node.children || [], num);
+    });
+    return map;
 }
 
 function hasTableInSubtree(node: TreeNode | undefined): boolean {
@@ -496,7 +548,7 @@ function shiftChapterMajor(chapter: string, offset: number): string {
     return `${nextMajor}${m[2] || ""}`;
 }
 
-const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onSdsCodeChange, onImageChange, onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [] }: TreeNodeItemProps) => {
+const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onSdsCodeChange, onImageChange, onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, uploadDocFile, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [], useNavChapterEditor = false, autoNavChapterNo = "" }: TreeNodeItemProps) => {
     const { t: ts } = useTranslation();
     const [fileList, setFileList] = useState<UploadFile[]>([]);
     const [uploadLoading, setUploadLoading] = useState(false);
@@ -535,8 +587,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                     formData.append('ref_type', String(node.ref_type));
                 }
                 
-                // 调用add_doc_file接口上传图片
-                const res = await Api.add_doc_file(formData); // 第一个参数根据实际fileType调整
+                const uploadFn = uploadDocFile || Api.add_doc_file;
+                const res = await uploadFn(formData);
                 if (res.code === Api.C_OK || res.code === 1) { // 兼容1表示成功的情况
                     const imgUrl = res.data; // 接口返回的data就是图片服务器地址
                     const figChild = (node.children || []).find((c) => isEmbeddedImageCaptionNode(c));
@@ -672,6 +724,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const titleIsTableCaption = hasTable && !isTraceSectionTitle && isLikelyTableCaptionLine(titleWithoutChapter || title);
     const hideImportedTablePlaceholderTitle = !readOnly && hasTable && !isTraceSectionTitle && (isSystemPlaceholderTitle(title) || titleIsTableCaption);
     const editDisplayTitle = hideImportedTablePlaceholderTitle ? "" : node.title;
+    const navTitleValue = stripNavChapterPrefix(String(editDisplayTitle || ""));
     const childCaptions = extractImageCaptions(node.text);
     const imageOnlyChildren = (node.children || []).filter((child) => isImageNodeOnly(child));
     const imageChildrenAll = (node.children || []).filter((child) => !!String(child.img_url || "").trim());
@@ -793,7 +846,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     ) ? 'node-pic-block--embedded-flow' : 'node-pic-block--embedded-figure';
     const compactWithImage = !readOnly && hasDisplayImage && !navFullSizeImageMode && !isNavEditComplianceCandidate && !isNavSingleChapterEdit;
     // 物理拓扑图(img_topo)、系统结构图(img_struct)只能自动获取，禁止删除/重新上传
-    const isAutoOnlyImage = node.ref_type === 'img_topo' || node.ref_type === 'img_struct';
+    const isAutoOnlyImage = node.ref_type === 'img_topo' || node.ref_type === 'img_struct'
+        || navEmbeddedDocImageChild?.ref_type === 'img_topo' || navEmbeddedDocImageChild?.ref_type === 'img_struct';
     const showNodeTableActions = node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces';
     // 标准需求/变更需求对应章节(SDS-RCN 编码)：章节标题与 SDS 编码只读，不可修改
     const isTraceReqNode = /^SDS-RCN/i.test(String(resolvedSdsCode || node.sds_code || "").trim());
@@ -1026,6 +1080,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         && (
             node.ref_type === 'img_topo'
             || node.ref_type === 'img_struct'
+            || navEmbeddedDocImageChild?.ref_type === 'img_topo'
+            || navEmbeddedDocImageChild?.ref_type === 'img_struct'
             || (isChapter345Section && !!navEmbeddedFigureChild?.img_url)
         );
     const editTextBeforeTable = showComplianceInlineInEdit ? (chapter7TableSplit?.before || "") : editDisplayNodeText;
@@ -1348,9 +1404,27 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
 
     return (
         <div style={{ marginLeft: level * 32 }}>
-          <div className={`tree-node-item level-${level}`}>
+          <div className={`tree-node-item level-${level}${useNavChapterEditor && !readOnly ? " nav-chapter-editor" : ""}`}>
+              {useNavChapterEditor && !readOnly && (
+                  <div className="nav-chapter-title-field">
+                      <div className="nav-chapter-title-label">
+                          章节标题{autoNavChapterNo ? `（编号 ${autoNavChapterNo} 自动生成）` : ""}
+                      </div>
+                      <div className="nav-chapter-title-input-wrap">
+                          {autoNavChapterNo ? <span className="nav-chapter-title-prefix">{autoNavChapterNo}</span> : null}
+                          <input
+                              className="nav-chapter-title-input node-input-native"
+                              type="text"
+                              value={navTitleValue}
+                              onChange={(e) => onTitleChange(node.id, e.target.value)}
+                              placeholder="只填名称，如：风险管理定义"
+                              disabled={readOnly || isTraceReqNode || isLockedModuleChapter}
+                          />
+                      </div>
+                  </div>
+              )}
               {!hideNodeRow && (
-              <div className={`node-row${navImageInHeaderRow ? ' nav-row-with-auto-image' : ''} ${!readOnly && hasDisplayImage && !stackContentBelowTitle ? " node-row-has-image" : ""}`}>
+              <div className={`node-row${navImageInHeaderRow ? ' nav-row-with-auto-image' : ''} ${!readOnly && hasDisplayImage && !stackContentBelowTitle ? " node-row-has-image" : ""}${useNavChapterEditor && !readOnly ? " node-row-nav-editor" : ""}`}>
                   {hasToggle ? (
                       <Button
                           type="text"
@@ -1385,7 +1459,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   ) : null}
                   {readOnly ? (
                       <div className="node-title">{displayTitle}</div>
-                  ) : (
+                  ) : useNavChapterEditor ? null : (
                       <input
                           className="node-title node-input-native"
                           type="text"
@@ -1603,6 +1677,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           </Button>
                       </Upload>
                       )}
+                      {!useNavChapterEditor && (
                       <Popconfirm
                           title={ts('confirm_delete')}
                           onConfirm={() => onDelete(node.id)}
@@ -1616,6 +1691,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                               {ts('delete')}
                           </Button>
                       </Popconfirm>
+                      )}
                   </Space>
                   )}
               </div>
@@ -2175,6 +2251,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         onOpenTraceList={onOpenTraceList}
                         onFetchSrsTrace={onFetchSrsTrace}
                         traceSynced={traceSynced}
+                        uploadDocFile={uploadDocFile}
                         readOnlyChapterOffset={readOnlyChapterOffset}
                         captionFromParent={childCaptionById.get(String(child.id)) || childCaptionById.get(String(child.n_id || ""))}
                         tableCaptionFromParent={
@@ -2208,9 +2285,10 @@ interface TreeStructureProps {
     traceSynced?: boolean;
     extraNavSections?: { key: string; title: string; content: ReactNode }[];
     onAddRoot?: () => void;
+    uploadDocFile?: (formData: FormData) => Promise<any>;
 }
 
-export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = [], onNodeDelete, readOnly, readOnlyRootWrapper = true, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, extraNavSections = [], onAddRoot }: TreeStructureProps) => {
+export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = [], onNodeDelete, readOnly, readOnlyRootWrapper = true, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, extraNavSections = [], onAddRoot, uploadDocFile }: TreeStructureProps) => {
     const { t: ts } = useTranslation();
     const [nodes, setNodes] = useState<TreeNode[]>(value);
     const [tableModalVisible, setTableModalVisible] = useState(false);
@@ -2339,7 +2417,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
             doc_id: parentNode?.doc_id || 0,
             n_id: 0, // 新节点，后端生成
             p_id: parentNode?.n_id || 0, // 使用父节点的n_id
-            title: "",
+            title: "新章节",
             img_url: undefined,
             text: "",
             table: {},
@@ -2365,7 +2443,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                     doc_id: sibling.doc_id || 0,
                     n_id: 0,
                     p_id: parentNode?.n_id ?? sibling.p_id ?? 0,
-                    title: "",
+                    title: "新章节",
                     img_url: undefined,
                     text: '',
                     table: {},
@@ -2410,6 +2488,14 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
 
         const newNodes = deleteNode(nodes, id);
         updateNodes(newNodes);
+    };
+
+    const handleDeleteFromNav = async (id: number) => {
+        const deletingActive = String(activeNodeId) === String(id);
+        await handleDelete(id);
+        if (deletingActive) {
+            setActiveNodeId(null);
+        }
     };
 
     const handleTitleChange = (id: number, title: string) => {
@@ -2740,11 +2826,8 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
         }
         return null;
     };
-    const isNavChapter = (n: TreeNode): boolean => {
-        if (isEmbeddedImageNode(n) || isEmbeddedTableNode(n)) return false;
-        if (n.ref_type === "sds_reqds" || n.ref_type === "sds_traces") return false;
-        return true;
-    };
+    const isNavChapter = isNavChapterNode;
+    const navChapterNumberMap = useNavLayout ? computeNavChapterNumberMap(visibleNodes) : new Map<string, string>();
     const canAddChildInNav = (node: TreeNode, depth: number): boolean => (
         !readOnly &&
         depth < 2 &&
@@ -2781,6 +2864,8 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
             const hasKids = kids.length > 0;
             const collapsed = navCollapsedIds.has(String(node.id));
             const isActive = !!effectiveNode && String(node.id) === String(effectiveNode.id);
+            const chapterNum = navChapterNumberMap.get(String(node.id)) || "";
+            const navLabel = `${chapterNum ? `${chapterNum} ` : ""}${stripNavChapterPrefix(node.title) || "(未命名)"}`;
             return (
                 <div key={`nav-${node.id}`}>
                     <div
@@ -2798,14 +2883,23 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                         ) : (
                             <span className="srs-nav-caret-placeholder" />
                         )}
-                        <span className="srs-nav-title" title={node.title || ""}>{node.title || ts("please_input_title")}</span>
-                        {canAddChildInNav(node, depth) && (
-                            <Tooltip title={ts("sds_doc.add_sub_chapter") || ts("srs_doc.add_sub_chapter") || "添加子章节"}>
-                                <PlusOutlined
-                                    className="srs-nav-add-child"
-                                    onClick={(e) => { e.stopPropagation(); handleAddChildFromNav(node.id); }}
+                        <span className="srs-nav-title" title={navLabel}>{navLabel}</span>
+                        {!readOnly && (
+                            <span className="srs-nav-ops" onClick={(e) => e.stopPropagation()}>
+                                {canAddChildInNav(node, depth) && (
+                                    <Tooltip title={ts("sds_doc.add_sub_chapter") || ts("srs_doc.add_sub_chapter") || "添加子章节"}>
+                                        <PlusOutlined
+                                            className="srs-nav-add-child"
+                                            onClick={() => handleAddChildFromNav(node.id)}
+                                        />
+                                    </Tooltip>
+                                )}
+                                <DeleteOutlined
+                                    className="srs-nav-delete-child"
+                                    title={ts("delete") || "删除章节"}
+                                    onClick={() => handleDeleteFromNav(node.id)}
                                 />
-                            </Tooltip>
+                            </span>
                         )}
                     </div>
                     {hasKids && !collapsed && renderNav(kids, depth + 1)}
@@ -2857,6 +2951,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                 onOpenTraceList,
                 onFetchSrsTrace,
                 traceSynced,
+                uploadDocFile,
                 readOnlyChapterOffset: effectiveReadOnlyChapterOffset,
             };
             return readOnly && !readOnlyRootWrapper ? (
@@ -2887,6 +2982,9 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                         <>
                             <div className="srs-tree-nav">
                                 <div className="srs-tree-nav-head">{ts("sds_doc.directory_structure") || ts("srs_doc.directory") || "目录"}</div>
+                                {!readOnly && (
+                                    <div className="srs-tree-nav-hint">封面/修订记录不参与编号；正文章节自动编号。</div>
+                                )}
                                 <div className="srs-tree-nav-body">
                                     {extraNavSections.map((sec) => {
                                         const isActive = !!effectiveExtra && effectiveExtra.key === sec.key;
@@ -2929,6 +3027,8 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                                             renderChildren={false}
                                             disableHierarchyActions
                                             hideLevelPrefix
+                                            useNavChapterEditor={!readOnly}
+                                            autoNavChapterNo={navChapterNumberMap.get(String(effectiveNode.id)) || ""}
                                             onAdd={handleAdd}
                                             onAddSibling={handleAddSibling}
                                             onDelete={handleDelete}
@@ -2944,6 +3044,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                                             onOpenTraceList={onOpenTraceList}
                                             onFetchSrsTrace={onFetchSrsTrace}
                                             traceSynced={traceSynced}
+                                            uploadDocFile={uploadDocFile}
                                             readOnlyChapterOffset={effectiveReadOnlyChapterOffset}
                                             navParentInlineTables={navParentInlineTables}
                                         />

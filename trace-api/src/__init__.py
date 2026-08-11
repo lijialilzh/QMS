@@ -23,7 +23,7 @@ from .api import web_auth, web_session, api_user, api_role, api_project, api_haz
     api_vuh_doc, api_version_rule, api_ptr_doc, api_company_info, api_label_doc, api_release_note, api_pha_doc, \
     api_cyber_cap_doc, api_research_doc, api_nsr_doc, api_acc_doc, api_nsmp_doc, api_rmp_doc, api_sd_doc, \
     api_crr_doc, api_dem_doc, api_deq_doc, api_scm_doc, api_scs_doc, api_dat_doc, api_stp_doc, api_utp_doc, \
-    api_utr_doc, api_str_doc, api_bug_doc, api_teq_doc, api_tem_doc, api_imm_doc, api_ftr_doc, api_ftr_record_doc, api_train_record_doc, api_person_sign, \
+    api_utr_doc, api_str_doc, api_bug_doc, api_teq_doc, api_tem_doc, api_imm_doc, api_hld_doc, api_ftr_doc, api_ftr_record_doc, api_train_record_doc, api_person_sign, \
     api_doc_integrate, api_print_cfg, api_doc_compare, \
     api_cybersec_plan_doc
 from .utils import read_line
@@ -136,6 +136,7 @@ def create_app():
     main_router.include_router(api_srs_type.router, prefix="/srs_type", tags=["SRS类型"])
 
     main_router.include_router(api_sds_doc.router, prefix="/sds_doc", tags=["SDS_DOC软件详细设计"])
+    main_router.include_router(api_hld_doc.router, prefix="/hld_doc", tags=["HLD_DOC软件概要设计"])
     main_router.include_router(api_sds_reqd.router, prefix="/sds_reqd", tags=["SDS需求细节"])
     main_router.include_router(api_sds_trace.router, prefix="/sds_trace", tags=["SDS追溯"])
 

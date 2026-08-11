@@ -30,8 +30,10 @@ import Csts from "./pages/basedata/Csts";
 import Products from "./pages/product/Products";
 import SrsDocs from "./pages/srs_doc/SrsDocs";
 import SdsDocs from "./pages/sds_doc/SdsDocs";
+import HldDocs from "./pages/hld_doc/HldDocs";
 import SrsDocDetail from "./pages/srs_doc/SrsDocDetail";
 import SdsDocDetail from "./pages/sds_doc/SdsDocDetail";
+import HldDocDetail from "./pages/hld_doc/HldDocDetail";
 import TestSets from "./pages/test_set/TestSets";
 import DocFiles from "./pages/doc_file/DocFiles";
 import ProdHazs from "./pages/prod_risk/prod_haz";
@@ -156,6 +158,11 @@ const router = createRouter([
             { path: "/sds_docs/add", element: <SdsDocDetail /> },
             { path: "/sds_docs/edit/:id", element: <SdsDocDetail /> },
             { path: "/sds_docs/view/:id", element: <SdsDocDetail /> },
+
+            { path: "/hld_docs", element: <HldDocs /> },
+            { path: "/hld_docs/add", element: <HldDocDetail /> },
+            { path: "/hld_docs/edit/:id", element: <HldDocDetail /> },
+            { path: "/hld_docs/view/:id", element: <HldDocDetail /> },
 
             { path: "/test_sets", element: <TestSets /> },
 

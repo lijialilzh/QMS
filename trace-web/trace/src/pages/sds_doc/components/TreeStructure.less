@@ -1,7 +1,8 @@
 @import "../../../index.less";
 @import "../../../index.app.less";
 
-.sds-doc-detail .tree-structure-container {
+.sds-doc-detail .tree-structure-container,
+.hld-doc-detail .tree-structure-container {
     background-color: #ffffff;
     // border: 1px solid #d9d9d9;
     border-radius: 6px;
@@ -316,6 +317,14 @@
             z-index: 1;
         }
 
+        .srs-tree-nav-hint {
+            font-size: 11px;
+            color: #9aa6b2;
+            line-height: 1.5;
+            padding: 6px 12px 4px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
         .srs-tree-nav-body {
             padding: 6px 0;
         }
@@ -331,12 +340,20 @@
 
             &:hover {
                 background: #f0f7ff;
+
+                .srs-nav-ops {
+                    opacity: 1;
+                }
             }
 
             &.active {
                 background: #e6f4ff;
                 border-left-color: #1890ff;
                 font-weight: 600;
+
+                .srs-nav-ops {
+                    opacity: 1;
+                }
             }
 
             .srs-nav-caret,
@@ -361,17 +378,28 @@
                 text-overflow: ellipsis;
             }
 
-            .srs-nav-add-child {
+            .srs-nav-ops {
                 flex-shrink: 0;
                 margin-left: 6px;
-                color: #1890ff;
-                opacity: 0;
+                display: inline-flex;
+                align-items: center;
+                gap: 10px;
+                color: #8a97a6;
+                opacity: 0.5;
                 transition: opacity 0.15s;
-            }
 
-            &:hover .srs-nav-add-child,
-            &.active .srs-nav-add-child {
-                opacity: 1;
+                .srs-nav-add-child,
+                .srs-nav-delete-child {
+                    cursor: pointer;
+                }
+
+                .srs-nav-add-child:hover {
+                    color: #1677ff;
+                }
+
+                .srs-nav-delete-child:hover {
+                    color: #ff4d4f;
+                }
             }
         }
 
@@ -855,6 +883,62 @@
 
     // 左目录单章编辑：须在 .tree-node-item 通用样式之后，覆盖占位符/正文缩进
     &.srs-tree-layout .srs-tree-editor {
+        .nav-chapter-title-field {
+            margin-bottom: 12px;
+
+            .nav-chapter-title-label {
+                font-size: 13px;
+                font-weight: 600;
+                color: #2b3a4b;
+                margin-bottom: 6px;
+            }
+
+            .nav-chapter-title-input-wrap {
+                display: flex;
+                align-items: stretch;
+                width: 100%;
+                border: 1px solid #d9d9d9;
+                border-radius: 6px;
+                overflow: hidden;
+                background: #fff;
+
+                &:focus-within {
+                    border-color: #4096ff;
+                    box-shadow: 0 0 0 2px rgba(5, 145, 255, 0.1);
+                }
+            }
+
+            .nav-chapter-title-prefix {
+                flex: 0 0 auto;
+                display: inline-flex;
+                align-items: center;
+                padding: 0 11px;
+                background: #fafafa;
+                border-right: 1px solid #d9d9d9;
+                color: #595959;
+                font-size: 13px;
+                white-space: nowrap;
+            }
+
+            .nav-chapter-title-input {
+                flex: 1 1 auto;
+                min-width: 0;
+                border: none !important;
+                outline: none !important;
+                box-shadow: none !important;
+                height: 32px;
+                padding: 4px 11px;
+                font-size: 13px;
+            }
+        }
+
+        .tree-node-item.nav-chapter-editor .node-row.node-row-nav-editor {
+            .node-title,
+            .node-title-prefix {
+                display: none !important;
+            }
+        }
+
         .tree-node-item .node-row {
             .node-expand-placeholder,
             .node-expand-btn,
@@ -885,7 +969,8 @@
 }
 
 // 详细设计编辑页：章节号等落在原生 input/textarea 上，antd 主题会覆盖外层字体，需直接命中
-.sds-doc-detail:not(.read-only) .tree-structure-container:not(.read-only-mode) {
+.sds-doc-detail:not(.read-only) .tree-structure-container:not(.read-only-mode),
+.hld-doc-detail:not(.read-only) .tree-structure-container:not(.read-only-mode) {
     .tree-node-item.level-0 .node-row,
     .tree-node-item.level-1 .node-row,
     .tree-node-item .node-row {

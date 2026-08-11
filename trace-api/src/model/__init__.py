@@ -147,6 +147,9 @@ from .teq_doc import TeqDoc  # noqa: E402,F401
 from .tem_doc import TemDoc  # noqa: E402,F401
 from .imm_doc import ImmDoc  # noqa: E402,F401
 
+# 软件概要设计（独立文档模块，开发文件）。
+from .hld_doc import HldDoc, HldNode  # noqa: E402,F401
+
 # 人员签名管理（基础数据）：人名章记录。
 from .person_sign import PersonSign  # noqa: E402,F401
 

@@ -86,6 +86,10 @@ class Perms(Enum):
     sds_doc_view = PermForm(code="sds_doc_view", name="查看", p_code=sds_doc.code)
     sds_doc_edit = PermForm(code="sds_doc_edit", name="编辑", p_code=sds_doc.code)
 
+    hld_doc = PermForm(code="hld_doc", name="开发测试文件管理/开发文件/软件概要设计")
+    hld_doc_view = PermForm(code="hld_doc_view", name="查看", p_code=hld_doc.code)
+    hld_doc_edit = PermForm(code="hld_doc_edit", name="编辑", p_code=hld_doc.code)
+
     test_set = PermForm(code="test_set", name="开发测试文件管理/测试文件/测试用例合集")
     test_set_view = PermForm(code="test_set_view", name="查看", p_code=test_set.code)
     test_set_edit = PermForm(code="test_set_edit", name="编辑", p_code=test_set.code)
@@ -310,6 +314,7 @@ def get_default_role_perm_codes():
     # 开发测试文件管理权限
     dev_test_file_perms = {
         "sds_doc", "sds_doc_view", "sds_doc_edit",
+        "hld_doc", "hld_doc_view", "hld_doc_edit",
         "sd_doc", "sd_doc_view", "sd_doc_edit",
         "crr_doc", "crr_doc_view", "crr_doc_edit",
         "dem_doc", "dem_doc_view", "dem_doc_edit",

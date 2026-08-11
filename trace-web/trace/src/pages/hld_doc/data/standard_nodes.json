@@ -1,0 +1,1983 @@
+[
+    {
+        "doc_id": 0,
+        "n_id": 0,
+        "p_id": 0,
+        "img_url": "",
+        "text": "",
+        "table": null,
+        "children": [
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "img_url": "",
+                "text": "从该阶段开发正式进入软件的实际开发阶段，本阶段完成系统的大致设计，并明确系统的数据结构与软件结构。在软件设计阶段主要是把一个软件需求转化为软件表示的过程，这种表示只是描绘出软件的总体概貌。\n本概要设计说明书的目的就是进一步细化软件设计阶段得出的软件总体概貌，把它加工成在程序细节上非常接近于源程序的软件表示。\n该概要设计说明书的预期读者主要包括：该软件的开发人员和测试人员。",
+                "table": null,
+                "children": [],
+                "title": "1.1 目的"
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "img_url": "",
+                "text": "产品名称：肿瘤CT图像随访与评估软件\n版本号：2.0.0.0\n适用范围：\n本产品用于显示、处理、测量和分析比较多时相CT图像，可以进行图像配准、病灶追踪、交互式分割及三维重建图像，支持基于 RECIST 标准对不同器官、组织及其他解剖结构中的肿瘤进行评估、管理并出具RECIST报告；其中肺结节检测模块用于辅助识别4mm及以上肺结节。供经培训合格的医师使用,不能单独用作临床诊疗决策依据。",
+                "table": null,
+                "children": [],
+                "title": "1.2 范围"
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "img_url": "",
+                "text": "《需求规格说明》",
+                "table": null,
+                "children": [],
+                "title": "1.3 参考资料"
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "img_url": "",
+                "text": "",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": [
+                        {
+                            "code": "col_1",
+                            "name": "术语/缩写"
+                        },
+                        {
+                            "code": "col_2",
+                            "name": "定义"
+                        }
+                    ],
+                    "rows": [
+                        {
+                            "col_1": "DICOM3.0",
+                            "col_2": "医学数字成像和通信（Digital Imaging and Communications in Medicine）,\n医学图像和相关信息的国际标准"
+                        },
+                        {
+                            "col_1": "CT",
+                            "col_2": "计算机断层成像 ( Computed Tomography)"
+                        },
+                        {
+                            "col_1": "B/S",
+                            "col_2": "浏览器/服务器（Browser/Server）结构"
+                        },
+                        {
+                            "col_1": "GPU",
+                            "col_2": "图像处理器（Graphics Processing Units）"
+                        }
+                    ],
+                    "cells": [
+                        [
+                            {
+                                "value": "术语/缩写",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "定义",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "DICOM3.0",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "医学数字成像和通信（Digital Imaging and Communications in Medicine）,\n医学图像和相关信息的国际标准",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "CT",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "计算机断层成像 ( Computed Tomography)",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "B/S",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "浏览器/服务器（Browser/Server）结构",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "GPU",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "图像处理器（Graphics Processing Units）",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            }
+                        ]
+                    ]
+                },
+                "children": [],
+                "title": "1.4 术语"
+            }
+        ],
+        "title": "1. 引言"
+    },
+    {
+        "doc_id": 0,
+        "n_id": 0,
+        "p_id": 0,
+        "img_url": "",
+        "text": "",
+        "table": null,
+        "children": [
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "img_url": "",
+                "text": "",
+                "table": null,
+                "children": [
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "data.trace/hld_node_img/import_hld/e6ae97e9fb42-92e7-11f1-954e-7b5fe518.png",
+                        "text": "",
+                        "table": null,
+                        "children": [],
+                        "title": "图 1 物理拓扑图",
+                        "ref_type": "img_topo"
+                    }
+                ],
+                "title": "2.1 物理拓扑",
+                "ref_type": "img_topo"
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "img_url": "",
+                "text": "",
+                "table": null,
+                "children": [
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "",
+                        "text": "功能模块定义\n本系统是由四个模块（DataProcessing简称DP，DLServer，RePACS和NeoViewer）构成的。DP负责接收来自浏览器上传或通过接口导入的患者图像数据，RePACS存储图像以及处理相关信息，DLServer提供数据处理后端服务，NeoViewer提供标准HTTP/HTTPS服务供最终用户使用。",
+                        "table": null,
+                        "children": [],
+                        "title": "2.2.1 功能模块定义"
+                    },
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "data.trace/hld_node_img/import_hld/e6ae97e9fb42-92e7-11f1-954e-7b604dbe.png",
+                        "text": "",
+                        "table": null,
+                        "children": [],
+                        "title": "图 2 系统结构图",
+                        "ref_type": "img_struct"
+                    },
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "",
+                        "text": "DataProcessing（DP）\nDataProcessing（简称 DP）是直接接收来自医院信息化系统推送或接口导入进行对接的模块。模块的输入是来自浏览器上传或通过接口导入的患者图像数据，模块输出是经过DP筛选后的、符合系统需求的图像数据，同时发起处理任务。\nDP模块主要功能如下：\n（1）通过接收来自医院信息化系统推送或接口导入进行对接，从医院信息化系统推送或接口导入获取一段时间内的患者图像数据；\n（2）对获取到的图像检查数据，根据预先配置的过滤和筛选规则进行处理，选择出符合系统要求的图像序列数据；\n（3）将选择出的序列数据，通过RePACS模块提供的HTTP/HTTPS接口服务，发送至RePACS模块进行图像存储。\n（4）发起一个处理任务，通过RePACS模块提供的HTTP/HTTPS接口服务，发送至RePACS模块存储处理任务。",
+                        "table": null,
+                        "children": [],
+                        "title": "2.2.2 DataProcessing（DP）"
+                    },
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "",
+                        "text": "DLServer\nDLServer提供数据处理服务，包括影像处理及其相关运算资源调用。DLServer 通过HTTP/HTTPS协议调用RePACS实现处理任务的获取与结果的反馈。DLServer内部分为任务监听、处理、结果识别三个子模块。",
+                        "table": null,
+                        "children": [],
+                        "title": "2.2.3 DLServer"
+                    },
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "",
+                        "text": "RePACS\nRePACS提供后端服务数据交互及处理任务管理服务，为后端服务之间可重用的数据提供规范化的存储/管理接口，并记录所有处理任务的信息。\nRePACS负责接收DP发送来的序列数据和处理任务并进行存储，供DLServer对图像数据进行处理并由NeoViewer模块的前端在展示时使用，是作为数据的存储模块。",
+                        "table": null,
+                        "children": [],
+                        "title": "2.2.4 RePACS"
+                    },
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "",
+                        "text": "NeoViewer\nNeoViewer是直接面对医生用户的前端模块｡基于B/S架构为最终用户提供处理服务｡医生通过浏览器,访问NeoViewer提供了的HTTP/HTTPS服务｡医生在浏览器上可以查询病人,查看某个病人的医学图像及处理结果｡\n该模块的后端输入是RePACS和DLServer对数据处理的结果,而前端输入则是医生用户在页面上的各项操作,模块的输出则是根据医生的操作,系统给出的相应响应。",
+                        "table": null,
+                        "children": [],
+                        "title": "2.2.5 NeoViewer"
+                    },
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "",
+                        "text": "系统性能\n最大并发用户数：3000。\n在符合运行环境下，一套总大小177 MB的医学图像，单并发：\n1.从接收传输图像开始，至产品处理完成的时间≤15分钟。\n2.进入患者详情页面，点击任意病灶进入阅片页面开始，至图像加载完成时间≤10s。\n3.用户点击登录之后，成功登录软件，进入患者列表的时间≤2s。\n4.用户点击退出之后，退出软件，跳转至登录页面的时间≤2s。\n5.用户输入搜索条件，出现检索结果的时间≤2s。",
+                        "table": null,
+                        "children": [],
+                        "title": "2.2.6 系统性能"
+                    }
+                ],
+                "title": "2.2 产品功能"
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "img_url": "",
+                "text": "软件为B/S架构。",
+                "table": null,
+                "children": [
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "",
+                        "text": "",
+                        "table": {
+                            "name": "表1 服务器硬件配置要求",
+                            "show_header": 1,
+                            "headers": [
+                                {
+                                    "code": "col_1",
+                                    "name": "配置"
+                                },
+                                {
+                                    "code": "col_2",
+                                    "name": "要求"
+                                }
+                            ],
+                            "rows": [
+                                {
+                                    "col_1": "CPU",
+                                    "col_2": "主频：至少为2GHz\n核心数：10核及以上\n指令集：x86指令集"
+                                },
+                                {
+                                    "col_1": "内存",
+                                    "col_2": "容量至少为64G"
+                                },
+                                {
+                                    "col_1": "GPU",
+                                    "col_2": "厂商：英伟达\n显存：至少8GB\nFP16计算性能：14TFLOPS"
+                                },
+                                {
+                                    "col_1": "硬盘",
+                                    "col_2": "系统盘：至少为500GB\n存储盘：至少为3TB"
+                                },
+                                {
+                                    "col_1": "网卡",
+                                    "col_2": "千兆PCI-E网卡（支持Linux系统）"
+                                }
+                            ],
+                            "cells": [
+                                [
+                                    {
+                                        "value": "配置",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "要求",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "CPU",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "主频：至少为2GHz\n核心数：10核及以上\n指令集：x86指令集",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "内存",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "容量至少为64G",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "GPU",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "厂商：英伟达\n显存：至少8GB\nFP16计算性能：14TFLOPS",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "硬盘",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "系统盘：至少为500GB\n存储盘：至少为3TB",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "网卡",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "千兆PCI-E网卡（支持Linux系统）",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ]
+                            ]
+                        },
+                        "children": [],
+                        "title": "2.4.1 服务器硬件环境配置见表1"
+                    },
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "",
+                        "text": "",
+                        "table": {
+                            "name": "表2 服务器软件配置要求",
+                            "show_header": 1,
+                            "headers": [
+                                {
+                                    "code": "col_1",
+                                    "name": "配置"
+                                },
+                                {
+                                    "code": "col_2",
+                                    "name": "操作系统"
+                                },
+                                {
+                                    "code": "col_3",
+                                    "name": "CUDA"
+                                }
+                            ],
+                            "rows": [
+                                {
+                                    "col_1": "要求",
+                                    "col_2": "Ubuntu 24.04LTS（64位）",
+                                    "col_3": "12.6"
+                                }
+                            ],
+                            "cells": [
+                                [
+                                    {
+                                        "value": "配置",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "操作系统",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "CUDA",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "要求",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "Ubuntu 24.04LTS（64位）",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "12.6",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ]
+                            ]
+                        },
+                        "children": [],
+                        "title": "2.4.2 服务器软件环境配置"
+                    },
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "",
+                        "text": "",
+                        "table": {
+                            "name": "表3 用户端配置要求",
+                            "show_header": 1,
+                            "headers": [
+                                {
+                                    "code": "col_1",
+                                    "name": "配置"
+                                },
+                                {
+                                    "code": "col_2",
+                                    "name": "要求"
+                                }
+                            ],
+                            "rows": [
+                                {
+                                    "col_1": "CPU",
+                                    "col_2": "英特尔酷睿 i5及以上"
+                                },
+                                {
+                                    "col_1": "内存",
+                                    "col_2": "至少16GB"
+                                },
+                                {
+                                    "col_1": "显示器分辨率",
+                                    "col_2": "1920*1080"
+                                },
+                                {
+                                    "col_1": "操作系统",
+                                    "col_2": "Windows 10 专业版（64位）及兼容版本"
+                                },
+                                {
+                                    "col_1": "浏览器",
+                                    "col_2": "Chrome 137.0及兼容版本"
+                                }
+                            ],
+                            "cells": [
+                                [
+                                    {
+                                        "value": "配置",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "要求",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "CPU",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "英特尔酷睿 i5及以上",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "内存",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "至少16GB",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "显示器分辨率",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "1920*1080",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "操作系统",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "Windows 10 专业版（64位）及兼容版本",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "浏览器",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "Chrome 137.0及兼容版本",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ]
+                            ]
+                        },
+                        "children": [],
+                        "title": "2.4.3 用户端配置"
+                    },
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "",
+                        "text": "",
+                        "table": {
+                            "name": "表4 网络要求",
+                            "show_header": 1,
+                            "headers": [
+                                {
+                                    "code": "col_1",
+                                    "name": "配置"
+                                },
+                                {
+                                    "code": "col_2",
+                                    "name": "要求"
+                                },
+                                {
+                                    "code": "col_3",
+                                    "name": "列3"
+                                }
+                            ],
+                            "rows": [
+                                {
+                                    "col_1": "网络类型",
+                                    "col_2": "局域网",
+                                    "col_3": "广域网"
+                                },
+                                {
+                                    "col_1": "带宽",
+                                    "col_2": "100Mbps及以上",
+                                    "col_3": "1000Mbps及以上"
+                                }
+                            ],
+                            "cells": [
+                                [
+                                    {
+                                        "value": "配置",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "要求",
+                                        "row_span": 1,
+                                        "col_span": 2,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "",
+                                        "row_span": 0,
+                                        "col_span": 0,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "网络类型",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "局域网",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "广域网",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ],
+                                [
+                                    {
+                                        "value": "带宽",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "100Mbps及以上",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    },
+                                    {
+                                        "value": "1000Mbps及以上",
+                                        "row_span": 1,
+                                        "col_span": 1,
+                                        "h_align": "left",
+                                        "v_align": "top"
+                                    }
+                                ]
+                            ]
+                        },
+                        "children": [],
+                        "title": "2.4.4 服务器及用户端网络条件"
+                    }
+                ],
+                "title": "2.3 运行环境"
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "img_url": "",
+                "text": "",
+                "table": null,
+                "children": [
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "",
+                        "text": "DP模块结构设计\nDP模块主要由信息拉取组件，处理组件和数据发送组件三部分构成。",
+                        "table": null,
+                        "children": [
+                            {
+                                "doc_id": 0,
+                                "n_id": 0,
+                                "p_id": 0,
+                                "img_url": "data.trace/hld_node_img/import_hld/e6ae97e9fb42-92e7-11f1-954e-7b6065ec.png",
+                                "text": "",
+                                "table": null,
+                                "children": [],
+                                "title": "图 3 DP内部结构设计图"
+                            }
+                        ],
+                        "title": "2.4.2 DP模块结构设计"
+                    },
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "",
+                        "text": "DLserver模块结构设计\nDLServer 由任务监听、识别预测、结果生成三个模块组成。",
+                        "table": null,
+                        "children": [
+                            {
+                                "doc_id": 0,
+                                "n_id": 0,
+                                "p_id": 0,
+                                "img_url": "data.trace/hld_node_img/import_hld/e6ae97e9fb42-92e7-11f1-954e-7b606dd0.png",
+                                "text": "",
+                                "table": null,
+                                "children": [],
+                                "title": "图 4 DLServer模块结构"
+                            }
+                        ],
+                        "title": "2.4.3 DLserver模块结构设计"
+                    },
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "",
+                        "text": "RePACS模块结构设计\nRePACS模块内部由图像数据保存组件、图像数据查询组件和数据库组件三部分构成。",
+                        "table": null,
+                        "children": [
+                            {
+                                "doc_id": 0,
+                                "n_id": 0,
+                                "p_id": 0,
+                                "img_url": "data.trace/hld_node_img/import_hld/e6ae97e9fb42-92e7-11f1-954e-7b6077a8.png",
+                                "text": "",
+                                "table": null,
+                                "children": [],
+                                "title": "图 5 RePACS模块结构图"
+                            }
+                        ],
+                        "title": "2.4.4 RePACS模块结构设计"
+                    },
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "",
+                        "text": "NeoViewer模块结构设计\n该模块是由一个前端和后端构成的。前端用来展示图像信息，后端则是负责与RePACS模块之间进行数据传递",
+                        "table": null,
+                        "children": [
+                            {
+                                "doc_id": 0,
+                                "n_id": 0,
+                                "p_id": 0,
+                                "img_url": "data.trace/hld_node_img/import_hld/e6ae97e9fb42-92e7-11f1-954e-7b608022.png",
+                                "text": "",
+                                "table": null,
+                                "children": [],
+                                "title": "图 6 NeoViewer模块结构图"
+                            }
+                        ],
+                        "title": "2.4.5 NeoViewer模块结构设计"
+                    }
+                ],
+                "title": "2.4 子模块结构"
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "img_url": "",
+                "text": "",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": [
+                        {
+                            "code": "col_1",
+                            "name": "现成软件名字"
+                        },
+                        {
+                            "code": "col_2",
+                            "name": "功能需求"
+                        },
+                        {
+                            "code": "col_3",
+                            "name": "性能需求"
+                        },
+                        {
+                            "code": "col_4",
+                            "name": "版本号"
+                        }
+                    ],
+                    "rows": [
+                        {
+                            "col_1": "PostgreSQL",
+                            "col_2": "1.储存数据\n2.对数据进行增/删/改/查操作",
+                            "col_3": "针对该软件无特殊要求",
+                            "col_4": "14.2"
+                        },
+                        {
+                            "col_1": "Docker",
+                            "col_2": "1. 查看容器日志\n2. 启动或运行容器\n3. 查询容器运行状态\n4. 删除特定镜像\n5. 查看本地镜像列表",
+                            "col_3": "针对该软件无特殊要求",
+                            "col_4": "18.06"
+                        },
+                        {
+                            "col_1": "Ant Design",
+                            "col_2": "1.基于React的企业级UI组件库\n2.基于TypeScript，提供完整的类型支持\n3.遵循Ant Design设计规范",
+                            "col_3": "针对该软件无特殊要求",
+                            "col_4": "4.24.16"
+                        },
+                        {
+                            "col_1": "react",
+                            "col_2": "基础的前端开发框架",
+                            "col_3": "针对该软件无特殊要求",
+                            "col_4": "18.3.1"
+                        },
+                        {
+                            "col_1": "redis",
+                            "col_2": "缓存中间件，用于会话管理和页面状态缓存",
+                            "col_3": "针对该软件无特殊要求",
+                            "col_4": "5.0.1"
+                        },
+                        {
+                            "col_1": "react-dom",
+                            "col_2": "前端渲染引擎，将界面组件渲染至浏览器",
+                            "col_3": "针对该软件无特殊要求",
+                            "col_4": "18.3.1"
+                        },
+                        {
+                            "col_1": "fastapi",
+                            "col_2": "Web API框架，构建软件后端接口",
+                            "col_3": "针对该软件无特殊要求",
+                            "col_4": "0.115.12"
+                        },
+                        {
+                            "col_1": "pika",
+                            "col_2": "消息队列客户端，用于异步任务通信",
+                            "col_3": "针对该软件无特殊要求",
+                            "col_4": "1.3.2"
+                        },
+                        {
+                            "col_1": "uvicorn",
+                            "col_2": "Web服务器，运行FastAPI后端服务",
+                            "col_3": "针对该软件无特殊要求",
+                            "col_4": "0.30.3"
+                        },
+                        {
+                            "col_1": "celery",
+                            "col_2": "分布式任务队列，处理后台异步任务",
+                            "col_3": "针对该软件无特殊要求",
+                            "col_4": "5.4.0"
+                        },
+                        {
+                            "col_1": "pydicom",
+                            "col_2": "DICOM文件处理库，解析医学影像文件",
+                            "col_3": "针对该软件无特殊要求",
+                            "col_4": "2.4.3"
+                        },
+                        {
+                            "col_1": "pynetdicom",
+                            "col_2": "DICOM网络通信库，实现DICOM协议传输",
+                            "col_3": "针对该软件无特殊要求",
+                            "col_4": "2.1.0"
+                        },
+                        {
+                            "col_1": "supervisor",
+                            "col_2": "进程管理工具，监控服务运行状态",
+                            "col_3": "针对该软件无特殊要求",
+                            "col_4": "4.2.5"
+                        },
+                        {
+                            "col_1": "side-channel-weakmap",
+                            "col_2": "前端安全工具，防范侧信道攻击",
+                            "col_3": "针对该软件无特殊要求",
+                            "col_4": "1.0.2"
+                        }
+                    ],
+                    "cells": [
+                        [
+                            {
+                                "value": "现成软件名字",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "功能需求",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "性能需求",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "版本号",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "PostgreSQL",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "1.储存数据\n2.对数据进行增/删/改/查操作",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "针对该软件无特殊要求",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "14.2",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "Docker",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "1. 查看容器日志\n2. 启动或运行容器\n3. 查询容器运行状态\n4. 删除特定镜像\n5. 查看本地镜像列表",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "针对该软件无特殊要求",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "18.06",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "Ant Design",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "1.基于React的企业级UI组件库\n2.基于TypeScript，提供完整的类型支持\n3.遵循Ant Design设计规范",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "针对该软件无特殊要求",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "4.24.16",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "react",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "基础的前端开发框架",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "针对该软件无特殊要求",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "18.3.1",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "redis",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "缓存中间件，用于会话管理和页面状态缓存",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "针对该软件无特殊要求",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "5.0.1",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "react-dom",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "前端渲染引擎，将界面组件渲染至浏览器",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "针对该软件无特殊要求",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "18.3.1",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "fastapi",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "Web API框架，构建软件后端接口",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "针对该软件无特殊要求",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "0.115.12",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "pika",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "消息队列客户端，用于异步任务通信",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "针对该软件无特殊要求",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "1.3.2",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "top"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "uvicorn",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "Web服务器，运行FastAPI后端服务",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "针对该软件无特殊要求",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "0.30.3",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "top"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "celery",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "分布式任务队列，处理后台异步任务",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "针对该软件无特殊要求",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "5.4.0",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "top"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "pydicom",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "DICOM文件处理库，解析医学影像文件",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "针对该软件无特殊要求",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "2.4.3",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "top"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "pynetdicom",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "DICOM网络通信库，实现DICOM协议传输",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "针对该软件无特殊要求",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "2.1.0",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "top"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "supervisor",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "进程管理工具，监控服务运行状态",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "针对该软件无特殊要求",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "4.2.5",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "top"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "side-channel-weakmap",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "前端安全工具，防范侧信道攻击",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "针对该软件无特殊要求",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "left",
+                                "v_align": "top"
+                            },
+                            {
+                                "value": "1.0.2",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "top"
+                            }
+                        ]
+                    ]
+                },
+                "children": [],
+                "title": "2.5 现成软件的功能和性能描述"
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "img_url": "",
+                "text": "现成软件项所需要的系统硬件和软件见本文件2.3章运行环境。",
+                "table": {
+                    "name": "现成软件项所要求的系统硬件和软件",
+                    "show_header": 1,
+                    "headers": [
+                        {
+                            "code": "c0",
+                            "name": "现成软件名字"
+                        },
+                        {
+                            "code": "c1",
+                            "name": "硬件和软件要求"
+                        }
+                    ],
+                    "rows": [],
+                    "cells": null
+                },
+                "children": [],
+                "title": "2.6 现成软件项所要求的系统硬件和软件"
+            }
+        ],
+        "title": "2. 总体设计"
+    },
+    {
+        "doc_id": 0,
+        "n_id": 0,
+        "p_id": 0,
+        "img_url": "",
+        "text": "",
+        "table": null,
+        "children": [
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "img_url": "",
+                "text": "本软件系统中只有NeoViewer模块是直接面向医生用户的，其他三个模块都是运行在系统后端，不需要与用户直接进行交互。\nNeoViewer是用来在浏览器展示经过该软件系统处理后的图像数据，并且提供与医生用户的直接交互。\n当用户输入帐号和密码，登录系统后，即可以通过点击NeoViewer的各个功能按钮，来实现按钮对应的功能。比如：当用户点击窗宽窗位按钮后，在界面中点击鼠标左键并上下或左右拖动鼠标时，便可以调节图像的窗宽和窗位值，显示的图像也会根据调节后的窗宽窗位值进行显示。",
+                "table": null,
+                "children": [],
+                "title": "3.1 用户接口"
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "img_url": "",
+                "text": "本软件系统中的DP是接收来自医院信息化系统推送或接口导入进行对接的。因此外部接口是由DP来提供和实现的，主要用来接收来自医院的浏览器上传或通过接口导入的患者图像数据。\nDP提供的接口为：在本机IP指定端口，开放标准Dicom传输协议C-STORE接口，等待医院的浏览器上传或通过接口导入给DP。",
+                "table": null,
+                "children": [],
+                "title": "3.2 外部接口"
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "img_url": "",
+                "text": "",
+                "table": null,
+                "children": [
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "",
+                        "text": "DataProcessing与RePACS的接口\n主要是用来定义DataProcessing模块发送给RePACS模块的图像数据和处理任务接口。RePACS模块通过接收/响应HTTP/HTTPS请求，数据使用JSON格式进行编码，使用null值作为缺省属性值。DataProcessing上传请求数据时需要指定Content-Type为application/json。",
+                        "table": null,
+                        "children": [],
+                        "title": "3.3.1 DataProcessing与RePACS的接口"
+                    },
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "",
+                        "text": "RePACS与DLServer的接口\n主要是用来定义DLServer模块向RePACS模块获取预处理任务和保存预处理结果的接口。",
+                        "table": null,
+                        "children": [],
+                        "title": "3.3.2 RePACS与DLServer的接口"
+                    },
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "",
+                        "text": "RePACS与NeoViewer的接口\n\n查询图像数据接口\n(1) 输入参数：\n接受 HTTP/HTTPS 协议下的 GET /studies/<studyInstanceUID> /< predict/infercare_ct_liver、predict/infercare_ct_lymph、predict/infercare_ct_urinary 请求。\n(2) 输出结果：\n若输入为 GET /studies/<studyInstanceUID> 且图像查询流程完成，接口返回 HTTP/HTTPS 200 响应 JSON 编码的 study 对象描述。\n返回json示例如下：\n{\n\"stationFlag\": \"\",\n\"patientSex\": \"M\",\n\"studyTime\": \"studyTime\",\n\"modality\": \"CT\",\n\"patientId\": \"3150532\",\n\"isRead\": null,\n\"seriesStatus\": 4,\n\"accessionNumber\": \"accessionNumber\",\n\"createdAt\": \"createdAt\",\n\"arrivalTime\": \"arrivalTime\",\n\"viewed\": \"unprocessed\",\n\"studyTimeStamp\": \"studyTimeStamp\",\n\"patientAge\": \"patientAge\",\n\"studyID\": \"studyID\",\n\"id\": 48,\n\"updatedAt\":\"updatedAt\",\n\"patientName\": \"\",\n\"pneumoniaResult\": -1,\n\"studyDescription\": \"studyDescription\",\n\"studyInstanceUID\": \"studyInstanceUID\",\n\"patientIndex\":\"patientIndex\",\n\"patientBirthDate\": \"patientBirthDate\",\n\"study_extra\": {\n},\n\"series\": [\n{\n\"modality\": \"CT\",\n\"thumbStorageId\": \"fs1\",\n\"seriesDate\":  \"seriesDate\",\n\"seriesTimeStamp\": \"seriesTimeStamp\",\n\"imgFrameNumber\": \"imgFrameNumber\",\n\"seriesId\": \"seriesId\",\n\"createdAt\":  \"createdAt\",\n\"sliceThickness\": 1.5,\n\"path\":  \"path\",\n\"protocolName\":  \"protocolName\",\n\"convolutionKernel\": [\n\"Br36d\",\n\"1\"\n],\n……\n\n获取病灶时间线列表接口\n(1) 输入项：\n接受HTTP/HTTPS协议的GET /patient/detail/10/lesion?tab=cf66299e-d62d-4c42-9c6c-4678981f5cba 请求。\n(2) 输出项：\n返回的json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1741174861.8293614,\n\"data\": {\n\"total\": 17,\n\"pages\": 1,\n\"rows\": [{\n\"index\": 1,\n\"lesion_size\": \"big\",\n\"master_patient_fk\": 2,\n\"template_id\": \"cf66299e-d62d-4c42-9c6c-4678981f5cba\",\n\"lesion_info\": [{\n\"id\": 62,\n\"detail\": {\n\"id\": 1,\n\"type\": \"solid nodule\",\n\"volume\": 357.326509475708,\n\"density\": [-723, 99],\n\"position\": [\"L_super_lb_apicoposter\"],\n\"axialZoom\": \"InferCareMPR/cf66299e-d62d-4c42-9c6c-4678981f5cba/1.3.12.2.1107.5.1.4.60217.30000020080615123145900095721/1-AZ.png\",\n\"malignant\": 0.5681018394729864,\n\"keySliceId\": 56,\n\"probability\": 0.9954901337623596,\n\"longDiameter\": 14.142615111868583,\n\"position_flow\": [],\n\"shortDiameter\": 3.9435717377675\n},\n\"summary\": {\n\"volume\": 357.326509475708,\n\"longDiameter\": 14.142615111868583,\n\"shortDiameter\": 3.9435717377675\n},\n\"modality\": \"CT\",\n\"visit_id\": 6,\n\"has_image\": true,\n\"patient_fk\": 2,\n\"study_date\": \"2020-08-08\",\n\"study_iuid\": \"1.2.840.113564.345049290535.9692.637324740667728219.67829\",\n\"study_time\": \"095006\",\n\"series_iuid\": \"1.3.12.2.1107.5.1.4.60217.30000020080615123145900095721\",\n\"accession_number\": \"CT2008080208\"\n}],\n\"echart\": {\n\"volume\": [357.326509475708, 96.36752414703369, 102.46635913113602],\n\"longDiameter\": [14.142615111868583, 5.797232698394026, 10.743466281805867],\n\"shortDiameter\": [3.9435717377675, 3.725476062322739, 3.7605498677025575],\n\"study_date\": [\"2020-08-08\", \"2021-01-18\", \"2022-10-27\"],\n\"study_time\": [\"095006\", \"165851\", \"092452\"]\n}], \"page\": 1, \"size\": 10, \"has_next\": false, \"extra\": {\n\"viewers\": [{\n\"id\": \"922fb0d2-d9bd-4e4b-a74b-0c44c71cbece\",\n\"name\": \"3D Viewer\",\n\"description\": \"3D 追踪客户端\",\n\"url\": \"/3dViewer\",\n\"preset\": true,\n\"multiTimePoint\": true,\n\"createdAt\": \"2025-03-05T18:26:43.574391\",\n\"updatedAt\": \"2025-03-05T18:26:43.574414\"\n}],\n\"lesion_threshold\": 6\n}\n}\n},……..\n\n获取单个患者时间线接口\n（1）输入项：\n接收HTTP/HTTPS协议的GET /patient/detail/1?solution=fada36b5-3e8f-4c69-9400-180f9a1ce798请求。\n（2）输出项：\n返回的json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1746699618.1988273,\n\"data\": {\n\"id\": 1,\n\"patient_id\": \"encrypted52uPhS8Tl70UcCttx2i5nO6khG8TcqWEFTYq7bQsE-I\",\n\"name\": \"encrypted52uPhS8Tl70UcCttx2i5nO6khG8TcqWEFTYq7bQsE-I\",\n\"gender_code\": \"M\",\n\"gender_display\": \"Male\",\n\"birthday\": \"1979-11-12\",\n\"age\": \"45\",\n\"phone_number\": null,\n\"id_number\": null,\n\"department_name\": \"System (Automatic enrollment)\",\n\"enroll_motivation\": {},\n\"visits\": [{\n\"id\": 3,\n\"patient_fk\": 1,\n\"assist_study_date\": \"2020-11-20\",\n\"default_study_iuid\": {\n\"tag\": {\n\"CT-chest\": [\"12629322-1776-457a-8ac6-d5d2c25c5dcc\"],\n\"CT-abdomen\": [\"68eac778-3994-405d-b688-295cc9fa823c\"]\n},\n\"tabs\": {\n\"08ea9ebc-b92f-46e3-8440-d4592c704796\": {\n\"key\": \"StomachLesion\",\n\"value\": \"Stomach lesion\"\n},\n},\n\"modality\": [\"CT\"],\n\"mpc_result\": [\"CT-abdomen\", \"CT-chest\"],\n\"study_iuid\": \"1.2.840.20201120.120112005799\"\n},\n\"default_series_iuid\": {\n\"08ea9ebc-b92f-46e3-8440-d4592c704796\": \"1.2.840.113619.2.55.3.2831183620.555.1605751157.325.3\",\n},\n\"default_study_time\": \"162026\",\n\"has_image\": true,\n\"extra\": {}\n}, {\n\"modality\": [\"CT\"],\n\"mpc_result\": [\"CT-abdomen\", \"CT-chest\"]\n},\n\"extra\": {\n\"visible_tags\": [\"CT-chest\"],\n\"visible_tabs\": [\"1aefc79c-90f8-4450-993d-8974567b010e\"],\n\"template_ids\": [\"1aefc79c-90f8-4450-993d-8974567b010e\"]\n},\n\"read\": false\n}\n}\n5.统一搜索接口\n（1）输入项\n接受HTTP/HTTPS协议的GET /unity/list?type=patient&page=1&size=10请求。\n（2）输出项：\n返回的json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1740736540.2686117,\n\"data\": {\n\"total\": 3,\n\"pages\": 1,\n\"rows\": [{\n\"id\": 3,\n\"patient_id\": \"CW023001-P003184673\",\n\"name\": \"CW023001-P003184673\",\n\"gender_code\": \"F\",\n\"gender_display\": \"女\",\n\"birthday\": \"1966-11-30\",\n\"age\": \"58\",\n\"phone_number\": null,\n\"id_number\": null,\n\"department_name\": \"系统（自动入组）\",\n\"enroll_motivation\": {\n\"method\": \"auto\",\n\"reason\": \"2022年03月31日检查，1、2、3号结节等16个结节长径大于1mm\",\n\"method_cn\": \"自动入组\"\n},\n\"visits\": [{\n\"id\": 5,\n\"patient_fk\": 3,\n\"assist_study_date\": \"2022-03-31\",\n\"default_study_iuid\": {\n\"study_iuid\": \"1.2.840.113564.345051450607.22592.637843375046413693.1076\",\n\"modality\": [\"CT\"],\n\"tag\": {\n\"CT-lung\": [\"83fde03b-0acb-4ed0-85ff-91d663f97ac2\"],\n\"CT-abdomen\": [\"e619c516-6689-40c5-b643-c009ad628e2b\", \"0b06c8dd-1230-43ea-ae5b-c25451ed1005\"]\n},\n\"mpc_result\": [\"CT-lung\", \"CT-abdomen\"],\n\"tabs\": {\n\"83fde03b-0acb-4ed0-85ff-91d663f97ac2\": \"Nodule\",\n\"e619c516-6689-40c5-b643-c009ad628e2b\": \"LiverTumour\",\n\"0b06c8dd-1230-43ea-ae5b-c25451ed1005\": \"UrinaryTumour\"\n}\n},\n\"default_series_iuid\": {\n\"83fde03b-0acb-4ed0-85ff-91d663f97ac2\": \"1.3.12.2.1107.5.1.4.73388.30000022032900102536800253076\",\n\"e619c516-6689-40c5-b643-c009ad628e2b\": \"1.3.12.2.1107.5.1.4.73388.30000022032900102536800253746\",\n\"0b06c8dd-1230-43ea-ae5b-c25451ed1005\": \"1.3.12.2.1107.5.1.4.73388.30000022032900102536800253076\"\n},\n\"default_study_time\": \"192918\",\n\"has_image\": true,\n\"extra\": {}\n}],\n\"tags\": {\n\"modality\": [\"CT\"],\n\"tag\": {\n\"CT-lung\": [\"83fde03b-0acb-4ed0-85ff-91d663f97ac2\"],\n\"CT-abdomen\": [\"e619c516-6689-40c5-b643-c009ad628e2b\", \"0b06c8dd-1230-43ea-ae5b-c25451ed1005\"]\n},\n\"mpc_result\": [\"CT-lung\", \"CT-abdomen\"],\n\"tabs\": {\n\"83fde03b-0acb-4ed0-85ff-91d663f97ac2\": \"Nodule\",\n\"e619c516-6689-40c5-b643-c009ad628e2b\": \"LiverTumour\",\n\"0b06c8dd-1230-43ea-ae5b-c25451ed1005\": \"UrinaryTumour\"\n}\n},\n\"tags\": {\n\"modality\": [\"CT\"],\n\"tag\": {\n\"CT-lung\": [\"83fde03b-0acb-4ed0-85ff-91d663f97ac2\"]\n},\n\"mpc_result\": [\"CT-lung\"],\n\"tabs\": {\n\"83fde03b-0acb-4ed0-85ff-91d663f97ac2\": \"Nodule\"\n}\n}\n}],\n\"page\": 1,\n\"size\": 10,\n\"has_next\": false\n}\n},\n……..\n\n获取磁盘容量接口\n(1) 输入参数：\n接受HTTP/HTTPS 协议的GET /unity/capacity 请求。\n(2) 输出结果：\n若磁盘空间正常或磁盘已满，接口返回free_bytes(可用空间)、total_bytes(总空间)。\n返回的json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1744274821.3891902,\n\"data\": {\n\"free_bytes\": 184447266816,\n\"total_bytes\": 490000453632\n}\n}",
+                        "table": null,
+                        "children": [],
+                        "title": "3.3.3 RePACS与NeoViewer的接口"
+                    },
+                    {
+                        "doc_id": 0,
+                        "n_id": 0,
+                        "p_id": 0,
+                        "img_url": "",
+                        "text": "NeoViewer的接口\n1.用户登录接口\n（1）输入项\n接受HTTP/HTTPS协议的POST /doctor/login 请求。\n请求内容为：\n{\n\"login_id\": \"G/ex3qYobBP3/VAi534VHKcBqqak7brwINpZua1MCMuRonaFsj3LRchN7Z4Ikvo237lU3bqryxybtWuzBs0yctB8k/FK7M5DvLUwt66Q1Cenn5gcWrolUJZwX9ZG1y2U5HN8x1uF+24qNOmQe7cDl7kFgyWiRazAFUIM3hgum22JcLumQBnCwNTKnn4+UQWJG5L5/JOxqVblnVJuwue38lOrtbUgztfJxUOrsHmojBSyR3LN7/DQaqGnEX+zC3APCqQgWgXnf5CI++BugMxwVa6phzS4P3q32gnphNzriIL62tP/ILcslwCFxj/SZzTuMTG0I2ceq3/RkrjWYSBdFw==\"\n}\n（2）输出项\n若登录成功，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1750756255.3504727,\n\"data\": {\n\"id\": 1,\n\"account\": \"tx-master\",\n\"name\": \"System Administrator\",\n\"mobile\": \"\",\n\"email\": null,\n\"doctor_code\": \"tx-master\",\n\"status\": 1,\n\"token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwic3ltYm9sIjoiTVdZMFl6Y3dOREV0TkRaaE5pMDBNRGM1TFRsbFpUQXRPVFptWXpFeU1qQmhO\",\n\"hospital_id\": null,\n\"hospital_name\": null,\n\"extra_uuid\": null,\n\"extra_info\": {},\n\"solutions\": [\"solutions \"],\n\"password_reset\": false\n}\n}\n2.用户修改密码接口\n（1）输入项\n接受HTTP/HTTPS协议的POST /doctor/change_password 请求。\n请求内容为：\n{\n\"old_password\": \"321\",\n\"new_password\": \"TXniubi2021\",\n\"confirm_password\": \"TXniubi2021\"\n}\n（2）输出项\n若首次修改密码成功，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 2,\n\"code\": 0,\n\"msg\": \"Successful.\",\n\"msg_cn\": \"密码修改成功，请重新登录\",\n\"timestamp\": 1715246243.7924857,\n\"data\": {}\n}\n3.用户退出接口\n（1）输入项\n接受HTTP/HTTPS协议的POST /doctor/logout 请求，raw-json\n（2）输出项\n若用户退出成功，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 2,\n\"code\": 0,\n\"msg\": \"Successful.\",\n\"msg_cn\": \"成功.\",\n\"timestamp\": 1715246131.5561185,\n\"data\": {}\n}\n4.科室列表接口\n（1）输入项\n接受HTTP/HTTPS协议的GET / department/list?name=请求。\n（2）输出项\n若退出成功，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"成功\",\n\"timestamp\": 1740044787.9643407,\n\"data\": {\n\"total\": 2,\n\"pages\": 1,\n\"rows\": [{\n\"id\": 1,\n\"name\": \"默认科室\",\n\"user_count\": 1,\n\"template_groups\": [\"a\", \"b\"]\n}, {\n\"id\": 2,\n\"name\": \"放射科2\",\n\"user_count\": 0,\n\"template_groups\": [\"a\", \"b\"]\n}],\n\"page\": 1,\n\"size\": 10,\n\"has_next\": false\n}\n}\n5.创建科室接口\n（1）输入项\n接受HTTP/HTTPS协议的POST /department/create请求。\n请求内容为：\n{\n\"name\": \"放射科\",\n\"solutions\": [\"abc\", \"bcd\"]\n}\n（2）输出项\n若成功显示用户列表，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"成功\",\n\"timestamp\": 1740044787.9643407,\n\"data\": {}\n}\n6.编辑科室接口\n（1）输入项\n接受HTTP/HTTPS协议的POST /department/update/<id>请求。\n请求内容为：\n{\n\"name\": \"放射科\",\n\"solutions\": [\"abc\", \"bcd\"]\n}\n（2）输出项\n若成功显示用户列表，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"成功\",\n\"timestamp\": 1740044787.9643407,\n\"data\": {}\n}\n7.删除科室接口\n（1）输入项\n接受HTTP/HTTPS协议的POST /department/delete/<id>请求。\n（2）输出项\n若成功显示用户列表，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 34,\n\"message\": \"科室被用户绑定\",\n\"timestamp\": 1740044787.9643407,\n\"data\": {}\n}\n8.获取用户列表接口\n（1）输入项\n接受HTTP/HTTPS协议的GET /doctor/list?name= 请求。\n请求内容为:\n（2）输出项\n若新增成功，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1750128332.2168877,\n\"data\": {\n\"total\": 6,\n\"pages\": 1,\n\"rows\": [{\n\"id\": 8,\n\"name\": \"user1\",\n\"account\": \"user1\",\n\"mobile\": null,\n\"sex\": \"9\",\n\"doctor_code\": \"user1\",\n\"department_id\": 4,\n\"created_at\": \"2025-06-16 18:09:06\",\n\"updated_at\": \"2025-06-16 18:09:06\",\n\"role_id\": 4,\n\"last_login\": \"\",\n\"status\": 1,\n\"organization_id\": 1\n}, {\n\"id\": 7,\n\"name\": \"dep1\",\n\"account\": \"thoraxadmin\",\n\"mobile\": null,\n\"sex\": \"9\",\n\"doctor_code\": \"thoraxadmin\",\n\"department_id\": 4,\n\"created_at\": \"2025-06-16 18:08:46\",\n\"updated_at\": \"2025-06-16 18:08:46\",\n\"role_id\": 3,\n\"last_login\": \"\",\n\"status\": 1,\n\"organization_id\": 1\n}],\n\"page\": 1,\n\"size\": 10,\n\"has_next\": false,\n\"extra\": {}\n}\n}\n9.创建用户接口\n（1）输入项\n接受HTTP/HTTPS协议的POST /doctor/create请求。\n请求内容为：\n{\n\"username\": \"testdd12345\",\n\"title\": \"住院医师\",\n\"sex\": \"0\",\n\"status\": 1,\n\"password\": \"qwer1234\",\n\"role_ids\": [1, 2],\n\"organization_id\": 1,\n\"name\": \"测试dd\",\n\"mobile\": \"13914111111\",\n\"department_ids\": [1]\n}\n（2）输出项\n若编辑成功，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 2,\n\"code\": 0,\n\"msg\": \"Successful.\",\n\"msg_cn\": \"成功.\",\n\"timestamp\": 1716256478.0007992,\n\"data\": {}\n}\n10.编辑用户接口\n（1）输入项\n接受HTTP/HTTPS协议的POST /doctor/single/<id>请求。\n请求内容为：\n{\n\"account\": \"testdd12345\",\n\"role_id\": 2,\n\"organization_id\": 1,\n\"name\": \"测试dd\",\n\"mobile\": \"13914111111\",\n\"department_id\": 8\n}\n（2）输出项\n若编辑成功，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 2,\n\"code\": 0,\n\"msg\": \"Successful.\",\n\"msg_cn\": \"成功.\",\n\"timestamp\": 1716257083.261009,\n\"data\": {}\n}\n11.重置用户密码接口\n（1）输入项\n接受HTTP/HTTPS协议的POST /doctor/reset_password/<id> 请求。\n请求内容为：\n{\n\"new_password\": \"321\",\n\"confirm_password\": \"321\"\n}\n（2）输出项\n若重置成功，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 2,\n\"code\": 2,\n\"msg\": \"Failed.\",\n\"msg_cn\": \"超管不可以给自己重置密码\",\n\"timestamp\": 1715246243.7924857,\n\"data\": {}\n}\n12.删除用户接口\n（1）输入项\n接受HTTP/HTTPS协议的DELETE /doctor/single/<id> 请求。\n请求内容为：\n请求内容为:\n（2）输出项\n若禁用成功，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 2,\n\"code\": 0,\n\"msg\": \"Successful.\",\n\"msg_cn\": \"成功.\",\n\"timestamp\": 1715247080.8356886,\n\"data\": {}\n}\n13.添加事件接口\n（1）输入项\n接受HTTP/HTTPS协议的POST /treatment/event/create 请求。\n请求内容为：\n{\n\"patient_fk\": 1,\n\"event_type\": \"chemotherapy\",\n\"event_date\": \"2025-04-15\",\n\"description\": \"  \",\n\"solution\": \"44b03efa-5ccc-44a5-9ca0-1beba7587f5b\",\n\"baseline_detail\": {\n\"chestCT\": {\n\"accession_number\": \"01D2020112005799\",\n\"study_iuid\": \"1.2.840.20201120.120112005799\",\n\"modality\": \"CT\",\n\"series_iuid\": \"1.2.840.113619.2.55.3.2831183620.555.1605751157.325.3\",\n\"study_date\": \"2020-11-20\",\n\"study_time\": \"162108\",\n\"product\": {\n\"1da39037-6bad-416e-959f-f6b51b47f9e8\": \"INFERCARE_CT_LYMPH\",\n\"f8e56cc2-860f-4fac-8a98-fa9c8cb940c1\": \"INFERCARE_CT_LUNG\"\n},\n\"mpc_scan\": \"\",\n\"mpc_result\": [\"lung\", \"abdomen\"],\n\"series_desc\": {\n\"1da39037-6bad-416e-959f-f6b51b47f9e8\": \"Recon 2:\",\n\"f8e56cc2-860f-4fac-8a98-fa9c8cb940c1\": \"Recon 2:\"\n}\n},\n\"abdomenCT\": {\n\"accession_number\": \"01D2020112005799\",\n\"study_iuid\": \"1.2.840.20201120.120112005799\",\n\"modality\": \"CT\",\n\"series_iuid\": \"1.2.840.113619.2.55.3.2831183620.555.1605751157.325.3\",\n\"study_date\": \"2020-11-20\",\n\"study_time\": \"162108\",\n\"product\": {\n\"1da39037-6bad-416e-959f-f6b51b47f9e8\": \"INFERCARE_CT_LYMPH\",\n\"f8e56cc2-860f-4fac-8a98-fa9c8cb940c1\": \"INFERCARE_CT_LUNG\"\n},\n\"mpc_scan\": \"\",\n\"mpc_result\": [\"lung\", \"abdomen\"],\n\"series_desc\": {\n\"1da39037-6bad-416e-959f-f6b51b47f9e8\": \"Recon 2:\",\n\"f8e56cc2-860f-4fac-8a98-fa9c8cb940c1\": \"Recon 2:\"\n}\n}\n}\n}\n（2）输出项\n若重置成功，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1745288901.1888342,\n\"data\": {\n\"event_id\": 85,\n\"baseline_id\": 151\n}\n}\n14.编辑事件接口\n（1）输入项\n接受HTTP/HTTPS协议的POST /treatment/event/<id>/edit请求。\n请求内容为：\n{\n\"event\": {\n\"description\": \"  \",\n\"event_date\": \"2025-04-21\",\n\"event_type\": \"surgical_operation\"\n},\n\"baseline\": {\n\"id\": 27,\n\"event_fk\": 18,\n\"index\": 0,\n\"detail\": {\n\"chestCT\": {\n\"product\": {\n\"3eff34b9-3018-4a4d-93d6-8a724e55918c\": \"INFERCARE_CT_LYMPH\",\n\"63e22fa3-90c8-473d-a7c5-b592215ee96e\": \"INFERCARE_CUSTOM\",\n\"9c7b3f92-bbc2-46ad-9bb7-baa0665f9324\": \"INFERCARE_CT_LUNG\"\n},\n\"modality\": \"CT\",\n\"mpc_scan\": \"plainScan\",\n\"mpc_result\": [\"lung\", \"abdomen\"],\n\"study_date\": \"2020-11-20\",\n\"study_iuid\": \"1.2.840.20201120.120112005799\",\n\"study_time\": \"162108\",\n\"series_desc\": {\n\"3eff34b9-3018-4a4d-93d6-8a724e55918c\": \"Recon 2:\"\n},\n\"series_iuid\": \"1.2.840.113619.2.55.3.2831183620.555.1605751157.325.3\",\n\"accession_number\": \"01D2020112005799\"\n},\n\"abdomenCT\": null\n},\n\"target_lesion\": {\n\"default\": {\n\"1.2.840.20201120.120112005799\": {}\n},\n\"infercare\": {\n\"1.2.840.20201120.120112005799\": {}\n}\n},\n\"doctor_fk\": 1,\n\"has_report\": false,\n\"report_list\": [],\n\"created_at\": \"2025-04-29 16:02:39\"\n},\n\"doctor_fk\": null,\n\"target_lesions\": {\n\"default\": {},\n\"infercare\": {}\n},\n\"has_report\": false,\n\"report_list\": [],\n\"created_at\": null\n}\n（2）输出项\n若重置成功，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1745304069.5292702,\n\"data\": {\n\"event_id\": 85,\n\"followup_id\": 155\n}\n}\n15.获取事件详情接口\n（1）输入项\n接受HTTP/HTTPS协议的GET /treatment/event/<id> 请求。\n（2）输出项\n若重置成功，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1745724247.4708135,\n\"data\": {\n\"id\": 138,\n\"patient_fk\": 1,\n\"event_type\": \"chemotherapy\",\n\"event_date\": \"2025-04-15\",\n\"description\": \"  \",\n\"doctor_fk\": 1,\n\"created_at\": \"2025-04-27 11:19:12\",\n\"followups\": [{\n\"id\": 235,\n\"event_fk\": 138,\n\"index\": 0,\n\"detail\": {\n\"chestCT\": {\n\"product\": {\n\"1da39037-6bad-416e-959f-f6b51b47f9e8\": \"INFERCARE_CT_LYMPH\",\n\"f8e56cc2-860f-4fac-8a98-fa9c8cb940c1\": \"INFERCARE_CT_LUNG\"\n},\n\"modality\": \"CT\",\n\"mpc_scan\": \"\",\n\"mpc_result\": [\"lung\", \"abdomen\"],\n\"study_date\": \"2020-11-20\",\n\"study_iuid\": \"1.2.840.20201120.120112005799\",\n\"study_time\": \"162108\",\n\"series_desc\": {\n\"1da39037-6bad-416e-959f-f6b51b47f9e8\": \"Recon 2:\",\n\"f8e56cc2-860f-4fac-8a98-fa9c8cb940c1\": \"Recon 2:\"\n},\n\"series_iuid\": \"1.2.840.113619.2.55.3.2831183620.555.1605751157.325.3\",\n\"accession_number\": \"01D2020112005799\"\n},\n\"abdomenCT\": {\n\"product\": {\n\"1da39037-6bad-416e-959f-f6b51b47f9e8\": \"INFERCARE_CT_LYMPH\",\n\"f8e56cc2-860f-4fac-8a98-fa9c8cb940c1\": \"INFERCARE_CT_LUNG\"\n},\n\"modality\": \"CT\",\n\"mpc_scan\": \"\",\n\"mpc_result\": [\"lung\", \"abdomen\"],\n\"study_date\": \"2020-11-20\",\n\"study_iuid\": \"1.2.840.20201120.120112005799\",\n\"study_time\": \"162108\",\n\"series_desc\": {\n\"1da39037-6bad-416e-959f-f6b51b47f9e8\": \"Recon 2:\",\n\"f8e56cc2-860f-4fac-8a98-fa9c8cb940c1\": \"Recon 2:\"\n},\n\"series_iuid\": \"1.2.840.113619.2.55.3.2831183620.555.1605751157.325.3\",\n\"accession_number\": \"01D2020112005799\"\n}\n},\n\"target_lesion\": {\n\"default\": {\n\"1.2.840.20201120.120112005799\": {}\n},\n\"infercare\": {\n\"1.2.840.20201120.120112005799\": {}\n}\n},\n\"doctor_fk\": 1,\n\"has_report\": false,\n\"report_list\": [],\n\"created_at\": \"2025-04-27 11:19:12\"\n}],\n\"solution\": \"44b03efa-5ccc-44a5-9ca0-1beba7587f5b\"\n}\n}\n16.删除某个事件接口\n（1）输入项\n接受HTTP/HTTPS协议的DELETE / treatment/event/<id> 请求。\n（2）输出项\n若删除成功，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1741682557.539222,\n\"data\": null\n}\n17.获取治疗时间线接口\n（1）输入项\n接受HTTP/HTTPS协议的GET\n/treatment/event/list/1?solution=44b03efa-5ccc-44a5-9ca0-1beba7587f5b 请求。\n（2）输出项\n若获取治疗时间线成功，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1745290806.6707854,\n\"data\": [{\n\"id\": 85,\n\"patient_fk\": 1,\n\"event_type\": \"chemotherapy\",\n\"event_date\": \"2025-04-15\",\n\"doctor_fk\": 1,\n\"created_at\": \"2025-04-22 10:28:46\",\n\"solution\": \"44b03efa-5ccc-44a5-9ca0-1beba7587f5b\",\n\"reports\": [{\n\"id\": 42,\n\"followup_fk\": 151,\n\"doctor_fk\": 1,\n\"path\": \"path/to/report/file\",\n\"created_at\": \"2025-04-22 11:11:23\"\n}, {\n\"id\": 44,\n\"followup_fk\": 154,\n\"doctor_fk\": 1,\n\"path\": \"path/to/report/file\",\n\"created_at\": \"2025-04-22 11:12:20\"\n}]\n}]\n}\n18.获取报告信息接口\n（1）输入项\n请求参数为：\n{\n\"report\": {\n\"title\": \"\",\n\"patient_name\": \"Unknown\",\n\"patient_id\": \"CE025005-0006997324\",\n\"followups\": [\n{\n\"follow_up_type\": \"Baseline\",\n\"description\": \"\",\n\"studies\": [\n{\n\"study_iuid\": \"1.2.840.113564.345049290535.9496.637205551706060958.116932\",\n\"modality\": \"CT\",\n\"scanned_at\": \"2020-03-23T15:17:02\",\n\"body\": \"chest\",\n\"description\": \"\",\n\"series\": [\n{\n\"series_iuid\": \"1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184\",\n\"is_enhanced_scan\": false\n}\n]\n}\n],\n\"target_lesions\": [\n{\n\"id\": 4,\n\"correlation_id\": \"fb641ecfb04\",\n\"template_id\": \"b25b756e-8d52-4de8-8689-069aa1c33693\",\n\"study_iuid\": \"tudy_iuid\",\n\"series_iuid\": \" series_iuid \",\n\"dicom_path\": series_iuid \",\n\"mask_label\": 4,\n\"lesion_mask\": lesion_mask \",\n\"organ_mask\": \" organ_mask \",\n\"vtp\": \"vtp\",\n\"key_slice_id\": 55,\n\"total_slice_count\": 214,\n\"series_serial_number\": \"4\",\n\"scanned_at\": \"2020-03-23T15:17:02\",\n\"name\": \"Lesion 4\",\n\"location\": \"\",\n\"organ\": \"\",\n\"position\": [\n\"R_super_lb_apical\"\n],\n\"lesion_type\": \"Nodule\",\n\"lesion_type_display_name\": \"Lung nodule\",\n\"long_diameter\": 7.519589508857552,\n\"short_diameter\": 7.207723899095239,\n\"volume\": 197.38623046875,\n\"status\": \"\",\n\"volume_change\": \"\"\n}\n],\n\"header_non_target_lesion_select_hint\": \"\",\n\"non_target_lesion_select\": \"\",\n\"target_lesions_response\": \"\",\n\"non_target_lesions_response\": \"\",\n\"new_lesions_response\": \"\",\n\"target_lesions_conclusion\": \"\",\n\"non_target_lesions_conclusion\": \"\",\n\"new_lesions_conclusion\": \"\",\n\"new_lesions_filter_rule\": \"\",\n\"over_all_response\": \"\",\n\"non_target_lesion_select_options\": {},\n\"non_target_lesion_conclusion_options\": {},\n\"new_lesion_conclusion_options\": {}\n}\n],\n\"lesion_size_thresholds\": {\n\"Nodule\": 6\n},\n\"organ_lesion_images\": [],\n\"target_lesion_images\": [],\n\"header_scan_information\": \"\",\n\"header_target_lesion\": \"\",\n\"header_non_target_lesion\": \"\",\n\"header_new_target_lesion\": \"\",\n\"header_overall_response\": \"\",\n\"header_lesion_details\": \"\",\n\"header_organ_wise_summary\": \"\"\n}\n}\n（2）输出项\n若获取报告信息成功，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"report\": {\n\"title\": \"RECIST Report\",\n\"patient_name\": \"Unknown\",\n\"patient_id\": \"CE025005-0006997324\",\n\"followups\": [{\n\"sequence_id\": 0,\n\"follow_up_type\": \"Baseline\",\n\"description\": \"Baseline: CT chest 03/23/2020\",\n\"studies\": [{\n\"study_iuid\": \"1.2.840.113564.345049290535.9496.637205551706060958.116932\",\n\"series\": [{\n\"series_iuid\": \"1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184\",\n\"is_enhanced_scan\": false\n}],\n\"body\": \"chest\",\n\"modality\": \"CT\",\n\"scanned_at\": \"2020-03-23T15:17:02\",\n\"description\": \"CT chest 03/23/2020\"\n}],\n\"target_lesions\": [{\n\"sequence_id\": 1,\n\"id\": 4,\n\"correlation_id\": \"fb641ecfb04\",\n\"template_id\": \"b25b756e-8d52-4de8-8689-069aa1c33693\",\n\"study_iuid\": \"1.2.840.113564.345049290535.9496.637205551706060958.116932\",\n\"series_iuid\": \"1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184\",\n\"dicom_path\": \"PP_STORE/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/76957b2f4ddfe119666883976de804fd/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184.mha\",\n\"mask_label\": 4,\n\"lesion_mask\": \"RESULT/infercare_ct_lung_result/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/nodule/nodule-seg.nii.gz\",\n\"organ_mask\": \"RESULT/infercare_ct_lung_result/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/nodule/lung-lobe-seg.nii.gz\",\n\"vtp\": \"RESULT/infercare_ct_lung_result/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/vtp/nodule_4.vtp\",\n\"key_slice_id\": 55,\n\"total_slice_count\": 214,\n\"scanned_at\": \"2020-03-23T15:17:02\",\n\"name\": \"Target Lesion #1: Lung nodule\",\n\"location\": \"Location: Right Upper Lobe Apical Segment (RUL S1)\",\n\"organ\": \"Lung\",\n\"position\": [\n\"R_super_lb_apical\"\n],\n\"lesion_type\": \"Nodule\",\n\"lesion_type_display_name\": \"Lung nodule\",\n\"long_diameter\": 7.5,\n\"short_diameter\": 7.207724,\n\"volume\": 197.38623,\n\"status\": \"\",\n\"volume_change\": \"Volume: 7.0 x 6.8 mm, volume 0.19 cc (series 5, image 60), previously 7.5 x 7.2 mm, volume 0.20 cc (series 4, image 55)\",\n\"series_serial_number\": \"4\"\n}],\n\"target_lesions_conclusion\": \"\",\n\"target_lesions_response\": \"N/A\",\n\"non_target_lesions\": [{\n\"sequence_id\": 1,\n\"id\": 1,\n\"correlation_id\": \"adffb641ecf\",\n\"template_id\": \"b25b756e-8d52-4de8-8689-069aa1c33693\",\n\"study_iuid\": \"1.2.840.113564.345049290535.9496.637205551706060958.116932\",\n\"series_iuid\": \"1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184\",\n\"dicom_path\": \"PP_STORE/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/76957b2f4ddfe119666883976de804fd/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184.mha\",\n\"mask_label\": 1,\n\"lesion_mask\": \"RESULT/infercare_ct_lung_result/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/nodule/nodule-seg.nii.gz\",\n\"organ_mask\": \"RESULT/infercare_ct_lung_result/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/nodule/lung-lobe-seg.nii.gz\",\n\"vtp\": \"RESULT/infercare_ct_lung_result/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/vtp/nodule_1.vtp\",\n\"key_slice_id\": 24,\n\"total_slice_count\": 214,\n\"scanned_at\": \"2020-03-23T15:17:02\",\n\"name\": \"Non-Target Lesion #1: Lung nodule\",\n\"location\": \"Location: Right Upper Lobe Apical Segment (RUL S1)\",\n\"organ\": \"Lung\",\n\"position\": [\n\"R_super_lb_apical\"\n],\n\"lesion_type\": \"Nodule\",\n\"lesion_type_display_name\": \"Lung nodule\",\n\"long_diameter\": 3.415495,\n\"short_diameter\": 2.217544,\n\"volume\": 14.561279,\n\"status\": \"\",\n\"volume_change\": \"Volume: 3.6 x 3.2 mm, volume 0.02 cc (series 5, image 30), previously 3.4 x 2.2 mm, volume 0.01 cc (series 4, image 24).\",\n\"series_serial_number\": \"4\"\n},\n......\n],\n\"header_scan_information\": \"Scan Information\",\n\"header_target_lesion\": \"Target Lesions\",\n\"header_non_target_lesion\": \"Non-Target Lesions\",\n\"header_new_target_lesion\": \"New Lesions\",\n\"header_overall_response\": \"Overall Response\",\n\"header_lesion_details\": \"Lesion Details\",\n\"header_organ_wise_summary\": \"Organ-Wise Summary\",\n\"lesion_size_thresholds\": {\n\"Nodule\": 6,\n\"LymphNode\": 10,\n\"LiverTumor\": 6,\n\"KidneyTumor\": 6\n}\n},\n\"success\": true,\n\"message\": \"OK\"\n}\n19.生成报告接口\n（1）输入项\n接受HTTP/HTTPS协议的POST  /api/report/report_info请求。\n请求参数为：\n{\n\"report\": {\n\"title\": \"RECIST Report\",\n\"patient_name\": \"Unknown\",\n\"patient_id\": \"CE025005-0006997324\",\n\"followups\": [{\n\"sequence_id\": 0,\n\"follow_up_type\": \"Baseline\",\n\"description\": \"Baseline: CT chest 03/23/2020\",\n\"studies\": [{\n\"study_iuid\": \"1.2.840.113564.345049290535.9496.637205551706060958.116932\",\n\"series\": [{\n\"series_iuid\": \"1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184\",\n\"is_enhanced_scan\": false\n}],\n\"body\": \"chest\",\n\"modality\": \"CT\",\n\"scanned_at\": \"2020-03-23T15:17:02\",\n\"description\": \"CT chest 03/23/2020\"\n}],\n\"target_lesions\": [{\n\"sequence_id\": 1,\n\"id\": 4,\n\"correlation_id\": \"fb641ecfb04\",\n\"template_id\": \"b25b756e-8d52-4de8-8689-069aa1c33693\",\n\"study_iuid\": \"1.2.840.113564.345049290535.9496.637205551706060958.116932\",\n\"series_iuid\": \"1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184\",\n\"dicom_path\": \"PP_STORE/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/76957b2f4ddfe119666883976de804fd/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184.mha\",\n\"mask_label\": 4,\n\"lesion_mask\": \"RESULT/infercare_ct_lung_result/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/nodule/nodule-seg.nii.gz\",\n\"organ_mask\": \"RESULT/infercare_ct_lung_result/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/nodule/lung-lobe-seg.nii.gz\",\n\"vtp\": \"RESULT/infercare_ct_lung_result/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/vtp/nodule_4.vtp\",\n\"key_slice_id\": 55,\n\"total_slice_count\": 214,\n\"scanned_at\": \"2020-03-23T15:17:02\",\n\"name\": \"Target Lesion #1: Lung nodule\",\n\"location\": \"Location: Right Upper Lobe Apical Segment (RUL S1)\",\n\"organ\": \"Lung\",\n\"position\": [\n\"R_super_lb_apical\"\n],\n\"lesion_type\": \"Nodule\",\n\"lesion_type_display_name\": \"Lung nodule\",\n\"long_diameter\": 7.5,\n\"short_diameter\": 7.207724,\n\"volume\": 197.38623,\n\"status\": \"\",\n\"volume_change\": \"Volume: 7.0 x 6.8 mm, volume 0.19 cc (series 5, image 60), previously 7.5 x 7.2 mm, volume 0.20 cc (series 4, image 55)\",\n\"series_serial_number\": \"4\"\n}],\n...\n],\n\"header_scan_information\": \"Scan Information\",\n\"header_target_lesion\": \"Target Lesions\",\n\"header_non_target_lesion\": \"Non-Target Lesions\",\n\"header_new_target_lesion\": \"New Lesions\",\n\"header_overall_response\": \"Overall Response\",\n\"header_lesion_details\": \"Lesion Details\",\n\"header_organ_wise_summary\": \"Organ-Wise Summary\",\n\"lesion_size_thresholds\": {\n\"Nodule\": 6,\n\"LymphNode\": 10,\n\"LiverTumor\": 6,\n\"KidneyTumor\": 6\n}\n}\n}\n（3）输出项\n若生成报告成功，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"download_url\": \"http://infercare_report/reports/infercare_reports/report-2025-07-03-16-28-53.pdf\",\n\"relative_url\": \"/reports/infercare_reports/report-2025-07-03-16-28-53.pdf\",\n\"success\": true,\n\"message\": \"OK\"\n}\n20.查看某个报告详情接口\n（1）输入项\n接受HTTP/HTTPS协议的GET /reports/infercare_reports/<file_name>.pdf 请求。\n（2）输出项\n成功展示pdf 文件\n21.删除某个报告接口\n（1）输入项\n接受HTTP/HTTPS协议的DELETE /treatment/event/report/<id> 请求。\n（2）输出项\n若新增机构成功，则返回HTTP/HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1741683486.4163342,\n\"data\": null\n}",
+                        "table": null,
+                        "children": [],
+                        "title": "3.3.4 NeoViewer的接口"
+                    }
+                ],
+                "title": "3.3 内部接口"
+            }
+        ],
+        "title": "3. 接口设计"
+    },
+    {
+        "doc_id": 0,
+        "n_id": 0,
+        "p_id": 0,
+        "img_url": "",
+        "text": "",
+        "table": null,
+        "children": [
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "img_url": "",
+                "text": "本系统内的数据结构主要指用于存储患者图像数据信息的数据结构，主要包括：患者信息、检查信息、序列信息、图像信息和存储信息、处理结果、功能。\n本部分数据采用Postgresql数据库进行存储。\nPostgresql数据库：\nalembic_Version: 版本管理\nauto_enroll_rule：自动注册规则\nclinial_stage: ​​分期表\ndepartment: ​​科室表\ndepartment: ​​科室通知\ndoctor: ​​医生表\nenroll_rule: ​​入组规则表\nexam: ​​检查记录表\nlabel_config: ​​标签配置表\nLesion: ​​病灶表\nLesionline: 病灶轮廓表\nmaster_slave_patient: 主从患者关联表\nmenu: 角色菜单权限表\norganization: 医疗机构表\npatient:患者\npatient_label: 患者标签表\npatient_statistic: 患者统计报表\nrisk_survey: 风险评估表\nrole: 角色表\nrole_menu: 角色菜单权限表\nseries: 科室系列表\nsys_language: 系统语言包表\nsys_language: 系统语言包表\ntimeline_event：时间线事件表\ntimeline_followup: 随访时间线表\ntimeline_report:  报告时间线表\ntimeline_target_lesion: 靶病灶时间线表\nupload_dicom: DICOM上传记录表\nupload_task: 文件上传任务表\nupload_task: 文件上传任务表\nuploaded_cache: 上传缓存表\nuploaded_cache: 上传缓存表\nuser_operation: 用户操作表\nweekly_statistic: 周度综合统计表\nweekly_statistic: 周度综合统计表\n库2数据库：\nalembic_version 数据库迁移表：\nevent 数据库迁移表：\nFavorite 收藏表：\nfavorite_to_study收藏-检查关联表：\nflyway_schema_history Flyway迁移历史表：\nnex_manual_upload_dicom_info手动上传DICOM信息表：\nnex_product_task_results 产品信息结果表：\nnex_series_product_result序列产品结果表：\nnex_stud检查研究表：\nnex_study_series_error_log研究序列错误日志表：\nnex_timeline时间线表：\nnex_timeline_detection_service 时间线检测服务表：\nnex_timeline_lesion_position时间线病灶位置表：\nnex_timeline_registration_service时间线配准服务表：\nnex_timeline_solution 时间线解决方案表：\nnex_timeline_solution_to_timeline_to_view_service 时间线解决方案视图服务关联表：\nnex_timeline_to_detection_service 时间线检测服务关联表：\nnex_timeline_to_registration_service  时间线配准服务关联表：\nnex_timeline_view_service 时间线视图服务表：\npatient 患者表：\nresult 结果表：\nseries 序列表：\nstudy 调查表：\ntask 任务表：\ntask_to_series  任务序列表：\nupload_info 上传信息表：\nwebhook表：\nwebhook_to_event 事件关联表：",
+                "table": null,
+                "children": [],
+                "title": "4.1 逻辑结构设计要点"
+            }
+        ],
+        "title": "4. 系统数据结构设计"
+    },
+    {
+        "doc_id": 0,
+        "n_id": 0,
+        "p_id": 0,
+        "img_url": "",
+        "text": "",
+        "table": null,
+        "children": [
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "img_url": "",
+                "text": "",
+                "table": {
+                    "name": null,
+                    "show_header": 1,
+                    "headers": [
+                        {
+                            "code": "col_1",
+                            "name": "出错编号"
+                        },
+                        {
+                            "code": "col_2",
+                            "name": "出错或故障情况"
+                        },
+                        {
+                            "code": "col_3",
+                            "name": "系统输出形式及含义"
+                        },
+                        {
+                            "code": "col_4",
+                            "name": "处理方法"
+                        }
+                    ],
+                    "rows": [
+                        {
+                            "col_1": "1",
+                            "col_2": "数据库连接失败",
+                            "col_3": "记录error级别的日志，日志中包括连接数据库的参数。",
+                            "col_4": "与数据库提供商核对连接参数，重新连接数据库。"
+                        },
+                        {
+                            "col_1": "2",
+                            "col_2": "读取dcm文件失败",
+                            "col_3": "记录error级别的日志，显示读取dcm文件的异常信息。",
+                            "col_4": "检查文件是否为非dcm文件。"
+                        },
+                        {
+                            "col_1": "3",
+                            "col_2": "读取dcm tag信息失败",
+                            "col_3": "记录error级别的日志，显示读取失败的文件路径和tag的名称。",
+                            "col_4": "查看该文件是否为合法的dcm文件，且它的tag值是否存在。"
+                        },
+                        {
+                            "col_1": "4",
+                            "col_2": "文件拷贝失败",
+                            "col_3": "记录error级别的日志，显示拷贝文件的源路径和目标路径。",
+                            "col_4": "查看拷贝文件的源路径和目标路径是否均存在。"
+                        },
+                        {
+                            "col_1": "5",
+                            "col_2": "发送RePACS数据失败",
+                            "col_3": "记录error级别的日志，显示RePACS服务器的ip, 服务的url及发送的数据的json串。",
+                            "col_4": "检查日志中的RePACS的ip和url参数是否正确；检查发送的json是否符合接口要求。"
+                        },
+                        {
+                            "col_1": "6",
+                            "col_2": "发送RePACS数据超时",
+                            "col_3": "记录error级别的日志，显示RePACS服务器的连接参数和连接时间。",
+                            "col_4": "检查RePACS配置参数是否正确；检查网络连接是否正常。"
+                        },
+                        {
+                            "col_1": "7",
+                            "col_2": "NeoViewer无法登录",
+                            "col_3": "前端界面显示 “用户名/密码错误”。",
+                            "col_4": "检查该用户名是否在用户列表中，密码是否正确。"
+                        },
+                        {
+                            "col_1": "8",
+                            "col_2": "NeoViewer前端无法\n显示图像",
+                            "col_3": "前端界面始终显示图像加载中。在控制台显示无法加载图像的studyUID, seriesUID，image等信息。",
+                            "col_4": "检查无法显示的图像是否存在，且已经完整地加载到内存中。"
+                        },
+                        {
+                            "col_1": "9",
+                            "col_2": "NeoViewer前端无法\n响应鼠标事件",
+                            "col_3": "前端界面无响应，控制台显示报错信息。",
+                            "col_4": "检查控制台是否报错，检查网络是否连接良好。"
+                        }
+                    ],
+                    "cells": [
+                        [
+                            {
+                                "value": "出错编号",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "出错或故障情况",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "系统输出形式及含义",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "处理方法",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "1",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "数据库连接失败",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "记录error级别的日志，日志中包括连接数据库的参数。",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "与数据库提供商核对连接参数，重新连接数据库。",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "2",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "读取dcm文件失败",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "记录error级别的日志，显示读取dcm文件的异常信息。",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "检查文件是否为非dcm文件。",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "3",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "读取dcm tag信息失败",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "记录error级别的日志，显示读取失败的文件路径和tag的名称。",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "查看该文件是否为合法的dcm文件，且它的tag值是否存在。",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "4",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "文件拷贝失败",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "记录error级别的日志，显示拷贝文件的源路径和目标路径。",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "查看拷贝文件的源路径和目标路径是否均存在。",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "5",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "发送RePACS数据失败",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "记录error级别的日志，显示RePACS服务器的ip, 服务的url及发送的数据的json串。",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "检查日志中的RePACS的ip和url参数是否正确；检查发送的json是否符合接口要求。",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "6",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "发送RePACS数据超时",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "记录error级别的日志，显示RePACS服务器的连接参数和连接时间。",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "检查RePACS配置参数是否正确；检查网络连接是否正常。",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "7",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "NeoViewer无法登录",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "前端界面显示 “用户名/密码错误”。",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "检查该用户名是否在用户列表中，密码是否正确。",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "8",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "NeoViewer前端无法\n显示图像",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "前端界面始终显示图像加载中。在控制台显示无法加载图像的studyUID, seriesUID，image等信息。",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "检查无法显示的图像是否存在，且已经完整地加载到内存中。",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            }
+                        ],
+                        [
+                            {
+                                "value": "9",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "NeoViewer前端无法\n响应鼠标事件",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "前端界面无响应，控制台显示报错信息。",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            },
+                            {
+                                "value": "检查控制台是否报错，检查网络是否连接良好。",
+                                "row_span": 1,
+                                "col_span": 1,
+                                "h_align": "center",
+                                "v_align": "middle"
+                            }
+                        ]
+                    ]
+                },
+                "children": [],
+                "title": "5.1 出错信息"
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "img_url": "",
+                "text": "日志备份技术： 由于该系统未来需要对接很多的医院，而且每一个医院处理的检查数据会非常巨大，因此每天产生的日志数据量也是非常巨大的。为了避免日志文件尺寸暴增而引起服务器宕机的问题，需要限制日志文件的尺寸。可以采用的技术方案包括：按照日期来存储日志同时限制日志文件数量；限制单个日志文件尺寸同时限制日志文件数量。",
+                "table": null,
+                "children": [],
+                "title": "5.2 补救措施"
+            },
+            {
+                "doc_id": 0,
+                "n_id": 0,
+                "p_id": 0,
+                "img_url": "",
+                "text": "日志分级设计：为了使系统在后期维护过程中，能够提高运维人员在查找和定位问题时的效率，系统在记录日志方面采用分级设计，按照info, debug, exception, error四个级别记录日志，并且会分别存储在不同的日志文件中。这样，如果系统出错时，可以直接进入exception和error文件中查看问题。\n附件一 评审结论",
+                "table": null,
+                "children": [],
+                "title": "5.3 系统维护设计"
+            }
+        ],
+        "title": "5. 出错信息处理"
+    }
+]

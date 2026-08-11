@@ -407,6 +407,11 @@ export default () => {
                                 perm: "sds_doc_view",
                             },
                             {
+                                key: "/hld_docs",
+                                label: ts("menu.hld_docs"),
+                                perm: "hld_doc_view",
+                            },
+                            {
                                 key: "/dem_docs",
                                 label: ts("menu.dem_docs"),
                                 perm: "dem_doc_view",
