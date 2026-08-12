@@ -1,11 +1,12 @@
 import "./Products.less";
-import { Form, Input, Button, Table, message, Row, Col, Modal, Select, Space } from "antd";
+import { Form, Input, Button, Table, message, Row, Col, Modal, Select, Space, Checkbox, Tag } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import { useEffect, useMemo } from "react";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { renderOneLineWithTooltip, useData } from "@/common";
 import * as Api from "@/api/ApiProduct";
+import * as ApiProdDhf from "@/api/ApiProdDhf";
 import * as ApiProject from "@/api/ApiProject";
 import * as ApiCompanyInfo from "@/api/ApiCompanyInfo";
 
@@ -272,6 +273,10 @@ export default () => {
         products: [],
         copyTargetName: "",
         copyFullVersion: "",
+        copyDhfRows: [] as any[],
+        copyDhfSelectedIds: [] as number[],
+        copyDhfSearch: "",
+        copyDhfLoading: false,
         selectedRowKeys: [],
     });
 
@@ -309,6 +314,21 @@ export default () => {
                 targetRow: row,
                 copyTargetName: targetName,
                 copyFullVersion: suggestFullVersion(products, targetName, row),
+                copyDhfRows: [],
+                copyDhfSelectedIds: [],
+                copyDhfSearch: "",
+                copyDhfLoading: true,
+            });
+            ApiProdDhf.list_prod_dhf({ prod_id: row.id, page_index: 0, page_size: 10000 }).then((res: any) => {
+                if (res.code === ApiProdDhf.C_OK) {
+                    dispatch({ copyDhfRows: res.data?.rows || [], copyDhfLoading: false });
+                } else {
+                    dispatch({ copyDhfLoading: false });
+                    message.error(res.msg || "加载 DHF 清单失败");
+                }
+            }).catch(() => {
+                dispatch({ copyDhfLoading: false });
+                message.error("加载 DHF 清单失败");
             });
         };
         if ((data.products || []).length > 0) {
@@ -344,6 +364,28 @@ export default () => {
         });
     };
 
+    const filteredCopyDhfRows = useMemo(() => {
+        const keyword = String(data.copyDhfSearch || "").trim().toLowerCase();
+        if (!keyword) return data.copyDhfRows || [];
+        return (data.copyDhfRows || []).filter((item: any) => {
+            const code = String(item.code || "").toLowerCase();
+            const name = String(item.name || "").toLowerCase();
+            return code.includes(keyword) || name.includes(keyword);
+        });
+    }, [data.copyDhfRows, data.copyDhfSearch]);
+
+    const selectedCopyDhfRows = useMemo(() => {
+        const selected = new Set(data.copyDhfSelectedIds || []);
+        return (data.copyDhfRows || []).filter((item: any) => selected.has(item.id));
+    }, [data.copyDhfRows, data.copyDhfSelectedIds]);
+
+    const toggleCopyDhfSelected = (id: number, checked: boolean) => {
+        const next = new Set(data.copyDhfSelectedIds || []);
+        if (checked) next.add(id);
+        else next.delete(id);
+        dispatch({ copyDhfSelectedIds: Array.from(next) });
+    };
+
     const doCopy = () => {
         const row = data.targetRow || {};
         if (!row.id) return;
@@ -365,15 +407,23 @@ export default () => {
             return;
         }
         dispatch({ loading: true });
+        const dhfIds = (data.copyDhfSelectedIds || []).filter((id: number) => id > 0);
         Api.duplicate_product({
             id: row.id,
             name: targetName,
             full_version: nextFullVersion,
+            dhf_ids: dhfIds.length > 0 ? dhfIds.join(",") : undefined,
         }).then((res: any) => {
             dispatch({ loading: false });
             if (res.code === Api.C_OK) {
                 dispatch({ dlgType: null });
-                message.success("复制成功");
+                const stats = res.data || {};
+                const parts = ["复制成功"];
+                if (stats.dhf_count) parts.push(`DHF ${stats.dhf_count} 条`);
+                if (stats.doc_count) parts.push(`文档 ${stats.doc_count} 份`);
+                if (stats.test_set_count) parts.push(`测试集 ${stats.test_set_count} 个`);
+                if (stats.doc_file_count) parts.push(`图表 ${stats.doc_file_count} 个`);
+                message.success(parts.join("，"));
                 doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
             } else {
                 message.error(res.msg || "复制失败");
@@ -620,7 +670,7 @@ export default () => {
             </Modal>
             <Modal
                 centered
-                width={520}
+                width={680}
                 title="复制"
                 open={data.dlgType === DlgTypes.copy}
                 maskClosable={false}
@@ -647,8 +697,63 @@ export default () => {
                             onChange={(e) => dispatch({ copyFullVersion: e.target.value })}
                         />
                     </div>
-                    <div style={{ color: "#888", marginTop: 12 }}>
+                    <div style={{ color: "#888", marginTop: 12, marginBottom: 12 }}>
                         完整版本需手动填写且不能与目标产品下已有版本重复；发布版本仍自动生成。
+                    </div>
+                    <div style={{ marginBottom: 8, fontWeight: 500 }}>联动复制 DHF（可选，手动勾选）</div>
+                    <Input
+                        allowClear
+                        placeholder="搜索文件编号 / 文件名称"
+                        value={data.copyDhfSearch}
+                        onChange={(e) => dispatch({ copyDhfSearch: e.target.value })}
+                        style={{ marginBottom: 8 }}
+                    />
+                    <div
+                        style={{
+                            maxHeight: 260,
+                            overflow: "auto",
+                            border: "1px solid #f0f0f0",
+                            borderRadius: 4,
+                            padding: "8px 12px",
+                            background: "#fafafa",
+                        }}>
+                        {data.copyDhfLoading ? (
+                            <div style={{ color: "#888" }}>加载 DHF 清单中...</div>
+                        ) : (data.copyDhfRows || []).length === 0 ? (
+                            <div style={{ color: "#888" }}>源产品暂无 DHF 条目，将仅复制产品主数据。</div>
+                        ) : filteredCopyDhfRows.length === 0 ? (
+                            <div style={{ color: "#888" }}>无匹配结果，请调整搜索关键字。</div>
+                        ) : (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                {filteredCopyDhfRows.map((item: any) => (
+                                    <Checkbox
+                                        key={item.id}
+                                        checked={(data.copyDhfSelectedIds || []).includes(item.id)}
+                                        onChange={(e) => toggleCopyDhfSelected(item.id, e.target.checked)}>
+                                        <span style={{ marginRight: 12 }}>{item.code || "-"}</span>
+                                        <span style={{ color: "#666" }}>{item.name || "-"}</span>
+                                    </Checkbox>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                    {selectedCopyDhfRows.length > 0 && (
+                        <div style={{ marginTop: 8 }}>
+                            <div style={{ color: "#888", marginBottom: 6 }}>已选条目（切换搜索仍保留）：</div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                {selectedCopyDhfRows.map((item: any) => (
+                                    <Tag
+                                        key={item.id}
+                                        closable
+                                        onClose={() => toggleCopyDhfSelected(item.id, false)}>
+                                        {(item.code || "-") + " " + (item.name || "-")}
+                                    </Tag>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    <div style={{ color: "#888", marginTop: 8 }}>
+                        已选 {(data.copyDhfSelectedIds || []).length} 条；勾选后将同步复制对应模块文档（编号 + 名称双重匹配）。
                     </div>
                 </div>
             </Modal>

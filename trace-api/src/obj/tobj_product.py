@@ -18,4 +18,8 @@ class ProductForm(BaseModel):
     note: Optional[str] = Field(title="备注")
 
     user_ids: Optional[List[int]] = Field(title="用户ID列表")
-    
+
+    dhf_count: Optional[int] = Field(title="复制DHF条数")
+    doc_count: Optional[int] = Field(title="复制文档数")
+    test_set_count: Optional[int] = Field(title="复制测试集数")
+    doc_file_count: Optional[int] = Field(title="复制图表文件数")

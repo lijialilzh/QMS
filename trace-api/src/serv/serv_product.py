@@ -60,7 +60,7 @@ class Server(object):
             db.session.rollback()
         return Resp.resp_err(msg=ts(msg_err_db))
 
-    async def duplicate_product(self, op_user: UserObj, id: int, product_id: int = None, name: str = None, full_version: str = None):
+    async def duplicate_product(self, op_user: UserObj, id: int, product_id: int = None, name: str = None, full_version: str = None, dhf_ids: List[int] = None):
         try:
             from_row: Product = db.session.execute(select(Product).where(Product.id == id)).scalars().first()
             if not from_row:
@@ -129,8 +129,37 @@ class Server(object):
                 user_ids = [op_user.id]
             if user_ids:
                 db.session.add_all([UserProd(user_id=user_id, product_id=new_row.id) for user_id in user_ids])
+
+            selected_dhf_rows = []
+            if dhf_ids:
+                from .serv_product_dhf_copy import copy_dhf_linked_assets, apply_product_version_token
+                selected_dhf_rows = db.session.execute(
+                    select(ProdDhf).where(ProdDhf.id.in_(dhf_ids), ProdDhf.prod_id == from_row.id).order_by(ProdDhf.code)
+                ).scalars().all()
+                for src in selected_dhf_rows:
+                    code = str(src.code or "").strip()
+                    if not code:
+                        continue
+                    if same_name:
+                        code = apply_product_version_token(code, next_full_version)
+                    db.session.add(ProdDhf(prod_id=new_row.id, code=code, name=str(src.name or "").strip()))
+
             db.session.commit()
-            return Resp.resp_ok(data=ProductForm(id=new_row.id))
+
+            copy_stats = {}
+            if selected_dhf_rows:
+                copy_stats = await copy_dhf_linked_assets(
+                    from_row.id,
+                    new_row.id,
+                    selected_dhf_rows,
+                    same_name=same_name,
+                    target_full_version=next_full_version,
+                )
+
+            data = ProductForm(id=new_row.id)
+            if copy_stats:
+                data = ProductForm(id=new_row.id, **{k: v for k, v in copy_stats.items() if k in ("dhf_count", "doc_count", "test_set_count", "doc_file_count")})
+            return Resp.resp_ok(data=data)
         except Exception:
             logger.exception("")
             db.session.rollback()

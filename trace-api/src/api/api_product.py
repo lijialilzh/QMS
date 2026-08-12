@@ -44,9 +44,15 @@ async def update_product(form: ProductForm):
 
 @router.get("/duplicate_product", summary="复制产品", response_model=Resp[ProductForm])
 @try_log(perm=Perms.product_edit)
-async def duplicate_product(id: int, product_id: int = None, name: str = None, full_version: str = None):
+async def duplicate_product(id: int, product_id: int = None, name: str = None, full_version: str = None, dhf_ids: str = None):
     op_user: UserObj = CtxUser.get()
-    return await server.duplicate_product(op_user, id, product_id, name, full_version)
+    parsed_dhf_ids = []
+    if dhf_ids:
+        for part in str(dhf_ids).split(","):
+            part = str(part or "").strip()
+            if part.isdigit():
+                parsed_dhf_ids.append(int(part))
+    return await server.duplicate_product(op_user, id, product_id, name, full_version, parsed_dhf_ids or None)
 
 
 @router.get("/list_product", summary="查询产品列表", response_model=Resp[Page[ProductObj]])

@@ -62,28 +62,42 @@ export default () => {
     });
 
     const loadDhfCounts = () => {
-        Api.list_prod_dhf({ page_index: 0, page_size: 100000 }).then((res: any) => {
+        return Api.list_prod_dhf({ page_index: 0, page_size: 100000 }).then((res: any) => {
             if (res.code === Api.C_OK) {
-                dispatch({ dhfCountMap: buildDhfCountMap(res.data?.rows || []) });
+                const map = buildDhfCountMap(res.data?.rows || []);
+                dispatch({ dhfCountMap: map });
+                return map;
             }
-        }).catch(() => {});
+            return data.dhfCountMap || new Map<number, number>();
+        }).catch(() => data.dhfCountMap || new Map<number, number>());
     };
 
-    const doSearch = (params: any, pageIndex: any, pageSize: any) => {
+    const doSearch = (params: any, pageIndex: any, pageSize: any, countMap?: Map<number, number>) => {
         dispatch({ loading: true });
-        ApiProduct.list_product({ ...params, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
-            if (res.code === ApiProduct.C_OK) {
-                dispatch({
-                    loading: false,
-                    pageIndex,
-                    pageSize,
-                    total: res.data.total,
-                    rows: res.data.rows || [],
-                });
-            } else {
-                dispatch({ loading: false, pageIndex, pageSize, total: 0, rows: [] });
-                message.error(res.msg);
-            }
+        const mapPromise = countMap ? Promise.resolve(countMap) : loadDhfCounts();
+        mapPromise.then((map) => {
+            ApiProduct.list_product({ ...params, page_index: 0, page_size: 10000 }).then((res: any) => {
+                if (res.code === ApiProduct.C_OK) {
+                    const allRows = (res.data.rows || []).filter((row: any) => (map.get(row.id) || 0) > 0);
+                    const total = allRows.length;
+                    const start = (pageIndex - 1) * pageSize;
+                    const rows = allRows.slice(start, start + pageSize);
+                    dispatch({
+                        loading: false,
+                        pageIndex,
+                        pageSize,
+                        total,
+                        rows,
+                        dhfCountMap: map,
+                    });
+                } else {
+                    dispatch({ loading: false, pageIndex, pageSize, total: 0, rows: [] });
+                    message.error(res.msg);
+                }
+            }).catch(() => {
+                dispatch({ loading: false });
+                message.error("加载产品列表失败");
+            });
         });
     };
 
@@ -159,7 +173,7 @@ export default () => {
             if (res.code === Api.C_OK) {
                 closeCopyModal();
                 message.success(res.msg || "复制成功");
-                loadDhfCounts();
+                doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
             } else {
                 message.error(res.msg || "复制失败");
             }
@@ -184,7 +198,7 @@ export default () => {
             if (res.code === Api.C_OK) {
                 dispatch({ dlgType: null });
                 message.success(res.msg || ts("save_success"));
-                loadDhfCounts();
+                doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
             } else {
                 message.error(res.msg);
             }
