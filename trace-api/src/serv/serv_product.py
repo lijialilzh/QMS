@@ -25,10 +25,74 @@ from .serv_utils import new_version
 
 logger = logging.getLogger(__name__)
 
+# 与 serv_srs_doc.DELETED_SRS_VERSION_PREFIX 保持一致：列表已隐藏，不算用户可见的引用
+DELETED_SRS_VERSION_PREFIX = "__deleted_srs__"
+
+DOC_FILE_CATEGORY_LABELS = {
+    "img_topo": "物理拓扑图",
+    "img_struct": "体系结构图",
+    "img_flow": "网络安全流程图",
+    "img_ui": "用户界面关系图",
+    "img_home": "主页面图示",
+}
+
 
 def _version_seq(v: str) -> int:
     m = re.search(r"(\d+)(?!.*\d)", v or "")
     return int(m.group(1)) if m else -1
+
+
+def _build_prod_docfile_block_msg(product_id: int) -> str:
+    rows = db.session.execute(
+        select(DocFile.category, func.count(DocFile.id))
+        .where(DocFile.product_id == product_id)
+        .group_by(DocFile.category)
+        .order_by(DocFile.category)
+    ).all()
+    if not rows:
+        return ts("msg_prod_x_docfile")
+    parts = []
+    for category, count in rows:
+        label = DOC_FILE_CATEGORY_LABELS.get(str(category or "").strip(), category or "未知类型")
+        parts.append(f"{label} {int(count or 0)} 条")
+    detail = "、".join(parts)
+    template = ts("msg_prod_x_docfile_detail")
+    if "%(detail)s" in template:
+        return template % {"detail": detail}
+    return f"{ts('msg_prod_x_docfile')} 剩余：{detail}。"
+
+
+def _active_srs_doc_filter():
+    return ~SrsDoc.version.like(f"{DELETED_SRS_VERSION_PREFIX}%")
+
+
+def _build_prod_srsdoc_block_msg(product_id: int) -> str:
+    rows = db.session.execute(
+        select(SrsDoc.version, SrsDoc.folder_name)
+        .where(SrsDoc.product_id == product_id)
+        .where(_active_srs_doc_filter())
+        .order_by(desc(SrsDoc.id))
+        .limit(8)
+    ).all()
+    if not rows:
+        return ts("msg_prod_x_srsdoc")
+    parts = []
+    for version, folder_name in rows:
+        label = str(version or "").strip() or "(未命名版本)"
+        folder = str(folder_name or "").strip()
+        parts.append(f"{label}{f'（{folder}）' if folder else ''}")
+    extra = db.session.execute(
+        select(func.count(SrsDoc.id))
+        .where(SrsDoc.product_id == product_id)
+        .where(_active_srs_doc_filter())
+    ).scalar() or 0
+    detail = "、".join(parts)
+    if extra > len(rows):
+        detail = f"{detail} 等共 {int(extra)} 份"
+    template = ts("msg_prod_x_srsdoc_detail")
+    if "%(detail)s" in template:
+        return template % {"detail": detail}
+    return f"{ts('msg_prod_x_srsdoc')} 剩余：{detail}。"
 
 
 class Server(object):
@@ -166,10 +230,10 @@ class Server(object):
         return Resp.resp_err(msg=ts(msg_err_db))
    
     async def delete_product(self, id):
-        sql = select(func.count(SrsDoc.id)).where(SrsDoc.product_id == id)
+        sql = select(func.count(SrsDoc.id)).where(SrsDoc.product_id == id).where(_active_srs_doc_filter())
         count = db.session.execute(sql).scalar()
         if count > 0:
-            return Resp.resp_err(msg=ts("msg_prod_x_srsdoc"))
+            return Resp.resp_err(msg=_build_prod_srsdoc_block_msg(id))
 
         sql = select(func.count(TestSet.id)).where(TestSet.product_id == id)
         count = db.session.execute(sql).scalar()
@@ -184,7 +248,7 @@ class Server(object):
         sql = select(func.count(DocFile.id)).where(DocFile.product_id == id)
         count = db.session.execute(sql).scalar()
         if count > 0:
-            return Resp.resp_err(msg=ts("msg_prod_x_docfile"))
+            return Resp.resp_err(msg=_build_prod_docfile_block_msg(id))
 
         db.session.execute(delete(Product).where(Product.id == id))
         db.session.commit()

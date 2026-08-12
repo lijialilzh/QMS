@@ -5,6 +5,7 @@ import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { useData } from "@/common";
+import { createDocBatchDelete, getDocTableRowSelection } from "../doc_shared/docBatchDelete";
 import * as Api from "@/api/ApiSrsDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
@@ -45,6 +46,7 @@ export default () => {
         rows: [],
         targetRow: {},
         loading: false,
+        selectedRowKeys: [],
         products: [],
         versionOptions: [] as { value: string; label: string }[],
         importFiles: [],
@@ -143,6 +145,15 @@ export default () => {
             }
         });
     };
+
+    const doBatchDelete = createDocBatchDelete({
+        ts,
+        dispatch,
+        data,
+        deleteFn: Api.delete_srs_doc,
+        cOk: Api.C_OK,
+        onRefresh: () => doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize),
+    });
 
     const doImportWord = () => {
         importForm.validateFields().then((values) => {
@@ -389,9 +400,13 @@ export default () => {
                     <Button type="primary" onClick={openAddModal}>
                         {ts("add")}
                     </Button>
+                                    <Button disabled={!(data.selectedRowKeys || []).length} danger onClick={doBatchDelete}>
+                        {ts("batch_delete")}
+                    </Button>
                 </Space>
             </div>
             <Table
+                rowSelection={getDocTableRowSelection(data, dispatch)}
                 className="expand"
                 columns={columns}
                 rowKey={(item: any) => item.id}

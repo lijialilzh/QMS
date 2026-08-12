@@ -97,10 +97,20 @@ function isEmbeddedTableNode(node: TreeNode): boolean {
 }
 
 /** 与 SDS/IMM 一致：去掉标题里已有章节号前缀，编辑时只填名称 */
-function stripNavChapterPrefix(title: string): string {
-    return String(title || "")
-        .replace(/^\s*\d+(?:\.\d+)*(?:[、.\s　]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
-        .trim();
+function stripNavChapterPrefix(title: string, chapterNo?: string): string {
+    let stripped = String(title || "").trim();
+    let prev = "";
+    while (stripped !== prev) {
+        prev = stripped;
+        stripped = stripped
+            .replace(/^\s*\d+(?:\.\d+)*(?:[、.\s　]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+            .trim();
+    }
+    const prefix = String(chapterNo || "").trim();
+    if (prefix && stripped.startsWith(prefix)) {
+        stripped = stripped.slice(prefix.length).replace(/^[\s、.．]+/, "").trim();
+    }
+    return stripped;
 }
 
 function isNavTableTitleNode(node: TreeNode): boolean {
@@ -1563,6 +1573,8 @@ interface TreeNodeItemProps {
     onEditSrsChangeTable?: (table: { id: number | string; title: string; data: any[]; type_code?: string }) => void;
     onDeleteSrsChangeTable?: (table: { id: number | string; title: string; data: any[]; type_code?: string }) => void;
     onSaveReqDetailTable?: (detail: any) => Promise<void>;
+    onEditSrsMainPreview?: () => void;
+    onEditSrsOtherPreview?: () => void;
     srsReqPreview?: {
         main: any[];
         other: any[];
@@ -1604,6 +1616,8 @@ const TreeNodeItem = ({
     onOpenReqList,
     onEditSrsChangeTable,
     onDeleteSrsChangeTable,
+    onEditSrsMainPreview,
+    onEditSrsOtherPreview,
     srsReqPreview,
     reqDetails,
     srsReqLoading,
@@ -1817,7 +1831,9 @@ const TreeNodeItem = ({
     const editableNodeText = isLockedOtherReqChapter ? stripOtherReqCodeLineFromText(node.text) : (node.text || "");
     const hasRcm = Array.isArray(node.rcm_codes);
     const hasRcmText = readOnly && /RCM\d+/i.test(String(node.text || ""));
-    const isSrsReqRefNode = node.ref_type === "srs_reqs" || node.ref_type === "srs_reqs_2";
+    const isSrsMainReqRefNode = node.ref_type === "srs_reqs";
+    const isSrsOtherReqRefNode = node.ref_type === "srs_reqs_2";
+    const isSrsReqRefNode = isSrsMainReqRefNode || isSrsOtherReqRefNode;
     const isSrsReqListNode = node.ref_type === "srs_reqds";
     const normalizeSrsCode = (value?: string) => String(value || "").replace(/\s+/g, "").toUpperCase();
     const nodeSrsCode = normalizeSrsCode(node.srs_code || "");
@@ -1975,6 +1991,10 @@ const TreeNodeItem = ({
             changeReqPreviewTablesToRender.length > 0
         )
     );
+    const shouldRenderSrsReqSection = shouldShowSrsReqPreviewTables ||
+        (!readOnly && (isSrsMainReqRefNode || isSrsOtherReqRefNode));
+    const shouldShowMainSrsPreviewBlock = (srsReqPreview?.main || []).length > 0 || isSrsMainReqRefNode;
+    const shouldShowOtherSrsPreviewBlock = (srsReqPreview?.other || []).length > 0 || isSrsOtherReqRefNode;
     const shouldShowChangeReqTables = !!(
         (isSrsReqListNode || (isImportedReqTableAnchor && hasNormalOtherReqTable)) &&
         changeReqPreviewTablesToRender.length > 0 &&
@@ -2219,7 +2239,10 @@ const TreeNodeItem = ({
         return rows;
     };
 
-    const navTitleValue = stripNavChapterPrefix(String(node.title || ""));
+    const navTitleValue = stripNavChapterPrefix(String(node.title || ""), autoNavChapterNo);
+    const navReadOnlyTitle = autoNavChapterNo
+        ? `${autoNavChapterNo} ${navTitleValue || "(未命名)"}`.trim()
+        : (node.title || "-");
 
     return (
         <div style={{ marginLeft: renderChildren ? level * 20 : 0 }}>
@@ -2240,7 +2263,7 @@ const TreeNodeItem = ({
                       <span className="node-title-prefix">{autoNavChapterNo || ""}</span>
                   )}
                   {readOnly || isLockedReqHierarchyNode || isLockedChapterMeta ? (
-                      <div className={`node-title${hasRcm ? " with-rcm" : ""}${hasRcmText ? " with-rcm-text" : ""}`}>{node.title || "-"}</div>
+                      <div className={`node-title${hasRcm ? " with-rcm" : ""}${hasRcmText ? " with-rcm-text" : ""}`}>{navReadOnlyTitle}</div>
                   ) : (
                       <Input
                           className={`node-title${hasRcm ? " with-rcm" : ""}${hasRcmText ? " with-rcm-text" : ""}`}
@@ -2632,19 +2655,40 @@ const TreeNodeItem = ({
               ))}
               {matchedReqDetail && !isRenderableTable(node.table) && renderReqDetailTable(matchedReqDetail, `req_detail_${node.id}`)}
               {chapterReqDetails.map((detail: any, idx: number) => renderReqDetailTable(detail, `chapter_req_detail_${node.id}_${detail?.code || idx}`))}
-              {shouldShowSrsReqPreviewTables && (
+              {isSrsMainReqRefNode && !!String(node.label || "").trim() && (
+                  <div className="node-content" style={{ marginBottom: 8, whiteSpace: "pre-line" }}>
+                      {node.label}
+                  </div>
+              )}
+              {shouldRenderSrsReqSection && (
                   <div className="node-table">
-                      {(srsReqPreview.main || []).length > 0 && (
+                      {shouldShowMainSrsPreviewBlock && (
                           <>
-                              <div style={{ marginBottom: 8, fontWeight: 600 }}>{ts("srs_doc.srs_table") || "产品需求列表"}</div>
+                              <div style={{ marginBottom: 8, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                  <span>{ts("srs_doc.srs_table") || "产品需求列表"}</span>
+                                  {!readOnly && onEditSrsMainPreview && (
+                                      <Button
+                                          size="small"
+                                          type="default"
+                                          icon={<EditOutlined />}
+                                          onClick={onEditSrsMainPreview}
+                                      >
+                                          {ts("edit")}
+                                      </Button>
+                                  )}
+                              </div>
                               <Table
                                   size="small"
                                   bordered
                                   pagination={false}
                                   rowKey="key"
                                   loading={!!srsReqLoading}
-                                  locale={{ emptyText: "暂无数据" }}
-                                  dataSource={srsReqPreview.main || []}
+                                  locale={{
+                                      emptyText: readOnly
+                                          ? "暂无数据"
+                                          : "暂无数据，请点击右上角「编辑」添加标准需求",
+                                  }}
+                                  dataSource={srsReqPreview?.main || []}
                                   columns={[
                                       { title: ts("srs_doc.srs_code") || "需求编号", dataIndex: "srs_code", width: 180 },
                                       { title: ts("srs_doc.module") || "模块", dataIndex: "module", width: 180 },
@@ -2656,17 +2700,33 @@ const TreeNodeItem = ({
                           </>
                       )}
 
-                      {(srsReqPreview.other || []).length > 0 && (
+                      {shouldShowOtherSrsPreviewBlock && (
                           <>
-                              <div style={{ marginTop: 16, marginBottom: 8, fontWeight: 600 }}>{ts("srs_doc.other_req_list") || "其他需求列表"}</div>
+                              <div style={{ marginTop: shouldShowMainSrsPreviewBlock ? 16 : 0, marginBottom: 8, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                                  <span>{ts("srs_doc.other_req_list") || "其他需求列表"}</span>
+                                  {!readOnly && onEditSrsOtherPreview && (
+                                      <Button
+                                          size="small"
+                                          type="default"
+                                          icon={<EditOutlined />}
+                                          onClick={onEditSrsOtherPreview}
+                                      >
+                                          {ts("edit")}
+                                      </Button>
+                                  )}
+                              </div>
                               <Table
                                   size="small"
                                   bordered
                                   pagination={false}
                                   rowKey="key"
                                   loading={!!srsReqLoading}
-                                  locale={{ emptyText: "暂无数据" }}
-                                  dataSource={srsReqPreview.other || []}
+                                  locale={{
+                                      emptyText: readOnly
+                                          ? "暂无数据"
+                                          : "暂无数据，请点击右上角「编辑」添加其他需求",
+                                  }}
+                                  dataSource={srsReqPreview?.other || []}
                                   columns={[
                                       { title: ts("srs_doc.srs_code") || "需求编号", dataIndex: "srs_code", width: 180 },
                                       { title: ts("srs_doc.module") || "需求模块", dataIndex: "module", width: 320 },
@@ -2754,6 +2814,8 @@ const TreeNodeItem = ({
                     onOpenReqList={onOpenReqList}
                     onEditSrsChangeTable={onEditSrsChangeTable}
                     onDeleteSrsChangeTable={onDeleteSrsChangeTable}
+                    onEditSrsMainPreview={onEditSrsMainPreview}
+                    onEditSrsOtherPreview={onEditSrsOtherPreview}
                     srsReqPreview={srsReqPreview}
                     reqDetails={reqDetails}
                     srsReqLoading={srsReqLoading}
@@ -4195,9 +4257,11 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         if (targetNode && isChapterMetaLockedNode(targetNode, srsReqPreview?.other || [])) {
             return;
         }
+        const chapterNo = navChapterNumberMap.get(String(id)) || "";
+        const normalizedTitle = chapterNo ? stripNavChapterPrefix(title, chapterNo) : title;
         const newNodes = findNodeAndUpdate(nodes, id, (node) => ({
             ...node,
-            title
+            title: normalizedTitle,
         }));
         updateNodes(newNodes);
     };
@@ -4312,6 +4376,82 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         setTableModalVisible(true);
         setInitialTableData(undefined); // 新增模式，不传初始数据
         setTableCellsBackup(undefined);
+    };
+
+    const findSrsReqRefNodeId = (refType: "srs_reqs" | "srs_reqs_2"): number | null => {
+        let found: number | null = null;
+        const walk = (list: TreeNode[]) => {
+            (list || []).forEach((node) => {
+                if (node.ref_type === refType && found == null) {
+                    found = node.id;
+                }
+                walk(node.children || []);
+            });
+        };
+        walk(nodes);
+        return found;
+    };
+
+    const buildMainSrsTableInitialData = (rows: any[] = []): TableDataWithHeaders => {
+        const headers = [
+            { code: uuidv4(), name: ts("srs_doc.srs_code") || "需求编号" },
+            { code: uuidv4(), name: ts("srs_doc.module") || "模块" },
+            { code: uuidv4(), name: ts("srs_doc.function") || "功能" },
+            { code: uuidv4(), name: ts("srs_doc.sub_function") || "子功能" },
+        ];
+        const dataRows = rows.length
+            ? rows.map((row) => [
+                String(row.srs_code || row.code || ""),
+                String(row.module || ""),
+                String(row.function || ""),
+                String(row.sub_function || ""),
+            ])
+            : [["", "", "", ""]];
+        return {
+            tableName: ts("srs_doc.srs_table") || "产品需求列表",
+            headers,
+            data: dataRows,
+        };
+    };
+
+    const buildOtherReqTableInitialData = (rows: any[] = []): TableDataWithHeaders => {
+        const headers = [
+            { code: uuidv4(), name: ts("srs_doc.srs_code") || "需求编号" },
+            { code: uuidv4(), name: ts("srs_doc.module") || "需求模块" },
+            { code: uuidv4(), name: ts("srs_doc.chapter_number") || "对应的章节号" },
+        ];
+        const dataRows = rows.length
+            ? rows.map((row) => [
+                String(row.srs_code || row.code || ""),
+                String(row.module || ""),
+                String(row.location || ""),
+            ])
+            : [["", "", ""]];
+        return {
+            tableName: ts("srs_doc.other_req_list") || "其他需求列表",
+            headers,
+            data: dataRows,
+        };
+    };
+
+    const handleEditSrsMainPreview = () => {
+        const refNodeId = findSrsReqRefNodeId("srs_reqs");
+        setShowReqTableHint(true);
+        setCurrentNodeId(refNodeId);
+        setInitialTableData(buildMainSrsTableInitialData(srsReqPreview?.main || []));
+        setTableCellsBackup(undefined);
+        setLockedTableRowLabels([]);
+        setTableModalVisible(true);
+    };
+
+    const handleEditSrsOtherPreview = () => {
+        const refNodeId = findSrsReqRefNodeId("srs_reqs_2");
+        setShowReqTableHint(false);
+        setCurrentNodeId(refNodeId);
+        setInitialTableData(buildOtherReqTableInitialData(srsReqPreview?.other || []));
+        setTableCellsBackup(undefined);
+        setLockedTableRowLabels([]);
+        setTableModalVisible(true);
     };
 
     const parseExcelToTables = (file: File): Promise<Array<{ sheetName: string; table: TableData }>> => {
@@ -6148,20 +6288,61 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         n.ref_type !== "srs_reqds"
     );
 
+    const isNavSpecialRefNode = (n: TreeNode): boolean => (
+        n.ref_type === "srs_reqs" || n.ref_type === "srs_reqs_2" || n.ref_type === "srs_reqds"
+    );
+
+    const getNavRefLabel = (node: TreeNode) => {
+        if (node.ref_type === "srs_reqs_2") {
+            return ts("srs_doc.other_req_list") || "其他需求列表";
+        }
+        if (node.ref_type === "srs_reqds") {
+            return ts("srs_doc.req_list") || "需求列表";
+        }
+        const label = String(node.label || "").trim();
+        return label || ts("srs_doc.srs_table") || "产品需求列表";
+    };
+
     const navChapterNumberMap = extraNavSections.length > 0
         ? computeNavChapterNumberMap(visibleNodes)
         : new Map<string, string>();
 
+    const renderNavSpecialRefItem = (node: TreeNode, depth: number) => {
+        const isActive = !!effectiveNode && String(node.id) === String(effectiveNode.id);
+        const navLabel = getNavRefLabel(node);
+        return (
+            <div key={`nav-ref-${node.id}`}>
+                <div
+                    className={`srs-nav-item srs-nav-item--ref${isActive ? " active" : ""}`}
+                    style={{ paddingLeft: 8 + depth * 14 }}
+                    onClick={() => setActiveNodeId(node.id)}
+                >
+                    <span className="srs-nav-caret-placeholder" />
+                    <span className="srs-nav-title" title={navLabel}>{navLabel}</span>
+                </div>
+            </div>
+        );
+    };
+
     // 递归渲染左目录：展开到子章节都可点击，选中后右侧编辑该章节
-    const renderNav = (list: TreeNode[], depth: number): JSX.Element[] => (
-        (list || []).filter(isNavChapter).map((node) => {
+    const renderNav = (list: TreeNode[], depth: number): JSX.Element[] => {
+        const items: JSX.Element[] = [];
+        (list || []).forEach((node) => {
+            if (isNavSpecialRefNode(node)) {
+                items.push(renderNavSpecialRefItem(node, depth));
+                return;
+            }
+            if (!isNavChapter(node)) {
+                return;
+            }
             const kids = (node.children || []).filter(isNavChapter);
-            const hasKids = kids.length > 0;
+            const refKids = (node.children || []).filter(isNavSpecialRefNode);
+            const hasKids = kids.length > 0 || refKids.length > 0;
             const collapsed = navCollapsedIds.has(String(node.id));
             const isActive = !!effectiveNode && String(node.id) === String(effectiveNode.id);
             const chapterNum = navChapterNumberMap.get(String(node.id)) || "";
             const navLabel = `${chapterNum ? `${chapterNum} ` : ""}${stripNavChapterPrefix(node.title) || "(未命名)"}`;
-            return (
+            items.push(
                 <div key={`nav-${node.id}`}>
                     <div
                         className={`srs-nav-item${isActive ? " active" : ""}`}
@@ -6197,10 +6378,91 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                             </span>
                         )}
                     </div>
-                    {hasKids && !collapsed && renderNav(kids, depth + 1)}
+                    {hasKids && !collapsed && (
+                        <>
+                            {renderNav(kids, depth + 1)}
+                            {refKids.map((refNode) => renderNavSpecialRefItem(refNode, depth + 1))}
+                        </>
+                    )}
                 </div>
             );
-        })
+        });
+        return items;
+    };
+
+    const findParentNodeByChildId = (list: TreeNode[], childId: number | string): TreeNode | null => {
+        for (const node of list || []) {
+            if ((node.children || []).some((child) => String(child.id) === String(childId))) {
+                return node;
+            }
+            const found = findParentNodeByChildId(node.children || [], childId);
+            if (found) return found;
+        }
+        return null;
+    };
+
+    const getInlineSiblingRefNodes = (node: TreeNode): TreeNode[] => {
+        if (isNavSpecialRefNode(node)) return [];
+        const parent = findParentNodeByChildId(nodes, node.id);
+        if (!parent) return [];
+        const siblings = parent.children || [];
+        const idx = siblings.findIndex((child) => String(child.id) === String(node.id));
+        if (idx < 0) return [];
+        const refs: TreeNode[] = [];
+        for (let i = idx + 1; i < siblings.length; i += 1) {
+            const sibling = siblings[i];
+            if (isNavSpecialRefNode(sibling)) {
+                refs.push(sibling);
+            } else {
+                break;
+            }
+        }
+        return refs;
+    };
+
+    const inlineSiblingRefNodes = effectiveNode && !isNavSpecialRefNode(effectiveNode)
+        ? getInlineSiblingRefNodes(effectiveNode)
+        : [];
+
+    const renderEditorTreeNodeItem = (node: TreeNode, options?: { hideChapterPrefix?: boolean }) => (
+        <TreeNodeItem
+            key={`editor-node-${node.id}`}
+            node={node}
+            level={0}
+            renderChildren={false}
+            disableHierarchyActions
+            hideLevelPrefix
+            useNavChapterEditor={!readOnly && !options?.hideChapterPrefix}
+            autoNavChapterNo={options?.hideChapterPrefix ? "" : (navChapterNumberMap.get(String(node.id)) || "")}
+            docId={docId}
+            productId={productId}
+            docVersion={docVersion}
+            productVersion={productVersion}
+            readOnly={readOnly}
+            rcmOptions={rcmOptions}
+            onRcmSelectChange={handleRcmSelectChange}
+            onAdd={handleAdd}
+            onAddSibling={handleAddSibling}
+            onDelete={handleDelete}
+            onTitleChange={handleTitleChange}
+            onSrsCodeChange={handleSrsCodeChange}
+            onImageChange={handleImageChange}
+            onContentChange={handleContentChange}
+            onAddTable={handleAddTable}
+            onImportTable={handleImportTable}
+            onEditTable={handleEditTable}
+            onDeleteTable={handleDeleteTable}
+            onOpenSrsTable={onOpenSrsTable}
+            onOpenReqList={onOpenReqList}
+            onEditSrsChangeTable={onEditSrsChangeTable}
+            onDeleteSrsChangeTable={onDeleteSrsChangeTable}
+            onEditSrsMainPreview={!readOnly && onSaveSrsReqTable ? handleEditSrsMainPreview : undefined}
+            onEditSrsOtherPreview={!readOnly && onSaveOtherReqTable ? handleEditSrsOtherPreview : undefined}
+            srsReqPreview={srsReqPreview}
+            reqDetails={reqDetails}
+            srsReqLoading={srsReqLoading}
+            existingChangeTableTitles={existingChangeTableTitles}
+        />
     );
 
     return (
@@ -6253,41 +6515,8 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                                 <div key={`extra-${effectiveExtra.key}`}>{effectiveExtra.content}</div>
                             ) : effectiveNode ? (
                                 <div className="tree-node-item-wrapper" key={effectiveNode.id}>
-                                    <TreeNodeItem
-                                        node={effectiveNode}
-                                        level={0}
-                                        renderChildren={false}
-                                        disableHierarchyActions
-                                        hideLevelPrefix
-                                        useNavChapterEditor={!readOnly}
-                                        autoNavChapterNo={navChapterNumberMap.get(String(effectiveNode.id)) || ""}
-                                        docId={docId}
-                                        productId={productId}
-                                        docVersion={docVersion}
-                                        productVersion={productVersion}
-                                        readOnly={readOnly}
-                                        rcmOptions={rcmOptions}
-                                        onRcmSelectChange={handleRcmSelectChange}
-                                        onAdd={handleAdd}
-                                        onAddSibling={handleAddSibling}
-                                        onDelete={handleDelete}
-                                        onTitleChange={handleTitleChange}
-                                        onSrsCodeChange={handleSrsCodeChange}
-                                        onImageChange={handleImageChange}
-                                        onContentChange={handleContentChange}
-                                        onAddTable={handleAddTable}
-                                        onImportTable={handleImportTable}
-                                        onEditTable={handleEditTable}
-                                        onDeleteTable={handleDeleteTable}
-                                        onOpenSrsTable={onOpenSrsTable}
-                                        onOpenReqList={onOpenReqList}
-                                        onEditSrsChangeTable={onEditSrsChangeTable}
-                                        onDeleteSrsChangeTable={onDeleteSrsChangeTable}
-                                        srsReqPreview={srsReqPreview}
-                                        reqDetails={reqDetails}
-                                        srsReqLoading={srsReqLoading}
-                                        existingChangeTableTitles={existingChangeTableTitles}
-                                    />
+                                    {renderEditorTreeNodeItem(effectiveNode)}
+                                    {inlineSiblingRefNodes.map((refNode) => renderEditorTreeNodeItem(refNode, { hideChapterPrefix: true }))}
                                 </div>
                             ) : (
                                 <Empty

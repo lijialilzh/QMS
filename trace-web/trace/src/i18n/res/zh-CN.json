@@ -73,6 +73,7 @@
         "doc_files_struct": "体系结构图",
         "doc_files_ui": "用户界面关系图",
         "doc_files_flow": "网络安全流程图",
+        "doc_files_home": "主页面图示",
         "doc_files": "图表文件",
         "prod_risk": "风险追溯管理",
         "prod_hazs": "产品HAZ管理",

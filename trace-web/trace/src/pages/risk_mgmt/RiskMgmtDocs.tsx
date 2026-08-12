@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
+import { createDocBatchDelete, getDocTableRowSelection } from "../doc_shared/docBatchDelete";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiRiskMgmtDoc";
 import * as ApiProduct from "@/api/ApiProduct";
@@ -121,6 +122,15 @@ export default () => {
             }
         });
     };
+
+    const doBatchDelete = createDocBatchDelete({
+        ts,
+        dispatch,
+        data,
+        deleteFn: Api.delete_risk_mgmt_doc,
+        cOk: Api.C_OK,
+        onRefresh: () => doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize),
+    });
 
     const doDuplicate = (row: any) => {
         loadProducts(data, dispatch);
@@ -334,9 +344,13 @@ export default () => {
                     }}>
                         {ts("add")}
                     </Button>
+                                    <Button disabled={!(data.selectedRowKeys || []).length} danger onClick={doBatchDelete}>
+                        {ts("batch_delete")}
+                    </Button>
                 </Space>
             </div>
             <Table
+                rowSelection={getDocTableRowSelection(data, dispatch)}
                 className="expand risk-doc-table"
                 rowKey="id"
                 loading={data.loading}

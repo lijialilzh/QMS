@@ -73,6 +73,7 @@
         "doc_files_struct": "Architecture Diagram",
         "doc_files_ui": "UI Relationship Diagram",
         "doc_files_flow": "Cybersecurity Flow Diagram",
+        "doc_files_home": "Home Page Diagram",
         "doc_files": "Diagram Files",
         "prod_risk": "Risk Traceability",
         "prod_hazs": "Product HAZ",

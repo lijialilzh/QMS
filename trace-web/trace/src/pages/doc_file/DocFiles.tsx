@@ -135,6 +135,7 @@ export default ({ fileType }: any) => {
         if (fileType === "img_struct") return "体系结构图";
         if (fileType === "img_flow") return "网络安全流程图";
         if (fileType === "img_ui") return "用户界面关系图";
+        if (fileType === "img_home") return "主页面图示";
         return fileType || "";
     };
     const getDocVersionLabel = () => "文档版本";

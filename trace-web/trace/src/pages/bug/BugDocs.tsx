@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
+import { createDocBatchDelete, getDocTableRowSelection } from "../doc_shared/docBatchDelete";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiBugDoc";
 import * as ApiProduct from "@/api/ApiProduct";
@@ -99,6 +100,15 @@ export default () => {
         });
     };
 
+    const doBatchDelete = createDocBatchDelete({
+        ts,
+        dispatch,
+        data,
+        deleteFn: Api.delete_bug_doc,
+        cOk: Api.C_OK,
+        onRefresh: () => doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize),
+    });
+
     const doDownload = (row: any) => {
         // 大文件用浏览器原生下载（带 cookie），边下边显示进度，避免前端 blob 缓冲卡顿
         const a = document.createElement("a");
@@ -181,9 +191,14 @@ export default () => {
                 <Space>
                     <Button onClick={async () => { const r: any = await Api.download_bug_template(); if (r && r.code !== Api.C_OK) message.error(r.msg || "下载失败"); }}>下载模版</Button>
                     <Button type="primary" onClick={openAdd}>上传</Button>
+                                    <Button disabled={!(data.selectedRowKeys || []).length} danger onClick={doBatchDelete}>
+                        {ts("batch_delete")}
+                    </Button>
                 </Space>
             </div>
-            <Table className="expand risk-doc-table" rowKey="id" loading={data.loading} columns={columns} dataSource={data.rows} tableLayout="fixed"
+            <Table
+                rowSelection={getDocTableRowSelection(data, dispatch)}
+                className="expand risk-doc-table" rowKey="id" loading={data.loading} columns={columns} dataSource={data.rows} tableLayout="fixed"
                 pagination={{
                     total: data.total, current: data.pageIndex, showSizeChanger: true, defaultPageSize: pageSizeOptions[0], pageSizeOptions, hideOnSinglePage: false,
                     onShowSizeChange: (page, pageSize) => dispatch({ pageIndex: page, pageSize }),

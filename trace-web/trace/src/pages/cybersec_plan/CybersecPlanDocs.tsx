@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
+import { createDocBatchDelete, getDocTableRowSelection } from "../doc_shared/docBatchDelete";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiCybersecPlanDoc";
 import * as ApiProduct from "@/api/ApiProduct";
@@ -118,6 +119,15 @@ export default () => {
             }
         });
     };
+
+    const doBatchDelete = createDocBatchDelete({
+        ts,
+        dispatch,
+        data,
+        deleteFn: Api.delete_cybersec_plan_doc,
+        cOk: Api.C_OK,
+        onRefresh: () => doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize),
+    });
 
     const doDuplicate = (row: any) => {
         loadProducts(data, dispatch);
@@ -256,9 +266,14 @@ export default () => {
                         dispatch({ dlgType: DlgTypes.add });
                         loadProducts(data, dispatch);
                     }}>{ts("add")}</Button>
+                                    <Button disabled={!(data.selectedRowKeys || []).length} danger onClick={doBatchDelete}>
+                        {ts("batch_delete")}
+                    </Button>
                 </Space>
             </div>
-            <Table className="expand risk-doc-table" rowKey="id" loading={data.loading} columns={columns} dataSource={data.rows} tableLayout="fixed"
+            <Table
+                rowSelection={getDocTableRowSelection(data, dispatch)}
+                className="expand risk-doc-table" rowKey="id" loading={data.loading} columns={columns} dataSource={data.rows} tableLayout="fixed"
                 pagination={{
                     total: data.total, current: data.pageIndex, showSizeChanger: true,
                     defaultPageSize: pageSizeOptions[0], pageSizeOptions, hideOnSinglePage: false,

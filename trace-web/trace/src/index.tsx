@@ -173,6 +173,7 @@ const router = createRouter([
             { path: "/doc_files_ui", element: <DocFiles fileType="img_ui" /> },
             { path: "/doc_files_flow", element: <DocFiles fileType="img_flow" /> },
             { path: "/doc_files_struct", element: <DocFiles fileType="img_struct" /> },
+            { path: "/doc_files_home", element: <DocFiles fileType="img_home" /> },
 
             { path: "/prod_hazs", element: <ProdHazs /> },
             { path: "/prod_rcms", element: <ProdRcms /> },

@@ -270,6 +270,11 @@ export default () => {
                         label: ts("menu.doc_files_flow"),
                         perm: "doc_file_flow_view",
                     },
+                    {
+                        key: "/doc_files_home",
+                        label: ts("menu.doc_files_home"),
+                        perm: "doc_file_home_view",
+                    },
                 ],
             },
             {

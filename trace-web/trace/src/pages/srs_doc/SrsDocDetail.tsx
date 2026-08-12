@@ -307,36 +307,73 @@ export default () => {
 
     const cloneTree = (nodes: TreeNode[]): TreeNode[] => JSON.parse(JSON.stringify(nodes || []));
     const normalizeTemplateTitle = (title?: string) => String(title || "").replace(/\s+/g, "").trim();
+    const cloneTemplateBranch = (tplNode: any): TreeNode => {
+        const addIds = (items: any[]): TreeNode[] => items.map((node) => ({
+            ...node,
+            id: `node_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            children: node.children ? addIds(node.children) : [],
+        }));
+        return addIds([JSON.parse(JSON.stringify(tplNode))])[0];
+    };
     const ensureStandardTemplateChildren = (nodes: TreeNode[]): { nodes: TreeNode[]; changed: boolean } => {
         const templateNodes = buildStandardNodesWithIds();
         let changed = false;
-        const mergeChildren = (currentItems: TreeNode[], templateItems: TreeNode[]): TreeNode[] => {
-            return (currentItems || []).map((current) => {
-                const matchedTemplate = (templateItems || []).find((tpl: any) => (
+
+        const mergeChildrenOrdered = (currentChildren: TreeNode[], templateChildren: TreeNode[]): TreeNode[] => {
+            const current = [...(currentChildren || [])];
+            const consumed = new Set<number>();
+            const output: TreeNode[] = [];
+
+            (templateChildren || []).forEach((tplChild) => {
+                const titleKey = normalizeTemplateTitle(tplChild.title);
+                let matchIdx = -1;
+                if (titleKey) {
+                    matchIdx = current.findIndex((child, idx) => (
+                        !consumed.has(idx) && normalizeTemplateTitle(child.title) === titleKey
+                    ));
+                } else if (tplChild.ref_type) {
+                    matchIdx = current.findIndex((child, idx) => (
+                        !consumed.has(idx) && child.ref_type === tplChild.ref_type
+                    ));
+                }
+                if (matchIdx >= 0) {
+                    consumed.add(matchIdx);
+                    output.push(mergeNode(current[matchIdx], tplChild));
+                } else if (titleKey || tplChild.ref_type) {
+                    changed = true;
+                    output.push(cloneTemplateBranch(tplChild));
+                }
+            });
+
+            current.forEach((child, idx) => {
+                if (!consumed.has(idx)) {
+                    output.push(child);
+                }
+            });
+            return output;
+        };
+
+        const mergeNode = (current: TreeNode, template: TreeNode): TreeNode => ({
+            ...current,
+            children: mergeChildrenOrdered(current.children || [], template.children || []),
+        });
+
+        const mergeRoots = (currentItems: TreeNode[], templateItems: TreeNode[]): TreeNode[] => (
+            (currentItems || []).map((current) => {
+                const matchedTemplate = (templateItems || []).find((tpl) => (
                     normalizeTemplateTitle(tpl.title) === normalizeTemplateTitle(current.title)
                 ));
                 if (!matchedTemplate) {
                     return {
                         ...current,
-                        children: mergeChildren(current.children || [], []),
+                        children: mergeRoots(current.children || [], []),
                     };
                 }
-                const currentChildren = current.children || [];
-                const currentChildKeys = new Set(currentChildren.map((child) => normalizeTemplateTitle(child.title)));
-                const missingChildren = (matchedTemplate.children || []).filter((tplChild: any) => {
-                    const key = normalizeTemplateTitle(tplChild.title);
-                    return key && !currentChildKeys.has(key);
-                });
-                if (missingChildren.length > 0) {
-                    changed = true;
-                }
-                return {
-                    ...current,
-                    children: mergeChildren([...currentChildren, ...missingChildren], matchedTemplate.children || []),
-                };
-            });
-        };
-        return { nodes: mergeChildren(nodes || [], templateNodes), changed };
+                return mergeNode(current, matchedTemplate);
+            })
+        );
+
+        return { nodes: mergeRoots(nodes || [], templateNodes), changed };
     };
 
     // 加载产品列表
@@ -2628,11 +2665,20 @@ export default () => {
                     
                     const parsedContentRaw = (targetRow.content || []).map((node: any) => parseTreeNode(node));
                     let shouldInitStandard = false;
+                    let shouldPatchTemplate = false;
                     let ensuredContentRaw = parsedContentRaw;
-                    if (!isReadOnly && needsStandardTemplate(parsedContentRaw)) {
-                        const product = await resolveProductById(targetRow.product_id);
-                        ensuredContentRaw = buildStandardTreeForDoc(product);
-                        shouldInitStandard = true;
+                    if (!isReadOnly) {
+                        if (needsStandardTemplate(parsedContentRaw)) {
+                            const product = await resolveProductById(targetRow.product_id);
+                            ensuredContentRaw = buildStandardTreeForDoc(product);
+                            shouldInitStandard = true;
+                        } else {
+                            const patched = ensureStandardTemplateChildren(parsedContentRaw);
+                            if (patched.changed) {
+                                ensuredContentRaw = patched.nodes;
+                                shouldPatchTemplate = true;
+                            }
+                        }
                     }
                     const loadProduct = (data.products as any[]).find((p: any) => p.id === targetRow.product_id);
                     const remappedContent = await remapProductBoundDocImages(
@@ -2667,11 +2713,11 @@ export default () => {
                         srsOtherReqData: srsTableState.srsOtherReqData,
                         srsChangeTables: srsTableState.srsChangeTables,
                         srsTableLoading: false,
-                        treeRefreshKey: shouldInitStandard ? Date.now() : data.treeRefreshKey,
+                        treeRefreshKey: (shouldInitStandard || shouldPatchTemplate) ? Date.now() : data.treeRefreshKey,
                     });
                     treeStructureRef.current = parsedContent;
                     initialEditTreeRef.current = cloneTree(parsedContent);
-                    if (shouldInitStandard && !isReadOnly) {
+                    if ((shouldInitStandard || shouldPatchTemplate) && !isReadOnly) {
                         const docId = targetRow.id || parseInt(String(id), 10);
                         const cleanedContent = parsedContent.map((node: any) => cleanTreeNode(node, docId, 0));
                         Api.update_srs_doc({
