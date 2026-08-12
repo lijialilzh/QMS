@@ -210,6 +210,11 @@ export default () => {
                                 label: ts("menu.prod_device_res"),
                                 perm: "prod_device_view",
                             },
+                            {
+                                key: "/prod_dhfs",
+                                label: ts("menu.prod_dhfs"),
+                                perm: "prod_dhf_view",
+                            },
                         ],
                     },
                     {
@@ -367,11 +372,6 @@ export default () => {
                                 key: "/train_record_docs",
                                 label: "培训记录表",
                                 perm: "ftr_record_doc_view",
-                            },
-                            {
-                                key: "/prod_dhfs",
-                                label: ts("menu.prod_dhfs"),
-                                perm: "prod_dhf_view",
                             },
                         ],
                     },

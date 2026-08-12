@@ -1,140 +1,85 @@
-import { Form, Input, Button, Table, message, Row, Col, Modal, Upload, Space } from "antd";
-import { SearchOutlined, UploadOutlined } from "@ant-design/icons";
+import { Form, Input, Button, Table, message, Row, Col, Modal, Space } from "antd";
+import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
-import { useData } from "@/common";
+import { renderOneLineWithTooltip, useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProdDhf";
-import { doSearchProducts } from "./util";
+import * as ApiProduct from "@/api/ApiProduct";
+import "./ProdDhfs.less";
 
 const pageSizeOptions = [20, 50, 100];
 
 enum DlgTypes {
     add = "add",
-    edit = "edit",
     delete = "delete",
-    import = "import",
 }
 
-const DetailDlg = ({ data, dispatch, onSaved }: any) => {
-    const { t: ts } = useTranslation();
-    const [editForm] = Form.useForm();
+const buildDhfCountMap = (rows: any[] = []) => {
+    const map = new Map<number, number>();
+    rows.forEach((row) => {
+        const pid = Number(row.prod_id);
+        if (!pid) return;
+        map.set(pid, (map.get(pid) || 0) + 1);
+    });
+    return map;
+};
 
-    const doEdit = () => {
-        editForm.validateFields().then((values) => {
-            dispatch({ loading: true });
-            const fn_request = data.dlgType === DlgTypes.edit ? Api.update_prod_dhf : Api.add_prod_dhf;
-            fn_request(values).then((res: any) => {
-                if (res.code === Api.C_OK) {
-                    onSaved();
-                    dispatch({ loading: false, dlgType: null });
-                    message.success(res.msg);
-                } else {
-                    dispatch({ loading: false });
-                    message.error(res.msg);
-                }
-            });
-        });
-    };
-
-    useEffect(() => {
-        if (data.dlgType === DlgTypes.add || data.dlgType === DlgTypes.edit) {
-            editForm.resetFields();
-            if (data.dlgType === DlgTypes.edit) {
-                dispatch({ loading: true });
-                Api.get_prod_dhf({ id: data.targetRow.id }).then((res: any) => {
-                    if (res.code === Api.C_OK) {
-                        const targetRow = res.data;
-                        editForm.setFieldsValue(targetRow);
-                        dispatch({ loading: false, targetRow });
-                    } else {
-                        message.error(res.msg);
-                        dispatch({ loading: false });
-                    }
-                });
-            }
+const loadProducts = (data: any, dispatch: any) => {
+    if ((data.products || []).length > 0) return;
+    ApiProduct.list_product({ page_size: 10000 }).then((res: any) => {
+        if (res.code === ApiProduct.C_OK) {
+            dispatch({ products: res.data.rows || [] });
+        } else {
+            message.error(res.msg);
         }
-    }, [data.dlgType, data.targetRow.id]);
-
-    return (
-        <Modal
-            width={"50%"}
-            centered
-            title={data.dlgType === DlgTypes.add ? ts("add") : ts("edit")}
-            open={data.dlgType === DlgTypes.add || data.dlgType === DlgTypes.edit}
-            maskClosable={false}
-            confirmLoading={data.loading}
-            onOk={doEdit}
-            onCancel={() => dispatch({ dlgType: null })}>
-            <div className="div-v">
-                <Form form={editForm} className="expand" onFinish={(_values) => {}}>
-                    <Form.Item hidden name="id">
-                        <Input allowClear value={data.targetRow.id} />
-                    </Form.Item>
-                    <Row gutter={24}>
-                        <Col span={24}>
-                            <Form.Item
-                                label={ts("product.product")}
-                                rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}
-                                name="prod_id">
-                                <ProductVersionSelect
-                                    products={data.products}
-                                    allowClear
-                                    namePlaceholder={ts("product.name")}
-                                    versionPlaceholder={ts("product.version")}
-                                    onChange={(value) => editForm.setFieldValue("prod_id", value)}
-                                />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-                    <Row gutter={24}>
-                        <Col span={24}>
-                            <Form.Item
-                                label={ts("prod_dhf.code")}
-                                rules={[{ required: true, message: sprintf(ts("msg_input"), { label: ts("prod_dhf.code") }) }]}
-                                name="code">
-                                <Input allowClear />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-                    <Row gutter={24}>
-                        <Col span={24}>
-                            <Form.Item
-                                label={ts("prod_dhf.name")}
-                                rules={[{ required: true, message: sprintf(ts("msg_input"), { label: ts("prod_dhf.name") }) }]}
-                                name="name">
-                                <Input allowClear />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-                </Form>
-            </div>
-        </Modal>
-    );
+    }).catch(() => {
+        message.error("加载产品列表失败");
+    });
 };
 
 export default () => {
     const { t: ts } = useTranslation();
+    const navigate = useNavigate();
     const [queryForm] = Form.useForm();
-    const [importForm] = Form.useForm();
+    const [addForm] = Form.useForm();
     const [data, dispatch] = useData({
         total: 0,
         pageIndex: 1,
         pageSize: pageSizeOptions[0],
         rows: [],
-        targetRow: {},
         loading: false,
         products: [],
-        selectedRowKeys: [],
-        importFiles: [],
+        dhfCountMap: new Map<number, number>(),
+        addProductId: undefined as number | undefined,
+        targetRow: {} as any,
+        copyProductId: undefined as number | undefined,
+        copyModalOpen: false,
+        copyLoading: false,
+        dlgType: null as string | null,
     });
+
+    const loadDhfCounts = () => {
+        Api.list_prod_dhf({ page_index: 0, page_size: 100000 }).then((res: any) => {
+            if (res.code === Api.C_OK) {
+                dispatch({ dhfCountMap: buildDhfCountMap(res.data?.rows || []) });
+            }
+        }).catch(() => {});
+    };
 
     const doSearch = (params: any, pageIndex: any, pageSize: any) => {
         dispatch({ loading: true });
-        Api.list_prod_dhf({ ...params, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
-            if (res.code === Api.C_OK) {
-                dispatch({ loading: false, pageIndex, pageSize, total: res.data.total, rows: res.data.rows });
+        ApiProduct.list_product({ ...params, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
+            if (res.code === ApiProduct.C_OK) {
+                dispatch({
+                    loading: false,
+                    pageIndex,
+                    pageSize,
+                    total: res.data.total,
+                    rows: res.data.rows || [],
+                });
             } else {
                 dispatch({ loading: false, pageIndex, pageSize, total: 0, rows: [] });
                 message.error(res.msg);
@@ -142,101 +87,190 @@ export default () => {
         });
     };
 
-    const doDelete = () => {
-        dispatch({ loading: true });
-        Api.delete_prod_dhf({ id: data.targetRow.id }).then((res: any) => {
-            if (res.code === Api.C_OK) {
-                dispatch({ loading: false, dlgType: null });
-                message.success(res.msg);
-                doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
-            } else {
-                dispatch({ loading: false });
-                message.error(res.msg);
+    const loadProductsForModal = () => loadProducts(data, dispatch);
+
+    const openAddModal = () => {
+        addForm.resetFields();
+        loadProductsForModal();
+        dispatch({ dlgType: DlgTypes.add, addProductId: undefined, copyModalOpen: false });
+    };
+
+    const doAddNavigate = () => {
+        addForm.validateFields().then((values) => {
+            const prodId = values.prod_id;
+            if (!prodId) {
+                message.warning(sprintf(ts("msg_select"), { label: ts("product.product") }));
+                return;
             }
+            dispatch({ dlgType: null });
+            navigate(`/prod_dhfs/edit/${prodId}`);
         });
     };
 
-    const doBatchDelete = () => {
-        const ids = data.selectedRowKeys || [];
-        if (ids.length === 0) {
-            message.warning(ts("please_select_items"));
+    const getCopyExcludeProductIds = () => {
+        const ids = new Set<number>();
+        if (data.targetRow?.id) ids.add(Number(data.targetRow.id));
+        data.dhfCountMap.forEach((count, prodId) => {
+            if (count > 0) ids.add(Number(prodId));
+        });
+        return Array.from(ids);
+    };
+
+    const openCopyModal = (row: any) => {
+        loadProductsForModal();
+        loadDhfCounts();
+        dispatch({
+            copyModalOpen: true,
+            dlgType: null,
+            targetRow: row,
+            copyProductId: undefined,
+            copyLoading: false,
+        });
+    };
+
+    const closeCopyModal = () => {
+        dispatch({ copyModalOpen: false, copyProductId: undefined, copyLoading: false });
+    };
+
+    const doCopy = () => {
+        const row = data.targetRow || {};
+        if (!row.id) {
+            message.warning("未找到源产品");
+            return;
+        }
+        if (!data.copyProductId) {
+            message.warning(sprintf(ts("msg_select"), { label: ts("product.product") }));
+            return;
+        }
+        if (Number(data.copyProductId) === Number(row.id)) {
+            message.warning("不能复制到相同产品版本，请选择其他完整版本");
+            return;
+        }
+        if ((data.dhfCountMap.get(Number(data.copyProductId)) || 0) > 0) {
+            message.warning("目标产品已有 DHF 清单，不能重复复制");
+            return;
+        }
+        dispatch({ copyLoading: true });
+        Api.copy_prod_dhfs({
+            source_prod_id: row.id,
+            target_product_id: data.copyProductId,
+        }).then((res: any) => {
+            dispatch({ copyLoading: false });
+            if (res.code === Api.C_OK) {
+                closeCopyModal();
+                message.success(res.msg || "复制成功");
+                loadDhfCounts();
+            } else {
+                message.error(res.msg || "复制失败");
+            }
+        }).catch(() => {
+            dispatch({ copyLoading: false });
+            message.error("复制失败");
+        });
+    };
+
+    const doDelete = () => {
+        const row = data.targetRow || {};
+        if (!row.id) return;
+        const count = data.dhfCountMap.get(row.id) || 0;
+        if (count <= 0) {
+            message.warning("该产品暂无 DHF 条目");
+            dispatch({ dlgType: null });
             return;
         }
         dispatch({ loading: true });
-        Api.delete_prod_dhfs({ ids }).then((res: any) => {
+        Api.delete_prod_dhfs_by_prod_id({ prod_id: row.id }).then((res: any) => {
+            dispatch({ loading: false });
             if (res.code === Api.C_OK) {
-                dispatch({ loading: false, selectedRowKeys: [] });
-                message.success(res.msg);
-                doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
+                dispatch({ dlgType: null });
+                message.success(res.msg || ts("save_success"));
+                loadDhfCounts();
             } else {
-                dispatch({ loading: false });
                 message.error(res.msg);
             }
+        }).catch(() => {
+            dispatch({ loading: false });
+            message.error("删除失败");
         });
     };
 
-    const doImport = () => {
-        importForm.validateFields().then((values) => {
-            const file = (data.importFiles || [])[0];
-            if (!file) {
-                message.warning(ts("select_file"));
-                return;
-            }
-            dispatch({ loading: true });
-            Api.import_prod_dhfs({ prod_id: values.prod_id, file }).then((res: any) => {
-                dispatch({ loading: false });
-                if (res.code === Api.C_OK) {
-                    message.success(res.msg);
-                    dispatch({ dlgType: null, importFiles: [] });
-                    importForm.resetFields();
-                    doSearch(queryForm.getFieldsValue(), 1, data.pageSize);
-                } else {
-                    message.error(res.msg);
-                }
-            });
-        });
-    };
+    useEffect(() => {
+        doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
+        loadDhfCounts();
+    }, []);
 
     const columns = [
         {
-            title: ts("prod_dhf.code"),
-            dataIndex: "code",
-        },
-        {
-            title: ts("prod_dhf.name"),
-            dataIndex: "name",
-        },
-        {
             title: ts("product.name"),
-            dataIndex: "product_name",
+            dataIndex: "name",
+            width: "22%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
         },
         {
-            title: ts("product.version"),
-            dataIndex: "product_version",
+            title: ts("product.full_version"),
+            dataIndex: "full_version",
+            width: "14%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: ts("product.release_version"),
+            dataIndex: "release_version",
+            width: "12%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: ts("product.type_code"),
+            dataIndex: "type_code",
+            width: "14%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: "DHF条数",
+            dataIndex: "id",
+            width: "10%",
+            render: (_: any, row: any) => data.dhfCountMap.get(row.id) || 0,
         },
         {
             title: ts("action"),
-            width: 140,
-            render: (_value: any, row: any) => {
+            width: "28%",
+            className: "prod-dhfs-list-action-col",
+            onCell: () => ({ className: "prod-dhfs-list-action-col" }),
+            render: (_: any, row: any) => {
+                const dhfCount = data.dhfCountMap.get(row.id) || 0;
                 return (
-                    <Space size={12} style={{ whiteSpace: "nowrap" }}>
-                        <Button type="link" onClick={() => dispatch({ dlgType: DlgTypes.edit, targetRow: row })}>
-                            {ts("edit")}
-                        </Button>
-                        <Button type="link" danger onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
-                            {ts("delete")}
-                        </Button>
-                    </Space>
+                <Space size={4}>
+                    <Button type="link" size="small" onClick={() => navigate(`/prod_dhfs/view/${row.id}`)}>
+                        {ts("view")}
+                    </Button>
+                    <Button type="link" size="small" onClick={() => navigate(`/prod_dhfs/edit/${row.id}`)}>
+                        {ts("edit")}
+                    </Button>
+                    <Button
+                        type="link"
+                        size="small"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            openCopyModal(row);
+                        }}>
+                        复制
+                    </Button>
+                    <Button
+                        type="link"
+                        size="small"
+                        danger
+                        disabled={dhfCount <= 0}
+                        onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
+                        {ts("delete")}
+                    </Button>
+                </Space>
                 );
             },
         },
     ];
-
-    useEffect(() => {
-        const form = queryForm.getFieldsValue();
-        doSearch(form, data.pageIndex, data.pageSize);
-        doSearchProducts(data, dispatch);
-    }, []);
 
     return (
         <div className="page div-v">
@@ -244,23 +278,11 @@ export default () => {
                 <Form
                     form={queryForm}
                     className="expand"
-                    onFinish={(values) => {
-                        doSearch(values, 1, data.pageSize);
-                    }}>
+                    onFinish={(values) => doSearch(values, 1, data.pageSize)}>
                     <Row gutter={10}>
                         <Col>
-                            <Form.Item label={ts("srs_doc.select_product")} name="prod_id">
-                                <ProductVersionSelect
-                                    products={data.products}
-                                    allowClear
-                                    namePlaceholder={ts("product.name")}
-                                    versionPlaceholder={ts("product.version")}
-                                    onChange={(value) => {
-                                        queryForm.setFieldValue("prod_id", value);
-                                        const form = { ...queryForm.getFieldsValue(), prod_id: value };
-                                        doSearch(form, 1, data.pageSize);
-                                    }}
-                                />
+                            <Form.Item label={ts("fuzzy")} name="fuzzy">
+                                <Input allowClear placeholder="产品名称/版本/型号" />
                             </Form.Item>
                         </Col>
                         <Col>
@@ -268,38 +290,12 @@ export default () => {
                         </Col>
                     </Row>
                 </Form>
-                <div className="div-h hspace">
-                    <Button type="primary" icon={<UploadOutlined />} onClick={() => dispatch({ dlgType: DlgTypes.import, importFiles: [] })}>
-                        导入
-                    </Button>
-                    <Button
-                        type="primary"
-                        loading={data.exporting}
-                        onClick={() => {
-                            dispatch({ exporting: true });
-                            Api.export_prod_dhfs({ ...queryForm.getFieldsValue(), page_index: 0, page_size: 2000 }).then((res: any) => {
-                                dispatch({ exporting: false });
-                                if (res.code !== Api.C_OK) {
-                                    message.error(res.msg);
-                                }
-                            });
-                        }}>
-                        {ts("export")}
-                    </Button>
-                    <Button type="primary" onClick={() => dispatch({ dlgType: DlgTypes.add, targetRow: {} })}>
-                        {ts("add")}
-                    </Button>
-                    <Button disabled={!(data.selectedRowKeys || []).length} danger onClick={doBatchDelete}>
-                        {ts("batch_delete")}
-                    </Button>
-                </div>
+                <Button type="primary" onClick={openAddModal}>
+                    {ts("add")}
+                </Button>
             </div>
             <Table
-                className="expand"
-                rowSelection={{
-                    selectedRowKeys: data.selectedRowKeys || [],
-                    onChange: (keys: any) => dispatch({ selectedRowKeys: keys }),
-                }}
+                className="expand prod-dhfs-list-table"
                 columns={columns}
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}
@@ -312,17 +308,73 @@ export default () => {
                     pageSizeOptions,
                     hideOnSinglePage: false,
                     onShowSizeChange: (page, pageSize) => {
-                        dispatch({ pageIndex: page, pageSize: pageSize });
+                        dispatch({ pageIndex: page, pageSize });
                     },
-                    showTotal: (total: number) => {
-                        return sprintf(ts("total_items"), { total });
-                    },
+                    showTotal: (total: number) => sprintf(ts("total_items"), { total }),
                 }}
-                onChange={(pager, _, _sorter: any) => {
-                    const form = queryForm.getFieldsValue();
-                    doSearch(form, pager.current, pager.pageSize);
+                onChange={(pager) => {
+                    doSearch(queryForm.getFieldsValue(), pager.current, pager.pageSize);
                 }}
             />
+            <Modal
+                centered
+                width={520}
+                title="新增产品 DHF"
+                open={data.dlgType === DlgTypes.add}
+                maskClosable={false}
+                onOk={doAddNavigate}
+                onCancel={() => dispatch({ dlgType: null })}>
+                <Form form={addForm} layout="vertical">
+                    <Form.Item
+                        label={ts("product.product")}
+                        name="prod_id"
+                        rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
+                        <ProductVersionSelect
+                            products={data.products}
+                            value={data.addProductId}
+                            namePlaceholder={ts("product.name")}
+                            versionPlaceholder={ts("product.full_version")}
+                            onChange={(value: any) => {
+                                addForm.setFieldValue("prod_id", value);
+                                dispatch({ addProductId: value });
+                            }}
+                        />
+                    </Form.Item>
+                    <div style={{ color: "#888" }}>选择产品后进入该产品的 DHF 维护页，可新增、导入清单条目。</div>
+                </Form>
+            </Modal>
+            <Modal
+                centered
+                width={520}
+                title="复制产品 DHF"
+                open={data.copyModalOpen}
+                maskClosable={false}
+                destroyOnClose
+                confirmLoading={data.copyLoading}
+                onOk={doCopy}
+                onCancel={closeCopyModal}>
+                <div style={{ lineHeight: 1.8 }}>
+                    <div style={{ marginBottom: 8 }}>
+                        源产品：{data.targetRow?.name || "-"}
+                        {data.targetRow?.full_version ? `（${data.targetRow.full_version}）` : ""}
+                    </div>
+                    <div style={{ marginBottom: 12 }}>复制到目标产品：</div>
+                    <ProductVersionSelect
+                        key={`copy-${data.targetRow?.id || 0}`}
+                        products={data.products}
+                        value={data.copyProductId}
+                        initialName={data.targetRow?.name}
+                        excludeProductIds={getCopyExcludeProductIds()}
+                        deferChangeUntilVersionSelect
+                        namePlaceholder={ts("product.name")}
+                        versionPlaceholder={ts("product.full_version")}
+                        onChange={(value: any) => dispatch({ copyProductId: value })}
+                    />
+                    <div style={{ color: "#888", marginTop: 12 }}>
+                        仅可复制到尚无 DHF 清单的产品版本（含同产品名称的其他完整版本）；每个产品版本只能有一套 DHF，不能重复复制。
+                    </div>
+                </div>
+            </Modal>
             <Modal
                 centered
                 title={ts("action")}
@@ -331,58 +383,12 @@ export default () => {
                 confirmLoading={data.loading}
                 onOk={doDelete}
                 onCancel={() => dispatch({ dlgType: null })}>
-                <div>{ts("confirm_delete")}</div>
+                <div>
+                    确定删除产品「{data.targetRow?.name || "-"}」
+                    {data.targetRow?.full_version ? `（${data.targetRow.full_version}）` : ""}
+                    的全部 DHF 条目（共 {data.dhfCountMap.get(data.targetRow?.id) || 0} 条）吗？
+                </div>
             </Modal>
-            <Modal
-                centered
-                width={640}
-                title="导入DHF"
-                open={data.dlgType === DlgTypes.import}
-                maskClosable={false}
-                confirmLoading={data.loading}
-                onOk={doImport}
-                onCancel={() => {
-                    dispatch({ dlgType: null, importFiles: [] });
-                    importForm.resetFields();
-                }}>
-                <Form form={importForm} layout="vertical">
-                    <Form.Item
-                        label={ts("product.product")}
-                        name="prod_id"
-                        rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
-                        <ProductVersionSelect
-                            products={data.products}
-                            allowClear
-                            namePlaceholder={ts("product.name")}
-                            versionPlaceholder={ts("product.version")}
-                            onChange={(value) => importForm.setFieldValue("prod_id", value)}
-                        />
-                    </Form.Item>
-                    <Form.Item label="Excel文件" required>
-                        <Upload
-                            maxCount={1}
-                            accept=".xlsx"
-                            fileList={data.importFiles}
-                            onRemove={() => dispatch({ importFiles: [] })}
-                            beforeUpload={(file) => {
-                                dispatch({ importFiles: [file] });
-                                return false;
-                            }}>
-                            <Button icon={<UploadOutlined />}>{ts("select_file")}</Button>
-                        </Upload>
-                    </Form.Item>
-                </Form>
-            </Modal>
-            <DetailDlg
-                data={data}
-                dispatch={dispatch}
-                onSaved={() => {
-                    if(data.dlgType === DlgTypes.add){
-                        queryForm.resetFields();
-                    }
-                    doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
-                }}
-            />
         </div>
     );
 };

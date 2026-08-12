@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
 from ..utils.i18n import ts
-from ..obj.tobj_prod_dhf import ProdDhfForm, ProdDhfBatchDeleteForm
+from ..obj.tobj_prod_dhf import ProdDhfForm, ProdDhfBatchDeleteForm, ProdDhfCopyForm, ProdDhfProdDeleteForm
 from ..obj.vobj_prod_dhf import ProdDhfObj
 from ..obj.tobj_role import Perms
 from ..obj import Resp, Page
@@ -42,6 +42,18 @@ async def delete_prod_dhfs(id: int):
 @try_log(perm=Perms.prod_dhf_edit)
 async def delete_prod_dhfs_batch(form: ProdDhfBatchDeleteForm):
     return await server.delete_prod_dhfs(form.ids or [])
+
+
+@router.post("/copy_prod_dhfs", summary="复制产品DHF清单", response_model=Resp[Any])
+@try_log(perm=Perms.prod_dhf_edit)
+async def copy_prod_dhfs(form: ProdDhfCopyForm):
+    return await server.copy_prod_dhfs(form.source_prod_id, form.target_product_id)
+
+
+@router.post("/delete_prod_dhfs_by_prod_id", summary="删除产品全部DHF", response_model=Resp[Any])
+@try_log(perm=Perms.prod_dhf_edit)
+async def delete_prod_dhfs_by_prod_id(form: ProdDhfProdDeleteForm):
+    return await server.delete_prod_dhfs_by_prod_id(form.prod_id)
 
 
 @router.get("/list_prod_dhf", summary="查询DHF列表", response_model=Resp[Page[ProdDhfObj]])

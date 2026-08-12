@@ -14,6 +14,10 @@ export const update_product = async (params: any) => {
     return await httpPost("/trace-api/product/update_product", params);
 };
 
+export const duplicate_product = async (params: any) => {
+    return await httpGet("/trace-api/product/duplicate_product", params);
+};
+
 export const list_product = async (params: any) => {
     return await httpGet("/trace-api/product/list_product", params);
 };

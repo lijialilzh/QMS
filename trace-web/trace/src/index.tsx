@@ -40,6 +40,7 @@ import ProdHazs from "./pages/prod_risk/prod_haz";
 import ProdRcms from "./pages/prod_risk/prod_rcm";
 import ProdCsts from "./pages/prod_risk/prod_cst";
 import ProdDhfs from "./pages/prod_risk/ProdDhfs";
+import ProdDhfDetail from "./pages/prod_risk/ProdDhfDetail";
 import SrsDocTrace from "./pages/prod_risk/SrsDocTrace";
 import ProdTraces from "./pages/overview/ProdTraces";
 import DocComparison from "./pages/overview/DocComparison";
@@ -148,6 +149,8 @@ const router = createRouter([
 
             { path: "/products", element: <Products /> },
             { path: "/prod_dhfs", element: <ProdDhfs /> },
+            { path: "/prod_dhfs/view/:prodId", element: <ProdDhfDetail /> },
+            { path: "/prod_dhfs/edit/:prodId", element: <ProdDhfDetail /> },
             
             { path: "/srs_docs", element: <SrsDocs /> },
             { path: "/srs_docs/add", element: <SrsDocDetail /> },

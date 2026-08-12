@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 from typing import List, Tuple
 from sqlalchemy import select, delete, func, or_
 from sqlalchemy.sql import desc
@@ -20,8 +21,14 @@ from ..utils.sql_ctx import db
 from ..utils.i18n import ts
 from ..obj import Page, Resp
 from . import msg_err_db
+from .serv_utils import new_version
 
 logger = logging.getLogger(__name__)
+
+
+def _version_seq(v: str) -> int:
+    m = re.search(r"(\d+)(?!.*\d)", v or "")
+    return int(m.group(1)) if m else -1
 
 
 class Server(object):
@@ -48,6 +55,82 @@ class Server(object):
                 db.session.add_all([UserProd(user_id=user_id, product_id=row.id) for user_id in user_ids])
             db.session.commit()
             return Resp.resp_ok()
+        except Exception:
+            logger.exception("")
+            db.session.rollback()
+        return Resp.resp_err(msg=ts(msg_err_db))
+
+    async def duplicate_product(self, op_user: UserObj, id: int, product_id: int = None, name: str = None, full_version: str = None):
+        try:
+            from_row: Product = db.session.execute(select(Product).where(Product.id == id)).scalars().first()
+            if not from_row:
+                return Resp.resp_err(msg=ts("msg_obj_null"))
+            if op_user.role_code == Roles.product_manager.value.code and from_row.create_user_id != op_user.id:
+                return Resp.resp_err(msg=ts("msg_no_perm"))
+            target_row: Product = from_row
+            if product_id and product_id != from_row.id:
+                target_row = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+                if not target_row:
+                    return Resp.resp_err(msg=ts("msg_obj_null"))
+            target_name = str(name or "").strip() or target_row.name
+            same_name = target_name == from_row.name
+            all_full_versions = db.session.execute(
+                select(Product.full_version).where(Product.name == target_name)
+            ).scalars().all()
+            all_release_versions = db.session.execute(
+                select(Product.release_version).where(Product.name == target_name)
+            ).scalars().all()
+            existing_full_set = {v for v in all_full_versions if v}
+            if full_version and str(full_version).strip():
+                next_full_version = str(full_version).strip()
+            elif same_name:
+                next_full_version = new_version(from_row.full_version)
+            else:
+                valid_full = [v for v in all_full_versions if v]
+                next_full_version = new_version(max(valid_full, key=_version_seq)) if valid_full else from_row.full_version
+            if not next_full_version:
+                return Resp.resp_err(msg=ts("msg_obj_exist"))
+            if next_full_version in existing_full_set:
+                return Resp.resp_err(msg=ts("msg_obj_exist"))
+            if same_name:
+                release_version = new_version(from_row.release_version)
+            else:
+                valid_release = [v for v in all_release_versions if v]
+                release_version = new_version(max(valid_release, key=_version_seq)) if valid_release else from_row.release_version
+            named_row = db.session.execute(
+                select(Product).where(Product.name == target_name).limit(1)
+            ).scalars().first()
+            ref_row = named_row or target_row
+            new_row = Product(
+                name=target_name,
+                project_id=from_row.project_id if same_name else ref_row.project_id,
+                category=from_row.category,
+                type_code=from_row.type_code,
+                full_version=next_full_version,
+                release_version=release_version,
+                udi=from_row.udi,
+                product_code=from_row.product_code,
+                registrant=from_row.registrant,
+                scope=from_row.scope,
+                component=from_row.component,
+                overall_desc=from_row.overall_desc,
+                note=from_row.note,
+                create_user_id=op_user.id,
+            )
+            db.session.add(new_row)
+            db.session.flush()
+            user_ids = db.session.execute(
+                select(UserProd.user_id).where(UserProd.product_id == from_row.id)
+            ).scalars().all()
+            user_ids = list(user_ids) if user_ids else []
+            if op_user.role_code == Roles.product_manager.value.code:
+                user_ids = [op_user.id]
+            elif not user_ids:
+                user_ids = [op_user.id]
+            if user_ids:
+                db.session.add_all([UserProd(user_id=user_id, product_id=new_row.id) for user_id in user_ids])
+            db.session.commit()
+            return Resp.resp_ok(data=ProductForm(id=new_row.id))
         except Exception:
             logger.exception("")
             db.session.rollback()

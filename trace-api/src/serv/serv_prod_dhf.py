@@ -144,6 +144,76 @@ class Server(object):
             logger.exception("")
             db.session.rollback()
         return Resp.resp_err(msg=ts(msg_err_db))
+
+    async def copy_prod_dhfs(self, source_prod_id: int, target_product_id: int):
+        if source_prod_id == target_product_id:
+            return Resp.resp_err(msg="不能复制到相同产品版本，请选择其他完整版本")
+        try:
+            target_count = db.session.execute(
+                select(func.count(ProdDhf.id)).where(ProdDhf.prod_id == target_product_id)
+            ).scalar() or 0
+            if target_count > 0:
+                return Resp.resp_err(msg="目标产品已有 DHF 清单，不能重复复制")
+
+            source_rows = db.session.execute(
+                select(ProdDhf).where(ProdDhf.prod_id == source_prod_id).order_by(ProdDhf.code)
+            ).scalars().all()
+            if not source_rows:
+                return Resp.resp_ok(data={"count": 0, "created": 0, "updated_by_code": 0, "updated_by_name": 0})
+
+            created = 0
+            updated_by_code = 0
+            updated_by_name = 0
+            affected = 0
+
+            for src in source_rows:
+                code = self.__to_str(src.code)
+                name = self.__to_str(src.name)
+                if not code:
+                    continue
+                affected += 1
+                existed = db.session.execute(
+                    select(ProdDhf).where(ProdDhf.prod_id == target_product_id, ProdDhf.code == code)
+                ).scalars().first()
+                if existed:
+                    existed.name = name
+                    updated_by_code += 1
+                else:
+                    existed_by_name = None
+                    if name:
+                        existed_by_name = db.session.execute(
+                            select(ProdDhf).where(ProdDhf.prod_id == target_product_id, ProdDhf.name == name)
+                        ).scalars().first()
+                    if existed_by_name:
+                        conflict = db.session.execute(
+                            select(func.count(ProdDhf.id)).where(
+                                ProdDhf.prod_id == target_product_id,
+                                ProdDhf.code == code,
+                                ProdDhf.id != existed_by_name.id
+                            )
+                        ).scalar() or 0
+                        if conflict == 0:
+                            existed_by_name.code = code
+                            existed_by_name.name = name
+                            updated_by_name += 1
+                        else:
+                            existed_by_name.name = name
+                            updated_by_name += 1
+                    else:
+                        db.session.add(ProdDhf(prod_id=target_product_id, code=code, name=name))
+                        created += 1
+
+            db.session.commit()
+            return Resp.resp_ok(data={
+                "count": affected,
+                "created": created,
+                "updated_by_code": updated_by_code,
+                "updated_by_name": updated_by_name,
+            })
+        except Exception:
+            logger.exception("")
+            db.session.rollback()
+        return Resp.resp_err(msg=ts(msg_err_db))
     
     async def update_prod_dhf(self, form: ProdDhfForm):
         try:
@@ -175,6 +245,13 @@ class Server(object):
         if not ids:
             return Resp.resp_ok()
         db.session.execute(delete(ProdDhf).where(ProdDhf.id.in_(ids)))
+        db.session.commit()
+        return Resp.resp_ok()
+
+    async def delete_prod_dhfs_by_prod_id(self, prod_id: int):
+        if not prod_id:
+            return Resp.resp_ok()
+        db.session.execute(delete(ProdDhf).where(ProdDhf.prod_id == prod_id))
         db.session.commit()
         return Resp.resp_ok()
     

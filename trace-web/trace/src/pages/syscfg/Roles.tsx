@@ -66,6 +66,7 @@ const matchModuleCodes = (moduleName: string, items: Array<{ code: string; name:
                 code.startsWith("prod_haz") ||
                 code.startsWith("prod_rcm") ||
                 code.startsWith("prod_cst") ||
+                code.startsWith("prod_dhf") ||
                 ["project_member", "project_timeline", "prod_runtime", "prod_device"].some((k) => code.startsWith(k))
             );
         if (moduleName === "产品文件管理")
@@ -85,8 +86,7 @@ const matchModuleCodes = (moduleName: string, items: Array<{ code: string; name:
                 code.startsWith("label_doc") ||
                 code.startsWith("nsmp_doc") ||
                 code.startsWith("risk_mgmt_doc") ||
-                code.startsWith("ftr_record_doc") ||
-                code.startsWith("prod_dhf")
+                code.startsWith("ftr_record_doc")
             );
         if (moduleName === "开发测试文件管理")
             return code === "sds_doc" || code.startsWith("sds_doc_") || code.startsWith("sd_doc") || code.startsWith("crr_doc") || code.startsWith("dem_doc") || code.startsWith("deq_doc") || code.startsWith("scm_doc") || code.startsWith("scs_doc") || code.startsWith("dat_doc") || code.startsWith("stp_doc") || code.startsWith("utp_doc") || code.startsWith("utr_doc") || code.startsWith("str_doc") || code.startsWith("bug_doc") || code.startsWith("teq_doc") || code.startsWith("tem_doc") || code.startsWith("imm_doc") || code.startsWith("ftr_doc") || code.startsWith("test_set") || code.startsWith("test_case") || code.startsWith("cybersec_doc") || code.startsWith("cybersec_plan_doc");

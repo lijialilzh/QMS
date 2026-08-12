@@ -15,4 +15,13 @@ class ProdDhfForm(BaseModel):
 
 class ProdDhfBatchDeleteForm(BaseModel):
     ids: Optional[List[int]] = Field(title="批量删除ID")
+
+
+class ProdDhfCopyForm(BaseModel):
+    source_prod_id: int = Field(title="源产品ID")
+    target_product_id: int = Field(title="目标产品ID")
+
+
+class ProdDhfProdDeleteForm(BaseModel):
+    prod_id: int = Field(title="产品ID")
     

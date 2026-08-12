@@ -1,7 +1,7 @@
 import "./Products.less";
 import { Form, Input, Button, Table, message, Row, Col, Modal, Select, Space } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { renderOneLineWithTooltip, useData } from "@/common";
@@ -15,7 +15,39 @@ enum DlgTypes {
     add = "add",
     edit = "edit",
     delete = "delete",
+    copy = "copy",
 }
+
+const versionSeq = (value?: string) => {
+    const matched = String(value || "").match(/(\d+)(?!.*\d)/);
+    return matched ? Number(matched[1]) : -1;
+};
+
+const bumpVersion = (version?: string) => {
+    const raw = String(version || "").trim();
+    const matched = raw.match(/(\d+)(?!.*\d)/);
+    if (!matched || matched.index === undefined) return raw;
+    const start = matched.index;
+    const digits = matched[1];
+    return `${raw.slice(0, start)}${Number(digits) + 1}${raw.slice(start + digits.length)}`;
+};
+
+const suggestFullVersion = (products: any[], targetName: string, sourceRow: any) => {
+    const versions = (products || [])
+        .filter((item) => item.name === targetName)
+        .map((item) => String(item.full_version || "").trim())
+        .filter(Boolean);
+    if (targetName === sourceRow?.name) {
+        return bumpVersion(sourceRow.full_version);
+    }
+    if (versions.length > 0) {
+        const maxVersion = versions.reduce((best, current) => (
+            versionSeq(current) >= versionSeq(best) ? current : best
+        ));
+        return bumpVersion(maxVersion);
+    }
+    return String(sourceRow?.full_version || "").trim();
+};
 
 const doSearchProjects = (data: any, dispatch: any) => {
     if (data.projects.length === 0) {
@@ -237,6 +269,9 @@ export default () => {
         loading: false,
         projects: [],
         companies: [],
+        products: [],
+        copyTargetName: "",
+        copyFullVersion: "",
         selectedRowKeys: [],
     });
 
@@ -263,6 +298,89 @@ export default () => {
                 dispatch({ loading: false });
                 message.error(res.msg);
             }
+        });
+    };
+
+    const handleCopy = (row: any) => {
+        const applyCopyDefaults = (products: any[]) => {
+            const targetName = row.name || "";
+            dispatch({
+                dlgType: DlgTypes.copy,
+                targetRow: row,
+                copyTargetName: targetName,
+                copyFullVersion: suggestFullVersion(products, targetName, row),
+            });
+        };
+        if ((data.products || []).length > 0) {
+            applyCopyDefaults(data.products);
+            return;
+        }
+        Api.list_product({ page_size: 10000 }).then((res: any) => {
+            if (res.code === Api.C_OK) {
+                const products = res.data.rows || [];
+                dispatch({ products });
+                applyCopyDefaults(products);
+            } else {
+                message.error(res.msg);
+            }
+        });
+    };
+
+    const copyNameOptions = useMemo(() => {
+        const names = new Set<string>();
+        (data.products || []).forEach((item: any) => {
+            if (item?.name) names.add(item.name);
+        });
+        return Array.from(names).map((name) => ({ label: name, value: name }));
+    }, [data.products]);
+
+    const handleCopyTargetNameChange = (targetName?: string) => {
+        const row = data.targetRow || {};
+        dispatch({
+            copyTargetName: targetName || "",
+            copyFullVersion: targetName
+                ? suggestFullVersion(data.products || [], targetName, row)
+                : "",
+        });
+    };
+
+    const doCopy = () => {
+        const row = data.targetRow || {};
+        if (!row.id) return;
+        const targetName = String(data.copyTargetName || "").trim();
+        const nextFullVersion = String(data.copyFullVersion || "").trim();
+        if (!targetName) {
+            message.warning(sprintf(ts("msg_select"), { label: ts("product.name") }));
+            return;
+        }
+        if (!nextFullVersion) {
+            message.warning(sprintf(ts("msg_input"), { label: ts("product.full_version") }));
+            return;
+        }
+        const duplicated = (data.products || []).some((item: any) => (
+            item.name === targetName && String(item.full_version || "").trim() === nextFullVersion
+        ));
+        if (duplicated) {
+            message.error("完整版本号已存在，请修改后再复制");
+            return;
+        }
+        dispatch({ loading: true });
+        Api.duplicate_product({
+            id: row.id,
+            name: targetName,
+            full_version: nextFullVersion,
+        }).then((res: any) => {
+            dispatch({ loading: false });
+            if (res.code === Api.C_OK) {
+                dispatch({ dlgType: null });
+                message.success("复制成功");
+                doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
+            } else {
+                message.error(res.msg || "复制失败");
+            }
+        }).catch(() => {
+            dispatch({ loading: false });
+            message.error("复制失败");
         });
     };
 
@@ -393,12 +511,15 @@ export default () => {
         },
         {
             title: ts("action"),
-            width: 110,
+            width: 150,
             render: (_value: any, row: any) => {
                 return (
                     <Space>
                         <Button type="link" size="small" onClick={() => dispatch({ dlgType: DlgTypes.edit, targetRow: row })}>
                             {ts("edit")}
+                        </Button>
+                        <Button type="link" size="small" onClick={() => handleCopy(row)}>
+                            复制
                         </Button>
                         <Button type="link" size="small" danger onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
                             {ts("delete")}
@@ -496,6 +617,40 @@ export default () => {
                 onOk={doDelete}
                 onCancel={() => dispatch({ dlgType: null })}>
                 <div>{ts("confirm_delete")}</div>
+            </Modal>
+            <Modal
+                centered
+                width={520}
+                title="复制"
+                open={data.dlgType === DlgTypes.copy}
+                maskClosable={false}
+                confirmLoading={data.loading}
+                onOk={doCopy}
+                onCancel={() => dispatch({ dlgType: null })}>
+                <div style={{ lineHeight: 1.8 }}>
+                    <div style={{ marginBottom: 12 }}>复制到目标产品（默认当前产品，可选其它产品）：</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <Select
+                            style={{ flex: 1, minWidth: 0 }}
+                            showSearch
+                            optionFilterProp="label"
+                            placeholder={ts("product.name")}
+                            value={data.copyTargetName || undefined}
+                            options={copyNameOptions}
+                            onChange={handleCopyTargetNameChange}
+                        />
+                        <Input
+                            style={{ flex: 1, minWidth: 0 }}
+                            allowClear
+                            placeholder={ts("product.full_version")}
+                            value={data.copyFullVersion}
+                            onChange={(e) => dispatch({ copyFullVersion: e.target.value })}
+                        />
+                    </div>
+                    <div style={{ color: "#888", marginTop: 12 }}>
+                        完整版本需手动填写且不能与目标产品下已有版本重复；发布版本仍自动生成。
+                    </div>
+                </div>
             </Modal>
             <DetailDlg
                 data={data}

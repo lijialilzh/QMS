@@ -33,3 +33,11 @@ export const import_prod_dhfs = async (params: any) => {
 export const delete_prod_dhfs = async (params: any) => {
     return await httpPost("/trace-api/prod_dhf/delete_prod_dhfs", params);
 };
+
+export const copy_prod_dhfs = async (params: any) => {
+    return await httpPost("/trace-api/prod_dhf/copy_prod_dhfs", params);
+};
+
+export const delete_prod_dhfs_by_prod_id = async (params: any) => {
+    return await httpPost("/trace-api/prod_dhf/delete_prod_dhfs_by_prod_id", params);
+};
