@@ -1,4 +1,6 @@
 import { Modal, message } from "antd";
+import type { TableRowSelection } from "antd/es/table/interface";
+import type { Key } from "react";
 import { sprintf } from "sprintf-js";
 import type { TFunction } from "i18next";
 
@@ -7,7 +9,7 @@ type DeleteDocFn = (params: { id: number | string }) => Promise<{ code: number; 
 type CreateDocBatchDeleteOptions = {
     ts: TFunction;
     dispatch: (action: Record<string, unknown>) => void;
-    data: { selectedRowKeys?: Array<number | string>; rows?: any[] };
+    data: { selectedRowKeys?: Key[]; rows?: any[] };
     deleteFn: DeleteDocFn;
     cOk: number;
     onRefresh: () => void;
@@ -15,12 +17,12 @@ type CreateDocBatchDeleteOptions = {
 };
 
 export function getDocTableRowSelection(
-    data: { selectedRowKeys?: Array<number | string> },
+    data: { selectedRowKeys?: Key[] },
     dispatch: (action: Record<string, unknown>) => void,
-) {
+): TableRowSelection {
     return {
         selectedRowKeys: data.selectedRowKeys || [],
-        onChange: (keys: Array<number | string>) => dispatch({ selectedRowKeys: keys }),
+        onChange: (keys) => dispatch({ selectedRowKeys: keys }),
     };
 }
 
@@ -48,17 +50,17 @@ export function createDocBatchDelete(options: CreateDocBatchDeleteOptions) {
                 dispatch({ loading: true });
                 const idToRow = Object.fromEntries((data.rows || []).map((row: any) => [row.id, row]));
                 let successCount = 0;
-                const failedIds: Array<number | string> = [];
+                const failedIds: Key[] = [];
                 for (const id of keys) {
                     try {
-                        const res = await deleteFn({ id });
+                        const res = await deleteFn({ id: id as number | string });
                         if (res.code === cOk) successCount += 1;
                         else failedIds.push(id);
                     } catch {
                         failedIds.push(id);
                     }
                 }
-                const labelOf = (row: any, id: number | string) => {
+                const labelOf = (row: any, id: Key) => {
                     if (getRowLabel) return getRowLabel(row) || String(id);
                     const version = row?.version || row?.full_version || "";
                     const product = row?.product_name || "";
