@@ -23,3 +23,4 @@ class ProductForm(BaseModel):
     doc_count: Optional[int] = Field(title="复制文档数")
     test_set_count: Optional[int] = Field(title="复制测试集数")
     doc_file_count: Optional[int] = Field(title="复制图表文件数")
+    runtime_env_copied: Optional[int] = Field(title="是否已复制运行环境(1=是)")

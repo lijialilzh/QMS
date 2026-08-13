@@ -94,6 +94,10 @@ class Server(object):
             obj.product_version = product.full_version
             obj.product_full_version = product.full_version
             obj.product_type_code = product.type_code
+            if not (obj.file_no or "").strip():
+                resolved = serv_review_util.resolve_doc_file_no(product.id, obj.file_no, obj.version, "vuh")
+                if resolved:
+                    obj.file_no = resolved
         return obj
 
     @staticmethod
@@ -301,6 +305,7 @@ class Server(object):
                 return Resp.resp_err(msg=ts("msg_obj_exist"))
             row = VuhDoc(**form.dict(exclude_none=True))
             row.id = None
+            row.file_no = serv_review_util.resolve_doc_file_no(form.product_id, form.file_no, form.version, "vuh") or None
             row.content = self.__normalize_content(row.content)
             db.session.add(row)
             db.session.commit()
@@ -331,7 +336,12 @@ class Server(object):
             newdoc = VuhDoc(
                 product_id=target_pid,
                 version=version,
-                file_no=sync_file_no_version(fromdoc.file_no, version),
+                file_no=sync_file_no_version(
+                    (fromdoc.file_no or "").strip()
+                    or serv_review_util.resolve_doc_file_no(target_pid, "", version, "vuh")
+                    or "",
+                    version,
+                ) or None,
                 change_log=fromdoc.change_log,
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )

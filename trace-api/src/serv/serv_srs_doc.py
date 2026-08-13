@@ -866,6 +866,18 @@ class Server(object):
         txt = re.sub(r"[，。；;、,.]+$", "", txt)
         return txt
 
+    def __req_code_group(self, code: str):
+        normalized = self.__normalize_srs_code(str(code or ""))
+        matched = re.match(r"^(SRS-[A-Z]+\d+)-\d+$", normalized or "")
+        return matched.group(1) if matched else normalized
+
+    def __is_placeholder_req_value(self, txt: str) -> bool:
+        value = self.__normalize_text(txt or "")
+        return (not value) or value in {
+            "/", "\\", "／", "＼", "-", "--", "_", "无",
+            "N/A", "n/a", "NA", "na", "null", "NULL", "None", "none",
+        }
+
     def __clean_req_title(self, txt: str):
         value = self.__normalize_text(txt or "")
         value = re.sub(r"^\s*\d+(?:\.\d+)*[\s、.．:：\-]*", "", value).strip()
@@ -1086,18 +1098,85 @@ class Server(object):
         return col_idx
 
     def __fill_req_table_merged_values(self, values: List[str], col_idx: Dict[str, int], last_values: Dict[str, str]):
-        """Word 纵向合并单元格在续行常为空，需求表字段需要继承上一条非空值。"""
+        """Word 纵向合并单元格在续行常为空，需求表字段需要继承上一条非空值。
+
+        与重构前前端一致：模块变化断开功能/子功能，功能变化断开子功能；
+        `-` 等占位视为空。新模块上若功能/子功能仍等于上一行，视为合并填空串行，不入库。
+        """
         next_values = list(values or [])
-        for field in ["module", "function", "sub_function", "location"]:
+
+        def field_text(field: str):
             idx = col_idx.get(field)
             if idx is None or idx >= len(next_values):
-                continue
+                return None, ""
             current = self.__normalize_text(next_values[idx])
+            if self.__is_placeholder_req_value(current):
+                current = ""
+            return idx, current
+
+        code_idx = col_idx.get("code")
+        group = ""
+        if code_idx is not None and code_idx < len(next_values):
+            group = self.__req_code_group(next_values[code_idx])
+        if group != last_values.get("_group"):
+            last_values["_group"] = group
+            for key in ["module", "function", "sub_function", "location"]:
+                last_values.pop(key, None)
+
+        module_idx, module = field_text("module")
+        function_idx, function = field_text("function")
+        sub_idx, sub_function = field_text("sub_function")
+        prev_module = last_values.get("module") or ""
+        seen_function = last_values.get("_seen_function") or ""
+        seen_sub = last_values.get("_seen_sub") or ""
+        module_changed = bool(module and module != prev_module)
+        function_changed = bool(function and function != seen_function)
+        if module_changed and function and function == seen_function:
+            function = ""
+            if function_idx is not None:
+                next_values[function_idx] = ""
+        if (module_changed or function_changed) and sub_function and sub_function == seen_sub:
+            sub_function = ""
+            if sub_idx is not None:
+                next_values[sub_idx] = ""
+        if module:
+            last_values.pop("function", None)
+            last_values.pop("sub_function", None)
+        if function:
+            last_values.pop("sub_function", None)
+
+        current_by_field = {
+            "module": module,
+            "function": function,
+            "sub_function": sub_function,
+            "location": field_text("location")[1],
+        }
+        idx_by_field = {
+            "module": module_idx,
+            "function": function_idx,
+            "sub_function": sub_idx,
+            "location": field_text("location")[0],
+        }
+        for field in ["module", "function", "sub_function", "location"]:
+            idx = idx_by_field.get(field)
+            if idx is None:
+                continue
+            current = current_by_field.get(field) or ""
             if current:
                 last_values[field] = current
                 next_values[idx] = current
-            elif last_values.get(field):
-                next_values[idx] = last_values[field]
+            elif field == "module" and last_values.get("module"):
+                next_values[idx] = last_values["module"]
+            elif field == "function" and not module and last_values.get("function"):
+                next_values[idx] = last_values["function"]
+            elif field == "sub_function" and not module and not function and last_values.get("sub_function"):
+                next_values[idx] = last_values["sub_function"]
+            elif field == "location" and last_values.get("location"):
+                next_values[idx] = last_values["location"]
+        if function:
+            last_values["_seen_function"] = function
+        if sub_function:
+            last_values["_seen_sub"] = sub_function
         return next_values
 
     def __extract_srs_reqs_from_tables(self, docx: Document):
@@ -1716,6 +1795,10 @@ class Server(object):
                     if value is None:
                         continue
                     col_code = header_codes[col_idx[field]]
+                    current_cell = table_row.get(col_code)
+                    # 合并续行的空格/`-` 只用于抽取，不能把 srs_req 继承值写回表格。
+                    if self.__is_placeholder_req_value(current_cell) and not self.__is_placeholder_req_value(value):
+                        continue
                     if table_row.get(col_code) != value:
                         table_row[col_code] = value
                         table_changed = True
@@ -1729,6 +1812,9 @@ class Server(object):
                         isinstance(cells[cell_row_idx][cell_col_idx], dict) and
                         cells[cell_row_idx][cell_col_idx].get("value") != value
                     ):
+                        cell_value = cells[cell_row_idx][cell_col_idx].get("value")
+                        if self.__is_placeholder_req_value(cell_value) and not self.__is_placeholder_req_value(value):
+                            continue
                         cells[cell_row_idx][cell_col_idx]["value"] = value
                         table_changed = True
             if table_changed:
@@ -3887,6 +3973,9 @@ class Server(object):
                     field: re.sub(r"\s+", "", self.__normalize_text(row.get(code, "") or ""))
                     for field, code in field_codes.items()
                 }
+                for field, value in list(current_values.items()):
+                    if self.__is_placeholder_req_value(value):
+                        current_values[field] = ""
                 module_changed = bool(current_values.get("module"))
                 function_changed = bool(current_values.get("function"))
                 for field, code in field_codes.items():

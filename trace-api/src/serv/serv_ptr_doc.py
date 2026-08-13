@@ -30,6 +30,7 @@ from ..obj.vobj_ptr_doc import PtrDocObj
 from ..utils.i18n import ts
 from ..utils.sql_ctx import db
 from . import msg_err_db
+from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
 from .serv_version_rule import DEFAULT_VERSION_RULE
@@ -61,6 +62,10 @@ class Server(object):
             obj.product_version = product.full_version
             obj.product_full_version = product.full_version
             obj.product_type_code = product.type_code
+            if not (obj.file_no or "").strip():
+                resolved = serv_review_util.resolve_doc_file_no(product.id, obj.file_no, obj.version, "ptr")
+                if resolved:
+                    obj.file_no = resolved
         return obj
 
     def __normalize_node(self, node):
@@ -208,6 +213,7 @@ class Server(object):
                 return Resp.resp_err(msg=ts("msg_obj_exist"))
             row = PtrDoc(**form.dict(exclude_none=True))
             row.id = None
+            row.file_no = serv_review_util.resolve_doc_file_no(form.product_id, form.file_no, form.version, "ptr") or None
             row.content = self.__normalize_content(row.content)
             db.session.add(row)
             db.session.commit()
@@ -238,7 +244,12 @@ class Server(object):
             newdoc = PtrDoc(
                 product_id=target_pid,
                 version=version,
-                file_no=sync_file_no_version(fromdoc.file_no, version),
+                file_no=sync_file_no_version(
+                    (fromdoc.file_no or "").strip()
+                    or serv_review_util.resolve_doc_file_no(target_pid, "", version, "ptr")
+                    or "",
+                    version,
+                ) or None,
                 change_log=fromdoc.change_log,
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )

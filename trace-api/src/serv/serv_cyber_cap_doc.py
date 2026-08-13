@@ -37,6 +37,7 @@ from ..obj.vobj_cyber_cap_doc import CyberCapDocObj
 from ..utils.i18n import ts
 from ..utils.sql_ctx import db
 from . import msg_err_db
+from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version
 from .serv_prod_runtime_env import DEFAULT_RUNTIME_ENV
 
@@ -177,7 +178,10 @@ class Server(object):
             info = self.__collect_autofill(product.id, product, row.version)
             # 文件编号优先用文档已填值，未填时回退 DHF
             if not (obj.file_no or "").strip():
-                if info.get("file_no"):
+                resolved = serv_review_util.resolve_doc_file_no(product.id, obj.file_no, row.version, "cyber_cap")
+                if resolved:
+                    obj.file_no = resolved
+                elif info.get("file_no"):
                     obj.file_no = info["file_no"]
             # auto 预览里的文件编号同步为最终展示值
             info["file_no"] = obj.file_no or info.get("file_no") or ""
@@ -195,6 +199,7 @@ class Server(object):
                 return Resp.resp_err(msg=ts("msg_obj_exist"))
             row = CyberCapDoc(**form.dict(exclude_none=True))
             row.id = None
+            row.file_no = serv_review_util.resolve_doc_file_no(form.product_id, form.file_no, form.version, "cyber_cap") or None
             row.content = self.__normalize_content(row.content)
             db.session.add(row)
             db.session.commit()

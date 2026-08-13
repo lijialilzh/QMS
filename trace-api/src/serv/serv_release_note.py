@@ -355,9 +355,9 @@ class Server(object):
             obj.product_type_code = product.type_code
             # 文件编号优先用文档已填值，未填时从产品 DHF 中按文档名匹配获取
             if not (obj.file_no or "").strip():
-                dhf_no = self.__dhf_file_no(product.id)
-                if dhf_no:
-                    obj.file_no = dhf_no
+                resolved = serv_review_util.resolve_doc_file_no(product.id, obj.file_no, obj.version, "release_note")
+                if resolved:
+                    obj.file_no = resolved
         return obj
 
     # ---------------- CRUD ----------------
@@ -371,6 +371,7 @@ class Server(object):
                 return Resp.resp_err(msg=ts("msg_obj_exist"))
             row = ReleaseNote(**form.dict(exclude_none=True))
             row.id = None
+            row.file_no = serv_review_util.resolve_doc_file_no(form.product_id, form.file_no, form.version, "release_note") or None
             row.content = self.__normalize_content(row.content)
             db.session.add(row)
             db.session.commit()

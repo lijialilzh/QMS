@@ -33,6 +33,7 @@ from ..obj.vobj_acc_doc import AccDocObj
 from ..utils.i18n import ts
 from ..utils.sql_ctx import db
 from . import msg_err_db
+from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version, docx_util
 
 logger = logging.getLogger(__name__)
@@ -224,9 +225,9 @@ class Server(object):
             obj.product_full_version = product.full_version
             obj.product_type_code = product.type_code
             if not (obj.file_no or "").strip():
-                dhf_no = self.__dhf_file_no(product.id)
-                if dhf_no:
-                    obj.file_no = dhf_no
+                resolved = serv_review_util.resolve_doc_file_no(product.id, obj.file_no, obj.version, "acc")
+                if resolved:
+                    obj.file_no = resolved
         return obj
 
     # ---------------- CRUD ----------------
@@ -239,6 +240,7 @@ class Server(object):
                 return Resp.resp_err(msg=ts("msg_obj_exist"))
             row = AccDoc(**form.dict(exclude_none=True))
             row.id = None
+            row.file_no = serv_review_util.resolve_doc_file_no(form.product_id, form.file_no, form.version, "acc") or None
             row.content = self.__normalize_content(row.content)
             db.session.add(row)
             db.session.commit()

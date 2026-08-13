@@ -754,9 +754,9 @@ class Server(object):
             obj.product_full_version = product.full_version
             obj.product_type_code = product.type_code
             if not (obj.file_no or "").strip():
-                dhf_no = self.__dhf_code(product.id, "风险管理报告")
-                if dhf_no:
-                    obj.file_no = dhf_no
+                resolved = serv_review_util.resolve_doc_file_no(product.id, obj.file_no, obj.version, "risk")
+                if resolved:
+                    obj.file_no = resolved
         return obj
 
     def __fill_list_obj(self, obj, product: Product = None, doc: RiskMgmtDoc = None):
@@ -907,6 +907,7 @@ class Server(object):
                 return Resp.resp_err(msg=f"版本 {form.version} 已存在，请更换文件版本号")
             row = RiskMgmtDoc(**form.dict(exclude_none=True))
             row.id = None
+            row.file_no = serv_review_util.resolve_doc_file_no(form.product_id, form.file_no, form.version, "risk") or None
             row.content = self.__normalize_content(row.content)
             db.session.add(row)
             db.session.commit()

@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+from collections import defaultdict
 from datetime import datetime
 from typing import List, Optional
 
@@ -106,6 +107,48 @@ def _coerce_hld_img_url_to_data(url: Optional[str]) -> Optional[str]:
     except Exception:
         logger.exception("coerce hld img url failed: %s", s)
         return _normalize_hld_img_url(s)
+
+
+def _hld_table_text(table) -> str:
+    data = table if isinstance(table, dict) else (table.dict() if hasattr(table, "dict") else {})
+    if not data:
+        return ""
+    headers = data.get("headers") or []
+    header_txt = " ".join(str(h.get("name") or h.get("code") or "") for h in headers if isinstance(h, dict))
+    row_txt = " ".join(
+        " ".join(str(v or "") for v in (row or {}).values())
+        for row in (data.get("rows") or [])
+        if isinstance(row, dict)
+    )
+    return f"{header_txt} {row_txt}"
+
+
+def _is_hld_change_log_table(table) -> bool:
+    txt = re.sub(r"\s+", "", _hld_table_text(table))
+    keys = ["修改日期", "版本号", "修订说明", "修订人", "批准人"]
+    return sum(1 for key in keys if key in txt) >= 3
+
+
+def _extract_hld_revision_change_desc(nodes, doc_version: str) -> str:
+    version = str(doc_version or "").strip()
+    fallback = ""
+    for node in nodes or []:
+        table = getattr(node, "table", None)
+        if not table or not _is_hld_change_log_table(table):
+            continue
+        data = table if isinstance(table, dict) else (table.dict() if hasattr(table, "dict") else {})
+        for row in data.get("rows") or []:
+            if not isinstance(row, dict):
+                continue
+            desc = str(row.get("change_desc") or "").strip()
+            if not desc:
+                continue
+            row_version = str(row.get("version_no") or "").strip()
+            if version and row_version == version:
+                return desc
+            if not fallback:
+                fallback = desc
+    return fallback
 
 
 class Server(object):
@@ -467,6 +510,12 @@ class Server(object):
         rows = db.session.execute(
             sql.offset(page_size * page_index).limit(page_size).order_by(desc(HldDoc.create_time))
         ).all()
+        doc_ids = [row.id for row, _ in rows]
+        nodes_by_doc = defaultdict(list)
+        if doc_ids:
+            node_rows = db.session.execute(select(HldNode).where(HldNode.doc_id.in_(doc_ids))).scalars().all()
+            for node in node_rows:
+                nodes_by_doc[node.doc_id].append(node)
         objs = []
         for row, row_prd in rows:
             obj = HldDocObj(**row.dict())
@@ -475,6 +524,9 @@ class Server(object):
                 obj.product_version = row_prd.full_version
             if not (obj.file_no or "").strip():
                 obj.file_no = serv_review_util.resolve_doc_file_no(row.product_id, row.file_no, row.version, "hld")
+            rev_desc = _extract_hld_revision_change_desc(nodes_by_doc.get(row.id, []), row.version)
+            if rev_desc:
+                obj.change_log = rev_desc
             objs.append(obj)
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
 

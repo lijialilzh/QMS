@@ -73,22 +73,55 @@ const normalizeSrsApprovalRows = (node: TreeNode) => {
     ];
 };
 
+const parseTimelineYear = (value: any): number => {
+    const text = String(value ?? "").trim();
+    const matched = text.match(/20\d{2}/);
+    if (matched) return parseInt(matched[0], 10);
+    const n = parseInt(text.replace(/[^\d]/g, ""), 10);
+    return n >= 2000 && n <= 2100 ? n : 0;
+};
+
+const fillTimelineDateYears = (rows: any[]): Array<{ row: any; year: number }> => {
+    const sorted = [...(rows || [])].sort((a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0));
+    let defaultYear = new Date().getFullYear();
+    sorted.forEach((r) => {
+        const y = parseTimelineYear(r.year) || parseTimelineYear(r.milestone_text);
+        if (y) defaultYear = y;
+    });
+    let lastYear = 0;
+    const dated: Array<{ row: any; year: number }> = [];
+    sorted.forEach((r) => {
+        const rowType = r.row_type || "date";
+        if (rowType === "year") {
+            const y = parseTimelineYear(r.milestone_text) || parseTimelineYear(r.year);
+            if (y) lastYear = y;
+            return;
+        }
+        if (rowType !== "date") return;
+        const explicit = parseTimelineYear(r.year);
+        if (explicit) lastYear = explicit;
+        dated.push({ row: r, year: explicit || lastYear || defaultYear });
+    });
+    return dated;
+};
+
 const computeSrsCoverDate = (rows: any[]): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10) || 0;
-    const dateKey = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
     const cellVals = (r: any) => Object.values(r.cells || {});
-    const match = (r: any, needReview: boolean) => {
-        if ((r.row_type || "date") !== "date" || !num(r.year) || !num(r.month)) return false;
+    const matchRow = (r: any, needReview: boolean) => {
+        if (!num(r.month)) return false;
         const vals = cellVals(r);
         const hitName = vals.some((v: any) => SRS_COVER_DATE_KEYWORDS.some((k) => String(v || "").includes(k)));
         const hitReview = vals.some((v: any) => String(v || "").includes("评审"));
         return hitName && (needReview ? hitReview : true);
     };
-    const pool = (rows || []).filter((r) => match(r, true));
-    const candidates = pool.length ? pool : (rows || []).filter((r) => match(r, false));
+    const dated = fillTimelineDateYears(rows).filter(({ row }) => (row.row_type || "date") === "date" && num(row.month));
+    const dateKey = ({ row, year }: { row: any; year: number }) => year * 10000 + num(row.month) * 100 + (num(row.day) || 0);
+    const pool = dated.filter(({ row }) => matchRow(row, true));
+    const candidates = pool.length ? pool : dated.filter(({ row }) => matchRow(row, false));
     if (!candidates.length) return "";
     const best = candidates.reduce((a, b) => (dateKey(b) > dateKey(a) ? b : a));
-    return `${num(best.year)}.${String(num(best.month)).padStart(2, "0")}.${String(num(best.day) || 1).padStart(2, "0")}`;
+    return `${best.year}.${String(num(best.row.month)).padStart(2, "0")}.${String(num(best.row.day) || 1).padStart(2, "0")}`;
 };
 
 type CoverRevisionAutofillInfo = {
@@ -1609,7 +1642,15 @@ export default () => {
         if (!details.length) return pruneEmptyReqChapterShells(tree || []);
         const cloned: TreeNode[] = JSON.parse(JSON.stringify(tree || []));
         const normalizeTitle = (value?: string) => normalizeReqText(value).replace(/\s+/g, "");
-        const stripHeadingNo = (value?: string) => String(value || "").trim().replace(/^\d+(?:\.\d+)*\s*/, "");
+        const stripHeadingNo = (value?: string) => {
+            let stripped = String(value || "").trim();
+            let prev = "";
+            while (stripped !== prev) {
+                prev = stripped;
+                stripped = stripped.replace(/^\d+(?:\.\d+)*(?:\s+|(?=\D|$))/, "").trim();
+            }
+            return stripped;
+        };
         const isAlgorithmReqDetail = (detail: any) => {
             const text = normalizeTitle([
                 detail?.module,
@@ -1677,6 +1718,11 @@ export default () => {
         };
         collectExistingReqDetails(cloned);
         const incomingCodes = new Set(effectiveDetails.map((detail: any) => normalizeSrsCodeForSync(detail?.code)).filter(Boolean));
+        const incomingStableKeys = new Set(
+            effectiveDetails
+                .map((detail: any) => normalizeReqDetailKey(detail?.req_detail_key))
+                .filter((key: string) => key.startsWith("reqd_")),
+        );
         const changeDetailKeys = new Set(
             effectiveDetails
                 .filter((detail: any) => !!String(detail?.type_code || "") && !["1", "2"].includes(String(detail?.type_code || "")))
@@ -1701,7 +1747,11 @@ export default () => {
                     const code = normalizeSrsCodeForSync(node.srs_code || extractSrsCodeFromTable(node.table));
                     const key = normalizeReqDetailKey(node.req_detail_key || getTableReqDetailKey(node.table));
                     if (code && excludedAlgorithmCodes.has(code)) return false;
-                    if (code && !incomingCodes.has(code)) return false;
+                    // 改 SRS 编号后树上仍可能是旧编号；req_detail_key 未变则保留功能描述节点。
+                    if (code && !incomingCodes.has(code)) {
+                        if (key.startsWith("reqd_") && incomingStableKeys.has(key)) return true;
+                        return false;
+                    }
                     const isStandardDetail = key.startsWith("reqd_") || (!key.startsWith("change_reqd_") && !!code && !changeDetailCodes.has(code) && incomingCodes.has(code));
                     if (isStandardDetail) return true;
                     const isChangeDetail = key.startsWith("change_reqd_") || changeDetailKeys.has(key);
@@ -1962,6 +2012,7 @@ export default () => {
                     const isReqDetailNode = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
                     if (isReqDetailNode && (
                         (detailKey && nodeKey === detailKey) ||
+                        (nodeCode === code && hasFilledFunctionalDetail(node.table)) ||
                         detailMatchesNodePath(node, ancestors, nodeCode)
                     )) {
                         return items.splice(index, 1)[0];
@@ -2022,7 +2073,13 @@ export default () => {
             }
             activeCodeSet.add(code);
         });
-        sortAndRenumberReqRoot(reqRoot);
+        const hasChangeIncoming = effectiveDetails.some((detail: any) => {
+            const typeCode = String(detail?.type_code || "");
+            return !!typeCode && !["1", "2"].includes(typeCode);
+        });
+        if (hasChangeIncoming) {
+            sortAndRenumberReqRoot(reqRoot);
+        }
         return pruneEmptyReqChapterShells(cloned);
     };
     const buildActiveReqDetailCodeSets = (srsTableState: { srsTableData?: any[]; srsChangeTables?: any[] }) => {
@@ -3695,6 +3752,8 @@ export default () => {
             return normalized.match(/^(SRS-[A-Z]+\d+)-\d+$/)?.[1] || normalized;
         };
         const lastValues: Record<string, string> = {};
+        let seenFunction = "";
+        let seenSub = "";
         const rows = (table?.rows || [])
             .map((row: any) => {
                 const code = normalizeReqCode(row?.[codeCol]);
@@ -3706,9 +3765,20 @@ export default () => {
                     lastValues.function = "";
                     lastValues.sub_function = "";
                 }
-                const rawModule = normalizeReqText(row?.[moduleCol]);
-                const rawFunction = normalizeReqText(row?.[functionCol]);
-                const rawSubFunction = normalizeReqText(row?.[subFunctionCol]);
+                let rawModule = normalizeReqText(row?.[moduleCol]);
+                let rawFunction = normalizeReqText(row?.[functionCol]);
+                let rawSubFunction = normalizeReqText(row?.[subFunctionCol]);
+                const prevModule = lastValues.module || "";
+                const moduleChanged = !!rawModule && rawModule !== prevModule;
+                const functionChanged = !!rawFunction && rawFunction !== seenFunction;
+                if (moduleChanged && rawFunction && rawFunction === seenFunction) {
+                    rawFunction = "";
+                    if (functionCol) row[functionCol] = "";
+                }
+                if ((moduleChanged || functionChanged) && rawSubFunction && rawSubFunction === seenSub) {
+                    rawSubFunction = "";
+                    if (subFunctionCol) row[subFunctionCol] = "";
+                }
                 if (rawModule) {
                     lastValues.module = rawModule;
                     lastValues.function = "";
@@ -3721,11 +3791,14 @@ export default () => {
                 if (rawSubFunction) {
                     lastValues.sub_function = rawSubFunction;
                 }
+                if (rawFunction) seenFunction = rawFunction;
+                if (rawSubFunction) seenSub = rawSubFunction;
                 return {
                     code,
                     module: rawModule || (sameGroup ? lastValues.module || "" : ""),
                     function: rawFunction || (sameGroup ? lastValues.function || "" : ""),
                     sub_function: rawSubFunction || (sameGroup ? lastValues.sub_function || "" : ""),
+                    req_detail_key: getRowReqDetailKey(row),
                 };
             })
             .filter((row: any) => row.code);
@@ -3762,9 +3835,15 @@ export default () => {
                 if (!rowCode || usedReqCodes.has(rowCode)) return;
                 usedReqCodes.add(rowCode);
                 const matchedByCode = oldRows.find((item: any) => normalizeReqCode(item.srs_code || item.code) === rowCode && !usedOldIds.has(item.id));
+                const rowStableKey = normalizeReqDetailKey((row as any)?.req_detail_key || (row as any)?.__req_detail_key);
+                const matchedByKey = rowStableKey
+                    ? oldRows.find((item: any) => item?.id && `reqd_${item.id}` === rowStableKey && !usedOldIds.has(item.id))
+                    : undefined;
+                const canMapByIndex = rows.length === oldRows.length;
                 const matchedOldRow =
+                    matchedByKey ||
                     matchedByCode ||
-                    (oldRows[index] && !usedOldIds.has(oldRows[index].id) ? oldRows[index] : undefined);
+                    (canMapByIndex && oldRows[index] && !usedOldIds.has(oldRows[index].id) ? oldRows[index] : undefined);
                 if (matchedOldRow?.id) {
                     usedOldIds.add(matchedOldRow.id);
                 }
@@ -3874,24 +3953,16 @@ export default () => {
                 });
 
             const srsTableState = await fetchSrsTableState(docId);
-            const syncedTree = dedupeChangeTableNodesInTree(
-                syncTreeWithSrsTableState(
-                    ((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) as TreeNode[],
-                    srsTableState,
-                ),
-            );
-            treeStructureRef.current = syncedTree;
             dispatch({
                 srsTableData: srsTableState.srsTableData,
                 srsOtherReqData: srsTableState.srsOtherReqData,
                 srsChangeTables: srsTableState.srsChangeTables,
-                treeStructure: syncedTree,
                 srsTableLoading: false,
             });
             if (needsReqListRefresh) {
             loadReqListData();
             }
-            return srsTableState.srsTableData;
+            return { srsTableData: srsTableState.srsTableData };
         } catch (error: any) {
             dispatch({ srsTableLoading: false });
             message.error(error?.message || "SRS表保存失败");
@@ -4845,6 +4916,10 @@ export default () => {
                             }}
                             onEditSrsChangeTable={openChangeReqEditModal}
                             onDeleteSrsChangeTable={handleDeleteChangeReqTableInCurrentPage}
+                            onAddSrsChangeTable={() => {
+                                loadSrsTableData();
+                                openAddChangeTableModal();
+                            }}
                             onSaveReqDetailTable={handleSaveReqDetailTable}
                             onSaveSrsReqTable={handleSaveSrsReqTableInCurrentPage}
                             onSaveOtherReqTable={handleSaveOtherReqTableInCurrentPage}

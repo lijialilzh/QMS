@@ -380,6 +380,49 @@ def _before_202509(rev_date):
     return int(m.group(1)) * 100 + int(m.group(2)) < 202509
 
 
+def _parse_timeline_year_value(value):
+    """从时间线「年」列或里程碑文本解析四位年份。"""
+    s = str(value or "").strip()
+    if not s:
+        return None
+    m = re.search(r"(20\d{2})", s)
+    if m:
+        return int(m.group(1))
+    digits = re.sub(r"[^\d]", "", s)
+    if len(digits) == 4 and digits.startswith("20"):
+        return int(digits)
+    return None
+
+
+def _timeline_date_rows_with_year(tl_rows):
+    """按 sort_order 为日期行补全年份（向下填充；模板缺年列时用年份行/兜底当前年）。"""
+    import datetime
+
+    sorted_rows = sorted(tl_rows or [], key=lambda r: ((r.sort_order or 0), (r.id or 0)))
+    default_year = datetime.date.today().year
+    for r in sorted_rows:
+        y = _parse_timeline_year_value(getattr(r, "year", None)) or _parse_timeline_year_value(getattr(r, "milestone_text", None))
+        if y:
+            default_year = y
+    last_year = None
+    dated = []
+    for r in sorted_rows:
+        rtype = (getattr(r, "row_type", None) or "date")
+        if rtype == "year":
+            y = _parse_timeline_year_value(getattr(r, "milestone_text", None) or getattr(r, "year", None))
+            if y:
+                last_year = y
+            continue
+        if rtype != "date":
+            continue
+        explicit = _parse_timeline_year_value(getattr(r, "year", None))
+        if explicit:
+            last_year = explicit
+        year = explicit or last_year or default_year
+        dated.append((r, year))
+    return dated
+
+
 def review_date(prod_id, name_keywords):
     """从时间线取评审日期（命中「文档名关键字」且优先命中「评审」的行，取最新），格式 yyyy.MM.dd。"""
     if not prod_id:
@@ -399,10 +442,11 @@ def review_date(prod_id, name_keywords):
         select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_([r.id for r in tl_rows]))
     ).scalars().all():
         cell_map.setdefault(c.row_id, []).append(c.output_result or "")
-    date_rows = [r for r in tl_rows if (r.row_type or "date") == "date" and to_int(r.year) and to_int(r.month)]
+    date_rows = [(r, y) for r, y in _timeline_date_rows_with_year(tl_rows) if to_int(r.month)]
 
-    def date_key(r):
-        return to_int(r.year) * 10000 + to_int(r.month) * 100 + (to_int(r.day) or 0)
+    def date_key(item):
+        r, year = item
+        return year * 10000 + to_int(r.month) * 100 + (to_int(r.day) or 0)
 
     def match(r, need_review):
         vals = cell_map.get(r.id, [])
@@ -410,11 +454,11 @@ def review_date(prod_id, name_keywords):
         hit_review = any("评审" in str(v or "") for v in vals)
         return hit_name and (hit_review if need_review else True)
 
-    rows = [r for r in date_rows if match(r, True)] or [r for r in date_rows if match(r, False)]
+    rows = [item for item in date_rows if match(item[0], True)] or [item for item in date_rows if match(item[0], False)]
     if not rows:
         return ""
-    r = max(rows, key=date_key)
-    return f"{to_int(r.year)}.{to_int(r.month):02d}.{(to_int(r.day) or 1):02d}"
+    r, year = max(rows, key=date_key)
+    return f"{year}.{to_int(r.month):02d}.{(to_int(r.day) or 1):02d}"
 
 
 def date_range(prod_id, name_keywords):
@@ -438,23 +482,25 @@ def date_range(prod_id, name_keywords):
     ).scalars().all():
         cell_map.setdefault(c.row_id, []).append(c.output_result or "")
 
-    def date_key(r):
-        return to_int(r.year) * 10000 + to_int(r.month) * 100 + (to_int(r.day) or 0)
+    def date_key(item):
+        r, year = item
+        return year * 10000 + to_int(r.month) * 100 + (to_int(r.day) or 0)
 
     matched = []
-    for r in tl_rows:
-        if (r.row_type or "date") != "date" or not to_int(r.year) or not to_int(r.month):
+    for r, year in _timeline_date_rows_with_year(tl_rows):
+        if not to_int(r.month):
             continue
         vals = cell_map.get(r.id, [])
         if any(any(k in str(v or "") for k in name_keywords) for v in vals):
-            matched.append(r)
+            matched.append((r, year))
     if not matched:
         return ("", "")
     lo = min(matched, key=date_key)
     hi = max(matched, key=date_key)
 
-    def fmt(r):
-        return f"{to_int(r.year)}.{to_int(r.month):02d}.{(to_int(r.day) or 1):02d}"
+    def fmt(item):
+        r, year = item
+        return f"{year}.{to_int(r.month):02d}.{(to_int(r.day) or 1):02d}"
 
     return (fmt(lo), fmt(hi))
 
@@ -504,6 +550,8 @@ COVER_KEYWORDS = {
     "sds": ["软件详细设计", "详细设计"],
     "hld": ["软件概要设计", "概要设计"],
     "pir": ["产品立项报告", "立项报告"],
+    "ptr": ["产品技术要求", "技术要求"],
+    "acc": ["产品验收记录", "验收记录"],
     "label": ["产品标签样稿", "标签"],
     "vuh": ["版本更新历史"],
     "nsmp": ["网络安全维护计划", "维护计划"],
@@ -517,6 +565,8 @@ COVER_KEYWORDS = {
     "bug": ["Bug管理及回归测试", "回归测试", "Bug管理", "缺陷"],
     "imm": ["安装维护手册", "安装维护", "MD5"],
     "ftr": ["现场测试规程", "现场测试"],
+    "cyber_cap": ["网络安全能力分析", "能力分析"],
+    "train_record": ["培训记录表", "培训记录"],
 }
 
 

@@ -423,6 +423,7 @@ export default () => {
                 if (stats.doc_count) parts.push(`文档 ${stats.doc_count} 份`);
                 if (stats.test_set_count) parts.push(`测试集 ${stats.test_set_count} 个`);
                 if (stats.doc_file_count) parts.push(`图表 ${stats.doc_file_count} 个`);
+                if (stats.runtime_env_copied) parts.push("运行环境");
                 message.success(parts.join("，"));
                 doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
             } else {

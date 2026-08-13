@@ -194,6 +194,9 @@ class Server(object):
             if user_ids:
                 db.session.add_all([UserProd(user_id=user_id, product_id=new_row.id) for user_id in user_ids])
 
+            from .serv_prod_runtime_env import copy_prod_runtime_env_for_product
+            runtime_env_copied = copy_prod_runtime_env_for_product(from_row.id, new_row.id)
+
             selected_dhf_rows = []
             if dhf_ids:
                 from .serv_product_dhf_copy import copy_dhf_linked_assets, apply_product_version_token
@@ -221,8 +224,13 @@ class Server(object):
                 )
 
             data = ProductForm(id=new_row.id)
+            resp_fields = {}
+            if runtime_env_copied:
+                resp_fields["runtime_env_copied"] = 1
             if copy_stats:
-                data = ProductForm(id=new_row.id, **{k: v for k, v in copy_stats.items() if k in ("dhf_count", "doc_count", "test_set_count", "doc_file_count")})
+                resp_fields.update({k: v for k, v in copy_stats.items() if k in ("dhf_count", "doc_count", "test_set_count", "doc_file_count")})
+            if resp_fields:
+                data = ProductForm(id=new_row.id, **resp_fields)
             return Resp.resp_ok(data=data)
         except Exception:
             logger.exception("")

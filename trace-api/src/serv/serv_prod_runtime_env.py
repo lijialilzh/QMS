@@ -33,6 +33,27 @@ DEFAULT_RUNTIME_ENV = {
 _EDITABLE_FIELDS = list(DEFAULT_RUNTIME_ENV.keys())
 
 
+def copy_prod_runtime_env_for_product(source_prod_id: int, target_prod_id: int) -> bool:
+    """产品复制时：若源产品已保存运行环境，则为目标产品复制一份（目标已有则跳过）。"""
+    if not source_prod_id or not target_prod_id or source_prod_id == target_prod_id:
+        return False
+    target_exists = db.session.execute(
+        select(ProdRuntimeEnv).where(ProdRuntimeEnv.prod_id == target_prod_id)
+    ).scalars().first()
+    if target_exists:
+        return False
+    source = db.session.execute(
+        select(ProdRuntimeEnv).where(ProdRuntimeEnv.prod_id == source_prod_id)
+    ).scalars().first()
+    if not source:
+        return False
+    new_row = ProdRuntimeEnv(prod_id=target_prod_id)
+    for key in _EDITABLE_FIELDS:
+        setattr(new_row, key, getattr(source, key, None))
+    db.session.add(new_row)
+    return True
+
+
 class Server(object):
 
     async def get_prod_runtime_env(self, prod_id: int):

@@ -1,4 +1,5 @@
 import logging
+import re
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
 from sqlalchemy import select, delete, func
@@ -170,6 +171,11 @@ class Server(object):
 
             last_year = ""
             last_month = ""
+            for r in grid[2:]:
+                a = str(r[0]).strip() if len(r) > 0 and r[0] is not None else ""
+                if re.search(r"20\d{2}", a):
+                    last_year = re.search(r"(20\d{2})", a).group(1)
+                    break
             sort_order = 0
             imported = 0
             for r in grid[2:]:
