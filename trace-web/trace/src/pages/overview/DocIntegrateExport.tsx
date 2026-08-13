@@ -7,7 +7,6 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as ApiPrint from "@/api/ApiPrintCfg";
 import "./DocIntegrateExport.less";
 
-const GROUP_ORDER = ["product_files", "dev_files", "test_files", "cybersec_files", "trace_files"] as const;
 const GROUP_TITLES: Record<string, string> = {
     product_files: "产品文件",
     dev_files: "开发文件",

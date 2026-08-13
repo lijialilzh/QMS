@@ -3032,15 +3032,6 @@ export default () => {
     };
 
     const normalizeText = (value?: string) => (value || "").replace(/\s+/g, "");
-    const stripChapterPrefix = (value?: string) =>
-        String(value || "")
-            .trim()
-            .replace(/^[\s\u3000•·▪■◆●○□◇\-–—]*/, "")
-            // 先清理标准章节号（1 / 1.2 / 1.2.3）
-            .replace(/^([0-9０-９]+(?:[.．][0-9０-９]+)*)(?:[\s、.．\u00a0\u2002\u2003\u2009]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
-            // 兜底：清理任意残留前导数字（含全角）
-            .replace(/^[0-9０-９]+(?:[\s\u00a0\u2002\u2003\u2009.．、-]*)/, "")
-            .trim();
     const hasTableContent = (node: TreeNode) => !!(node.table && Array.isArray(node.table.rows) && node.table.rows.length > 0);
     const getTableText = (node: TreeNode) => {
         if (!hasTableContent(node) || !node.table) return "";

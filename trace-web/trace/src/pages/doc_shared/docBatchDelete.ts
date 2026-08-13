@@ -48,7 +48,9 @@ export function createDocBatchDelete(options: CreateDocBatchDeleteOptions) {
             content: sprintf(ts("batch_delete_confirm"), { count: keys.length }),
             onOk: async () => {
                 dispatch({ loading: true });
-                const idToRow = Object.fromEntries((data.rows || []).map((row: any) => [row.id, row]));
+                const idToRow: Record<string, any> = Object.fromEntries(
+                    (data.rows || []).map((row: any) => [String(row.id), row]),
+                );
                 let successCount = 0;
                 const failedIds: Key[] = [];
                 for (const id of keys) {
@@ -66,7 +68,7 @@ export function createDocBatchDelete(options: CreateDocBatchDeleteOptions) {
                     const product = row?.product_name || "";
                     return [product, version].filter(Boolean).join(" ") || String(id);
                 };
-                const failedItems = failedIds.map((id) => labelOf(idToRow[id], id)).join("、");
+                const failedItems = failedIds.map((id) => labelOf(idToRow[String(id)], id)).join("、");
                 dispatch({ loading: false, selectedRowKeys: [] });
                 if (failedIds.length === 0) {
                     message.success(ts("batch_delete_success"));

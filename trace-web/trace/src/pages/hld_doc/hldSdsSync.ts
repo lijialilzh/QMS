@@ -302,9 +302,6 @@ const buildInterfaceDetailChildren = (
 const childHasDetailTable = (child: TreeNode) =>
     Array.isArray(child.table?.rows) && (child.table?.rows?.length || 0) > 0;
 
-const childHasDetailText = (child: TreeNode) =>
-    !!String(child.text || "").trim() && !childHasDetailTable(child);
-
 export const stripLegacyInterfaceText = (tree: TreeNode[]): TreeNode[] =>
     walkTree(tree, (node) => {
         const title = String(node.title || "");

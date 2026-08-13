@@ -294,8 +294,6 @@ export default () => {
             );
         });
 
-    const images: string[] = active && Array.isArray(active.images) ? active.images : [];
-
     return (
         <div className="div-v page pdp-detail">
             <div className="div-h pdp-toolbar">

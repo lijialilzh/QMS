@@ -609,7 +609,19 @@ export default () => {
                                     const segments = splitBodyTables(active.body, active.tables, images);
                                     const hasInterleave = (segments.some((s) => s.type === "table") || segments.some((s) => s.type === "image")) && segments.some((s) => s.type === "text") && active.ref_type !== "review";
                                     if (hasInterleave) {
-                                        return segments.map((seg, si) => {
+                                        return (
+                                            <>
+                                                {(active.ref_type === "personnel" || stripNum(active.title) === "人员资源") && !readonly && (
+                                                    <div className="pdp-pull-bar">
+                                                        <Button type="primary" ghost loading={data.pulling} onClick={pullPersonnel}>
+                                                            从产品参与人员获取
+                                                        </Button>
+                                                        <span className="pdp-pull-hint">
+                                                            按当前产品{data.doc.product_full_version ? `（${data.doc.product_full_version}）` : ""}从「产品参与人员」同步全部人员（编号/姓名/角色，保留已填所属部门）
+                                                        </span>
+                                                    </div>
+                                                )}
+                                                {segments.map((seg, si) => {
                                             if (seg.type === "text") {
                                                 return (
                                                     <div className="pdp-field" key={si}>
@@ -692,7 +704,9 @@ export default () => {
                                                     </table>
                                                 </div>
                                             );
-                                        });
+                                        })}
+                                            </>
+                                        );
                                     }
                                     return (
                                         <>
@@ -706,6 +720,16 @@ export default () => {
                                                     onChange={(e) => patchNode(active._key, { body: e.target.value })}
                                                 />
                                             </div>
+                                            {(active.ref_type === "personnel" || stripNum(active.title) === "人员资源") && !readonly && (
+                                                <div className="pdp-pull-bar">
+                                                    <Button type="primary" ghost loading={data.pulling} onClick={pullPersonnel}>
+                                                        从产品参与人员获取
+                                                    </Button>
+                                                    <span className="pdp-pull-hint">
+                                                        按当前产品{data.doc.product_full_version ? `（${data.doc.product_full_version}）` : ""}从「产品参与人员」同步全部人员（编号/姓名/角色，保留已填所属部门）
+                                                    </span>
+                                                </div>
+                                            )}
                                             {active.ref_type === "review"
                                                 ? (active.tables || []).map((tb: any[], ti: number) => (
                                                     <div className="pdp-table-block" key={ti}>

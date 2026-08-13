@@ -1,6 +1,6 @@
-import { Button, Form, Input, Select, Space, Spin, Upload, message } from "antd";
-import { PlusOutlined, DeleteOutlined, FileAddOutlined, UploadOutlined } from "@ant-design/icons";
-import { useEffect, useRef } from "react";
+import { Button, Input, Space, Spin, message } from "antd";
+import { PlusOutlined, DeleteOutlined, FileAddOutlined } from "@ant-design/icons";
+import { useEffect } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
@@ -26,7 +26,6 @@ const createRevisionSection = () => ({
 const normalizeTitleText = (value: any) => String(value || "").replace(/\s+/g, "");
 const isCoverSection = (s: any) => s?.ref_type === "cover" || normalizeTitleText(s?.title) === DOC_TITLE;
 const isRevisionSection = (s: any) => s?.ref_type === "revision" || normalizeTitleText(s?.title) === "文件修订记录";
-const isFlowDiagramSection = (s: any) => s?.ref_type === "flow_diagram" || normalizeTitleText(s?.title).endsWith("系统总体架构");
 const isImgTopoSection = (s: any) => s?.ref_type === "img_topo" || normalizeTitleText(s?.title).includes("物理拓扑图");
 const isImgStructSection = (s: any) => s?.ref_type === "img_struct" || normalizeTitleText(s?.title).includes("系统架构");
 
@@ -86,7 +85,6 @@ const mapNode = (nodes: any[], key: string, fn: (n: any) => any): any[] =>
     (nodes || []).map((n: any) => n._key === key ? fn(n) : { ...n, children: mapNode(n.children || [], key, fn) });
 const removeNode = (nodes: any[], key: string): any[] =>
     (nodes || []).filter((n: any) => n._key !== key).map((n: any) => ({ ...n, children: removeNode(n.children || [], key) }));
-const firstKey = (nodes: any[]): string => (nodes && nodes[0] ? nodes[0]._key : "");
 const sectionKey = (s: any) => s?._key || s?.title || s?.ref_type || "";
 
 const NO_NUM = new Set(["cover", "revision", "appendix"]);
@@ -121,7 +119,6 @@ export default () => {
     const location = useLocation();
     const isAdd = location.pathname.includes("/add");
     const isView = location.pathname.includes("/view/");
-    const [form] = Form.useForm();
     const [data, dispatch] = useData({
         loading: false, saving: false, exporting: false,
         detail: {} as any, content: emptyContent, products: [] as any[],
@@ -576,11 +573,6 @@ export default () => {
 
                                         {/* 表格 */}
                                         {(active.tables || []).map((tb: any[], ti: number) => {
-                                            const isAppendix = active.ref_type === "appendix" || active.ref_type === "runtime_env";
-                                            // 整行合并：整行只有第一格有内容
-                                            const isFullRow = (row: any[]) => row.length > 1
-                                                && String(row?.[0] ?? "").trim() !== ""
-                                                && row.slice(1).every((c: any) => String(c ?? "").trim() === "");
                                             return (
                                             <div className="pdp-table-block" key={ti}>
                                                 <div className="pdp-table-bar">

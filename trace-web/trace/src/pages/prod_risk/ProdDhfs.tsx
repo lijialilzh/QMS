@@ -124,7 +124,7 @@ export default () => {
     const getCopyExcludeProductIds = () => {
         const ids = new Set<number>();
         if (data.targetRow?.id) ids.add(Number(data.targetRow.id));
-        data.dhfCountMap.forEach((count, prodId) => {
+        (data.dhfCountMap as Map<number, number>).forEach((count: number, prodId: number) => {
             if (count > 0) ids.add(Number(prodId));
         });
         return Array.from(ids);
