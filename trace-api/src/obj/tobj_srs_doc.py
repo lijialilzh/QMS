@@ -23,6 +23,7 @@ class TableCell(BaseModel):
 class Table(BaseModel):
     name: Optional[str] = Field(title="表格名称")
     show_header: Optional[int] = Field(title="是否显示表头", default=1)
+    no_cell_merge: Optional[int] = Field(title="禁用单元格合并展示", default=0)
     headers: Optional[List[TabHeader]] = Field(title="表头")
     rows: Optional[List[Dict[str, Any]]] = Field(title="表格行数据")
     cells: Optional[List[List[TableCell]]] = Field(title="二维单元格（含合并信息）")

@@ -457,7 +457,10 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
   };
 
   const createEmptyRow = (): TableRowData => {
-    const rowData: TableRowData = { key: Date.now() + Math.floor(Math.random() * 1000), __rowMeta: {} };
+    const rowData: TableRowData = {
+      key: Date.now() + Math.floor(Math.random() * 1000),
+      __rowMeta: { req_detail_key: `reqd_${uuidv4()}` },
+    };
     for (let colIndex = 0; colIndex < colCount; colIndex++) {
       rowData[`col_${colIndex}`] = '';
     }

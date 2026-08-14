@@ -1120,6 +1120,8 @@ class Server(object):
             group = self.__req_code_group(next_values[code_idx])
         if group != last_values.get("_group"):
             last_values["_group"] = group
+            last_values["_seen_function"] = last_values.get("function") or last_values.get("_seen_function") or ""
+            last_values["_seen_sub"] = last_values.get("sub_function") or last_values.get("_seen_sub") or ""
             for key in ["module", "function", "sub_function", "location"]:
                 last_values.pop(key, None)
 
@@ -1127,15 +1129,15 @@ class Server(object):
         function_idx, function = field_text("function")
         sub_idx, sub_function = field_text("sub_function")
         prev_module = last_values.get("module") or ""
-        seen_function = last_values.get("_seen_function") or ""
-        seen_sub = last_values.get("_seen_sub") or ""
+        prev_function = last_values.get("function") or last_values.get("_seen_function") or ""
+        prev_sub = last_values.get("sub_function") or last_values.get("_seen_sub") or ""
         module_changed = bool(module and module != prev_module)
-        function_changed = bool(function and function != seen_function)
-        if module_changed and function and function == seen_function:
+        function_changed = bool(function and function != prev_function)
+        if module_changed and function and function == prev_function:
             function = ""
             if function_idx is not None:
                 next_values[function_idx] = ""
-        if (module_changed or function_changed) and sub_function and sub_function == seen_sub:
+        if (module_changed or function_changed) and sub_function and sub_function == prev_sub:
             sub_function = ""
             if sub_idx is not None:
                 next_values[sub_idx] = ""
@@ -1173,11 +1175,116 @@ class Server(object):
                 next_values[idx] = last_values["sub_function"]
             elif field == "location" and last_values.get("location"):
                 next_values[idx] = last_values["location"]
-        if function:
-            last_values["_seen_function"] = function
-        if sub_function:
-            last_values["_seen_sub"] = sub_function
+        filled_function = next_values[function_idx] if function_idx is not None else function
+        filled_sub = next_values[sub_idx] if sub_idx is not None else sub_function
+        if filled_function:
+            last_values["_seen_function"] = filled_function
+        if filled_sub:
+            last_values["_seen_sub"] = filled_sub
         return next_values
+
+    def __is_standard_main_req_table(self, table) -> bool:
+        if not table or not getattr(table, "headers", None):
+            return False
+        headers = table.headers or []
+        header_names = [
+            self.__normalize_header(getattr(h, "name", "") or "")
+            for h in headers
+        ]
+        col_idx = self.__resolve_req_columns(header_names)
+        return "code" in col_idx and "module" in col_idx and "function" in col_idx
+
+    def __flatten_imported_req_table(self, table: Table) -> Table:
+        """Word 导入的产品需求列表：逐行补全模块/功能/子功能，去掉 cells 合并结构。"""
+        if not self.__is_standard_main_req_table(table):
+            return table
+        table_name = str(getattr(table, "name", "") or "")
+        if "变更" in table_name:
+            return table
+
+        headers = table.headers or []
+        header_codes = [getattr(h, "code", "") or "" for h in headers]
+        header_norm = [self.__normalize_header(getattr(h, "name", "") or "") for h in headers]
+        col_idx = self.__resolve_req_columns(header_norm)
+        cells = getattr(table, "cells", None) or []
+        rows = list(getattr(table, "rows", None) or [])
+
+        if (not rows) and isinstance(cells, list) and len(cells) > 1:
+            active_spans: Dict[int, dict] = {}
+            rows = []
+            for cell_row in cells[1:]:
+                row: Dict[str, str] = {}
+                for col_index, header in enumerate(headers):
+                    code = header_codes[col_index] if col_index < len(header_codes) else ""
+                    active = active_spans.get(col_index)
+                    cell = cell_row[col_index] if col_index < len(cell_row) else None
+                    row_span = int(getattr(cell, "row_span", 1) or 1) if cell is not None else 1
+                    col_span = int(getattr(cell, "col_span", 1) or 1) if cell is not None else 1
+                    if row_span == 0 or col_span == 0:
+                        row[code] = active.get("value", "") if active else ""
+                        if active:
+                            active["remaining"] -= 1
+                            if active["remaining"] <= 0:
+                                active_spans.pop(col_index, None)
+                        continue
+                    value = self.__clean_req_table_field(getattr(cell, "value", "") if cell is not None else "")
+                    row[code] = value
+                    if row_span > 1:
+                        active_spans[col_index] = {"value": value, "remaining": row_span - 1}
+                rows.append(row)
+
+        field_codes = {
+            field: header_codes[col_idx[field]]
+            for field in ["module", "function", "sub_function", "location"]
+            if field in col_idx and col_idx[field] < len(header_codes)
+        }
+        last_values: Dict[str, str] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            current_values = {
+                field: re.sub(r"\s+", "", self.__normalize_text(row.get(code, "") or ""))
+                for field, code in field_codes.items()
+            }
+            for field, value in list(current_values.items()):
+                if self.__is_placeholder_req_value(value):
+                    current_values[field] = ""
+            module_changed = bool(current_values.get("module"))
+            function_changed = bool(current_values.get("function"))
+            for field, code in field_codes.items():
+                value = current_values.get(field) or ""
+                if value:
+                    last_values[field] = value
+                    row[code] = value
+                    if field == "module":
+                        last_values.pop("function", None)
+                        last_values.pop("sub_function", None)
+                    elif field == "function":
+                        last_values.pop("sub_function", None)
+                elif field == "module" and last_values.get("module"):
+                    row[code] = last_values["module"]
+                elif field == "function" and not module_changed and last_values.get("function"):
+                    row[code] = last_values["function"]
+                elif field == "sub_function" and not (module_changed or function_changed) and last_values.get("sub_function"):
+                    row[code] = last_values["sub_function"]
+                elif field == "location" and last_values.get("location"):
+                    row[code] = last_values["location"]
+                else:
+                    row[code] = value
+
+        table.rows = rows
+        table.cells = None
+        table.no_cell_merge = 1
+        return table
+
+    def __flatten_imported_req_tables_in_nodes(self, nodes: List[SrsNodeForm]):
+        def walk(items: List[SrsNodeForm]):
+            for node in items or []:
+                if node.table:
+                    node.table = self.__flatten_imported_req_table(node.table)
+                walk(node.children or [])
+
+        walk(nodes or [])
 
     def __extract_srs_reqs_from_tables(self, docx: Document):
         req_rows = []
@@ -2645,6 +2752,8 @@ class Server(object):
                     if not req_code:
                         continue
                     req_rcm_map.setdefault(req_code, set()).update(rcm_set or set())
+            # 导入时产品需求列表不保留 Word 纵向合并：每行独立展示模块/功能/子功能。
+            self.__flatten_imported_req_tables_in_nodes(content)
             form = SrsDocForm(
                 product_id=product_id,
                 version=version,

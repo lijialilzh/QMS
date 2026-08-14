@@ -66,11 +66,11 @@
 
     .detail-content {
         flex: 1;
+        min-height: 0;
         padding: 16px;
         display: flex;
         flex-direction: column;
-        overflow-y: auto;
-        overflow-x: hidden;
+        overflow: hidden;
 
         .page-actions {
             margin-bottom: 12px;
@@ -107,10 +107,19 @@
         margin-top: 12px;
         flex-shrink: 0;
 
-        // 目录结构区域自然展开
+        // 目录区铺满剩余可视高度：左目录 / 右表格各自滚动，不再撑出页面
         &.doc-section-flex {
             display: flex;
             flex-direction: column;
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+
+            > .tree-structure-container.srs-tree-layout {
+                flex: 1;
+                min-height: 0;
+                overflow: hidden;
+            }
         }
 
         .doc-section-header {
