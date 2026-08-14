@@ -540,17 +540,6 @@ export default () => {
             .filter((table) => !isBaseChangeTypeCode(table?.type_code))
             .sort((left, right) => getChangeTableSortKey(left) - getChangeTableSortKey(right))
     );
-    const moveChangeTableToEnd = (tables: any[] = [], typeCode?: string) => {
-        const code = String(typeCode || "");
-        if (!code) return sortSrsChangeTables(tables);
-        const sorted = sortSrsChangeTables(tables);
-        const targetIndex = sorted.findIndex((table) => String(table?.type_code || "") === code);
-        if (targetIndex < 0) return sorted;
-        const next = [...sorted];
-        const [target] = next.splice(targetIndex, 1);
-        next.push(target);
-        return next;
-    };
     const filteredSrsChangeTables = useMemo(() => (
         sortSrsChangeTables(data.srsChangeTables || []).map((table: any) => ({
             ...table,
@@ -3396,96 +3385,31 @@ export default () => {
         };
     }, [params.id]);
 
+    const buildChangeReqTableHeaders = () => ([
+        { code: "srs_code", name: ts("srs_doc.srs_code") || "需求编号" },
+        { code: "module", name: ts("srs_doc.module") || "模块" },
+        { code: "function", name: ts("srs_doc.function") || "功能" },
+        { code: "sub_function", name: ts("srs_doc.sub_function") || "子功能" },
+    ]);
+
     const openAddChangeTableModal = () => {
+        const headers = buildChangeReqTableHeaders();
         dispatch({
-            showAddChangeTableModal: true,
-            newChangeTableName: `变更需求${(data.srsChangeTables || []).length + 1}`,
+            showAddChangeTableModal: false,
+            newChangeTableName: "",
+            changeReqEditTarget: undefined,
+            changeReqEditInitialData: {
+                tableName: `变更需求${(data.srsChangeTables || []).length + 1}`,
+                headers,
+                data: [["", "", "", ""]],
+                rowMeta: [{}],
+            },
+            showChangeReqEditModal: true,
         });
     };
 
-    const handleAddChangeTableInCurrentPage = async () => {
-        const docId = params.id ? parseInt(params.id) : 0;
-        if (!docId) {
-            message.warning("缺少文档信息");
-            return;
-        }
-        const typeName = String(data.newChangeTableName || "").trim();
-        if (!typeName) {
-            message.warning("请输入表名");
-            return;
-        }
-        const isDuplicateChangeTableName = (data.srsChangeTables || []).some(
-            (item: any) => String(item?.title || "").trim() === typeName
-        );
-        if (isDuplicateChangeTableName) {
-            message.warning("表名已存在，不允许重复");
-            return;
-        }
-        try {
-            dispatch({ srsTableLoading: true });
-            const res: any = await ApiSrsType.add_srs_type({
-                doc_id: docId,
-                type_name: typeName,
-            });
-            if (res.code !== ApiSrsType.C_OK) {
-                throw new Error(res.msg || "新增变更表格失败");
-            }
-            const created = res.data || {};
-            const srsTableState = await fetchSrsTableState(docId);
-            const createdTable = created.type_code
-                ? {
-                            id: created.id || `change_${created.type_code}`,
-                            title: created.type_name || typeName,
-                            type_code: created.type_code,
-                    create_time: created.create_time,
-                            data: [],
-                }
-                : undefined;
-            const nextChangeTables = created.type_code
-                ? moveChangeTableToEnd(srsTableState.srsChangeTables, created.type_code)
-                : sortSrsChangeTables(srsTableState.srsChangeTables);
-            dispatch({
-                srsTableData: srsTableState.srsTableData,
-                srsOtherReqData: srsTableState.srsOtherReqData,
-                srsChangeTables: nextChangeTables,
-                srsTableLoading: false,
-                showAddChangeTableModal: false,
-                newChangeTableName: "",
-            });
-            if (createdTable) {
-                const headers = [
-                    { code: "srs_code", name: ts("srs_doc.srs_code") || "需求编号" },
-                    { code: "module", name: ts("srs_doc.module") || "模块" },
-                    { code: "function", name: ts("srs_doc.function") || "功能" },
-                    { code: "sub_function", name: ts("srs_doc.sub_function") || "子功能" },
-                ];
-                dispatch({
-                    changeReqEditTarget: createdTable,
-                    changeReqEditInitialData: {
-                        tableName: createdTable.title || "",
-                        type_code: createdTable.type_code,
-                        tableId: createdTable.id,
-                        headers,
-                        data: [],
-                        rowMeta: [],
-                    },
-                    showChangeReqEditModal: true,
-                });
-            }
-            message.success("变更表格已新增");
-        } catch (error: any) {
-            dispatch({ srsTableLoading: false });
-            message.error(error?.message || "新增变更表格失败");
-        }
-    };
-
     const openChangeReqEditModal = (table: { id: number | string; title: string; type_code?: string; data: any[] }) => {
-        const headers = [
-            { code: "srs_code", name: ts("srs_doc.srs_code") || "需求编号" },
-            { code: "module", name: ts("srs_doc.module") || "模块" },
-            { code: "function", name: ts("srs_doc.function") || "功能" },
-            { code: "sub_function", name: ts("srs_doc.sub_function") || "子功能" },
-        ];
+        const headers = buildChangeReqTableHeaders();
         const initialData: TableDataWithHeaders = {
             tableName: table.title || "",
             type_code: table.type_code,
@@ -5302,27 +5226,6 @@ export default () => {
                         />
                     </div>
                 ))}
-            </Modal>
-
-            <Modal
-                title="新增变更表格"
-                open={data.showAddChangeTableModal}
-                onOk={handleAddChangeTableInCurrentPage}
-                onCancel={() => dispatch({ showAddChangeTableModal: false, newChangeTableName: "" })}
-                confirmLoading={data.srsTableLoading}
-                okText={ts("confirm") || "确定"}
-                cancelText={ts("cancel") || "取消"}
-            >
-                <Form layout="vertical">
-                    <Form.Item label="表名" required>
-                        <Input
-                            value={data.newChangeTableName}
-                            placeholder="请输入表名，例如：变更列表"
-                            onChange={(event) => dispatch({ newChangeTableName: event.target.value })}
-                            onPressEnter={handleAddChangeTableInCurrentPage}
-                        />
-                    </Form.Item>
-                </Form>
             </Modal>
 
             {/* 需求列表弹框 */}

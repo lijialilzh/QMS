@@ -18,20 +18,33 @@ except Exception:
     Image = None
 from docx import enum as dox_enum
 from docx.shared import RGBColor
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from ...obj.tobj_srs_doc import Table
 
 def __fonted_cell(cell, text, font_size=10.5):
     # python-docx 合并单元格时会保留/拼接多个段落；写入前先清空，避免文本重复。
+    raw = str(text or "")
     cell.text = ""
-    for paragraph in cell.paragraphs:
-        paragraph.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.LEFT
-        paragraph.paragraph_format.first_line_indent = Pt(0)
-        paragraph.paragraph_format.left_indent = Pt(0)
-        paragraph.paragraph_format.right_indent = Pt(0)
-        paragraph.paragraph_format.space_before = Pt(0)
-        paragraph.paragraph_format.space_after = Pt(0)
-        fonted_txt(paragraph, text, font_size)
+    paragraph = cell.paragraphs[0] if cell.paragraphs else cell.add_paragraph()
+    paragraph.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.LEFT
+    paragraph.paragraph_format.first_line_indent = Pt(0)
+    paragraph.paragraph_format.left_indent = Pt(0)
+    paragraph.paragraph_format.right_indent = Pt(0)
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.space_after = Pt(0)
+    # 封面编制人/审核人/批准人签名图：嵌入图片，不把 data URL 当正文写出
+    if raw.startswith("data:image"):
+        try:
+            b64 = raw.split(",", 1)[1] if "," in raw else ""
+            paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            paragraph.add_run().add_picture(io.BytesIO(base64.b64decode(b64)), height=Pt(28))
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            return
+        except Exception:
+            logging.exception("embed signature image into table cell failed")
+    fonted_txt(paragraph, raw, font_size)
 
 def __apply_table_border(tabx):
     tblBorders = OxmlElement('w:tblBorders')
@@ -62,6 +75,8 @@ def __text_visual_len(value: str) -> float:
     txt = str(value or "").strip()
     if not txt:
         return 0.0
+    if txt.startswith("data:image"):
+        return 12.0
     # 中文按双宽估算，英文/数字按单宽估算；防止超长URL把比例拉爆
     score = 0.0
     for ch in txt:
@@ -143,11 +158,19 @@ def __apply_adaptive_col_width(tabx, headers, rows):
 def save_tab2docx(tab: Table,  docx: Document):
     # 优先使用 cells 导出（保留Word导入时的合并单元格结构）
     if tab.cells and len(tab.cells) > 0:
-        row_count = len(tab.cells)
-        col_count = max((len(row) for row in tab.cells), default=0)
+        export_cells = list(tab.cells)
+        header_names = [str(getattr(h, "name", "") or "").strip() for h in (tab.headers or [])]
+        skip_empty_header = (not tab.show_header) or (header_names and not any(header_names))
+        if skip_empty_header and export_cells:
+            first_row = export_cells[0] or []
+            first_empty = all(not str(getattr(c, "value", "") or "").strip() for c in first_row)
+            if first_empty:
+                export_cells = export_cells[1:]
+        row_count = len(export_cells)
+        col_count = max((len(row) for row in export_cells), default=0)
         if row_count > 0 and col_count > 0:
             tabx = docx.add_table(rows=row_count, cols=col_count)
-            for ri, row in enumerate(tab.cells):
+            for ri, row in enumerate(export_cells):
                 for ci, cell in enumerate(row):
                     if cell is None:
                         continue
@@ -165,19 +188,18 @@ def save_tab2docx(tab: Table,  docx: Document):
             header_names = []
             if tab.show_header and row_count > 0:
                 try:
-                    header_names = [str(tab.cells[0][ci].value or "") for ci in range(col_count)]
+                    header_names = [str(export_cells[0][ci].value or "") for ci in range(col_count)]
                 except Exception:
                     header_names = []
             pseudo_headers = tab.headers or [type("Header", (), {"code": f"c{idx}", "name": (header_names[idx] if idx < len(header_names) else f"列{idx+1}")}) for idx in range(col_count)]
             pseudo_rows = []
-            data_start = 1 if (tab.show_header and row_count > 0) else 0
-            for ri in range(data_start, row_count):
+            for ri in range(row_count):
                 row_dict = {}
                 for ci in range(col_count):
-                    code = getattr(pseudo_headers[ci], "code", f"c{ci}")
+                    code = getattr(pseudo_headers[ci], "code", f"c{ci}") if ci < len(pseudo_headers) else f"c{ci}"
                     val = ""
                     try:
-                        cell = tab.cells[ri][ci]
+                        cell = export_cells[ri][ci]
                         val = "" if cell is None else str(getattr(cell, "value", "") or "")
                     except Exception:
                         val = ""
@@ -194,7 +216,8 @@ def save_tab2docx(tab: Table,  docx: Document):
 
     tabx = docx.add_table(rows=0, cols=len(tab.headers))
 
-    if tab.show_header:
+    header_names = [str(getattr(header, "name", "") or "").strip() for header in tab.headers]
+    if tab.show_header and any(header_names):
         header_cells = tabx.add_row().cells
         for ci, header in enumerate(tab.headers):
             __fonted_cell(header_cells[ci], header.name)

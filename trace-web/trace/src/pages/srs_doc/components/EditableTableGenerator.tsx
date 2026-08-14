@@ -130,13 +130,20 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
     const label = normalizeLockLabel(record?.col_0);
     return lockedLabelSet.has(label) || (isReqDetailTwoColumnTable && (rowIndex === 0 || rowIndex === 1));
   };
-  const isLockedHeaderRow = colCount === 2 && (
-    lockedLabelSet.has(normalizeLockLabel(customHeaders[0]?.name)) ||
-    /^SRS-/i.test(String(customHeaders[1]?.name || "").trim())
-  );
 
   const CHANGE_REQ_TABLE_HEADERS = "需求编号,模块,功能,子功能";
   const isChangeReqTableName = (value?: string) => /变更/.test(String(value || "").trim());
+  const isFixedChangeReqTable = Boolean(
+    initialData?.headers?.some((h) => h.code === "srs_code") &&
+    initialData?.headers?.some((h) => h.code === "module") &&
+    initialData?.headers?.some((h) => h.code === "function") &&
+    initialData?.headers?.some((h) => h.code === "sub_function")
+  );
+  const isCreateChangeReqTable = isFixedChangeReqTable && !initialData?.type_code;
+  const isLockedHeaderRow = isFixedChangeReqTable || (colCount === 2 && (
+    lockedLabelSet.has(normalizeLockLabel(customHeaders[0]?.name)) ||
+    /^SRS-/i.test(String(customHeaders[1]?.name || "").trim())
+  ));
 
   const applyChangeReqTablePreset = () => {
     setHeaderInput(CHANGE_REQ_TABLE_HEADERS);
@@ -504,6 +511,10 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
   // 7. 确认按钮：将表格数据转换为包含表头的结构返回
   const handleConfirm = () => {
     const latestTableData = tableDataRef.current.length ? tableDataRef.current : tableData;
+    if (isFixedChangeReqTable && !String(tableName || "").trim()) {
+      message.warning("请输入表名");
+      return;
+    }
     if (latestTableData.length === 0) {
       message.warning(ts('srs_doc.please_generate_table_first'));
       return;
@@ -549,7 +560,9 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
 
   return (
     <Modal
-      title={initialData ? ts('srs_doc.edit_table') : ts('srs_doc.add_table')}
+      title={isCreateChangeReqTable
+        ? (ts('srs_doc.add_change_table') || "新增变更表格")
+        : (initialData ? ts('srs_doc.edit_table') : ts('srs_doc.add_table'))}
       open={open}
       onCancel={handleCancel}
       footer={tableData.length > 0 ? (
@@ -562,7 +575,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
           </Button>
         </Space>
       ) : null}
-      width={760}
+      width={isFixedChangeReqTable ? 1100 : 760}
       destroyOnClose
       className="editable-table-modal"
       styles={{
@@ -599,58 +612,68 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
             name="tableName"
             label="表名"
             className="editable-table-meta-name"
+            required={isFixedChangeReqTable}
+            rules={isFixedChangeReqTable ? [{ required: true, message: "请输入表名" }] : undefined}
           >
             <Input placeholder="请输入表名" />
           </Form.Item>
 
-          <Form.Item
-            name="rowCount"
-            label={ts('srs_doc.row_count')}
-            className="editable-table-meta-count"
-            rules={[{ required: true, message: ts('srs_doc.please_input_row_count') }]}
-          >
-            <InputNumber
-              min={1}
-              max={50}
-            />
-          </Form.Item>
+          {!isFixedChangeReqTable && (
+            <>
+              <Form.Item
+                name="rowCount"
+                label={ts('srs_doc.row_count')}
+                className="editable-table-meta-count"
+                rules={[{ required: true, message: ts('srs_doc.please_input_row_count') }]}
+              >
+                <InputNumber
+                  min={1}
+                  max={50}
+                />
+              </Form.Item>
 
-          <Form.Item
-            name="colCount"
-            label={ts('srs_doc.col_count')}
-            className="editable-table-meta-count"
-            rules={[{ required: true, message: ts('srs_doc.please_input_col_count') }]}
-          >
-            <InputNumber
-              min={1}
-              max={20}
-            />
-          </Form.Item>
+              <Form.Item
+                name="colCount"
+                label={ts('srs_doc.col_count')}
+                className="editable-table-meta-count"
+                rules={[{ required: true, message: ts('srs_doc.please_input_col_count') }]}
+              >
+                <InputNumber
+                  min={1}
+                  max={20}
+                />
+              </Form.Item>
+            </>
+          )}
         </div>
 
-        <Form.Item
-          className="editable-table-header-item"
-          label={ts('srs_doc.table_header')}
-          extra={<span style={{ color: '#999', fontSize: '12px' }}>{ts('srs_doc.table_header_hint')}</span>}
-        >
-          <div className="editable-table-header-input-row">
-            <Input
-              value={headerInput}
-              onChange={(e) => setHeaderInput(e.target.value)}
-              placeholder={ts('srs_doc.table_header_placeholder')}
-            />
-            <Button type="primary" onClick={generateTable} disabled={submitting}>
-              {ts('srs_doc.generate_table_preview')}
-            </Button>
-          </div>
-        </Form.Item>
+        {!isFixedChangeReqTable && (
+          <Form.Item
+            className="editable-table-header-item"
+            label={ts('srs_doc.table_header')}
+            extra={<span style={{ color: '#999', fontSize: '12px' }}>{ts('srs_doc.table_header_hint')}</span>}
+          >
+            <div className="editable-table-header-input-row">
+              <Input
+                value={headerInput}
+                onChange={(e) => setHeaderInput(e.target.value)}
+                placeholder={ts('srs_doc.table_header_placeholder')}
+              />
+              <Button type="primary" onClick={generateTable} disabled={submitting}>
+                {ts('srs_doc.generate_table_preview')}
+              </Button>
+            </div>
+          </Form.Item>
+        )}
       </Form>
 
       {/* 第二步：渲染生成的可编辑表格 */}
       {tableData.length > 0 && (
         <>
         <div className="editable-table-preview">
-          <div className="editable-table-preview-title">{ts('srs_doc.table_preview')}</div>
+          {!isFixedChangeReqTable && (
+            <div className="editable-table-preview-title">{ts('srs_doc.table_preview')}</div>
+          )}
           <div className="editable-table-preview-scroll">
             <Table
               dataSource={tableData}

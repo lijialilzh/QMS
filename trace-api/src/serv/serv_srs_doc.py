@@ -3704,7 +3704,7 @@ class Server(object):
                         set_if(row, "value2", rev_date)
                     if len(rows) > 4:
                         set_if(rows[4], "value1", rev_date)
-                    node.table = Table(headers=self.__approval_headers(), rows=rows)
+                    node.table = Table(headers=self.__approval_headers(), rows=rows, show_header=0)
                 elif table and self.__is_change_log_table(table):
                     rows = [dict(r or {}) for r in (getattr(table, "rows", None) or [])]
                     while len(rows) < 1:
@@ -4268,6 +4268,10 @@ class Server(object):
                 for r in orig_cells
             )
             if has_h_merge:
+                return export_table
+            if self.__is_approval_table(export_table):
+                export_table.show_header = 0
+                export_table.cells = None
                 return export_table
             export_table = __clean_srs_table_for_export(export_table)
             built_cells = __build_srs_table_export_cells(export_table)
