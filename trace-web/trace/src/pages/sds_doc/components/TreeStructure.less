@@ -36,16 +36,21 @@
 
     &.srs-tree-layout {
         display: flex;
-        align-items: flex-start;
+        align-items: stretch;
         gap: 16px;
         background: transparent;
         padding: 0;
         border-radius: 0;
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
     }
 
     .srs-tree-editor {
         flex: 1 1 auto;
         min-width: 0;
+        min-height: 0;
+        overflow: auto;
         background: #fff;
         border: 1px solid #eef0f3;
         border-radius: 8px;
@@ -300,8 +305,12 @@
     .srs-tree-nav {
         flex: 0 0 260px;
         width: 260px;
-        max-height: 70vh;
-        overflow: auto;
+        height: 100%;
+        align-self: stretch;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
         border: 1px solid #eef0f3;
         border-radius: 8px;
         background: #fafafa;
@@ -312,9 +321,7 @@
             font-size: 13px;
             border-bottom: 1px solid #e8e8e8;
             background: #f0f0f0;
-            position: sticky;
-            top: 0;
-            z-index: 1;
+            flex-shrink: 0;
         }
 
         .srs-tree-nav-hint {
@@ -323,10 +330,15 @@
             line-height: 1.5;
             padding: 6px 12px 4px;
             border-bottom: 1px solid #f0f0f0;
+            flex-shrink: 0;
         }
 
         .srs-tree-nav-body {
-            padding: 6px 0;
+            flex: 1;
+            min-height: 0;
+            overflow-y: auto;
+            overscroll-behavior: contain;
+            padding: 6px 0 12px;
         }
 
         .srs-nav-item {
@@ -740,6 +752,18 @@
                 height: auto !important;
             }
 
+            .ant-table-tbody > tr > td.ant-table-cell {
+                white-space: pre-line !important;
+                overflow: visible !important;
+                text-overflow: unset !important;
+                height: auto !important;
+                min-height: 30px;
+                line-height: 1.5 !important;
+                padding-top: 4px !important;
+                padding-bottom: 4px !important;
+                vertical-align: top;
+            }
+
             .table-cell-content {
                 white-space: pre-line;
                 word-break: break-word;
@@ -797,6 +821,18 @@
                     font-size: 13px;
                     line-height: 1.5;
                     font-family: "Times New Roman", "SimSun", "Songti SC", serif;
+                }
+
+                .ant-table-tbody > tr > td.ant-table-cell {
+                    white-space: pre-line !important;
+                    overflow: visible !important;
+                    text-overflow: unset !important;
+                    height: auto !important;
+                    min-height: 30px;
+                    line-height: 1.5 !important;
+                    padding-top: 4px !important;
+                    padding-bottom: 4px !important;
+                    vertical-align: top;
                 }
 
             }

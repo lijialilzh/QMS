@@ -2003,9 +2003,11 @@ class SdsSrsTraceSyncMixin:
                     location = inferred_heading or location
             if location and not self._is_valid_sync_location_for_req(location, trace_code, type_code):
                 location = ""
-            if inferred_node and not (req_fields.get("module") or req_fields.get("sub_function")):
+            if inferred_node:
                 inferred_name = self._strip_heading_number(getattr(inferred_node, "title", "") or "")
-                if inferred_name:
+                chapter_weak = not chapter or bool(re.fullmatch(r"\d+", str(chapter).strip()))
+                inferred_ok = bool(inferred_name) and not re.fullmatch(r"\d+", str(inferred_name).strip())
+                if chapter_weak and inferred_ok and not (req_fields.get("module") or req_fields.get("sub_function")):
                     chapter = inferred_name
                     req.function = inferred_name
             if chapter:

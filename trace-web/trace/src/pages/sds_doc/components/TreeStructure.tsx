@@ -280,6 +280,31 @@ function normalizeRepeatedTraceChapterCell(value: any): string {
     return normalized.length === chapterIndexes.length ? normalized.join("\n") : raw;
 }
 
+function formatTraceSdsCodeCell(value: any): string {
+    const raw = String(value || "").replace(/\r/g, "").trim();
+    if (!raw) return "";
+    const lines = raw.split("\n").map((line) => line.trim()).filter(Boolean);
+    const tokens = lines.flatMap((line) => {
+        const codes = line.match(/SDS[-_A-Za-z0-9.]+/gi);
+        if (codes && codes.length > 1) return codes;
+        const parts = line.split(/[,，;；]+/).map((item) => item.trim()).filter(Boolean);
+        return parts.length > 1 ? parts : [line];
+    });
+    return tokens.join("\n");
+}
+
+function formatTraceChapterCell(value: any): string {
+    const raw = normalizeRepeatedTraceChapterCell(value);
+    return String(raw || "").replace(/([）)])\s*(?=\S)/g, "$1\n");
+}
+
+function formatTraceTableCell(headerName: string, value: any): string {
+    const name = String(headerName || "").trim();
+    if (name === "设计编号") return formatTraceSdsCodeCell(value);
+    if (name === "需求/代码" || name === "需求代码") return formatTraceChapterCell(value);
+    return value == null ? "" : String(value);
+}
+
 function isReviewStyleTable(table?: TableData | null): boolean {
     if (!table || !Array.isArray(table.headers) || table.headers.length === 0) return false;
     const headerText = table.headers
@@ -677,9 +702,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                     const colSpan = cell?.col_span ?? 1;
                     const hAlign = (cell?.h_align || "left") as "left" | "center" | "right";
                     const vAlign = (cell?.v_align || "top") as "top" | "middle" | "bottom";
-                    const cellValue = header.name === "需求/代码"
-                        ? normalizeRepeatedTraceChapterCell(cell?.value)
-                        : (cell?.value || "");
+                    const cellValue = formatTraceTableCell(header.name, cell?.value);
                     return {
                         children: <div className="table-cell-content">{cellValue}</div>,
                         props: { rowSpan, colSpan, style: { textAlign: hAlign, verticalAlign: vAlign } },
@@ -687,9 +710,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                 };
             } else {
                 col.render = (val: any) => {
-                    const cellValue = header.name === "需求/代码"
-                        ? normalizeRepeatedTraceChapterCell(val)
-                        : (val || "");
+                    const cellValue = formatTraceTableCell(header.name, val);
                     return <div className="table-cell-content">{cellValue}</div>;
                 };
             }

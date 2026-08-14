@@ -4,7 +4,7 @@ import sys
 import json
 import hashlib
 from typing import Dict, List, Optional, Tuple, Union
-from sqlalchemy import select, or_, and_, delete
+from sqlalchemy import select, or_, and_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import desc
 from ..obj.vobj_user import UserObj
@@ -122,6 +122,15 @@ class Server(object):
                 col_idx["location"] = code
         return col_idx
 
+    @staticmethod
+    def __usable_req_chapter_name(value: str) -> str:
+        txt = str(value or "").strip()
+        if not txt or txt in {"/", "\\", "-", "--", "—", "N/A", "n/a", "无", "暂无"}:
+            return ""
+        if re.fullmatch(r"\d+", txt):
+            return ""
+        return txt
+
     def __load_srs_req_hierarchy_map(self, srs_doc_id: int) -> Dict[str, dict]:
         """从 SRS 文档「产品需求列表」读取层级，避免 srs_req 表合并单元格继承污染。"""
         result: Dict[str, dict] = {}
@@ -141,6 +150,22 @@ class Server(object):
                 continue
             headers = table.get("headers") or []
             rows = table.get("rows") or []
+            if not rows:
+                cells = table.get("cells") or []
+                body_cells = cells[1:] if len(cells) > 1 else []
+                rows = []
+                for cell_row in body_cells:
+                    row_obj = {}
+                    for idx, header in enumerate(headers or []):
+                        if not isinstance(header, dict):
+                            continue
+                        col_code = header.get("code")
+                        if not col_code:
+                            continue
+                        cell = cell_row[idx] if isinstance(cell_row, list) and idx < len(cell_row) else None
+                        row_obj[col_code] = (cell or {}).get("value") if isinstance(cell, dict) else ""
+                    if row_obj:
+                        rows.append(row_obj)
             if not headers or not rows:
                 continue
             col_idx = self.__resolve_srs_req_table_columns(headers)
@@ -426,10 +451,16 @@ class Server(object):
         module = module if module is not None else fields.get("module")
         function = function if function is not None else fields.get("function")
         sub_function = sub_function if sub_function is not None else fields.get("sub_function")
-        placeholders = {"", "/", "\\", "-", "--", "—", "N/A", "n/a", "无", "暂无"}
-        for val in [sub_function, function, module]:
-            txt = str(val or "").strip()
-            if txt and txt not in placeholders:
+        candidates = [sub_function, function, module]
+        if row_req is not None:
+            candidates.extend([
+                getattr(row_req, "sub_function", None),
+                getattr(row_req, "function", None),
+                getattr(row_req, "module", None),
+            ])
+        for val in candidates:
+            txt = Server.__usable_req_chapter_name(val)
+            if txt:
                 return txt
         return ""
 
@@ -490,25 +521,10 @@ class Server(object):
                     .where(SrsReq.doc_id == srs_doc_id)
                     .where(SrsReq.type_code != "reqd")
                 ).all()
-                active_srs_codes = {self.__normalize_srs_code(code) for code in hierarchy_map.keys() if code}
-                if active_srs_codes:
-                    reqs = [
-                        row for row in reqs
-                        if self.__normalize_srs_code(row[1]) in active_srs_codes
-                    ]
                 if not reqs:
-                    if not active_srs_codes and self.__ensure_traces_from_imported_srs_trace_table(sds_doc_id, srs_doc_id):
+                    if self.__ensure_traces_from_imported_srs_trace_table(sds_doc_id, srs_doc_id):
                         continue
-                    db.session.execute(delete(SdsTrace).where(SdsTrace.doc_id == sds_doc_id))
                     continue
-                current_req_ids = [req_id for req_id, *_rest in reqs]
-                if current_req_ids:
-                    db.session.execute(
-                        delete(SdsTrace).where(
-                            SdsTrace.doc_id == sds_doc_id,
-                            SdsTrace.req_id.notin_(current_req_ids),
-                        )
-                    )
                 values = []
                 fixed_values = []
                 for req_id, code, module, function, sub_function in reqs:
@@ -532,7 +548,15 @@ class Server(object):
                             doc_id=sds_doc_id,
                             req_id=req_id,
                             sds_code=(code or "").replace("SRS", "SDS"),
-                            chapter=self.compose_srs_req_chapter(**fields) or fields.get("function") or fields.get("module") or "/",
+                            chapter=(
+                                self.compose_srs_req_chapter(
+                                    None, hierarchy_map=hierarchy_map, code=code, **fields
+                                )
+                                or self.__usable_req_chapter_name(sub_function)
+                                or self.__usable_req_chapter_name(function)
+                                or self.__usable_req_chapter_name(module)
+                                or "/"
+                            ),
                         )
                     )
                 if values:

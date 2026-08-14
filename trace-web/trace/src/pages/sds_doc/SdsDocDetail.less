@@ -34,11 +34,11 @@
 
     .detail-content {
         flex: 1;
+        min-height: 0;
         padding: 16px;
         display: flex;
         flex-direction: column;
-        overflow-y: auto;
-        overflow-x: hidden;
+        overflow: hidden;
     }
 
     .sds-toolbar-form {
@@ -99,10 +99,37 @@
         margin-top: 0;
         flex-shrink: 0;
 
-        // 目录结构区域自然展开
+        // 目录区铺满剩余可视高度：左目录 / 右表格各自滚动，不再撑出页面
         &.doc-section-flex {
             display: flex;
             flex-direction: column;
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+
+            > .tree-structure-container.srs-tree-layout,
+            .tree-structure-container.srs-tree-layout {
+                flex: 1;
+                min-height: 0;
+                overflow: hidden;
+            }
+
+            .ant-spin-nested-loading {
+                flex: 1;
+                min-height: 0;
+                height: 100% !important;
+                display: flex;
+                flex-direction: column;
+            }
+
+            .ant-spin-nested-loading > .ant-spin-container {
+                flex: 1;
+                min-height: 0;
+                height: 100% !important;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+            }
         }
 
         .doc-section-header {

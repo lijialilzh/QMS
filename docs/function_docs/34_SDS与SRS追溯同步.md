@@ -40,7 +40,7 @@
 ## 5. 同步流程（sync_srs_trace）
 
 1. **SRS 重绑**：若关联 SRS 已删除，尝试同版本或最新有效 SRS；必要时清空旧 `sds_trace`。
-2. `__ensure_sds_traces`：保证追溯行与 SRS 一致。
+2. `__ensure_sds_traces`：按 `(doc_id, req_id)` upsert 追溯行（有则更新、无则插入，获取不删除）。
 3. Word 导入：章节号规范化 + `_bind_word_leaf_codes_from_srs`。
 4. `_sync_missing_design_nodes_from_srs`：在各产品 `X.6` 同步区按 SDS 编号生成功能章节树（`X.1~X.5` 固定不动）。
 5. `_persist_trace_chapters_from_srs`：回写 `sds_trace.chapter/location`；严格章节编号（模块=二级、功能=三级、子功能=四级）。
