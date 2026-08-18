@@ -7,7 +7,6 @@ import io
 import urllib.parse
 from typing import Any, List
 from datetime import datetime
-from uuid import uuid4
 from fastapi import APIRouter, Form, File, UploadFile
 from fastapi.responses import StreamingResponse
 from ..obj.vobj_srs_doc import SrsDocObj
@@ -21,6 +20,14 @@ from ..utils.i18n import ts
 
 router = APIRouter()
 server = Server()
+
+
+def _srs_export_filename(file_no: str, folder_name: str) -> str:
+    # 与导入解析互逆：{文件编号}{文档名称}.docx，中间不加分隔符
+    name = f"{(file_no or '').strip()}{(folder_name or '').strip() or '需求规格说明'}.docx"
+    for ch in '/\\:*?"<>|':
+        name = name.replace(ch, "_")
+    return name
 
 
 @router.post("/add_srs_doc", summary="添加SRS_DOC", response_model=Resp[SrsDocForm])
@@ -87,12 +94,12 @@ async def add_doc_file(doc_id: int = Form(...), file: UploadFile = File(default=
 @router.get("/export_srs_doc", summary="导出SRS_DOC")
 @try_log(perm=Perms.srs_doc_view)
 async def export_srs_doc(id: int = 0):
+    resp = await server.get_srs_doc(id, with_tree=False)
+    doc = resp.data or SrsDocObj()
     output = io.BytesIO()
     await server.export_srs_doc(output, id)
     output.seek(0)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M%S")
-    suffix = uuid4().hex[:8]
-    raw_name = f"srs_doc_{timestamp}_{suffix}.docx"
+    raw_name = _srs_export_filename(doc.file_no, doc.folder_name)
     filename = urllib.parse.quote(raw_name)
     return StreamingResponse(content=output, 
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -110,9 +117,7 @@ async def export_srs_doc_snapshot(form: SrsDocForm):
     output = io.BytesIO()
     await server.export_srs_doc(output, form.id or 0, snapshot=form)
     output.seek(0)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M%S")
-    suffix = uuid4().hex[:8]
-    raw_name = f"srs_doc_{timestamp}_{suffix}.docx"
+    raw_name = _srs_export_filename(form.file_no, form.folder_name)
     filename = urllib.parse.quote(raw_name)
     return StreamingResponse(content=output,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",

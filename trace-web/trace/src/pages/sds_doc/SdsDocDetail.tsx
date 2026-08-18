@@ -143,6 +143,105 @@ const applySdsCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAut
     return { nodes: walk(nodes), changed };
 };
 
+const SDS_REVIEW_ROLE_KWS: Record<string, string[]> = {
+    产品经理: ["产品经理"],
+    产品开发部经理: ["研发负责人", "产品开发部经理"],
+    开发负责人: ["开发负责人", "TPM"],
+    QA: ["QA", "质量"],
+};
+
+const isSdsSignImg = (value: any) => String(value || "").startsWith("data:image");
+
+const applySdsReviewPersonAutofill = (
+    nodes: TreeNode[],
+    info: {
+        coverDate: string;
+        resolveName: (role: string) => string;
+        resolveSign: (name: string) => string;
+        approverName: string;
+        approverSign: string;
+    },
+): { nodes: TreeNode[]; changed: boolean } => {
+    let changed = false;
+    const fillPerson = (row: any, nameKey: string, signKey: string, role: string) => {
+        const name = info.resolveName(role);
+        const sign = name ? info.resolveSign(name) : "";
+        const nameVal = String(row[nameKey] || "");
+        const signVal = String(row[signKey] || "");
+        if (isSdsSignImg(nameVal)) {
+            if (!signVal.trim()) {
+                row[signKey] = nameVal;
+            }
+            row[nameKey] = name || "";
+            changed = true;
+        } else if (name && !nameVal.trim()) {
+            row[nameKey] = name;
+            changed = true;
+        }
+        if (sign && !String(row[signKey] || "").trim()) {
+            row[signKey] = sign;
+            changed = true;
+        }
+    };
+    const fillTable = (table: any) => {
+        if (!table?.rows?.length) return table;
+        const headerTxt = (table.headers || []).map((h: any) => h?.name || "").join(" ");
+        const rowTxt = (table.rows || []).map((row: any) => Object.values(row || {}).join(" ")).join(" ");
+        if (!/人员角色|参评人员签字|批准人员签字/.test(`${headerTxt} ${rowTxt}`)) return table;
+        const rows = (table.rows || []).map((r: any) => ({ ...r }));
+        rows.forEach((row: any) => {
+            const r1 = String(row.role1 || "").trim();
+            if (r1.startsWith("评审时间")) {
+                if (info.coverDate) {
+                    const next = `评审时间：${info.coverDate}`;
+                    if (r1 !== next) {
+                        row.role1 = next;
+                        changed = true;
+                    }
+                }
+                return;
+            }
+            if (r1.startsWith("批准人员签字")) {
+                const approverVal = info.approverSign || info.approverName;
+                if (approverVal && !String(row.name1 || "").trim()) {
+                    row.name1 = approverVal;
+                    changed = true;
+                }
+                if (info.coverDate && !String(row.sign1 || "").trim()) {
+                    row.sign1 = info.coverDate;
+                    changed = true;
+                }
+                return;
+            }
+            if (!r1 || r1.startsWith("参评人员") || r1 === "人员角色" || r1.startsWith("其他")) return;
+            fillPerson(row, "name1", "sign1", r1);
+            const r2 = String(row.role2 || "").trim();
+            if (r2 && r2 !== "人员角色") {
+                fillPerson(row, "name2", "sign2", r2);
+            }
+        });
+        return { ...table, rows };
+    };
+    const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+        const children = walk((node.children || []) as TreeNode[]);
+        let table: any = node.table;
+        if (table) {
+            table = fillTable({ ...table });
+            if (Array.isArray(table.extra_tables)) {
+                table = {
+                    ...table,
+                    extra_tables: table.extra_tables.map((ex: any) => ({
+                        ...ex,
+                        table: ex?.table ? fillTable({ ...ex.table }) : ex?.table,
+                    })),
+                };
+            }
+        }
+        return { ...node, table, children };
+    });
+    return { nodes: walk(nodes), changed };
+};
+
 /** 详细设计页：antd Input/TextArea 字号来自 theme token.inputFontSize（= token.fontSize），需在此统一为 13 */
 const SDS_DOC_DETAIL_THEME = {
     token: {
@@ -735,7 +834,7 @@ export default () => {
                 .replace(/^(\d+(?:\.\d+)+|\d{1,2})(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
                 .replace(/\s+/g, "");
         const isFrontMatterTitle = (title?: string) =>
-            /^(目录|需求规格说明|文件修订记录|软件详细设计说明书|软件详细设计)$/.test(normalizeBusinessTitle(title));
+            /^(目录|需求规格说明|文件修订记录|软件详细设计说明书|软件详细设计|评审记录|附件一评审结论)$/.test(normalizeBusinessTitle(title));
         const firstBodyMajor = roots
             .filter((node) => !isFrontMatterTitle(node.title))
             .map((node) => parseHeadingNumber(node.title))
@@ -823,7 +922,7 @@ export default () => {
         );
         const pureTitle = pureTitleRaw.replace(/\s+/g, "");
         const pureTitleWithoutTrailingColon = pureTitle.replace(/[:：]+$/, "");
-        if (/^(目录|需求规格说明|文件修订记录|软件详细设计说明书|软件详细设计)$/.test(pureTitle)) return false;
+        if (/^(目录|需求规格说明|文件修订记录|软件详细设计说明书|软件详细设计|评审记录|附件一评审结论)$/.test(pureTitle)) return false;
         // 句子型文本（含逗号/句号/分号/冒号等）不是章节，不自动补编号（避免出现“7.1 ...”误识别）
         if (/[，,。；;！？!?]/.test(pureTitle)) return false;
         const hasInnerColon = /[:：]/.test(pureTitleWithoutTrailingColon);
@@ -986,7 +1085,7 @@ export default () => {
                 .replace(/\s+/g, "");
         const isFrontMatterTitle = (title?: string) => {
             const t = normalizeBusinessTitle(title);
-            return /^(目录|需求规格说明|文件修订记录|软件详细设计说明书|软件详细设计)$/.test(t);
+            return /^(目录|需求规格说明|文件修订记录|软件详细设计说明书|软件详细设计|评审记录|附件一评审结论)$/.test(t);
         };
         const rootExistingNumbers = (roots || [])
             .filter((node) => isNumberableNode(node) && !isFrontMatterTitle(node.title))
@@ -1449,15 +1548,101 @@ export default () => {
         } as any,
         children: [],
     });
+    const createReviewAppendixNode = (): TreeNode => {
+        const check = "☑通过 □存在问题";
+        const contentItems: Array<[string, string]> = [
+            ["法规标准引用", "是否明确"],
+            ["法规标准引用", "是否合理"],
+            ["法规标准引用", "是否完整"],
+            ["法规标准引用", "是否符合法规"],
+            ["文档完整程度", "文档结构清楚、内容详尽"],
+            ["文档完整程度", "包含架构设计"],
+            ["文档完整程度", "包含模块设计"],
+            ["文档完整程度", "包含接口设计"],
+            ["文档完整程度", "包含功能详细设计"],
+            ["文档完整程度", "包含必要的数据结构"],
+            ["文档完整程度", "软件整体输入、输出接口清晰"],
+            ["文档完整程度", "是否可追溯"],
+            ["功能覆盖程度", "设计中考虑了整体功能需求"],
+            ["功能覆盖程度", "性能要求清晰、明确"],
+            ["功能覆盖程度", "接口定义清晰、明确"],
+            ["功能覆盖程度", "模块设计覆盖所有功能要求"],
+            ["功能覆盖程度", "针对每一项功能都有详细设计"],
+            ["功能覆盖程度", "功能设计中具备输入、输出项明确"],
+            ["功能覆盖程度", "功能设计中具备逻辑或结构图"],
+            ["功能覆盖程度", "能实现软件系统结构"],
+            ["功能覆盖程度", "设计的内容不与软件系统结构互相矛盾"],
+        ];
+        let prevCat = "";
+        const contentRows = contentItems.map(([cat, item]) => {
+            const row = { cat: cat === prevCat ? "" : cat, item, result: check };
+            prevCat = cat;
+            return row;
+        });
+        contentRows.push({
+            cat: "评审结论：\n通过，详细设计包含架构设计、包含模块设计、包含接口设计、包含必要的数据结构，输入、输出接口清晰，模块设计覆盖了所有功能要求，针对需求完成了可追溯。",
+            item: "",
+            result: "",
+        });
+        return {
+            id: generateTempNodeId(),
+            doc_id: 0,
+            n_id: 0,
+            p_id: 0,
+            title: "附件一 评审结论",
+            ref_type: "review",
+            text: "",
+            table: {
+                name: "评审内容",
+                headers: [
+                    { code: "cat", name: "评审内容" },
+                    { code: "item", name: "评审项" },
+                    { code: "result", name: "评审结论" },
+                ],
+                rows: contentRows,
+                extra_tables: [
+                    {
+                        title: "参评人员签字",
+                        table: {
+                            headers: [
+                                { code: "role1", name: "人员角色" },
+                                { code: "name1", name: "姓名" },
+                                { code: "sign1", name: "签字" },
+                                { code: "role2", name: "人员角色" },
+                                { code: "name2", name: "姓名" },
+                                { code: "sign2", name: "签字" },
+                            ],
+                            rows: [
+                                { role1: "参评人员签字", name1: "", sign1: "", role2: "", name2: "", sign2: "" },
+                                { role1: "评审时间：", name1: "", sign1: "", role2: "", name2: "", sign2: "" },
+                                { role1: "人员角色", name1: "姓名", sign1: "签字", role2: "人员角色", name2: "姓名", sign2: "签字" },
+                                { role1: "产品经理", name1: "", sign1: "", role2: "产品开发部经理", name2: "", sign2: "" },
+                                { role1: "开发负责人", name1: "", sign1: "", role2: "QA", name2: "", sign2: "" },
+                                { role1: "其他参评人员", name1: "/", sign1: "", role2: "", name2: "", sign2: "" },
+                                { role1: "批准人员签字/日期", name1: "", sign1: "", role2: "", name2: "", sign2: "" },
+                            ],
+                        },
+                    },
+                ],
+            } as any,
+            children: [],
+        };
+    };
     const ensureFrontMatterTables = (roots: TreeNode[]): TreeNode[] => {
         const list = [...(roots || [])];
         let hasCover = false;
         let hasChange = false;
+        let hasReview = false;
+        const isReviewTitle = (title?: string) => {
+            const t = String(title || "").replace(/\s+/g, "");
+            return t === "评审记录" || t === "附件一评审结论" || t.startsWith("附件一");
+        };
         const walk = (nodes: TreeNode[]) => {
             (nodes || []).forEach((node) => {
                 const title = String(node?.title || "").replace(/\s+/g, "");
                 if (title.includes("软件详细设计")) hasCover = true;
                 if (title.includes("文件修订记录")) hasChange = true;
+                if (isReviewTitle(node?.title) || String((node as any)?.ref_type || "") === "review") hasReview = true;
                 if (getTableHitCount(node, ["编制科室", "编制部门", "文件版本", "编制人", "审核人", "批准人", "生效日期"]) >= 3) hasCover = true;
                 if (getTableHitCount(node, ["修改日期", "版本号", "修订说明", "修订人", "批准人"]) >= 3) hasChange = true;
                 walk((node.children || []) as TreeNode[]);
@@ -1467,7 +1652,9 @@ export default () => {
         const prefix: TreeNode[] = [];
         if (!hasCover) prefix.push(createCoverTableNode());
         if (!hasChange) prefix.push(createChangeLogTableNode());
-        return prefix.length > 0 ? [...prefix, ...list] : list;
+        const withPrefix = prefix.length > 0 ? [...prefix, ...list] : list;
+        if (hasReview) return withPrefix;
+        return [...withPrefix, createReviewAppendixNode()];
     };
     const buildStandardNodesWithIds = (): TreeNode[] => {
         const addIdsToNodes = (nodes: any[]): TreeNode[] => {
@@ -3244,16 +3431,31 @@ export default () => {
                 const who = label === "编制人" ? tpm : label === "审核人" || label === "批准人" ? devLead : "";
                 return who ? (signMap[who] || who) : "";
             };
-            const result = applySdsCoverRevisionAutofill(data.treeStructure as TreeNode[], {
+            const resolveReviewName = (role: string) => {
+                const kws = SDS_REVIEW_ROLE_KWS[role] || [role];
+                for (const kw of kws) {
+                    const nm = findRole((r) => r.includes(kw));
+                    if (nm) return nm;
+                }
+                return "";
+            };
+            const coverResult = applySdsCoverRevisionAutofill(data.treeStructure as TreeNode[], {
                 coverDate: computeSdsCoverDate(tlRows),
                 version: String(displayDocVersion || ""),
                 resolveSigner,
                 reviser: tpm,
                 approver: devLead,
             });
-            if (result.changed) {
-                treeStructureRef.current = result.nodes;
-                dispatch({ treeStructure: result.nodes });
+            const reviewResult = applySdsReviewPersonAutofill(coverResult.nodes, {
+                coverDate: computeSdsCoverDate(tlRows),
+                resolveName: resolveReviewName,
+                resolveSign: (name: string) => (name ? (signMap[name] || "") : ""),
+                approverName: devLead,
+                approverSign: signMap[devLead] || "",
+            });
+            if (coverResult.changed || reviewResult.changed) {
+                treeStructureRef.current = reviewResult.nodes;
+                dispatch({ treeStructure: reviewResult.nodes });
             }
         });
         return () => { cancelled = true; };

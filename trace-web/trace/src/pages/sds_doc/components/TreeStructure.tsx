@@ -11,6 +11,7 @@ import { v4 as uuidv4 } from 'uuid';
 import * as XLSX from "xlsx";
 import * as Api from "@/api/ApiSdsDoc";
 import { isSdsTraceSectionNode, SdsTraceSectionActions } from "./SdsTraceSection";
+import ReviewTable from "@/common/ReviewTable";
 
 // 表格数据结构（匹配后端接口，允许空对象表示无表格数据）
 interface TableData {
@@ -196,6 +197,10 @@ function isNavDbFieldTableNode(node: TreeNode): boolean {
 }
 
 function isNavUnnumberedNode(node: TreeNode): boolean {
+    const title = String(node.title || "").replace(/\s+/g, "");
+    if (node.ref_type === "review" || title === "评审记录" || title === "附件一评审结论" || title.startsWith("附件一")) {
+        return true;
+    }
     return isNavTableTitleNode(node) || isNavDbFieldTableNode(node);
 }
 
@@ -312,6 +317,43 @@ function isReviewStyleTable(table?: TableData | null): boolean {
         .filter(Boolean)
         .join("|");
     return /(评审|审查|结论|法规标准引用)/.test(headerText);
+}
+
+function isReviewContentTable(table?: TableData | null): boolean {
+    if (!table?.headers?.length) return false;
+    const names = table.headers.map((h) => String(h?.name || "")).join("|");
+    return /评审内容/.test(names) && /评审项/.test(names);
+}
+
+function isReviewPersonTable(table?: TableData | null): boolean {
+    if (!table?.headers?.length) return false;
+    const names = table.headers.map((h) => String(h?.name || "")).join("|");
+    return /人员角色/.test(names) && /签字/.test(names);
+}
+
+function tableToReviewGrid(table: TableData): string[][] {
+    const headers = table.headers || [];
+    const codes = headers.map((h) => h.code);
+    const names = headers.map((h) => String(h.name || ""));
+    const grid: string[][] = [];
+    if (isReviewContentTable(table)) {
+        grid.push(names);
+    }
+    (table.rows || []).forEach((row) => {
+        grid.push(codes.map((code) => String((row as any)?.[code] ?? "")));
+    });
+    return grid;
+}
+
+function renderReviewGridTable(table: TableData) {
+    return (
+        <div className="sds-review-grid-wrap">
+            <ReviewTable
+                grid={tableToReviewGrid(table)}
+                headerRows={isReviewContentTable(table) ? 1 : 0}
+            />
+        </div>
+    );
 }
 
 function extractImageCaptions(rawText: string | undefined): string[] {
@@ -1842,6 +1884,9 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                       )}
                       <div className="node-table-header">
                           <div className="node-table-scroll">
+                          {isReviewContentTable(node.table) && node.table
+                              ? renderReviewGridTable(node.table)
+                              : (
                           <Table
                               columns={buildTableColumns(node.table)}
                               dataSource={buildTableDataSource(node.table)}
@@ -1850,6 +1895,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                               bordered
                               tableLayout="fixed"
                           />
+                              )}
                           </div>
                           {!readOnly && !isTraceSectionTitle && (
                           <Space className="node-table-actions" size={8}>
@@ -1880,13 +1926,16 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           if (!extraTable || !hasRenderableTable(extraTable)) return null;
                           return (
                               <div className="node-extra-table" key={`extra-table-${node.id}-${idx}`} style={{ marginTop: 24 }}>
-                                  {!!extraTitle && (
+                                  {!!extraTitle && extraTitle !== "参评人员签字" && (
                                       <div className="node-content" style={{ marginBottom: 8, textAlign: "left", fontSize: 13, fontWeight: 600 }}>
                                           {extraTitle}
                                       </div>
                                   )}
                                   <div className="node-table-header">
                                       <div className="node-table-scroll">
+                                          {(isReviewPersonTable(extraTable) || isReviewContentTable(extraTable))
+                                              ? renderReviewGridTable(extraTable)
+                                              : (
                                           <Table
                                               columns={buildTableColumns(extraTable)}
                                               dataSource={buildTableDataSource(extraTable)}
@@ -1895,6 +1944,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                               bordered
                                               tableLayout="fixed"
                                           />
+                                              )}
                                       </div>
                                   </div>
                               </div>
@@ -2804,7 +2854,9 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
         const newNodes = findNodeAndUpdate(nodes, currentNodeId, (node) => ({
             ...node,
             label: stripChapterPrefixForTableCaption(String(tableData.tableName || '').trim()),
-            table: tableFormat
+            table: tableFormat && Object.keys(tableFormat).length > 0
+                ? { ...tableFormat, extra_tables: node.table?.extra_tables }
+                : tableFormat
         }));
         updateNodes(newNodes);
         setTableCellsBackup(undefined);
@@ -3014,7 +3066,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                             <div className="srs-tree-nav">
                                 <div className="srs-tree-nav-head">{ts("sds_doc.directory_structure") || ts("srs_doc.directory") || "目录"}</div>
                                 {!readOnly && (
-                                    <div className="srs-tree-nav-hint">封面/修订记录不参与编号；正文章节自动编号。</div>
+                                    <div className="srs-tree-nav-hint">封面/修订记录/附件一不参与编号；正文章节自动编号。</div>
                                 )}
                                 <div className="srs-tree-nav-body">
                                     {extraNavSections.map((sec) => {

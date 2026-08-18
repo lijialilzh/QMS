@@ -6,7 +6,6 @@
 import io
 import urllib.parse
 from typing import Any, List
-from datetime import datetime
 from fastapi import APIRouter, Form, File, UploadFile
 from fastapi.responses import StreamingResponse
 from ..obj.vobj_sds_doc import CompareObj, SdsDocObj
@@ -15,10 +14,17 @@ from ..obj.tobj_role import Perms
 from ..obj import Resp, Page
 from ..serv.serv_sds_doc import Server
 from . import CtxUser, try_log
-from ..utils.i18n import ts
 
 router = APIRouter()
 server = Server()
+
+
+def _sds_export_filename(file_no: str) -> str:
+    # 与导入解析互逆：{文件编号}软件详细设计.docx，中间不加分隔符
+    name = f"{(file_no or '').strip()}软件详细设计.docx"
+    for ch in '/\\:*?"<>|':
+        name = name.replace(ch, "_")
+    return name
 
 
 @router.post("/add_sds_doc", summary="添加SDS_DOC", response_model=Resp[SdsDocForm])
@@ -118,13 +124,17 @@ async def get_sds_doc(id: int):
 @router.get("/export_sds_doc", summary="导出SDS_DOC")
 @try_log(perm=Perms.sds_doc_view)
 async def export_sds_doc(id: int = 0):
+    resp = await server.get_sds_doc(id, with_tree=False)
+    doc = resp.data or SdsDocObj()
     output = io.BytesIO()
     await server.export_sds_doc(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"{ts('file_sds_doc')}-{timestamp}.docx")
+    raw_name = _sds_export_filename(doc.file_no)
+    filename = urllib.parse.quote(raw_name)
     return StreamingResponse(content=output, 
         media_type="application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}; filename*=UTF-8''{filename}",
+        }
     )
 
 @router.get("/compare_sds_doc", summary="对比SDS_DOC", response_model=Resp[List[CompareObj]])

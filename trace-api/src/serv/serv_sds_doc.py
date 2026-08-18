@@ -47,6 +47,7 @@ from ..model.sds_trace import SdsTrace
 from ..model.srs_doc import SrsDoc
 from ..obj.tobj_srs_doc import Table, TabHeader
 from ..model.product import Product, UserProd
+from ..model.project_member import ProjectMember
 from ..obj.vobj_sds_doc import CompareObj, SdsDocObj
 from ..model.sds_doc import SdsDoc, SdsNode
 from ..obj.tobj_sds_doc import SdsDocForm, SdsNodeForm, SdsTable, SdsExtraTable
@@ -1715,6 +1716,307 @@ class Server(SdsSrsTraceSyncMixin, object):
             objs.append(obj)
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
 
+    @staticmethod
+    def __table_text(table):
+        if not table:
+            return ""
+        headers = getattr(table, "headers", None) or []
+        rows = getattr(table, "rows", None) or []
+        cells = getattr(table, "cells", None) or []
+        header_txt = " ".join((getattr(h, "name", "") or "") for h in headers)
+        row_txt = " ".join(
+            " ".join(str(v or "") for v in (row or {}).values()) for row in rows
+        )
+        cell_txt = " ".join(
+            str(getattr(c, "value", "") or "") if not isinstance(c, dict) else str(c.get("value") or "")
+            for crow in cells for c in (crow or []) if c is not None
+        )
+        return f"{header_txt} {row_txt} {cell_txt}"
+
+    @classmethod
+    def __is_approval_table(cls, table):
+        txt = cls.__table_text(table)
+        keys = ["编制科室", "编制部门", "文件版本", "编制人", "审核人", "批准人", "生效日期"]
+        return sum(1 for k in keys if k in txt) >= 5
+
+    @classmethod
+    def __is_review_person_table(cls, table):
+        txt = cls.__table_text(table)
+        return any(k in txt for k in ["参评人员签字", "人员角色", "批准人员签字"])
+
+    @staticmethod
+    def __approval_headers():
+        return [
+            TabHeader(code="label1", name=""),
+            TabHeader(code="value1", name=""),
+            TabHeader(code="label2", name=""),
+            TabHeader(code="value2", name=""),
+        ]
+
+    @classmethod
+    def __normalize_approval_rows(cls, table):
+        headers = getattr(table, "headers", None) or []
+        rows = list(getattr(table, "rows", None) or [])
+        first = rows[0] if rows else {}
+        if any(getattr(h, "code", "") == "label1" for h in headers):
+            return rows
+        get_val = lambda code: (first or {}).get(code) or ""
+        return [
+            {"label1": "编制部门", "value1": get_val("dept"), "label2": "文件版本", "value2": get_val("version")},
+            {"label1": "编制人", "value1": get_val("author"), "label2": "日期", "value2": ""},
+            {"label1": "审核人", "value1": get_val("reviewer"), "label2": "日期", "value2": ""},
+            {"label1": "批准人", "value1": get_val("approver"), "label2": "日期", "value2": ""},
+            {"label1": "生效日期", "value1": get_val("effective_date"), "label2": "", "value2": ""},
+        ]
+
+    @staticmethod
+    def __cell_text(cell):
+        if cell is None:
+            return ""
+        if isinstance(cell, dict):
+            return str(cell.get("value") or "")
+        return str(getattr(cell, "value", "") or "")
+
+    @classmethod
+    def __set_cell_text(cls, cell, value, only_empty=False):
+        if cell is None:
+            return
+        if only_empty and str(cls.__cell_text(cell) or "").strip():
+            return
+        if isinstance(cell, dict):
+            cell["value"] = value or ""
+        else:
+            cell.value = value or ""
+
+    def __autofill_cover_cells(self, table, version, rev_date, signers):
+        cells = getattr(table, "cells", None) or []
+        if not cells:
+            return
+        for crow in cells:
+            if not crow:
+                continue
+            for ci, cell in enumerate(crow):
+                lab = str(self.__cell_text(cell) or "").strip()
+                if lab in ("编制科室", "编制部门"):
+                    if ci + 1 < len(crow):
+                        self.__set_cell_text(crow[ci + 1], "研发部", only_empty=True)
+                elif lab == "文件版本":
+                    if version and ci + 1 < len(crow):
+                        self.__set_cell_text(crow[ci + 1], str(version), only_empty=False)
+                elif lab in ("编制人", "审核人", "批准人"):
+                    sig = signers.get(lab, "")
+                    if sig and ci + 1 < len(crow):
+                        self.__set_cell_text(crow[ci + 1], sig, only_empty=True)
+                    if ci + 2 < len(crow) and str(self.__cell_text(crow[ci + 2]) or "").strip() == "日期":
+                        if ci + 3 < len(crow):
+                            self.__set_cell_text(crow[ci + 3], rev_date, only_empty=True)
+                elif lab == "生效日期":
+                    if ci + 1 < len(crow):
+                        self.__set_cell_text(crow[ci + 1], rev_date, only_empty=True)
+
+    def __autofill_tree_cover_revision(self, tree, prod_id, version):
+        """封面自动获取：编制人=TPM，审核/批准=研发负责人；日期取时间线。仅填空。"""
+        if not tree:
+            return tree
+        rev_date = serv_review_util.cover_date(prod_id, "sds") if prod_id else ""
+        if prod_id:
+            signers = (
+                serv_review_util.cover_signers(prod_id, "sds", rev_date)
+                if serv_review_util.sign_mode_enabled()
+                else serv_review_util.cover_signer_names(prod_id, "sds", rev_date)
+            )
+        else:
+            signers = {}
+
+        def set_if(row, key, val):
+            if val and not str(row.get(key) or "").strip():
+                row[key] = val
+
+        def walk(nodes):
+            for node in nodes or []:
+                table = getattr(node, "table", None)
+                if table and self.__is_approval_table(table):
+                    rows = [dict(r or {}) for r in self.__normalize_approval_rows(table)]
+                    if rows:
+                        if version:
+                            rows[0]["value2"] = str(version)
+                        set_if(rows[0], "value1", "研发部")
+                    signer_labels = {1: "编制人", 2: "审核人", 3: "批准人"}
+                    for idx, label in signer_labels.items():
+                        if idx >= len(rows):
+                            continue
+                        row = rows[idx]
+                        sig = signers.get(label, "")
+                        if sig and not str(row.get("value1") or "").startswith("data:image"):
+                            set_if(row, "value1", sig)
+                        set_if(row, "value2", rev_date)
+                    if len(rows) > 4:
+                        set_if(rows[4], "value1", rev_date)
+                    self.__autofill_cover_cells(table, version, rev_date, signers)
+                    if not getattr(table, "cells", None):
+                        node.table = SdsTable(
+                            headers=self.__approval_headers(),
+                            rows=rows,
+                            show_header=0,
+                            extra_tables=getattr(table, "extra_tables", None),
+                            name=getattr(table, "name", None),
+                            trace_synced=getattr(table, "trace_synced", None),
+                        )
+                    else:
+                        table.rows = rows
+                        table.headers = self.__approval_headers()
+                        table.show_header = 0
+                if getattr(node, "children", None):
+                    walk(node.children)
+
+        walk(tree)
+        return tree
+
+    def __autofill_tree_review_persons(self, tree, prod_id):
+        """评审记录人员按职称（人员角色）匹配该产品参与人员，写入姓名和签名。"""
+        if not tree or not prod_id:
+            return tree
+        rev_date = serv_review_util.cover_date(prod_id, "sds") or ""
+        members = db.session.execute(
+            select(ProjectMember).where(ProjectMember.prod_id == prod_id)
+        ).scalars().all()
+        sign_mode = serv_review_util.sign_mode_enabled()
+        approver = serv_review_util.review_approver("sds", prod_id, rev_date) or ""
+
+        def fill_name_cell(cell_row, name_idx, sign_idx, role_label):
+            nm = serv_review_util._resolve_review_name(role_label, members, rev_date)
+            if not nm:
+                return
+            if name_idx < len(cell_row):
+                self.__set_cell_text(cell_row[name_idx], nm, only_empty=False)
+            if sign_idx < len(cell_row) and sign_mode:
+                cur_sign = str(self.__cell_text(cell_row[sign_idx]) or "")
+                if not cur_sign.strip() or not cur_sign.startswith("data:image"):
+                    self.__set_cell_text(cell_row[sign_idx], serv_review_util._sign_by_name(nm) or "", only_empty=False)
+
+        def fill_cells(table):
+            cells = getattr(table, "cells", None) or []
+            if not cells:
+                return
+            for crow in cells:
+                if not crow:
+                    continue
+                lab = str(self.__cell_text(crow[0]) or "").strip()
+                if lab.startswith("评审时间"):
+                    if rev_date:
+                        self.__set_cell_text(crow[0], f"评审时间：{rev_date}", only_empty=False)
+                    continue
+                if lab.startswith("批准人员签字"):
+                    if approver and len(crow) > 1:
+                        sig = (serv_review_util._sign_by_name(approver) or approver) if sign_mode else approver
+                        cur = str(self.__cell_text(crow[1]) or "")
+                        if not cur.strip():
+                            self.__set_cell_text(crow[1], sig, only_empty=False)
+                    if len(crow) > 2 and rev_date:
+                        self.__set_cell_text(crow[2], rev_date, only_empty=True)
+                    continue
+                if lab.startswith("参评人员") or lab == "人员角色" or lab.startswith("其他"):
+                    continue
+                if lab:
+                    fill_name_cell(crow, 1, 2, lab)
+                if len(crow) > 3:
+                    lab2 = str(self.__cell_text(crow[3]) or "").strip()
+                    if lab2 and lab2 != "人员角色":
+                        fill_name_cell(crow, 4, 5, lab2)
+
+        def fill_rows(table):
+            headers = getattr(table, "headers", None) or []
+            rows = list(getattr(table, "rows", None) or [])
+            if not headers or not rows:
+                return
+            codes = [getattr(h, "code", "") or "" for h in headers]
+            names = [getattr(h, "name", "") or "" for h in headers]
+            role_idx = next((i for i, n in enumerate(names) if "角色" in n or "职称" in n), None)
+            name_idx = next((i for i, n in enumerate(names) if n == "姓名"), None)
+            if role_idx is None or name_idx is None:
+                return
+            role_code = codes[role_idx]
+            name_code = codes[name_idx]
+            sign_idx = next((i for i, n in enumerate(names) if "签字" in n or "签名" in n), None)
+            sign_code = codes[sign_idx] if sign_idx is not None else ""
+            for row in rows:
+                role = str((row or {}).get(role_code) or "").strip()
+                if not role or role.startswith("其他") or role.startswith("批准") or role == "人员角色":
+                    continue
+                nm = serv_review_util._resolve_review_name(role, members, rev_date)
+                if not nm:
+                    continue
+                row[name_code] = nm
+                if sign_code and sign_mode:
+                    cur_sign = str(row.get(sign_code) or "")
+                    if not cur_sign.strip() or not cur_sign.startswith("data:image"):
+                        row[sign_code] = serv_review_util._sign_by_name(nm) or ""
+            table.rows = rows
+
+        def walk(nodes):
+            for node in nodes or []:
+                table = getattr(node, "table", None)
+                title = str(getattr(node, "title", "") or "")
+                if table and (self.__is_review_person_table(table) or "评审记录" in title):
+                    if self.__is_review_person_table(table):
+                        fill_cells(table)
+                        if not getattr(table, "cells", None):
+                            fill_rows(table)
+                if getattr(node, "children", None):
+                    walk(node.children)
+
+        walk(tree)
+        return tree
+
+    def __write_sds_review_appendix(self, docx, prod_id):
+        """导出末尾追加「附件一 评审结论」，表格样式与软件开发计划评审记录一致。"""
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
+        from .serv_utils import docx_util
+
+        keywords = (serv_review_util.REVIEW_DEFS.get("sds") or {}).get("name_keywords") or ["软件详细设计", "详细设计"]
+        rev_date = serv_review_util.review_date(prod_id, keywords) if prod_id else ""
+        sec = serv_review_util.build_review_section("sds", rev_date, prod_id)
+        if not sec:
+            return
+        docx.add_page_break()
+        title = docx.add_paragraph()
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        title.paragraph_format.first_line_indent = Pt(0)
+        title.paragraph_format.left_indent = Pt(0)
+        title.paragraph_format.right_indent = Pt(0)
+        title.paragraph_format.line_spacing = 1.5
+        title.paragraph_format.space_before = Pt(0)
+        title.paragraph_format.space_after = Pt(0)
+        docx_util.fonted_txt(title, "附件一 评审结论", font_size=16.0, bold=True)
+
+        def set_cell(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
+            s = str(text or "")
+            if s.startswith("data:image"):
+                try:
+                    b64 = s.split(",", 1)[1] if "," in s else ""
+                    cell.text = ""
+                    para = cell.paragraphs[0]
+                    para.alignment = align
+                    para.add_run().add_picture(io.BytesIO(base64.b64decode(b64)), height=Pt(33))
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    return
+                except Exception:
+                    pass
+            cell.text = ""
+            lines = s.split("\n")
+            for i, line in enumerate(lines):
+                para = cell.paragraphs[0] if i == 0 else cell.add_paragraph()
+                para.alignment = align
+                para.paragraph_format.line_spacing = 1.3
+                docx_util.fonted_txt(para, line, font_size=10.5, bold=bold)
+            cell.vertical_alignment = (
+                WD_CELL_VERTICAL_ALIGNMENT.CENTER if align == WD_ALIGN_PARAGRAPH.CENTER else WD_CELL_VERTICAL_ALIGNMENT.TOP
+            )
+
+        for t_idx, table in enumerate(sec.get("tables") or []):
+            serv_review_util.render_review_grid(docx, table, set_cell, merge_col0=(t_idx == 0), merge_full=True)
+
     async def export_sds_doc(self, output, id: int = 0, *args, **kwargs):
         if Document is None or Pt is None or dox_enum is None:
             return
@@ -3285,6 +3587,8 @@ finally:
 
                 roots = await __sync_missing_reqd_nodes_for_export(sds_doc.content or [])
                 roots = await __sync_trace_table_nodes_for_export(roots)
+                self.__autofill_tree_cover_revision(roots, sds_doc.product_id, sds_doc.version)
+                self.__autofill_tree_review_persons(roots, sds_doc.product_id)
                 design_root = next((n for n in roots if __is_design_cover(getattr(n, "title", ""))), None)
                 rev_root = next((n for n in roots if __is_revision_label(getattr(n, "title", ""))), None)
                 catalog_root = next((n for n in roots if __is_catalog(getattr(n, "title", ""))), None)
@@ -3318,6 +3622,11 @@ finally:
                     rev_section_nodes = [SdsNodeForm(title="文件修订记录", children=[])]
 
                 remaining_roots = body_from_design + remaining_roots
+                remaining_roots = [
+                    n for n in remaining_roots
+                    if "评审记录" not in re.sub(r"\s+", "", str(getattr(n, "title", "") or ""))
+                    and "附件一评审结论" not in re.sub(r"\s+", "", str(getattr(n, "title", "") or ""))
+                ]
                 first_major = __first_major(remaining_roots)
                 body_major_offset = (first_major - 1) if (first_major and first_major > 1) else 0
 
@@ -3348,6 +3657,7 @@ finally:
                 docx_util.fonted_txt(header_para, sds_doc.file_no)
                 await __writenodes_legacy(sds_doc.content or [], docx, level=0)
 
+            self.__write_sds_review_appendix(docx, sds_doc.product_id)
             docx_util.fill_toc_cache(docx)
             docx.save(output)
             output.seek(0)
