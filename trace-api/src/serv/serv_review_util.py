@@ -938,7 +938,7 @@ def build_review_section(key, rev_date="", prod_id=None):
     # 「签字」列按「姓名」列自动取签名图（第2列姓名→第3列签字；第5列姓名→第6列签字），仅填空
     old_test = _before_202509(rev_date)
     # 测试文件：评审记录按「人员角色」获取当前产品参与人员姓名（其余模块保持模板名+宋月规则）
-    role_based = key in ("stp", "utp", "utr", "str", "sds")
+    role_based = key in ("stp", "utp", "utr", "str", "sds", "srs")
     rb_members = []
     if role_based and prod_id:
         rb_members = db.session.execute(

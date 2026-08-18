@@ -633,6 +633,28 @@
             }
         }
     }
+
+    .srs-review-grid-wrap {
+        width: 100%;
+        overflow-x: auto;
+
+        .pdp-grid {
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: fixed;
+
+            td {
+                border: 1px solid #e8edf2;
+                vertical-align: middle;
+                word-break: break-word;
+
+                &.head {
+                    background: #f5f8fc;
+                    font-weight: 600;
+                }
+            }
+        }
+    }
 }
 
 .srs-doc-detail:not(.read-only) .tree-structure-container:not(.read-only-mode) {

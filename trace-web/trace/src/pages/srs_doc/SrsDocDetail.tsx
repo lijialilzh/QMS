@@ -125,6 +125,108 @@ const computeSrsCoverDate = (rows: any[]): string => {
     return `${best.year}.${String(num(best.row.month)).padStart(2, "0")}.${String(num(best.row.day) || 1).padStart(2, "0")}`;
 };
 
+const SRS_REVIEW_ROLE_KWS: Record<string, string[]> = {
+    产品经理: ["产品经理"],
+    研发总监: ["研发负责人", "研发总监"],
+    产品部经理: ["产品负责人", "产品部经理", "产品总监"],
+    开发负责人: ["开发负责人", "TPM"],
+    QA: ["QA", "质量"],
+    RA: ["RA", "法规"],
+    临床人员: ["临床"],
+};
+
+const isSrsSignImg = (value: any) => String(value || "").startsWith("data:image");
+
+const applySrsReviewPersonAutofill = (
+    nodes: TreeNode[],
+    info: {
+        coverDate: string;
+        resolveName: (role: string) => string;
+        resolveSign: (name: string) => string;
+        approverName: string;
+        approverSign: string;
+    },
+): { nodes: TreeNode[]; changed: boolean } => {
+    let changed = false;
+    const fillPerson = (row: any, nameKey: string, signKey: string, role: string) => {
+        const name = info.resolveName(role);
+        const sign = name ? info.resolveSign(name) : "";
+        const nameVal = String(row[nameKey] || "");
+        const signVal = String(row[signKey] || "");
+        if (isSrsSignImg(nameVal)) {
+            if (!signVal.trim()) {
+                row[signKey] = nameVal;
+            }
+            row[nameKey] = name || "";
+            changed = true;
+        } else if (name && !nameVal.trim()) {
+            row[nameKey] = name;
+            changed = true;
+        }
+        if (sign && !String(row[signKey] || "").trim()) {
+            row[signKey] = sign;
+            changed = true;
+        }
+    };
+    const fillTable = (table: any) => {
+        if (!table?.rows?.length) return table;
+        const headerTxt = (table.headers || []).map((h: any) => h?.name || "").join(" ");
+        const rowTxt = (table.rows || []).map((row: any) => Object.values(row || {}).join(" ")).join(" ");
+        if (!/人员角色|参评人员签字|批准人员签字/.test(`${headerTxt} ${rowTxt}`)) return table;
+        const rows = (table.rows || []).map((r: any) => ({ ...r }));
+        rows.forEach((row: any) => {
+            const r1 = String(row.role1 || "").trim();
+            if (r1.startsWith("评审时间")) {
+                if (info.coverDate) {
+                    const next = `评审时间：${info.coverDate}`;
+                    if (r1 !== next) {
+                        row.role1 = next;
+                        changed = true;
+                    }
+                }
+                return;
+            }
+            if (r1.startsWith("批准人员签字")) {
+                const approverVal = info.approverSign || info.approverName;
+                if (approverVal && !String(row.name1 || "").trim()) {
+                    row.name1 = approverVal;
+                    changed = true;
+                }
+                if (info.coverDate && !String(row.sign1 || "").trim()) {
+                    row.sign1 = info.coverDate;
+                    changed = true;
+                }
+                return;
+            }
+            if (!r1 || r1.startsWith("参评人员") || r1 === "人员角色" || r1.startsWith("其他")) return;
+            fillPerson(row, "name1", "sign1", r1);
+            const r2 = String(row.role2 || "").trim();
+            if (r2 && r2 !== "人员角色") {
+                fillPerson(row, "name2", "sign2", r2);
+            }
+        });
+        return { ...table, rows };
+    };
+    const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+        const children = walk((node.children || []) as TreeNode[]);
+        let table: any = node.table;
+        if (table) {
+            table = fillTable({ ...table });
+            if (Array.isArray(table.extra_tables)) {
+                table = {
+                    ...table,
+                    extra_tables: table.extra_tables.map((ex: any) => ({
+                        ...ex,
+                        table: ex?.table ? fillTable({ ...ex.table }) : ex?.table,
+                    })),
+                };
+            }
+        }
+        return { ...node, table, children };
+    });
+    return { nodes: walk(nodes), changed };
+};
+
 type CoverRevisionAutofillInfo = {
     coverDate: string;
     version: string;
@@ -349,6 +451,194 @@ export default () => {
         return !hasMainChapter(list);
     };
 
+    const generateTempNodeId = () => Date.now() + Math.floor(Math.random() * 100000);
+    const isReviewAppendixTitle = (title?: string) => {
+        const t = String(title || "").replace(/\s+/g, "");
+        return t === "评审记录" || t === "附件一评审结论" || t.startsWith("附件一") || t.includes("评审记录");
+    };
+    const createReviewAppendixNode = (): TreeNode => {
+        const check = "☑通过 □存在问题";
+        const contentItems: Array<[string, string]> = [
+            ["风险、法规标准引用", "是否明确"],
+            ["风险、法规标准引用", "是否合理"],
+            ["风险、法规标准引用", "是否完整"],
+            ["风险、法规标准引用", "是否符合法规"],
+            ["风险、法规标准引用", "是否包含风险控制措施"],
+            ["需求撰写", "需求设计前是否具备有效的调研"],
+            ["需求撰写", "是否包含完整需求编号"],
+            ["需求撰写", "是否包含需求背景及意义"],
+            ["需求撰写", "需求撰写是否细化"],
+            ["需求撰写", "是否具有一致性"],
+            ["需求撰写", "任务是否可被具体拆分"],
+            ["需求撰写", "是否考虑异常情况"],
+            ["需求撰写", "语义是否清晰明确"],
+            ["需求撰写", "是否考虑边界情况"],
+            ["需求撰写", "是否满足《需求设计和操作规范》"],
+        ];
+        let prevCat = "";
+        const contentRows = contentItems.map(([cat, item]) => {
+            const row = { cat: cat === prevCat ? "" : cat, item, result: check };
+            prevCat = cat;
+            return row;
+        });
+        contentRows.push({
+            cat: "评审结论：\n通过。风险、法规标准引用明确合理，需求撰写内容完整清晰，满足规范要求.",
+            item: "",
+            result: "",
+        });
+        return {
+            id: generateTempNodeId(),
+            doc_id: 0,
+            n_id: 0,
+            p_id: 0,
+            title: "附件一 评审结论",
+            ref_type: "review",
+            text: "",
+            table: {
+                name: "评审内容",
+                headers: [
+                    { code: "cat", name: "评审内容" },
+                    { code: "item", name: "评审项" },
+                    { code: "result", name: "评审结论" },
+                ],
+                rows: contentRows,
+                extra_tables: [
+                    {
+                        title: "参评人员签字",
+                        table: {
+                            headers: [
+                                { code: "role1", name: "人员角色" },
+                                { code: "name1", name: "姓名" },
+                                { code: "sign1", name: "签字" },
+                                { code: "role2", name: "人员角色" },
+                                { code: "name2", name: "姓名" },
+                                { code: "sign2", name: "签字" },
+                            ],
+                            rows: [
+                                { role1: "参评人员签字", name1: "", sign1: "", role2: "", name2: "", sign2: "" },
+                                { role1: "评审时间：", name1: "", sign1: "", role2: "", name2: "", sign2: "" },
+                                { role1: "人员角色", name1: "姓名", sign1: "签字", role2: "人员角色", name2: "姓名", sign2: "签字" },
+                                { role1: "研发总监", name1: "", sign1: "", role2: "产品部经理", name2: "", sign2: "" },
+                                { role1: "开发负责人", name1: "", sign1: "", role2: "测试负责人", name2: "", sign2: "" },
+                                { role1: "QA", name1: "", sign1: "", role2: "RA", name2: "", sign2: "" },
+                                { role1: "临床人员", name1: "", sign1: "", role2: "产品经理", name2: "", sign2: "" },
+                                { role1: "其他参会人员", name1: "/", sign1: "", role2: "", name2: "", sign2: "" },
+                                { role1: "批准人员签字/日期", name1: "", sign1: "", role2: "", name2: "", sign2: "" },
+                            ],
+                        },
+                    },
+                ],
+            } as any,
+            children: [],
+        };
+    };
+    const ensureReviewAppendix = (roots: TreeNode[]): { nodes: TreeNode[]; changed: boolean } => {
+        let hasReview = false;
+        const walk = (nodes: TreeNode[]) => {
+            (nodes || []).forEach((node) => {
+                if (isReviewAppendixTitle(node?.title) || String((node as any)?.ref_type || "") === "review") {
+                    hasReview = true;
+                }
+                walk((node.children || []) as TreeNode[]);
+            });
+        };
+        walk(roots || []);
+        if (hasReview) return { nodes: roots || [], changed: false };
+        return { nodes: [...(roots || []), createReviewAppendixNode()], changed: true };
+    };
+
+    const DOC_REQ_SECTION_TITLES = [
+        "在用户说明书中说明",
+        "在用户说明书中增加的警示",
+        "在用户说明书中增加的注意事项",
+    ];
+    const normalizeDocReqTitle = (title?: string) => String(title || "")
+        .replace(/^(\d+(?:\.\d+)*)\s*/, "")
+        .replace(/\s+/g, "")
+        .replace(/[：:。.．]+$/, "")
+        .trim();
+    const extractRcmCodesFromText = (text?: string): string[] => {
+        const hits = String(text || "").match(/RCM[\s\-_]*\d{2,4}/gi) || [];
+        const codes: string[] = [];
+        hits.forEach((hit) => {
+            const code = hit.replace(/[\s\-_]/g, "").toUpperCase();
+            if (/^RCM\d{2,4}$/.test(code) && !codes.includes(code)) codes.push(code);
+        });
+        return codes;
+    };
+    const splitDocReqSections = (text?: string): { intro: string; sections: Record<string, string> } => {
+        const sections: Record<string, string[]> = {};
+        DOC_REQ_SECTION_TITLES.forEach((title) => { sections[title] = []; });
+        const intro: string[] = [];
+        let current: string | null = null;
+        String(text || "").replace(/\r/g, "").split("\n").forEach((line) => {
+            const compact = normalizeDocReqTitle(line);
+            const hit = DOC_REQ_SECTION_TITLES.find((title) => normalizeDocReqTitle(title) === compact);
+            if (hit) {
+                current = hit;
+                return;
+            }
+            if (current) sections[current].push(line);
+            else intro.push(line);
+        });
+        const joined: Record<string, string> = {};
+        DOC_REQ_SECTION_TITLES.forEach((title) => {
+            joined[title] = sections[title].join("\n").replace(/^\n+|\n+$/g, "");
+        });
+        return { intro: intro.join("\n").replace(/^\n+|\n+$/g, ""), sections: joined };
+    };
+    const redistributeDocReqRcms = (roots: TreeNode[]): { nodes: TreeNode[]; changed: boolean } => {
+        let changed = false;
+        const walk = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
+            const children = walk((node.children || []) as TreeNode[]);
+            let nextNode: TreeNode = { ...node, children };
+            const titleKey = normalizeDocReqTitle(nextNode.title);
+            if (titleKey !== "文档需求" && !titleKey.endsWith("文档需求")) {
+                return nextNode;
+            }
+            const split = splitDocReqSections(nextNode.text);
+            if (!DOC_REQ_SECTION_TITLES.some((title) => !!split.sections[title])) {
+                return nextNode;
+            }
+            let moved = false;
+            const nextChildren = (children || []).map((child) => {
+                const childKey = normalizeDocReqTitle(child.title);
+                const sectionTitle = DOC_REQ_SECTION_TITLES.find((title) => normalizeDocReqTitle(title) === childKey);
+                if (!sectionTitle) return child;
+                const sectionText = split.sections[sectionTitle] || "";
+                if (!sectionText) return child;
+                moved = true;
+                split.sections[sectionTitle] = "";
+                if (String(child.text || "").trim()) return child;
+                const nextCodes = extractRcmCodesFromText(sectionText);
+                return {
+                    ...child,
+                    text: sectionText,
+                    rcm_codes: nextCodes,
+                };
+            });
+            if (!moved) {
+                return { ...nextNode, children };
+            }
+            changed = true;
+            const leftoverSections = DOC_REQ_SECTION_TITLES
+                .filter((title) => !!split.sections[title])
+                .map((title) => `${title}：\n${split.sections[title]}`)
+                .join("\n");
+            const nextText = [split.intro, leftoverSections].filter(Boolean).join("\n");
+            return {
+                ...nextNode,
+                text: nextText,
+                children: nextChildren,
+                ...(Array.isArray(nextNode.rcm_codes)
+                    ? { rcm_codes: extractRcmCodesFromText(nextText) }
+                    : {}),
+            };
+        });
+        const nodes = walk(roots || []);
+        return { nodes, changed };
+    };
+
     const resolveProductById = async (productId?: number) => {
         if (!productId) return undefined;
         const cached = (data.products as any[]).find((p: any) => p.id === productId);
@@ -361,11 +651,16 @@ export default () => {
     };
 
     const buildStandardTreeForDoc = (product?: any): TreeNode[] => {
-        return applyProductScopeToTree(buildStandardNodesWithIds(), product).nodes;
+        return ensureReviewAppendix(applyProductScopeToTree(buildStandardNodesWithIds(), product).nodes).nodes;
     };
 
     const cloneTree = (nodes: TreeNode[]): TreeNode[] => JSON.parse(JSON.stringify(nodes || []));
-    const normalizeTemplateTitle = (title?: string) => String(title || "").replace(/\s+/g, "").trim();
+    const normalizeTemplateTitle = (title?: string) => String(title || "")
+        .replace(/^\d+(?:\.\d+)*/, "")
+        .replace(/[：:]+$/, "")
+        .replace(/\s+/g, "")
+        .trim();
+    const isStructDiagramSection = (title?: string) => normalizeTemplateTitle(title) === "系统结构图";
     const cloneTemplateBranch = (tplNode: any): TreeNode => {
         const addIds = (items: any[]): TreeNode[] => items.map((node) => ({
             ...node,
@@ -378,7 +673,8 @@ export default () => {
         const templateNodes = buildStandardNodesWithIds();
         let changed = false;
 
-        const mergeChildrenOrdered = (currentChildren: TreeNode[], templateChildren: TreeNode[]): TreeNode[] => {
+        const mergeChildrenOrdered = (currentChildren: TreeNode[], templateChildren: TreeNode[], parentTpl?: TreeNode): TreeNode[] => {
+            const lockToTemplate = isStructDiagramSection(parentTpl?.title);
             const current = [...(currentChildren || [])];
             const consumed = new Set<number>();
             const output: TreeNode[] = [];
@@ -397,7 +693,17 @@ export default () => {
                 }
                 if (matchIdx >= 0) {
                     consumed.add(matchIdx);
-                    output.push(mergeNode(current[matchIdx], tplChild));
+                    const merged = mergeNode(current[matchIdx], tplChild);
+                    if (lockToTemplate) {
+                        const nextTitle = String(tplChild.title || merged.title || "");
+                        const nextText = String(tplChild.text ?? merged.text ?? "");
+                        if (String(merged.title || "") !== nextTitle || String(merged.text || "") !== nextText) {
+                            changed = true;
+                        }
+                        output.push({ ...merged, title: nextTitle, text: nextText });
+                    } else {
+                        output.push(merged);
+                    }
                 } else if (titleKey || tplChild.ref_type) {
                     changed = true;
                     output.push(cloneTemplateBranch(tplChild));
@@ -405,16 +711,19 @@ export default () => {
             });
 
             current.forEach((child, idx) => {
-                if (!consumed.has(idx)) {
-                    output.push(child);
+                if (consumed.has(idx)) return;
+                if (lockToTemplate) {
+                    changed = true;
+                    return;
                 }
+                output.push(child);
             });
             return output;
         };
 
         const mergeNode = (current: TreeNode, template: TreeNode): TreeNode => ({
             ...current,
-            children: mergeChildrenOrdered(current.children || [], template.children || []),
+            children: mergeChildrenOrdered(current.children || [], template.children || [], template),
         });
 
         const mergeRoots = (currentItems: TreeNode[], templateItems: TreeNode[]): TreeNode[] => (
@@ -2556,13 +2865,33 @@ export default () => {
         });
         return { nodes: walk(nodes), changed };
     };
+    const ensureChangeLogMinRows = (nodes: TreeNode[], minRows = 5): { nodes: TreeNode[]; changed: boolean } => {
+        let changed = false;
+        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+            const children = walk((node.children || []) as TreeNode[]);
+            let nextNode: TreeNode = { ...node, children };
+            if (nextNode.table && isSrsChangeLogTableNode(nextNode)) {
+                const rows = [...((nextNode.table as any).rows || [])];
+                if (rows.length < minRows) {
+                    while (rows.length < minRows) {
+                        rows.push({ change_date: "", version_no: "", change_desc: "", changer: "", approver: "" });
+                    }
+                    nextNode = { ...nextNode, table: { ...nextNode.table, rows } as any };
+                    changed = true;
+                }
+            }
+            return nextNode;
+        });
+        return { nodes: walk(nodes), changed };
+    };
     useEffect(() => {
         if (!(data.treeStructure as TreeNode[] || []).length) return;
         const verResult = applyVersionToCoverTable(data.treeStructure as TreeNode[], displayDocVersion);
         const deptResult = applyDeptToCoverTable(verResult.nodes, "产品部");
-        if (verResult.changed || deptResult.changed) {
-            treeStructureRef.current = deptResult.nodes;
-            dispatch({ treeStructure: deptResult.nodes });
+        const logResult = ensureChangeLogMinRows(deptResult.nodes, 5);
+        if (verResult.changed || deptResult.changed || logResult.changed) {
+            treeStructureRef.current = logResult.nodes;
+            dispatch({ treeStructure: logResult.nodes });
         }
     }, [displayDocVersion, data.treeStructure]);
 
@@ -2592,16 +2921,40 @@ export default () => {
                 const who = label === "编制人" ? tpm : label === "审核人" || label === "批准人" ? devLead : "";
                 return who ? (signMap[who] || who) : "";
             };
+            const coverDate = computeSrsCoverDate(tlRows);
+            const resolveReviewName = (role: string) => {
+                const label = String(role || "").trim();
+                if (label.includes("测试") && !label.includes("用户")) {
+                    const matched = String(coverDate || "").match(/(\d{4})\D+(\d{1,2})/);
+                    const before = matched
+                        ? parseInt(matched[1], 10) * 100 + parseInt(matched[2], 10) < 202509
+                        : false;
+                    return before ? "宋月" : "孙家旭";
+                }
+                const kws = SRS_REVIEW_ROLE_KWS[label] || [label];
+                for (const kw of kws) {
+                    const nm = findRole((r) => r.includes(kw));
+                    if (nm) return nm;
+                }
+                return "";
+            };
             const result = applyCoverRevisionAutofill(data.treeStructure as TreeNode[], {
-                coverDate: computeSrsCoverDate(tlRows),
+                coverDate,
                 version: String(displayDocVersion || ""),
                 resolveSigner,
                 reviser: tpm,
                 approver: devLead,
             });
-            if (result.changed) {
-                treeStructureRef.current = result.nodes;
-                dispatch({ treeStructure: result.nodes });
+            const reviewResult = applySrsReviewPersonAutofill(result.nodes, {
+                coverDate,
+                resolveName: resolveReviewName,
+                resolveSign: (name: string) => (name ? (signMap[name] || "") : ""),
+                approverName: devLead,
+                approverSign: signMap[devLead] || "",
+            });
+            if (result.changed || reviewResult.changed) {
+                treeStructureRef.current = reviewResult.nodes;
+                dispatch({ treeStructure: reviewResult.nodes });
             }
         });
         return () => { cancelled = true; };
@@ -2610,9 +2963,11 @@ export default () => {
     useEffect(() => {
         if (params.id || data.loading || !(data.treeStructure as TreeNode[] || []).length) return;
         const { nodes, changed } = ensureStandardTemplateChildren(data.treeStructure as TreeNode[]);
-        if (changed) {
-            treeStructureRef.current = nodes;
-            dispatch({ treeStructure: nodes });
+        const reviewed = ensureReviewAppendix(nodes);
+        const redistributed = redistributeDocReqRcms(reviewed.nodes);
+        if (changed || reviewed.changed || redistributed.changed) {
+            treeStructureRef.current = redistributed.nodes;
+            dispatch({ treeStructure: redistributed.nodes });
         }
     }, [params.id, data.loading, data.treeStructure]);
 
@@ -2954,6 +3309,8 @@ export default () => {
                     const parsedContentRaw = (targetRow.content || []).map((node: any) => parseTreeNode(node));
                     let shouldInitStandard = false;
                     let shouldPatchTemplate = false;
+                    let shouldAppendReview = false;
+                    let shouldRedistributeDocReq = false;
                     let ensuredContentRaw = parsedContentRaw;
                     if (!isReadOnly) {
                         if (needsStandardTemplate(parsedContentRaw)) {
@@ -2968,6 +3325,12 @@ export default () => {
                             }
                         }
                     }
+                    const reviewed = ensureReviewAppendix(ensuredContentRaw);
+                    ensuredContentRaw = reviewed.nodes;
+                    if (reviewed.changed && !isReadOnly) shouldAppendReview = true;
+                    const redistributed = redistributeDocReqRcms(ensuredContentRaw);
+                    ensuredContentRaw = redistributed.nodes;
+                    if (redistributed.changed && !isReadOnly) shouldRedistributeDocReq = true;
                     const loadProduct = (data.products as any[]).find((p: any) => p.id === targetRow.product_id);
                     const remappedContent = await remapProductBoundDocImages(
                         ensuredContentRaw,
@@ -3001,14 +3364,14 @@ export default () => {
                         srsOtherReqData: srsTableState.srsOtherReqData,
                         srsChangeTables: srsTableState.srsChangeTables,
                         srsTableLoading: false,
-                        treeRefreshKey: (shouldInitStandard || shouldPatchTemplate) ? Date.now() : data.treeRefreshKey,
+                        treeRefreshKey: (shouldInitStandard || shouldPatchTemplate || shouldAppendReview || shouldRedistributeDocReq) ? Date.now() : data.treeRefreshKey,
                     });
                     treeStructureRef.current = parsedContent;
                     initialEditTreeRef.current = cloneTree(parsedContent);
                     if (!(srsTableState.srsTableData || []).length && !isReadOnly) {
                         window.setTimeout(() => loadSrsTableData(true), 600);
                     }
-                    if ((shouldInitStandard || shouldPatchTemplate) && !isReadOnly) {
+                    if ((shouldInitStandard || shouldPatchTemplate || shouldAppendReview || shouldRedistributeDocReq) && !isReadOnly) {
                         const docId = targetRow.id || parseInt(String(id), 10);
                         const cleanedContent = parsedContent.map((node: any) => cleanTreeNode(node, docId, 0));
                         Api.update_srs_doc({
@@ -3039,7 +3402,7 @@ export default () => {
         } else {
             // 新增模式
             editForm.resetFields();
-            const initialTree = buildStandardNodesWithIds();
+            const initialTree = redistributeDocReqRcms(ensureReviewAppendix(buildStandardNodesWithIds()).nodes).nodes;
             initialEditTreeRef.current = [];
             dispatch({
                 isEdit: false,

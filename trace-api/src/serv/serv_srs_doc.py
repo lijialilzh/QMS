@@ -3718,6 +3718,9 @@ class Server(object):
                     set_if(row, "changer", reviser)
                     set_if(row, "approver", approver)
                     rows[0] = row
+                    empty_rev = {"change_date": "", "version_no": "", "change_desc": "", "changer": "", "approver": ""}
+                    while len(rows) < 5:
+                        rows.append(dict(empty_rev))
                     node.table = Table(
                         headers=getattr(table, "headers", None) or [],
                         rows=rows,
@@ -3907,6 +3910,55 @@ class Server(object):
             ),
         ]
         return Resp.resp_ok(data=results)
+
+    def __write_srs_review_appendix(self, docx, prod_id):
+        """导出末尾追加「附件一 评审结论」，表格样式与软件开发计划/详细设计评审记录一致。"""
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
+        from .serv_utils import docx_util
+
+        keywords = (serv_review_util.REVIEW_DEFS.get("srs") or {}).get("name_keywords") or ["需求规格说明", "需求规格"]
+        rev_date = serv_review_util.review_date(prod_id, keywords) if prod_id else ""
+        sec = serv_review_util.build_review_section("srs", rev_date, prod_id)
+        if not sec:
+            return
+        docx.add_page_break()
+        title = docx.add_paragraph()
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        title.paragraph_format.first_line_indent = Pt(0)
+        title.paragraph_format.left_indent = Pt(0)
+        title.paragraph_format.right_indent = Pt(0)
+        title.paragraph_format.line_spacing = 1.5
+        title.paragraph_format.space_before = Pt(0)
+        title.paragraph_format.space_after = Pt(0)
+        docx_util.fonted_txt(title, "附件一 评审结论", font_size=16.0, bold=True)
+
+        def set_cell(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
+            s = str(text or "")
+            if s.startswith("data:image"):
+                try:
+                    b64 = s.split(",", 1)[1] if "," in s else ""
+                    cell.text = ""
+                    para = cell.paragraphs[0]
+                    para.alignment = align
+                    para.add_run().add_picture(io.BytesIO(base64.b64decode(b64)), height=Pt(33))
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    return
+                except Exception:
+                    pass
+            cell.text = ""
+            lines = s.split("\n")
+            for i, line in enumerate(lines):
+                para = cell.paragraphs[0] if i == 0 else cell.add_paragraph()
+                para.alignment = align
+                para.paragraph_format.line_spacing = 1.3
+                docx_util.fonted_txt(para, line, font_size=10.5, bold=bold)
+            cell.vertical_alignment = (
+                WD_CELL_VERTICAL_ALIGNMENT.CENTER if align == WD_ALIGN_PARAGRAPH.CENTER else WD_CELL_VERTICAL_ALIGNMENT.TOP
+            )
+
+        for t_idx, table in enumerate(sec.get("tables") or []):
+            serv_review_util.render_review_grid(docx, table, set_cell, merge_col0=(t_idx == 0), merge_full=True)
 
     async def export_srs_doc(self, output, doc_id, snapshot: SrsDocForm = None, *args, **kwargs):
         if Document is None or Pt is None or dox_enum is None:
@@ -4259,6 +4311,30 @@ class Server(object):
                 return table
             export_table = deepcopy(table)
             __renumber_req_detail_table(export_table)
+            # 文件修订记录：与编辑页一致，至少 5 行；清空 cells，避免导入 Word 的短网格覆盖 rows。
+            if self.__is_change_log_table(export_table):
+                headers = getattr(export_table, "headers", None) or []
+                rows = [dict(r or {}) for r in (getattr(export_table, "rows", None) or [])]
+                cells = getattr(export_table, "cells", None) or []
+                if (not rows) and isinstance(cells, list) and len(cells) > 1:
+                    header_codes = [getattr(h, "code", "") or f"c{i}" for i, h in enumerate(headers)]
+                    data_rows = cells[1:]
+                    if not header_codes:
+                        header_codes = [f"c{i}" for i in range(len(cells[0] or []))]
+                    for cell_row in data_rows:
+                        row = {}
+                        for col_index, code in enumerate(header_codes):
+                            cell = cell_row[col_index] if isinstance(cell_row, list) and col_index < len(cell_row) else None
+                            row[code] = str(getattr(cell, "value", "") or "") if cell is not None else ""
+                        rows.append(row)
+                empty_row = {getattr(h, "code", ""): "" for h in headers} if headers else {
+                    "change_date": "", "version_no": "", "change_desc": "", "changer": "", "approver": ""
+                }
+                while len(rows) < 5:
+                    rows.append(dict(empty_row))
+                export_table.rows = rows
+                export_table.cells = None
+                return export_table
             # 表格本身带横向合并(col_span>1)时（如导入Word的合并表头），
             # 直接保留原合并结构导出，不清空、不重建（重建无法还原横向合并）。
             # 需求表的合并为纵向(col_span 全为1)，不受影响，仍走下方重建逻辑。
@@ -4399,6 +4475,28 @@ class Server(object):
         def __add_blank_lines(docx: Document, line_count: int):
             for _ in range(max(0, line_count)):
                 docx.add_paragraph("")
+
+        def __trim_trailing_empty_paragraphs(docx: Document):
+            # 表后空段落若已落到下一页，再强制分页会多出一页空白。分页前清掉文末空段。
+            body = docx.element.body
+            while True:
+                children = list(body)
+                if not children:
+                    break
+                last = children[-1]
+                if qn and last.tag == qn("w:sectPr"):
+                    if len(children) < 2:
+                        break
+                    last = children[-2]
+                if not qn or last.tag != qn("w:p"):
+                    break
+                if any(br.get(qn("w:type")) == "page" for br in last.findall(".//" + qn("w:br"))):
+                    break
+                if last.find(".//" + qn("w:drawing")) is not None:
+                    break
+                if "".join(last.itertext()).strip():
+                    break
+                last.getparent().remove(last)
 
         def __is_revision_table(table):
             if not table:
@@ -5148,6 +5246,12 @@ class Server(object):
                 rev_section_nodes = [SrsNodeForm(title="文件修订记录", children=[])]
 
             remaining_roots = body_from_spec + remaining_roots
+            remaining_roots = [
+                n for n in remaining_roots
+                if str(getattr(n, "ref_type", "") or "") != "review"
+                and "评审记录" not in re.sub(r"\s+", "", str(getattr(n, "title", "") or ""))
+                and "附件一评审结论" not in re.sub(r"\s+", "", str(getattr(n, "title", "") or ""))
+            ]
             imported_catalog_text = __extract_imported_catalog_text(*(roots or []))
 
             export_sections = [
@@ -5161,6 +5265,7 @@ class Server(object):
                 if not section_nodes:
                     continue
                 if not first_section:
+                    __trim_trailing_empty_paragraphs(docx)
                     docx.add_page_break()
                 if section_name == "catalog":
                     __write_catalog_page(docx, imported_catalog_text)
@@ -5171,6 +5276,7 @@ class Server(object):
                     __add_blank_lines(docx, 5)
                 first_section = False
 
+            self.__write_srs_review_appendix(docx, srs_doc.product_id)
             docx_util.fill_toc_cache(docx)
             docx.save(output)
             output.seek(0)

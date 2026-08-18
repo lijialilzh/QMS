@@ -37,17 +37,40 @@
         flex-shrink: 0;
 
         .srs-toolbar {
+            display: flex;
+            align-items: center;
             gap: 12px;
             padding: 8px 16px;
             background: #ffffff;
             border-bottom: 1px solid #eef0f3;
             flex-wrap: wrap;
             row-gap: 6px;
+
+            .ant-form-item,
+            .srs-toolbar-item {
+                margin-top: 0 !important;
+                margin-bottom: 0 !important;
+            }
+
+            .ant-form-item-row {
+                align-items: center !important;
+                flex-wrap: nowrap;
+            }
+
+            .ant-form-item-explain {
+                position: absolute;
+                top: 100%;
+            }
+
+            .ant-space,
+            .ant-btn {
+                align-self: center;
+            }
         }
 
         .srs-toolbar-item {
             margin-right: 0;
-            margin-bottom: 0;
+            margin-bottom: 0 !important;
         }
 
         .srs-toolbar-meta {
@@ -291,6 +314,11 @@
                     align-items: flex-start !important;
                     overflow-x: visible;
 
+                    // 单条 RCM：标题 / 需求编号 / 下拉框同一水平中线
+                    &:has(.node-rcm-select.is-compact) {
+                        align-items: center !important;
+                    }
+
                     // 第1行：标题 + 需求编号 + RCM 下拉框 + 操作按钮（四者同一行）
                     .node-title {
                         order: 1;
@@ -299,6 +327,12 @@
                         min-width: 120px !important;
                         max-width: 120px !important;
                         margin-right: 8px !important;
+                    }
+                    .node-title:not(.ant-input),
+                    .node-srs-code:not(.ant-input) {
+                        height: 32px;
+                        display: flex;
+                        align-items: center;
                     }
                     .node-srs-code {
                         order: 2;
@@ -314,6 +348,26 @@
                         max-width: none !important;
                         min-width: 140px !important;
                         margin-right: 8px !important;
+
+                        // 仅 0/1 个 RCM：贴「选择RCM代码」字宽，高度与左侧 32px 齐平
+                        &.is-compact {
+                            flex: 0 0 128px !important;
+                            width: 128px !important;
+                            min-width: 128px !important;
+                            max-width: 128px !important;
+                            height: 32px !important;
+
+                            .ant-select {
+                                width: 100% !important;
+                                height: 32px !important;
+                            }
+
+                            .ant-select-selector {
+                                min-height: 32px !important;
+                                height: 32px !important;
+                                max-height: 32px !important;
+                            }
+                        }
 
                         // 与左侧标题 Input（32px）齐平：内边距+标签合计不超过 32；多行限高滚动
                         .ant-select-selector {

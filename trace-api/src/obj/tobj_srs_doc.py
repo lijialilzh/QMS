@@ -20,6 +20,11 @@ class TableCell(BaseModel):
     v_align: Optional[str] = Field(title="垂直对齐", default="top")
 
 
+class ExtraTable(BaseModel):
+    title: Optional[str] = Field(title="附加表标题")
+    table: Optional["Table"] = Field(title="附加表格")
+
+
 class Table(BaseModel):
     name: Optional[str] = Field(title="表格名称")
     show_header: Optional[int] = Field(title="是否显示表头", default=1)
@@ -27,7 +32,10 @@ class Table(BaseModel):
     headers: Optional[List[TabHeader]] = Field(title="表头")
     rows: Optional[List[Dict[str, Any]]] = Field(title="表格行数据")
     cells: Optional[List[List[TableCell]]] = Field(title="二维单元格（含合并信息）")
-    
+    extra_tables: Optional[List[ExtraTable]] = Field(title="附加表格列表", default=None)
+
+
+ExtraTable.update_forward_refs()
 
 class SrsNodeForm(Node):
     label: Optional[str] = Field(title="节点小标题")

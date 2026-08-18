@@ -11,6 +11,7 @@ import { v4 as uuidv4 } from 'uuid';
 import * as XLSX from "xlsx";
 import * as Api from "@/api/ApiSrsDoc";
 import * as ApiDocFile from "@/api/ApiDocFile";
+import ReviewTable from "@/common/ReviewTable";
 
 // 表格数据结构（匹配后端接口，允许空对象表示无表格数据）
 interface TableData {
@@ -20,6 +21,7 @@ interface TableData {
     headers?: Array<{ code: string; name: string }>;
     rows?: { [key: string]: any }[];
     cells?: Array<Array<{ value?: string; row_span?: number; col_span?: number; h_align?: string; v_align?: string }>>;
+    extra_tables?: Array<{ title?: string; table?: TableData }>;
     req_detail_key?: string;
 }
 
@@ -137,6 +139,10 @@ function isNavChapterNodeForMap(n: TreeNode): boolean {
 }
 
 function isNavUnnumberedNode(node: TreeNode): boolean {
+    const title = String(node.title || "").replace(/\s+/g, "");
+    if (node.ref_type === "review" || title === "评审记录" || title === "附件一评审结论" || title.startsWith("附件一") || title.includes("评审记录")) {
+        return true;
+    }
     return isNavTableTitleNode(node);
 }
 
@@ -1674,6 +1680,43 @@ function hasRenderableTable(table?: TableData | null): boolean {
         table.cells.length > 1;
 }
 
+function isReviewContentTable(table?: TableData | null): boolean {
+    if (!table?.headers?.length) return false;
+    const names = table.headers.map((h) => String(h?.name || "")).join("|");
+    return /评审内容/.test(names) && /评审项/.test(names);
+}
+
+function isReviewPersonTable(table?: TableData | null): boolean {
+    if (!table?.headers?.length) return false;
+    const names = table.headers.map((h) => String(h?.name || "")).join("|");
+    return /人员角色/.test(names) && /签字/.test(names);
+}
+
+function tableToReviewGrid(table: TableData): string[][] {
+    const headers = table.headers || [];
+    const codes = headers.map((h) => h.code);
+    const names = headers.map((h) => String(h.name || ""));
+    const grid: string[][] = [];
+    if (isReviewContentTable(table)) {
+        grid.push(names);
+    }
+    (table.rows || []).forEach((row) => {
+        grid.push(codes.map((code) => String((row as any)?.[code] ?? "")));
+    });
+    return grid;
+}
+
+function renderReviewGridTable(table: TableData) {
+    return (
+        <div className="srs-review-grid-wrap">
+            <ReviewTable
+                grid={tableToReviewGrid(table)}
+                headerRows={isReviewContentTable(table) ? 1 : 0}
+            />
+        </div>
+    );
+}
+
 function isSrsCodeColumn(header?: { code: string; name: string }): boolean {
     const hName = normalizeCellText(header?.name);
     const hCode = normalizeCellText(header?.code);
@@ -2140,6 +2183,7 @@ const TreeNodeItem = ({
     const isImportedPlaceholderTitle = (title?: string) => /^导入表格\d*$/.test(String(title || "").trim());
     const getNormalTableDisplayTitle = (item: { table?: TableData | null; title?: string; text?: string; index: number; isCurrentNodeTable?: boolean }) => {
         if (isFunctionalKvTable(item.table)) return "";
+        if (isReviewContentTable(item.table) || isReviewPersonTable(item.table)) return "";
         const tableName = String(item.table?.name || "").trim();
         if (tableName) return tableName;
         if (item.isCurrentNodeTable) return "";
@@ -2646,7 +2690,7 @@ const TreeNodeItem = ({
                   }
                   {/* 章节 RCM 选择：选择后自动拼接写入 text 文本框（与标题同一行） */}
                   {!isAutoReqNode && Array.isArray(node.rcm_codes) && (
-                      <div className="node-rcm-select">
+                      <div className={`node-rcm-select${((node.rcm_codes || []).filter(Boolean).length <= 1) ? " is-compact" : ""}`}>
                           {readOnly ? (
                               <div>{(node.rcm_codes || []).join(", ") || "-"}</div>
                           ) : (
@@ -2872,6 +2916,9 @@ const TreeNodeItem = ({
                             </div>
                         )}
                         <div className="node-table-header">
+                            {(isReviewContentTable(tbl.table) || isReviewPersonTable(tbl.table))
+                                ? renderReviewGridTable(tbl.table)
+                                : (
                             <Table
                                 columns={buildTableColumns(tbl.table)}
                                 dataSource={buildTableDataSource(tbl.table)}
@@ -2881,6 +2928,7 @@ const TreeNodeItem = ({
                                 tableLayout="fixed"
                                 showHeader={!(tbl.table?.show_header === 0 || isFunctionalKvTable(tbl.table))}
                             />
+                                )}
                             {!readOnly && (
                             <Space className="node-table-actions" size={8}>
                                 <Button
@@ -2929,6 +2977,35 @@ const TreeNodeItem = ({
                         </div>
                     </div>
                 ))}
+              {!(isProductBoundDocImageNode || (node.ref_type && (isImgRefType(node.ref_type) || node.ref_type === 'srs_reqs' || node.ref_type === 'srs_reqs_2'))) &&
+                (node.table?.extra_tables || []).map((extra, idx) => {
+                    const extraTitle = String(extra?.title || "").trim();
+                    const extraTable = extra?.table;
+                    if (!extraTable || !hasRenderableTable(extraTable)) return null;
+                    return (
+                        <div className="node-extra-table" key={`extra-table-${node.id}-${idx}`} style={{ marginTop: 24 }}>
+                            {!!extraTitle && extraTitle !== "参评人员签字" && (
+                                <div className="node-content" style={{ marginBottom: 8, textAlign: "left", fontSize: 13, fontWeight: 600 }}>
+                                    {extraTitle}
+                                </div>
+                            )}
+                            <div className="node-table-header">
+                                {(isReviewPersonTable(extraTable) || isReviewContentTable(extraTable))
+                                    ? renderReviewGridTable(extraTable)
+                                    : (
+                                <Table
+                                    columns={buildTableColumns(extraTable)}
+                                    dataSource={buildTableDataSource(extraTable)}
+                                    pagination={false}
+                                    size="small"
+                                    bordered
+                                    tableLayout="fixed"
+                                />
+                                    )}
+                            </div>
+                        </div>
+                    );
+                })}
               {showReqExtraTables && embeddedOtherReqTableNodes.map((subNode, idx) => (
                   <div className="node-table" key={`embedded_sub_table_${subNode.id || idx}`}>
                       <div style={{ marginBottom: 8, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -5339,6 +5416,12 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             }
         }
 
+        const withKeptExtraTables = (node: TreeNode, tbl: TableData | null) => {
+            if (!tbl || Object.keys(tbl).length === 0) return tbl;
+            const extras = node.table?.extra_tables;
+            return Array.isArray(extras) ? { ...tbl, extra_tables: extras } : tbl;
+        };
+
         const getReqNameFromTable = () => {
             const leftCode = tableData.headers[0]?.code;
             const rightCode = tableData.headers[1]?.code;
@@ -5426,7 +5509,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                         children: [...(node.children || []), newTableNode],
                     };
                 }
-                return { ...node, table: tableFormat };
+                return { ...node, table: withKeptExtraTables(node, tableFormat) };
             });
             updateNodes(nodesAfterChangeTableApply);
             const explicitTypeCode = String(tableData?.type_code || "").trim();
@@ -5758,7 +5841,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             return {
                 ...node,
                 title: node.label === "__auto_req_detail" && reqNameFromTable ? replaceTitleName(node.title, reqNameFromTable) : node.title,
-                table: tableFormat,
+                table: withKeptExtraTables(node, tableFormat),
             };
         });
         if (isSavingOtherReqTable) {
@@ -6868,6 +6951,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         node.ref_type !== "srs_reqs" &&
         node.ref_type !== "srs_reqs_2" &&
         node.ref_type !== "srs_reqds" &&
+        node.ref_type !== "review" &&
         !isImgRefType(node.ref_type)
     );
     // 目录里新增子章节：复用 handleAdd，并自动展开父节点、选中新节点
@@ -7082,7 +7166,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                         <div className="srs-tree-nav">
                             <div className="srs-tree-nav-head">{ts("srs_doc.directory_structure") || ts("srs_doc.directory") || "目录"}</div>
                             {!readOnly && (
-                                <div className="srs-tree-nav-hint">封面/修订记录不参与编号；正文章节自动编号。</div>
+                                <div className="srs-tree-nav-hint">封面/修订记录/评审记录不参与编号；正文章节自动编号。</div>
                             )}
                             <div className="srs-tree-nav-body">
                                 {extraNavSections.map((sec) => {
