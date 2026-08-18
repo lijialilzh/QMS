@@ -99,6 +99,8 @@ interface TreeNodeItemProps {
     /** 左目录单章编辑：IMM 风格自动章节号（只填名称，编号展示用） */
     useNavChapterEditor?: boolean;
     autoNavChapterNo?: string;
+    /** 追溯表「（章节 x）」与左目录共用编号 */
+    navLocationBySdsCode?: Map<string, string>;
     /** 可选：文档图片上传 API（HLD 等复用组件时传入，默认 SDS） */
     uploadDocFile?: (formData: FormData) => Promise<any>;
 }
@@ -239,6 +241,66 @@ function computeNavChapterNumberMap(list: TreeNode[]): Map<string, string> {
         walkChildren(node.children || [], num);
     });
     return map;
+}
+
+function normalizeSdsCodeKey(value: string): string {
+    return String(value || "").replace(/\s+/g, "").replace(/_/g, "-").toUpperCase();
+}
+
+function collectNodeSdsCodes(node: TreeNode): string[] {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    const add = (raw: string) => {
+        const code = normalizeSdsCodeKey(raw);
+        if (code && !seen.has(code)) {
+            seen.add(code);
+            out.push(code);
+        }
+    };
+    String((node as any).sds_code || "").split(/[\r\n,，;；]+/).forEach(add);
+    const fromText = extractSdsCodeFromNodeText(node.text).code;
+    if (fromText) add(fromText);
+    return out;
+}
+
+function buildNavLocationBySdsCode(list: TreeNode[], numberMap: Map<string, string>): Map<string, string> {
+    const map = new Map<string, string>();
+    const walk = (nodes: TreeNode[]) => {
+        (nodes || []).forEach((node) => {
+            const heading = numberMap.get(String(node.id)) || "";
+            if (heading) {
+                collectNodeSdsCodes(node).forEach((code) => {
+                    const prev = map.get(code);
+                    if (!prev || heading.split(".").length >= prev.split(".").length) {
+                        map.set(code, heading);
+                    }
+                });
+            }
+            walk(node.children || []);
+        });
+    };
+    walk(list);
+    return map;
+}
+
+function applyNavLocationToChapterCell(chapterCell: any, sdsCodeCell: any, locationMap?: Map<string, string>): string {
+    const formatted = formatTraceChapterCell(chapterCell);
+    if (!locationMap || locationMap.size === 0) return formatted;
+    const sdsLines = formatTraceSdsCodeCell(sdsCodeCell)
+        .split("\n")
+        .map((item) => normalizeSdsCodeKey(item))
+        .filter(Boolean);
+    return formatted.split("\n").map((line, idx) => {
+        const code = sdsLines[idx] || sdsLines[0] || "";
+        const loc = code ? (locationMap.get(code) || "") : "";
+        if (!loc) return line;
+        if (/（章节\s*[^）]+）/.test(line) || /\(章节\s*[^)]+\)/.test(line)) {
+            return line
+                .replace(/（章节\s*[^）]+）/g, `（章节 ${loc}）`)
+                .replace(/\(章节\s*[^)]+\)/g, `（章节 ${loc}）`);
+        }
+        return line;
+    }).join("\n");
 }
 
 function hasTableInSubtree(node: TreeNode | undefined): boolean {
@@ -636,7 +698,7 @@ function shiftChapterMajor(chapter: string, offset: number): string {
     return `${nextMajor}${m[2] || ""}`;
 }
 
-const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onSdsCodeChange, onImageChange, onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, uploadDocFile, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [], useNavChapterEditor = false, autoNavChapterNo = "" }: TreeNodeItemProps) => {
+const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onSdsCodeChange, onImageChange, onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, uploadDocFile, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [], useNavChapterEditor = false, autoNavChapterNo = "", navLocationBySdsCode }: TreeNodeItemProps) => {
     const { t: ts } = useTranslation();
     const [fileList, setFileList] = useState<UploadFile[]>([]);
     const [uploadLoading, setUploadLoading] = useState(false);
@@ -737,22 +799,28 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                     const headerCell = tableCells[0]?.[index];
                     return { colSpan: headerCell?.col_span ?? 1 } as any;
                 };
-                col.render = (_val: any, _row: any, rowIndex: number) => {
+                col.render = (_val: any, row: any, rowIndex: number) => {
                     const bodyCells = tableCells.slice(1);
                     const cell = bodyCells[rowIndex]?.[index];
                     const rowSpan = cell?.row_span ?? 1;
                     const colSpan = cell?.col_span ?? 1;
                     const hAlign = (cell?.h_align || "left") as "left" | "center" | "right";
                     const vAlign = (cell?.v_align || "top") as "top" | "middle" | "bottom";
-                    const cellValue = formatTraceTableCell(header.name, cell?.value);
+                    let cellValue = formatTraceTableCell(header.name, cell?.value);
+                    if (header.name === "需求/代码" || header.name === "需求代码") {
+                        cellValue = applyNavLocationToChapterCell(cellValue, row?.sds_code, navLocationBySdsCode);
+                    }
                     return {
                         children: <div className="table-cell-content">{cellValue}</div>,
                         props: { rowSpan, colSpan, style: { textAlign: hAlign, verticalAlign: vAlign } },
                     };
                 };
             } else {
-                col.render = (val: any) => {
-                    const cellValue = formatTraceTableCell(header.name, val);
+                col.render = (val: any, row: any) => {
+                    let cellValue = formatTraceTableCell(header.name, val);
+                    if (header.name === "需求/代码" || header.name === "需求代码") {
+                        cellValue = applyNavLocationToChapterCell(cellValue, row?.sds_code, navLocationBySdsCode);
+                    }
                     return <div className="table-cell-content">{cellValue}</div>;
                 };
             }
@@ -2334,6 +2402,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         traceSynced={traceSynced}
                         uploadDocFile={uploadDocFile}
                         readOnlyChapterOffset={readOnlyChapterOffset}
+                        navLocationBySdsCode={navLocationBySdsCode}
                         captionFromParent={childCaptionById.get(String(child.id)) || childCaptionById.get(String(child.n_id || ""))}
                         tableCaptionFromParent={
                             childTableCaptionById.get(String(child.id))
@@ -2910,7 +2979,8 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
         return null;
     };
     const isNavChapter = isNavChapterNode;
-    const navChapterNumberMap = useNavLayout ? computeNavChapterNumberMap(visibleNodes) : new Map<string, string>();
+    const navChapterNumberMap = computeNavChapterNumberMap(visibleNodes);
+    const navLocationBySdsCode = buildNavLocationBySdsCode(visibleNodes, navChapterNumberMap);
     const canAddChildInNav = (node: TreeNode, depth: number): boolean => (
         !readOnly &&
         depth < 2 &&
@@ -3036,6 +3106,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                 traceSynced,
                 uploadDocFile,
                 readOnlyChapterOffset: effectiveReadOnlyChapterOffset,
+                navLocationBySdsCode,
             };
             return readOnly && !readOnlyRootWrapper ? (
                 <TreeNodeItem key={node.id} {...rootItemProps} />
@@ -3130,6 +3201,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                                             uploadDocFile={uploadDocFile}
                                             readOnlyChapterOffset={effectiveReadOnlyChapterOffset}
                                             navParentInlineTables={navParentInlineTables}
+                                            navLocationBySdsCode={navLocationBySdsCode}
                                         />
                                     </div>
                                 ) : (

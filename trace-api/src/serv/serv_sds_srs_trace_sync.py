@@ -19,7 +19,7 @@ from ..obj.vobj_sds_trace import SdsTraceObj
 from ..obj import Resp
 from ..utils.sql_ctx import db
 from ..utils.i18n import ts
-from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, fixed_rcn300_sds_codes
+from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, FIXED_RCN300_TRACES, fixed_rcn300_sds_codes
 from .serv_sds_reqd import Server as ServSdsReqd
 
 logger = logging.getLogger(__name__)
@@ -86,6 +86,7 @@ class SdsSrsTraceSyncMixin:
             return roots
 
         location_by_code, location_by_title = self._build_sds_tree_location_indexes(roots)
+        nav_by_code = self._build_nav_style_location_by_code(roots)
 
         resp = await sdstrace_serv.list_sds_trace(None, doc_id=doc_id, page_size=10000, from_sync=mark_synced)
         rows: List[SdsTraceObj] = resp.data.rows or []
@@ -123,7 +124,10 @@ class SdsSrsTraceSyncMixin:
             for idx in range(count):
                 chapter = chapters[idx].strip() if idx < len(chapters) else (chapters[0].strip() if chapters else "")
                 sds_code = normalize_code(sds_codes[idx] if idx < len(sds_codes) else "")
-                location = locations[idx].strip() if idx < len(locations) else ""
+                stored_location = locations[idx].strip() if idx < len(locations) else ""
+                srs_code = normalize_code(getattr(row, "srs_code", "") or "")
+                keep_fixed = srs_code in FIXED_RCN300_TRACES or sds_code in fixed_rcn300_sds_codes()
+                location = stored_location if keep_fixed else (nav_by_code.get(sds_code, "") or stored_location)
                 if not location and sds_code:
                     location = location_by_code.get(sds_code, "")
                 if not location:
@@ -412,6 +416,110 @@ class SdsSrsTraceSyncMixin:
     def _heading_depth(value: str) -> int:
         txt = str(value or "").strip()
         return len(txt.split(".")) if txt else 0
+
+    def _is_nav_front_root(self, node: SdsNodeForm) -> bool:
+        title = re.sub(r"\s+", "", str(getattr(node, "title", "") or ""))
+        body = self._normalize_sds_node_title(getattr(node, "title", "") or "")
+        if "目录" in title:
+            return True
+        if "文件修订记录" in title:
+            return True
+        return body in ("软件详细设计", "软件详细设计说明书", "需求规格说明")
+
+    def _is_nav_chapter_node(self, node: SdsNodeForm) -> bool:
+        ref_type = str(getattr(node, "ref_type", "") or "")
+        if ref_type in (SDS_TRACES_REF, "sds_reqds", "img_flow"):
+            return False
+        title = str(getattr(node, "title", "") or getattr(node, "label", "") or "").strip()
+        if re.match(r"^\d+(?:\.\d+)+\.?\s", title):
+            return True
+        if re.match(r"^导入(?:表格|图片)\d*$", title):
+            return False
+        if re.match(r"^图\s*\d+", title, flags=re.I):
+            return False
+        table = getattr(node, "table", None)
+        headers = getattr(table, "headers", None) or []
+        has_table = bool(headers)
+        no_text = not str(getattr(node, "text", "") or "").strip()
+        no_children = not (getattr(node, "children", None) or [])
+        has_img = bool(str(getattr(node, "img_url", "") or "").strip())
+        if has_img and no_text and not has_table and no_children and re.search(r"程序逻辑|流程图|结构图|拓扑图", title):
+            return False
+        return True
+
+    def _is_nav_unnumbered_node(self, node: SdsNodeForm) -> bool:
+        ref_type = str(getattr(node, "ref_type", "") or "")
+        compact = re.sub(r"\s+", "", str(getattr(node, "title", "") or ""))
+        if ref_type == "review" or compact in ("评审记录", "附件一评审结论") or compact.startswith("附件一"):
+            return True
+        title = str(getattr(node, "title", "") or "").strip()
+        if re.match(r"^\s*表\d+", title):
+            return True
+        table = getattr(node, "table", None)
+        headers = getattr(table, "headers", None) or []
+        if headers:
+            first = headers[0]
+            h0 = str(getattr(first, "name", None) or (first.get("name") if isinstance(first, dict) else "") or "").strip()
+            if h0 in ("Field ID", "字段ID"):
+                return True
+        return False
+
+    def _compute_nav_style_headings(self, roots: List[SdsNodeForm]) -> Dict[int, str]:
+        """与编辑页左目录同一套编号：封面/修订记录/附件一/图表不占号。"""
+        headings: Dict[int, str] = {}
+
+        def walk_children(nodes: List[SdsNodeForm], prefix: str):
+            idx = 0
+            for node in nodes or []:
+                if not self._is_nav_chapter_node(node):
+                    continue
+                if self._is_nav_unnumbered_node(node):
+                    headings[id(node)] = ""
+                    walk_children(getattr(node, "children", None) or [], prefix)
+                    continue
+                idx += 1
+                num = f"{prefix}.{idx}" if prefix else str(idx)
+                headings[id(node)] = num
+                walk_children(getattr(node, "children", None) or [], num)
+
+        body_idx = 0
+        for node in roots or []:
+            if self._is_nav_front_root(node):
+                continue
+            if not self._is_nav_chapter_node(node):
+                continue
+            if self._is_nav_unnumbered_node(node):
+                headings[id(node)] = ""
+                walk_children(getattr(node, "children", None) or [], "")
+                continue
+            body_idx += 1
+            num = str(body_idx)
+            headings[id(node)] = num
+            walk_children(getattr(node, "children", None) or [], num)
+        return headings
+
+    def _build_nav_style_location_by_code(self, roots: List[SdsNodeForm]) -> Dict[str, str]:
+        headings = self._compute_nav_style_headings(roots)
+        by_code: Dict[str, str] = {}
+
+        def put_code(code: str, heading: str):
+            token = self._normalize_code(code)
+            if not token or not heading:
+                return
+            prev = by_code.get(token)
+            if not prev or self._heading_depth(heading) >= self._heading_depth(prev):
+                by_code[token] = heading
+
+        def walk(nodes: List[SdsNodeForm]):
+            for node in nodes or []:
+                heading = headings.get(id(node)) or ""
+                if heading:
+                    for code in self._extract_node_sds_codes(node):
+                        put_code(code, heading)
+                walk(getattr(node, "children", None) or [])
+
+        walk(roots or [])
+        return by_code
 
     @staticmethod
     def _extract_sds_code_token(txt: str) -> str:
@@ -1976,6 +2084,7 @@ class SdsSrsTraceSyncMixin:
         srs_doc_id = db.session.execute(select(SdsDoc.srsdoc_id).where(SdsDoc.id == doc_id)).scalar()
         hierarchy_map = _trace_load_srs_req_hierarchy_map(srs_doc_id)
         self._restore_product_root_headings(roots)
+        nav_by_code = self._build_nav_style_location_by_code(roots)
         strict_location_map = self._build_strict_srs_trace_location_map(rows, hierarchy_map, roots)
         for trace, req in rows:
             req_fields = sdstrace_serv.hierarchy_for_req(req, hierarchy_map)
@@ -1986,7 +2095,14 @@ class SdsSrsTraceSyncMixin:
                 trace.chapter = chapter or None
                 trace.location = None
                 continue
-            location = strict_location_map.get(trace_code) or ""
+            srs_code = str(getattr(req, "code", "") or "").strip().upper()
+            if srs_code in FIXED_RCN300_TRACES:
+                if chapter:
+                    trace.chapter = chapter
+                continue
+            location = nav_by_code.get(trace_code) or by_code.get(trace_code) or ""
+            if not location:
+                location = strict_location_map.get(trace_code) or ""
             if not location:
                 location = _trace_resolve_sds_tree_location(
                 getattr(trace, "sds_code", "") or "",
@@ -2015,7 +2131,7 @@ class SdsSrsTraceSyncMixin:
             else:
                 trace.chapter = None
             trace.location = location or None
-        self._apply_strict_srs_trace_headings(rows, hierarchy_map, roots, strict_location_map)
+        self._apply_strict_srs_trace_headings(rows, hierarchy_map, roots, nav_by_code)
         db.session.flush()
 
     def _restore_product_root_headings(self, roots: List[SdsNodeForm]):
