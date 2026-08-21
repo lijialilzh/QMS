@@ -47,10 +47,10 @@
 ## 6. 关键业务逻辑与规则
 
 ### 6.1 自动补齐（__ensure_sds_traces，列表前调用）
-1. 从 SRS「产品需求列表」读层级 `hierarchy_map`（`rows` 为空时读 `cells`）。
+1. 从 SRS「产品需求列表」读层级 `hierarchy_map`。
 2. 必要时从 SRS Word 表补齐 `srs_req`/`srs_type`。
-3. 按 key **`(doc_id, req_id)`** 对每个 `type_code != "reqd"` 需求 upsert 追溯行：已有则更新 chapter，没有则插入。
-4. **获取/补齐过程不删除**已有 `sds_trace`。
+3. 对每个 `type_code != "reqd"` 需求 upsert 追溯行。
+4. 删除已不在 SRS 的 req_id 追溯。
 5. **RCN300 固定映射**（`FIXED_RCN300_TRACES`）：一条 SRS 可对应多个 SDS 编号+章节+location（产品特例）。
 
 ### 6.2 location 解析（非 from_sync）
@@ -85,4 +85,4 @@
 1. **`from_sync` 两种取值的不同 location 来源**（DB vs 树推算）不可混淆。
 2. **RCN300 固定映射 / NAME_DICT 别名** 为产品特例，改动会影响特定产品追溯。
 3. **type_code 分组（主表 / extra_tables / 不参与）** 不可改。
-4. 自动补齐按 `(doc_id, req_id)` upsert，**不可用树表白名单过滤或删除仍有效的追溯行**。
+4. 自动补齐时「删除已不在 SRS 的追溯」逻辑不可误删仍有效的行。

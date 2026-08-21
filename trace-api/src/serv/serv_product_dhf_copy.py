@@ -64,6 +64,8 @@ from .serv_utils import new_version, sync_file_no_version
 logger = logging.getLogger(__name__)
 
 TARGET_DOC_VERSION = "A0"
+# 与 serv_srs_doc.DELETED_SRS_VERSION_PREFIX 保持一致：软删 SRS 不参与版本复制
+DELETED_SRS_VERSION_PREFIX = "__deleted_srs__"
 
 
 def compact_full_version_suffix(full_version: str) -> str:
@@ -192,7 +194,10 @@ def _registry_by_key() -> Dict[str, Tuple[object, str, str, str]]:
 
 
 def _version_seq(value) -> int:
-    matched = re.search(r"(\d+)(?!.*\d)", str(value or ""))
+    text = str(value or "")
+    if text.startswith(DELETED_SRS_VERSION_PREFIX):
+        return -1
+    matched = re.search(r"(\d+)(?!.*\d)", text)
     return int(matched.group(1)) if matched else -1
 
 
@@ -254,11 +259,17 @@ def _apply_target_version_a1(
 
 def _list_docs(model, source_prod_id: int):
     if model is SdsDoc:
-        srs_ids = select(SrsDoc.id).where(SrsDoc.product_id == source_prod_id)
+        srs_ids = select(SrsDoc.id).where(
+            SrsDoc.product_id == source_prod_id,
+            ~SrsDoc.version.like(f"{DELETED_SRS_VERSION_PREFIX}%"),
+        )
         return db.session.execute(
             select(SdsDoc).where(or_(SdsDoc.product_id == source_prod_id, SdsDoc.srsdoc_id.in_(srs_ids)))
         ).scalars().all()
-    return db.session.execute(select(model).where(model.product_id == source_prod_id)).scalars().all()
+    q = select(model).where(model.product_id == source_prod_id)
+    if model is SrsDoc:
+        q = q.where(~SrsDoc.version.like(f"{DELETED_SRS_VERSION_PREFIX}%"))
+    return db.session.execute(q).scalars().all()
 
 
 async def _call_duplicate(doc_key: str, serv_module: str, serv_class: str, method_name: str, doc_id: int, target_pid: int):
