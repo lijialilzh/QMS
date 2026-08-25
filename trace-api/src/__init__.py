@@ -20,6 +20,7 @@ from .api import web_auth, web_session, api_user, api_role, api_project, api_haz
     api_prod_haz, api_prod_rcm, api_prod_cst, api_srs_req, api_srs_reqd, api_prod_dhf, api_sds_reqd, api_sds_trace, \
     api_srs_type, api_doc_file, api_risk_mgmt_doc, api_cybersec_doc, api_ai_support, \
     api_project_member, api_project_timeline, api_prod_runtime_env, api_prod_device_res, api_pdp_doc, api_pir_doc, \
+    api_model_doc, api_data_doc, \
     api_vuh_doc, api_version_rule, api_ptr_doc, api_company_info, api_label_doc, api_release_note, api_pha_doc, \
     api_cyber_cap_doc, api_research_doc, api_nsr_doc, api_acc_doc, api_nsmp_doc, api_rmp_doc, api_sd_doc, \
     api_crr_doc, api_dem_doc, api_deq_doc, api_scm_doc, api_scs_doc, api_dat_doc, api_stp_doc, api_utp_doc, \
@@ -88,6 +89,8 @@ def create_app():
     main_router.include_router(api_prod_device_res.router, prefix="/prod_device_res", tags=["设备资源"])
     main_router.include_router(api_pdp_doc.router, prefix="/pdp_doc", tags=["产品开发计划"])
     main_router.include_router(api_pir_doc.router, prefix="/pir_doc", tags=["产品立项报告"])
+    main_router.include_router(api_model_doc.router, prefix="/model_doc", tags=["模型文件"])
+    main_router.include_router(api_data_doc.router, prefix="/data_doc", tags=["数据文件"])
     main_router.include_router(api_vuh_doc.router, prefix="/vuh_doc", tags=["版本更新历史"])
     main_router.include_router(api_version_rule.router, prefix="/version_rule", tags=["版本命名规则"])
     main_router.include_router(api_ptr_doc.router, prefix="/ptr_doc", tags=["产品技术要求"])

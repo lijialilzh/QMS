@@ -11,6 +11,8 @@ import AiAssistant from "@/views/AiAssistant";
 import * as Api from "@/api/ApiUser";
 import { Root, actions, useDispatch, useSelector } from "@/store";
 import Loading from "@/views/Loading";
+import { MODEL_DOC_TYPE_ORDER, MODEL_DOC_TYPES } from "./model_doc/ModelDocTypes";
+import { DATA_DOC_TYPE_ORDER, DATA_DOC_TYPES } from "./model_doc/DataDocTypes";
 
 enum DlgTypes {
     menu = "menu",
@@ -523,6 +525,34 @@ export default () => {
                 ],
             },
             {
+                key: "/manage_model_doc",
+                label: ts("menu.manage_model_doc"),
+                icon: <img src="assets/icon/menu-create.svg" />,
+                children: MODEL_DOC_TYPE_ORDER.map((code) => ({
+                    key: `/model_docs/${code}`,
+                    label: MODEL_DOC_TYPES[code].title,
+                    perm: "model_doc_view",
+                })),
+            },
+            {
+                key: "/manage_data_doc",
+                label: ts("menu.manage_data_doc"),
+                icon: <img src="assets/icon/menu-create.svg" />,
+                children: [
+                    ...DATA_DOC_TYPE_ORDER.map((code) => ({
+                        key: `/data_docs/${code}`,
+                        label: DATA_DOC_TYPES[code].title,
+                        perm: "data_doc_view",
+                    })),
+                ],
+            },
+            {
+                key: "/data_stats",
+                label: ts("menu.data_stats"),
+                icon: <img src="assets/icon/menu-create.svg" />,
+                perm: "data_doc_view",
+            },
+            {
                 key: "/prod_overview",
                 label: ts("menu.prod_overview"),
                 icon: <img src="assets/icon/menu-create.svg" />,
@@ -578,15 +608,23 @@ export default () => {
     useEffect(() => {
         const path = location.pathname;
         const pathParts = path.split("/").filter(Boolean);
-        const isDetailPage = pathParts.length > 1;
-        // 详情页时菜单高亮父级：/srs_docs/edit/1 -> /srs_docs
-        const menuSelectedKey = isDetailPage ? `/${pathParts[0]}` : path;
+        const isModelDoc = pathParts[0] === "model_docs";
+        const isDataDoc = pathParts[0] === "data_docs";
+        const isTypedDoc = isModelDoc || isDataDoc;
+        const isDetailPage = isTypedDoc ? pathParts.length > 2 : pathParts.length > 1;
+        const menuSelectedKey = isTypedDoc
+            ? (pathParts.length >= 2 ? `/${pathParts[0]}/${pathParts[1]}` : path)
+            : (isDetailPage ? `/${pathParts[0]}` : path);
 
         let pageKey = path.replace(/\//, "").replace("-", "_");
         if (isDetailPage) {
             pageKey = pathParts[0].replace("-", "_");
         }
-        const pageName = ts(`menu.${pageKey}`);
+        const pageName = isModelDoc && pathParts[1] && MODEL_DOC_TYPES[pathParts[1]]
+            ? MODEL_DOC_TYPES[pathParts[1]].title
+            : isDataDoc && pathParts[1] && DATA_DOC_TYPES[pathParts[1]]
+            ? DATA_DOC_TYPES[pathParts[1]].title
+            : ts(`menu.${pageKey}`);
         dispatch({ path: location.pathname, pageName, isDetailPage, menuSelectedKey });
     }, [location, i18n.language]);
 

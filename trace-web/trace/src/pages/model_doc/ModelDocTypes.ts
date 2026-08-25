@@ -1,0 +1,43 @@
+export const MODEL_DOC_TYPES: Record<string, { title: string; keywords: string[] }> = {
+    md_001: { title: "模型配置管理计划", keywords: ["模型配置管理计划"] },
+    md_002_01: { title: "数据标注规则", keywords: ["数据标注规则", "肺栓塞分割数据标注规则"] },
+    md_002_02: { title: "标记规则", keywords: ["标记规则", "肺叶分割标记规则"] },
+    md_003: { title: "数据标注需求", keywords: ["数据标注需求"] },
+    md_004: { title: "算法方案概要设计", keywords: ["算法方案概要设计"] },
+    md_005: { title: "模型测试方案设计", keywords: ["模型测试方案设计"] },
+    md_006: { title: "模型开发计划", keywords: ["模型开发计划"] },
+    md_007: { title: "算法方案详细设计", keywords: ["算法方案详细设计"] },
+    md_014: { title: "模型测试报告", keywords: ["模型测试报告"] },
+    md_017: { title: "模型性能测试报告", keywords: ["模型性能测试报告"] },
+    md_019: { title: "开发环境维护记录说明", keywords: ["开发环境维护记录说明", "模型开发环境"] },
+    md_020: { title: "测试环境维护记录说明", keywords: ["测试环境维护记录说明", "模型测试环境"] },
+    md_021: { title: "模型配置管理报告", keywords: ["模型配置管理报告"] },
+    md_022: { title: "模型可追溯性分析报告", keywords: ["模型可追溯性分析报告", "可追溯性分析"] },
+    pd_003: { title: "模型需求规格说明", keywords: ["模型需求规格说明"] },
+    md_008_01: { title: "肺栓塞分割代码审查记录", keywords: ["代码审查记录", "肺栓塞分割代码审查"] },
+    md_008_02: { title: "肺叶分割代码审查记录", keywords: ["代码审查记录", "肺叶分割代码审查"] },
+    md_009_01: { title: "肺栓塞分割模型训练集构建记录", keywords: ["训练集构建记录", "肺栓塞分割模型训练集"] },
+    md_009_02: { title: "肺叶分割模型训练集构建记录", keywords: ["训练集构建记录", "肺叶分割模型训练集"] },
+    md_010_01: { title: "肺栓塞分割模型调优集构建记录", keywords: ["调优集构建记录", "肺栓塞分割模型调优集"] },
+    md_010_02: { title: "肺叶分割模型调优集构建记录", keywords: ["调优集构建记录", "肺叶分割模型调优集"] },
+    md_011_01: { title: "肺栓塞分诊模型测试集构建记录", keywords: ["测试集构建记录", "肺栓塞分诊模型测试集"] },
+    md_011_02: { title: "肺叶分割模型测试集构建记录", keywords: ["测试集构建记录", "肺叶分割模型测试集"] },
+    md_012_01: { title: "肺栓塞分割模型训练记录", keywords: ["模型训练记录", "肺栓塞分割模型训练"] },
+    md_012_02: { title: "肺叶分割模型训练记录", keywords: ["模型训练记录", "肺叶分割模型训练"] },
+    md_013_01: { title: "肺栓塞分诊模型测试记录", keywords: ["模型测试记录", "肺栓塞分诊模型测试记录"] },
+    md_013_02: { title: "肺叶分割模型测试记录", keywords: ["模型测试记录", "肺叶分割模型测试记录"] },
+    md_015_01: { title: "肺栓塞分割封装需求", keywords: ["封装需求", "肺栓塞分割封装"] },
+    md_015_02: { title: "肺叶分割封装需求", keywords: ["封装需求", "肺叶分割封装"] },
+    md_016: { title: "模型工程封装记录", keywords: ["模型工程封装记录"] },
+    md_018: { title: "模型服务提交记录", keywords: ["模型服务提交记录"] },
+    md_019_qr: { title: "开发环境维护记录", keywords: ["开发环境维护记录"] },
+    md_020_qr: { title: "测试环境维护记录", keywords: ["测试环境维护记录"] },
+    md_deq: { title: "模型开发设备清单", keywords: ["开发设备清单"] },
+    md_teq: { title: "模型测试设备清单", keywords: ["测试设备清单"] },
+    md_eq: { title: "模型设备清单", keywords: ["设备清单"] },
+};
+
+export const MODEL_DOC_TYPE_ORDER = Object.keys(MODEL_DOC_TYPES);
+
+export const getModelDocMeta = (type?: string) =>
+    MODEL_DOC_TYPES[type || ""] || { title: "模型文件", keywords: [] as string[] };

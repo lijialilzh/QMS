@@ -222,6 +222,14 @@ class Perms(Enum):
     pir_doc_view = PermForm(code="pir_doc_view", name="查看", p_code=pir_doc.code)
     pir_doc_edit = PermForm(code="pir_doc_edit", name="编辑", p_code=pir_doc.code)
 
+    model_doc = PermForm(code="model_doc", name="模型文件")
+    model_doc_view = PermForm(code="model_doc_view", name="查看", p_code=model_doc.code)
+    model_doc_edit = PermForm(code="model_doc_edit", name="编辑", p_code=model_doc.code)
+
+    data_doc = PermForm(code="data_doc", name="数据文件")
+    data_doc_view = PermForm(code="data_doc_view", name="查看", p_code=data_doc.code)
+    data_doc_edit = PermForm(code="data_doc_edit", name="编辑", p_code=data_doc.code)
+
     vuh_doc = PermForm(code="vuh_doc", name="产品文件管理/版本更新历史")
     vuh_doc_view = PermForm(code="vuh_doc_view", name="查看", p_code=vuh_doc.code)
     vuh_doc_edit = PermForm(code="vuh_doc_edit", name="编辑", p_code=vuh_doc.code)
@@ -309,6 +317,8 @@ def get_default_role_perm_codes():
         "nsmp_doc", "nsmp_doc_view", "nsmp_doc_edit",
         "risk_mgmt_doc", "risk_mgmt_doc_view", "risk_mgmt_doc_edit",
         "prod_dhf", "prod_dhf_view", "prod_dhf_edit",
+        "model_doc", "model_doc_view", "model_doc_edit",
+        "data_doc", "data_doc_view", "data_doc_edit",
     }
 
     # 开发测试文件管理权限

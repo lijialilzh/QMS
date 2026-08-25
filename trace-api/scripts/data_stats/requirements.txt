@@ -1,0 +1,6 @@
+pandas>=2.0
+openpyxl>=3.1
+pydicom>=2.3
+numpy>=1.24
+# 可选：亚组 95%CI 更精确；未安装时用正态近似
+# statsmodels>=0.14
