@@ -1,8 +1,5 @@
 export const MODEL_DOC_TYPES: Record<string, { title: string; keywords: string[] }> = {
     md_001: { title: "模型配置管理计划", keywords: ["模型配置管理计划"] },
-    md_002_01: { title: "数据标注规则", keywords: ["数据标注规则", "肺栓塞分割数据标注规则"] },
-    md_002_02: { title: "标记规则", keywords: ["标记规则", "肺叶分割标记规则"] },
-    md_003: { title: "数据标注需求", keywords: ["数据标注需求"] },
     md_004: { title: "算法方案概要设计", keywords: ["算法方案概要设计"] },
     md_005: { title: "模型测试方案设计", keywords: ["模型测试方案设计"] },
     md_006: { title: "模型开发计划", keywords: ["模型开发计划"] },

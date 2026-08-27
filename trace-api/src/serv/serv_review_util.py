@@ -392,7 +392,7 @@ DEPT_SIGNERS = {
     },
     "model": {
         "编制人": ("member_role", "模型"),
-        "审核人": ("member_role", "算法"),
+        "审核人": ("member_role", ["算法", "研发负责人"]),
         "批准人": ("member_role", "研发负责人"),
     },
     "data": {
@@ -415,8 +415,8 @@ DOC_DEPT = {
     "scm": "dev", "scs": "dev",
     # 测试文件：编制人=测试人员，审核/批准=研发负责人
     "stp": "test", "utp": "test", "utr": "test", "str": "test", "bug": "test", "imm": "test",
-    # 模型文件：编制人=模型，审核人=算法，批准人=研发负责人（无匹配则空）
-    "md_001": "model", "md_002_01": "model", "md_002_02": "model", "md_003": "model",
+    # 模型文件：编制人=模型，审核人=算法（无则研发负责人），批准人=研发负责人（无匹配则空）
+    "md_001": "model",
     "md_004": "model", "md_005": "model", "md_006": "model", "md_007": "model",
     "md_014": "model", "md_017": "model", "md_019": "model", "md_020": "model",
     "md_021": "model", "md_022": "model", "pd_003": "model",
@@ -425,7 +425,8 @@ DOC_DEPT = {
     "md_012_01": "model", "md_012_02": "model", "md_013_01": "model", "md_013_02": "model",
     "md_015_01": "model", "md_015_02": "model", "md_016": "model", "md_018": "model",
     "md_019_qr": "model", "md_020_qr": "model", "md_deq": "model", "md_teq": "model", "md_eq": "model",
-    "dd_001": "data", "dd_006": "data", "dd_007": "data", "dd_016": "data", "dd_017": "data",
+    "dd_001": "data", "md_002_01": "data", "md_002_02": "data", "md_003": "data",
+    "dd_006": "data", "dd_007": "data", "dd_016": "data", "dd_017": "data",
     "dd_002": "data", "dd_003": "data", "dd_004": "data", "dd_005_01": "data", "dd_005_02": "data",
     "dd_008_01": "data", "dd_008_02": "data", "dd_009_01": "data", "dd_009_02": "data", "dd_009_03": "data",
     "dd_010": "data", "dd_011": "data", "dd_012": "data",
@@ -860,10 +861,14 @@ def _resolve_signer_name(spec, members, rev_date=""):
     kind, arg = spec
     if kind == "name":
         return arg
-    # member_role：测试人员在 2025.09 之前统一为宋月
-    if ("测试" in str(arg)) and _before_202509(rev_date):
+    keywords = arg if isinstance(arg, (list, tuple)) else [arg]
+    if any("测试" in str(k) for k in keywords) and _before_202509(rev_date):
         return "宋月"
-    return next((m.name for m in members if arg in str(m.role or "")), "")
+    for k in keywords:
+        hit = next((m.name for m in members if str(k) in str(m.role or "")), "")
+        if hit:
+            return hit
+    return ""
 
 
 def cover_signers(prod_id, key="pdp", rev_date=""):

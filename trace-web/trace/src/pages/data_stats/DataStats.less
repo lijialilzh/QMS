@@ -40,14 +40,16 @@
 
 .data-stats-table {
     flex: 1;
-    min-height: 0;
+    min-height: 400px;
     overflow: auto;
 }
 
-.data-stats-table .ant-tabs {
-    height: 100%;
+.data-stats-table .ant-spin-container {
+    min-height: 400px;
 }
 
-.data-stats-table .ant-tabs-content-holder {
+.data-stats-table .ant-tabs-content-holder,
+.data-stats-table .ant-tabs-tabpane {
+    min-height: 320px;
     overflow: auto;
 }

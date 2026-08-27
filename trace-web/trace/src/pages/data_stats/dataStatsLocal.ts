@@ -23,12 +23,10 @@ export const DETAIL_PREVIEW_COLUMNS = [
     "image slices", "Series Description",
 ];
 
-const HEADER_BYTES = 256 * 1024;
+const HEADER_BYTES = 512 * 1024;
 const AGE_BINS = [0, 18, 40, 60, 110];
 const SKIP_EXT = /\.(txt|json|xml|csv|xlsx|xls|png|jpg|jpeg|gif|bmp|html|md|zip|pdf)$/i;
 const LONG_VR = new Set(["OB", "OW", "OF", "SQ", "UT", "UN", "OD", "OL", "UC", "UR", "OV"]);
-const TAG_PIXEL = 0x7fe00010;
-const TAG_TS = 0x00020010;
 
 const TAGS: Array<{ tag: number; key: string; vr: string; def?: any }> = [
     { tag: 0x00100020, key: "PatientID", vr: "LO", def: "none" },
@@ -57,9 +55,6 @@ const TAGS: Array<{ tag: number; key: string; vr: string; def?: any }> = [
     { tag: 0x00280030, key: "PixelSpacing", vr: "DS", def: 9999 },
     { tag: 0x00180088, key: "SpacingBetweenSlices", vr: "DS", def: 9999 },
 ];
-
-const TAG_META: Record<number, { key: string; vr: string; def?: any }> = {};
-TAGS.forEach((t) => { TAG_META[t.tag] = t; });
 
 function isDicomName(name: string) {
     if (!name || /^DICOMDIR$/i.test(name)) return false;
@@ -100,68 +95,72 @@ function readValue(vr: string, view: DataView, u8: Uint8Array, off: number, len:
     return readCString(u8, off, len);
 }
 
+function isDicm(u8: Uint8Array) {
+    return u8.length >= 132
+        && u8[128] === 68 && u8[129] === 73 && u8[130] === 67 && u8[131] === 77;
+}
+
+function looksText(s: string) {
+    if (!s) return false;
+    for (let i = 0; i < s.length; i++) {
+        const c = s.charCodeAt(i);
+        if (c === 9 || c === 10 || c === 13 || c === 92) continue;
+        if (c < 32 || c > 126) return false;
+    }
+    return true;
+}
+
+function huntTag(u8: Uint8Array, view: DataView, tag: number, expectVr: string): string {
+    const group = (tag >>> 16) & 0xffff;
+    const element = tag & 0xffff;
+    const b0 = group & 0xff;
+    const b1 = (group >> 8) & 0xff;
+    const b2 = element & 0xff;
+    const b3 = (element >> 8) & 0xff;
+    const start = isDicm(u8) ? 132 : 0;
+    for (let i = start; i + 8 <= u8.length; i++) {
+        if (u8[i] !== b0 || u8[i + 1] !== b1 || u8[i + 2] !== b2 || u8[i + 3] !== b3) continue;
+        const vr = String.fromCharCode(u8[i + 4], u8[i + 5]);
+        let len = 0;
+        let valOff = 0;
+        let useVr = expectVr;
+        if (/^[A-Z]{2}$/.test(vr) && vr !== "SQ") {
+            if (LONG_VR.has(vr)) {
+                if (i + 12 > u8.length) continue;
+                len = view.getUint32(i + 8, true);
+                valOff = i + 12;
+            } else {
+                len = view.getUint16(i + 6, true);
+                valOff = i + 8;
+            }
+            useVr = vr === "UN" ? expectVr : vr;
+        } else {
+            len = view.getUint32(i + 4, true);
+            valOff = i + 8;
+        }
+        if (len === 0xffffffff || len < 0 || valOff + len > u8.length) continue;
+        if (len > 1024) continue;
+        if (expectVr === "US" && len !== 2 && len !== 4) continue;
+        if (expectVr === "DA" && len !== 8 && len !== 10) continue;
+        const v = readValue(useVr, view, u8, valOff, len, true);
+        if (!v) continue;
+        if (expectVr === "US" || expectVr === "FL" || expectVr === "FD" || expectVr === "UL") return v;
+        if (looksText(v)) return v;
+    }
+    return "";
+}
+
 function parseDicomTags(buf: ArrayBuffer): Record<string, string> {
     const u8 = new Uint8Array(buf);
     const view = new DataView(buf);
     const out: Record<string, string> = {};
     if (buf.byteLength < 8) return out;
-    let offset = 0;
-    if (buf.byteLength >= 132 && String.fromCharCode(u8[128], u8[129], u8[130], u8[131]) === "DICM") {
-        offset = 132;
-    }
-    let little = true;
-    let explicit = true;
-    let guard = 0;
-    while (offset + 8 <= buf.byteLength && guard++ < 20000) {
-        const group = view.getUint16(offset, little);
-        const element = view.getUint16(offset + 2, little);
-        const tag = (group << 16) | element;
-        if (tag === TAG_PIXEL) break;
-        const inMeta = group === 0x0002;
-        const useExplicit = inMeta || explicit;
-        let length = 0;
-        let valOff = 0;
-        let vr = "";
-        if (useExplicit) {
-            if (offset + 6 > buf.byteLength) break;
-            vr = String.fromCharCode(u8[offset + 4], u8[offset + 5]);
-            if (LONG_VR.has(vr)) {
-                if (offset + 12 > buf.byteLength) break;
-                length = view.getUint32(offset + 8, little);
-                valOff = offset + 12;
-            } else {
-                length = view.getUint16(offset + 6, little);
-                valOff = offset + 8;
-            }
-        } else {
-            length = view.getUint32(offset + 4, little);
-            valOff = offset + 8;
-            vr = TAG_META[tag]?.vr || "UN";
-        }
-        if (length === 0xffffffff) {
-            offset = valOff;
-            continue;
-        }
-        if (length < 0 || valOff + length > buf.byteLength) break;
-        if (tag === TAG_TS) {
-            const ts = readCString(u8, valOff, length).replace(/\0/g, "").trim();
-            if (ts.indexOf("1.2.840.10008.1.2.2") === 0) {
-                little = false;
-                explicit = true;
-            } else if (ts === "1.2.840.10008.1.2") {
-                little = true;
-                explicit = false;
-            } else {
-                little = true;
-                explicit = true;
-            }
-        }
-        const meta = TAG_META[tag];
-        if (meta && out[meta.key] === undefined) {
-            out[meta.key] = readValue(vr || meta.vr, view, u8, valOff, length, little);
-        }
-        offset = valOff + length;
-    }
+    TAGS.forEach((t) => {
+        const v = huntTag(u8, view, t.tag, t.vr);
+        if (v) out[t.key] = v;
+    });
+    const birth = huntTag(u8, view, 0x00100030, "DA");
+    if (birth) out.PatientBirthDate = birth;
     return out;
 }
 
@@ -170,6 +169,22 @@ function parseAge(raw: string): number | null {
     if (!m) return null;
     const n = parseInt(m[1], 10);
     return Number.isFinite(n) ? n : null;
+}
+
+function ageFromDates(birth: string, study: string): number | null {
+    const b = String(birth).replace(/\D/g, "");
+    const s = String(study).replace(/\D/g, "");
+    if (b.length < 8 || s.length < 8) return null;
+    const by = parseInt(b.slice(0, 4), 10);
+    const bm = parseInt(b.slice(4, 6), 10);
+    const bd = parseInt(b.slice(6, 8), 10);
+    const sy = parseInt(s.slice(0, 4), 10);
+    const sm = parseInt(s.slice(4, 6), 10);
+    const sd = parseInt(s.slice(6, 8), 10);
+    if (!by || !sy) return null;
+    let age = sy - by;
+    if (sm < bm || (sm === bm && sd < bd)) age -= 1;
+    return age >= 0 && age < 150 ? age : null;
 }
 
 function ageBinLabel(age: number) {
@@ -216,6 +231,10 @@ function tagsToRow(tags: Record<string, string>): CaseRow | null {
         }
         row[t.key] = raw;
     });
+    if (row.AGE == null && tags.PatientBirthDate && tags["study date"]) {
+        const age = ageFromDates(tags.PatientBirthDate, tags["study date"]);
+        if (age != null) row.AGE = age;
+    }
     row.wc_ww = mergeWwWc(tags.WindowWidth || "", tags.WindowCenter || "");
     row.sex = row.SEX || "";
     row.age = row.AGE == null ? null : row.AGE;
@@ -323,10 +342,20 @@ function countBy(rows: CaseRow[], getter: (r: CaseRow) => string) {
     let any = false;
     rows.forEach((r) => {
         const key = getter(r);
-        if (key) any = true;
+        if (key && key !== "none") any = true;
         map.set(key, (map.get(key) || 0) + 1);
     });
     return any ? map : new Map<string, number>();
+}
+
+function countByAll(rows: CaseRow[], getter: (r: CaseRow) => string) {
+    const map = new Map<string, number>();
+    rows.forEach((r) => {
+        const raw = getter(r);
+        const key = !raw || raw === "none" ? "(空)" : raw;
+        map.set(key, (map.get(key) || 0) + 1);
+    });
+    return map;
 }
 
 export function buildStatsGrid(
@@ -373,15 +402,14 @@ export function buildTriageAoa(rows: CaseRow[]) {
     const header = ["Item", "Catgory", "pos_cases", "neg_cases", "Sen", "Spe"];
     const body: any[][] = [];
     const keys: Array<{ item: string; getter: (r: CaseRow) => string }> = [
-        { item: "SEX", getter: (r) => r.SEX == null ? "" : String(r.SEX) },
-        { item: "DEVICE", getter: (r) => r.DEVICE == null ? "" : String(r.DEVICE) },
-        { item: "KVP", getter: (r) => r.KVP == null ? "" : String(r.KVP) },
-        { item: "THICKNESS", getter: (r) => r.THICKNESS == null ? "" : String(r.THICKNESS) },
+        { item: "SEX", getter: (r) => r.SEX == null ? String(r.sex || "") : String(r.SEX) },
+        { item: "DEVICE", getter: (r) => r.DEVICE == null ? String(r.device || "") : String(r.DEVICE) },
+        { item: "KVP", getter: (r) => r.KVP == null ? String(r.kvp || "") : String(r.KVP) },
+        { item: "THICKNESS", getter: (r) => r.THICKNESS == null ? String(r.thickness || "") : String(r.THICKNESS) },
         { item: "ConvolutionKernel", getter: (r) => r.ConvolutionKernel == null ? "" : String(r.ConvolutionKernel) },
     ];
     keys.forEach(({ item, getter }) => {
-        const map = countBy(rows, getter);
-        map.forEach((count, cat) => {
+        countByAll(rows, getter).forEach((count, cat) => {
             body.push([item, cat, count, 0, "", ""]);
         });
     });

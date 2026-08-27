@@ -7,9 +7,10 @@ import * as XLSX from "xlsx";
 import {
     STATS_TITLES,
     StatsKind,
-    DETAIL_PREVIEW_COLUMNS,
+    DETAIL_COLUMNS,
     buildStatsGrid,
     buildWorkbookSheets,
+    buildTriageAoa,
     distRowsFromGrid,
     statsFromFiles,
     CaseRow,
@@ -49,12 +50,15 @@ export default () => {
         [data.rows],
     );
     const triageRows = useMemo(() => {
-        const sh = sheets.find((s) => s.name === "统计结果");
-        if (!sh || sh.rows.length < 2) return [];
-        return sh.rows.slice(1).map((r, i) => ({
+        const aoa = buildTriageAoa(data.rows || []);
+        if (aoa.length < 2) return [];
+        return aoa.slice(1).map((r, i) => ({
             key: i, Item: r[0], Catgory: r[1], pos_cases: r[2], neg_cases: r[3], Sen: r[4], Spe: r[5],
         }));
-    }, [sheets]);
+    }, [data.rows]);
+    const deviceRows = useMemo(() => triageRows.map((r) => ({
+        key: r.key, Item: r.Item, Catgory: r.Catgory, pos_cases: r.pos_cases, neg_cases: r.neg_cases,
+    })), [triageRows]);
 
     const pickFolder = () => {
         if (!folderRef.current) return;
@@ -83,18 +87,7 @@ export default () => {
                 return;
             }
             dispatch({ loading: false, progress: "", rows });
-            const list = buildWorkbookSheets(title, rows, {
-                dataType: data.dataType,
-                disease: data.disease,
-                person: data.person,
-            });
-            try {
-                saveXlsx(list, title);
-            } catch (_e) {
-                message.warning("请再点「下载 Excel」保存文件");
-                return;
-            }
-            message.success(`已统计 ${rows.length} 个序列。Excel 含「病例明细 / 数据分布 / 统计结果 / 设备分布」，在电脑「下载」里打开「${title}.xlsx」看底部工作表`, 10);
+            message.success(`已统计 ${rows.length} 个序列，请在下方页签查看`);
         }).catch(() => {
             dispatch({ loading: false, progress: "", rows: [] });
             message.error("读取失败");
@@ -141,8 +134,8 @@ export default () => {
                 </Space>
             </div>
             <div className="data-stats-hint">
-                每个病例一个文件夹。下载的 Excel 有 4 个工作表（底部切换）：病例明细、数据分布、统计结果、设备分布。文件在电脑「下载」文件夹，不会写到病例目录。
-                {total ? `　当前 ${total} 个序列，文件名：${title}.xlsx。` : ""}
+                每个病例一个文件夹。选完后在本页查看，不自动下载。需要存档时再点「下载 Excel」。
+                {total ? `　当前 ${total} 个序列。` : ""}
             </div>
             <div className="data-stats-fields">
                 <span>统计人</span>
@@ -155,6 +148,7 @@ export default () => {
             </div>
             <Spin spinning={data.loading} wrapperClassName="data-stats-table">
                 <Tabs
+                    animated={{ inkBar: true, tabPane: false }}
                     items={[
                         {
                             key: "detail",
@@ -163,10 +157,10 @@ export default () => {
                                 <Table
                                     size="small"
                                     pagination={{ pageSize: 50 }}
-                                    scroll={{ x: 1100 }}
+                                    scroll={{ x: 2400 }}
                                     dataSource={detailRows}
-                                    columns={DETAIL_PREVIEW_COLUMNS.map((c) => ({
-                                        title: c, dataIndex: c, ellipsis: true, width: 120,
+                                    columns={DETAIL_COLUMNS.map((c) => ({
+                                        title: c, dataIndex: c, ellipsis: true, width: 130,
                                     }))}
                                     locale={{ emptyText: "请选择病例文件夹" }}
                                 />
@@ -197,6 +191,7 @@ export default () => {
                                 <Table
                                     size="small"
                                     pagination={false}
+                                    scroll={{ x: 720 }}
                                     dataSource={triageRows}
                                     columns={[
                                         { title: "Item", dataIndex: "Item", width: 160 },
@@ -206,7 +201,26 @@ export default () => {
                                         { title: "Sen", dataIndex: "Sen", width: 80 },
                                         { title: "Spe", dataIndex: "Spe", width: 80 },
                                     ]}
-                                    locale={{ emptyText: "请选择病例文件夹" }}
+                                    locale={{ emptyText: total ? "暂无统计结果" : "请选择病例文件夹" }}
+                                />
+                            ),
+                        },
+                        {
+                            key: "device",
+                            label: "设备分布",
+                            children: (
+                                <Table
+                                    size="small"
+                                    pagination={false}
+                                    scroll={{ x: 640 }}
+                                    dataSource={deviceRows}
+                                    columns={[
+                                        { title: "Item", dataIndex: "Item", width: 160 },
+                                        { title: "Catgory", dataIndex: "Catgory" },
+                                        { title: "pos_cases", dataIndex: "pos_cases", width: 110 },
+                                        { title: "neg_cases", dataIndex: "neg_cases", width: 110 },
+                                    ]}
+                                    locale={{ emptyText: total ? "暂无设备分布" : "请选择病例文件夹" }}
                                 />
                             ),
                         },

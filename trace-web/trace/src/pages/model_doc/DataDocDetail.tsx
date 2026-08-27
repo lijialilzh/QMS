@@ -64,6 +64,35 @@ const firstKey = (nodes: any[]): string => (nodes && nodes[0] ? nodes[0]._key : 
 
 const stripNum = (title: string): string => String(title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();
 
+const BASE_PROD_NAME = "肺栓塞CT图像辅助评估软件";
+const BASE_PROD_TYPE = "IR-CT-PE";
+
+const replaceExact = (s: any, from: string, to: string) => {
+    if (!from || !to || from === to) return s;
+    if (typeof s !== "string" || s.startsWith("data:image")) return s;
+    return s.includes(from) ? s.split(from).join(to) : s;
+};
+
+const replaceKeywords = (nodes: any[], pairs: Array<[string, string]>): any[] => {
+    const list = (pairs || [])
+        .filter(([from, to]) => from && to && from !== to)
+        .sort((a, b) => b[0].length - a[0].length);
+    if (!list.length) return nodes;
+    const apply = (s: any) => list.reduce((acc, [from, to]) => replaceExact(acc, from, to), s);
+    const fix = (n: any): any => ({
+        ...n,
+        title: apply(n.title),
+        body: apply(n.body),
+        tables: (n.tables || []).map((tb: any[]) =>
+            Array.isArray(tb)
+                ? tb.map((row: any[]) => (Array.isArray(row) ? row.map((c: any) => apply(c)) : row))
+                : tb
+        ),
+        children: (n.children || []).map(fix),
+    });
+    return (nodes || []).map(fix);
+};
+
 const computeNumbers = (nodes: any[]): Record<string, string> => {
     const map: Record<string, string> = {};
     let bodyIdx = 0;
@@ -107,7 +136,7 @@ export default () => {
         products: [] as any[],
     });
 
-    const fillBasicInfo = (nodes: any[], info: Record<string, string>): any[] => {
+    const fillBasicInfo = (nodes: any[], info: Record<string, string>, replaceProduct = false): any[] => {
         const labelMap: Record<string, string> = {
             "产品名称": info.name || "",
             "软件版本": info.version || "",
@@ -127,12 +156,11 @@ export default () => {
                         ? tb.map((row: any[]) => {
                               if (!Array.isArray(row) || row.length < 2) return row;
                               const k = String(row[0]).trim();
-                              if (labelMap[k] && !String(row[1] || "").trim()) {
-                                  const next = [...row];
-                                  next[1] = labelMap[k];
-                                  return next;
-                              }
-                              return row;
+                              if (!(k in labelMap)) return row;
+                              if (!replaceProduct && String(row[1] || "").trim()) return row;
+                              const next = [...row];
+                              next[1] = labelMap[k];
+                              return next;
                           })
                         : tb
                 );
@@ -164,15 +192,18 @@ export default () => {
         return (nodes || []).map(fix);
     };
 
-    const autofill = (productId: number, secs: any[], version: string): Promise<any[]> =>
+    const autofill = (productId: number, secs: any[], version: string, replaceProduct = false, oldProductId = 0): Promise<any[]> =>
         new Promise((resolve) => {
             if (!productId) { resolve(secs); return; }
+            const oldId = replaceProduct && oldProductId && oldProductId !== productId ? oldProductId : 0;
             Promise.all([
                 ApiProduct.get_product({ id: productId }).catch(() => null),
+                oldId ? ApiProduct.get_product({ id: oldId }).catch(() => null) : Promise.resolve(null),
                 ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
                 ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
-            ]).then(([pr, tl, mb]: any[]) => {
+            ]).then(([pr, oldPr, tl, mb]: any[]) => {
                 const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
+                const oldProd = oldPr && oldPr.code === Api.C_OK ? (oldPr.data || {}) : {};
                 const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
                 const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
                 const findRole = (pred: (role: string) => boolean) => {
@@ -186,13 +217,26 @@ export default () => {
                     version: prod.full_version,
                     code: prod.product_code,
                     scope: prod.scope,
-                });
+                }, replaceProduct);
                 out = fillRevision(out, {
                     fileDate: computeFileDate(tlRows, meta.keywords.concat(meta.title)),
                     version,
                     reviser: modeler || algo,
                     approver: findRole((r) => r.includes("负责人")),
                 });
+                const newName = String(prod.name || "").trim();
+                const newType = String(prod.type_code || "").trim();
+                const newCode = String(prod.product_code || "").trim();
+                const oldName = String(oldProd.name || "").trim();
+                const oldType = String(oldProd.type_code || "").trim();
+                const oldCode = String(oldProd.product_code || "").trim();
+                out = replaceKeywords(out, [
+                    [oldName, newName],
+                    [BASE_PROD_NAME, newName],
+                    [oldType, newType],
+                    [BASE_PROD_TYPE, newType],
+                    [oldCode, newCode],
+                ]);
                 resolve(out);
             }).catch(() => resolve(secs));
         });
@@ -216,8 +260,9 @@ export default () => {
 
     const rebindProduct = (newId: number) => {
         const product = (data.products || []).find((p: any) => p.id === newId) || {};
+        const prevId = data.doc.product_id;
         dispatch({ loading: true, doc: { ...data.doc, product_id: newId, product_name: product.name, product_full_version: product.full_version } });
-        autofill(newId, data.sections, data.doc.version).then((secs) => dispatch({ loading: false, sections: secs }));
+        autofill(newId, data.sections, data.doc.version, true, prevId).then((secs) => dispatch({ loading: false, sections: secs }));
     };
 
     useEffect(() => {

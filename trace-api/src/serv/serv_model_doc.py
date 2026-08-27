@@ -42,6 +42,7 @@ DEFAULT_CONTENTS = {**WORD_CONTENTS, **XLSX_CONTENTS}
 logger = logging.getLogger(__name__)
 
 COVER_DEPT = "模型部"
+NO_BASIC_INFO = {"md_001", "md_004"}
 
 
 def doc_title(doc_type):
@@ -173,7 +174,186 @@ class Server(object):
     def __normalize_content(self, content, doc_type=None):
         if not isinstance(content, dict) or not isinstance(content.get("sections"), list):
             return self.__default_content(doc_type)
-        return {"sections": [self.__normalize_node(s) for s in content["sections"]]}
+        out = {"sections": [self.__normalize_node(s) for s in content["sections"]]}
+        if doc_type == "md_001":
+            self.__relocate_md001_tables(out)
+        elif doc_type in NO_BASIC_INFO:
+            self.__drop_product_info(out)
+        return out
+
+    @classmethod
+    def __drop_product_info(cls, content):
+        """去掉原 Word 没有的「产品信息」章（已存文档打开/导出时也去掉）。"""
+        def drop(ns):
+            out = []
+            for n in ns or []:
+                t = cls.__strip_num(n.get("title"))
+                if n.get("ref_type") == "basic_info" or t == "产品信息":
+                    continue
+                n["children"] = drop(n.get("children") or [])
+                out.append(n)
+            return out
+        content["sections"] = drop((content or {}).get("sections") or [])
+
+
+    @staticmethod
+    def __is_review_grid(tb):
+        return isinstance(tb, list) and tb and isinstance(tb[0], list) and "评审记录" in str(tb[0][0] or "")
+
+    @staticmethod
+    def __table_hdr(tb):
+        if not (isinstance(tb, list) and tb and isinstance(tb[0], list) and tb[0]):
+            return "", 0
+        return str(tb[0][0] or "").strip(), len(tb[0])
+
+    def __relocate_md001_tables(self, content):
+        """按原 Word 把误挂章节的表挪回：评审表→附件；SCI 表→标识配置；工具表→版本更新原则。"""
+        sections = (content or {}).get("sections") or []
+        nodes = {}
+
+        def visit(ns):
+            for n in ns or []:
+                nodes[self.__strip_num(n.get("title"))] = n
+                visit(n.get("children") or [])
+
+        visit(sections)
+
+        def pull(title, pred):
+            node = nodes.get(title)
+            if not node:
+                return []
+            tbs = node.get("tables") or []
+            moved = [tb for tb in tbs if pred(tb)]
+            if moved:
+                node["tables"] = [tb for tb in tbs if not pred(tb)]
+            return moved
+
+        tool, annex = nodes.get("配置管理工具"), nodes.get("附件 1 评审记录")
+        if tool and annex:
+            moved = pull("配置管理工具", self.__is_review_grid)
+            if moved and not any(self.__is_review_grid(tb) for tb in (annex.get("tables") or [])):
+                annex["tables"] = moved + (annex.get("tables") or [])
+
+        ident = nodes.get("标识配置")
+        if ident is not None and not (ident.get("tables") or []):
+            def is_sci5(tb):
+                h, n = self.__table_hdr(tb)
+                return h == "SCI名称" and n >= 5
+            def is_sci4(tb):
+                h, n = self.__table_hdr(tb)
+                return h == "SCI名称" and n == 4
+            moved = pull("目的", is_sci5) + pull("范围", is_sci4) + pull("目的", is_sci4) + pull("范围", is_sci5)
+            if moved:
+                ident["tables"] = moved
+
+        verp = nodes.get("版本更新原则")
+        if verp is not None and not (verp.get("tables") or []):
+            def is_tool(tb):
+                return self.__table_hdr(tb)[0] == "工具类型"
+            moved = pull("缩写", is_tool)
+            if moved:
+                verp["tables"] = moved
+
+        prod_name = ""
+        def take_name(ns):
+            nonlocal prod_name
+            for n in ns or []:
+                t = self.__strip_num(n.get("title"))
+                if n.get("ref_type") == "basic_info" or t == "产品信息":
+                    for tb in n.get("tables") or []:
+                        for row in tb or []:
+                            if isinstance(row, list) and str(row[0] if row else "").strip() == "产品名称":
+                                v = str(row[1] if len(row) > 1 else "").strip()
+                                if v:
+                                    prod_name = v
+                                    return
+                take_name(n.get("children") or [])
+        take_name(sections)
+
+        def drop_info(ns):
+            out = []
+            for n in ns or []:
+                t = self.__strip_num(n.get("title"))
+                if n.get("ref_type") == "basic_info" or t == "产品信息":
+                    continue
+                n["children"] = drop_info(n.get("children") or [])
+                out.append(n)
+            return out
+        content["sections"] = drop_info(sections)
+        nodes.clear()
+        visit(content["sections"])
+
+        scope = nodes.get("范围")
+        if scope is not None:
+            from_tbl = ""
+            keep = []
+            for tb in (scope.get("tables") or []):
+                if self.__is_prod_name_table(tb):
+                    for row in tb:
+                        if isinstance(row, list) and str(row[0] if row else "").strip() == "产品名称":
+                            v = str(row[1] if len(row) > 1 else "").strip()
+                            if v and not from_tbl:
+                                from_tbl = v
+                    continue
+                keep.append(tb)
+            scope["tables"] = keep
+            scope["body"] = self.__fill_scope_body(scope.get("body") or "", from_tbl or prod_name)
+
+    @staticmethod
+    def __cell_eq_nonempty(a, b):
+        sa, sb = str(a or ""), str(b or "")
+        return sa == sb and sa.strip() != ""
+
+    def __grid_span_origins(self, grid):
+        rows = [list(r) for r in grid]
+        r_n = len(rows)
+        c_n = max((len(r) for r in rows), default=0)
+        for r in rows:
+            while len(r) < c_n:
+                r.append("")
+        skip = [[False] * c_n for _ in range(r_n)]
+        colspan = [[1] * c_n for _ in range(r_n)]
+        rowspan = [[1] * c_n for _ in range(r_n)]
+        for r in range(r_n):
+            c = 0
+            while c < c_n:
+                if skip[r][c]:
+                    c += 1
+                    continue
+                c2 = c
+                while c2 + 1 < c_n and self.__cell_eq_nonempty(rows[r][c], rows[r][c2 + 1]):
+                    c2 += 1
+                colspan[r][c] = c2 - c + 1
+                for k in range(c + 1, c2 + 1):
+                    skip[r][k] = True
+                c = c2 + 1
+        for r in range(r_n):
+            for c in range(c_n):
+                if skip[r][c] or colspan[r][c] != 1:
+                    continue
+                if c != 0:
+                    continue
+                if not str(rows[r][c] or "").strip():
+                    continue
+                r2 = r
+                while r2 + 1 < r_n:
+                    if skip[r2 + 1][c] or colspan[r2 + 1][c] != 1:
+                        break
+                    if not self.__cell_eq_nonempty(rows[r][c], rows[r2 + 1][c]):
+                        break
+                    r2 += 1
+                rs = r2 - r + 1
+                if rs > 1:
+                    rowspan[r][c] = rs
+                    for k in range(r + 1, r2 + 1):
+                        skip[k][c] = True
+        origins = []
+        for r in range(r_n):
+            for c in range(c_n):
+                if skip[r][c]:
+                    continue
+                origins.append((r, c, rowspan[r][c], colspan[r][c]))
+        return rows, origins
 
     @staticmethod
     def __fill_cover_meta(content, version):
@@ -262,6 +442,25 @@ class Server(object):
         }
 
     @staticmethod
+    def __fill_scope_body(body, prod_name):
+        name = str(prod_name or "").strip()
+        s = str(body or "")
+        if re.search(r"产品名称[：:]\s*\S", s):
+            return s
+        if re.search(r"产品名称[：:]", s):
+            return re.sub(r"产品名称[：:]\s*", ("产品名称：" + name) if name else "产品名称：", s, count=1)
+        line = f"产品名称：{name}" if name else "产品名称："
+        return f"{line}\n{s}" if s else line
+
+    @staticmethod
+    def __is_prod_name_table(tb):
+        return (
+            isinstance(tb, list) and tb and isinstance(tb[0], list)
+            and str(tb[0][0] if tb[0] else "").strip() == "产品名称"
+            and len(tb[0]) <= 2
+        )
+
+    @staticmethod
     def __strip_num(title):
         return re.sub(r"^\s*\d+(?:\.\d+)*[\.、\s]*", "", str(title or "")).strip()
 
@@ -303,6 +502,8 @@ class Server(object):
                     key = str(row[0]).strip()
                     if key in label_map and label_map[key] and not str(row[1] or "").strip():
                         row[1] = label_map[key]
+        if title == "范围":
+            node["body"] = self.__fill_scope_body(node.get("body") or "", info.get("prod_name") or "")
         for child in (node.get("children") or []):
             self.__fill_node(child, info)
 
@@ -585,10 +786,20 @@ class Server(object):
             table.style = "Table Grid"
             table.alignment = WD_TABLE_ALIGNMENT.CENTER
             table.autofit = True
-            for r_idx, row in enumerate(grid):
-                cells = table.add_row().cells
-                for c_idx in range(cols):
-                    set_cell(cells[c_idx], row[c_idx] if c_idx < len(row) else "", bold=(r_idx == 0))
+            if self.__is_review_grid(grid):
+                padded, origins = self.__grid_span_origins(grid)
+                for _ in padded:
+                    table.add_row()
+                for r, c, rs, cs in origins:
+                    cell = table.cell(r, c)
+                    if rs > 1 or cs > 1:
+                        cell = cell.merge(table.cell(r + rs - 1, c + cs - 1))
+                    set_cell(cell, padded[r][c], bold=(r == 0))
+            else:
+                for r_idx, row in enumerate(grid):
+                    cells = table.add_row().cells
+                    for c_idx in range(cols):
+                        set_cell(cells[c_idx], row[c_idx] if c_idx < len(row) else "", bold=(r_idx == 0))
             document.add_paragraph()
 
         def add_cover_grid(grid):
@@ -661,8 +872,21 @@ class Server(object):
         docx_util.insert_toc_field(document)
 
         document.add_page_break()
-        for i, node in enumerate(body):
-            render_body_section(node, 1, str(i + 1))
+        if obj.doc_type in NO_BASIC_INFO:
+            idx = 0
+            for node in body:
+                t = self.__strip_num(node.get("title"))
+                if node.get("ref_type") == "basic_info" or t == "产品信息":
+                    render_body_section(node, 1, "")
+                    continue
+                if t.startswith("附件"):
+                    render_body_section(node, 1, "")
+                    continue
+                idx += 1
+                render_body_section(node, 1, str(idx))
+        else:
+            for i, node in enumerate(body):
+                render_body_section(node, 1, str(i + 1))
 
         docx_util.fill_toc_cache(document)
         document.save(output)

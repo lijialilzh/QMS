@@ -19,6 +19,24 @@ const ROLES = [
     "测试人员",
     "生产",
     "临床",
+    "标注人员",
+];
+
+const ANNOTATOR_ROLE = "标注人员";
+const DEFAULT_ANNOTATORS = [
+    "刘冰",
+    "周鑫仪",
+    "蒙明",
+    "余露",
+    "王丽",
+    "任小军",
+    "赵钰淇",
+    "龙菲",
+    "李良梦",
+    "徐飘飘",
+    "史江坤",
+    "马星宇",
+    "王莹莹",
 ];
 
 // 备注快捷标识：用于标注开发人员前后端及所属模块（仍可自由输入其它备注）
@@ -45,19 +63,37 @@ export default () => {
         });
     };
 
-    const loadMembers = (prodId: any) => {
+    const loadMembers = (prodId: any, allowSeed = true) => {
         if (!prodId) {
             dispatch({ rows: [] });
             return;
         }
         dispatch({ loading: true });
         Api.list_project_member({ prod_id: prodId, page_index: 0, page_size: 1000 }).then((res: any) => {
-            if (res.code === Api.C_OK) {
-                dispatch({ loading: false, rows: res.data.rows || [] });
-            } else {
+            if (res.code !== Api.C_OK) {
                 dispatch({ loading: false, rows: [] });
                 message.error(res.msg);
+                return;
             }
+            const rows = res.data.rows || [];
+            const hasAnnotator = rows.some((r: any) => (r.role || "").trim() === ANNOTATOR_ROLE);
+            if (allowSeed && !hasAnnotator && DEFAULT_ANNOTATORS.length) {
+                const maxSort = rows.reduce((m: number, r: any) => Math.max(m, r.sort_order || 0), 0);
+                Promise.all(
+                    DEFAULT_ANNOTATORS.map((name, i) =>
+                        Api.add_project_member({
+                            prod_id: prodId,
+                            role: ANNOTATOR_ROLE,
+                            name,
+                            sort_order: maxSort + 1 + i,
+                        })
+                    )
+                ).then(() => loadMembers(prodId, false)).catch(() => {
+                    dispatch({ loading: false, rows });
+                });
+                return;
+            }
+            dispatch({ loading: false, rows });
         });
     };
 
