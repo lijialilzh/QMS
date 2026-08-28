@@ -19,6 +19,10 @@ const ROLES = [
     "测试人员",
     "生产",
     "临床",
+    "模型部负责人",
+    "高级算法工程师",
+    "算法工程师",
+    "项目专员",
     "标注人员",
 ];
 
@@ -37,6 +41,14 @@ const DEFAULT_ANNOTATORS = [
     "史江坤",
     "马星宇",
     "王莹莹",
+];
+
+const DEFAULT_MODEL_MEMBERS = [
+    { role: "模型部负责人", name: "王瑜" },
+    { role: "高级算法工程师", name: "张欢" },
+    { role: "算法工程师", name: "刘恩佑" },
+    { role: "算法工程师", name: "郝增号" },
+    { role: "项目专员", name: "肖薇" },
 ];
 
 // 备注快捷标识：用于标注开发人员前后端及所属模块（仍可自由输入其它备注）
@@ -76,22 +88,47 @@ export default () => {
                 return;
             }
             const rows = res.data.rows || [];
-            const hasAnnotator = rows.some((r: any) => (r.role || "").trim() === ANNOTATOR_ROLE);
-            if (allowSeed && !hasAnnotator && DEFAULT_ANNOTATORS.length) {
-                const maxSort = rows.reduce((m: number, r: any) => Math.max(m, r.sort_order || 0), 0);
-                Promise.all(
-                    DEFAULT_ANNOTATORS.map((name, i) =>
-                        Api.add_project_member({
-                            prod_id: prodId,
-                            role: ANNOTATOR_ROLE,
-                            name,
-                            sort_order: maxSort + 1 + i,
-                        })
-                    )
-                ).then(() => loadMembers(prodId, false)).catch(() => {
-                    dispatch({ loading: false, rows });
+            if (allowSeed) {
+                const adds: { role: string; name: string; sort_order: number }[] = [];
+                const updates: any[] = [];
+                let sort = rows.reduce((m: number, r: any) => Math.max(m, r.sort_order || 0), 0);
+                const hasAnnotator = rows.some((r: any) => (r.role || "").trim() === ANNOTATOR_ROLE);
+                if (!hasAnnotator && DEFAULT_ANNOTATORS.length) {
+                    DEFAULT_ANNOTATORS.forEach((name) => {
+                        sort += 1;
+                        adds.push({ role: ANNOTATOR_ROLE, name, sort_order: sort });
+                    });
+                }
+                const existingRoles = new Set(rows.map((r: any) => String(r.role || "").trim()));
+                const head = rows.find((r: any) => {
+                    const role = String(r.role || "").trim();
+                    return role === "模型部负责人" || role === "模型负责人";
                 });
-                return;
+                if (head) {
+                    const name = String(head.name || "").trim();
+                    const needName = !name || name === "肖微" || name === "肖薇";
+                    const needRole = String(head.role || "").trim() !== "模型部负责人";
+                    if (needName || needRole) {
+                        updates.push({ ...head, role: "模型部负责人", name: needName ? "王瑜" : name });
+                    }
+                    existingRoles.add("模型部负责人");
+                    existingRoles.add("模型负责人");
+                }
+                DEFAULT_MODEL_MEMBERS.forEach((m) => {
+                    if (existingRoles.has(m.role)) return;
+                    sort += 1;
+                    adds.push({ role: m.role, name: m.name, sort_order: sort });
+                });
+                const jobs: Promise<any>[] = [
+                    ...updates.map((u) => Api.update_project_member({ ...u })),
+                    ...adds.map((a) => Api.add_project_member({ prod_id: prodId, ...a })),
+                ];
+                if (jobs.length) {
+                    Promise.all(jobs).then(() => loadMembers(prodId, false)).catch(() => {
+                        dispatch({ loading: false, rows });
+                    });
+                    return;
+                }
             }
             dispatch({ loading: false, rows });
         });

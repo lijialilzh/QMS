@@ -1,4 +1,4 @@
-/** Word 式网格：相邻相同非空单元格横向合并；纵向仅合并首列。 */
+/** Word 式网格：相邻相同非空单元格横向合并；纵向合并首列（该列已横向合并时仍合并）。 */
 
 export type CellSpan = { skip: boolean; colSpan: number; rowSpan: number };
 
@@ -41,13 +41,14 @@ export const computeGridSpans = (grid: any[][]): CellSpan[][] => {
 
     for (let r = 0; r < R; r++) {
         for (let c = 0; c < C; c++) {
-            if (spans[r][c].skip || spans[r][c].colSpan !== 1) continue;
+            if (spans[r][c].skip) continue;
             if (c !== 0) continue;
             if (!txt(at(r, c)).trim()) continue;
+            const cs = spans[r][c].colSpan;
             let r2 = r;
             while (r2 + 1 < R) {
                 const nxt = spans[r2 + 1][c];
-                if (nxt.skip || nxt.colSpan !== 1) break;
+                if (nxt.skip || nxt.colSpan !== cs) break;
                 if (!sameNonEmpty(at(r, c), at(r2 + 1, c))) break;
                 r2 += 1;
             }

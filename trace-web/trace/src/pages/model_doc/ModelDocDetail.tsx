@@ -1,5 +1,5 @@
-import { Button, Input, Space, Spin, message } from "antd";
-import { PlusOutlined, DeleteOutlined, FileAddOutlined } from "@ant-design/icons";
+import { Button, Input, Space, Spin, Upload, message } from "antd";
+import { PlusOutlined, DeleteOutlined, FileAddOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -31,6 +31,121 @@ const computeFileDate = (rows: any[], keywords: string[]): string => {
     let best = matches[0];
     matches.forEach((r: any) => { if (key(r) < key(best)) best = r; });
     return `${num(best.year)}年${num(best.month)}月${num(best.day)}日`;
+};
+
+const isModelDevOut = (val: any) => {
+    const s = String(val || "");
+    if (/模型开发(?!计划)/.test(s)) return true;
+    if (s.includes("模型训练")) return true;
+    if (/模型测试(?!方案)/.test(s)) return true;
+    if (s.includes("模型封装") || s.includes("模型服务提交")) return true;
+    return false;
+};
+
+const computeModelCycle = (rows: any[]): string => {
+    const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
+    const dates = (rows || [])
+        .filter((r: any) => (r.row_type || "date") === "date" && isModelDevOut((r.cells || {})["模型部"]))
+        .map((r: any) => ({ y: num(r.year), m: num(r.month), d: num(r.day) || 1 }))
+        .filter((x: any) => !isNaN(x.y) && !isNaN(x.m) && x.m >= 1 && x.m <= 12);
+    if (!dates.length) return "";
+    const key = (x: any) => x.y * 10000 + x.m * 100 + x.d;
+    let min = dates[0];
+    let max = dates[0];
+    dates.forEach((x: any) => { if (key(x) < key(min)) min = x; if (key(x) > key(max)) max = x; });
+    const start = Date.UTC(min.y, min.m - 1, min.d);
+    const end = Date.UTC(max.y, max.m - 1, max.d);
+    const days = Math.round((end - start) / 86400000) + 1;
+    return days > 0 ? `共用时约${days}天。` : "";
+};
+
+const fillModelCycle = (nodes: any[], text: string): any[] => {
+    if (!text) return nodes;
+    const fix = (n: any): any => {
+        const isCycle = n.ref_type === "prod_cycle"
+            || (stripNum(n.title) === "项目开发时间" && (n.children || []).length === 0);
+        return { ...n, body: isCycle ? text : n.body, children: (n.children || []).map(fix) };
+    };
+    return (nodes || []).map(fix);
+};
+
+const memberNames = (members: any[], pred: (role: string) => boolean): string[] =>
+    (members || []).map((m: any) => ({ role: String(m.role || "").trim(), name: String(m.name || "").trim() }))
+        .filter((m) => m.name && pred(m.role))
+        .map((m) => m.name);
+
+const fillMd006People = (nodes: any[], members: any[]): any[] => {
+    const staffDefs = [
+        { pred: (r: string) => r === "模型部负责人" || r === "模型负责人", label: "模型部负责人" },
+        { pred: (r: string) => r === "高级算法工程师", label: "高级算法工程师" },
+        { pred: (r: string) => r === "算法工程师", label: "算法工程师" },
+        { pred: (r: string) => r === "项目专员", label: "项目专员" },
+    ];
+    const staffRows: string[][] = [];
+    staffDefs.forEach((d) => {
+        memberNames(members, d.pred).forEach((name) => {
+            staffRows.push([String(staffRows.length + 1), name, "模型部", d.label]);
+        });
+    });
+    const pm = memberNames(members, (r) => r.includes("产品经理"))[0] || "";
+    const testers = memberNames(members, (r) => r === "项目专员");
+    const algos = memberNames(members, (r) => r === "算法工程师");
+    const tpm = memberNames(members, (r) => r.toUpperCase() === "TPM" || r.includes("TPM"))[0]
+        || memberNames(members, (r) => r.includes("开发人员")).join(" ");
+    const dataNames = memberNames(members, (r) => r.includes("数据")).join(" ");
+    const modelDeptNames = staffRows.map((r) => r[1]).join(" ");
+
+    const fillReview = (tb: any[]): any[] => {
+        if (!isReviewRecordGrid(tb)) return tb;
+        return tb.map((row: any[]) => {
+            if (!Array.isArray(row) || String(row[0] || "").trim() !== "参评人员") return row;
+            const next = [...row];
+            const put = (idx: number) => {
+                const dept = String(next[idx] || "").trim();
+                let names = "";
+                if (dept === "模型部") names = modelDeptNames;
+                else if (dept === "产品部") names = pm;
+                else if (dept.includes("产品开发")) names = tpm;
+                else if (dept === "数据部") names = dataNames;
+                if (names && idx + 1 < next.length) next[idx + 1] = names;
+            };
+            put(1);
+            put(3);
+            return next;
+        });
+    };
+
+    const fix = (n: any): any => {
+        const title = stripNum(n.title);
+        let body = n.body;
+        let tables = Array.isArray(n.tables) ? n.tables.map((tb: any[]) => (Array.isArray(tb) ? tb.map((r: any[]) => (Array.isArray(r) ? [...r] : r)) : tb)) : n.tables;
+        if (title === "项目简介" && pm) {
+            if (/产品经理[：:]/.test(String(body || ""))) body = String(body).replace(/产品经理[：:][^\n]*/, `产品经理： ${pm}`);
+            else body = `${String(body || "").replace(/\s*$/, "")}${body ? "\n" : ""}产品经理： ${pm}`;
+        }
+        if (title === "人员资源" && Array.isArray(tables) && Array.isArray(tables[0]) && tables[0][0]) {
+            const hdr = tables[0][0];
+            if (String(hdr[0] || "").includes("编号")) {
+                tables = [[hdr, ...staffRows], ...tables.slice(1)];
+            }
+        }
+        if (title.includes("里程碑") && Array.isArray(tables) && Array.isArray(tables[0]) && tables[0][0]) {
+            const t = tables[0];
+            const hi = t[0].findIndex((h: any) => String(h || "").includes("负责人"));
+            const si = t[0].findIndex((h: any) => String(h || "").includes("阶段"));
+            if (hi >= 0) {
+                t.slice(1).forEach((row: any[]) => {
+                    if (!Array.isArray(row)) return;
+                    const stage = si >= 0 ? String(row[si] || "") : row.join(" ");
+                    const names = /测试/.test(stage) ? testers : algos;
+                    if (names.length) row[hi] = names.join("\n");
+                });
+            }
+        }
+        if (Array.isArray(tables)) tables = tables.map((tb: any[]) => fillReview(tb));
+        return { ...n, body, tables, children: (n.children || []).map(fix) };
+    };
+    return (nodes || []).map(fix);
 };
 
 const ensureKeys = (nodes: any[]): any[] =>
@@ -407,7 +522,7 @@ export default () => {
                     return "";
                 };
                 const signOr = (name: string) => (name && signMap[name]) || name || "";
-                const writer = findRole("模型");
+                const writer = findRole("模型部负责人", "模型负责人", "模型");
                 const reviewer = findRole("算法", "研发负责人");
                 const approver = findRole("研发负责人");
                 const fileDate = computeFileDate(tlRows, meta.keywords.concat(meta.title));
@@ -442,6 +557,10 @@ export default () => {
                     [BASE_PROD_TYPE, newType],
                     [oldCode, newCode],
                 ]);
+                if (type === "md_006") {
+                    out = fillModelCycle(out, computeModelCycle(tlRows));
+                    out = fillMd006People(out, members);
+                }
                 resolve(out);
             }).catch(() => resolve(secs));
         });
@@ -458,7 +577,7 @@ export default () => {
             const doc = res.data || {};
             let sections = ensureKeys((doc.content && doc.content.sections) || []);
             if (type === "md_001") sections = applyMd001Layout(sections);
-            else if (NO_BASIC_INFO.has(type || "")) sections = dropMd001ProductInfo(sections);
+            else sections = dropMd001ProductInfo(sections);
             autofill(doc.product_id, sections, doc.version).then((secs) => {
                 dispatch({ loading: false, doc, sections: secs, activeKey: findNode(secs, data.activeKey) ? data.activeKey : firstKey(secs) });
             });
@@ -514,6 +633,20 @@ export default () => {
             });
         });
         updateTables(tables);
+    };
+    const replaceCellImage = (ti: number, r: number, ci: number, file: File, colSpan = 1, rowSpan = 1) => {
+        if (!file.type.startsWith("image/")) {
+            message.error("请选择图片文件");
+            return false;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+            setCell(ti, r, ci, String(reader.result || ""), colSpan, rowSpan);
+            message.success("图片已更换，请保存文档");
+        };
+        reader.onerror = () => message.error("图片读取失败");
+        reader.readAsDataURL(file);
+        return false;
     };
     const addRow = (ti: number) => {
         const tables = (active.tables || []).map((tb: any[], i: number) => {
@@ -657,7 +790,7 @@ export default () => {
                                         addonBefore={numbers[active._key] || undefined}
                                         value={stripNum(active.title)}
                                         disabled={readonly}
-                                        placeholder="只填名称，如：产品信息"
+                                        placeholder="只填名称，如：目的"
                                         onChange={(e) => patchNode(active._key, { title: e.target.value })}
                                     />
                                 </div>
@@ -698,6 +831,11 @@ export default () => {
                                                             const cell = row[ci] ?? "";
                                                             const cs = sp?.colSpan || 1;
                                                             const rs = sp?.rowSpan || 1;
+                                                            const left = String(row[0] ?? "");
+                                                            const hasImg = typeof cell === "string" && cell.startsWith("data:image");
+                                                            const isFlowSlot = left.includes("算法流程图") && ci > 0;
+                                                            const figureSlot = isFlowSlot || (cols === 1 && (hasImg || !String(cell ?? "").trim()));
+                                                            const figureLike = hasImg && figureSlot;
                                                             return (
                                                             <td
                                                                 key={ci}
@@ -706,13 +844,42 @@ export default () => {
                                                                 rowSpan={rs > 1 ? rs : undefined}
                                                                 style={cs > 1 || rs > 1 ? { verticalAlign: "middle" } : undefined}
                                                             >
-                                                                {typeof cell === "string" && cell.startsWith("data:image") ? (
-                                                                    <span style={{ position: "relative", display: "inline-block" }}>
-                                                                        <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
+                                                                {hasImg ? (
+                                                                    <span style={{ position: "relative", display: "inline-block", maxWidth: "100%" }}>
+                                                                        <img
+                                                                            src={cell}
+                                                                            alt={figureLike ? "算法图" : "签名"}
+                                                                            style={{
+                                                                                height: figureLike ? "auto" : 44,
+                                                                                maxHeight: figureLike ? 420 : 44,
+                                                                                width: "auto",
+                                                                                maxWidth: "100%",
+                                                                                objectFit: "contain",
+                                                                                display: "inline-block",
+                                                                                verticalAlign: "middle",
+                                                                            }}
+                                                                        />
+                                                                        {!readonly && figureLike && (
+                                                                            <Upload
+                                                                                accept="image/*"
+                                                                                showUploadList={false}
+                                                                                beforeUpload={(f) => replaceCellImage(ti, r, ci, f as File, cs, rs)}
+                                                                            >
+                                                                                <Button size="small" icon={<UploadOutlined />} style={{ marginLeft: 6 }}>更换</Button>
+                                                                            </Upload>
+                                                                        )}
                                                                         {!readonly && (
-                                                                            <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "", cs, rs)} />
+                                                                            <DeleteOutlined title={figureLike ? "清除图片" : "清除签名"} style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "", cs, rs)} />
                                                                         )}
                                                                     </span>
+                                                                ) : !readonly && figureSlot ? (
+                                                                    <Upload
+                                                                        accept="image/*"
+                                                                        showUploadList={false}
+                                                                        beforeUpload={(f) => replaceCellImage(ti, r, ci, f as File, cs, rs)}
+                                                                    >
+                                                                        <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
+                                                                    </Upload>
                                                                 ) : (
                                                                     <Input.TextArea
                                                                         className="pdp-cell"

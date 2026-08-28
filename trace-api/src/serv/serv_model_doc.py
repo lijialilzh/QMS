@@ -7,7 +7,9 @@
 import base64
 import copy
 import logging
+import os
 import re
+from datetime import date
 from io import BytesIO
 from typing import List
 from sqlalchemy import delete, func, select
@@ -33,16 +35,31 @@ from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
-from .model_doc_templates import DOC_META as WORD_META, DEFAULT_CONTENTS as WORD_CONTENTS
+from .model_doc_templates import DOC_META as WORD_META, DEFAULT_CONTENTS as WORD_CONTENTS, REVIEW_TABLES as WORD_REVIEW_TABLES
 from .model_doc_xlsx_templates import XLSX_META, XLSX_CONTENTS
 
 DOC_META = {**WORD_META, **XLSX_META}
 DEFAULT_CONTENTS = {**WORD_CONTENTS, **XLSX_CONTENTS}
+REVIEW_TABLES = WORD_REVIEW_TABLES
 
 logger = logging.getLogger(__name__)
 
 COVER_DEPT = "模型部"
-NO_BASIC_INFO = {"md_001", "md_004"}
+SKIP_ANNEX_NUM = {"md_001", "md_004"}
+_MD007_IMG_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "src-res", "model_doc", "md_007"
+)
+_MD007_IMG_FILES = {
+    "fig1": "fig1_overview.png",
+    "pe_flow": "pe_flow.png",
+    "fig2": "fig2_patch.png",
+    "fig3": "fig3_unet.png",
+    "fig4": "fig4_receptive.png",
+    "lobe_flow": "lobe_flow.png",
+    "recon_flow": "recon_flow.png",
+    "cube": "cube.png",
+}
+_MD007_IMG_CACHE = {}
 
 
 def doc_title(doc_type):
@@ -82,16 +99,6 @@ def _empty_template(doc_type):
                     ["", "", "", "", ""],
                 ]],
             },
-            {
-                "title": "产品信息", "ref_type": "basic_info", "body": "", "children": [],
-                "tables": [[
-                    ["基本信息", "描述"],
-                    ["产品名称", ""],
-                    ["软件版本", ""],
-                    ["产品标识", ""],
-                    ["预期用途", ""],
-                ]],
-            },
         ]
     }
 
@@ -100,7 +107,12 @@ class Server(object):
 
     def __default_content(self, doc_type):
         raw = DEFAULT_CONTENTS.get(doc_type)
-        return copy.deepcopy(raw) if raw else _empty_template(doc_type)
+        content = copy.deepcopy(raw) if raw else _empty_template(doc_type)
+        self.__drop_product_info(content)
+        self.__ensure_review_annex(content, doc_type)
+        if doc_type == "md_007":
+            self.__fill_md007_algo_info(content)
+        return content
 
     def __to_obj(self, row: ModelDoc, product: Product = None):
         obj = ModelDocObj(**row.dict())
@@ -177,8 +189,14 @@ class Server(object):
         out = {"sections": [self.__normalize_node(s) for s in content["sections"]]}
         if doc_type == "md_001":
             self.__relocate_md001_tables(out)
-        elif doc_type in NO_BASIC_INFO:
-            self.__drop_product_info(out)
+        if doc_type == "md_006":
+            self.__relocate_md006_tables(out)
+        if doc_type == "md_007":
+            self.__fill_md007_algo_info(out)
+        if doc_type in WORD_CONTENTS:
+            self.__fill_empty_template_tables(out, doc_type)
+        self.__drop_product_info(out)
+        self.__ensure_review_annex(out, doc_type)
         return out
 
     @classmethod
@@ -195,6 +213,67 @@ class Server(object):
             return out
         content["sections"] = drop((content or {}).get("sections") or [])
 
+    @classmethod
+    def __is_annex_title(cls, title):
+        t = cls.__strip_num(title).replace(" ", "")
+        return t.startswith("附件") and "评审记录" in t
+
+    @classmethod
+    def __ensure_review_annex(cls, content, doc_type=None):
+        """原 Word 有评审表的，附件为空则补上；误挂在其它章节的评审表挪回附件。"""
+        sections = (content or {}).get("sections")
+        if not isinstance(sections, list):
+            return
+
+        def strip_annex_line(n):
+            body = str(n.get("body") or "")
+            lines = [ln for ln in body.split("\n") if ln.strip() not in ("附件 1 评审记录", "附件1 评审记录")]
+            n["body"] = "\n".join(lines).rstrip()
+
+        annex_nodes = []
+
+        def find(ns):
+            for n in ns or []:
+                if not isinstance(n, dict):
+                    continue
+                strip_annex_line(n)
+                if cls.__is_annex_title(n.get("title")):
+                    annex_nodes.append(n)
+                find(n.get("children") or [])
+
+        find(sections)
+        annex = annex_nodes[0] if annex_nodes else None
+        annex_ids = {id(n) for n in annex_nodes}
+        pulled = []
+
+        def pull(ns):
+            for n in ns or []:
+                if not isinstance(n, dict):
+                    continue
+                if id(n) in annex_ids:
+                    pull(n.get("children") or [])
+                    continue
+                keep = []
+                for tb in (n.get("tables") or []):
+                    if cls.__is_review_grid(tb):
+                        pulled.append(tb)
+                    else:
+                        keep.append(tb)
+                n["tables"] = keep
+                pull(n.get("children") or [])
+
+        pull(sections)
+        src = copy.deepcopy(REVIEW_TABLES.get(doc_type) or []) if doc_type else []
+        table = None
+        if annex:
+            existing = [tb for tb in (annex.get("tables") or []) if cls.__is_review_grid(tb)]
+            table = existing[0] if existing else (pulled[0] if pulled else (src or None))
+            if table:
+                annex["tables"] = [table]
+                annex["title"] = "附件 1 评审记录"
+        elif pulled or src:
+            table = pulled[0] if pulled else src
+            sections.append({"title": "附件 1 评审记录", "body": "", "tables": [table], "children": []})
 
     @staticmethod
     def __is_review_grid(tb):
@@ -205,6 +284,63 @@ class Server(object):
         if not (isinstance(tb, list) and tb and isinstance(tb[0], list) and tb[0]):
             return "", 0
         return str(tb[0][0] or "").strip(), len(tb[0])
+
+    @staticmethod
+    def __table_head_cells(tb):
+        if not (isinstance(tb, list) and tb and isinstance(tb[0], list)):
+            return []
+        return [str(c or "").strip() for c in tb[0]]
+
+    def __relocate_md006_tables(self, content):
+        """按原 Word：人员表→人员资源；设备表→开发平台；里程碑表→项目开发计划及里程碑。"""
+        sections = (content or {}).get("sections") or []
+        nodes = {}
+
+        def visit(ns):
+            for n in ns or []:
+                nodes[self.__strip_num(n.get("title"))] = n
+                visit(n.get("children") or [])
+
+        visit(sections)
+
+        def is_person(tb):
+            return self.__table_head_cells(tb)[:4] == ["编号", "姓名", "所属部门", "角色"]
+
+        def is_equip(tb):
+            return self.__table_head_cells(tb)[:3] == ["编号", "设备", "设备名称"]
+
+        def is_mile(tb):
+            return self.__table_head_cells(tb)[:5] == ["阶段", "任务划分", "负责人", "计划完成时间", "阶段性交付物"]
+
+        def collect_and_strip(pred, keep_node):
+            moved = []
+
+            def walk(ns):
+                for n in ns or []:
+                    stay, take = [], []
+                    for tb in (n.get("tables") or []):
+                        if pred(tb) and n is not keep_node:
+                            take.append(tb)
+                        else:
+                            stay.append(tb)
+                    n["tables"] = stay
+                    moved.extend(take)
+                    walk(n.get("children") or [])
+
+            walk(sections)
+            return moved
+
+        for title, pred in (
+            ("人员资源", is_person),
+            ("开发平台", is_equip),
+            ("项目开发计划及里程碑", is_mile),
+        ):
+            target = nodes.get(title)
+            if target is None:
+                continue
+            misplaced = collect_and_strip(pred, target)
+            if misplaced and not any(pred(tb) for tb in (target.get("tables") or [])):
+                target["tables"] = misplaced + (target.get("tables") or [])
 
     def __relocate_md001_tables(self, content):
         """按原 Word 把误挂章节的表挪回：评审表→附件；SCI 表→标识配置；工具表→版本更新原则。"""
@@ -299,6 +435,175 @@ class Server(object):
             scope["tables"] = keep
             scope["body"] = self.__fill_scope_body(scope.get("body") or "", from_tbl or prod_name)
 
+    @classmethod
+    def __md007_data_url(cls, key):
+        if key in _MD007_IMG_CACHE:
+            return _MD007_IMG_CACHE[key]
+        name = _MD007_IMG_FILES.get(key) or ""
+        path = os.path.join(_MD007_IMG_DIR, name) if name else ""
+        data = ""
+        if path and os.path.isfile(path):
+            with open(path, "rb") as f:
+                data = "data:image/png;base64," + base64.b64encode(f.read()).decode("ascii")
+        _MD007_IMG_CACHE[key] = data
+        return data
+
+    @staticmethod
+    def __tables_have_text(tables):
+        for tb in tables or []:
+            for row in tb or []:
+                for c in row or []:
+                    s = str(c or "").strip()
+                    if s and not s.startswith("data:image"):
+                        return True
+        return False
+
+    @staticmethod
+    def __has_figure_table(tables):
+        for tb in tables or []:
+            if not isinstance(tb, list) or not tb:
+                continue
+            cols = max((len(row) for row in tb if isinstance(row, list)), default=0)
+            if cols != 1:
+                continue
+            for row in tb:
+                if isinstance(row, list) and row and str(row[0] or "").startswith("data:image"):
+                    return True
+        return False
+
+    @staticmethod
+    def __fill_flow_cell(tb, url):
+        if not url or not isinstance(tb, list):
+            return
+        for row in tb:
+            if not isinstance(row, list) or not row:
+                continue
+            if "算法流程图" not in str(row[0] or ""):
+                continue
+            while len(row) < 2:
+                row.append("")
+            if not str(row[1] or "").strip():
+                row[1] = url
+
+    @classmethod
+    def __collect_md007_src(cls):
+        src = {}
+
+        def visit(ns, parents):
+            for n in ns or []:
+                if not isinstance(n, dict):
+                    continue
+                title = cls.__strip_num(n.get("title"))
+                path = parents + [title]
+                if title == "算法基本信息":
+                    if "肺栓塞分割模块" in path:
+                        src["pe"] = n
+                    elif "肺叶分割模块" in path:
+                        src["lobe"] = n
+                    elif "三维重建模块" in path:
+                        src["recon"] = n
+                    else:
+                        src["h1"] = n
+                elif title == "模块设计描述":
+                    if "肺栓塞分割模块" in path:
+                        src["pe_desc"] = n
+                    elif "肺叶分割模块" in path:
+                        src["lobe_desc"] = n
+                    elif "三维重建模块" in path:
+                        src["recon_desc"] = n
+                visit(n.get("children") or [], path)
+
+        visit((WORD_CONTENTS.get("md_007") or {}).get("sections") or [], [])
+        return src
+
+    def __fill_md007_algo_info(self, content):
+        """原 Word：三个「算法基本信息」为两列表；图 1～6 与立方体示意图按章节补上。空才填。"""
+        sections = (content or {}).get("sections")
+        if not isinstance(sections, list):
+            return
+        src = self.__collect_md007_src()
+        imgs = {k: self.__md007_data_url(k) for k in _MD007_IMG_FILES}
+
+        def ensure_tables(node, src_node, flow_key=None, fig_keys=None):
+            if not isinstance(node, dict):
+                return
+            tables = node.get("tables") if isinstance(node.get("tables"), list) else []
+            if not self.__tables_have_text(tables) and not self.__has_figure_table(tables):
+                src_tables = copy.deepcopy((src_node or {}).get("tables") or []) if src_node else []
+                if src_tables:
+                    tables = src_tables
+            if flow_key:
+                for tb in tables:
+                    self.__fill_flow_cell(tb, imgs.get(flow_key) or "")
+            if fig_keys and not self.__has_figure_table(tables):
+                extra = [[[imgs[k]]] for k in fig_keys if imgs.get(k)]
+                tables = list(tables) + extra
+            node["tables"] = tables
+
+        def visit(ns, parents):
+            for n in ns or []:
+                if not isinstance(n, dict):
+                    continue
+                title = self.__strip_num(n.get("title"))
+                path = parents + [title]
+                if title == "算法基本信息":
+                    if "肺栓塞分割模块" in path:
+                        ensure_tables(n, src.get("pe"), flow_key="pe_flow")
+                    elif "肺叶分割模块" in path:
+                        ensure_tables(n, src.get("lobe"), flow_key="lobe_flow")
+                    elif "三维重建模块" in path:
+                        ensure_tables(n, src.get("recon"), flow_key="recon_flow")
+                    else:
+                        ensure_tables(n, src.get("h1"), fig_keys=["fig1"])
+                elif title == "模块设计描述":
+                    if "肺栓塞分割模块" in path:
+                        ensure_tables(n, None, fig_keys=["fig2", "fig3", "fig4"])
+                    elif "肺叶分割模块" in path:
+                        ensure_tables(n, None, fig_keys=["lobe_flow"])
+                    elif "三维重建模块" in path:
+                        ensure_tables(n, None, fig_keys=["recon_flow", "cube"])
+                visit(n.get("children") or [], path)
+
+        visit(sections, [])
+
+    def __fill_empty_template_tables(self, content, doc_type):
+        """原 Word 章节表：按标题路径从模板补到空章节。封面/修订/产品信息不走此逻辑。空才填。"""
+        src = (WORD_CONTENTS.get(doc_type) or {}).get("sections")
+        sections = (content or {}).get("sections")
+        if not isinstance(src, list) or not isinstance(sections, list):
+            return
+        skip = {"cover", "revision", "basic_info"}
+        src_map = {}
+
+        def visit_src(ns, parents):
+            for n in ns or []:
+                if not isinstance(n, dict):
+                    continue
+                title = self.__strip_num(n.get("title"))
+                src_map[tuple(parents + [title])] = n
+                visit_src(n.get("children") or [], parents + [title])
+
+        visit_src(src, [])
+
+        def visit(ns, parents):
+            for n in ns or []:
+                if not isinstance(n, dict):
+                    continue
+                title = self.__strip_num(n.get("title"))
+                path = tuple(parents + [title])
+                src_n = src_map.get(path)
+                if (
+                    src_n
+                    and src_n.get("ref_type") not in skip
+                    and n.get("ref_type") not in skip
+                ):
+                    src_tables = copy.deepcopy(src_n.get("tables") or [])
+                    if src_tables and not self.__tables_have_text(n.get("tables")) and not self.__has_figure_table(n.get("tables")):
+                        n["tables"] = src_tables
+                visit(n.get("children") or [], parents + [title])
+
+        visit(sections, [])
+
     @staticmethod
     def __cell_eq_nonempty(a, b):
         sa, sb = str(a or ""), str(b or "")
@@ -329,15 +634,16 @@ class Server(object):
                 c = c2 + 1
         for r in range(r_n):
             for c in range(c_n):
-                if skip[r][c] or colspan[r][c] != 1:
+                if skip[r][c]:
                     continue
                 if c != 0:
                     continue
                 if not str(rows[r][c] or "").strip():
                     continue
+                cs = colspan[r][c]
                 r2 = r
                 while r2 + 1 < r_n:
-                    if skip[r2 + 1][c] or colspan[r2 + 1][c] != 1:
+                    if skip[r2 + 1][c] or colspan[r2 + 1][c] != cs:
                         break
                     if not self.__cell_eq_nonempty(rows[r][c], rows[r2 + 1][c]):
                         break
@@ -400,11 +706,27 @@ class Server(object):
             select(ProjectTimelineRow).where(ProjectTimelineRow.prod_id == prod_id)
         ).scalars().all()
         cell_map = {}
+        model_row_ids = set()
+
+        def is_model_dev_out(text):
+            s = str(text or "")
+            if re.search(r"模型开发(?!计划)", s):
+                return True
+            if "模型训练" in s:
+                return True
+            if re.search(r"模型测试(?!方案)", s):
+                return True
+            if "模型封装" in s or "模型服务提交" in s:
+                return True
+            return False
+
         if tl_rows:
             for c in db.session.execute(
                 select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_([r.id for r in tl_rows]))
             ).scalars().all():
                 cell_map.setdefault(c.row_id, []).append(c.output_result or "")
+                if (c.dept or "") == "模型部" and is_model_dev_out(c.output_result):
+                    model_row_ids.add(c.row_id)
 
         def to_int(v):
             digits = re.sub(r"[^\d]", "", str(v or ""))
@@ -425,20 +747,37 @@ class Server(object):
             fr = min(file_rows, key=date_key)
             file_date = f"{to_int(fr.year)}年{to_int(fr.month)}月{to_int(fr.day)}日"
 
+        cycle_text = ""
+        if doc_type == "md_006":
+            model_dates = []
+            for r in date_rows:
+                if r.id not in model_row_ids:
+                    continue
+                y, m, d = to_int(r.year), to_int(r.month), to_int(r.day) or 1
+                try:
+                    model_dates.append(date(y, m, d))
+                except Exception:
+                    continue
+            if model_dates:
+                days = (max(model_dates) - min(model_dates)).days + 1
+                if days > 0:
+                    cycle_text = "共用时约%d天。" % days
+
         members = db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == prod_id)).scalars().all()
         def find_member(pred):
             for m in members:
                 if pred(str(m.role or "")):
                     return (m.name or "").strip()
             return ""
-        modeler = find_member(lambda r: "模型" in r)
+        modeler = find_member(lambda r: r in ("模型部负责人", "模型负责人")) or find_member(lambda r: "模型" in r)
         algo = find_member(lambda r: "算法" in r)
-        approver = find_member(lambda r: "负责人" in r)
+        approver = find_member(lambda r: "研发负责人" in r) or find_member(lambda r: "负责人" in r)
 
         return {
             "prod_name": prod_name, "full_version": full_version, "product_code": product_code,
             "scope": scope, "file_date": file_date, "version": doc_version,
-            "reviser": modeler or algo, "approver": approver,
+            "reviser": modeler or algo, "approver": approver, "cycle_text": cycle_text,
+            "members": members, "doc_type": doc_type,
         }
 
     @staticmethod
@@ -504,8 +843,105 @@ class Server(object):
                         row[1] = label_map[key]
         if title == "范围":
             node["body"] = self.__fill_scope_body(node.get("body") or "", info.get("prod_name") or "")
+        is_cycle = ref == "prod_cycle" or (title == "项目开发时间" and not (node.get("children") or []))
+        if is_cycle and info.get("cycle_text"):
+            node["body"] = info["cycle_text"]
+        if info.get("doc_type") == "md_006":
+            self.__fill_md006_people_node(node, info.get("members") or [])
         for child in (node.get("children") or []):
             self.__fill_node(child, info)
+
+    @staticmethod
+    def __member_names(members, pred):
+        out = []
+        for m in members or []:
+            role = str(getattr(m, "role", "") or "").strip()
+            name = str(getattr(m, "name", "") or "").strip()
+            if name and pred(role):
+                out.append(name)
+        return out
+
+    def __fill_md006_people_node(self, node, members):
+        title = self.__strip_num(node.get("title"))
+        staff_defs = [
+            (lambda r: r in ("模型部负责人", "模型负责人"), "模型部负责人"),
+            (lambda r: r == "高级算法工程师", "高级算法工程师"),
+            (lambda r: r == "算法工程师", "算法工程师"),
+            (lambda r: r == "项目专员", "项目专员"),
+        ]
+        staff_rows = []
+        for pred, label in staff_defs:
+            for name in self.__member_names(members, pred):
+                staff_rows.append([str(len(staff_rows) + 1), name, "模型部", label])
+        pm = (self.__member_names(members, lambda r: "产品经理" in r) or [""])[0]
+        testers = self.__member_names(members, lambda r: r == "项目专员")
+        algos = self.__member_names(members, lambda r: r == "算法工程师")
+        tpm = (self.__member_names(members, lambda r: "TPM" in r.upper()) or [""])[0]
+        if not tpm:
+            tpm = " ".join(self.__member_names(members, lambda r: "开发人员" in r))
+        data_names = " ".join(self.__member_names(members, lambda r: "数据" in r))
+        model_dept = " ".join(r[1] for r in staff_rows)
+
+        if title == "项目简介" and pm:
+            body = str(node.get("body") or "")
+            if re.search(r"产品经理[：:]", body):
+                node["body"] = re.sub(r"产品经理[：:][^\n]*", "产品经理： " + pm, body, count=1)
+            else:
+                node["body"] = (body.rstrip() + ("\n" if body.strip() else "") + "产品经理： " + pm)
+
+        tables = node.get("tables") or []
+        if title == "人员资源" and tables and isinstance(tables[0], list) and tables[0]:
+            hdr = tables[0][0]
+            if isinstance(hdr, list) and "编号" in str(hdr[0] or ""):
+                tables[0] = [hdr] + staff_rows
+
+        if "里程碑" in title and tables and isinstance(tables[0], list) and tables[0]:
+            t = tables[0]
+            header = t[0] if isinstance(t[0], list) else []
+            hi = next((i for i, h in enumerate(header) if "负责人" in str(h or "")), -1)
+            si = next((i for i, h in enumerate(header) if "阶段" in str(h or "")), -1)
+            if hi >= 0:
+                for row in t[1:]:
+                    if not isinstance(row, list):
+                        continue
+                    stage = str(row[si] or "") if si >= 0 else " ".join(str(c or "") for c in row)
+                    names = testers if "测试" in stage else algos
+                    if names:
+                        while len(row) <= hi:
+                            row.append("")
+                        row[hi] = "\n".join(names)
+
+        for i, tb in enumerate(tables):
+            if not self.__is_review_grid(tb):
+                continue
+            new_tb = []
+            for row in tb:
+                if not isinstance(row, list) or str(row[0] or "").strip() != "参评人员":
+                    new_tb.append(row)
+                    continue
+                next_row = list(row)
+
+                def put(idx):
+                    if idx >= len(next_row):
+                        return
+                    dept = str(next_row[idx] or "").strip()
+                    names = ""
+                    if dept == "模型部":
+                        names = model_dept
+                    elif dept == "产品部":
+                        names = pm
+                    elif "产品开发" in dept:
+                        names = tpm
+                    elif dept == "数据部":
+                        names = data_names
+                    if names and idx + 1 < len(next_row):
+                        next_row[idx + 1] = names
+
+                put(1)
+                put(3)
+                new_tb.append(next_row)
+            tables[i] = new_tb
+        node["tables"] = tables
 
     def __exists(self, product_id, doc_type, version, exclude_id=None):
         sql = select(func.count(ModelDoc.id)).where(
@@ -755,15 +1191,56 @@ class Server(object):
         def add_text(text):
             docx_util.save_txt2docx(str(text or ""), document)
 
-        def set_cell(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
+        def png_wh(raw):
+            if raw[:8] == b"\x89PNG\r\n\x1a\n" and len(raw) >= 24:
+                return int.from_bytes(raw[16:20], "big"), int.from_bytes(raw[20:24], "big")
+            return 0, 0
+
+        def add_picture_fit(run, raw, max_w, max_h):
+            w, h = png_wh(raw)
+            if w > 0 and h > 0 and (h * max_w) > (w * max_h):
+                run.add_picture(BytesIO(raw), height=Inches(max_h))
+            else:
+                run.add_picture(BytesIO(raw), width=Inches(max_w))
+
+        def is_figure_grid(grid):
+            cols = max((len(row) for row in grid if isinstance(row, list)), default=0)
+            if cols != 1:
+                return False
+            return any(
+                isinstance(row, list) and row and str(row[0] or "").startswith("data:image")
+                for row in grid
+            )
+
+        def add_figure_grid(grid):
+            for row in grid:
+                val = str(row[0] if row else "")
+                if val.startswith("data:image"):
+                    try:
+                        raw = base64.b64decode(val.split(",", 1)[1] if "," in val else "")
+                        p = document.add_paragraph()
+                        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        add_picture_fit(p.add_run(), raw, 5.5, 3.6)
+                    except Exception:
+                        logger.exception("md007_export_figure_failed")
+                elif val.strip():
+                    p = document.add_paragraph()
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    docx_util.fonted_txt(p, val, font_size=10.5)
+            document.add_paragraph()
+
+        def set_cell(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT, figure=False):
             s = str(text or "")
             if s.startswith("data:image"):
                 try:
-                    b64 = s.split(",", 1)[1] if "," in s else ""
+                    raw = base64.b64decode(s.split(",", 1)[1] if "," in s else "")
                     cell.text = ""
                     para = cell.paragraphs[0]
                     para.alignment = align
-                    para.add_run().add_picture(BytesIO(base64.b64decode(b64)), height=Pt(33))
+                    if figure:
+                        add_picture_fit(para.add_run(), raw, 4.2, 2.6)
+                    else:
+                        para.add_run().add_picture(BytesIO(raw), height=Pt(33))
                     cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
                     return
                 except Exception:
@@ -782,6 +1259,9 @@ class Server(object):
             cols = max((len(row) for row in grid), default=0)
             if cols <= 0:
                 return
+            if is_figure_grid(grid):
+                add_figure_grid(grid)
+                return
             table = document.add_table(rows=0, cols=cols)
             table.style = "Table Grid"
             table.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -798,8 +1278,14 @@ class Server(object):
             else:
                 for r_idx, row in enumerate(grid):
                     cells = table.add_row().cells
+                    left = str(row[0] if row else "")
                     for c_idx in range(cols):
-                        set_cell(cells[c_idx], row[c_idx] if c_idx < len(row) else "", bold=(r_idx == 0))
+                        set_cell(
+                            cells[c_idx],
+                            row[c_idx] if c_idx < len(row) else "",
+                            bold=(r_idx == 0),
+                            figure=("算法流程图" in left and c_idx > 0),
+                        )
             document.add_paragraph()
 
         def add_cover_grid(grid):
@@ -872,7 +1358,7 @@ class Server(object):
         docx_util.insert_toc_field(document)
 
         document.add_page_break()
-        if obj.doc_type in NO_BASIC_INFO:
+        if obj.doc_type in SKIP_ANNEX_NUM:
             idx = 0
             for node in body:
                 t = self.__strip_num(node.get("title"))

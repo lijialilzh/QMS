@@ -33,7 +33,7 @@ from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
-from .data_doc_templates import DOC_META, DEFAULT_CONTENTS
+from .data_doc_templates import DOC_META, DEFAULT_CONTENTS, REVIEW_TABLES
 
 logger = logging.getLogger(__name__)
 
@@ -77,16 +77,6 @@ def _empty_template(doc_type):
                     ["", "", "", "", ""],
                 ]],
             },
-            {
-                "title": "产品信息", "ref_type": "basic_info", "body": "", "children": [],
-                "tables": [[
-                    ["基本信息", "描述"],
-                    ["产品名称", ""],
-                    ["软件版本", ""],
-                    ["产品标识", ""],
-                    ["预期用途", ""],
-                ]],
-            },
         ]
     }
 
@@ -95,7 +85,10 @@ class Server(object):
 
     def __default_content(self, doc_type):
         raw = DEFAULT_CONTENTS.get(doc_type)
-        return copy.deepcopy(raw) if raw else _empty_template(doc_type)
+        content = copy.deepcopy(raw) if raw else _empty_template(doc_type)
+        self.__drop_product_info(content)
+        self.__ensure_review_annex(content, doc_type)
+        return content
 
     def __to_obj(self, row: DataDoc, product: Product = None):
         obj = DataDocObj(**row.dict())
@@ -169,7 +162,147 @@ class Server(object):
     def __normalize_content(self, content, doc_type=None):
         if not isinstance(content, dict) or not isinstance(content.get("sections"), list):
             return self.__default_content(doc_type)
-        return {"sections": [self.__normalize_node(s) for s in content["sections"]]}
+        out = {"sections": [self.__normalize_node(s) for s in content["sections"]]}
+        self.__drop_product_info(out)
+        self.__ensure_review_annex(out, doc_type)
+        return out
+
+    @classmethod
+    def __drop_product_info(cls, content):
+        """原样例没有独立「产品信息」章；新增/打开/导出时去掉。"""
+        def drop(ns):
+            out = []
+            for n in ns or []:
+                t = cls.__strip_num(n.get("title"))
+                if n.get("ref_type") == "basic_info" or t == "产品信息":
+                    continue
+                n["children"] = drop(n.get("children") or [])
+                out.append(n)
+            return out
+        content["sections"] = drop((content or {}).get("sections") or [])
+
+    @classmethod
+    def __is_annex_title(cls, title):
+        t = cls.__strip_num(title).replace(" ", "")
+        return t.startswith("附件") and "评审记录" in t
+
+    @staticmethod
+    def __is_review_grid(tb):
+        return isinstance(tb, list) and tb and isinstance(tb[0], list) and "评审记录" in str(tb[0][0] or "")
+
+    @staticmethod
+    def __cell_eq_nonempty(a, b):
+        sa, sb = str(a or ""), str(b or "")
+        return sa == sb and sa.strip() != ""
+
+    def __grid_span_origins(self, grid):
+        rows = [list(r) for r in grid]
+        r_n = len(rows)
+        c_n = max((len(r) for r in rows), default=0)
+        for r in rows:
+            while len(r) < c_n:
+                r.append("")
+        skip = [[False] * c_n for _ in range(r_n)]
+        colspan = [[1] * c_n for _ in range(r_n)]
+        rowspan = [[1] * c_n for _ in range(r_n)]
+        for r in range(r_n):
+            c = 0
+            while c < c_n:
+                if skip[r][c]:
+                    c += 1
+                    continue
+                c2 = c
+                while c2 + 1 < c_n and self.__cell_eq_nonempty(rows[r][c], rows[r][c2 + 1]):
+                    c2 += 1
+                colspan[r][c] = c2 - c + 1
+                for k in range(c + 1, c2 + 1):
+                    skip[r][k] = True
+                c = c2 + 1
+        for r in range(r_n):
+            for c in range(c_n):
+                if skip[r][c]:
+                    continue
+                if c != 0:
+                    continue
+                if not str(rows[r][c] or "").strip():
+                    continue
+                cs = colspan[r][c]
+                r2 = r
+                while r2 + 1 < r_n:
+                    if skip[r2 + 1][c] or colspan[r2 + 1][c] != cs:
+                        break
+                    if not self.__cell_eq_nonempty(rows[r][c], rows[r2 + 1][c]):
+                        break
+                    r2 += 1
+                rs = r2 - r + 1
+                if rs > 1:
+                    rowspan[r][c] = rs
+                    for k in range(r + 1, r2 + 1):
+                        skip[k][c] = True
+        origins = []
+        for r in range(r_n):
+            for c in range(c_n):
+                if skip[r][c]:
+                    continue
+                origins.append((r, c, rowspan[r][c], colspan[r][c]))
+        return rows, origins
+
+    @classmethod
+    def __ensure_review_annex(cls, content, doc_type=None):
+        """原 Word 有评审表的，附件为空则补上；误挂在其它章节的评审表挪回附件。"""
+        sections = (content or {}).get("sections")
+        if not isinstance(sections, list):
+            return
+
+        def strip_annex_line(n):
+            body = str(n.get("body") or "")
+            lines = [ln for ln in body.split("\n") if ln.strip() not in ("附件 1 评审记录", "附件1 评审记录")]
+            n["body"] = "\n".join(lines).rstrip()
+
+        annex_nodes = []
+
+        def find(ns):
+            for n in ns or []:
+                if not isinstance(n, dict):
+                    continue
+                strip_annex_line(n)
+                if cls.__is_annex_title(n.get("title")):
+                    annex_nodes.append(n)
+                find(n.get("children") or [])
+
+        find(sections)
+        annex = annex_nodes[0] if annex_nodes else None
+        annex_ids = {id(n) for n in annex_nodes}
+        pulled = []
+
+        def pull(ns):
+            for n in ns or []:
+                if not isinstance(n, dict):
+                    continue
+                if id(n) in annex_ids:
+                    pull(n.get("children") or [])
+                    continue
+                keep = []
+                for tb in (n.get("tables") or []):
+                    if cls.__is_review_grid(tb):
+                        pulled.append(tb)
+                    else:
+                        keep.append(tb)
+                n["tables"] = keep
+                pull(n.get("children") or [])
+
+        pull(sections)
+        src = copy.deepcopy(REVIEW_TABLES.get(doc_type) or []) if doc_type else []
+        table = None
+        if annex:
+            existing = [tb for tb in (annex.get("tables") or []) if cls.__is_review_grid(tb)]
+            table = existing[0] if existing else (pulled[0] if pulled else (src or None))
+            if table:
+                annex["tables"] = [table]
+                annex["title"] = "附件 1 评审记录"
+        elif pulled or src:
+            table = pulled[0] if pulled else src
+            sections.append({"title": "附件 1 评审记录", "body": "", "tables": [table], "children": []})
 
     @staticmethod
     def __fill_cover_meta(content, version):
@@ -613,10 +746,20 @@ class Server(object):
             table.style = "Table Grid"
             table.alignment = WD_TABLE_ALIGNMENT.CENTER
             table.autofit = True
-            for r_idx, row in enumerate(grid):
-                cells = table.add_row().cells
-                for c_idx in range(cols):
-                    set_cell(cells[c_idx], row[c_idx] if c_idx < len(row) else "", bold=(r_idx == 0))
+            if self.__is_review_grid(grid):
+                padded, origins = self.__grid_span_origins(grid)
+                for _ in padded:
+                    table.add_row()
+                for r, c, rs, cs in origins:
+                    cell = table.cell(r, c)
+                    if rs > 1 or cs > 1:
+                        cell = cell.merge(table.cell(r + rs - 1, c + cs - 1))
+                    set_cell(cell, padded[r][c], bold=(r == 0))
+            else:
+                for r_idx, row in enumerate(grid):
+                    cells = table.add_row().cells
+                    for c_idx in range(cols):
+                        set_cell(cells[c_idx], row[c_idx] if c_idx < len(row) else "", bold=(r_idx == 0))
             document.add_paragraph()
 
         def add_cover_grid(grid):

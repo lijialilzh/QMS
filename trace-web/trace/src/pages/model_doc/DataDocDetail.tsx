@@ -64,6 +64,10 @@ const firstKey = (nodes: any[]): string => (nodes && nodes[0] ? nodes[0]._key : 
 
 const stripNum = (title: string): string => String(title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();
 
+const dropProductInfo = (nodes: any[]): any[] =>
+    (nodes || []).filter((n: any) => n.ref_type !== "basic_info" && stripNum(n.title) !== "产品信息")
+        .map((n: any) => ({ ...n, children: dropProductInfo(n.children || []) }));
+
 const BASE_PROD_NAME = "肺栓塞CT图像辅助评估软件";
 const BASE_PROD_TYPE = "IR-CT-PE";
 
@@ -251,7 +255,7 @@ export default () => {
                 return;
             }
             const doc = res.data || {};
-            const sections = ensureKeys((doc.content && doc.content.sections) || []);
+            const sections = dropProductInfo(ensureKeys((doc.content && doc.content.sections) || []));
             autofill(doc.product_id, sections, doc.version).then((secs) => {
                 dispatch({ loading: false, doc, sections: secs, activeKey: findNode(secs, data.activeKey) ? data.activeKey : firstKey(secs) });
             });
@@ -353,8 +357,7 @@ export default () => {
 
     const isMetaSection = (n: any) => {
         const t = stripNum(n.title);
-        return n.ref_type === "cover" || n.ref_type === "revision" || n.ref_type === "basic_info"
-            || t === "文件修订记录" || t === "产品信息";
+        return n.ref_type === "cover" || n.ref_type === "revision" || t === "文件修订记录";
     };
 
     const doImportStats = (file: File) => {
@@ -365,7 +368,7 @@ export default () => {
                 message.error(res.msg || "导入失败");
                 return;
             }
-            const incoming = ensureKeys(res.data?.sections || []);
+            const incoming = dropProductInfo(ensureKeys(res.data?.sections || []));
             if (!incoming.length) {
                 message.error("Excel 无有效表格");
                 return;
@@ -483,7 +486,7 @@ export default () => {
                                         addonBefore={numbers[active._key] || undefined}
                                         value={stripNum(active.title)}
                                         disabled={readonly}
-                                        placeholder="只填名称，如：产品信息"
+                                        placeholder="只填名称，如：目的"
                                         onChange={(e) => patchNode(active._key, { title: e.target.value })}
                                     />
                                 </div>
