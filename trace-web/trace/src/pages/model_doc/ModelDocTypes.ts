@@ -29,12 +29,14 @@ export const MODEL_DOC_TYPES: Record<string, { title: string; keywords: string[]
     md_018: { title: "模型服务提交记录", keywords: ["模型服务提交记录"] },
     md_019_qr: { title: "开发环境维护记录", keywords: ["开发环境维护记录"] },
     md_020_qr: { title: "测试环境维护记录", keywords: ["测试环境维护记录"] },
-    md_deq: { title: "模型开发设备清单", keywords: ["开发设备清单"] },
-    md_teq: { title: "模型测试设备清单", keywords: ["测试设备清单"] },
+    md_deq: { title: "开发设备清单", keywords: ["开发设备清单"] },
+    md_teq: { title: "测试设备清单", keywords: ["测试设备清单"] },
     md_eq: { title: "模型设备清单", keywords: ["设备清单"] },
 };
 
-export const MODEL_DOC_TYPE_ORDER = Object.keys(MODEL_DOC_TYPES);
+export const MODEL_DOC_TYPE_ORDER = Object.keys(MODEL_DOC_TYPES).filter(
+    (k) => k !== "md_019_qr" && k !== "md_020_qr",
+);
 
 export const getModelDocMeta = (type?: string) =>
     MODEL_DOC_TYPES[type || ""] || { title: "模型文件", keywords: [] as string[] };

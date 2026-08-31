@@ -1,6 +1,7 @@
-import { Button, Input, Space, Spin, Upload, message } from "antd";
+import { Button, Checkbox, Input, Space, Spin, Upload, message } from "antd";
 import { PlusOutlined, DeleteOutlined, FileAddOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
+import type { CSSProperties } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
@@ -9,9 +10,16 @@ import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
+import * as ApiProdDhf from "@/api/ApiProdDhf";
+import * as ApiSrsDoc from "@/api/ApiSrsDoc";
+import * as ApiSrsReq from "@/api/ApiSrsReq";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import { getModelDocMeta } from "./ModelDocTypes";
-import { computeGridSpans, isReviewRecordGrid } from "./gridSpans";
+import { computeGridSpans, computeCodeReviewSpans, isReviewRecordGrid, isCodeReviewChecklistGrid } from "./gridSpans";
+import {
+    buildEnvCheckTable, collectAssetCodes, computeDevTestWeeks, envCheckGroups, envCheckLeafCols,
+    envCheckTitle, isEnvCheckGrid, parseEqAssets, prevEnvCheckRows,
+} from "./envMaintCheck";
 import "../pdp/PdpDocDetail.less";
 
 let _seq = 0;
@@ -31,6 +39,12 @@ const computeFileDate = (rows: any[], keywords: string[]): string => {
     let best = matches[0];
     matches.forEach((r: any) => { if (key(r) < key(best)) best = r; });
     return `${num(best.year)}年${num(best.month)}月${num(best.day)}日`;
+};
+
+const toDottedDate = (s: string): string => {
+    const m = String(s || "").match(/(\d+)\s*年\s*(\d+)\s*月\s*(\d+)\s*日/);
+    if (m) return `${m[1]}.${Number(m[2])}.${Number(m[3])}`;
+    return String(s || "").trim();
 };
 
 const isModelDevOut = (val: any) => {
@@ -58,6 +72,7 @@ const computeModelCycle = (rows: any[]): string => {
     const days = Math.round((end - start) / 86400000) + 1;
     return days > 0 ? `共用时约${days}天。` : "";
 };
+
 
 const fillModelCycle = (nodes: any[], text: string): any[] => {
     if (!text) return nodes;
@@ -144,6 +159,264 @@ const fillMd006People = (nodes: any[], members: any[]): any[] => {
         }
         if (Array.isArray(tables)) tables = tables.map((tb: any[]) => fillReview(tb));
         return { ...n, body, tables, children: (n.children || []).map(fix) };
+    };
+    return (nodes || []).map(fix);
+};
+
+const fillMd017People = (nodes: any[], members: any[]): any[] => {
+    const fillTb = (tb: any[]): any[] => {
+        if (!Array.isArray(tb) || !Array.isArray(tb[0])) return tb;
+        const hdr = tb[0].map((h: any) => String(h || ""));
+        const pi = hdr.findIndex((h) => h.includes("资源数量") || h.includes("具体人员"));
+        const ri = hdr.findIndex((h) => h.includes("角色"));
+        if (pi < 0) return tb;
+        const roleIdx = ri >= 0 ? ri : 0;
+        return tb.map((row: any[], i: number) => {
+            if (i === 0 || !Array.isArray(row)) return row;
+            const next = [...row];
+            const role = String(next[roleIdx] || "").trim();
+            const names = role ? memberNames(members, (r) => r === role) : [];
+            while (next.length <= pi) next.push("");
+            next[pi] = names.length ? `${names.length}人/${names.join(" ")}` : "";
+            return next;
+        });
+    };
+    const fix = (n: any): any => {
+        let tables = n.tables;
+        if (stripNum(n.title) === "测试人员" && Array.isArray(tables)) {
+            tables = tables.map((tb: any[]) => (Array.isArray(tb) ? fillTb(tb) : tb));
+        }
+        return { ...n, tables, children: (n.children || []).map(fix) };
+    };
+    return (nodes || []).map(fix);
+};
+
+const fillMd008Meta = (nodes: any[], members: any[], fileDate: string, signMap: Record<string, string>): any[] => {
+    const auditee = memberNames(members, (r) => r === "算法工程师").join(" ");
+    const auditorNames = memberNames(members, (r) => r === "高级算法工程师");
+    const auditor = auditorNames.join(" ");
+    const date = toDottedDate(fileDate);
+    const sign = (auditorNames[0] && signMap[auditorNames[0]]) || auditor || "";
+    const fillTb = (tb: any[]): any[] => {
+        if (!isCodeReviewChecklistGrid(tb)) return tb;
+        return tb.map((row: any[]) => {
+            if (!Array.isArray(row)) return row;
+            const next = [...row];
+            while (next.length < 7) next.push("");
+            const a = String(next[0] || "").trim();
+            if (a === "代码地址") next[5] = date;
+            if (a === "被审核人") {
+                next[2] = auditee;
+                next[5] = auditor;
+            }
+            if (a.includes("审核人") && a.includes("签字")) next[2] = sign;
+            return next;
+        });
+    };
+    const fix = (n: any): any => {
+        let tables = n.tables;
+        if (Array.isArray(tables)) tables = tables.map((tb: any[]) => (Array.isArray(tb) ? fillTb(tb) : tb));
+        return { ...n, tables, children: (n.children || []).map(fix) };
+    };
+    return (nodes || []).map(fix);
+};
+
+const ensureEnvMaintChapter = (nodes: any[], docType: string): any[] => {
+    if (docType !== "md_019" && docType !== "md_020") return nodes;
+    const want = docType === "md_019" ? "开发环境维护记录" : "测试环境维护记录";
+    const after = docType === "md_019" ? "开发环境定期检查" : "测试环境定期检查";
+    let found: any = null;
+    const hunt = (ns: any[]) => {
+        (ns || []).forEach((n: any) => {
+            if (stripNum(n.title) === want) found = n;
+            hunt(n.children || []);
+        });
+    };
+    hunt(nodes);
+    if (found) return nodes;
+    const node = { _key: genKey(), title: want, body: "", tables: [], children: [] };
+    const idx = (nodes || []).findIndex((n: any) => stripNum(n.title) === after);
+    if (idx >= 0) {
+        const next = [...nodes];
+        next.splice(idx + 1, 0, node);
+        return next;
+    }
+    return [...(nodes || []), node];
+};
+
+const fillEnvMaint = (nodes: any[], opts: {
+    prodName: string; fullVersion: string; weeks: string[];
+    checker: string; eqAssets: { code: string; usage: string }[] | null; docType: string;
+}): any[] => {
+    const wantTitle = opts.docType === "md_019" ? "开发环境维护记录" : "测试环境维护记录";
+    const fillAsset = (tb: any[]): any[] => {
+        if (!Array.isArray(tb) || !Array.isArray(tb[0])) return tb;
+        const hdr = tb[0].map((h: any) => String(h || ""));
+        if (String(hdr[0] || "").trim() !== "资产编码" || !hdr.some((h: string) => h.includes("设备信息"))) return tb;
+        const old: Record<string, string> = {};
+        tb.slice(1).forEach((row: any[]) => {
+            if (!Array.isArray(row)) return;
+            const code = String(row[0] || "").trim();
+            if (code) old[code] = String(row[1] || "");
+        });
+        if (opts.eqAssets !== null) {
+            const header = hdr.length >= 4 ? hdr.slice(0, 4) : ["资产编码", "设备信息", "产品名称", "完整版本"];
+            return [header, ...opts.eqAssets.map((a) => [a.code, old[a.code] || "", opts.prodName, opts.fullVersion])];
+        }
+        return tb.map((row: any[], i: number) => {
+            if (i === 0 || !Array.isArray(row)) return row;
+            const next = [...row];
+            while (next.length < 4) next.push("");
+            next[2] = opts.prodName;
+            next[3] = opts.fullVersion;
+            return next;
+        });
+    };
+    const withAssets = (nodes || []).map(function fix(n: any): any {
+        let tables = n.tables;
+        if (Array.isArray(tables)) tables = tables.map((tb: any[]) => (Array.isArray(tb) ? fillAsset(tb) : tb));
+        return { ...n, tables, children: (n.children || []).map(fix) };
+    });
+    const oldByAsset: Record<string, Record<string, string[]>> = {};
+    const collectOld = (ns: any[]) => {
+        (ns || []).forEach((n: any) => {
+            (n.tables || []).forEach((tb: any[]) => {
+                if (!isEnvCheckGrid(tb)) return;
+                oldByAsset[String(tb[0][2] || "")] = prevEnvCheckRows(tb);
+            });
+            collectOld(n.children || []);
+        });
+    };
+    collectOld(withAssets);
+    const assets = opts.eqAssets !== null ? opts.eqAssets : collectAssetCodes(withAssets);
+    const checks = assets.map((a) => buildEnvCheckTable(opts.docType, a, opts.weeks || [], opts.checker, oldByAsset[a.code] || {}));
+    return withAssets.map(function fix(n: any): any {
+        const title = stripNum(n.title);
+        const tables = title === wantTitle ? checks : n.tables;
+        return { ...n, tables, children: (n.children || []).map(fix) };
+    });
+};
+
+const MD022_ID_COLS = ["算法设计ID", "训练集构建", "调优集构建ID", "算法训练ID", "测试集构建ID", "算法测试ID"] as const;
+const MD022_MODULES = ["肺栓塞分诊", "肺叶分割", "气管分割", "肺血管分割"];
+const MD022_MODULE_DOC_TYPES: Record<string, Record<string, string>> = {
+    "肺栓塞分诊": {
+        "算法设计ID": "md_004",
+        "训练集构建": "md_009_01",
+        "调优集构建ID": "md_010_01",
+        "算法训练ID": "md_012_01",
+        "测试集构建ID": "md_011_01",
+        "算法测试ID": "md_013_01",
+    },
+    "肺叶分割": {
+        "算法设计ID": "md_004",
+        "训练集构建": "md_009_02",
+        "调优集构建ID": "md_010_02",
+        "算法训练ID": "md_012_02",
+        "测试集构建ID": "md_011_02",
+        "算法测试ID": "md_013_02",
+    },
+};
+const MD022_DHF_KEYWORDS: Record<string, string[]> = {
+    md_004: ["算法方案概要设计"],
+    md_009_01: ["训练集构建记录", "肺栓塞分割模型训练集"],
+    md_009_02: ["训练集构建记录", "肺叶分割模型训练集"],
+    md_010_01: ["调优集构建记录", "肺栓塞分割模型调优集"],
+    md_010_02: ["调优集构建记录", "肺叶分割模型调优集"],
+    md_011_01: ["测试集构建记录", "肺栓塞分诊模型测试集"],
+    md_011_02: ["测试集构建记录", "肺叶分割模型测试集"],
+    md_012_01: ["模型训练记录", "肺栓塞分割模型训练"],
+    md_012_02: ["模型训练记录", "肺叶分割模型训练"],
+    md_013_01: ["模型测试记录", "肺栓塞分诊模型测试记录"],
+    md_013_02: ["模型测试记录", "肺叶分割模型测试记录"],
+};
+
+const normalizeDhfCode = (code: string): string => {
+    let txt = String(code || "").trim();
+    for (const sep of ["(", "（"]) {
+        if (txt.includes(sep)) txt = txt.split(sep)[0].trim();
+    }
+    return txt;
+};
+
+const matchDhfCode = (rows: any[], keywords: string[]): string => {
+    const kws = [...(keywords || [])].filter((k) => String(k || "").trim()).sort((a, b) => b.length - a.length);
+    for (const kw of kws) {
+        const exact = (rows || []).find((r: any) => String(r.name || "").trim() === kw && String(r.code || "").trim());
+        if (exact) return normalizeDhfCode(exact.code);
+        const fuzzy = (rows || []).find((r: any) => String(r.name || "").includes(kw) && String(r.code || "").trim());
+        if (fuzzy) return normalizeDhfCode(fuzzy.code);
+    }
+    return "";
+};
+
+const collectMd022FileNos = (docs: any[], dhfRows: any[]): Record<string, string> => {
+    const byType: Record<string, string> = {};
+    (docs || []).forEach((d: any) => {
+        const t = String(d.doc_type || "").trim();
+        const no = String(d.file_no || "").trim();
+        if (t && no && !byType[t]) byType[t] = no;
+    });
+    const out: Record<string, string> = {};
+    Object.keys(MD022_DHF_KEYWORDS).forEach((t) => {
+        out[t] = byType[t] || matchDhfCode(dhfRows, MD022_DHF_KEYWORDS[t]) || "";
+    });
+    return out;
+};
+
+const collectMd022Srs = (reqs: any[]): Record<string, string> => {
+    const out: Record<string, string> = {};
+    MD022_MODULES.forEach((m) => { out[m] = ""; });
+    const blob = (r: any) => [r.module, r.function, r.sub_function].map((v) => String(v || "")).join(" ");
+    let fallback = "";
+    MD022_MODULES.forEach((module) => {
+        const hits = (reqs || [])
+            .filter((r: any) => String(r.type_code || "") !== "reqd" && blob(r).includes(module) && String(r.code || "").trim().toUpperCase().startsWith("SRS-"))
+            .map((r: any) => String(r.code || "").trim())
+            .sort();
+        if (hits.length) {
+            out[module] = hits[0];
+            if (!fallback) fallback = hits[0];
+        }
+    });
+    if (fallback) {
+        MD022_MODULES.forEach((m) => { if (!out[m]) out[m] = fallback; });
+    }
+    return out;
+};
+
+const fillMd022Trace = (nodes: any[], fileNos: Record<string, string>, srsMap: Record<string, string>): any[] => {
+    const fillTb = (tb: any[]): any[] => {
+        if (!Array.isArray(tb) || !Array.isArray(tb[0])) return tb;
+        const hdr = tb[0].map((h: any) => String(h || "").trim());
+        const reqI = hdr.indexOf("算法需求");
+        const modI = hdr.indexOf("模块");
+        if (reqI < 0 || modI < 0) return tb;
+        const colI: Record<string, number> = {};
+        MD022_ID_COLS.forEach((name) => {
+            const i = hdr.indexOf(name);
+            if (i >= 0) colI[name] = i;
+        });
+        return tb.map((row: any[], i: number) => {
+            if (i === 0 || !Array.isArray(row)) return row;
+            const next = [...row];
+            while (next.length < hdr.length) next.push("");
+            const module = String(next[modI] || "").trim();
+            const mapping = MD022_MODULE_DOC_TYPES[module] || {};
+            next[reqI] = srsMap[module] || "";
+            Object.keys(colI).forEach((name) => {
+                const dt = mapping[name];
+                next[colI[name]] = dt ? (fileNos[dt] || "") : "";
+            });
+            return next;
+        });
+    };
+    const fix = (n: any): any => {
+        let tables = n.tables;
+        if (stripNum(n.title) === "模型可追溯性分析表" && Array.isArray(tables)) {
+            tables = tables.map((tb: any[]) => (Array.isArray(tb) ? fillTb(tb) : tb));
+        }
+        return { ...n, tables, children: (n.children || []).map(fix) };
     };
     return (nodes || []).map(fix);
 };
@@ -496,17 +769,23 @@ export default () => {
         return (nodes || []).map(fix);
     };
 
-    const autofill = (productId: number, secs: any[], version: string, replaceProduct = false, oldProductId = 0): Promise<any[]> =>
+    const autofill = (productId: number, secs: any[], version: string, replaceProduct = false, oldProductId = 0, _fileNo = ""): Promise<any[]> =>
         new Promise((resolve) => {
             if (!productId) { resolve(secs); return; }
             const oldId = replaceProduct && oldProductId && oldProductId !== productId ? oldProductId : 0;
+            const md022Extra = type === "md_022";
+            const envExtra = type === "md_019" || type === "md_020";
             Promise.all([
                 ApiProduct.get_product({ id: productId }).catch(() => null),
                 oldId ? ApiProduct.get_product({ id: oldId }).catch(() => null) : Promise.resolve(null),
                 ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
                 ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
                 ApiPersonSign.list_person_sign({ page_index: 0, page_size: 1000 }).catch(() => null),
-            ]).then(([pr, oldPr, tl, mb, ps]: any[]) => {
+                md022Extra ? Api.list_model_doc({ product_id: productId, page_index: 0, page_size: 10000 }).catch(() => null) : Promise.resolve(null),
+                md022Extra ? ApiProdDhf.list_prod_dhf({ prod_id: productId, page_index: 0, page_size: 10000 }).catch(() => null) : Promise.resolve(null),
+                md022Extra ? ApiSrsDoc.list_srs_doc({ product_id: productId, page_index: 0, page_size: 5 }).catch(() => null) : Promise.resolve(null),
+                envExtra ? Api.list_model_doc({ product_id: productId, doc_type: type === "md_019" ? "md_deq" : "md_teq", page_index: 0, page_size: 1 }).catch(() => null) : Promise.resolve(null),
+            ]).then(async ([pr, oldPr, tl, mb, ps, mdList, dhfList, srsList, eqList]: any[]) => {
                 const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
                 const oldProd = oldPr && oldPr.code === Api.C_OK ? (oldPr.data || {}) : {};
                 const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
@@ -561,6 +840,38 @@ export default () => {
                     out = fillModelCycle(out, computeModelCycle(tlRows));
                     out = fillMd006People(out, members);
                 }
+                if (type === "md_017") {
+                    out = fillMd017People(out, members);
+                }
+                if (type === "md_022") {
+                    const docRows = mdList && mdList.code === Api.C_OK ? ((mdList.data && mdList.data.rows) || []) : [];
+                    const dhfRows = dhfList && dhfList.code === Api.C_OK ? ((dhfList.data && dhfList.data.rows) || []) : [];
+                    let srsReqs: any[] = [];
+                    const srsDoc = srsList && srsList.code === Api.C_OK ? (((srsList.data && srsList.data.rows) || [])[0] || null) : null;
+                    if (srsDoc && srsDoc.id) {
+                        const reqRes: any = await ApiSrsReq.list_srs_req({ doc_id: srsDoc.id, page_index: 0, page_size: 10000 }).catch(() => null);
+                        srsReqs = reqRes && reqRes.code === Api.C_OK ? ((reqRes.data && reqRes.data.rows) || []) : [];
+                    }
+                    out = fillMd022Trace(out, collectMd022FileNos(docRows, dhfRows), collectMd022Srs(srsReqs));
+                }
+                if (type === "md_008_01" || type === "md_008_02") {
+                    out = fillMd008Meta(out, members, fileDate, signMap);
+                }
+                if (type === "md_019" || type === "md_020") {
+                    out = ensureEnvMaintChapter(out, type);
+                    const checkerName = memberNames(members, (r) => r === "模型部负责人")[0]
+                        || memberNames(members, (r) => r === "模型负责人")[0]
+                        || "";
+                    const eqDoc = eqList && eqList.code === Api.C_OK ? (((eqList.data && eqList.data.rows) || [])[0] || null) : null;
+                    out = fillEnvMaint(out, {
+                        prodName: newName,
+                        fullVersion: String(prod.full_version || "").trim(),
+                        weeks: computeDevTestWeeks(tlRows),
+                        checker: (checkerName && signMap[checkerName]) || checkerName || "",
+                        eqAssets: eqDoc ? parseEqAssets(eqDoc.content) : null,
+                        docType: type,
+                    });
+                }
                 resolve(out);
             }).catch(() => resolve(secs));
         });
@@ -578,7 +889,7 @@ export default () => {
             let sections = ensureKeys((doc.content && doc.content.sections) || []);
             if (type === "md_001") sections = applyMd001Layout(sections);
             else sections = dropMd001ProductInfo(sections);
-            autofill(doc.product_id, sections, doc.version).then((secs) => {
+            autofill(doc.product_id, sections, doc.version, false, 0, doc.file_no || "").then((secs) => {
                 dispatch({ loading: false, doc, sections: secs, activeKey: findNode(secs, data.activeKey) ? data.activeKey : firstKey(secs) });
             });
         });
@@ -588,7 +899,7 @@ export default () => {
         const product = (data.products || []).find((p: any) => p.id === newId) || {};
         const prevId = data.doc.product_id;
         dispatch({ loading: true, doc: { ...data.doc, product_id: newId, product_name: product.name, product_full_version: product.full_version } });
-        autofill(newId, data.sections, data.doc.version, true, prevId).then((secs) => dispatch({ loading: false, sections: secs }));
+        autofill(newId, data.sections, data.doc.version, true, prevId, data.doc.file_no || "").then((secs) => dispatch({ loading: false, sections: secs }));
     };
 
     useEffect(() => {
@@ -627,9 +938,29 @@ export default () => {
             if (i !== ti) return tb;
             const cs = Math.max(1, colSpan);
             const rs = Math.max(1, rowSpan);
+            const crr = isCodeReviewChecklistGrid(tb);
             return tb.map((row: any[], ri: number) => {
                 if (ri < r || ri >= r + rs) return row;
-                return row.map((cell: any, cc: number) => (cc >= ci && cc < ci + cs ? val : cell));
+                const next = [...row];
+                while (next.length < ci + cs) next.push("");
+                return next.map((cell: any, cc: number) => {
+                    if (cc < ci || cc >= ci + cs) return cell;
+                    if (crr) return (ri === r && cc === ci) ? val : "";
+                    return val;
+                });
+            });
+        });
+        updateTables(tables);
+    };
+    const setEnvRowCell = (ti: number, r: number, ci: number, val: string) => {
+        const tables = (active.tables || []).map((tb: any[], i: number) => {
+            if (i !== ti || !Array.isArray(tb[r])) return tb;
+            return tb.map((row: any[], ri: number) => {
+                if (ri !== r) return row;
+                const next = [...row];
+                while (next.length <= ci) next.push("");
+                next[ci] = val;
+                return next;
             });
         });
         updateTables(tables);
@@ -806,6 +1137,83 @@ export default () => {
                                 </div>
 
                                 {(active.tables || []).map((tb: any[], ti: number) => (
+                                    isEnvCheckGrid(tb) ? (() => {
+                                        const kind = (String(tb[0][1] || "dev") === "server" ? "server" : "dev") as "server" | "dev";
+                                        const groups = envCheckGroups(type || "md_019", kind);
+                                        const cols = envCheckLeafCols(type || "md_019", kind);
+                                        const title = envCheckTitle(type || "md_019", kind, String(tb[0][2] || ""));
+                                        const dataRows = tb.slice(1);
+                                        const tdBase: CSSProperties = { border: "1px solid #d9d9d9", padding: "4px 6px", fontSize: 12, verticalAlign: "middle" };
+                                        const thCell: CSSProperties = { ...tdBase, background: "#fafafa", color: "#555", fontWeight: 600, textAlign: "center", whiteSpace: "pre-line" };
+                                        const barCell: CSSProperties = { ...tdBase, background: "#f0f5ff", fontWeight: 600, color: "#1d39c4", textAlign: "center" };
+                                        return (
+                                    <div className="pdp-table-block" key={ti} style={{ overflowX: "auto" }}>
+                                        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1100, marginBottom: 8 }}>
+                                            <tbody>
+                                                <tr><td colSpan={cols.length} style={barCell}>{title}</td></tr>
+                                                <tr>
+                                                    {groups.map((g, gi) => (
+                                                        g.leaves.length
+                                                            ? <td key={gi} colSpan={g.leaves.length} style={thCell}>{g.label}</td>
+                                                            : <td key={gi} rowSpan={2} style={thCell}>{g.label}</td>
+                                                    ))}
+                                                </tr>
+                                                <tr>
+                                                    {groups.flatMap((g, gi) => g.leaves.map((lf, li) => <td key={`${gi}-${li}`} style={thCell}>{lf}</td>))}
+                                                </tr>
+                                                {dataRows.length === 0 ? (
+                                                    <tr><td colSpan={cols.length} style={{ ...tdBase, textAlign: "center", color: "#bbb" }}>该产品未查询到「开发~测试」时间线，暂无周记录</td></tr>
+                                                ) : dataRows.map((row: any[], ri: number) => {
+                                                    let checkIdx = -1;
+                                                    return (
+                                                        <tr key={ri}>
+                                                            {cols.map((col, idx) => {
+                                                                if (col.type === "date") {
+                                                                    return <td key={idx} style={{ ...tdBase, textAlign: "center", whiteSpace: "pre-line", minWidth: 92 }}>{String(row[0] || "").replace("- ", "-\n")}</td>;
+                                                                }
+                                                                if (col.type === "problem") {
+                                                                    const ci = checkIdx + 2;
+                                                                    return (
+                                                                        <td key={idx} style={{ ...tdBase, minWidth: 100, textAlign: "center" }}>
+                                                                            <Input.TextArea className="pdp-cell" autoSize={{ minRows: 1, maxRows: 4 }} value={row[ci] ?? ""} disabled={readonly} onChange={(e) => setEnvRowCell(ti, ri + 1, ci, e.target.value)} />
+                                                                        </td>
+                                                                    );
+                                                                }
+                                                                if (col.type === "checker") {
+                                                                    const ci = checkIdx + 3;
+                                                                    const ck = String(row[ci] ?? "");
+                                                                    return (
+                                                                        <td key={idx} style={{ ...tdBase, textAlign: "center", minWidth: 120 }}>
+                                                                            {ck.startsWith("data:image")
+                                                                                ? <img src={ck} alt="检查人" style={{ height: 42, width: "auto", maxWidth: "100%", objectFit: "contain" }} />
+                                                                                : <Input.TextArea className="pdp-cell" autoSize={{ minRows: 1, maxRows: 3 }} value={ck} disabled={readonly} onChange={(e) => setEnvRowCell(ti, ri + 1, ci, e.target.value)} />}
+                                                                        </td>
+                                                                    );
+                                                                }
+                                                                checkIdx += 1;
+                                                                const cj = checkIdx + 1;
+                                                                const mk = String(row[cj] ?? "");
+                                                                return (
+                                                                    <td key={idx} style={{ ...tdBase, textAlign: "center", whiteSpace: "nowrap" }}>
+                                                                        <div style={{ lineHeight: "22px" }}>
+                                                                            <Checkbox checked={mk === "是"} disabled={readonly} onChange={() => setEnvRowCell(ti, ri + 1, cj, mk === "是" ? "" : "是")} style={{ transform: "scale(0.8)" }} />
+                                                                            <span style={{ marginLeft: "2em", fontSize: 13 }}>是</span>
+                                                                        </div>
+                                                                        <div style={{ lineHeight: "22px" }}>
+                                                                            <Checkbox checked={mk === "否"} disabled={readonly} onChange={() => setEnvRowCell(ti, ri + 1, cj, mk === "否" ? "" : "否")} style={{ transform: "scale(0.8)" }} />
+                                                                            <span style={{ marginLeft: "2em", fontSize: 13 }}>否</span>
+                                                                        </div>
+                                                                    </td>
+                                                                );
+                                                            })}
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                        );
+                                    })() : (
                                     <div className="pdp-table-block" key={ti}>
                                         <div className="pdp-table-bar">
                                             <span className="pdp-label">表格 {ti + 1}</span>
@@ -821,11 +1229,13 @@ export default () => {
                                             <tbody>
                                                 {(() => {
                                                     const review = isReviewRecordGrid(tb);
-                                                    const spans = review ? computeGridSpans(tb) : null;
-                                                    const cols = tb.reduce((m: number, row: any[]) => Math.max(m, Array.isArray(row) ? row.length : 0), 0);
+                                                    const crr = isCodeReviewChecklistGrid(tb);
+                                                    const spans = review ? computeGridSpans(tb) : crr ? computeCodeReviewSpans(tb) : null;
+                                                    const cols = Math.max(crr ? 7 : 0, tb.reduce((m: number, row: any[]) => Math.max(m, Array.isArray(row) ? row.length : 0), 0));
+                                                    const merged = review || crr;
                                                     return tb.map((row: any[], r: number) => (
                                                     <tr key={r}>
-                                                        {(review ? Array.from({ length: cols }, (_, ci) => ci) : row.map((_: any, ci: number) => ci)).map((ci: number) => {
+                                                        {(merged ? Array.from({ length: cols }, (_, ci) => ci) : row.map((_: any, ci: number) => ci)).map((ci: number) => {
                                                             const sp = spans?.[r]?.[ci];
                                                             if (sp?.skip) return null;
                                                             const cell = row[ci] ?? "";
@@ -908,6 +1318,7 @@ export default () => {
                                             </tbody>
                                         </table>
                                     </div>
+                                    )
                                 ))}
 
                                 {!readonly && (

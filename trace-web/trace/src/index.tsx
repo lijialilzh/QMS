@@ -95,7 +95,7 @@ import BugDocs from "./pages/bug/BugDocs";
 import PirDocs from "./pages/pir/PirDocs";
 import PirDocDetail from "./pages/pir/PirDocDetail";
 import ModelDocs from "./pages/model_doc/ModelDocs";
-import ModelDocDetail from "./pages/model_doc/ModelDocDetail";
+import ModelDocPage from "./pages/model_doc/ModelDocPage";
 import DataDocs from "./pages/model_doc/DataDocs";
 import DataDocDetail from "./pages/model_doc/DataDocDetail";
 import DataStats from "./pages/data_stats/DataStats";
@@ -259,8 +259,8 @@ const router = createRouter([
             { path: "/pir_docs/edit/:id", element: <PirDocDetail /> },
             { path: "/pir_docs/view/:id", element: <PirDocDetail /> },
             { path: "/model_docs/:type", element: <ModelDocs /> },
-            { path: "/model_docs/:type/edit/:id", element: <ModelDocDetail /> },
-            { path: "/model_docs/:type/view/:id", element: <ModelDocDetail /> },
+            { path: "/model_docs/:type/edit/:id", element: <ModelDocPage /> },
+            { path: "/model_docs/:type/view/:id", element: <ModelDocPage /> },
             { path: "/data_docs/:type", element: <DataDocs /> },
             { path: "/data_docs/:type/edit/:id", element: <DataDocDetail /> },
             { path: "/data_docs/:type/view/:id", element: <DataDocDetail /> },

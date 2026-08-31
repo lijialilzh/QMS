@@ -1,0 +1,91 @@
+# 模型文件训练记录默认内容。详见 docs/function_docs/99_模型文件管理.md。
+
+TRAIN_DOC_TYPES = ("md_012_01", "md_012_02")
+
+_COMMON_HW = "GeForce RTX 2070 × 2"
+_COMMON_SW = "Ubuntu18.04，PyTorch1.4.0，Python3.7等"
+_COMMON_TIME = "2023.1.31-2023.2.28"
+_COMMON_CONCLUSION = "模型已收敛，可以做测试。"
+
+TRAIN_DEFAULTS = {
+    "md_012_01": {
+        "author": "郝增号",
+        "write_date": "2023.02.28",
+        "auditor": "张欢",
+        "model_name": "seg_pulmonary_embolism.pth",
+        "model_func": "肺栓塞分割",
+        "train_set": "肺栓塞分割训练集",
+        "case_count": "5939",
+        "train_time": _COMMON_TIME,
+        "hw_env": _COMMON_HW,
+        "sw_env": _COMMON_SW,
+        "eval_points": [
+            ["数据量", "灵敏度", "特异度"],
+            ["848", "0.70", "0.68"],
+            ["1696", "0.76", "0.74"],
+            ["2544", "0.81", "0.79"],
+            ["3392", "0.85", "0.83"],
+            ["4240", "0.87", "0.85"],
+            ["5088", "0.882352941", "0.878431373"],
+            ["5939", "0.882352941", "0.878431373"],
+        ],
+        "process_points": [
+            ["step", "loss"],
+            ["0", "6.7"],
+            ["50", "2.5"],
+            ["100", "1.0"],
+            ["200", "0.60"],
+            ["300", "0.45"],
+            ["400", "0.35"],
+            ["500", "0.28"],
+            ["600", "0.24"],
+            ["700", "0.20"],
+        ],
+        "eval_img": "",
+        "process_img": "",
+        "conclusion": _COMMON_CONCLUSION,
+        "author_sign": "",
+        "auditor_sign": "",
+    },
+    "md_012_02": {
+        "author": "刘恩佑",
+        "write_date": "2023.02.28",
+        "auditor": "张欢",
+        "model_name": "seg_lung_lobe.pt",
+        "model_func": "肺叶分割",
+        "train_set": "肺叶分割训练集",
+        "case_count": "3552",
+        "train_time": _COMMON_TIME,
+        "hw_env": _COMMON_HW,
+        "sw_env": _COMMON_SW,
+        "eval_points": [
+            ["数据量", "DICE"],
+            ["507", "0.81"],
+            ["1014", "0.87"],
+            ["1521", "0.90"],
+            ["2028", "0.925"],
+            ["2535", "0.939681832"],
+            ["3042", "0.972916256"],
+            ["3552", "0.976896552"],
+        ],
+        "process_points": [
+            ["step", "loss"],
+            ["0", "0.18"],
+            ["250", "0.16"],
+            ["500", "0.13"],
+            ["1000", "0.11"],
+            ["1500", "0.10"],
+            ["2000", "0.09"],
+            ["3000", "0.085"],
+            ["4000", "0.082"],
+            ["5000", "0.08"],
+            ["6000", "0.08"],
+            ["7000", "0.08"],
+        ],
+        "eval_img": "",
+        "process_img": "",
+        "conclusion": _COMMON_CONCLUSION,
+        "author_sign": "",
+        "auditor_sign": "",
+    },
+}
