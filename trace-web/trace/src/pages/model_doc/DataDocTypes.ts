@@ -36,46 +36,40 @@ export const DATA_DOC_TYPES: Record<string, { title: string; keywords: string[] 
     dd_eq: { title: "数据设备清单", keywords: ["设备清单"] },
 };
 
-/** 数据文件左侧菜单：按 DD 编号；005/008/009/013 与样例文件夹一致做二级分组。名称不改。 */
-export type DataDocMenuNode =
-    | { type: string }
-    | { group: string; key: string; types: string[] };
+/** 数据文件左侧菜单：按工作阶段做二级分组。名称不改。 */
+export type DataDocMenuNode = { group: string; key: string; types: string[] };
 
 export const DATA_DOC_MENU: DataDocMenuNode[] = [
-    { type: "dd_001" },
-    { type: "md_002_01" },
-    { type: "md_002_02" },
-    { type: "md_003" },
-    { type: "dd_002" },
-    { type: "dd_003" },
-    { type: "dd_004" },
-    { group: "人员培训记录", key: "data_dd_005", types: ["dd_005_01", "dd_005_02"] },
-    { type: "dd_006" },
-    { type: "dd_007" },
-    { group: "数据试标注记录", key: "data_dd_008", types: ["dd_008_01", "dd_008_02"] },
-    { group: "数据标注记录", key: "data_dd_009", types: ["dd_009_01", "dd_009_02", "dd_009_03"] },
-    { type: "dd_010" },
-    { type: "dd_011" },
-    { type: "dd_012" },
+    { group: "需求与规则", key: "data_req", types: ["dd_001", "md_002_01", "md_002_02", "md_003"] },
+    { group: "采集与整理", key: "data_collect", types: ["dd_002", "dd_003", "dd_004"] },
     {
-        group: "人员考核评价记录",
-        key: "data_dd_013",
-        types: ["dd_013_01", "dd_013_02", "dd_013_03", "dd_013_04", "dd_013_05", "dd_013_06", "dd_013_07"],
+        group: "培训与考核",
+        key: "data_train",
+        types: [
+            "dd_005_01", "dd_005_02",
+            "dd_006", "dd_007",
+            "dd_013_01", "dd_013_02", "dd_013_03", "dd_013_04",
+            "dd_013_05", "dd_013_06", "dd_013_07",
+        ],
     },
-    { type: "dd_014" },
-    { type: "dd_015_01" },
-    { type: "dd_015_02" },
-    { type: "dd_015_03" },
-    { type: "dd_016" },
-    { type: "dd_016_qr" },
-    { type: "dd_017" },
-    { type: "dd_017_qr" },
-    { type: "dd_eq" },
+    {
+        group: "标注与入库",
+        key: "data_anno",
+        types: [
+            "dd_008_01", "dd_008_02",
+            "dd_009_01", "dd_009_02", "dd_009_03",
+            "dd_010", "dd_011", "dd_012",
+        ],
+    },
+    { group: "统计与维护", key: "data_stats_doc", types: ["dd_014", "dd_015_01", "dd_015_02", "dd_015_03"] },
+    {
+        group: "设备与环境维护",
+        key: "data_env",
+        types: ["dd_eq", "dd_016", "dd_017"],
+    },
 ];
 
-export const DATA_DOC_TYPE_ORDER = DATA_DOC_MENU.flatMap((item) =>
-    "types" in item ? item.types : [item.type]
-);
+export const DATA_DOC_TYPE_ORDER = DATA_DOC_MENU.flatMap((item) => item.types);
 
 export const DATA_STATS_IMPORT_TYPES = new Set(["dd_015_01", "dd_015_02", "dd_015_03"]);
 

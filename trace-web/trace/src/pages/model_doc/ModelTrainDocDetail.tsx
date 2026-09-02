@@ -186,7 +186,7 @@ export default () => {
     const c = data.content || {};
     const evalImg = useMemo(() => buildEvalChart(isPe, c.eval_points || []), [isPe, c.eval_points]);
     const processImg = useMemo(() => buildProcessChart(isPe, c.process_points || []), [isPe, c.process_points]);
-    const autoCount = lastEvalX(c.eval_points || []);
+    const autoCount = String(c.case_count || "").trim() || lastEvalX(c.eval_points || []);
 
     const packed = () => ({
         ...data.content,

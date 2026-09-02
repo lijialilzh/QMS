@@ -8,6 +8,7 @@ import base64
 import copy
 import logging
 import re
+from datetime import date, timedelta
 from io import BytesIO
 from typing import List
 from sqlalchemy import delete, func, select
@@ -38,6 +39,57 @@ from .data_doc_templates import DOC_META, DEFAULT_CONTENTS, REVIEW_TABLES
 logger = logging.getLogger(__name__)
 
 COVER_DEPT = "数据部"
+ENV_DOC_TYPES = ("dd_016", "dd_017")
+ENV_CHECK_GROUPS = {
+    ("dd_016", "server"): [
+        ("日期", []),
+        ("硬件环境", ["CPU", "GPU", "内存", "网卡"]),
+        ("软件环境", ["操作系统\n运行是否正常", "数据库\n运行是否正常", "应用服务\n运行是否正常"]),
+        ("开发环境\n是否更新升级", []),
+        ("服务器\n是否杀毒", []),
+        ("网络环境\n是否正常", []),
+        ("开发工具", ["是否正常运行", "是否更新升级"]),
+        ("服务器\n是否备份", []),
+        ("服务器\n日志是否错误", []),
+        ("出现的问题及处理方式", []),
+        ("检查人", []),
+    ],
+    ("dd_016", "dev"): [
+        ("日期", []),
+        ("硬件环境", ["CPU", "GPU", "内存", "网卡"]),
+        ("软件环境", ["操作系统\n运行是否正常", "浏览器\n运行是否正常"]),
+        ("开发环境\n是否更新升级", []),
+        ("开发机\n是否杀毒", []),
+        ("网络环境\n是否正常", []),
+        ("开发工具", ["是否正常运行", "是否更新升级"]),
+        ("出现的问题及处理方式", []),
+        ("检查人", []),
+    ],
+    ("dd_017", "server"): [
+        ("日期", []),
+        ("硬件环境", ["CPU", "GPU", "内存", "网卡"]),
+        ("软件环境", ["操作系统\n运行是否正常", "数据库\n运行是否正常", "应用服务\n运行是否正常"]),
+        ("标注环境\n是否更新升级", []),
+        ("服务器\n是否杀毒", []),
+        ("网络环境\n是否正常", []),
+        ("标注工具", ["是否正常运行", "是否更新升级"]),
+        ("服务器\n是否备份", []),
+        ("服务器\n日志是否错误", []),
+        ("出现的问题及处理方式", []),
+        ("检查人", []),
+    ],
+    ("dd_017", "dev"): [
+        ("日期", []),
+        ("硬件环境", ["CPU", "GPU", "内存", "网卡"]),
+        ("软件环境", ["操作系统\n运行是否正常", "浏览器\n运行是否正常"]),
+        ("标注环境\n是否更新升级", []),
+        ("标注机\n是否杀毒", []),
+        ("网络环境\n是否正常", []),
+        ("标注工具", ["是否正常运行", "是否更新升级"]),
+        ("出现的问题及处理方式", []),
+        ("检查人", []),
+    ],
+}
 
 
 def doc_title(doc_type):
@@ -88,6 +140,8 @@ class Server(object):
         content = copy.deepcopy(raw) if raw else _empty_template(doc_type)
         self.__drop_product_info(content)
         self.__ensure_review_annex(content, doc_type)
+        if doc_type in ENV_DOC_TYPES:
+            self.__complete_env_maint_chapter(content, doc_type)
         return content
 
     def __to_obj(self, row: DataDoc, product: Product = None):
@@ -165,6 +219,8 @@ class Server(object):
         out = {"sections": [self.__normalize_node(s) for s in content["sections"]]}
         self.__drop_product_info(out)
         self.__ensure_review_annex(out, doc_type)
+        if doc_type in ENV_DOC_TYPES:
+            self.__complete_env_maint_chapter(out, doc_type)
         return out
 
     @classmethod
@@ -333,6 +389,14 @@ class Server(object):
         info = self.__collect_autofill(prod_id, product, obj.version, obj.doc_type)
         for node in sections:
             self.__fill_node(node, info)
+        if obj.doc_type in ENV_DOC_TYPES:
+            def walk(ns):
+                for n in ns or []:
+                    if isinstance(n, dict):
+                        self.__fill_env_maint_node(n, info)
+                        walk(n.get("children") or [])
+            walk(sections)
+            self.__rebuild_env_checks(content, info)
         self.__fill_cover_meta(content, obj.version)
         key = obj.doc_type or ""
         serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, key))
@@ -380,14 +444,46 @@ class Server(object):
                 if pred(str(m.role or "")):
                     return (m.name or "").strip()
             return ""
+        def member_names(pred):
+            return [(m.name or "").strip() for m in members if (m.name or "").strip() and pred(str(m.role or ""))]
         modeler = find_member(lambda r: "模型" in r)
         algo = find_member(lambda r: "算法" in r)
         approver = find_member(lambda r: "负责人" in r)
+
+        env_weeks = []
+        env_assets = None
+        env_checker = env_title = ""
+        if doc_type in ENV_DOC_TYPES:
+            env_title = "开发环境维护记录" if doc_type == "dd_016" else "标注环境维护记录"
+            usage_kw = "标注" if doc_type == "dd_017" else "开发"
+            dev_ds, test_ds = [], []
+            for r in date_rows:
+                y, m, d = to_int(r.year), to_int(r.month), to_int(r.day) or 1
+                try:
+                    dt = date(y, m, d)
+                except Exception:
+                    continue
+                vals = cell_map.get(r.id, [])
+                if any(("产品开发" in str(v)) and ("计划" not in str(v)) for v in vals):
+                    dev_ds.append(dt)
+                if any("测试" in str(v) for v in vals):
+                    test_ds.append(dt)
+            if dev_ds and test_ds:
+                env_weeks = self.__week_ranges_from_dates([min(dev_ds), max(test_ds)])
+            eq_doc = db.session.execute(
+                select(DataDoc).where(DataDoc.product_id == prod_id, DataDoc.doc_type == "dd_eq").order_by(DataDoc.id.desc())
+            ).scalars().first()
+            if eq_doc:
+                env_assets = self.__parse_eq_codes(eq_doc.content if isinstance(eq_doc.content, dict) else {}, usage_kw)
+            checkers = member_names(lambda r: r == "数据部负责人") or member_names(lambda r: r == "数据负责人") or member_names(lambda r: "数据" in r)
+            env_checker = serv_review_util._sign_by_name(checkers[0] if checkers else "") or (checkers[0] if checkers else "")
 
         return {
             "prod_name": prod_name, "full_version": full_version, "product_code": product_code,
             "scope": scope, "file_date": file_date, "version": doc_version,
             "reviser": modeler or algo, "approver": approver,
+            "doc_type": doc_type, "env_weeks": env_weeks, "env_assets": env_assets,
+            "env_checker": env_checker, "env_title": env_title,
         }
 
     @staticmethod
@@ -444,6 +540,298 @@ class Server(object):
         if exclude_id:
             sql = sql.where(DataDoc.id != exclude_id)
         return (db.session.execute(sql).scalar() or 0) > 0
+
+    @staticmethod
+    def __is_env_check_grid(tb):
+        return isinstance(tb, list) and tb and isinstance(tb[0], list) and str(tb[0][0] or "").strip() == "env_check"
+
+    @staticmethod
+    def __is_asset_grid(tb):
+        if not (isinstance(tb, list) and tb and isinstance(tb[0], list) and tb[0]):
+            return False
+        hdr = [str(c or "") for c in tb[0]]
+        return str(hdr[0] or "").strip() == "资产编码" and any("设备信息" in h for h in hdr)
+
+    @staticmethod
+    def __env_check_leaves(doc_type, kind):
+        cols = []
+        for gl, leaves in ENV_CHECK_GROUPS.get((doc_type, kind), ENV_CHECK_GROUPS[("dd_016", "dev")]):
+            if leaves:
+                for lf in leaves:
+                    cols.append({"label": lf, "type": "check"})
+            else:
+                t = "date" if gl == "日期" else "problem" if gl.startswith("出现的问题") else "checker" if gl == "检查人" else "check"
+                cols.append({"label": gl, "type": t})
+        return cols
+
+    @classmethod
+    def __env_check_defaults(cls, doc_type, kind):
+        out = []
+        for c in cls.__env_check_leaves(doc_type, kind):
+            if c["type"] != "check":
+                continue
+            lb = c["label"]
+            out.append("否" if ("更新升级" in lb or "日志是否错误" in lb) else "是")
+        return out
+
+    def __complete_env_maint_chapter(self, content, doc_type):
+        if doc_type not in ENV_DOC_TYPES:
+            return
+        want = "开发环境维护记录" if doc_type == "dd_016" else "标注环境维护记录"
+        after = "开发环境定期检查" if doc_type == "dd_016" else "标注环境定期检查"
+        old = "开发环境定期验证" if doc_type == "dd_016" else "标注环境定期验证"
+        sections = (content or {}).get("sections")
+        if not isinstance(sections, list):
+            return
+
+        def rename(ns):
+            for n in ns or []:
+                if not isinstance(n, dict):
+                    continue
+                if self.__strip_num(n.get("title")) == old:
+                    n["title"] = after
+                rename(n.get("children") or [])
+
+        rename(sections)
+
+        def find_title(ns, name):
+            for n in ns or []:
+                if not isinstance(n, dict):
+                    continue
+                if self.__strip_num(n.get("title")) == name:
+                    return n
+                hit = find_title(n.get("children") or [], name)
+                if hit:
+                    return hit
+            return None
+
+        if find_title(sections, want):
+            inspect = find_title(sections, after)
+            self.__ensure_asset_header(inspect)
+            return
+        new_node = {"title": want, "body": "", "tables": [], "children": []}
+        idx = next((i for i, n in enumerate(sections) if isinstance(n, dict) and self.__strip_num(n.get("title")) == after), -1)
+        if idx >= 0:
+            sections.insert(idx + 1, new_node)
+        else:
+            sections.append(new_node)
+        self.__ensure_asset_header(find_title(sections, after))
+
+    @staticmethod
+    def __ensure_asset_header(node):
+        if not isinstance(node, dict):
+            return
+        tables = node.get("tables") or []
+        for i, tb in enumerate(tables):
+            if not (isinstance(tb, list) and tb and isinstance(tb[0], list)):
+                continue
+            hdr = [str(c or "") for c in tb[0]]
+            if str(hdr[0] or "").strip() == "资产编码":
+                continue
+            if len(hdr) >= 2:
+                tables[i] = [["资产编码", "设备信息", "产品名称", "完整版本"]] + tb
+        node["tables"] = tables
+
+    @staticmethod
+    def __week_ranges_from_dates(dates):
+        if not dates:
+            return []
+        start_d, end_d = min(dates), max(dates)
+        if start_d > end_d:
+            return []
+
+        def fmt(d):
+            return f"{d.year}.{d.month:02d}.{d.day:02d}"
+
+        ranges = []
+        cur = start_d - timedelta(days=start_d.weekday())
+        while cur <= end_d:
+            monday = cur
+            friday = monday + timedelta(days=4)
+            ws = max(monday, start_d)
+            we = min(friday, end_d)
+            if ws.weekday() >= 5:
+                cur = monday + timedelta(days=7)
+                continue
+            if we.weekday() >= 5:
+                we = friday
+            if ws <= we:
+                ranges.append(f"{fmt(ws)}- {fmt(we)}")
+            cur = monday + timedelta(days=7)
+        return ranges
+
+    def __parse_eq_table(self, tb, usage_contains=""):
+        out, seen = [], set()
+        if not isinstance(tb, list):
+            return out
+        hi = brand_i = code_i = name_i = usage_i = -1
+        for i, row in enumerate(tb):
+            if not isinstance(row, list):
+                continue
+            cells = [str(c or "").strip() for c in row]
+            if any(c == "品牌" for c in cells) and any("资产编码" in c for c in cells):
+                hi = i
+                brand_i = next(j for j, c in enumerate(cells) if c == "品牌")
+                code_i = next(j for j, c in enumerate(cells) if "资产编码" in c)
+                name_i = next((j for j, c in enumerate(cells) if c == "名称"), -1)
+                usage_i = next((j for j, c in enumerate(cells) if c == "用途"), -1)
+                break
+        if hi < 0:
+            return out
+        for row in tb[hi + 1:]:
+            if not isinstance(row, list):
+                continue
+            brand = str(row[brand_i] if brand_i < len(row) else "").strip()
+            code = str(row[code_i] if code_i < len(row) else "").strip()
+            name = str(row[name_i] if 0 <= name_i < len(row) else "").strip()
+            usage = str(row[usage_i] if 0 <= usage_i < len(row) else "").strip()
+            if name == "显示器":
+                continue
+            if usage_contains and usage_contains not in usage:
+                continue
+            if brand in ("组装机", "Apple") and code and code not in seen:
+                seen.add(code)
+                out.append((code, usage))
+        return out
+
+    def __parse_eq_codes(self, content, usage_contains=""):
+        if isinstance(content, dict) and isinstance(content.get("rows"), list):
+            return self.__parse_eq_table(content.get("rows"), usage_contains)
+        out, seen = [], set()
+        for code, usage in self.__parse_eq_table_walk((content or {}).get("sections") or [], usage_contains):
+            if code not in seen:
+                seen.add(code)
+                out.append((code, usage))
+        return out
+
+    def __parse_eq_table_walk(self, ns, usage_contains=""):
+        out = []
+        for n in ns or []:
+            if not isinstance(n, dict):
+                continue
+            for tb in n.get("tables") or []:
+                out.extend(self.__parse_eq_table(tb, usage_contains))
+            out.extend(self.__parse_eq_table_walk(n.get("children") or [], usage_contains))
+        return out
+
+    def __fill_env_maint_node(self, node, info):
+        eq_assets = info.get("env_assets")
+        prod_name = info.get("prod_name") or ""
+        full_version = info.get("full_version") or ""
+        tables = node.get("tables") or []
+        for ti, tb in enumerate(tables):
+            if not isinstance(tb, list) or not self.__is_asset_grid(tb):
+                continue
+            old = {}
+            for row in tb[1:]:
+                if isinstance(row, list) and row:
+                    code = str(row[0] or "").strip()
+                    if code:
+                        old[code] = str(row[1] if len(row) > 1 else "")
+            hdr = [str(c or "") for c in tb[0]]
+            hdr = hdr[:4] if len(hdr) >= 4 else ["资产编码", "设备信息", "产品名称", "完整版本"]
+            if eq_assets is not None:
+                body = [[code, old.get(code, ""), prod_name, full_version] for code, _u in eq_assets]
+                tables[ti] = [hdr] + body
+            else:
+                new_tb = [hdr]
+                for row in tb[1:]:
+                    if not isinstance(row, list):
+                        continue
+                    next_row = list(row)
+                    while len(next_row) < 4:
+                        next_row.append("")
+                    next_row[2] = prod_name
+                    next_row[3] = full_version
+                    new_tb.append(next_row)
+                tables[ti] = new_tb
+        node["tables"] = tables
+
+    def __collect_asset_codes(self, content):
+        out, seen = [], set()
+
+        def walk(ns):
+            for n in ns or []:
+                if not isinstance(n, dict):
+                    continue
+                for tb in n.get("tables") or []:
+                    if not self.__is_asset_grid(tb):
+                        continue
+                    for row in tb[1:]:
+                        if not isinstance(row, list) or not row:
+                            continue
+                        code = str(row[0] or "").strip()
+                        if code and code not in seen:
+                            seen.add(code)
+                            out.append((code, ""))
+                walk(n.get("children") or [])
+
+        walk((content or {}).get("sections") or [])
+        return out
+
+    def __rebuild_env_checks(self, content, info):
+        want = info.get("env_title") or ""
+        doc_type = info.get("doc_type") or "dd_016"
+        weeks = info.get("env_weeks") or []
+        checker = info.get("env_checker") or ""
+        assets = info.get("env_assets")
+        if assets is None:
+            assets = self.__collect_asset_codes(content)
+
+        def find_title(ns, name):
+            for n in ns or []:
+                if not isinstance(n, dict):
+                    continue
+                if self.__strip_num(n.get("title")) == name:
+                    return n
+                hit = find_title(n.get("children") or [], name)
+                if hit:
+                    return hit
+            return None
+
+        node = find_title((content or {}).get("sections") or [], want)
+        if not node:
+            return
+        old = {}
+        for tb in node.get("tables") or []:
+            if not self.__is_env_check_grid(tb):
+                continue
+            code = str(tb[0][2] if len(tb[0]) > 2 else "")
+            by_date = {}
+            for row in tb[1:]:
+                if isinstance(row, list) and row:
+                    by_date[str(row[0] or "")] = [str(c or "") for c in row]
+            old[code] = by_date
+        tables = []
+        for code, usage in assets or []:
+            kind = "server" if "共用" in str(usage or "") else "dev"
+            defaults = self.__env_check_defaults(doc_type, kind)
+            prev = old.get(code) or {}
+            rows = [["env_check", kind, code]]
+            for w in weeks:
+                p = prev.get(w) or []
+                marks = []
+                for i, d in enumerate(defaults):
+                    v = str(p[i + 1] if i + 1 < len(p) else "").strip()
+                    marks.append(v if v in ("是", "否") else d)
+                problem = str(p[len(defaults) + 1] if len(p) > len(defaults) + 1 else "").strip() or "无"
+                rows.append([w] + marks + [problem, checker])
+            tables.append(rows)
+        node["tables"] = tables
+
+    def __apply_env_eq_assets(self, obj: DataDocObj, product: Product = None):
+        if obj.doc_type not in ENV_DOC_TYPES or not obj.product_id:
+            return
+        info = self.__collect_autofill(obj.product_id, product, obj.version, obj.doc_type)
+
+        def walk(ns):
+            for n in ns or []:
+                if isinstance(n, dict):
+                    self.__fill_env_maint_node(n, info)
+                    walk(n.get("children") or [])
+
+        walk((obj.content or {}).get("sections") or [])
+        self.__rebuild_env_checks(obj.content, info)
 
     async def add_data_doc(self, form: DataDocForm):
         try:
@@ -543,7 +931,9 @@ class Server(object):
         if not row:
             return Resp.resp_err(msg=ts("msg_obj_null"))
         doc, product = row
-        return Resp.resp_ok(data=self.__to_obj(doc, product))
+        obj = self.__to_obj(doc, product)
+        self.__apply_env_eq_assets(obj, product)
+        return Resp.resp_ok(data=obj)
 
     def parse_stats_excel(self, raw: bytes):
         """解析统计脚本输出的 xlsx：每个工作表一章，供编辑页展示。不落库。"""
@@ -737,8 +1127,76 @@ class Server(object):
                 docx_util.fonted_txt(para, line, font_size=10.5, bold=bold)
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER if align == WD_ALIGN_PARAGRAPH.CENTER else WD_CELL_VERTICAL_ALIGNMENT.TOP
 
+        def set_yesno(cell, mark):
+            cell.text = ""
+            yes = str(mark or "").strip() == "是"
+            no = str(mark or "").strip() == "否"
+            p1 = cell.paragraphs[0]
+            p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            r1 = p1.add_run(("\u2611\ufe0e" if yes else "\u2610") + " 是")
+            r1.font.size = Pt(9)
+            p2 = cell.add_paragraph()
+            p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            r2 = p2.add_run(("\u2610" if not no else "\u2611\ufe0e") + " 否")
+            r2.font.size = Pt(9)
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
+        def add_env_check_grid(grid):
+            kind = str(grid[0][1] if len(grid[0]) > 1 else "dev") or "dev"
+            code = str(grid[0][2] if len(grid[0]) > 2 else "")
+            doc_t = obj.doc_type or "dd_016"
+            leaves = self.__env_check_leaves(doc_t, kind)
+            groups = ENV_CHECK_GROUPS.get((doc_t, kind), ENV_CHECK_GROUPS[("dd_016", "dev")])
+            ncols = len(leaves)
+            if doc_t == "dd_017":
+                title_txt = "标注共用-%s检查表（%s）" % ("服务器" if kind == "server" else "标注机", code)
+            else:
+                title_txt = "开发共用-%s检查表（%s）" % ("服务器" if kind == "server" else "开发机", code)
+            tb = document.add_table(rows=0, cols=ncols)
+            tb.style = "Table Grid"
+            tb.alignment = WD_TABLE_ALIGNMENT.CENTER
+            trow = tb.add_row().cells
+            tmerge = trow[0]
+            for i in range(1, ncols):
+                tmerge = tmerge.merge(trow[i])
+            set_cell(tmerge, title_txt, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
+            grow = tb.add_row().cells
+            lrow = tb.add_row().cells
+            ci = 0
+            for gl, gleaves in groups:
+                if gleaves:
+                    gm = grow[ci]
+                    for k in range(1, len(gleaves)):
+                        gm = gm.merge(grow[ci + k])
+                    set_cell(gm, gl, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
+                    for k, lf in enumerate(gleaves):
+                        set_cell(lrow[ci + k], lf, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
+                    ci += len(gleaves)
+                else:
+                    vm = grow[ci].merge(lrow[ci])
+                    set_cell(vm, gl, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
+                    ci += 1
+            for row in grid[1:]:
+                cells = tb.add_row().cells
+                j = 0
+                for idx, col in enumerate(leaves):
+                    t = col["type"]
+                    if t == "date":
+                        set_cell(cells[idx], str(row[0] if row else "").replace("- ", "-\n"), align=WD_ALIGN_PARAGRAPH.CENTER)
+                    elif t == "check":
+                        set_yesno(cells[idx], row[j + 1] if j + 1 < len(row) else "")
+                        j += 1
+                    elif t == "problem":
+                        set_cell(cells[idx], row[j + 1] if j + 1 < len(row) else "", align=WD_ALIGN_PARAGRAPH.CENTER)
+                    elif t == "checker":
+                        set_cell(cells[idx], row[j + 2] if j + 2 < len(row) else "", align=WD_ALIGN_PARAGRAPH.CENTER)
+            document.add_paragraph()
+
         def add_grid(grid):
             grid = [row for row in (grid or []) if isinstance(row, list)]
+            if self.__is_env_check_grid(grid):
+                add_env_check_grid(grid)
+                return
             cols = max((len(row) for row in grid), default=0)
             if cols <= 0:
                 return

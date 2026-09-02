@@ -22,6 +22,7 @@ from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT, WD_R
 
 from ..model.product import Product
 from ..model.model_doc import ModelDoc
+from ..model.data_doc import DataDoc
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..model.project_member import ProjectMember
 from ..model.srs_doc import SrsDoc
@@ -41,12 +42,23 @@ from .model_doc_templates import DOC_META as WORD_META, DEFAULT_CONTENTS as WORD
 from .model_doc_xlsx_templates import XLSX_META, XLSX_CONTENTS
 from .model_doc_build_templates import BUILD_DOC_TYPES, BUILD_DEFAULTS
 from .model_doc_train_templates import TRAIN_DOC_TYPES, TRAIN_DEFAULTS
+from .model_doc_test_templates import TEST_DOC_TYPES, TEST_DEFAULTS
+from .model_doc_pkg_templates import PKG_DOC_TYPES, PKG_REQ_TYPES, PKG_REC_TYPES, PKG_SUBMIT_TYPES, PKG_DEFAULTS
 
 DOC_META = {**WORD_META, **XLSX_META}
 DEFAULT_CONTENTS = {**WORD_CONTENTS, **XLSX_CONTENTS}
 REVIEW_TABLES = WORD_REVIEW_TABLES
 EQ_DOC_TYPES = ("md_deq", "md_teq", "md_eq")
 CRR_DOC_TYPES = ("md_008_01", "md_008_02")
+BUILD_DATASET_NAME = {
+    "md_009_01": "肺栓塞分割训练集",
+    "md_009_02": "肺叶分割训练集",
+    "md_010_01": "肺栓塞分割调优集",
+    "md_010_02": "肺叶分割调优集",
+    "md_011_01": "肺栓塞分诊测试集",
+    "md_011_02": "肺叶分割测试集",
+}
+TRAIN_BUILD_TYPE = {"md_012_01": "md_009_01", "md_012_02": "md_009_02"}
 _CRR_CATEGORIES = ("结构", "文档", "变量", "算法操作", "循环和分支")
 _CRR_CONCLUSIONS = ("通过", "有条件通过", "不通过")
 _MD008_URL = {
@@ -217,6 +229,10 @@ class Server(object):
             return self.__build_default_content(doc_type)
         if doc_type in TRAIN_DOC_TYPES:
             return self.__train_default_content(doc_type)
+        if doc_type in TEST_DOC_TYPES:
+            return self.__test_default_content(doc_type)
+        if doc_type in PKG_DOC_TYPES:
+            return self.__pkg_default_content(doc_type)
         raw = DEFAULT_CONTENTS.get(doc_type)
         content = copy.deepcopy(raw) if raw else _empty_template(doc_type)
         self.__drop_product_info(content)
@@ -231,7 +247,7 @@ class Server(object):
         obj = ModelDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content, row.doc_type)
         key = row.doc_type or ""
-        if key not in EQ_DOC_TYPES and key not in CRR_DOC_TYPES and key not in BUILD_DOC_TYPES and key not in TRAIN_DOC_TYPES:
+        if key not in EQ_DOC_TYPES and key not in CRR_DOC_TYPES and key not in BUILD_DOC_TYPES and key not in TRAIN_DOC_TYPES and key not in TEST_DOC_TYPES and key not in PKG_DOC_TYPES:
             self.__fill_cover_meta(obj.content, obj.version)
             serv_review_util.fill_cover_dates(
                 obj.content, serv_review_util.cover_date(row.product_id, key) if row.product_id else ""
@@ -759,6 +775,408 @@ class Server(object):
             return self.__train_fill_count(extracted)
         return self.__train_fill_count(base)
 
+    def __test_default_content(self, doc_type):
+        raw = TEST_DEFAULTS.get(doc_type) or TEST_DEFAULTS.get("md_013_01") or {}
+        return copy.deepcopy(raw)
+
+    def __test_ncols(self, doc_type):
+        return 6 if doc_type == "md_013_01" else 5
+
+    def __test_header(self, doc_type):
+        if doc_type == "md_013_01":
+            return ["因素", "类别", "阳性数据量", "阴性数据量", "灵敏度(95%CI区间)", "特异度(95%CI区间)"]
+        return ["因素", "类别", "样本量", "dice均值", "dice方差"]
+
+    def __test_qty_cols(self, doc_type):
+        return (2, 3) if doc_type == "md_013_01" else (2,)
+
+    def __test_pad_row(self, row, n):
+        cells = [str(c if c is not None else "").replace("\xa0", "").strip() for c in (row or [])]
+        while len(cells) < n:
+            cells.append("")
+        return cells[:n]
+
+    def __test_fmt_dice(self, v):
+        s = str(v if v is not None else "").strip()
+        if not s:
+            return ""
+        try:
+            return f"{float(s):.4f}"
+        except Exception:
+            return s
+
+    def __test_fill_total(self, rows, doc_type):
+        n = self.__test_ncols(doc_type)
+        header = self.__test_header(doc_type)
+        qty_cols = self.__test_qty_cols(doc_type)
+        out = [self.__test_pad_row(r, n) for r in (rows or []) if isinstance(r, list)]
+        if not out:
+            out = [header[:]]
+        if str(out[0][0]).strip() != "因素":
+            out = [header[:]] + out
+        if doc_type == "md_013_02":
+            for r in out[1:]:
+                for ci in (3, 4):
+                    if ci < len(r):
+                        r[ci] = self.__test_fmt_dice(r[ci])
+        total_at = next((i for i, r in enumerate(out) if str(r[0]).strip() == "总计"), -1)
+        end = total_at if total_at >= 0 else len(out)
+        start = 1
+        for i in range(end - 1, 0, -1):
+            a = str(out[i][0]).strip()
+            if a and a != "总计":
+                start = i
+                break
+        sums = {ci: 0.0 for ci in qty_cols}
+        for i in range(start, end):
+            for ci in qty_cols:
+                sums[ci] += self.__build_parse_qty(out[i][ci] if ci < len(out[i]) else "")
+        old = out[total_at] if total_at >= 0 else [""] * n
+        total = ["总计"] + [""] * (n - 1)
+        for ci in range(1, n):
+            if ci in qty_cols:
+                q = sums[ci]
+                total[ci] = str(int(round(q))) if abs(q - round(q)) < 1e-9 else str(q)
+            else:
+                total[ci] = old[ci] if ci < len(old) else ""
+                if doc_type == "md_013_02" and ci in (3, 4):
+                    total[ci] = self.__test_fmt_dice(total[ci])
+        if total_at >= 0:
+            out[total_at] = total
+        else:
+            out.append(total)
+        return out
+
+    def __extract_test_from_grid(self, tb, doc_type):
+        if not isinstance(tb, list):
+            return None
+        n = self.__test_ncols(doc_type)
+        out = self.__test_default_content(doc_type)
+        out["result_rows"] = [self.__test_header(doc_type)]
+        found = False
+        in_result = False
+        for row in tb:
+            if not isinstance(row, list):
+                continue
+            cells = self.__test_pad_row(row, max(n, 6))
+            a = cells[0]
+            if a == "编写人":
+                found = True
+                out["author"] = cells[1]
+                if "编写日期" in cells:
+                    i = cells.index("编写日期")
+                    out["write_date"] = cells[i + 1] if i + 1 < len(cells) else ""
+                if "审核人" in cells:
+                    i = cells.index("审核人")
+                    out["auditor"] = cells[i + 1] if i + 1 < len(cells) else ""
+            elif a == "测试模型名称":
+                found = True
+                out["model_name"] = cells[1]
+            elif a == "测试集":
+                out["test_set"] = cells[1]
+            elif a == "测试方法":
+                out["method"] = cells[1]
+            elif a == "测试时间":
+                out["test_time"] = cells[1]
+            elif a == "硬件环境":
+                out["hw_env"] = cells[1]
+            elif a == "软件环境":
+                out["sw_env"] = cells[1]
+            elif a == "测试结果":
+                in_result = True
+            elif a == "因素" and "类别" in "".join(cells):
+                in_result = True
+            elif a.startswith("结论"):
+                out["conclusion"] = cells[1] or (cells[2] if len(cells) > 2 else "")
+                in_result = False
+            elif "编写人" in a and "签字" in a:
+                out["author_sign"] = cells[1]
+                if any("审核人" in x for x in cells):
+                    for i, x in enumerate(cells):
+                        if "审核人" in x and i + 1 < len(cells):
+                            out["auditor_sign"] = cells[i + 1]
+                            break
+                in_result = False
+            elif in_result and any(cells[:n]):
+                out["result_rows"].append(cells[:n])
+        return out if found else None
+
+    def __normalize_test_content(self, content, doc_type):
+        base = self.__test_default_content(doc_type)
+        n = self.__test_ncols(doc_type)
+        header = self.__test_header(doc_type)
+        if not isinstance(content, dict):
+            base["result_rows"] = self.__test_fill_total(base.get("result_rows") or [], doc_type)
+            return base
+        if isinstance(content.get("result_rows"), list) and content.get("result_rows"):
+            for key in base:
+                if content.get(key) is not None:
+                    base[key] = content.get(key)
+            rows = [self.__test_pad_row(r, n) for r in (base.get("result_rows") or []) if isinstance(r, list)]
+            if not rows or str(rows[0][0]).strip() != "因素":
+                rows = [header[:]] + rows
+            has_total = any(str(r[0]).strip() == "总计" for r in rows)
+            if not has_total:
+                base["result_rows"] = self.__test_default_content(doc_type)["result_rows"]
+            else:
+                base["result_rows"] = rows
+            base["result_rows"] = self.__test_fill_total(base.get("result_rows") or [], doc_type)
+            return base
+        extracted = None
+
+        def walk(ns):
+            nonlocal extracted
+            for n0 in ns or []:
+                if extracted or not isinstance(n0, dict):
+                    continue
+                for tb in n0.get("tables") or []:
+                    extracted = self.__extract_test_from_grid(tb, doc_type)
+                    if extracted:
+                        return
+                walk(n0.get("children") or [])
+
+        walk(content.get("sections") or [])
+        if extracted:
+            for k in ("author", "write_date", "auditor", "model_name", "test_set", "method", "test_time", "hw_env", "sw_env", "conclusion"):
+                extracted[k] = extracted.get(k) or base[k]
+            has_total = any(r and str(r[0]).strip() == "总计" for r in extracted.get("result_rows") or [])
+            if not has_total:
+                extracted["result_rows"] = base["result_rows"]
+            extracted["result_rows"] = self.__test_fill_total(extracted.get("result_rows") or [], doc_type)
+            return extracted
+        base["result_rows"] = self.__test_fill_total(base.get("result_rows") or [], doc_type)
+        return base
+
+    def __pkg_default_content(self, doc_type):
+        raw = PKG_DEFAULTS.get(doc_type) or PKG_DEFAULTS.get("md_015_01") or {}
+        return copy.deepcopy(raw)
+
+    def __pkg_is_flat(self, content):
+        if not isinstance(content, dict):
+            return False
+        keys = ("model_func", "param_url", "code_url", "pack_code_url", "consistency_url",
+                "consistency_data_url", "consistency_result_url", "conclusion",
+                "submit_model", "test_conclusion", "author")
+        return any(content.get(k) is not None for k in keys)
+
+    def __extract_pkg_from_grid(self, tb, doc_type):
+        if not isinstance(tb, list):
+            return None
+        out = self.__pkg_default_content(doc_type)
+        found = False
+        is_rec = doc_type in PKG_REC_TYPES
+        is_submit = doc_type in PKG_SUBMIT_TYPES
+        for row in tb:
+            if not isinstance(row, list):
+                continue
+            cells = [str(c if c is not None else "").strip() for c in row]
+            while len(cells) < 6:
+                cells.append("")
+            a = cells[0].replace(" ", "")
+            if "签字" in a and "编写人" in a:
+                out["author_sign"] = cells[1]
+            elif "签字" in a and "审核人" in a:
+                out["auditor_sign"] = cells[1]
+            elif "签字" in a and "批准人" in a:
+                out["approver_sign"] = cells[1]
+            elif a == "编写人":
+                found = True
+                out["author"] = cells[1]
+                if "编写日期" in cells:
+                    i = cells.index("编写日期")
+                    out["write_date"] = cells[i + 1] if i + 1 < len(cells) else ""
+                if "审核人" in cells:
+                    i = cells.index("审核人")
+                    out["auditor"] = cells[i + 1] if i + 1 < len(cells) else ""
+            elif a in ("模型功能", "功能"):
+                found = True
+                out["model_func"] = cells[1]
+            elif a == "提交模型":
+                found = True
+                out["submit_model"] = cells[1]
+            elif a == "模型测试结论":
+                out["test_conclusion"] = cells[1]
+            elif a == "模型代码地址":
+                out["code_url"] = cells[1]
+            elif a == "模型参数地址":
+                found = True
+                out["param_url"] = cells[1]
+            elif a == "一致性测试结果":
+                out["consistency_url"] = cells[1]
+            elif a == "待封装代码地址":
+                out["code_url"] = cells[1]
+            elif a == "封装代码地址":
+                out["pack_code_url"] = cells[1]
+            elif a == "一致性测试数据地址":
+                out["consistency_data_url"] = cells[1]
+            elif a == "一致性结果地址":
+                out["consistency_result_url"] = cells[1]
+            elif a == "验收结论":
+                out["conclusion"] = cells[1]
+            elif "提交人" in a:
+                out["submitter_sign"] = cells[1]
+                for i, x in enumerate(cells):
+                    if "审核人" in x and i + 1 < len(cells):
+                        out["auditor_sign"] = cells[i + 1]
+                        break
+            elif "封装人" in a:
+                out["packer_sign"] = cells[1]
+                for i, x in enumerate(cells):
+                    if "审核人" in x and i + 1 < len(cells):
+                        out["auditor_sign"] = cells[i + 1]
+                        break
+        if found and is_rec:
+            out.pop("code_url", None)
+            out.pop("consistency_url", None)
+            out.pop("submitter_sign", None)
+        elif found and not is_submit:
+            out.pop("pack_code_url", None)
+            out.pop("consistency_data_url", None)
+            out.pop("consistency_result_url", None)
+            out.pop("conclusion", None)
+            out.pop("packer_sign", None)
+        return out if found else None
+
+    def __normalize_pkg_content(self, content, doc_type):
+        base = self.__pkg_default_content(doc_type)
+        if not isinstance(content, dict):
+            return base
+        if self.__pkg_is_flat(content) and not content.get("sections"):
+            for key in base:
+                if content.get(key) is not None:
+                    base[key] = content.get(key)
+            return base
+        extracted = None
+
+        def walk(ns):
+            nonlocal extracted
+            for n0 in ns or []:
+                if extracted or not isinstance(n0, dict):
+                    continue
+                for tb in n0.get("tables") or []:
+                    extracted = self.__extract_pkg_from_grid(tb, doc_type)
+                    if extracted:
+                        return
+                walk(n0.get("children") or [])
+
+        walk(content.get("sections") or [])
+        if extracted:
+            for k in base:
+                extracted[k] = extracted.get(k) or base[k]
+            return extracted
+        return base
+
+    def __latest_data_content(self, product_id, doc_type):
+        if not product_id:
+            return None
+        row = db.session.execute(
+            select(DataDoc)
+            .where(DataDoc.product_id == product_id, DataDoc.doc_type == doc_type)
+            .order_by(DataDoc.id.desc())
+        ).scalars().first()
+        return row.content if row else None
+
+    def __iter_content_tables(self, content):
+        def walk(ns):
+            for n in ns or []:
+                if not isinstance(n, dict):
+                    continue
+                yield str(n.get("title") or ""), n.get("tables") or []
+                yield from walk(n.get("children") or [])
+        yield from walk((content or {}).get("sections") or [])
+
+    def __parse_dd010_counts(self, content):
+        out = {}
+        for title, tables in self.__iter_content_tables(content):
+            t = title.replace(" ", "")
+            for tb in tables:
+                if not isinstance(tb, list) or not tb:
+                    continue
+                first = "".join(str(c or "") for c in (tb[0] if isinstance(tb[0], list) else []))
+                if t not in ("标注",) and "标注数据库" not in first:
+                    continue
+                header = None
+                name_i = qty_i = None
+                for row in tb:
+                    if not isinstance(row, list):
+                        continue
+                    cells = [str(c or "").strip() for c in row]
+                    if "数据集" in cells and any("数据量" in x for x in cells):
+                        header = cells
+                        name_i = cells.index("数据集")
+                        qty_i = next(i for i, x in enumerate(cells) if "数据量" in x)
+                        continue
+                    if header is None or name_i is None or qty_i is None:
+                        continue
+                    name = cells[name_i] if name_i < len(cells) else ""
+                    qty = cells[qty_i] if qty_i < len(cells) else ""
+                    if name and qty and name not in ("数据集",):
+                        out[name] = qty.split(".")[0] if qty.replace(".", "", 1).isdigit() else qty
+        return out
+
+    def __parse_dd012_counts(self, content):
+        out = {}
+        for _title, tables in self.__iter_content_tables(content):
+            for tb in tables:
+                if not isinstance(tb, list):
+                    continue
+                header = None
+                name_i = qty_i = None
+                for row in tb:
+                    if not isinstance(row, list):
+                        continue
+                    cells = [str(c or "").strip() for c in row]
+                    if "批次" in cells and "数据量" in cells:
+                        header = cells
+                        name_i = cells.index("批次")
+                        qty_i = cells.index("数据量")
+                        continue
+                    if header is None:
+                        continue
+                    name = cells[name_i] if name_i < len(cells) else ""
+                    qty = cells[qty_i] if qty_i < len(cells) else ""
+                    if name and qty and name not in ("批次",):
+                        out[name] = qty.split(".")[0] if qty.replace(".", "", 1).isdigit() else qty
+        return out
+
+    def __dataset_qty(self, product_id, dataset_name):
+        if not product_id or not dataset_name:
+            return ""
+        counts = self.__parse_dd010_counts(self.__latest_data_content(product_id, "dd_010"))
+        if dataset_name in counts:
+            return counts[dataset_name]
+        counts = self.__parse_dd012_counts(self.__latest_data_content(product_id, "dd_012"))
+        return counts.get(dataset_name) or ""
+
+    def __apply_dataset_counts(self, content, doc_type, product_id):
+        if not isinstance(content, dict) or not product_id:
+            return content
+        if doc_type in BUILD_DOC_TYPES:
+            qty = self.__dataset_qty(product_id, BUILD_DATASET_NAME.get(doc_type))
+            if qty:
+                content["case_count"] = qty
+            return content
+        if doc_type in TRAIN_DOC_TYPES:
+            build_type = TRAIN_BUILD_TYPE.get(doc_type)
+            name = BUILD_DATASET_NAME.get(build_type)
+            qty = self.__dataset_qty(product_id, name)
+            if not qty and build_type:
+                row = db.session.execute(
+                    select(ModelDoc)
+                    .where(ModelDoc.product_id == product_id, ModelDoc.doc_type == build_type)
+                    .order_by(ModelDoc.id.desc())
+                ).scalars().first()
+                if row:
+                    qty = str((self.__normalize_build_content(row.content, build_type) or {}).get("case_count") or "").strip()
+            if qty:
+                content["case_count"] = qty
+        return content
+
+    def __apply_dataset_autofill(self, obj: ModelDocObj):
+        if obj.doc_type not in BUILD_DOC_TYPES and obj.doc_type not in TRAIN_DOC_TYPES:
+            return
+        obj.content = self.__apply_dataset_counts(obj.content or {}, obj.doc_type, obj.product_id)
+
     def __normalize_content(self, content, doc_type=None):
         if doc_type in EQ_DOC_TYPES:
             return self.__normalize_eq_content(content, doc_type)
@@ -768,6 +1186,10 @@ class Server(object):
             return self.__normalize_build_content(content, doc_type)
         if doc_type in TRAIN_DOC_TYPES:
             return self.__normalize_train_content(content, doc_type)
+        if doc_type in TEST_DOC_TYPES:
+            return self.__normalize_test_content(content, doc_type)
+        if doc_type in PKG_DOC_TYPES:
+            return self.__normalize_pkg_content(content, doc_type)
         if not isinstance(content, dict) or not isinstance(content.get("sections"), list):
             return self.__default_content(doc_type)
         out = {"sections": [self.__normalize_node(s) for s in content["sections"]]}
@@ -1546,9 +1968,15 @@ class Server(object):
         if obj.doc_type in CRR_DOC_TYPES:
             return self.__fill_crr_fields(content, obj)
         if obj.doc_type in BUILD_DOC_TYPES:
-            return self.__normalize_build_content(content, obj.doc_type)
+            c = self.__normalize_build_content(content, obj.doc_type)
+            return self.__apply_dataset_counts(c, obj.doc_type, obj.product_id)
         if obj.doc_type in TRAIN_DOC_TYPES:
-            return self.__normalize_train_content(content, obj.doc_type)
+            c = self.__normalize_train_content(content, obj.doc_type)
+            return self.__apply_dataset_counts(c, obj.doc_type, obj.product_id)
+        if obj.doc_type in TEST_DOC_TYPES:
+            return self.__normalize_test_content(content, obj.doc_type)
+        if obj.doc_type in PKG_DOC_TYPES:
+            return self.__normalize_pkg_content(content, obj.doc_type)
         sections = (content or {}).get("sections") or []
         prod_id = obj.product_id
         if not prod_id:
@@ -2275,6 +2703,7 @@ class Server(object):
             row.id = None
             row.file_no = serv_review_util.resolve_doc_file_no(form.product_id, form.file_no, form.version, doc_type) or None
             row.content = self.__normalize_content(row.content, doc_type)
+            row.content = self.__apply_dataset_counts(row.content, doc_type, form.product_id)
             db.session.add(row)
             db.session.commit()
             return Resp.resp_ok(data=ModelDocForm(id=row.id))
@@ -2336,11 +2765,17 @@ class Server(object):
             if next_pid != row.product_id or next_ver != row.version:
                 if self.__exists(next_pid, row.doc_type, next_ver, exclude_id=row.id):
                     return Resp.resp_err(msg=ts("msg_obj_exist"))
+            if next_pid != row.product_id or "content" in payload:
+                raw = payload.get("content", row.content)
+                filled = self.__normalize_content(raw, row.doc_type)
+                filled = self.__apply_dataset_counts(filled, row.doc_type, next_pid)
+                payload["content"] = filled
             for key, value in payload.items():
                 if key == "id":
                     continue
                 if key == "content":
                     value = self.__normalize_content(value, row.doc_type)
+                    value = self.__apply_dataset_counts(value, row.doc_type, next_pid)
                 setattr(row, key, value)
             db.session.commit()
             return Resp.resp_ok()
@@ -2363,6 +2798,7 @@ class Server(object):
         obj = self.__to_obj(doc, product)
         self.__apply_env_eq_assets(obj, product)
         self.__apply_crr_autofill(obj, product)
+        self.__apply_dataset_autofill(obj)
         return Resp.resp_ok(data=obj)
 
     async def list_model_doc(self, op_user: UserObj = None, product_id: int = 0, version: str = None,
@@ -2888,6 +3324,272 @@ class Server(object):
         document.save(output)
         output.seek(0)
 
+    def __export_test_xlsx(self, output, obj: ModelDocObj, content):
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        c = content if isinstance(content, dict) else {}
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "工作表1"
+        thin = Border(
+            left=Side(style="thin"), right=Side(style="thin"),
+            top=Side(style="thin"), bottom=Side(style="thin"),
+        )
+        center = Alignment(wrap_text=True, vertical="center", horizontal="center")
+        left = Alignment(wrap_text=True, vertical="center", horizontal="left")
+
+        def cell_text(val):
+            s = str(val or "")
+            return "[签名]" if s.startswith("data:image") else s
+
+        def put(r, col, val, bold=False, size=10.5, align=center):
+            cell = ws.cell(r, col, cell_text(val))
+            cell.font = Font(name="宋体", size=size, bold=bold)
+            cell.alignment = align
+            cell.border = thin
+            return cell
+
+        def border_range(r1, c1, r2, c2):
+            for rr in range(r1, r2 + 1):
+                for cc in range(c1, c2 + 1):
+                    ws.cell(rr, cc).border = thin
+                    if ws.cell(rr, cc).font is None or not ws.cell(rr, cc).font.name:
+                        ws.cell(rr, cc).font = Font(name="宋体", size=10.5)
+                    if not ws.cell(rr, cc).alignment or not ws.cell(rr, cc).alignment.vertical:
+                        ws.cell(rr, cc).alignment = center
+
+        def merge(r1, c1, r2, c2):
+            if r1 != r2 or c1 != c2:
+                ws.merge_cells(start_row=r1, start_column=c1, end_row=r2, end_column=c2)
+            border_range(r1, c1, r2, c2)
+
+        put(1, 1, obj.file_no or "", bold=True, size=12)
+        merge(1, 1, 1, 6)
+        ws.row_dimensions[1].height = 29
+        put(2, 1, doc_title(obj.doc_type), bold=True, size=16)
+        merge(2, 1, 2, 6)
+        ws.row_dimensions[2].height = 44
+
+        r = 3
+        put(r, 1, "编写人", bold=True)
+        put(r, 2, c.get("author") or "")
+        put(r, 3, "编写日期", bold=True)
+        put(r, 4, c.get("write_date") or "")
+        put(r, 5, "审核人", bold=True)
+        put(r, 6, c.get("auditor") or "")
+
+        def span_val(label, value):
+            nonlocal r
+            r += 1
+            put(r, 1, label, bold=True)
+            put(r, 2, value or "", align=left)
+            merge(r, 2, r, 6)
+            ws.row_dimensions[r].height = 23
+
+        def bar(text):
+            nonlocal r
+            r += 1
+            put(r, 1, text, bold=True)
+            merge(r, 1, r, 6)
+            ws.row_dimensions[r].height = 23
+
+        span_val("测试模型名称", c.get("model_name") or "")
+        span_val("测试集", c.get("test_set") or "")
+        span_val("测试方法", c.get("method") or "")
+        span_val("测试时间", c.get("test_time") or "")
+        bar("测试环境")
+        span_val("硬件环境", c.get("hw_env") or "")
+        span_val("软件环境", c.get("sw_env") or "")
+        bar("测试结果")
+
+        is_pe = obj.doc_type == "md_013_01"
+        n = 6 if is_pe else 5
+        rows = [self.__test_pad_row(row, n) for row in (c.get("result_rows") or []) if isinstance(row, list)]
+        if not rows:
+            rows = [self.__test_header(obj.doc_type)]
+        r += 1
+        result_start = r
+        for r_idx, row in enumerate(rows):
+            is_head = r_idx == 0
+            is_total = str(row[0]).strip() == "总计"
+            if is_pe:
+                for ci in range(6):
+                    put(r, ci + 1, row[ci] if ci < len(row) else "", bold=(is_head or is_total))
+            else:
+                for ci in range(4):
+                    put(r, ci + 1, row[ci] if ci < len(row) else "", bold=(is_head or is_total))
+                put(r, 5, row[4] if len(row) > 4 else "", bold=(is_head or is_total))
+                merge(r, 5, r, 6)
+            ws.row_dimensions[r].height = 22
+            r += 1
+        i = 1
+        while i < len(rows):
+            a = str(rows[i][0] or "").strip()
+            if not a or a == "总计":
+                i += 1
+                continue
+            j = i + 1
+            while j < len(rows) and not str(rows[j][0] or "").strip():
+                j += 1
+            if j > i + 1:
+                top = result_start + i
+                bot = result_start + j - 1
+                merge(top, 1, bot, 1)
+                put(top, 1, a, bold=True)
+            i = j
+
+        put(r, 1, "结论", bold=True)
+        put(r, 2, c.get("conclusion") or "", align=left)
+        merge(r, 2, r, 6)
+        ws.row_dimensions[r].height = 32
+        r += 1
+        put(r, 1, "编写人（签字）/日期", bold=True)
+        put(r, 2, c.get("author_sign") or "")
+        merge(r, 2, r, 3)
+        put(r, 4, "审核人（签字）/日期", bold=True)
+        put(r, 5, c.get("auditor_sign") or "")
+        merge(r, 5, r, 6)
+        ws.row_dimensions[r].height = 32
+
+        widths = (12.0, 14.0, 10.0, 12.0, 18.0, 18.0)
+        for i, w in enumerate(widths, 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        wb.save(output)
+        output.seek(0)
+
+    def __export_pkg_xlsx(self, output, obj: ModelDocObj, content):
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        c = content if isinstance(content, dict) else {}
+        is_rec = obj.doc_type in PKG_REC_TYPES
+        is_submit = obj.doc_type in PKG_SUBMIT_TYPES
+        cols = 8 if is_rec else 6
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "工作表1"
+        thin = Border(
+            left=Side(style="thin"), right=Side(style="thin"),
+            top=Side(style="thin"), bottom=Side(style="thin"),
+        )
+        center = Alignment(wrap_text=True, vertical="center", horizontal="center")
+        left = Alignment(wrap_text=True, vertical="center", horizontal="left")
+
+        def cell_text(val):
+            s = str(val or "")
+            return "[签名]" if s.startswith("data:image") else s
+
+        def put(r, col, val, bold=False, size=10.5, align=center):
+            cell = ws.cell(r, col, cell_text(val))
+            cell.font = Font(name="宋体", size=size, bold=bold)
+            cell.alignment = align
+            cell.border = thin
+            return cell
+
+        def border_range(r1, c1, r2, c2):
+            for rr in range(r1, r2 + 1):
+                for cc in range(c1, c2 + 1):
+                    cell = ws.cell(rr, cc)
+                    cell.border = thin
+                    if not cell.font or not cell.font.name:
+                        cell.font = Font(name="宋体", size=10.5)
+                    if not cell.alignment or not cell.alignment.vertical:
+                        cell.alignment = center
+
+        def merge(r1, c1, r2, c2):
+            if r1 != r2 or c1 != c2:
+                ws.merge_cells(start_row=r1, start_column=c1, end_row=r2, end_column=c2)
+            border_range(r1, c1, r2, c2)
+
+        if is_submit:
+            title = "模型服务提交记录"
+        elif is_rec:
+            title = "模型工程封装记录"
+        else:
+            title = "模型工程封装需求"
+        put(1, 1, (obj.file_no or "").replace("\t", "").strip(), bold=True, size=12)
+        merge(1, 1, 1, cols)
+        ws.row_dimensions[1].height = 22
+        put(2, 1, title, bold=True, size=16)
+        merge(2, 1, 2, cols)
+        ws.row_dimensions[2].height = 36
+
+        r = 3
+
+        def span_val(label, value, value_center=False):
+            nonlocal r
+            put(r, 1, label, bold=True)
+            put(r, 2, value or "", align=center if value_center else left)
+            merge(r, 2, r, cols)
+            ws.row_dimensions[r].height = 28 if len(str(value or "")) > 60 else 22
+            r += 1
+
+        if is_submit:
+            put(r, 1, "编写人", bold=True)
+            put(r, 2, c.get("author") or "")
+            put(r, 3, "编写日期", bold=True)
+            put(r, 4, c.get("write_date") or "")
+            put(r, 5, "审核人", bold=True)
+            put(r, 6, c.get("auditor") or "")
+            ws.row_dimensions[r].height = 22
+            r += 1
+            span_val("功能", c.get("model_func") or "")
+            span_val("提交模型", c.get("submit_model") or "")
+            span_val("模型测试结论", c.get("test_conclusion") or "")
+            span_val("模型代码地址", c.get("code_url") or "")
+            span_val("模型参数地址", c.get("param_url") or "")
+            span_val("一致性测试数据地址", c.get("consistency_data_url") or "")
+            span_val("一致性结果地址", c.get("consistency_result_url") or "")
+            for label, key in (
+                ("编写人（签字）/日期", "author_sign"),
+                ("审核人（签字）/日期", "auditor_sign"),
+                ("批准人（签字）/日期", "approver_sign"),
+            ):
+                put(r, 1, label, bold=True)
+                put(r, 2, c.get(key) or "")
+                merge(r, 2, r, 6)
+                ws.row_dimensions[r].height = 32
+                r += 1
+        else:
+            span_val("模型功能", c.get("model_func") or "")
+            if is_rec:
+                span_val("封装代码地址", c.get("pack_code_url") or "")
+            span_val("模型参数地址", c.get("param_url") or "")
+            if is_rec:
+                span_val("一致性测试数据地址", c.get("consistency_data_url") or "")
+                span_val("一致性结果地址", c.get("consistency_result_url") or "")
+                span_val("验收结论", c.get("conclusion") or "", value_center=True)
+            else:
+                span_val("一致性测试结果", c.get("consistency_url") or "")
+                span_val("待封装代码地址", c.get("code_url") or "")
+
+            put(r, 1, "封装人/日期" if is_rec else "提交人/日期", bold=True)
+            if is_rec:
+                put(r, 2, c.get("packer_sign") or "")
+                merge(r, 2, r, 4)
+                put(r, 5, "审核人/日期", bold=True)
+                put(r, 6, c.get("auditor_sign") or "")
+                merge(r, 6, r, 8)
+            else:
+                put(r, 2, c.get("submitter_sign") or "")
+                merge(r, 2, r, 3)
+                put(r, 4, "审核人/日期", bold=True)
+                put(r, 5, c.get("auditor_sign") or "")
+                merge(r, 5, r, 6)
+            ws.row_dimensions[r].height = 32
+
+        if is_rec:
+            widths = (18.0, 12.0, 13.0, 13.0, 13.0, 13.0, 13.0, 13.0)
+        else:
+            widths = (16.0, 12.0, 12.0, 12.0, 14.0, 18.0)
+        for i, w in enumerate(widths, 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+        wb.save(output)
+        output.seek(0)
+
     async def export_model_doc(self, output, id: int):
         resp = await self.get_model_doc(id)
         obj: ModelDocObj = resp.data
@@ -2906,6 +3608,12 @@ class Server(object):
         if obj.doc_type in TRAIN_DOC_TYPES:
             self.__export_train_docx(output, obj, c)
             return title, "docx"
+        if obj.doc_type in TEST_DOC_TYPES:
+            self.__export_test_xlsx(output, obj, c)
+            return title, "xlsx"
+        if obj.doc_type in PKG_DOC_TYPES:
+            self.__export_pkg_xlsx(output, obj, c)
+            return title, "xlsx"
         if doc_format(obj.doc_type) == "xlsx":
             self.__export_xlsx(output, obj, c)
             return title, "xlsx"

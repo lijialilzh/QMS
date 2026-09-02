@@ -34,9 +34,30 @@ export const MODEL_DOC_TYPES: Record<string, { title: string; keywords: string[]
     md_eq: { title: "模型设备清单", keywords: ["设备清单"] },
 };
 
-export const MODEL_DOC_TYPE_ORDER = Object.keys(MODEL_DOC_TYPES).filter(
-    (k) => k !== "md_019_qr" && k !== "md_020_qr",
-);
+/** 模型文件左侧菜单：按工作阶段做二级分组。名称不改。 */
+export type ModelDocMenuNode = { group: string; key: string; types: string[] };
+
+export const MODEL_DOC_MENU: ModelDocMenuNode[] = [
+    { group: "计划与需求", key: "model_plan", types: ["md_001", "md_006", "pd_003"] },
+    { group: "方案设计", key: "model_design", types: ["md_004", "md_007", "md_005"] },
+    {
+        group: "审查、构建与训练",
+        key: "model_build_train",
+        types: [
+            "md_008_01", "md_008_02",
+            "md_009_01", "md_009_02",
+            "md_010_01", "md_010_02",
+            "md_011_01", "md_011_02",
+            "md_012_01", "md_012_02",
+        ],
+    },
+    { group: "测试", key: "model_test", types: ["md_013_01", "md_013_02", "md_014", "md_017"] },
+    { group: "封装与提交", key: "model_pkg", types: ["md_015_01", "md_015_02", "md_016", "md_018"] },
+    { group: "配置与追溯", key: "model_cfg", types: ["md_021", "md_022"] },
+    { group: "设备与环境维护", key: "model_env", types: ["md_eq", "md_deq", "md_019", "md_teq", "md_020"] },
+];
+
+export const MODEL_DOC_TYPE_ORDER = MODEL_DOC_MENU.flatMap((item) => item.types);
 
 export const getModelDocMeta = (type?: string) =>
     MODEL_DOC_TYPES[type || ""] || { title: "模型文件", keywords: [] as string[] };

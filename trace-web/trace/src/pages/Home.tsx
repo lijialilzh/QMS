@@ -11,7 +11,7 @@ import AiAssistant from "@/views/AiAssistant";
 import * as Api from "@/api/ApiUser";
 import { Root, actions, useDispatch, useSelector } from "@/store";
 import Loading from "@/views/Loading";
-import { MODEL_DOC_TYPE_ORDER, MODEL_DOC_TYPES } from "./model_doc/ModelDocTypes";
+import { MODEL_DOC_MENU, MODEL_DOC_TYPES } from "./model_doc/ModelDocTypes";
 import { DATA_DOC_MENU, DATA_DOC_TYPES } from "./model_doc/DataDocTypes";
 
 enum DlgTypes {
@@ -528,33 +528,29 @@ export default () => {
                 key: "/manage_model_doc",
                 label: ts("menu.manage_model_doc"),
                 icon: <img src="assets/icon/menu-create.svg" />,
-                children: MODEL_DOC_TYPE_ORDER.map((code) => ({
-                    key: `/model_docs/${code}`,
-                    label: MODEL_DOC_TYPES[code].title,
-                    perm: "model_doc_view",
+                children: MODEL_DOC_MENU.map((item) => ({
+                    key: item.key,
+                    label: item.group,
+                    children: item.types.map((code) => ({
+                        key: `/model_docs/${code}`,
+                        label: MODEL_DOC_TYPES[code].title,
+                        perm: "model_doc_view",
+                    })),
                 })),
             },
             {
                 key: "/manage_data_doc",
                 label: ts("menu.manage_data_doc"),
                 icon: <img src="assets/icon/menu-create.svg" />,
-                children: DATA_DOC_MENU.map((item) =>
-                    "types" in item
-                        ? {
-                              key: item.key,
-                              label: item.group,
-                              children: item.types.map((code) => ({
-                                  key: `/data_docs/${code}`,
-                                  label: DATA_DOC_TYPES[code].title,
-                                  perm: "data_doc_view",
-                              })),
-                          }
-                        : {
-                              key: `/data_docs/${item.type}`,
-                              label: DATA_DOC_TYPES[item.type].title,
-                              perm: "data_doc_view",
-                          }
-                ),
+                children: DATA_DOC_MENU.map((item) => ({
+                    key: item.key,
+                    label: item.group,
+                    children: item.types.map((code) => ({
+                        key: `/data_docs/${code}`,
+                        label: DATA_DOC_TYPES[code].title,
+                        perm: "data_doc_view",
+                    })),
+                })),
             },
             {
                 key: "/data_stats",

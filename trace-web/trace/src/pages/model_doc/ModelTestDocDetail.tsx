@@ -12,7 +12,7 @@ import { getModelDocMeta } from "./ModelDocTypes";
 import "../pdp/PdpDocDetail.less";
 
 const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", marginBottom: 16, tableLayout: "fixed" };
-const tdBase: CSSProperties = { border: "1px solid #d9d9d9", padding: "6px 10px", fontSize: 13, verticalAlign: "middle" };
+const tdBase: CSSProperties = { border: "1px solid #d9d9d9", padding: "6px 8px", fontSize: 13, verticalAlign: "middle" };
 const tdLabel: CSSProperties = { ...tdBase, background: "#fafafa", color: "#555", whiteSpace: "nowrap", fontWeight: 500, textAlign: "center" };
 const tdValue: CSSProperties = { ...tdBase, color: "#333", whiteSpace: "pre-wrap", textAlign: "center" };
 const barCell: CSSProperties = { ...tdBase, background: "#fafafa", fontWeight: 600, textAlign: "center" };
@@ -21,20 +21,26 @@ const thCell: CSSProperties = { ...tdBase, background: "#fafafa", color: "#555",
 const DEFAULT_CONTENT = {
     author: "",
     write_date: "",
-    data_use: "",
-    data_type: "",
+    auditor: "",
+    model_name: "",
+    test_set: "",
     method: "",
-    case_count: "",
-    annotator: "",
-    dist_rows: [["因素", "类别", "数量", "占比"]],
+    test_time: "",
+    hw_env: "",
+    sw_env: "",
+    result_rows: [] as string[][],
+    conclusion: "",
     author_sign: "",
     auditor_sign: "",
 };
 
-const pad4 = (row: any[]) => {
+const peHeader = ["因素", "类别", "阳性数据量", "阴性数据量", "灵敏度(95%CI区间)", "特异度(95%CI区间)"];
+const lobeHeader = ["因素", "类别", "样本量", "dice均值", "dice方差"];
+
+const padN = (row: any[], n: number) => {
     const cells = (row || []).map((c) => String(c ?? ""));
-    while (cells.length < 4) cells.push("");
-    return cells.slice(0, 4);
+    while (cells.length < n) cells.push("");
+    return cells.slice(0, n);
 };
 
 const parseQty = (v: any) => {
@@ -44,20 +50,11 @@ const parseQty = (v: any) => {
     return Number.isFinite(n) ? n : 0;
 };
 
-const parsePct = (v: any) => {
-    const s = String(v ?? "").trim();
-    if (!s) return 0;
-    if (s.endsWith("%")) {
-        const n = Number(s.slice(0, -1).trim());
-        return Number.isFinite(n) ? n : 0;
-    }
-    const n = Number(s);
-    if (!Number.isFinite(n)) return 0;
-    return Math.abs(n) <= 1.0001 ? n * 100 : n;
-};
+const qtyCols = (isPe: boolean) => (isPe ? [2, 3] : [2]);
 
-const computeBuildTotal = (rows: any[][]) => {
-    const list = (rows || []).map(pad4);
+const computeTestQty = (rows: any[][], isPe: boolean) => {
+    const n = isPe ? 6 : 5;
+    const list = (rows || []).map((r) => padN(r, n));
     const totalAt = list.findIndex((r) => String(r[0] ?? "").trim() === "总计");
     const end = totalAt >= 0 ? totalAt : list.length;
     let start = 1;
@@ -65,26 +62,27 @@ const computeBuildTotal = (rows: any[][]) => {
         const a = String(list[i][0] ?? "").trim();
         if (a && a !== "总计") { start = i; break; }
     }
-    let qty = 0;
-    let pct = 0;
-    for (let i = start; i < end; i++) {
-        qty += parseQty(list[i][2]);
-        pct += parsePct(list[i][3]);
+    const out: Record<number, string> = {};
+    for (const ci of qtyCols(isPe)) {
+        let qty = 0;
+        for (let i = start; i < end; i++) qty += parseQty(list[i][ci]);
+        out[ci] = Math.abs(qty - Math.round(qty)) < 1e-9 ? String(Math.round(qty)) : String(qty);
     }
-    const qtyStr = Math.abs(qty - Math.round(qty)) < 1e-9 ? String(Math.round(qty)) : String(qty);
-    let pctStr = `${pct.toFixed(2)}%`;
-    if (pct === 0 && qty > 0) pctStr = "100.00%";
-    else if (Math.abs(pct - 100) < 0.05) pctStr = "100.00%";
-    return { qty: qtyStr, pct: pctStr };
+    return out;
 };
 
-const applyBuildTotal = (rows: any[][]) => {
-    const list = (rows || []).map(pad4);
-    const { qty, pct } = computeBuildTotal(list);
+const applyTestTotal = (rows: any[][], isPe: boolean) => {
+    const n = isPe ? 6 : 5;
+    const list = (rows || []).map((r) => padN(r, n));
+    const qtys = computeTestQty(list, isPe);
     const totalAt = list.findIndex((r) => String(r[0] ?? "").trim() === "总计");
-    const totalRow = ["总计", "", qty, pct];
-    if (totalAt >= 0) list[totalAt] = totalRow;
-    else list.push(totalRow);
+    const old = totalAt >= 0 ? list[totalAt] : Array(n).fill("");
+    const total = ["总计", ...Array(n - 1).fill("")];
+    for (let ci = 1; ci < n; ci++) {
+        total[ci] = qtyCols(isPe).includes(ci) ? (qtys[ci] || "0") : (old[ci] || "");
+    }
+    if (totalAt >= 0) list[totalAt] = total;
+    else list.push(total);
     return list;
 };
 
@@ -110,6 +108,8 @@ export default () => {
     const location = useLocation();
     const readonly = location.pathname.includes("/view/");
     const meta = getModelDocMeta(type);
+    const isPe = type === "md_013_01";
+    const cols = isPe ? 6 : 5;
     const [data, dispatch] = useData({
         loading: false,
         saving: false,
@@ -130,8 +130,8 @@ export default () => {
             }
             const doc = res.data || {};
             const content = { ...DEFAULT_CONTENT, ...(doc.content || {}) };
-            if (!Array.isArray(content.dist_rows) || !content.dist_rows.length) {
-                content.dist_rows = DEFAULT_CONTENT.dist_rows;
+            if (!Array.isArray(content.result_rows) || !content.result_rows.length) {
+                content.result_rows = isPe ? [peHeader] : [lobeHeader];
             }
             dispatch({ loading: false, doc, content });
         });
@@ -156,28 +156,28 @@ export default () => {
         dispatch({ content: { ...data.content, [key]: value } });
     };
 
-    const setDist = (r: number, c: number, value: string) => {
-        const dist_rows = (data.content.dist_rows || []).map((row: any[], ri: number) =>
-            ri === r ? pad4(row).map((cell, ci) => (ci === c ? value : cell)) : row
+    const setResult = (r: number, c: number, value: string) => {
+        const result_rows = (data.content.result_rows || []).map((row: any[], ri: number) =>
+            ri === r ? padN(row, cols).map((cell, ci) => (ci === c ? value : cell)) : row
         );
-        dispatch({ content: { ...data.content, dist_rows } });
+        dispatch({ content: { ...data.content, result_rows } });
     };
 
-    const addDistRowAfter = (r: number) => {
-        const dist_rows = [...(data.content.dist_rows || [])];
-        const isTotal = String(dist_rows[r]?.[0] ?? "").trim() === "总计";
-        dist_rows.splice(isTotal ? r : r + 1, 0, ["", "", "", ""]);
-        dispatch({ content: { ...data.content, dist_rows } });
+    const addResultRowAfter = (r: number) => {
+        const result_rows = [...(data.content.result_rows || [])];
+        const isTotal = String(result_rows[r]?.[0] ?? "").trim() === "总计";
+        result_rows.splice(isTotal ? r : r + 1, 0, Array(cols).fill(""));
+        dispatch({ content: { ...data.content, result_rows } });
     };
 
-    const delDistRow = (r: number) => {
-        const dist_rows = (data.content.dist_rows || []).filter((_: any, i: number) => i !== r);
-        dispatch({ content: { ...data.content, dist_rows } });
+    const delResultRow = (r: number) => {
+        const result_rows = (data.content.result_rows || []).filter((_: any, i: number) => i !== r);
+        dispatch({ content: { ...data.content, result_rows } });
     };
 
     const doSave = () => {
         dispatch({ saving: true });
-        const content = { ...data.content, dist_rows: applyBuildTotal(data.content.dist_rows || []) };
+        const content = { ...data.content, result_rows: applyTestTotal(data.content.result_rows || [], isPe) };
         Api.update_model_doc({ id, content, product_id: data.doc.product_id, version: data.doc.version }).then((res: any) => {
             dispatch({ saving: false, content });
             if (res.code === Api.C_OK) message.success(ts("save_success"));
@@ -199,9 +199,9 @@ export default () => {
     };
 
     const c = data.content || {};
-    const dist: any[][] = Array.isArray(c.dist_rows) ? c.dist_rows.map(pad4) : [];
-    const { skip, spans } = factorMeta(dist);
-    const totals = computeBuildTotal(dist);
+    const result: any[][] = Array.isArray(c.result_rows) ? c.result_rows.map((r: any[]) => padN(r, cols)) : [];
+    const { skip, spans } = factorMeta(result);
+    const totals = computeTestQty(result, isPe);
 
     const editValue = (value: string, onChange: (v: string) => void, style: CSSProperties = {}) => (
         readonly
@@ -214,6 +214,12 @@ export default () => {
             ? <img src={value} alt="" style={{ maxHeight: 36 }} />
             : editValue(value, onChange)
     );
+
+    const renderResultCell = (row: string[], r: number, ci: number, isTotal: boolean) => {
+        const qty = qtyCols(isPe).includes(ci);
+        if (isTotal && qty) return totals[ci] || "0";
+        return editValue(row[ci], (v) => setResult(r, ci, v));
+    };
 
     return (
         <div className="div-v page pdp-detail">
@@ -257,49 +263,66 @@ export default () => {
 
             <Spin spinning={data.loading} wrapperClassName="pdp-scroll">
                 <div style={{ height: "100%", overflow: "auto" }}>
-                    <div style={{ padding: "12px 20px", maxWidth: 960 }}>
+                    <div style={{ padding: "12px 20px", maxWidth: 1180 }}>
                         <div style={{ textAlign: "center", fontSize: 16, fontWeight: 700, margin: "4px 0 6px" }}>{meta.title}</div>
                         <div style={{ textAlign: "center", color: "#999", marginBottom: 14 }}>{data.doc.file_no || ""}</div>
 
                         <table style={tableStyle}>
                             <colgroup>
+                                <col style={{ width: "14%" }} />
+                                <col style={{ width: "16%" }} />
+                                <col style={{ width: "14%" }} />
                                 <col style={{ width: "18%" }} />
-                                <col style={{ width: "32%" }} />
-                                <col style={{ width: "18%" }} />
-                                <col style={{ width: "32%" }} />
+                                <col style={{ width: "19%" }} />
+                                <col style={{ width: "19%" }} />
                             </colgroup>
                             <tbody>
                                 <tr>
                                     <td style={tdLabel}>编写人</td>
                                     <td style={tdValue}>{editValue(c.author, (v) => setField("author", v))}</td>
-                                    <td style={tdLabel}>编写时间</td>
+                                    <td style={tdLabel}>编写日期</td>
                                     <td style={tdValue}>{editValue(c.write_date, (v) => setField("write_date", v))}</td>
+                                    <td style={tdLabel}>审核人</td>
+                                    <td style={tdValue}>{editValue(c.auditor, (v) => setField("auditor", v))}</td>
                                 </tr>
                                 <tr>
-                                    <td style={tdLabel}>数据用途</td>
-                                    <td style={tdValue}>{editValue(c.data_use, (v) => setField("data_use", v))}</td>
-                                    <td style={tdLabel}>数据类型</td>
-                                    <td style={tdValue}>{editValue(c.data_type, (v) => setField("data_type", v))}</td>
+                                    <td style={tdLabel}>测试模型名称</td>
+                                    <td style={{ ...tdValue, textAlign: "left" }} colSpan={5}>{editValue(c.model_name, (v) => setField("model_name", v), { textAlign: "left" })}</td>
                                 </tr>
                                 <tr>
-                                    <td style={tdLabel}>构建方法</td>
-                                    <td style={{ ...tdValue, textAlign: "left" }} colSpan={3}>{editValue(c.method, (v) => setField("method", v), { textAlign: "left" })}</td>
+                                    <td style={tdLabel}>测试集</td>
+                                    <td style={{ ...tdValue, textAlign: "left" }} colSpan={5}>{editValue(c.test_set, (v) => setField("test_set", v), { textAlign: "left" })}</td>
                                 </tr>
                                 <tr>
-                                    <td style={tdLabel}>病例数量</td>
-                                    <td style={tdValue}>{c.case_count || ""}</td>
-                                    <td style={tdLabel}>标记人员及方式</td>
-                                    <td style={tdValue}>{editValue(c.annotator, (v) => setField("annotator", v))}</td>
+                                    <td style={tdLabel}>测试方法</td>
+                                    <td style={{ ...tdValue, textAlign: "left" }} colSpan={5}>{editValue(c.method, (v) => setField("method", v), { textAlign: "left" })}</td>
                                 </tr>
                                 <tr>
-                                    <td style={barCell} colSpan={4}>数据分布</td>
+                                    <td style={tdLabel}>测试时间</td>
+                                    <td style={{ ...tdValue, textAlign: "left" }} colSpan={5}>{editValue(c.test_time, (v) => setField("test_time", v), { textAlign: "left" })}</td>
                                 </tr>
-                                {dist.map((row, r) => {
+                                <tr>
+                                    <td style={barCell} colSpan={6}>测试环境</td>
+                                </tr>
+                                <tr>
+                                    <td style={tdLabel}>硬件环境</td>
+                                    <td style={{ ...tdValue, textAlign: "left" }} colSpan={5}>{editValue(c.hw_env, (v) => setField("hw_env", v), { textAlign: "left" })}</td>
+                                </tr>
+                                <tr>
+                                    <td style={tdLabel}>软件环境</td>
+                                    <td style={{ ...tdValue, textAlign: "left" }} colSpan={5}>{editValue(c.sw_env, (v) => setField("sw_env", v), { textAlign: "left" })}</td>
+                                </tr>
+                                <tr>
+                                    <td style={barCell} colSpan={6}>测试结果</td>
+                                </tr>
+                                {result.map((row, r) => {
+                                    const lastCol = cols - 1;
+                                    const cellSpan = (ci: number) => (!isPe && ci === lastCol ? 2 : 1);
                                     if (r === 0) {
                                         return (
                                             <tr key={r}>
                                                 {row.map((cell: string, ci: number) => (
-                                                    <td key={ci} style={thCell}>{cell}</td>
+                                                    <td key={ci} style={thCell} colSpan={cellSpan(ci)}>{cell}</td>
                                                 ))}
                                             </tr>
                                         );
@@ -309,32 +332,42 @@ export default () => {
                                         <tr key={r}>
                                             {skip.has(r) ? null : (
                                                 <td style={{ ...tdValue, fontWeight: 600 }} rowSpan={spans[r]}>
-                                                    {isTotal ? "总计" : editValue(row[0], (v) => setDist(r, 0, v))}
+                                                    {isTotal ? "总计" : editValue(row[0], (v) => setResult(r, 0, v))}
                                                 </td>
                                             )}
-                                            <td style={tdValue}>{isTotal ? "" : editValue(row[1], (v) => setDist(r, 1, v))}</td>
-                                            <td style={tdValue}>{isTotal ? totals.qty : editValue(row[2], (v) => setDist(r, 2, v))}</td>
-                                            <td style={tdValue}>
-                                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                                    <div style={{ flex: 1 }}>{isTotal ? totals.pct : editValue(row[3], (v) => setDist(r, 3, v))}</div>
-                                                    {!readonly ? (
-                                                        <span style={{ display: "inline-flex", gap: 6, flexShrink: 0 }}>
-                                                            <PlusOutlined style={{ color: "#1677ff", cursor: "pointer" }} onClick={() => addDistRowAfter(r)} />
-                                                            {isTotal ? null : (
-                                                                <DeleteOutlined style={{ color: "#999", cursor: "pointer" }} onClick={() => delDistRow(r)} />
-                                                            )}
-                                                        </span>
-                                                    ) : null}
-                                                </div>
-                                            </td>
+                                            {row.slice(1).map((_: string, idx: number) => {
+                                                const ci = idx + 1;
+                                                const last = ci === lastCol;
+                                                return (
+                                                    <td key={ci} style={tdValue} colSpan={cellSpan(ci)}>
+                                                        {last ? (
+                                                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                                                <div style={{ flex: 1 }}>{renderResultCell(row, r, ci, isTotal)}</div>
+                                                                {!readonly ? (
+                                                                    <span style={{ display: "inline-flex", gap: 6, flexShrink: 0 }}>
+                                                                        <PlusOutlined style={{ color: "#1677ff", cursor: "pointer" }} onClick={() => addResultRowAfter(r)} />
+                                                                        {isTotal ? null : (
+                                                                            <DeleteOutlined style={{ color: "#999", cursor: "pointer" }} onClick={() => delResultRow(r)} />
+                                                                        )}
+                                                                    </span>
+                                                                ) : null}
+                                                            </div>
+                                                        ) : renderResultCell(row, r, ci, isTotal)}
+                                                    </td>
+                                                );
+                                            })}
                                         </tr>
                                     );
                                 })}
                                 <tr>
-                                    <td style={tdLabel}>编写人签字（日期）</td>
-                                    <td style={{ ...tdValue, height: 44 }}>{signCell(c.author_sign, (v) => setField("author_sign", v))}</td>
-                                    <td style={tdLabel}>审核人签字（日期）</td>
-                                    <td style={{ ...tdValue, height: 44 }}>{signCell(c.auditor_sign, (v) => setField("auditor_sign", v))}</td>
+                                    <td style={tdLabel}>结论</td>
+                                    <td style={{ ...tdValue, textAlign: "left" }} colSpan={5}>{editValue(c.conclusion, (v) => setField("conclusion", v), { textAlign: "left" })}</td>
+                                </tr>
+                                <tr>
+                                    <td style={tdLabel}>编写人（签字）/日期</td>
+                                    <td style={{ ...tdValue, height: 44 }} colSpan={2}>{signCell(c.author_sign, (v) => setField("author_sign", v))}</td>
+                                    <td style={tdLabel}>审核人（签字）/日期</td>
+                                    <td style={{ ...tdValue, height: 44 }} colSpan={2}>{signCell(c.auditor_sign, (v) => setField("auditor_sign", v))}</td>
                                 </tr>
                             </tbody>
                         </table>

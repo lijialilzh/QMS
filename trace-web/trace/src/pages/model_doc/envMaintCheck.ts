@@ -53,9 +53,34 @@ const DEV_TEST: Group[] = [
     { label: "出现的问题及处理方式", leaves: [] },
     { label: "检查人", leaves: [] },
 ];
+const SERVER_ANNO: Group[] = [
+    { label: "日期", leaves: [] },
+    { label: "硬件环境", leaves: ["CPU", "GPU", "内存", "网卡"] },
+    { label: "软件环境", leaves: ["操作系统\n运行是否正常", "数据库\n运行是否正常", "应用服务\n运行是否正常"] },
+    { label: "标注环境\n是否更新升级", leaves: [] },
+    { label: "服务器\n是否杀毒", leaves: [] },
+    { label: "网络环境\n是否正常", leaves: [] },
+    { label: "标注工具", leaves: ["是否正常运行", "是否更新升级"] },
+    { label: "服务器\n是否备份", leaves: [] },
+    { label: "服务器\n日志是否错误", leaves: [] },
+    { label: "出现的问题及处理方式", leaves: [] },
+    { label: "检查人", leaves: [] },
+];
+const DEV_ANNO: Group[] = [
+    { label: "日期", leaves: [] },
+    { label: "硬件环境", leaves: ["CPU", "GPU", "内存", "网卡"] },
+    { label: "软件环境", leaves: ["操作系统\n运行是否正常", "浏览器\n运行是否正常"] },
+    { label: "标注环境\n是否更新升级", leaves: [] },
+    { label: "标注机\n是否杀毒", leaves: [] },
+    { label: "网络环境\n是否正常", leaves: [] },
+    { label: "标注工具", leaves: ["是否正常运行", "是否更新升级"] },
+    { label: "出现的问题及处理方式", leaves: [] },
+    { label: "检查人", leaves: [] },
+];
 
 export const envCheckGroups = (docType: string, kind: EnvCheckKind): Group[] => {
     if (docType === "md_020") return kind === "server" ? SERVER_TEST : DEV_TEST;
+    if (docType === "dd_017") return kind === "server" ? SERVER_ANNO : DEV_ANNO;
     return kind === "server" ? SERVER_DEV : DEV_DEV;
 };
 
@@ -65,6 +90,9 @@ export const envCheckKind = (usage: string): EnvCheckKind =>
 export const envCheckTitle = (docType: string, kind: EnvCheckKind, code: string): string => {
     if (docType === "md_020") {
         return `测试共用-${kind === "server" ? "服务器" : "测试机"}检查表（${code}）`;
+    }
+    if (docType === "dd_017") {
+        return `标注共用-${kind === "server" ? "服务器" : "标注机"}检查表（${code}）`;
     }
     return `开发共用-${kind === "server" ? "服务器" : "开发机"}检查表（${code}）`;
 };
@@ -143,7 +171,7 @@ export const computeDevTestWeeks = (rows: any[]): string[] => {
     return ranges;
 };
 
-export const parseEqAssets = (content: any): EnvAsset[] => {
+export const parseEqAssets = (content: any, usageContains?: string): EnvAsset[] => {
     const out: EnvAsset[] = [];
     const seen = new Set<string>();
     const parseTable = (tb: any[]) => {
@@ -174,6 +202,7 @@ export const parseEqAssets = (content: any): EnvAsset[] => {
             const name = nameI >= 0 ? String(row[nameI] || "").trim() : "";
             const usage = usageI >= 0 ? String(row[usageI] || "").trim() : "";
             if (name === "显示器") return;
+            if (usageContains && !usage.includes(usageContains)) return;
             if ((brand === "组装机" || brand === "Apple") && code && !seen.has(code)) {
                 seen.add(code);
                 out.push({ code, usage });

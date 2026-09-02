@@ -97,7 +97,7 @@ import PirDocDetail from "./pages/pir/PirDocDetail";
 import ModelDocs from "./pages/model_doc/ModelDocs";
 import ModelDocPage from "./pages/model_doc/ModelDocPage";
 import DataDocs from "./pages/model_doc/DataDocs";
-import DataDocDetail from "./pages/model_doc/DataDocDetail";
+import DataDocPage from "./pages/model_doc/DataDocPage";
 import DataStats from "./pages/data_stats/DataStats";
 import VuhDocs from "./pages/vuh/VuhDocs";
 import VuhDocDetail from "./pages/vuh/VuhDocDetail";
@@ -262,8 +262,8 @@ const router = createRouter([
             { path: "/model_docs/:type/edit/:id", element: <ModelDocPage /> },
             { path: "/model_docs/:type/view/:id", element: <ModelDocPage /> },
             { path: "/data_docs/:type", element: <DataDocs /> },
-            { path: "/data_docs/:type/edit/:id", element: <DataDocDetail /> },
-            { path: "/data_docs/:type/view/:id", element: <DataDocDetail /> },
+            { path: "/data_docs/:type/edit/:id", element: <DataDocPage /> },
+            { path: "/data_docs/:type/view/:id", element: <DataDocPage /> },
             { path: "/data_stats", element: <DataStats /> },
             { path: "/vuh_docs", element: <VuhDocs /> },
             { path: "/vuh_docs/edit/:id", element: <VuhDocDetail /> },
