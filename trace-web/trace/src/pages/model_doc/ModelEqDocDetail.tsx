@@ -15,6 +15,7 @@ const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", t
 const tdBase: CSSProperties = { border: "1px solid #d9d9d9", padding: "4px 6px", fontSize: 13, verticalAlign: "middle" };
 const thCell: CSSProperties = { ...tdBase, background: "#fafafa", color: "#555", fontWeight: 600, textAlign: "center" };
 const tdValue: CSSProperties = { ...tdBase, color: "#333", textAlign: "center" };
+const tdOp: CSSProperties = { ...tdBase, width: 100, textAlign: "center", whiteSpace: "nowrap" };
 
 export default () => {
     const { t: ts } = useTranslation();
@@ -171,7 +172,7 @@ export default () => {
                                 <col style={{ width: 70 }} />
                                 <col style={{ width: 90 }} />
                                 <col style={{ width: 60 }} />
-                                {!readonly && <col style={{ width: 50 }} />}
+                                {!readonly && <col style={{ width: 100 }} />}
                             </colgroup>
                             <tbody>
                                 {rows.map((row, r) => (
@@ -184,8 +185,10 @@ export default () => {
                                             </td>
                                         ))}
                                         {!readonly && (
-                                            <td style={{ ...tdValue }}>
-                                                {r > 0 && <DeleteOutlined title="删除该行" style={{ color: "#c00", cursor: "pointer" }} onClick={() => delRow(r)} />}
+                                            <td style={r === 0 ? { ...thCell, width: 100 } : tdOp}>
+                                                {r === 0 ? "操作" : (
+                                                    <DeleteOutlined title="删除该行" style={{ color: "#999", cursor: "pointer" }} onClick={() => delRow(r)} />
+                                                )}
                                             </td>
                                         )}
                                     </tr>

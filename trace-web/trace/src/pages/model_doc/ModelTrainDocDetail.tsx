@@ -18,6 +18,7 @@ const tdLabel: CSSProperties = { ...tdBase, background: "#fafafa", color: "#555"
 const tdValue: CSSProperties = { ...tdBase, color: "#333", whiteSpace: "pre-wrap", textAlign: "center" };
 const barCell: CSSProperties = { ...tdBase, background: "#fafafa", fontWeight: 600, textAlign: "center" };
 const thCell: CSSProperties = { ...tdBase, background: "#fafafa", color: "#555", fontWeight: 600, textAlign: "center" };
+const tdOp: CSSProperties = { ...tdBase, width: 100, textAlign: "center", whiteSpace: "nowrap" };
 
 const DEFAULT_CONTENT = {
     author: "",
@@ -245,9 +246,7 @@ export default () => {
                 <tr>
                     {headers.map((h) => <td key={h} style={thCell}>{h}</td>)}
                     {!readonly ? (
-                        <td style={thCell}>
-                            <PlusOutlined style={{ color: "#1677ff", cursor: "pointer" }} onClick={() => addRow(key, 0, cols)} />
-                        </td>
+                        <td style={{ ...thCell, width: 100 }}>操作</td>
                     ) : null}
                 </tr>
                 {(rows || []).slice(1).map((row, i) => {
@@ -259,8 +258,8 @@ export default () => {
                                 <td key={ci} style={tdValue}>{editValue(cell, (v) => setGrid(key, r, ci, v, cols))}</td>
                             ))}
                             {!readonly ? (
-                                <td style={{ ...tdValue, width: 56 }}>
-                                    <span style={{ display: "inline-flex", gap: 6 }}>
+                                <td style={tdOp}>
+                                    <span style={{ display: "inline-flex", gap: 14, justifyContent: "center" }}>
                                         <PlusOutlined style={{ color: "#1677ff", cursor: "pointer" }} onClick={() => addRow(key, r, cols)} />
                                         <DeleteOutlined style={{ color: "#999", cursor: "pointer" }} onClick={() => delRow(key, r)} />
                                     </span>

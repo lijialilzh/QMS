@@ -17,7 +17,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT, WD_ROW_HEIGHT_RULE
 
 from ..model.product import Product
 from ..model.data_doc import DataDoc
@@ -40,6 +40,18 @@ logger = logging.getLogger(__name__)
 
 COVER_DEPT = "数据部"
 ENV_DOC_TYPES = ("dd_016", "dd_017")
+RECORD_DOC_TYPES = {
+    "dd_002", "dd_003", "dd_004",
+    "dd_005_01", "dd_005_02",
+    "dd_008_01", "dd_008_02",
+    "dd_009_01", "dd_009_02", "dd_009_03",
+    "dd_010", "dd_011", "dd_012",
+    "dd_013_01", "dd_013_02", "dd_013_03", "dd_013_04",
+    "dd_013_05", "dd_013_06", "dd_013_07",
+    "dd_014",
+    "dd_015_01", "dd_015_02", "dd_015_03",
+    "dd_eq",
+}
 ENV_CHECK_GROUPS = {
     ("dd_016", "server"): [
         ("日期", []),
@@ -219,9 +231,39 @@ class Server(object):
         out = {"sections": [self.__normalize_node(s) for s in content["sections"]]}
         self.__drop_product_info(out)
         self.__ensure_review_annex(out, doc_type)
+        if doc_type == "dd_006":
+            self.__flatten_dd006_process(out)
         if doc_type in ENV_DOC_TYPES:
             self.__complete_env_maint_chapter(out, doc_type)
         return out
+
+    @classmethod
+    def __flatten_dd006_process(cls, content):
+        """源 Word「评估流程」下 2.1～2.5 是正文，不是子章节；子章正文都空时折回。"""
+        def walk(ns):
+            for n in ns or []:
+                if cls.__strip_num(n.get("title")) == "评估流程":
+                    kids = n.get("children") or []
+                    if kids and all(
+                        not str(k.get("body") or "").strip()
+                        and not (k.get("tables") or [])
+                        and not (k.get("children") or [])
+                        for k in kids
+                    ):
+                        lines = []
+                        for i, k in enumerate(kids):
+                            title = str(k.get("title") or "").strip()
+                            if not title:
+                                continue
+                            if not re.match(r"^\d+\.\d+", title):
+                                title = "2.%d %s" % (i + 1, title)
+                            lines.append(title)
+                        if lines:
+                            old = str(n.get("body") or "").strip()
+                            n["body"] = (old + "\n" + "\n".join(lines)).strip() if old else "\n".join(lines)
+                        n["children"] = []
+                walk(n.get("children") or [])
+        walk((content or {}).get("sections") or [])
 
     @classmethod
     def __drop_product_info(cls, content):
@@ -991,6 +1033,199 @@ class Server(object):
         rows: List[DataDocObj] = [self.__to_obj(doc, product) for doc, product in db.session.execute(sql).all()]
         return Resp.resp_ok(data=Page(total=total, rows=rows, page_index=page_index, page_size=page_size))
 
+    @staticmethod
+    def __is_meta_section(node):
+        if not isinstance(node, dict):
+            return False
+        if node.get("ref_type") in ("cover", "revision", "basic_info"):
+            return True
+        title = re.sub(r"^\s*\d+(?:\.\d+)*[\.、\s]*", "", str(node.get("title") or "")).strip()
+        return title in ("文件修订记录", "产品信息")
+
+    def __iter_record_sections(self, sections):
+        for node in sections or []:
+            if not isinstance(node, dict):
+                continue
+            if self.__is_meta_section(node):
+                yield from self.__iter_record_sections(node.get("children") or [])
+                continue
+            yield node
+
+    @staticmethod
+    def __grid_spans(grid):
+        rows = [r if isinstance(r, list) else [] for r in (grid or [])]
+        r_n = len(rows)
+        c_n = max((len(r) for r in rows), default=0)
+        spans = [[{"skip": False, "col": 1, "row": 1} for _ in range(c_n)] for _ in range(r_n)]
+
+        def txt(r, c):
+            if r >= r_n or c >= len(rows[r]):
+                return ""
+            return str(rows[r][c] or "")
+
+        def same(r, c, r2, c2):
+            a, b = txt(r, c), txt(r2, c2)
+            return a == b and a.strip() != ""
+
+        for r in range(r_n):
+            c = 0
+            while c < c_n:
+                if spans[r][c]["skip"]:
+                    c += 1
+                    continue
+                c2 = c
+                while c2 + 1 < c_n and same(r, c, r, c2 + 1):
+                    c2 += 1
+                cs = c2 - c + 1
+                spans[r][c]["col"] = cs
+                for k in range(c + 1, c2 + 1):
+                    spans[r][k]["skip"] = True
+                c = c2 + 1
+        for r in range(r_n):
+            for c in range(c_n):
+                if spans[r][c]["skip"]:
+                    continue
+                c2 = c + spans[r][c]["col"] - 1
+                while c2 + 1 < c_n and not spans[r][c2 + 1]["skip"] and not txt(r, c2 + 1).strip():
+                    spans[r][c2 + 1]["skip"] = True
+                    spans[r][c]["col"] += 1
+                    c2 += 1
+        for r in range(r_n):
+            for c in range(c_n):
+                if spans[r][c]["skip"] or not txt(r, c).strip():
+                    continue
+                cs = spans[r][c]["col"]
+                r2 = r
+                while r2 + 1 < r_n:
+                    nxt = spans[r2 + 1][c]
+                    if nxt["skip"] or nxt["col"] != cs:
+                        break
+                    below = txt(r2 + 1, c)
+                    if same(r, c, r2 + 1, c) or not below.strip():
+                        r2 += 1
+                        continue
+                    break
+                if r2 > r:
+                    spans[r][c]["row"] = r2 - r + 1
+                    for k in range(r + 1, r2 + 1):
+                        spans[k][c]["skip"] = True
+        return rows, spans
+
+    def __export_record_xlsx(self, output, obj: DataDocObj, content):
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        wb = Workbook()
+        default = wb.active
+        used_names = set()
+        thin = Border(
+            left=Side(style="thin"), right=Side(style="thin"),
+            top=Side(style="thin"), bottom=Side(style="thin"),
+        )
+        center = Alignment(wrap_text=True, vertical="center", horizontal="center")
+        left_mid = Alignment(wrap_text=True, vertical="center", horizontal="left")
+
+        def sheet_name(title):
+            raw = self.__strip_num(title) or "Sheet"
+            if re.match(r"^Sheet\d*$", raw, re.I) or re.match(r"^工作表\d*$", raw):
+                raw = doc_title(obj.doc_type) or raw
+            name = re.sub(r'[:\\/\?\*\[\]]', "_", raw)[:31] or "Sheet"
+            base = name
+            idx = 2
+            while name.lower() in used_names:
+                suffix = str(idx)
+                name = (base[: 31 - len(suffix)] + suffix)
+                idx += 1
+            used_names.add(name.lower())
+            return name
+
+        def write_table(ws, grid, start_row=1):
+            rows, spans = self.__grid_spans(grid)
+            r_n = len(rows)
+            c_n = max((len(r) for r in rows), default=0)
+
+            def row_only_first(r):
+                a = str((rows[r][0] if rows[r] else "") or "").strip()
+                if not a:
+                    return False
+                return all(not str((rows[r][k] if k < len(rows[r]) else "") or "").strip() for k in range(1, c_n))
+
+            def cell_align(s, r):
+                t = str(s or "")
+                if t.startswith("评估人") or t.startswith("复核人") or t.startswith("记录人"):
+                    return left_mid
+                if row_only_first(r) and re.search(r"TX-|DD-|MD-", t):
+                    return center
+                return center
+
+            for r in range(r_n):
+                for c in range(c_n):
+                    sp = spans[r][c]
+                    if sp["skip"]:
+                        continue
+                    val = rows[r][c] if c < len(rows[r]) else ""
+                    s = str(val or "")
+                    only_first = row_only_first(r)
+                    if c == 0 and only_first and re.search(r"TX-|DD-|MD-", s) and (obj.file_no or "").strip():
+                        s = str(obj.file_no).strip()
+                    if s.startswith("data:image"):
+                        s = "[签名]"
+                    is_title = only_first and c == 0 and not re.search(r"TX-|DD-|MD-", s)
+                    cell = ws.cell(start_row + r, c + 1, s)
+                    cell.font = Font(name="宋体", bold=bool(is_title), size=16 if is_title else (12 if only_first else 10))
+                    cell.alignment = cell_align(s, r)
+                    cell.border = thin
+                    cs, rs = sp["col"], sp["row"]
+                    if cs > 1 or rs > 1:
+                        ws.merge_cells(
+                            start_row=start_row + r, start_column=c + 1,
+                            end_row=start_row + r + rs - 1, end_column=c + 1 + cs - 1,
+                        )
+                    align = cell_align(s, r)
+                    for rr in range(start_row + r, start_row + r + rs):
+                        for cc in range(c + 1, c + 1 + cs):
+                            cur = ws.cell(rr, cc)
+                            cur.border = thin
+                            cur.alignment = align
+                            if rr == start_row + r and cc == c + 1:
+                                cur.font = cell.font
+                if row_only_first(r):
+                    ws.row_dimensions[start_row + r].height = 22
+                elif r <= 3:
+                    ws.row_dimensions[start_row + r].height = 28
+                else:
+                    ws.row_dimensions[start_row + r].height = 36
+            for c in range(1, c_n + 1):
+                widest = 8
+                for r in range(r_n):
+                    raw = str((rows[r][c - 1] if c - 1 < len(rows[r]) else "") or "")
+                    for line in raw.split("\n") or [""]:
+                        widest = max(widest, min(36, len(line) + 2))
+                ws.column_dimensions[get_column_letter(c)].width = max(10, min(36, widest * 1.1))
+            return start_row + r_n
+
+        def write_node(ws, node, row):
+            for table in (node.get("tables") or []):
+                if isinstance(table, list) and table:
+                    row = write_table(ws, table, row) + 1
+            for child in (node.get("children") or []):
+                if isinstance(child, dict) and not self.__is_meta_section(child):
+                    row = write_node(ws, child, row)
+            return row
+
+        nodes = list(self.__iter_record_sections((content or {}).get("sections") or []))
+        first = True
+        for node in nodes:
+            ws = default if first else wb.create_sheet()
+            first = False
+            ws.title = sheet_name(node.get("title"))
+            write_node(ws, node, 1)
+        if first:
+            default.title = (doc_title(obj.doc_type) or "数据文件")[:31]
+        wb.save(output)
+        output.seek(0)
+
     def __export_xlsx(self, output, obj: DataDocObj, content):
         from openpyxl import Workbook
         from openpyxl.styles import Font, Alignment, Border, Side
@@ -1070,7 +1305,10 @@ class Server(object):
         c = self.__autofill_for_export(self.__normalize_content(obj.content, obj.doc_type), obj)
         title = doc_title(obj.doc_type)
         if doc_format(obj.doc_type) == "xlsx":
-            self.__export_xlsx(output, obj, c)
+            if obj.doc_type in RECORD_DOC_TYPES:
+                self.__export_record_xlsx(output, obj, c)
+            else:
+                self.__export_xlsx(output, obj, c)
             return title, "xlsx"
         sections = c.get("sections") or []
         document = Document()
@@ -1113,6 +1351,9 @@ class Server(object):
                     cell.text = ""
                     para = cell.paragraphs[0]
                     para.alignment = align
+                    para.paragraph_format.space_before = Pt(0)
+                    para.paragraph_format.space_after = Pt(0)
+                    para.paragraph_format.line_spacing = 1
                     para.add_run().add_picture(BytesIO(base64.b64decode(b64)), height=Pt(33))
                     cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
                     return
@@ -1213,12 +1454,20 @@ class Server(object):
                     if rs > 1 or cs > 1:
                         cell = cell.merge(table.cell(r + rs - 1, c + cs - 1))
                     set_cell(cell, padded[r][c], bold=(r == 0))
+                for r, src in enumerate(padded):
+                    fit_sign_row(table.rows[r], src)
             else:
                 for r_idx, row in enumerate(grid):
                     cells = table.add_row().cells
                     for c_idx in range(cols):
                         set_cell(cells[c_idx], row[c_idx] if c_idx < len(row) else "", bold=(r_idx == 0))
+                    fit_sign_row(table.rows[r_idx], row)
             document.add_paragraph()
+
+        def fit_sign_row(row, src):
+            if any(str(c or "").startswith("data:image") for c in (src or [])):
+                row.height = Pt(50)
+                row.height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
 
         def add_cover_grid(grid):
             grid = [row for row in (grid or []) if isinstance(row, list)]
@@ -1230,7 +1479,8 @@ class Server(object):
             table.alignment = WD_TABLE_ALIGNMENT.CENTER
             table.autofit = True
             for row in grid:
-                cells = table.add_row().cells
+                wr = table.add_row()
+                cells = wr.cells
                 for c_idx in range(cols):
                     text = row[c_idx] if c_idx < len(row) else ""
                     set_cell(cells[c_idx], text, bold=(c_idx % 2 == 0), align=WD_ALIGN_PARAGRAPH.CENTER)
@@ -1239,6 +1489,7 @@ class Server(object):
                     for c_idx in range(2, cols):
                         merged = merged.merge(cells[c_idx])
                     set_cell(merged, row[1] if len(row) > 1 else "", align=WD_ALIGN_PARAGRAPH.CENTER)
+                fit_sign_row(wr, row)
             document.add_paragraph()
 
         def add_body_heading(title, level):

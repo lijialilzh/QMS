@@ -40,28 +40,31 @@ export const DATA_DOC_TYPES: Record<string, { title: string; keywords: string[] 
 export type DataDocMenuNode = { group: string; key: string; types: string[] };
 
 export const DATA_DOC_MENU: DataDocMenuNode[] = [
-    { group: "需求与规则", key: "data_req", types: ["dd_001", "md_002_01", "md_002_02", "md_003"] },
-    { group: "采集与整理", key: "data_collect", types: ["dd_002", "dd_003", "dd_004"] },
     {
-        group: "培训与考核",
-        key: "data_train",
+        group: "规范",
+        key: "data_spec",
+        types: ["dd_001", "md_003", "md_002_01", "md_002_02", "dd_006", "dd_007"],
+    },
+    { group: "采集记录", key: "data_collect", types: ["dd_002", "dd_003", "dd_004"] },
+    {
+        group: "人员记录",
+        key: "data_people",
         types: [
             "dd_005_01", "dd_005_02",
-            "dd_006", "dd_007",
             "dd_013_01", "dd_013_02", "dd_013_03", "dd_013_04",
             "dd_013_05", "dd_013_06", "dd_013_07",
         ],
     },
     {
-        group: "标注与入库",
-        key: "data_anno",
+        group: "入库记录",
+        key: "data_inbound",
         types: [
             "dd_008_01", "dd_008_02",
             "dd_009_01", "dd_009_02", "dd_009_03",
-            "dd_010", "dd_011", "dd_012",
+            "dd_011", "dd_010", "dd_012",
         ],
     },
-    { group: "统计与维护", key: "data_stats_doc", types: ["dd_014", "dd_015_01", "dd_015_02", "dd_015_03"] },
+    { group: "数据资产", key: "data_asset", types: ["dd_014", "dd_015_01", "dd_015_02", "dd_015_03"] },
     {
         group: "设备与环境维护",
         key: "data_env",
@@ -72,6 +75,20 @@ export const DATA_DOC_MENU: DataDocMenuNode[] = [
 export const DATA_DOC_TYPE_ORDER = DATA_DOC_MENU.flatMap((item) => item.types);
 
 export const DATA_STATS_IMPORT_TYPES = new Set(["dd_015_01", "dd_015_02", "dd_015_03"]);
+
+/** 记录 / 反馈 / 统计表：无左侧章节，单页原表，导出一张 xlsx。 */
+export const DATA_RECORD_DOC_TYPES = new Set([
+    "dd_002", "dd_003", "dd_004",
+    "dd_005_01", "dd_005_02",
+    "dd_008_01", "dd_008_02",
+    "dd_009_01", "dd_009_02", "dd_009_03",
+    "dd_010", "dd_011", "dd_012",
+    "dd_013_01", "dd_013_02", "dd_013_03", "dd_013_04",
+    "dd_013_05", "dd_013_06", "dd_013_07",
+    "dd_014",
+    "dd_015_01", "dd_015_02", "dd_015_03",
+    "dd_eq",
+]);
 
 export const getDataDocMeta = (type?: string) =>
     DATA_DOC_TYPES[type || ""] || { title: "数据文件", keywords: [] as string[] };

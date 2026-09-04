@@ -17,6 +17,7 @@ const tdLabel: CSSProperties = { ...tdBase, background: "#fafafa", color: "#555"
 const tdValue: CSSProperties = { ...tdBase, color: "#333", whiteSpace: "pre-wrap", textAlign: "center" };
 const barCell: CSSProperties = { ...tdBase, background: "#fafafa", fontWeight: 600, textAlign: "center" };
 const thCell: CSSProperties = { ...tdBase, background: "#fafafa", color: "#555", fontWeight: 600, textAlign: "center" };
+const tdOp: CSSProperties = { ...tdBase, width: 100, textAlign: "center", whiteSpace: "nowrap" };
 
 const DEFAULT_CONTENT = {
     author: "",
@@ -275,6 +276,7 @@ export default () => {
                                 <col style={{ width: "18%" }} />
                                 <col style={{ width: "19%" }} />
                                 <col style={{ width: "19%" }} />
+                                {!readonly && <col style={{ width: 100 }} />}
                             </colgroup>
                             <tbody>
                                 <tr>
@@ -284,36 +286,45 @@ export default () => {
                                     <td style={tdValue}>{editValue(c.write_date, (v) => setField("write_date", v))}</td>
                                     <td style={tdLabel}>审核人</td>
                                     <td style={tdValue}>{editValue(c.auditor, (v) => setField("auditor", v))}</td>
+                                    {!readonly && <td style={tdOp} />}
                                 </tr>
                                 <tr>
                                     <td style={tdLabel}>测试模型名称</td>
                                     <td style={{ ...tdValue, textAlign: "left" }} colSpan={5}>{editValue(c.model_name, (v) => setField("model_name", v), { textAlign: "left" })}</td>
+                                    {!readonly && <td style={tdOp} />}
                                 </tr>
                                 <tr>
                                     <td style={tdLabel}>测试集</td>
                                     <td style={{ ...tdValue, textAlign: "left" }} colSpan={5}>{editValue(c.test_set, (v) => setField("test_set", v), { textAlign: "left" })}</td>
+                                    {!readonly && <td style={tdOp} />}
                                 </tr>
                                 <tr>
                                     <td style={tdLabel}>测试方法</td>
                                     <td style={{ ...tdValue, textAlign: "left" }} colSpan={5}>{editValue(c.method, (v) => setField("method", v), { textAlign: "left" })}</td>
+                                    {!readonly && <td style={tdOp} />}
                                 </tr>
                                 <tr>
                                     <td style={tdLabel}>测试时间</td>
                                     <td style={{ ...tdValue, textAlign: "left" }} colSpan={5}>{editValue(c.test_time, (v) => setField("test_time", v), { textAlign: "left" })}</td>
+                                    {!readonly && <td style={tdOp} />}
                                 </tr>
                                 <tr>
                                     <td style={barCell} colSpan={6}>测试环境</td>
+                                    {!readonly && <td style={thCell} />}
                                 </tr>
                                 <tr>
                                     <td style={tdLabel}>硬件环境</td>
                                     <td style={{ ...tdValue, textAlign: "left" }} colSpan={5}>{editValue(c.hw_env, (v) => setField("hw_env", v), { textAlign: "left" })}</td>
+                                    {!readonly && <td style={tdOp} />}
                                 </tr>
                                 <tr>
                                     <td style={tdLabel}>软件环境</td>
                                     <td style={{ ...tdValue, textAlign: "left" }} colSpan={5}>{editValue(c.sw_env, (v) => setField("sw_env", v), { textAlign: "left" })}</td>
+                                    {!readonly && <td style={tdOp} />}
                                 </tr>
                                 <tr>
                                     <td style={barCell} colSpan={6}>测试结果</td>
+                                    {!readonly && <td style={thCell} />}
                                 </tr>
                                 {result.map((row, r) => {
                                     const lastCol = cols - 1;
@@ -324,6 +335,7 @@ export default () => {
                                                 {row.map((cell: string, ci: number) => (
                                                     <td key={ci} style={thCell} colSpan={cellSpan(ci)}>{cell}</td>
                                                 ))}
+                                                {!readonly && <td style={{ ...thCell, width: 100 }}>操作</td>}
                                             </tr>
                                         );
                                     }
@@ -337,37 +349,36 @@ export default () => {
                                             )}
                                             {row.slice(1).map((_: string, idx: number) => {
                                                 const ci = idx + 1;
-                                                const last = ci === lastCol;
                                                 return (
                                                     <td key={ci} style={tdValue} colSpan={cellSpan(ci)}>
-                                                        {last ? (
-                                                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                                                <div style={{ flex: 1 }}>{renderResultCell(row, r, ci, isTotal)}</div>
-                                                                {!readonly ? (
-                                                                    <span style={{ display: "inline-flex", gap: 6, flexShrink: 0 }}>
-                                                                        <PlusOutlined style={{ color: "#1677ff", cursor: "pointer" }} onClick={() => addResultRowAfter(r)} />
-                                                                        {isTotal ? null : (
-                                                                            <DeleteOutlined style={{ color: "#999", cursor: "pointer" }} onClick={() => delResultRow(r)} />
-                                                                        )}
-                                                                    </span>
-                                                                ) : null}
-                                                            </div>
-                                                        ) : renderResultCell(row, r, ci, isTotal)}
+                                                        {renderResultCell(row, r, ci, isTotal)}
                                                     </td>
                                                 );
                                             })}
+                                            {!readonly && (
+                                                <td style={tdOp}>
+                                                    <span style={{ display: "inline-flex", gap: 14, justifyContent: "center" }}>
+                                                        <PlusOutlined style={{ color: "#1677ff", cursor: "pointer" }} onClick={() => addResultRowAfter(r)} />
+                                                        {isTotal ? null : (
+                                                            <DeleteOutlined style={{ color: "#999", cursor: "pointer" }} onClick={() => delResultRow(r)} />
+                                                        )}
+                                                    </span>
+                                                </td>
+                                            )}
                                         </tr>
                                     );
                                 })}
                                 <tr>
                                     <td style={tdLabel}>结论</td>
                                     <td style={{ ...tdValue, textAlign: "left" }} colSpan={5}>{editValue(c.conclusion, (v) => setField("conclusion", v), { textAlign: "left" })}</td>
+                                    {!readonly && <td style={tdOp} />}
                                 </tr>
                                 <tr>
                                     <td style={tdLabel}>编写人（签字）/日期</td>
                                     <td style={{ ...tdValue, height: 44 }} colSpan={2}>{signCell(c.author_sign, (v) => setField("author_sign", v))}</td>
                                     <td style={tdLabel}>审核人（签字）/日期</td>
                                     <td style={{ ...tdValue, height: 44 }} colSpan={2}>{signCell(c.auditor_sign, (v) => setField("auditor_sign", v))}</td>
+                                    {!readonly && <td style={tdOp} />}
                                 </tr>
                             </tbody>
                         </table>

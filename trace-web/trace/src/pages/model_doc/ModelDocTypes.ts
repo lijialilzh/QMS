@@ -38,8 +38,8 @@ export const MODEL_DOC_TYPES: Record<string, { title: string; keywords: string[]
 export type ModelDocMenuNode = { group: string; key: string; types: string[] };
 
 export const MODEL_DOC_MENU: ModelDocMenuNode[] = [
-    { group: "计划与需求", key: "model_plan", types: ["md_001", "md_006", "pd_003"] },
-    { group: "方案设计", key: "model_design", types: ["md_004", "md_007", "md_005"] },
+    { group: "计划与需求", key: "model_plan", types: ["md_001", "pd_003", "md_006"] },
+    { group: "方案设计", key: "model_design", types: ["md_004", "md_005", "md_007"] },
     {
         group: "审查、构建与训练",
         key: "model_build_train",
@@ -53,8 +53,8 @@ export const MODEL_DOC_MENU: ModelDocMenuNode[] = [
     },
     { group: "测试", key: "model_test", types: ["md_013_01", "md_013_02", "md_014", "md_017"] },
     { group: "封装与提交", key: "model_pkg", types: ["md_015_01", "md_015_02", "md_016", "md_018"] },
-    { group: "配置与追溯", key: "model_cfg", types: ["md_021", "md_022"] },
     { group: "设备与环境维护", key: "model_env", types: ["md_eq", "md_deq", "md_019", "md_teq", "md_020"] },
+    { group: "配置与追溯", key: "model_cfg", types: ["md_021", "md_022"] },
 ];
 
 export const MODEL_DOC_TYPE_ORDER = MODEL_DOC_MENU.flatMap((item) => item.types);

@@ -17,6 +17,7 @@ const tdLabel: CSSProperties = { ...tdBase, background: "#fafafa", color: "#555"
 const tdValue: CSSProperties = { ...tdBase, color: "#333", whiteSpace: "pre-wrap", textAlign: "center" };
 const barCell: CSSProperties = { ...tdBase, background: "#fafafa", fontWeight: 600, textAlign: "center" };
 const thCell: CSSProperties = { ...tdBase, background: "#fafafa", color: "#555", fontWeight: 600, textAlign: "center" };
+const tdOp: CSSProperties = { ...tdBase, width: 100, textAlign: "center", whiteSpace: "nowrap" };
 
 const DEFAULT_CONTENT = {
     author: "",
@@ -267,6 +268,7 @@ export default () => {
                                 <col style={{ width: "32%" }} />
                                 <col style={{ width: "18%" }} />
                                 <col style={{ width: "32%" }} />
+                                {!readonly && <col style={{ width: 100 }} />}
                             </colgroup>
                             <tbody>
                                 <tr>
@@ -274,25 +276,30 @@ export default () => {
                                     <td style={tdValue}>{editValue(c.author, (v) => setField("author", v))}</td>
                                     <td style={tdLabel}>编写时间</td>
                                     <td style={tdValue}>{editValue(c.write_date, (v) => setField("write_date", v))}</td>
+                                    {!readonly && <td style={tdOp} />}
                                 </tr>
                                 <tr>
                                     <td style={tdLabel}>数据用途</td>
                                     <td style={tdValue}>{editValue(c.data_use, (v) => setField("data_use", v))}</td>
                                     <td style={tdLabel}>数据类型</td>
                                     <td style={tdValue}>{editValue(c.data_type, (v) => setField("data_type", v))}</td>
+                                    {!readonly && <td style={tdOp} />}
                                 </tr>
                                 <tr>
                                     <td style={tdLabel}>构建方法</td>
                                     <td style={{ ...tdValue, textAlign: "left" }} colSpan={3}>{editValue(c.method, (v) => setField("method", v), { textAlign: "left" })}</td>
+                                    {!readonly && <td style={tdOp} />}
                                 </tr>
                                 <tr>
                                     <td style={tdLabel}>病例数量</td>
                                     <td style={tdValue}>{c.case_count || ""}</td>
                                     <td style={tdLabel}>标记人员及方式</td>
                                     <td style={tdValue}>{editValue(c.annotator, (v) => setField("annotator", v))}</td>
+                                    {!readonly && <td style={tdOp} />}
                                 </tr>
                                 <tr>
                                     <td style={barCell} colSpan={4}>数据分布</td>
+                                    {!readonly && <td style={thCell} />}
                                 </tr>
                                 {dist.map((row, r) => {
                                     if (r === 0) {
@@ -301,6 +308,7 @@ export default () => {
                                                 {row.map((cell: string, ci: number) => (
                                                     <td key={ci} style={thCell}>{cell}</td>
                                                 ))}
+                                                {!readonly && <td style={{ ...thCell, width: 100 }}>操作</td>}
                                             </tr>
                                         );
                                     }
@@ -314,19 +322,17 @@ export default () => {
                                             )}
                                             <td style={tdValue}>{isTotal ? "" : editValue(row[1], (v) => setDist(r, 1, v))}</td>
                                             <td style={tdValue}>{isTotal ? totals.qty : editValue(row[2], (v) => setDist(r, 2, v))}</td>
-                                            <td style={tdValue}>
-                                                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                                    <div style={{ flex: 1 }}>{isTotal ? totals.pct : editValue(row[3], (v) => setDist(r, 3, v))}</div>
-                                                    {!readonly ? (
-                                                        <span style={{ display: "inline-flex", gap: 6, flexShrink: 0 }}>
-                                                            <PlusOutlined style={{ color: "#1677ff", cursor: "pointer" }} onClick={() => addDistRowAfter(r)} />
-                                                            {isTotal ? null : (
-                                                                <DeleteOutlined style={{ color: "#999", cursor: "pointer" }} onClick={() => delDistRow(r)} />
-                                                            )}
-                                                        </span>
-                                                    ) : null}
-                                                </div>
-                                            </td>
+                                            <td style={tdValue}>{isTotal ? totals.pct : editValue(row[3], (v) => setDist(r, 3, v))}</td>
+                                            {!readonly && (
+                                                <td style={tdOp}>
+                                                    <span style={{ display: "inline-flex", gap: 14, justifyContent: "center" }}>
+                                                        <PlusOutlined style={{ color: "#1677ff", cursor: "pointer" }} onClick={() => addDistRowAfter(r)} />
+                                                        {isTotal ? null : (
+                                                            <DeleteOutlined style={{ color: "#999", cursor: "pointer" }} onClick={() => delDistRow(r)} />
+                                                        )}
+                                                    </span>
+                                                </td>
+                                            )}
                                         </tr>
                                     );
                                 })}
@@ -335,6 +341,7 @@ export default () => {
                                     <td style={{ ...tdValue, height: 44 }}>{signCell(c.author_sign, (v) => setField("author_sign", v))}</td>
                                     <td style={tdLabel}>审核人签字（日期）</td>
                                     <td style={{ ...tdValue, height: 44 }}>{signCell(c.auditor_sign, (v) => setField("auditor_sign", v))}</td>
+                                    {!readonly && <td style={tdOp} />}
                                 </tr>
                             </tbody>
                         </table>

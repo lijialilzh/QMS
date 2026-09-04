@@ -8,12 +8,16 @@ import * as Api from "@/api/ApiDataDoc";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
+import * as ApiPersonSign from "@/api/ApiPersonSign";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import { getDataDocMeta, DATA_STATS_IMPORT_TYPES } from "./DataDocTypes";
+import { computeGridSpans, isReviewRecordGrid } from "./gridSpans";
 import "../pdp/PdpDocDetail.less";
 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
+const COVER_MODEL_WRITER = new Set(["dd_001", "md_002_01", "md_002_02", "md_003", "dd_006", "dd_007"]);
+const COVER_SHEN_APPROVER = new Set(["md_002_01", "md_002_02", "md_003", "dd_006", "dd_007"]);
 
 const computeFileDate = (rows: any[], keywords: string[]): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
@@ -29,6 +33,12 @@ const computeFileDate = (rows: any[], keywords: string[]): string => {
     let best = matches[0];
     matches.forEach((r: any) => { if (key(r) < key(best)) best = r; });
     return `${num(best.year)}年${num(best.month)}月${num(best.day)}日`;
+};
+
+const toDottedDate = (s: string): string => {
+    const m = String(s || "").match(/(\d+)\s*年\s*(\d+)\s*月\s*(\d+)\s*日/);
+    if (m) return `${m[1]}.${Number(m[2])}.${Number(m[3])}`;
+    return String(s || "").trim();
 };
 
 const ensureKeys = (nodes: any[]): any[] =>
@@ -174,7 +184,7 @@ export default () => {
         return (nodes || []).map(fix);
     };
 
-    const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; reviser?: string; approver?: string }): any[] => {
+    const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; reviser?: string; approver?: string }, replace = false): any[] => {
         const fix = (n: any): any => {
             const isRev = n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
             let tables = n.tables;
@@ -184,12 +194,59 @@ export default () => {
                 while (t.length < 6) t.push(new Array(cols).fill(""));
                 const row = t[1];
                 const setIf = (i: number, val: any) => { if (val && !String(row[i] || "").trim()) row[i] = val; };
-                setIf(0, info.fileDate);
-                setIf(1, info.version);
-                if (!String(row[2] || "").trim()) row[2] = "首次发布";
-                setIf(3, info.reviser);
-                setIf(4, info.approver);
+                const setTo = (i: number, val: any) => { row[i] = val || ""; };
+                if (replace) {
+                    setTo(0, info.fileDate);
+                    setTo(3, info.reviser);
+                    setTo(4, info.approver);
+                    if (!String(row[2] || "").trim()) row[2] = "首次发布";
+                } else {
+                    setIf(0, info.fileDate);
+                    setIf(1, info.version);
+                    if (!String(row[2] || "").trim()) row[2] = "首次发布";
+                    setIf(3, info.reviser);
+                    setIf(4, info.approver);
+                }
                 tables = [t, ...n.tables.slice(1)];
+            }
+            return { ...n, tables, children: (n.children || []).map(fix) };
+        };
+        return (nodes || []).map(fix);
+    };
+
+    const fillCover = (
+        nodes: any[],
+        info: { date?: string; 编制人?: string; 审核人?: string; 批准人?: string },
+        replace = false,
+    ): any[] => {
+        const signers: Record<string, string> = {
+            "编制人": info.编制人 || "",
+            "审核人": info.审核人 || "",
+            "批准人": info.批准人 || "",
+        };
+        const put = (row: any[], idx: number, val: string) => {
+            if (replace) row[idx] = val || "";
+            else if (val && !String(row[idx] || "").trim()) row[idx] = val;
+        };
+        const fix = (n: any): any => {
+            const isCover = n.ref_type === "cover";
+            let tables = n.tables;
+            if (isCover && Array.isArray(n.tables)) {
+                tables = n.tables.map((tb: any[]) => {
+                    if (!Array.isArray(tb)) return tb;
+                    return tb.map((row: any[]) => {
+                        if (!Array.isArray(row) || !row.length) return row;
+                        const next = [...row];
+                        const label = String(next[0] || "").trim();
+                        if (label in signers) {
+                            if (next.length >= 2) put(next, 1, signers[label]);
+                            if (next.length >= 4) put(next, 3, info.date || "");
+                        } else if (label === "生效日期" && next.length >= 2) {
+                            put(next, 1, info.date || "");
+                        }
+                        return next;
+                    });
+                });
             }
             return { ...n, tables, children: (n.children || []).map(fix) };
         };
@@ -205,29 +262,47 @@ export default () => {
                 oldId ? ApiProduct.get_product({ id: oldId }).catch(() => null) : Promise.resolve(null),
                 ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
                 ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
-            ]).then(([pr, oldPr, tl, mb]: any[]) => {
+                ApiPersonSign.list_person_sign({ page_index: 0, page_size: 1000 }).catch(() => null),
+            ]).then(([pr, oldPr, tl, mb, ps]: any[]) => {
                 const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
                 const oldProd = oldPr && oldPr.code === Api.C_OK ? (oldPr.data || {}) : {};
                 const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
                 const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
-                const findRole = (pred: (role: string) => boolean) => {
-                    const hit = members.find((m: any) => pred(String(m.role || "")));
-                    return hit ? String(hit.name || "").trim() : "";
+                const signRows = ps && ps.code === Api.C_OK ? ((ps.data && ps.data.rows) || []) : [];
+                const signMap: Record<string, string> = {};
+                signRows.forEach((s: any) => { if (s.name && s.sign_img) signMap[String(s.name).trim()] = s.sign_img; });
+                const findRole = (...kws: string[]) => {
+                    for (const k of kws) {
+                        const hit = members.find((m: any) => String(m.role || "").includes(k));
+                        if (hit) return String(hit.name || "").trim();
+                    }
+                    return "";
                 };
-                const modeler = findRole((r) => r.includes("模型"));
-                const algo = findRole((r) => r.includes("算法"));
+                const signOr = (name: string) => (name && signMap[name]) || name || "";
+                const writer = COVER_MODEL_WRITER.has(type || "")
+                    ? findRole("模型负责人", "模型部负责人", "模型")
+                    : findRole("数据部负责人", "数据负责人", "数据");
+                const reviewer = COVER_MODEL_WRITER.has(type || "") ? "沈宏" : findRole("模型");
+                const approver = COVER_SHEN_APPROVER.has(type || "") ? "沈宏" : findRole("研发负责人");
+                const fileDate = computeFileDate(tlRows, meta.keywords.concat(meta.title));
                 let out = fillBasicInfo(secs, {
                     name: prod.name,
                     version: prod.full_version,
                     code: prod.product_code,
                     scope: prod.scope,
                 }, replaceProduct);
+                out = fillCover(out, {
+                    date: toDottedDate(fileDate),
+                    编制人: signOr(writer),
+                    审核人: signOr(reviewer),
+                    批准人: signOr(approver),
+                }, replaceProduct);
                 out = fillRevision(out, {
-                    fileDate: computeFileDate(tlRows, meta.keywords.concat(meta.title)),
+                    fileDate,
                     version,
-                    reviser: modeler || algo,
-                    approver: findRole((r) => r.includes("负责人")),
-                });
+                    reviser: writer,
+                    approver,
+                }, replaceProduct);
                 const newName = String(prod.name || "").trim();
                 const newType = String(prod.type_code || "").trim();
                 const newCode = String(prod.product_code || "").trim();
@@ -300,12 +375,18 @@ export default () => {
 
     const active = findNode(data.sections, data.activeKey);
     const updateTables = (tables: any[]) => patchNode(data.activeKey, { tables });
-    const setCell = (ti: number, r: number, ci: number, val: string) => {
-        const tables = (active.tables || []).map((tb: any[], i: number) =>
-            i !== ti ? tb : tb.map((row: any[], ri: number) =>
-                ri !== r ? row : row.map((cell: any, cc: number) => (cc === ci ? val : cell))
-            )
-        );
+    const setCell = (ti: number, r: number, ci: number, val: string, colSpan = 1, rowSpan = 1) => {
+        const tables = (active.tables || []).map((tb: any[], i: number) => {
+            if (i !== ti) return tb;
+            const cs = Math.max(1, colSpan);
+            const rs = Math.max(1, rowSpan);
+            return tb.map((row: any[], ri: number) => {
+                if (ri < r || ri >= r + rs) return row;
+                const next = [...row];
+                while (next.length < ci + cs) next.push("");
+                return next.map((cell: any, cc: number) => (cc < ci || cc >= ci + cs ? cell : val));
+            });
+        });
         updateTables(tables);
     };
     const addRow = (ti: number) => {
@@ -515,15 +596,31 @@ export default () => {
                                         </div>
                                         <table className="pdp-grid">
                                             <tbody>
-                                                {tb.map((row: any[], r: number) => (
+                                                {(() => {
+                                                    const review = isReviewRecordGrid(tb);
+                                                    const spans = review ? computeGridSpans(tb) : null;
+                                                    const cols = tb.reduce((m: number, row: any[]) => Math.max(m, Array.isArray(row) ? row.length : 0), 0);
+                                                    return tb.map((row: any[], r: number) => (
                                                     <tr key={r}>
-                                                        {row.map((cell: any, ci: number) => (
-                                                            <td key={ci} className={r === 0 ? "head" : ""}>
+                                                        {(review ? Array.from({ length: cols }, (_, ci) => ci) : row.map((_: any, ci: number) => ci)).map((ci: number) => {
+                                                            const sp = spans?.[r]?.[ci];
+                                                            if (sp?.skip) return null;
+                                                            const cell = row[ci] ?? "";
+                                                            const cs = sp?.colSpan || 1;
+                                                            const rs = sp?.rowSpan || 1;
+                                                            return (
+                                                            <td
+                                                                key={ci}
+                                                                className={r === 0 ? "head" : ""}
+                                                                colSpan={cs > 1 ? cs : undefined}
+                                                                rowSpan={rs > 1 ? rs : undefined}
+                                                                style={cs > 1 || rs > 1 ? { verticalAlign: "middle" } : undefined}
+                                                            >
                                                                 {typeof cell === "string" && cell.startsWith("data:image") ? (
                                                                     <span style={{ position: "relative", display: "inline-block" }}>
                                                                         <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
                                                                         {!readonly && (
-                                                                            <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />
+                                                                            <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "", cs, rs)} />
                                                                         )}
                                                                     </span>
                                                                 ) : (
@@ -532,14 +629,15 @@ export default () => {
                                                                         autoSize={{ minRows: 1, maxRows: 8 }}
                                                                         value={cell ?? ""}
                                                                         disabled={readonly}
-                                                                        onChange={(e) => setCell(ti, r, ci, e.target.value)}
+                                                                        onChange={(e) => setCell(ti, r, ci, e.target.value, cs, rs)}
                                                                     />
                                                                 )}
                                                                 {!readonly && r === 0 && tb[0].length > 1 && (
                                                                     <DeleteOutlined className="pdp-col-del" title="删除该列" onClick={() => delCol(ti, ci)} />
                                                                 )}
                                                             </td>
-                                                        ))}
+                                                            );
+                                                        })}
                                                         {!readonly && (
                                                             <td className="pdp-row-op">
                                                                 {tb.length > 1 && (
@@ -548,7 +646,8 @@ export default () => {
                                                             </td>
                                                         )}
                                                     </tr>
-                                                ))}
+                                                    ));
+                                                })()}
                                             </tbody>
                                         </table>
                                     </div>
