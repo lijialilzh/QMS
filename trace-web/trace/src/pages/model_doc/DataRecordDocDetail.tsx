@@ -1,4 +1,4 @@
-import { Button, Input, Space, Spin, Upload, message } from "antd";
+import { Button, Checkbox, Input, Space, Spin, Upload, message } from "antd";
 import { DeleteOutlined, PlusOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import type { CSSProperties } from "react";
@@ -80,8 +80,30 @@ const isSignRow = (row: any[]) => (row || []).some((c: any) => isSignLabel(Strin
 const isMetaLabelRow = (row: any[]) => /^(结论|问题描述)/.test(String(row?.[0] ?? "").trim());
 const stripPua = (s: any) => {
     if (typeof s !== "string" || s.startsWith("data:image")) return s;
-    return s.replace(/[\uF000-\uF8FF]/g, "").replace(/[ \t]+$/g, "");
+    return s
+        .replace(/[\uF000-\uF8FF]/g, "")
+        .replace(/þ/g, "☑")
+        .replace(/¨/g, "☐")
+        .replace(/(^|[\s])o(?=正常|不正常|不适用|是|否|无重复|有重复)/g, "$1☐")
+        .replace(/[ \t]+$/g, "");
 };
+
+const CHECK_OPT = "正常|不正常|不适用|是|否|无重复|有重复";
+const parseCheckItem = (s: string) => {
+    const t = String(s || "").trim();
+    const m = t.match(new RegExp(`^([☑☐])(${CHECK_OPT})$`));
+    return m ? { checked: m[1] === "☑", label: m[2] } : null;
+};
+const parseCheckItems = (s: any) => {
+    if (typeof s !== "string" || s.startsWith("data:image")) return null;
+    const lines = stripPua(s).split(/\n/).map((x: string) => x.trim()).filter(Boolean);
+    if (!lines.length) return null;
+    const items = lines.map(parseCheckItem);
+    if (items.some((it: { checked: boolean; label: string } | null) => !it)) return null;
+    return items as Array<{ checked: boolean; label: string }>;
+};
+const joinCheckItems = (items: Array<{ checked: boolean; label: string }>) =>
+    items.map((it) => `${it.checked ? "☑" : "☐"}${it.label}`).join("\n");
 
 const computeRecordSpans = (grid: any[][]) => {
     const spans = computeGridSpans(grid);
@@ -449,6 +471,7 @@ export default () => {
                                     if (sp?.skip) return null;
                                     const raw = row[ci] ?? "";
                                     const cell = stripPua(raw);
+                                    const checkItems = parseCheckItems(cell);
                                     const cs = sp?.colSpan || 1;
                                     const rs = sp?.rowSpan || 1;
                                     const align = sign ? "left" : "center";
@@ -462,6 +485,25 @@ export default () => {
                                         >
                                             {typeof cell === "string" && cell.startsWith("data:image") ? (
                                                 <img src={cell} alt="" style={{ maxHeight: 36 }} />
+                                            ) : checkItems ? (
+                                                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
+                                                    {checkItems.map((it, ii) => (
+                                                        <Checkbox
+                                                            key={ii}
+                                                            checked={it.checked}
+                                                            disabled={readonly}
+                                                            style={{ transform: "scale(0.85)", fontSize: 13 }}
+                                                            onChange={() => {
+                                                                const next = checkItems.map((x, j) =>
+                                                                    j === ii ? { ...x, checked: !x.checked } : x
+                                                                );
+                                                                setCell(n._key, ti, r, ci, joinCheckItems(next), cs, rs);
+                                                            }}
+                                                        >
+                                                            {it.label}
+                                                        </Checkbox>
+                                                    ))}
+                                                </div>
                                             ) : (
                                                 <Input.TextArea
                                                     variant="borderless"

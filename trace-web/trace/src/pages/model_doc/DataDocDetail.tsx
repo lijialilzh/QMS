@@ -17,7 +17,6 @@ import "../pdp/PdpDocDetail.less";
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
 const COVER_MODEL_WRITER = new Set(["dd_001", "md_002_01", "md_002_02", "md_003", "dd_006", "dd_007"]);
-const COVER_SHEN_APPROVER = new Set(["md_002_01", "md_002_02", "md_003", "dd_006", "dd_007"]);
 
 const computeFileDate = (rows: any[], keywords: string[]): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
@@ -77,6 +76,15 @@ const stripNum = (title: string): string => String(title || "").replace(/^\s*\d+
 const dropProductInfo = (nodes: any[]): any[] =>
     (nodes || []).filter((n: any) => n.ref_type !== "basic_info" && stripNum(n.title) !== "产品信息")
         .map((n: any) => ({ ...n, children: dropProductInfo(n.children || []) }));
+
+const isCoverTable = (tb: any[]) => {
+    if (!Array.isArray(tb) || tb.length < 4) return false;
+    const labels = new Set((tb || []).filter(Array.isArray).map((r: any[]) => String(r[0] || "").trim()));
+    return labels.has("编制人") && labels.has("审核人") && labels.has("批准人")
+        && (labels.has("编制部门") || labels.has("生效日期"));
+};
+
+const isCoverNode = (n: any) => n?.ref_type === "cover" || (n?.tables || []).some((tb: any[]) => isCoverTable(tb));
 
 const BASE_PROD_NAME = "肺栓塞CT图像辅助评估软件";
 const BASE_PROD_TYPE = "IR-CT-PE";
@@ -214,6 +222,44 @@ export default () => {
         return (nodes || []).map(fix);
     };
 
+    const isShenVal = (v: any, shenSign: string) => {
+        const t = String(v ?? "").trim();
+        return t === "沈宏" || (!!shenSign && t === shenSign);
+    };
+
+    const relocateMisplacedCoverShen = (nodes: any[], shenSign: string, keepShenApprover: boolean): any[] => {
+        const fix = (n: any): any => {
+            let tables = n.tables;
+            if (isCoverNode(n) && Array.isArray(n.tables)) {
+                tables = n.tables.map((tb: any[]) => {
+                    if (!Array.isArray(tb) || !isCoverTable(tb)) return tb;
+                    const cell = (lab: string) => {
+                        const row = tb.find((r: any) => Array.isArray(r) && String(r[0] || "").trim() === lab);
+                        return row ? row[1] : "";
+                    };
+                    const reviewFilled = !!String(cell("审核人") || "").trim();
+                    const writerShen = isShenVal(cell("编制人"), shenSign);
+                    const reviewShen = !keepShenApprover && isShenVal(cell("审核人"), shenSign);
+                    const approverShen = !keepShenApprover && isShenVal(cell("批准人"), shenSign);
+                    if (!writerShen && !reviewShen && !approverShen) return tb;
+                    const moved = writerShen ? cell("编制人") : cell("批准人");
+                    return tb.map((row: any[]) => {
+                        if (!Array.isArray(row)) return row;
+                        const next = [...row];
+                        const lab = String(next[0] || "").trim();
+                        if (lab === "编制人" && writerShen) next[1] = "";
+                        if (lab === "批准人" && approverShen) next[1] = "";
+                        if (lab === "审核人" && reviewShen) next[1] = "";
+                        if (lab === "审核人" && keepShenApprover && !reviewFilled && writerShen) next[1] = moved;
+                        return next;
+                    });
+                });
+            }
+            return { ...n, tables, children: (n.children || []).map(fix) };
+        };
+        return (nodes || []).map(fix);
+    };
+
     const fillCover = (
         nodes: any[],
         info: { date?: string; 编制人?: string; 审核人?: string; 批准人?: string },
@@ -229,7 +275,7 @@ export default () => {
             else if (val && !String(row[idx] || "").trim()) row[idx] = val;
         };
         const fix = (n: any): any => {
-            const isCover = n.ref_type === "cover";
+            const isCover = isCoverNode(n);
             let tables = n.tables;
             if (isCover && Array.isArray(n.tables)) {
                 tables = n.tables.map((tb: any[]) => {
@@ -248,7 +294,7 @@ export default () => {
                     });
                 });
             }
-            return { ...n, tables, children: (n.children || []).map(fix) };
+            return { ...n, ref_type: isCover ? "cover" : n.ref_type, tables, children: (n.children || []).map(fix) };
         };
         return (nodes || []).map(fix);
     };
@@ -282,8 +328,8 @@ export default () => {
                 const writer = COVER_MODEL_WRITER.has(type || "")
                     ? findRole("模型负责人", "模型部负责人", "模型")
                     : findRole("数据部负责人", "数据负责人", "数据");
-                const reviewer = COVER_MODEL_WRITER.has(type || "") ? "沈宏" : findRole("模型");
-                const approver = COVER_SHEN_APPROVER.has(type || "") ? "沈宏" : findRole("研发负责人");
+                const reviewer = findRole("模型");
+                const approver = findRole("研发负责人");
                 const fileDate = computeFileDate(tlRows, meta.keywords.concat(meta.title));
                 let out = fillBasicInfo(secs, {
                     name: prod.name,
@@ -291,6 +337,7 @@ export default () => {
                     code: prod.product_code,
                     scope: prod.scope,
                 }, replaceProduct);
+                out = relocateMisplacedCoverShen(out, signMap["沈宏"] || "", false);
                 out = fillCover(out, {
                     date: toDottedDate(fileDate),
                     编制人: signOr(writer),

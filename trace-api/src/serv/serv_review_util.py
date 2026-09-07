@@ -846,22 +846,18 @@ def _sign_by_name(name):
 
 
 # 个别模块如需覆盖部门默认规则，可在此登记 key -> {label:(kind,arg)}；留空则一律按部门规则。
-_DATA_MODEL_WRITER_SHEN = {
+_DATA_MODEL_COVER = {
     "编制人": ("member_role", ["模型负责人", "模型部负责人", "模型"]),
-    "审核人": ("name", "沈宏"),
-    "批准人": ("name", "沈宏"),
+    "审核人": ("member_role", "模型"),
+    "批准人": ("member_role", "研发负责人"),
 }
 COVER_SIGNERS = {
-    "dd_001": {
-        "编制人": ("member_role", ["模型负责人", "模型部负责人", "模型"]),
-        "审核人": ("name", "沈宏"),
-        "批准人": ("member_role", "研发负责人"),
-    },
-    "md_002_01": _DATA_MODEL_WRITER_SHEN,
-    "md_002_02": _DATA_MODEL_WRITER_SHEN,
-    "md_003": _DATA_MODEL_WRITER_SHEN,
-    "dd_006": _DATA_MODEL_WRITER_SHEN,
-    "dd_007": _DATA_MODEL_WRITER_SHEN,
+    "dd_001": _DATA_MODEL_COVER,
+    "md_002_01": _DATA_MODEL_COVER,
+    "md_002_02": _DATA_MODEL_COVER,
+    "md_003": _DATA_MODEL_COVER,
+    "dd_006": _DATA_MODEL_COVER,
+    "dd_007": _DATA_MODEL_COVER,
 }
 
 
