@@ -32,6 +32,35 @@ const memberNames = (members: any[], pred: (role: string) => boolean): string[] 
         .filter((m) => m.name && pred(m.role))
         .map((m) => m.name);
 
+const BASE_PROD_NAME = "肺栓塞CT图像辅助评估软件";
+const BASE_PROD_TYPE = "IR-CT-PE";
+
+const replaceExact = (s: any, from: string, to: string) => {
+    if (!from || !to || from === to) return s;
+    if (typeof s !== "string" || s.startsWith("data:image")) return s;
+    return s.includes(from) ? s.split(from).join(to) : s;
+};
+
+const replaceKeywords = (nodes: any[], pairs: Array<[string, string]>): any[] => {
+    const list = (pairs || [])
+        .filter(([from, to]) => from && to && from !== to)
+        .sort((a, b) => b[0].length - a[0].length);
+    if (!list.length) return nodes;
+    const apply = (s: any) => list.reduce((acc, [from, to]) => replaceExact(acc, from, to), s);
+    const fix = (n: any): any => ({
+        ...n,
+        title: apply(n.title),
+        body: apply(n.body),
+        tables: (n.tables || []).map((tb: any[]) =>
+            Array.isArray(tb)
+                ? tb.map((row: any[]) => (Array.isArray(row) ? row.map((c: any) => apply(c)) : row))
+                : tb
+        ),
+        children: (n.children || []).map(fix),
+    });
+    return (nodes || []).map(fix);
+};
+
 const inspectTitle = (docType: string) => (docType === "dd_017" ? "标注环境定期检查" : "开发环境定期检查");
 const inspectOldTitle = (docType: string) => (docType === "dd_017" ? "标注环境定期验证" : "开发环境定期验证");
 const maintTitle = (docType: string) => (docType === "dd_017" ? "标注环境维护记录" : "开发环境维护记录");
@@ -157,17 +186,20 @@ export default () => {
         products: [] as any[],
     });
 
-    const applyEnv = (productId: number, secs: any[]): Promise<any[]> =>
+    const applyEnv = (productId: number, secs: any[], oldProductId = 0): Promise<any[]> =>
         new Promise((resolve) => {
             if (!productId) { resolve(secs); return; }
+            const oldId = oldProductId && oldProductId !== productId ? oldProductId : 0;
             Promise.all([
                 ApiProduct.get_product({ id: productId }).catch(() => null),
+                oldId ? ApiProduct.get_product({ id: oldId }).catch(() => null) : Promise.resolve(null),
                 ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
                 ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
                 ApiPersonSign.list_person_sign({ page_index: 0, page_size: 1000 }).catch(() => null),
                 Api.list_data_doc({ product_id: productId, doc_type: "dd_eq", page_index: 0, page_size: 1 }).catch(() => null),
-            ]).then(([pr, tl, mb, ps, eqList]: any[]) => {
+            ]).then(([pr, oldPr, tl, mb, ps, eqList]: any[]) => {
                 const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
+                const oldProd = oldPr && oldPr.code === Api.C_OK ? (oldPr.data || {}) : {};
                 const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
                 const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
                 const signRows = ps && ps.code === Api.C_OK ? ((ps.data && ps.data.rows) || []) : [];
@@ -178,15 +210,25 @@ export default () => {
                     || memberNames(members, (r) => r.includes("数据"))[0]
                     || "";
                 const eqDoc = eqList && eqList.code === Api.C_OK ? (((eqList.data && eqList.data.rows) || [])[0] || null) : null;
+                const prodName = String(prod.name || "").trim();
+                const fullVersion = String(prod.full_version || "").trim();
                 let out = ensureEnvMaintChapter(secs, docType);
                 out = fillEnvMaint(out, {
-                    prodName: String(prod.name || "").trim(),
-                    fullVersion: String(prod.full_version || "").trim(),
+                    prodName,
+                    fullVersion,
                     weeks: computeDevTestWeeks(tlRows),
                     checker: (checkerName && signMap[checkerName]) || checkerName || "",
                     eqAssets: eqDoc ? parseEqAssets(eqDoc.content, docType === "dd_017" ? "标注" : "开发") : null,
                     docType,
                 });
+                out = replaceKeywords(out, [
+                    [String(oldProd.name || "").trim(), prodName],
+                    [BASE_PROD_NAME, prodName],
+                    [String(oldProd.type_code || "").trim(), String(prod.type_code || "").trim()],
+                    [BASE_PROD_TYPE, String(prod.type_code || "").trim()],
+                    [String(oldProd.product_code || "").trim(), String(prod.product_code || "").trim()],
+                    [String(oldProd.full_version || "").trim(), fullVersion],
+                ]);
                 resolve(out);
             }).catch(() => resolve(secs));
         });
@@ -219,7 +261,7 @@ export default () => {
     const rebindProduct = (newId: number) => {
         const product = (data.products || []).find((p: any) => p.id === newId) || {};
         dispatch({ loading: true, doc: { ...data.doc, product_id: newId, product_name: product.name, product_full_version: product.full_version } });
-        applyEnv(newId, data.sections).then((secs) => dispatch({ loading: false, sections: secs }));
+        applyEnv(newId, data.sections, data.doc.product_id).then((secs) => dispatch({ loading: false, sections: secs }));
     };
 
     const inspect = findByTitle(data.sections, inspectTitle(docType));

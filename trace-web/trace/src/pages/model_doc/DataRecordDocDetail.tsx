@@ -55,6 +55,13 @@ const hideSheetTitle = (title: string) => {
     return !t || /^Sheet\d*$/i.test(t) || /^工作表\d*$/.test(t);
 };
 
+const maxTableCols = (nodes: any[]): number =>
+    (nodes || []).reduce((m, n) => {
+        const t = (n.tables || []).reduce((tm: number, tb: any[]) =>
+            Math.max(tm, (tb || []).reduce((rm: number, row: any[]) => Math.max(rm, Array.isArray(row) ? row.length : 0), 0)), 0);
+        return Math.max(m, t, maxTableCols(n.children || []));
+    }, 0);
+
 const looksLikeFileNo = (s: string) => /TX-|DD-|MD-/.test(String(s || ""));
 
 const onlyFirstRow = (row: any[], cols: number) => {
@@ -100,6 +107,7 @@ const computeRecordSpans = (grid: any[][]) => {
             const cs = spans[r][c].colSpan;
             let r2 = r;
             while (r2 + 1 < R) {
+                if (rowAllEmpty(rows[r2 + 1], C) || isSignRow(rows[r2 + 1])) break;
                 let ok = true;
                 for (let k = 0; k < cs; k++) {
                     const cell = spans[r2 + 1]?.[c + k];
@@ -121,6 +129,74 @@ const computeRecordSpans = (grid: any[][]) => {
 
 const BASE_PROD_NAME = "肺栓塞CT图像辅助评估软件";
 const BASE_PROD_TYPE = "IR-CT-PE";
+const PROD_LABEL_NAME = new Set(["产品名称", "项目名称", "所属项目", "数据所属项目"]);
+const PROD_LABEL_VER = new Set(["软件版本", "完整版本"]);
+const PROD_LABEL_CODE = new Set(["产品标识", "产品代码"]);
+const PROD_LABEL_SCOPE = new Set(["预期用途", "适用范围"]);
+const PROD_COL_HEADERS = new Set(["产品名称", "完整版本", "软件版本", "所属项目", "数据所属项目"]);
+
+const productValueForLabel = (label: string, info: { name: string; version: string; code: string; scope: string }) => {
+    if (PROD_LABEL_NAME.has(label)) return info.name;
+    if (PROD_LABEL_VER.has(label)) return info.version;
+    if (PROD_LABEL_CODE.has(label)) return info.code;
+    if (PROD_LABEL_SCOPE.has(label)) return info.scope;
+    return "";
+};
+
+const isProdLabelValueRow = (row: any[], cols: number) => {
+    if (!productValueForLabel(String(row?.[0] ?? "").trim(), { name: "x", version: "x", code: "x", scope: "x" })) return false;
+    for (let c = 2; c < cols; c++) if (String(row?.[c] ?? "").trim()) return false;
+    return true;
+};
+
+const fillRecordProductCells = (nodes: any[], info: { name: string; version: string; code: string; scope: string }, replace: boolean): any[] => {
+    const put = (cur: any, next: string) => {
+        if (!next) return cur;
+        if (replace || !String(cur ?? "").trim()) return next;
+        return cur;
+    };
+    const fixTable = (tb: any[]) => {
+        if (!Array.isArray(tb) || !tb.length) return tb;
+        const cols = tb.reduce((m, r) => Math.max(m, Array.isArray(r) ? r.length : 0), 0);
+        let headerIdx = -1;
+        const colLabel: string[] = [];
+        for (let r = 0; r < tb.length; r++) {
+            const row = tb[r];
+            if (!Array.isArray(row) || isProdLabelValueRow(row, cols)) continue;
+            const hits = row.filter((c) => PROD_COL_HEADERS.has(String(c ?? "").trim())).length;
+            const filled = row.filter((c) => String(c ?? "").trim()).length;
+            if (hits >= 1 && filled >= 2) {
+                headerIdx = r;
+                for (let c = 0; c < cols; c++) colLabel[c] = String(row[c] ?? "").trim();
+                break;
+            }
+        }
+        return tb.map((row: any[], ri: number) => {
+            if (!Array.isArray(row)) return row;
+            const next = [...row];
+            if (isProdLabelValueRow(next, cols)) {
+                const mapped = productValueForLabel(String(next[0] ?? "").trim(), info);
+                while (next.length < 2) next.push("");
+                next[1] = put(next[1], mapped);
+            }
+            if (headerIdx >= 0 && ri > headerIdx) {
+                for (let c = 0; c < cols; c++) {
+                    const mapped = productValueForLabel(colLabel[c] || "", info);
+                    if (!mapped) continue;
+                    while (next.length <= c) next.push("");
+                    next[c] = put(next[c], mapped);
+                }
+            }
+            return next;
+        });
+    };
+    const fix = (n: any): any => ({
+        ...n,
+        tables: (n.tables || []).map((tb: any[]) => (Array.isArray(tb) ? fixTable(tb) : tb)),
+        children: (n.children || []).map(fix),
+    });
+    return (nodes || []).map(fix);
+};
 
 const replaceExact = (s: any, from: string, to: string) => {
     if (!from || !to || from === to) return s;
@@ -175,13 +251,22 @@ export default () => {
             ]).then(([pr, oldPr]: any[]) => {
                 const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
                 const oldProd = oldPr && oldPr.code === Api.C_OK ? (oldPr.data || {}) : {};
-                resolve(replaceKeywords(secs, [
-                    [String(oldProd.name || "").trim(), String(prod.name || "").trim()],
-                    [BASE_PROD_NAME, String(prod.name || "").trim()],
+                const info = {
+                    name: String(prod.name || "").trim(),
+                    version: String(prod.full_version || "").trim(),
+                    code: String(prod.product_code || "").trim(),
+                    scope: String(prod.scope || "").trim(),
+                };
+                let out = replaceKeywords(secs, [
+                    [String(oldProd.name || "").trim(), info.name],
+                    [BASE_PROD_NAME, info.name],
                     [String(oldProd.type_code || "").trim(), String(prod.type_code || "").trim()],
                     [BASE_PROD_TYPE, String(prod.type_code || "").trim()],
-                    [String(oldProd.product_code || "").trim(), String(prod.product_code || "").trim()],
-                ]));
+                    [String(oldProd.product_code || "").trim(), info.code],
+                    [String(oldProd.full_version || "").trim(), info.version],
+                ]);
+                out = fillRecordProductCells(out, info, replaceProduct);
+                resolve(out);
             }).catch(() => resolve(secs));
         });
 
@@ -267,8 +352,13 @@ export default () => {
         const tables = (findTables(data.sections, key) || []).map((tb: any[], i: number) => {
             if (i !== ti) return tb;
             const cols = tb[0] ? tb[0].length : 1;
+            const src = tb[afterR] || [];
+            const blank = new Array(cols).fill("");
+            if (src.length && !isSignRow(src) && !isMetaLabelRow(src) && !onlyFirstRow(src, cols)) {
+                blank[0] = src[0] ?? "";
+            }
             const next = [...tb];
-            next.splice(afterR + 1, 0, new Array(cols).fill(""));
+            next.splice(afterR + 1, 0, blank);
             return next;
         });
         patchNode(key, { tables });
@@ -335,7 +425,7 @@ export default () => {
             !onlyFirstRow(row, cols) && (row || []).some((c: any) => String(c ?? "").trim())
         );
         return (
-            <div key={ti} className="pdp-record-wrap" style={{ marginBottom: 8 }}>
+            <div key={ti} style={{ marginBottom: 8, overflowX: "visible" }}>
                 <table style={tableStyle}>
                     <tbody>
                         {tb.map((row: any[], r: number) => {
@@ -343,7 +433,7 @@ export default () => {
                             const bannerText = String(row[0] ?? "").trim();
                             if (banner && (looksLikeFileNo(bannerText) || bannerText === meta.title || r <= 1)) return null;
                             const emptyRow = rowAllEmpty(row, cols);
-                            if (emptyRow && r <= 2) return null;
+                            if (emptyRow) return null;
                             const allSkip = Array.from({ length: cols }, (_, ci) => !!spans?.[r]?.[ci]?.skip).every(Boolean);
                             if (allSkip) return <tr key={r} />;
                             const subHead = firstBody >= 0 && r === firstBody + 1
@@ -375,10 +465,10 @@ export default () => {
                                             ) : (
                                                 <Input.TextArea
                                                     variant="borderless"
-                                                    autoSize={{ minRows: 1, maxRows: 4 }}
+                                                    autoSize={{ minRows: 1 }}
                                                     value={cell ?? ""}
                                                     disabled={readonly}
-                                                    style={{ padding: 0, textAlign: align, fontSize: 13, lineHeight: 1.4 }}
+                                                    style={{ padding: 0, textAlign: align, fontSize: 13, lineHeight: 1.4, width: "100%", minWidth: 0, overflow: "hidden" }}
                                                     onChange={(e) => setCell(n._key, ti, r, ci, e.target.value, cs, rs)}
                                                 />
                                             )}
@@ -469,7 +559,7 @@ export default () => {
             </div>
             <Spin spinning={data.loading} wrapperClassName="pdp-scroll">
                 <div style={{ height: "100%", overflow: "auto" }}>
-                    <div style={{ padding: "12px 20px", maxWidth: 1100 }}>
+                    <div style={{ padding: "12px 20px", maxWidth: maxTableCols(data.sections) > 8 ? 1600 : 1100 }}>
                         <div style={{ textAlign: "center", fontSize: 16, fontWeight: 700, margin: "4px 0 6px" }}>{meta.title}</div>
                         <div style={{ textAlign: "center", color: "#999", marginBottom: 14 }}>{data.doc.file_no || ""}</div>
                         {(data.sections || []).map((n: any) => renderSection(n))}
