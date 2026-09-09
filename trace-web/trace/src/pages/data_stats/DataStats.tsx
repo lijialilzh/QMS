@@ -3,7 +3,12 @@ import { Button, Input, Radio, Space, Spin, Table, Tabs, message } from "antd";
 import { FolderOpenOutlined, DownloadOutlined } from "@ant-design/icons";
 import { useMemo, useRef, useEffect } from "react";
 import { useData } from "@/common";
+import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as XLSX from "xlsx";
+import * as Api from "@/api/ApiDataDoc";
+import * as ApiProduct from "@/api/ApiProduct";
+import * as ApiTimeline from "@/api/ApiProjectTimeline";
+import * as ApiMember from "@/api/ApiProjectMember";
 import {
     STATS_TITLES,
     StatsKind,
@@ -15,7 +20,37 @@ import {
     statsFromFiles,
     CaseRow,
     SheetAoa,
+    readLastStats,
+    readStatsCache,
+    saveStatsCache,
+    pidsFromRows,
+    fillPidTable,
+    buildAnnotMeta,
+    AnnotFillMeta,
+    attachCaseRows,
+    caseRowsFromContent,
 } from "./dataStatsLocal";
+
+const KIND_DOC: Record<StatsKind, { type: string; title: string }> = {
+    raw: { type: "dd_015_01", title: "原始数据库统计表" },
+    base: { type: "dd_015_02", title: "基础数据库统计表" },
+    ann: { type: "dd_015_03", title: "标注数据库统计表" },
+};
+
+const ANN_PID_DOCS = [
+    { type: "dd_008_01", title: "肺栓塞分割试标注记录" },
+    { type: "dd_008_02", title: "肺叶分割试标注记录" },
+    { type: "dd_009_01", title: "肺栓塞分割标注记录" },
+    { type: "dd_009_02", title: "肺叶分割标注记录" },
+    { type: "dd_009_03", title: "肺栓塞分诊标注记录" },
+];
+
+const stripNum = (title: string) => String(title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();
+const isMetaSection = (n: any) => {
+    const t = stripNum(n?.title);
+    return n?.ref_type === "cover" || n?.ref_type === "revision" || n?.ref_type === "basic_info"
+        || t === "文件修订记录" || t === "产品信息";
+};
 
 export default () => {
     const folderRef = useRef<HTMLInputElement>(null);
@@ -27,7 +62,28 @@ export default () => {
         dataType: "",
         disease: "",
         person: "",
+        productId: 0,
+        products: [] as any[],
+        writing: false,
     });
+    const ctxRef = useRef(data);
+    ctxRef.current = data;
+    const quotaWarned = useRef(false);
+    const wroteOnLoad = useRef(false);
+
+    const persistRows = (rows: CaseRow[], extra?: { person?: string; dataType?: string; disease?: string }) => {
+        const cur = ctxRef.current;
+        const ok = saveStatsCache(cur.productId || 0, cur.kind as StatsKind, {
+            rows,
+            person: extra?.person ?? cur.person ?? "",
+            dataType: extra?.dataType ?? cur.dataType ?? "",
+            disease: extra?.disease ?? cur.disease ?? "",
+        });
+        if (!ok && !quotaWarned.current) {
+            quotaWarned.current = true;
+            message.warning("本机缓存已满，本页加速可能失效；已写入数据文件的分布表和病例明细仍保留");
+        }
+    };
 
     useEffect(() => {
         const el = folderRef.current;
@@ -35,6 +91,203 @@ export default () => {
         el.setAttribute("webkitdirectory", "");
         el.setAttribute("directory", "");
     }, []);
+
+    useEffect(() => {
+        ApiProduct.list_product({ page_size: 10000 }).then((res: any) => {
+            if (res.code === Api.C_OK) dispatch({ products: res.data?.rows || [] });
+        });
+        const last = readLastStats();
+        if (!last) return;
+        dispatch({
+            productId: last.productId,
+            kind: last.kind,
+            rows: last.item.rows,
+            person: last.item.person || "",
+            dataType: last.item.dataType || "",
+            disease: last.item.disease || "",
+        });
+    }, []);
+
+    const loadFromDoc = (productId: number, kind: StatsKind) => {
+        if (!productId) return;
+        const meta = KIND_DOC[kind];
+        Api.list_data_doc({ product_id: productId, doc_type: meta.type, page_index: 0, page_size: 1 }).then((list: any) => {
+            if (list.code !== Api.C_OK) return;
+            const hit = ((list.data && list.data.rows) || [])[0];
+            if (!hit) return;
+            return Api.get_data_doc({ id: hit.id }).then((got: any) => {
+                if (got.code !== Api.C_OK) return;
+                const item = caseRowsFromContent(got.data && got.data.content);
+                const cur = ctxRef.current;
+                if (!item || cur.productId !== productId || cur.kind !== kind || (cur.rows || []).length) return;
+                dispatch({
+                    rows: item.rows,
+                    person: item.person || cur.person,
+                    dataType: item.dataType || cur.dataType,
+                    disease: item.disease || cur.disease,
+                });
+                saveStatsCache(productId, kind, {
+                    rows: item.rows,
+                    person: item.person || cur.person || "",
+                    dataType: item.dataType || cur.dataType || "",
+                    disease: item.disease || cur.disease || "",
+                });
+            });
+        });
+    };
+
+    const switchSlot = (productId: number, kind: StatsKind) => {
+        const hit = readStatsCache(productId, kind);
+        if (hit) {
+            dispatch({ productId, kind, rows: hit.rows, person: hit.person, dataType: hit.dataType, disease: hit.disease });
+            return;
+        }
+        const keep = data.rows || [];
+        if (keep.length) {
+            dispatch({ productId, kind, rows: keep, person: data.person, dataType: data.dataType, disease: data.disease });
+            saveStatsCache(productId, kind, {
+                rows: keep,
+                person: data.person || "",
+                dataType: data.dataType || "",
+                disease: data.disease || "",
+            });
+            return;
+        }
+        dispatch({ productId, kind, rows: [], person: data.person, dataType: data.dataType, disease: data.disease });
+        loadFromDoc(productId, kind);
+    };
+
+    const writeStatsDoc = (rows: CaseRow[]) => {
+        const cur = ctxRef.current;
+        const productId = cur.productId;
+        const meta = KIND_DOC[cur.kind as StatsKind];
+        const title = STATS_TITLES[cur.kind as StatsKind];
+        return Api.list_data_doc({ product_id: productId, doc_type: meta.type, page_index: 0, page_size: 1 }).then((list: any) => {
+            if (list.code !== Api.C_OK) {
+                message.error(list.msg || "查询数据文件失败");
+                return;
+            }
+            const hit = ((list.data && list.data.rows) || [])[0];
+            if (!hit) {
+                message.warning(`请先在数据文件新增「${meta.title}」，本次未写入统计表`);
+                return;
+            }
+            return Api.get_data_doc({ id: hit.id }).then((got: any) => {
+                if (got.code !== Api.C_OK) {
+                    message.error(got.msg || "打开统计表失败");
+                    return;
+                }
+                const doc = got.data || {};
+                const secs = (doc.content && doc.content.sections) || [];
+                const kept = secs.filter((n: any) => isMetaSection(n));
+                const rec = secs.find((n: any) => !isMetaSection(n));
+                const grid = buildStatsGrid(title, rows, {
+                    dataType: cur.dataType, disease: cur.disease, person: cur.person,
+                });
+                const table = [grid[0], [doc.file_no || "", "", "", ""], ...grid.slice(1)];
+                const next = [...kept, attachCaseRows({
+                    title: rec?.title || "数据分布",
+                    body: "",
+                    tables: [table],
+                    children: [],
+                }, {
+                    rows,
+                    person: cur.person || "",
+                    dataType: cur.dataType || "",
+                    disease: cur.disease || "",
+                })];
+                return Api.update_data_doc({
+                    id: hit.id,
+                    content: { sections: next },
+                    product_id: doc.product_id,
+                    version: doc.version,
+                }).then((up: any) => {
+                    if (up.code !== Api.C_OK) message.error(up.msg || "写入统计表失败");
+                    else message.success(`已写入「${meta.title}」`);
+                });
+            });
+        });
+    };
+
+    const writeOneAnnot = (productId: number, meta: { type: string; title: string }, pids: string[], fill?: AnnotFillMeta) =>
+        Api.list_data_doc({ product_id: productId, doc_type: meta.type, page_index: 0, page_size: 1 }).then((list: any) => {
+            if (list.code !== Api.C_OK) return { title: meta.title, status: "error", msg: list.msg };
+            const hit = ((list.data && list.data.rows) || [])[0];
+            if (!hit) return { title: meta.title, status: "skip" };
+            return Api.get_data_doc({ id: hit.id }).then((got: any) => {
+                if (got.code !== Api.C_OK) return { title: meta.title, status: "error", msg: got.msg };
+                const doc = got.data || {};
+                const secs = (doc.content && doc.content.sections) || [];
+                const kept = secs.filter((n: any) => isMetaSection(n));
+                const rec = secs.find((n: any) => !isMetaSection(n));
+                const srcTable = ((rec && rec.tables) || [])[0] || [];
+                const table = fillPidTable(srcTable, pids, meta.type, fill);
+                const next = [...kept, {
+                    title: rec?.title || meta.title,
+                    body: rec?.body || "",
+                    tables: [table],
+                    children: rec?.children || [],
+                }];
+                return Api.update_data_doc({
+                    id: hit.id,
+                    content: { sections: next },
+                    product_id: doc.product_id,
+                    version: doc.version,
+                }).then((up: any) => {
+                    if (up.code !== Api.C_OK) return { title: meta.title, status: "error", msg: up.msg };
+                    return { title: meta.title, status: "ok" };
+                });
+            });
+        });
+
+    const writeAnnotPids = async (rows: CaseRow[]) => {
+        const productId = ctxRef.current.productId;
+        const pids = pidsFromRows(rows);
+        if (!pids.length) {
+            message.warning("病例明细没有可用 PID，未写入试标注/标注记录");
+            return;
+        }
+        const [tl, mb] = await Promise.all([
+            ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
+            ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
+        ]);
+        const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
+        const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
+        const ok: string[] = [];
+        let missing = 0;
+        for (let i = 0; i < ANN_PID_DOCS.length; i++) {
+            const item = ANN_PID_DOCS[i];
+            const fill = buildAnnotMeta(item.type, tlRows, members);
+            const r = await writeOneAnnot(productId, item, pids, fill);
+            if (r.status === "ok") ok.push(r.title);
+            else if (r.status === "skip") missing += 1;
+            else message.error(r.msg || `写入「${r.title}」失败`);
+        }
+        if (ok.length) message.success(`已写入标注记录：${ok.join("、")}`);
+        else if (missing) message.warning("请先在数据文件新增试标注或标注记录，本次未写入");
+    };
+
+    const writeDataFiles = (rows: CaseRow[]) => {
+        const productId = ctxRef.current.productId;
+        if (!productId) {
+            message.warning("请先选择产品，统计结果未写入数据文件");
+            return Promise.resolve();
+        }
+        dispatch({ writing: true });
+        return writeStatsDoc(rows)
+            .then(() => writeAnnotPids(rows))
+            .catch(() => {
+                message.error("写入数据文件失败");
+            })
+            .finally(() => dispatch({ writing: false }));
+    };
+
+    useEffect(() => {
+        if (wroteOnLoad.current) return;
+        if (!data.productId || !(data.rows || []).length) return;
+        wroteOnLoad.current = true;
+        writeDataFiles(data.rows);
+    }, [data.productId, data.rows]);
 
     const title = STATS_TITLES[data.kind as StatsKind];
     const extra = { dataType: data.dataType, disease: data.disease, person: data.person };
@@ -87,7 +340,9 @@ export default () => {
                 return;
             }
             dispatch({ loading: false, progress: "", rows });
+            persistRows(rows);
             message.success(`已统计 ${rows.length} 个序列，请在下方页签查看`);
+            writeDataFiles(rows);
         }).catch(() => {
             dispatch({ loading: false, progress: "", rows: [] });
             message.error("读取失败");
@@ -116,34 +371,58 @@ export default () => {
             />
             <div className="data-stats-toolbar">
                 <span className="data-stats-title">数据统计</span>
+                <span className="data-stats-product">
+                    <ProductVersionSelect
+                        products={data.products}
+                        value={data.productId || undefined}
+                        namePlaceholder="产品名称"
+                        versionPlaceholder="完整版本"
+                        onChange={(v) => switchSlot(v || 0, data.kind as StatsKind)}
+                    />
+                </span>
                 <Radio.Group
                     value={data.kind}
                     buttonStyle="solid"
-                    onChange={(e) => dispatch({ kind: e.target.value })}>
+                    onChange={(e) => switchSlot(data.productId || 0, e.target.value)}>
                     <Radio.Button value="raw">原始数据库</Radio.Button>
                     <Radio.Button value="base">基础数据库</Radio.Button>
                     <Radio.Button value="ann">标注数据库</Radio.Button>
                 </Radio.Group>
                 <Space>
-                    <Button icon={<FolderOpenOutlined />} loading={data.loading} onClick={pickFolder}>
+                    <Button icon={<FolderOpenOutlined />} loading={data.loading || data.writing} onClick={pickFolder}>
                         选择病例文件夹
                     </Button>
                     <Button type="primary" icon={<DownloadOutlined />} disabled={!total} onClick={downloadXlsx}>
                         下载 Excel
                     </Button>
+                    <Button disabled={!total} loading={data.writing} onClick={() => writeDataFiles(data.rows)}>
+                        写入数据文件
+                    </Button>
                 </Space>
             </div>
             <div className="data-stats-hint">
-                每个病例一个文件夹。选完后在本页查看，不自动下载。需要存档时再点「下载 Excel」。
+                每个病例一个文件夹。选完后在本页查看；病例明细写入该产品统计表（图像不保存）。刷新或换浏览器后，选同一产品即可从数据文件读回。已选产品同时写入数据分布，并把 PID 写入已有试标注/标注记录。
                 {total ? `　当前 ${total} 个序列。` : ""}
             </div>
             <div className="data-stats-fields">
                 <span>统计人</span>
-                <Input placeholder="选填" value={data.person} onChange={(e) => dispatch({ person: e.target.value })} />
+                <Input placeholder="选填" value={data.person} onChange={(e) => {
+                    const person = e.target.value;
+                    dispatch({ person });
+                    if ((data.rows || []).length) persistRows(data.rows, { person });
+                }} />
                 <span>数据类型</span>
-                <Input placeholder="如 胸部CTPA" value={data.dataType} onChange={(e) => dispatch({ dataType: e.target.value })} />
+                <Input placeholder="如 胸部CTPA" value={data.dataType} onChange={(e) => {
+                    const dataType = e.target.value;
+                    dispatch({ dataType });
+                    if ((data.rows || []).length) persistRows(data.rows, { dataType });
+                }} />
                 <span>疾病构成</span>
-                <Input placeholder="选填" value={data.disease} onChange={(e) => dispatch({ disease: e.target.value })} />
+                <Input placeholder="选填" value={data.disease} onChange={(e) => {
+                    const disease = e.target.value;
+                    dispatch({ disease });
+                    if ((data.rows || []).length) persistRows(data.rows, { disease });
+                }} />
                 {data.progress ? <span className="data-stats-progress">{data.progress}</span> : null}
             </div>
             <Spin spinning={data.loading} wrapperClassName="data-stats-table">
@@ -159,8 +438,9 @@ export default () => {
                                     pagination={{ pageSize: 50 }}
                                     scroll={{ x: 2400 }}
                                     dataSource={detailRows}
-                                    columns={DETAIL_COLUMNS.map((c) => ({
-                                        title: c, dataIndex: c, ellipsis: true, width: 130,
+                                    columns={["TXID", "PatientName", ...DETAIL_COLUMNS.filter((c) => c !== "TXID")].map((c) => ({
+                                        title: c === "TXID" ? "TXID（病例文件夹）" : (c === "PatientName" ? "姓名" : c),
+                                        dataIndex: c, ellipsis: true, width: c === "TXID" || c === "PatientName" ? 180 : 130,
                                     }))}
                                     locale={{ emptyText: "请选择病例文件夹" }}
                                 />

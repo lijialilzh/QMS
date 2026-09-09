@@ -24,6 +24,7 @@ const ROLES = [
     "算法工程师",
     "项目专员",
     "标注人员",
+    "审核医生",
 ];
 
 const ANNOTATOR_ROLE = "标注人员";
@@ -42,6 +43,9 @@ const DEFAULT_ANNOTATORS = [
     "马星宇",
     "王莹莹",
 ];
+
+const REVIEWER_ROLE = "审核医生";
+const DEFAULT_REVIEWERS = ["苏婷", "韦人"];
 
 const DEFAULT_MODEL_MEMBERS = [
     { role: "模型部负责人", name: "王瑜" },
@@ -97,6 +101,13 @@ export default () => {
                     DEFAULT_ANNOTATORS.forEach((name) => {
                         sort += 1;
                         adds.push({ role: ANNOTATOR_ROLE, name, sort_order: sort });
+                    });
+                }
+                const hasReviewer = rows.some((r: any) => (r.role || "").trim() === REVIEWER_ROLE);
+                if (!hasReviewer && DEFAULT_REVIEWERS.length) {
+                    DEFAULT_REVIEWERS.forEach((name) => {
+                        sort += 1;
+                        adds.push({ role: REVIEWER_ROLE, name, sort_order: sort });
                     });
                 }
                 const existingRoles = new Set(rows.map((r: any) => String(r.role || "").trim()));

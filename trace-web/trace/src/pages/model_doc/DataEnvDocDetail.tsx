@@ -12,7 +12,7 @@ import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
 import { getDataDocMeta } from "./DataDocTypes";
 import {
-    buildEnvCheckTable, collectAssetCodes, computeDevTestWeeks, envCheckGroups, envCheckLeafCols,
+    buildEnvCheckTable, collectAssetCodes, computeDataEnvWeeks, envCheckGroups, envCheckLeafCols,
     envCheckTitle, isEnvCheckGrid, parseEqAssets, prevEnvCheckRows,
 } from "./envMaintCheck";
 import "../pdp/PdpDocDetail.less";
@@ -216,7 +216,7 @@ export default () => {
                 out = fillEnvMaint(out, {
                     prodName,
                     fullVersion,
-                    weeks: computeDevTestWeeks(tlRows),
+                    weeks: computeDataEnvWeeks(tlRows, docType),
                     checker: (checkerName && signMap[checkerName]) || checkerName || "",
                     eqAssets: eqDoc ? parseEqAssets(eqDoc.content, docType === "dd_017" ? "标注" : "开发") : null,
                     docType,
@@ -424,7 +424,7 @@ export default () => {
                                                 {groups.flatMap((g, gi) => g.leaves.map((lf, li) => <td key={`${gi}-${li}`} style={thCell}>{lf}</td>))}
                                             </tr>
                                             {dataRows.length === 0 ? (
-                                                <tr><td colSpan={cols.length} style={{ ...tdValue, textAlign: "center", color: "#bbb" }}>该产品未查询到「开发~测试」时间线，暂无周记录</td></tr>
+                                                <tr><td colSpan={cols.length} style={{ ...tdValue, textAlign: "center", color: "#bbb" }}>该产品未查询到数据部对应时间线，暂无周记录</td></tr>
                                             ) : dataRows.map((row: any[], ri: number) => {
                                                 let checkIdx = -1;
                                                 return (

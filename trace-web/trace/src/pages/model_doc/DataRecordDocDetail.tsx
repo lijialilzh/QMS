@@ -7,12 +7,26 @@ import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
 import * as Api from "@/api/ApiDataDoc";
 import * as ApiProduct from "@/api/ApiProduct";
+import * as ApiTimeline from "@/api/ApiProjectTimeline";
+import * as ApiMember from "@/api/ApiProjectMember";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import { getDataDocMeta, DATA_STATS_IMPORT_TYPES } from "./DataDocTypes";
+import { ANN_PID_TYPES, annotTableSig, applyPidsToSections, buildAnnotMeta, pidsFromCache } from "../data_stats/dataStatsLocal";
 import { computeGridSpans } from "./gridSpans";
 import "../pdp/PdpDocDetail.less";
 
 const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", marginBottom: 16, tableLayout: "fixed" };
+const PATH_LABELS = new Set(["存储路径"]);
+const uploadColMin = (label: string) => {
+    const t = String(label || "").trim();
+    if (t === "数据所属项目" || t === "数据所属医院") return 168;
+    if (t === "医院编号") return 108;
+    if (t.includes("上传日期") || t === "上传人员") return 100;
+    if (t.includes("上传数据量") || t.includes("上传数量")) return 92;
+    if (t === "存储路径") return 320;
+    if (t === "数据集") return 140;
+    return 96;
+};
 const tdBase: CSSProperties = { border: "1px solid #d9d9d9", padding: "6px 10px", fontSize: 13, verticalAlign: "middle", textAlign: "center" };
 const tdHead: CSSProperties = { ...tdBase, background: "#fafafa", color: "#555", fontWeight: 600 };
 const tdValue: CSSProperties = { ...tdBase, color: "#333", whiteSpace: "pre-wrap" };
@@ -321,7 +335,60 @@ export default () => {
                         children: (n.children || []).map(fix),
                     };
                 }) : secs;
-                dispatch({ loading: false, doc, sections: withNo });
+                const docType = String(type || doc.doc_type || "");
+                if (ANN_PID_TYPES.indexOf(docType) < 0) {
+                    dispatch({ loading: false, doc, sections: withNo });
+                    return;
+                }
+                const curPids: string[] = [];
+                const pickPids = (ns: any[]) => {
+                    (ns || []).forEach((n: any) => {
+                        if (isMetaSection(n)) { pickPids(n.children || []); return; }
+                        (n.tables || []).forEach((tb: any[]) => {
+                            let col = -1;
+                            (tb || []).forEach((row: any[]) => {
+                                if (col < 0) {
+                                    const i = (row || []).findIndex((c: any) => String(c ?? "").trim() === "PID");
+                                    if (i >= 0) col = i;
+                                    return;
+                                }
+                                const pid = String(row?.[col] ?? "").trim();
+                                if (pid) curPids.push(pid);
+                            });
+                        });
+                        pickPids(n.children || []);
+                    });
+                };
+                pickPids(withNo);
+                const cachePids = pidsFromCache(doc.product_id || 0);
+                const pids = cachePids.length ? cachePids : curPids;
+                if (!pids.length) {
+                    dispatch({ loading: false, doc, sections: withNo });
+                    return;
+                }
+                Promise.all([
+                    ApiTimeline.list_timeline({ prod_id: doc.product_id }).catch(() => null),
+                    ApiMember.list_project_member({ prod_id: doc.product_id, page_index: 0, page_size: 1000 }).catch(() => null),
+                ]).then(([tl, mb]: any[]) => {
+                    const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
+                    const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
+                    const fill = buildAnnotMeta(docType, tlRows, members);
+                    const filled = applyPidsToSections(withNo, pids, docType, fill);
+                    if (annotTableSig(filled) === annotTableSig(withNo)) {
+                        dispatch({ loading: false, doc, sections: withNo });
+                        return;
+                    }
+                    dispatch({ loading: false, doc, sections: filled });
+                    Api.update_data_doc({
+                        id: doc.id,
+                        content: { sections: stripKeys(filled) },
+                        product_id: doc.product_id,
+                        version: doc.version,
+                    }).then((up: any) => {
+                        if (up.code === Api.C_OK) message.success(`已写入 ${pids.length} 条标注记录`);
+                        else message.error(up.msg || "写入标注记录失败");
+                    });
+                }).catch(() => dispatch({ loading: false, doc, sections: withNo }));
             });
         });
     };
@@ -441,14 +508,18 @@ export default () => {
     const backPath = `/data_docs/${type || data.doc.doc_type || "dd_002"}`;
 
     const renderTable = (n: any, ti: number, tb: any[]) => {
-        const spans = computeRecordSpans(tb);
+        const docType = String(type || data.doc.doc_type || "");
+        const isUpload = docType === "dd_010";
+        const noCellMerge = docType === "dd_eq" || isUpload || /^(dd_008_|dd_009_)/.test(docType);
+        const spans = noCellMerge ? null : computeRecordSpans(tb);
         const cols = tb.reduce((m: number, row: any[]) => Math.max(m, Array.isArray(row) ? row.length : 0), 0);
         const firstBody = tb.findIndex((row: any[]) =>
             !onlyFirstRow(row, cols) && (row || []).some((c: any) => String(c ?? "").trim())
         );
+        const headerRow = firstBody >= 0 ? (tb[firstBody] || []) : [];
         return (
-            <div key={ti} style={{ marginBottom: 8, overflowX: "visible" }}>
-                <table style={tableStyle}>
+            <div key={ti} style={{ marginBottom: 8, overflowX: isUpload ? "auto" : "visible" }}>
+                <table style={isUpload ? { ...tableStyle, tableLayout: "auto", minWidth: 1280 } : tableStyle}>
                     <tbody>
                         {tb.map((row: any[], r: number) => {
                             const banner = onlyFirstRow(row, cols);
@@ -474,8 +545,14 @@ export default () => {
                                     const checkItems = parseCheckItems(cell);
                                     const cs = sp?.colSpan || 1;
                                     const rs = sp?.rowSpan || 1;
-                                    const align = sign ? "left" : "center";
-                                    const st: CSSProperties = isHeadRow ? tdHead : { ...tdValue, textAlign: align };
+                                    const colLabel = String(headerRow[ci] ?? "").trim();
+                                    const isPath = isUpload && PATH_LABELS.has(colLabel);
+                                    const align = sign || isPath ? "left" : "center";
+                                    const st: CSSProperties = {
+                                        ...(isHeadRow ? tdHead : tdValue),
+                                        textAlign: isHeadRow ? "center" : align,
+                                        ...(isUpload ? { minWidth: uploadColMin(colLabel), ...(isPath ? { wordBreak: "break-all" } : {}) } : {}),
+                                    };
                                     return (
                                         <td
                                             key={ci}
@@ -601,7 +678,12 @@ export default () => {
             </div>
             <Spin spinning={data.loading} wrapperClassName="pdp-scroll">
                 <div style={{ height: "100%", overflow: "auto" }}>
-                    <div style={{ padding: "12px 20px", maxWidth: maxTableCols(data.sections) > 8 ? 1600 : 1100 }}>
+                    <div style={{
+                        padding: "12px 20px",
+                        maxWidth: String(type || data.doc.doc_type || "") === "dd_010"
+                            ? "100%"
+                            : (maxTableCols(data.sections) > 8 ? 1600 : 1100),
+                    }}>
                         <div style={{ textAlign: "center", fontSize: 16, fontWeight: 700, margin: "4px 0 6px" }}>{meta.title}</div>
                         <div style={{ textAlign: "center", color: "#999", marginBottom: 14 }}>{data.doc.file_no || ""}</div>
                         {(data.sections || []).map((n: any) => renderSection(n))}

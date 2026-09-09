@@ -455,11 +455,14 @@ class Server(object):
             select(ProjectTimelineRow).where(ProjectTimelineRow.prod_id == prod_id)
         ).scalars().all()
         cell_map = {}
+        data_dept_map = {}
         if tl_rows:
             for c in db.session.execute(
                 select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_([r.id for r in tl_rows]))
             ).scalars().all():
                 cell_map.setdefault(c.row_id, []).append(c.output_result or "")
+                if c.dept == "数据部":
+                    data_dept_map[c.row_id] = c.output_result or ""
 
         def to_int(v):
             digits = re.sub(r"[^\d]", "", str(v or ""))
@@ -498,20 +501,23 @@ class Server(object):
         if doc_type in ENV_DOC_TYPES:
             env_title = "开发环境维护记录" if doc_type == "dd_016" else "标注环境维护记录"
             usage_kw = "标注" if doc_type == "dd_017" else "开发"
-            dev_ds, test_ds = [], []
+            env_kws = (
+                ("标注环境维护", "人员培训", "培训记录", "试标注", "数据标注记录", "标注数据库", "标注需求反馈")
+                if doc_type == "dd_017"
+                else ("清洗", "整理", "回传", "多中心", "原始数据库", "基础数据库", "数据质量评估")
+            )
+            env_ds = []
             for r in date_rows:
                 y, m, d = to_int(r.year), to_int(r.month), to_int(r.day) or 1
                 try:
                     dt = date(y, m, d)
                 except Exception:
                     continue
-                vals = cell_map.get(r.id, [])
-                if any(("产品开发" in str(v)) and ("计划" not in str(v)) for v in vals):
-                    dev_ds.append(dt)
-                if any("测试" in str(v) for v in vals):
-                    test_ds.append(dt)
-            if dev_ds and test_ds:
-                env_weeks = self.__week_ranges_from_dates([min(dev_ds), max(test_ds)])
+                text = data_dept_map.get(r.id, "")
+                if any(k in text for k in env_kws):
+                    env_ds.append(dt)
+            if env_ds:
+                env_weeks = self.__week_ranges_from_dates([min(env_ds), max(env_ds)])
             eq_doc = db.session.execute(
                 select(DataDoc).where(DataDoc.product_id == prod_id, DataDoc.doc_type == "dd_eq").order_by(DataDoc.id.desc())
             ).scalars().first()

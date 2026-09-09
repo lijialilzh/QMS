@@ -122,28 +122,16 @@ export const isEnvCheckGrid = (tb: any[]): boolean =>
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
-export const computeDevTestWeeks = (rows: any[]): string[] => {
+const utcOf = (r: any) => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
-    const utcOf = (r: any) => {
-        const y = num(r.year);
-        const m = num(r.month);
-        const d = num(r.day) || 1;
-        if (isNaN(y) || isNaN(m) || m < 1 || m > 12 || d < 1) return null;
-        return Date.UTC(y, m - 1, d);
-    };
-    const dev: number[] = [];
-    const test: number[] = [];
-    (rows || []).forEach((r: any) => {
-        if ((r.row_type || "date") !== "date") return;
-        const dt = utcOf(r);
-        if (dt == null) return;
-        const vals = Object.values(r.cells || {});
-        if (vals.some((v) => String(v || "").includes("产品开发") && !String(v || "").includes("计划"))) dev.push(dt);
-        if (vals.some((v) => String(v || "").includes("测试"))) test.push(dt);
-    });
-    if (!dev.length || !test.length) return [];
-    const start = Math.min(...dev);
-    const end = Math.max(...test);
+    const y = num(r.year);
+    const m = num(r.month);
+    const d = num(r.day) || 1;
+    if (isNaN(y) || isNaN(m) || m < 1 || m > 12 || d < 1) return null;
+    return Date.UTC(y, m - 1, d);
+};
+
+const weekRanges = (start: number, end: number): string[] => {
     if (start > end) return [];
     const fmt = (ms: number) => {
         const d = new Date(ms);
@@ -169,6 +157,38 @@ export const computeDevTestWeeks = (rows: any[]): string[] => {
         cur = monday + 7 * 86400000;
     }
     return ranges;
+};
+
+export const computeDevTestWeeks = (rows: any[]): string[] => {
+    const dev: number[] = [];
+    const test: number[] = [];
+    (rows || []).forEach((r: any) => {
+        if ((r.row_type || "date") !== "date") return;
+        const dt = utcOf(r);
+        if (dt == null) return;
+        const vals = Object.values(r.cells || {});
+        if (vals.some((v) => String(v || "").includes("产品开发") && !String(v || "").includes("计划"))) dev.push(dt);
+        if (vals.some((v) => String(v || "").includes("测试"))) test.push(dt);
+    });
+    if (!dev.length || !test.length) return [];
+    return weekRanges(Math.min(...dev), Math.max(...test));
+};
+
+const DATA_DEV_KWS = ["清洗", "整理", "回传", "多中心", "原始数据库", "基础数据库", "数据质量评估"];
+const DATA_ANNO_KWS = ["标注环境维护", "人员培训", "培训记录", "试标注", "数据标注记录", "标注数据库", "标注需求反馈"];
+
+export const computeDataEnvWeeks = (rows: any[], docType: string): string[] => {
+    const kws = docType === "dd_017" ? DATA_ANNO_KWS : DATA_DEV_KWS;
+    const dates: number[] = [];
+    (rows || []).forEach((r: any) => {
+        if ((r.row_type || "date") !== "date") return;
+        const dt = utcOf(r);
+        if (dt == null) return;
+        const text = String((r.cells || {})["数据部"] || "");
+        if (kws.some((k) => text.includes(k))) dates.push(dt);
+    });
+    if (!dates.length) return [];
+    return weekRanges(Math.min(...dates), Math.max(...dates));
 };
 
 export const parseEqAssets = (content: any, usageContains?: string): EnvAsset[] => {

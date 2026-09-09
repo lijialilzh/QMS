@@ -100,67 +100,118 @@ function isDicm(u8: Uint8Array) {
         && u8[128] === 68 && u8[129] === 73 && u8[130] === 67 && u8[131] === 77;
 }
 
-function looksText(s: string) {
-    if (!s) return false;
-    for (let i = 0; i < s.length; i++) {
-        const c = s.charCodeAt(i);
-        if (c === 9 || c === 10 || c === 13 || c === 92) continue;
-        if (c < 32 || c > 126) return false;
-    }
-    return true;
-}
-
-function huntTag(u8: Uint8Array, view: DataView, tag: number, expectVr: string): string {
-    const group = (tag >>> 16) & 0xffff;
-    const element = tag & 0xffff;
-    const b0 = group & 0xff;
-    const b1 = (group >> 8) & 0xff;
-    const b2 = element & 0xff;
-    const b3 = (element >> 8) & 0xff;
-    const start = isDicm(u8) ? 132 : 0;
-    for (let i = start; i + 8 <= u8.length; i++) {
-        if (u8[i] !== b0 || u8[i + 1] !== b1 || u8[i + 2] !== b2 || u8[i + 3] !== b3) continue;
-        const vr = String.fromCharCode(u8[i + 4], u8[i + 5]);
-        let len = 0;
-        let valOff = 0;
-        let useVr = expectVr;
-        if (/^[A-Z]{2}$/.test(vr) && vr !== "SQ") {
-            if (LONG_VR.has(vr)) {
-                if (i + 12 > u8.length) continue;
-                len = view.getUint32(i + 8, true);
-                valOff = i + 12;
-            } else {
-                len = view.getUint16(i + 6, true);
-                valOff = i + 8;
-            }
-            useVr = vr === "UN" ? expectVr : vr;
-        } else {
-            len = view.getUint32(i + 4, true);
-            valOff = i + 8;
-        }
-        if (len === 0xffffffff || len < 0 || valOff + len > u8.length) continue;
-        if (len > 1024) continue;
-        if (expectVr === "US" && len !== 2 && len !== 4) continue;
-        if (expectVr === "DA" && len !== 8 && len !== 10) continue;
-        const v = readValue(useVr, view, u8, valOff, len, true);
-        if (!v) continue;
-        if (expectVr === "US" || expectVr === "FL" || expectVr === "FD" || expectVr === "UL") return v;
-        if (looksText(v)) return v;
-    }
-    return "";
-}
+const TAG_ITEM = 0xfffee000;
+const TAG_ITEM_DELIM = 0xfffee00d;
+const TAG_SEQ_DELIM = 0xfffee0dd;
+const TAG_PIXEL = 0x7fe00010;
+const TAG_META_LEN = 0x00020000;
+const TAG_TS = 0x00020010;
+const VR_OF: Record<number, string> = {};
+TAGS.forEach((t) => { VR_OF[t.tag] = t.vr; });
+VR_OF[0x00100030] = "DA";
+VR_OF[TAG_TS] = "UI";
 
 function parseDicomTags(buf: ArrayBuffer): Record<string, string> {
     const u8 = new Uint8Array(buf);
     const view = new DataView(buf);
     const out: Record<string, string> = {};
     if (buf.byteLength < 8) return out;
-    TAGS.forEach((t) => {
-        const v = huntTag(u8, view, t.tag, t.vr);
-        if (v) out[t.key] = v;
-    });
-    const birth = huntTag(u8, view, 0x00100030, "DA");
-    if (birth) out.PatientBirthDate = birth;
+    const want: Record<number, string> = { 0x00100030: "PatientBirthDate", 0x00100010: "PatientName" };
+    TAGS.forEach((t) => { want[t.tag] = t.key; });
+
+    const isDelim = (tag: number) => tag === TAG_ITEM || tag === TAG_ITEM_DELIM || tag === TAG_SEQ_DELIM;
+    const readHdr = (o: number, expl: boolean, le: boolean) => {
+        if (o + 8 > u8.length) return null;
+        const tag = ((view.getUint16(o, le) << 16) | view.getUint16(o + 2, le)) >>> 0;
+        if (isDelim(tag)) {
+            return { tag, vr: "", len: view.getUint32(o + 4, le), valOff: o + 8 };
+        }
+        if (expl) {
+            const vr = String.fromCharCode(u8[o + 4], u8[o + 5]);
+            if (LONG_VR.has(vr)) {
+                if (o + 12 > u8.length) return null;
+                return { tag, vr, len: view.getUint32(o + 8, le), valOff: o + 12 };
+            }
+            return { tag, vr, len: view.getUint16(o + 6, le), valOff: o + 8 };
+        }
+        return { tag, vr: VR_OF[tag] || "", len: view.getUint32(o + 4, le), valOff: o + 8 };
+    };
+
+    const skipSq = (start: number, expl: boolean, le: boolean, seqLen: number): number => {
+        if (seqLen !== 0xffffffff) return start + Math.max(0, seqLen);
+        let o = start;
+        while (o + 8 <= u8.length) {
+            const h = readHdr(o, expl, le);
+            if (!h) return u8.length;
+            if (h.tag === TAG_SEQ_DELIM) return h.valOff;
+            if (h.tag === TAG_ITEM) {
+                o = h.len === 0xffffffff ? skipItem(h.valOff, expl, le) : h.valOff + Math.max(0, h.len);
+                continue;
+            }
+            if (h.vr === "SQ" || h.len === 0xffffffff) o = skipSq(h.valOff, expl, le, h.len);
+            else o = h.valOff + Math.max(0, h.len);
+        }
+        return u8.length;
+    };
+
+    const skipItem = (start: number, expl: boolean, le: boolean): number => {
+        let o = start;
+        while (o + 8 <= u8.length) {
+            const h = readHdr(o, expl, le);
+            if (!h) return u8.length;
+            if (h.tag === TAG_ITEM_DELIM) return h.valOff;
+            if (h.vr === "SQ" || h.len === 0xffffffff) o = skipSq(h.valOff, expl, le, h.len);
+            else o = h.valOff + Math.max(0, h.len);
+        }
+        return u8.length;
+    };
+
+    const walk = (start: number, expl: boolean, le: boolean, take: boolean, onlyGroup?: number) => {
+        let o = start;
+        let ts = "";
+        let metaEnd = -1;
+        while (o + 8 <= u8.length) {
+            const h = readHdr(o, expl, le);
+            if (!h) break;
+            const group = (h.tag >>> 16) & 0xffff;
+            if (onlyGroup != null && group !== onlyGroup) break;
+            if (h.tag === TAG_PIXEL || h.tag === TAG_SEQ_DELIM || h.tag === TAG_ITEM_DELIM) break;
+            if (h.tag === TAG_ITEM) {
+                o = h.len === 0xffffffff ? skipItem(h.valOff, expl, le) : h.valOff + Math.max(0, h.len);
+                continue;
+            }
+            if (h.vr === "SQ" || h.len === 0xffffffff) {
+                o = skipSq(h.valOff, expl, le, h.len);
+                continue;
+            }
+            if (h.len < 0 || h.valOff + h.len > u8.length) break;
+            const key = want[h.tag];
+            if (take && key && h.len <= 2048 && out[key] == null) {
+                const vr = h.vr || VR_OF[h.tag] || "LO";
+                const v = readValue(vr, view, u8, h.valOff, h.len, le);
+                if (v) out[key] = v;
+            }
+            if (h.tag === TAG_TS) ts = readValue("UI", view, u8, h.valOff, h.len, le);
+            if (h.tag === TAG_META_LEN && h.len >= 4) {
+                metaEnd = h.valOff + h.len + view.getUint32(h.valOff, le);
+            }
+            o = h.valOff + h.len;
+            if (metaEnd >= 0 && o >= metaEnd) break;
+        }
+        return { next: metaEnd >= 0 ? metaEnd : o, ts };
+    };
+
+    let off = isDicm(u8) ? 132 : 0;
+    let little = true;
+    let explicit = true;
+    if (off + 6 <= u8.length && view.getUint16(off, true) === 2) {
+        const meta = walk(off, true, true, false, 2);
+        off = meta.next;
+        const ts = (meta.ts || "").replace(/\0/g, "").trim();
+        if (ts === "1.2.840.10008.1.2") explicit = false;
+        else if (ts === "1.2.840.10008.1.2.2") { little = false; explicit = true; }
+    }
+    walk(off, explicit, little, true);
     return out;
 }
 
@@ -259,6 +310,66 @@ function checkContinue(files: File[]) {
     return Math.max.apply(null, ins) - Math.min.apply(null, ins) + 1 === files.length;
 }
 
+function isSeriesFolder(name: string) {
+    const n = String(name || "").trim();
+    if (!n) return false;
+    if (/^(dicom|dicomdir|images|image|data|s\d+|ser\d*|series\d*|st\d+|se\d+|im\d+)$/i.test(n)) return true;
+    if (/^\d+\.\d+\.\d+/.test(n)) return true;
+    if (/abdomen|thorax|chest|lung|pelvis|brain|head|neck|monitor|scout|localizer|topogram/i.test(n)) return true;
+    if (/br\d+/i.test(n) || /dcm$/i.test(n) || /_\d+_\d+_/.test(n)) return true;
+    return false;
+}
+
+function txidFromKeys(keys: string[]) {
+    const split = (keys || []).map((k) => String(k || "").split("/").filter(Boolean));
+    if (!split.length) return "";
+    let i = 0;
+    while (split.every((p) => p[i] && p[i] === split[0][i])) i += 1;
+    const common = split[0].slice(0, i);
+    let parts = common.length ? common : split[0];
+    while (parts.length > 2 && isSeriesFolder(parts[parts.length - 1])) parts = parts.slice(0, -1);
+    return parts[parts.length - 1] || "";
+}
+
+function mergeByStudy(rows: CaseRow[]): CaseRow[] {
+    const map = new Map<string, { row: CaseRow; keys: string[]; slices: number }>();
+    rows.forEach((r) => {
+        const sig = [r.PatientID || "", r["ACC NO"] || "", r["study date"] || ""].join("|");
+        const key = String(r._key || r.TXID || "");
+        const slices = Number(r["image slices"] || 0) || 0;
+        const hit = map.get(sig);
+        if (!hit) {
+            map.set(sig, { row: { ...r }, keys: key ? [key] : [], slices });
+            return;
+        }
+        if (key) hit.keys.push(key);
+        hit.slices += slices;
+    });
+    const grouped = Array.from(map.values()).map((g) => {
+        const fromPath = txidFromKeys(g.keys);
+        const txid = fromPath || String(g.row.PatientID || "").trim() || String(g.row.TXID || "");
+        return { ...g, txid };
+    });
+    const txidCount = new Map<string, number>();
+    grouped.forEach((g) => txidCount.set(g.txid, (txidCount.get(g.txid) || 0) + 1));
+    return grouped.map((g) => {
+        const row = g.row;
+        const pid = String(row.PatientID || "").trim();
+        row.TXID = (txidCount.get(g.txid) || 0) > 1 ? (pid || g.txid) : g.txid;
+        row["image slices"] = g.slices;
+        delete row._key;
+        return row;
+    });
+}
+
+export const normalizeStatsRows = (rows: CaseRow[]): CaseRow[] => mergeByStudy(rows || []);
+
+function caseKey(dirParts: string[]) {
+    let end = dirParts.length;
+    while (end > 2 && isSeriesFolder(dirParts[end - 1])) end -= 1;
+    return dirParts.slice(0, Math.max(1, end)).join("/") || "_root";
+}
+
 function groupFiles(files: File[]) {
     const map = new Map<string, File[]>();
     for (let i = 0; i < files.length; i++) {
@@ -268,7 +379,7 @@ function groupFiles(files: File[]) {
         if (parts.some((p) => p.startsWith("."))) continue;
         if (!isDicomName(file.name)) continue;
         parts.pop();
-        const key = parts.join("/") || "_root";
+        const key = caseKey(parts);
         const list = map.get(key);
         if (list) list.push(file);
         else map.set(key, [file]);
@@ -316,6 +427,7 @@ export async function statsFromFiles(
         }
         if (row) {
             const parts = key.split("/").filter(Boolean);
+            row._key = key;
             row.TXID = parts[parts.length - 1] || key;
             row["image slices"] = candidates.length;
             row.contiue = checkContinue(candidates);
@@ -325,7 +437,7 @@ export async function statsFromFiles(
         done += 1;
         onProgress?.(done, keys.length);
     });
-    return rows;
+    return mergeByStudy(rows);
 }
 
 function addFactor(grid: any[][], item: string, counts: Map<string, number>, total: number) {
@@ -398,6 +510,71 @@ export function buildDetailAoa(rows: CaseRow[]) {
     return aoa;
 }
 
+const stripStatsTitle = (title: string) => String(title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();
+
+export const isStatsMetaSection = (n: any) => {
+    const t = stripStatsTitle(n?.title);
+    return n?.ref_type === "cover" || n?.ref_type === "revision" || n?.ref_type === "basic_info"
+        || t === "文件修订记录" || t === "产品信息";
+};
+
+const rowsFromDetailAoa = (aoa: any[][]): CaseRow[] => {
+    if (!aoa || aoa.length < 2) return [];
+    const header = (aoa[0] || []).map((c: any) => String(c || ""));
+    if (header[0] !== "PatientID") return [];
+    return aoa.slice(1).map((row: any[]) => {
+        const r: CaseRow = {};
+        header.forEach((k, i) => { r[k] = row?.[i]; });
+        r.sex = r.SEX || "";
+        r.age = r.AGE == null || r.AGE === "" ? null : r.AGE;
+        r.device = r.DEVICE && r.DEVICE !== "none" ? r.DEVICE : "";
+        r.kvp = r.KVP == null ? "" : String(r.KVP);
+        r.thickness = r.THICKNESS == null ? "" : String(r.THICKNESS);
+        return r;
+    }).filter((r) => DETAIL_COLUMNS.some((k) => String(r[k] ?? "").trim()));
+};
+
+export const attachCaseRows = (section: any, item: StatsCacheItem) => ({
+    ...(section || {}),
+    case_rows: item.rows || [],
+    case_meta: {
+        person: item.person || "",
+        dataType: item.dataType || "",
+        disease: item.disease || "",
+    },
+});
+
+export const caseRowsFromContent = (content: any): StatsCacheItem | null => {
+    const walk = (ns: any[]): StatsCacheItem | null => {
+        for (let i = 0; i < (ns || []).length; i++) {
+            const n = ns[i];
+            if (isStatsMetaSection(n)) {
+                const nested = walk(n.children || []);
+                if (nested) return nested;
+                continue;
+            }
+            if (Array.isArray(n?.case_rows) && n.case_rows.length) {
+                const m = n.case_meta || {};
+                return {
+                    rows: normalizeStatsRows(n.case_rows),
+                    person: String(m.person || ""),
+                    dataType: String(m.dataType || ""),
+                    disease: String(m.disease || ""),
+                };
+            }
+            const tables = n?.tables || [];
+            for (let t = 0; t < tables.length; t++) {
+                const rows = rowsFromDetailAoa(tables[t]);
+                if (rows.length) return { rows, person: "", dataType: "", disease: "" };
+            }
+            const nested = walk(n.children || []);
+            if (nested) return nested;
+        }
+        return null;
+    };
+    return walk((content && content.sections) || []);
+};
+
 export function buildTriageAoa(rows: CaseRow[]) {
     const header = ["Item", "Catgory", "pos_cases", "neg_cases", "Sen", "Spe"];
     const body: any[][] = [];
@@ -442,3 +619,297 @@ export function distRowsFromGrid(grid: any[][]) {
         ratio: r[3],
     }));
 }
+
+const STATS_STORE_KEY = "qms_data_stats_v1";
+
+export type StatsCacheItem = {
+    rows: CaseRow[];
+    person: string;
+    dataType: string;
+    disease: string;
+};
+
+type StatsStore = {
+    last?: { productId: number; kind: StatsKind };
+    caches?: Record<string, StatsCacheItem>;
+};
+
+const slotKey = (productId: number, kind: string) => `${productId || 0}:${kind}`;
+
+export const loadStatsStore = (): StatsStore => {
+    try {
+        const raw = localStorage.getItem(STATS_STORE_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (_e) {
+        return {};
+    }
+};
+
+export const readStatsCache = (productId: number, kind: StatsKind): StatsCacheItem | null => {
+    const hit = loadStatsStore().caches?.[slotKey(productId, kind)];
+    if (!hit || !Array.isArray(hit.rows) || !hit.rows.length) return null;
+    return { ...hit, rows: normalizeStatsRows(hit.rows) };
+};
+
+export const readLastStats = (): { productId: number; kind: StatsKind; item: StatsCacheItem } | null => {
+    const last = loadStatsStore().last;
+    if (!last || (last.kind !== "raw" && last.kind !== "base" && last.kind !== "ann")) return null;
+    const item = readStatsCache(last.productId || 0, last.kind);
+    if (!item) return null;
+    return { productId: last.productId || 0, kind: last.kind, item };
+};
+
+export const ANN_PID_TYPES = ["dd_008_01", "dd_008_02", "dd_009_01", "dd_009_02", "dd_009_03"];
+
+export const pidsFromRows = (rows: CaseRow[]): string[] => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    (rows || []).forEach((r) => {
+        const pid = String(r.TXID || r.PatientID || "").trim();
+        if (!pid || pid === "none" || seen.has(pid)) return;
+        seen.add(pid);
+        out.push(pid);
+    });
+    return out;
+};
+
+export const pidsFromCache = (productId: number): string[] => {
+    const last = readLastStats();
+    const kinds: StatsKind[] = [];
+    const add = (k?: StatsKind) => {
+        if (k && !kinds.includes(k)) kinds.push(k);
+    };
+    if (last && (!productId || !last.productId || last.productId === productId)) add(last.kind);
+    add("ann");
+    add("raw");
+    add("base");
+    const ids = productId ? [productId, 0] : [0];
+    for (let i = 0; i < ids.length; i++) {
+        for (let j = 0; j < kinds.length; j++) {
+            const hit = readStatsCache(ids[i], kinds[j]);
+            if (!hit) continue;
+            const pids = pidsFromRows(hit.rows);
+            if (pids.length) return pids;
+        }
+    }
+    return last ? pidsFromRows(last.item.rows) : [];
+};
+
+const defaultPidHeader = (docType: string) => (
+    docType === "dd_009_03"
+        ? ["评测日期", "评测项目", "数据类型", "PID", "测试医生1", "测试医生2", "二合一结果", "仲裁医生", "仲裁时间", "仲裁状态"]
+        : ["标注日期", "标注人员", "标注项目", "数据类型", "PID", "可用状态", "审核日期", "审核医生", "审核结果"]
+);
+
+export type AnnotFillMeta = {
+    annotDate: string;
+    reviewDate: string;
+    annotators: string[];
+    reviewer: string;
+    reviewers: string[];
+    project: string;
+    dataType: string;
+    status: string;
+    result: string;
+};
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+const utcOf = (r: any) => {
+    const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
+    const y = num(r.year);
+    const m = num(r.month);
+    const d = num(r.day) || 1;
+    if (isNaN(y) || isNaN(m) || m < 1 || m > 12 || d < 1) return null;
+    return Date.UTC(y, m - 1, d);
+};
+
+const ymd = (ms: number) => {
+    const d = new Date(ms);
+    return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+};
+
+const matchAnnotText = (text: string, docType: string) => {
+    const t = String(text || "");
+    if (docType === "dd_008_01") return t.includes("试标注") && t.includes("肺栓塞");
+    if (docType === "dd_008_02") return t.includes("试标注") && t.includes("肺叶");
+    if (docType === "dd_009_01") return t.includes("标注记录") && t.includes("肺栓塞分割") && !t.includes("试标注") && !t.includes("分诊");
+    if (docType === "dd_009_02") return t.includes("标注记录") && t.includes("肺叶") && !t.includes("试标注");
+    if (docType === "dd_009_03") return t.includes("标注记录") && t.includes("分诊") && !t.includes("试标注");
+    return false;
+};
+
+const matchAnnotLoose = (text: string, docType: string) => {
+    const t = String(text || "");
+    if (docType.indexOf("dd_008_") === 0) return t.includes("试标注");
+    if (docType.indexOf("dd_009_") === 0) return t.includes("标注记录") && !t.includes("试标注");
+    return false;
+};
+
+export const annotProjectOf = (docType: string) => {
+    if (docType === "dd_008_02" || docType === "dd_009_02") return "肺叶分割";
+    if (docType === "dd_009_03") return "肺栓塞分诊";
+    return "肺栓塞分割";
+};
+
+export const annotDataTypeOf = (docType: string) => (docType === "dd_009_03" ? "测试集" : "训练集");
+
+export const buildAnnotMeta = (docType: string, tlRows: any[], members: any[]): AnnotFillMeta => {
+    const dates: number[] = [];
+    (tlRows || []).forEach((r: any) => {
+        if ((r.row_type || "date") !== "date") return;
+        const dt = utcOf(r);
+        if (dt == null) return;
+        const text = String((r.cells || {})["数据部"] || "");
+        if (matchAnnotText(text, docType)) dates.push(dt);
+    });
+    if (!dates.length) {
+        (tlRows || []).forEach((r: any) => {
+            if ((r.row_type || "date") !== "date") return;
+            const dt = utcOf(r);
+            if (dt == null) return;
+            const text = String((r.cells || {})["数据部"] || "");
+            if (matchAnnotLoose(text, docType)) dates.push(dt);
+        });
+    }
+    const annotDate = dates.length ? ymd(Math.min.apply(null, dates)) : "";
+    const reviewDate = dates.length ? ymd(Math.max.apply(null, dates)) : "";
+    const annotators = (members || [])
+        .filter((m: any) => String(m.role || "").trim() === "标注人员")
+        .map((m: any) => String(m.name || "").trim())
+        .filter(Boolean);
+    const reviewers = (members || [])
+        .filter((m: any) => String(m.role || "").trim() === "审核医生")
+        .map((m: any) => String(m.name || "").trim())
+        .filter(Boolean);
+    return {
+        annotDate,
+        reviewDate,
+        annotators,
+        reviewers,
+        reviewer: reviewers[0] || "",
+        project: annotProjectOf(docType),
+        dataType: annotDataTypeOf(docType),
+        status: "已标注",
+        result: "通过",
+    };
+};
+
+const cellByLabel = (label: string, pid: string, index: number, meta?: AnnotFillMeta, fillExtra = true) => {
+    if (label === "PID") return pid;
+    if (!fillExtra || !meta) return "";
+    if (label === "标注日期") return meta.annotDate;
+    if (label === "标注人员") return meta.annotators.length ? meta.annotators[index % meta.annotators.length] : "";
+    if (label === "标注项目") return meta.project;
+    if (label === "数据类型") return meta.dataType;
+    if (label === "可用状态") return meta.status;
+    if (label === "审核日期") return meta.reviewDate;
+    if (label === "审核医生") {
+        const list = (meta.reviewers && meta.reviewers.length) ? meta.reviewers : (meta.reviewer ? [meta.reviewer] : []);
+        return list.length ? list[index % list.length] : "";
+    }
+    if (label === "审核结果") return meta.result;
+    if (label === "评测日期") return meta.annotDate;
+    if (label === "评测项目") return meta.project;
+    if (label === "测试医生1") return meta.annotators[0] || "";
+    if (label === "测试医生2") return meta.annotators[1] || "";
+    if (label === "二合一结果") return "一致";
+    return "";
+};
+
+export const fillPidTable = (table: any[][], pids: string[], docType: string, meta?: AnnotFillMeta): any[][] => {
+    const src = Array.isArray(table) ? table : [];
+    let headerIdx = -1;
+    let pidCol = -1;
+    for (let i = 0; i < src.length; i++) {
+        const row = Array.isArray(src[i]) ? src[i] : [];
+        const col = row.findIndex((c: any) => String(c ?? "").trim() === "PID");
+        if (col >= 0) {
+            headerIdx = i;
+            pidCol = col;
+            break;
+        }
+    }
+    const header = headerIdx >= 0 ? [...(src[headerIdx] || [])] : defaultPidHeader(docType);
+    if (pidCol < 0) pidCol = header.findIndex((c) => String(c ?? "").trim() === "PID");
+    if (pidCol < 0) pidCol = header.length > 4 ? 4 : header.length ? header.length - 1 : 0;
+    const cols = Math.max(header.length, 1);
+    const prefix = (headerIdx >= 0 ? src.slice(0, headerIdx) : []).map((r) => {
+        const next = Array.isArray(r) ? [...r] : [];
+        while (next.length < cols) next.push("");
+        return next;
+    });
+    const head = [...header];
+    while (head.length < cols) head.push("");
+    const fillExtra = true;
+    const dataRows = pids.map((pid, index) => {
+        const row = Array(cols).fill("");
+        for (let c = 0; c < cols; c++) {
+            row[c] = cellByLabel(String(head[c] ?? "").trim(), pid, index, meta, fillExtra);
+        }
+        if (!String(row[pidCol] ?? "").trim()) row[pidCol] = pid;
+        return row;
+    });
+    return [...prefix, head, ...dataRows];
+};
+
+const isPidMeta = (n: any) => {
+    const t = String(n?.title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();
+    return n?.ref_type === "cover" || n?.ref_type === "revision" || n?.ref_type === "basic_info"
+        || t === "文件修订记录" || t === "产品信息";
+};
+
+const tableHasPid = (tb: any[]) =>
+    (tb || []).some((row: any[]) => (row || []).some((c: any) => String(c ?? "").trim() === "PID"));
+
+export const applyPidsToSections = (sections: any[], pids: string[], docType: string, meta?: AnnotFillMeta): any[] => {
+    const walk = (ns: any[]): any[] => (ns || []).map((n) => {
+        if (isPidMeta(n)) return { ...n, children: walk(n.children || []) };
+        const src = Array.isArray(n.tables) ? n.tables : [];
+        const tables = src.length
+            ? src.map((tb: any[]) => (tableHasPid(tb) || !(tb || []).length ? fillPidTable(tb, pids, docType, meta) : tb))
+            : [fillPidTable([], pids, docType, meta)];
+        if (!tables.some((tb: any[]) => tableHasPid(tb))) {
+            tables[0] = fillPidTable(src[0] || [], pids, docType, meta);
+        }
+        return { ...n, tables, children: walk(n.children || []) };
+    });
+    return walk(sections);
+};
+
+export const annotTableSig = (sections: any[]): string => {
+    const rows: any[] = [];
+    const walk = (ns: any[]) => {
+        (ns || []).forEach((n) => {
+            if (isPidMeta(n)) { walk(n.children || []); return; }
+            (n.tables || []).forEach((tb: any[]) => {
+                if (tableHasPid(tb)) rows.push(tb);
+            });
+            walk(n.children || []);
+        });
+    };
+    walk(sections);
+    return JSON.stringify(rows);
+};
+
+export const saveStatsCache = (productId: number, kind: StatsKind, item: StatsCacheItem): boolean => {
+    try {
+        const store = loadStatsStore();
+        const caches = { ...(store.caches || {}) };
+        caches[slotKey(productId, kind)] = {
+            rows: item.rows || [],
+            person: item.person || "",
+            dataType: item.dataType || "",
+            disease: item.disease || "",
+        };
+        localStorage.setItem(STATS_STORE_KEY, JSON.stringify({
+            last: { productId: productId || 0, kind },
+            caches,
+        }));
+        return true;
+    } catch (_e) {
+        return false;
+    }
+};
