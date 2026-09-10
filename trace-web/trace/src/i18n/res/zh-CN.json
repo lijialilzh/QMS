@@ -15,6 +15,7 @@
         "project_timeline": "时间逻辑线",
         "prod_runtime_env": "运行环境",
         "prod_device_res": "设备资源",
+        "prod_hospitals": "合规医院列表",
         "basedata": "基础数据",
         "version_rule": "版本命名规则",
         "company_infos": "公司基本信息",

@@ -260,6 +260,245 @@ const replaceKeywords = (nodes: any[], pairs: Array<[string, string]>): any[] =>
     return (nodes || []).map(fix);
 };
 
+type Qty3 = { train: string; tune: string; test: string };
+const emptyQty = (): Qty3 => ({ train: "", tune: "", test: "" });
+
+const excelSerialToDot = (s: string) => {
+    const t = String(s || "").trim();
+    if (!/^\d{4,6}$/.test(t)) return "";
+    const n = Number(t);
+    if (n < 20000 || n > 80000) return "";
+    const d = new Date(Date.UTC(1899, 11, 30) + n * 86400000);
+    if (Number.isNaN(d.getTime())) return "";
+    return `${d.getUTCFullYear()}.${d.getUTCMonth() + 1}.${d.getUTCDate()}`;
+};
+
+const parseDotDate = (s: string) => {
+    const serial = excelSerialToDot(s);
+    if (serial) return serial;
+    const m = String(s || "").match(/(\d{4})[.年/\-](\d{1,2})[.月/\-](\d{1,2})/);
+    return m ? `${Number(m[1])}.${Number(m[2])}.${Number(m[3])}` : "";
+};
+
+const dateKey = (dot: string) => {
+    const m = String(dot || "").match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})$/);
+    return m ? Number(m[1]) * 10000 + Number(m[2]) * 100 + Number(m[3]) : 0;
+};
+
+const walkDocSections = (nodes: any[], fn: (n: any) => void) => {
+    (nodes || []).forEach((n: any) => {
+        if (!n) return;
+        fn(n);
+        walkDocSections(n.children || [], fn);
+    });
+};
+
+const parseMd003Req = (content: any) => {
+    const pe = emptyQty();
+    const lobe = emptyQty();
+    let deliver = "";
+    let lastKind = "";
+    const takeQty = (body: string, dest: Qty3) => {
+        const train = body.match(/训练数据量要求[：:]\s*(\d+)/);
+        const tune = body.match(/调优数据量要求[：:]\s*(\d+)/);
+        const test = body.match(/测试数据量要求[：:]\s*(\d+)/);
+        if (train) dest.train = train[1];
+        if (tune) dest.tune = tune[1];
+        if (test) dest.test = test[1];
+        const dm = body.match(/交付时间[\s\S]{0,40}?(\d{4}[.年/\-]\d{1,2}[.月/\-]\d{1,2})/);
+        if (dm) deliver = parseDotDate(dm[1]) || deliver;
+    };
+    walkDocSections((content && content.sections) || [], (n) => {
+        const title = stripNum(n.title);
+        const body = String(n.body || "");
+        const blob = title + body;
+        if (title === "标注规则" || title.includes("肺叶") || title.includes("肺栓塞")) {
+            if (blob.includes("肺叶")) lastKind = "lobe";
+            if (blob.includes("肺栓塞")) lastKind = "pe";
+        }
+        if (title !== "数据") return;
+        let kind = lastKind;
+        if (body.includes("交付时间")) kind = "pe";
+        else if (!kind) kind = body.includes("肺叶") ? "lobe" : "pe";
+        takeQty(body, kind === "lobe" ? lobe : pe);
+    });
+    return { pe, lobe, deliver };
+};
+
+const parseDd010Counts = (content: any) => {
+    const counts: Record<string, string> = {};
+    const dates: string[] = [];
+    walkDocSections((content && content.sections) || [], (n) => {
+        const t = String(n.title || "").replace(/\s/g, "");
+        (n.tables || []).forEach((tb: any[]) => {
+            if (!Array.isArray(tb) || !tb.length) return;
+            const first = (Array.isArray(tb[0]) ? tb[0] : []).map((c: any) => String(c || "")).join("");
+            if (t !== "标注" && !first.includes("标注数据库")) return;
+            let nameI = -1;
+            let qtyI = -1;
+            let dateI = -1;
+            tb.forEach((row: any[]) => {
+                if (!Array.isArray(row)) return;
+                const cells = row.map((c) => String(c ?? "").trim());
+                if (cells.includes("数据集") && cells.some((x) => x.includes("数据量"))) {
+                    nameI = cells.indexOf("数据集");
+                    qtyI = cells.findIndex((x) => x.includes("数据量"));
+                    dateI = cells.findIndex((x) => x.includes("上传日期") || x === "时间");
+                    return;
+                }
+                if (nameI < 0) return;
+                const name = cells[nameI] || "";
+                const qty = cells[qtyI] || "";
+                if (name && qty && name !== "数据集") {
+                    counts[name] = qty.replace(/\.0+$/, "").split(".")[0];
+                }
+                if (dateI >= 0) {
+                    const d = parseDotDate(cells[dateI] || "");
+                    if (d) dates.push(d);
+                }
+            });
+        });
+    });
+    let latest = "";
+    dates.forEach((d) => { if (dateKey(d) >= dateKey(latest)) latest = d; });
+    return { counts, date: latest };
+};
+
+const parseDd012Counts = (content: any) => {
+    const counts: Record<string, string> = {};
+    walkDocSections((content && content.sections) || [], (n) => {
+        (n.tables || []).forEach((tb: any[]) => {
+            let nameI = -1;
+            let qtyI = -1;
+            (tb || []).forEach((row: any[]) => {
+                if (!Array.isArray(row)) return;
+                const cells = row.map((c) => String(c ?? "").trim());
+                if (cells.includes("批次") && cells.includes("数据量")) {
+                    nameI = cells.indexOf("批次");
+                    qtyI = cells.indexOf("数据量");
+                    return;
+                }
+                if (nameI < 0) return;
+                const name = cells[nameI] || "";
+                const qty = cells[qtyI] || "";
+                if (name && qty && name !== "批次") {
+                    counts[name] = qty.replace(/\.0+$/, "").split(".")[0];
+                }
+            });
+        });
+    });
+    return counts;
+};
+
+const qtyFromNames = (counts: Record<string, string>, names: [string, string, string]): Qty3 => ({
+    train: counts[names[0]] || "",
+    tune: counts[names[1]] || "",
+    test: counts[names[2]] || "",
+});
+
+const fmtPeReq = (q: Qty3) => (q.train && q.tune && q.test
+    ? `1.肺栓塞分割训练集：${q.train}\n  肺栓塞分割调优集：${q.tune}\n  多中心客观测试集:${q.test}` : "");
+const fmtLobeReq = (q: Qty3) => (q.train && q.tune && q.test
+    ? `2.肺叶分割训练集：${q.train}\n  肺叶分割调优集：${q.tune}\n  肺叶分测试集: ${q.test}` : "");
+const fmtPeAct = (q: Qty3) => (q.train && q.tune && q.test
+    ? `1.肺栓塞分割训练集：${q.train}\n  肺栓塞分割调优集：${q.tune}\n  肺栓塞分诊测试集:${q.test}` : "");
+const fmtLobeAct = (q: Qty3) => (q.train && q.tune && q.test
+    ? `2.肺叶分割训练集：${q.train}\n  肺叶分割调优集：${q.tune}\n  肺叶分割测试集: ${q.test}` : "");
+
+const applyDd011Table = (nodes: any[], src: {
+    peTypeReq?: string; peTypeAct?: string;
+    lobeTypeReq?: string; lobeTypeAct?: string;
+    peQtyReq?: string; peQtyAct?: string;
+    lobeQtyReq?: string; lobeQtyAct?: string;
+    deliverReq?: string; deliverAct?: string;
+}) => {
+    const fixTable = (tb: any[]) => {
+        if (!Array.isArray(tb)) return tb;
+        const hit = (tb || []).some((row) =>
+            Array.isArray(row)
+            && String(row[0] ?? "").trim() === "评估要点"
+            && String(row[1] ?? "").includes("文档需求")
+        );
+        if (!hit) return tb;
+        let prev = "";
+        return tb.map((row: any[]) => {
+            if (!Array.isArray(row)) return row;
+            const label = String(row[0] ?? "").trim();
+            if (label) prev = label;
+            const req = String(row[1] ?? "");
+            const next = [...row];
+            const put = (ci: number, val?: string) => {
+                if (!val) return;
+                while (next.length <= ci) next.push("");
+                next[ci] = val;
+            };
+            if (prev === "标注类型") {
+                if (req.includes("肺叶") || /^2[.]/.test(req.trim())) {
+                    put(1, src.lobeTypeReq);
+                    put(3, src.lobeTypeAct);
+                } else if (req.includes("肺栓塞") || /^1[.]/.test(req.trim()) || label === "标注类型") {
+                    put(1, src.peTypeReq);
+                    put(3, src.peTypeAct);
+                }
+            } else if (prev === "数据量") {
+                if (req.includes("肺叶")) {
+                    put(1, src.lobeQtyReq);
+                    put(3, src.lobeQtyAct);
+                } else if (req.includes("肺栓塞") || label === "数据量") {
+                    put(1, src.peQtyReq);
+                    put(3, src.peQtyAct);
+                }
+            } else if (label === "交付时间") {
+                put(1, src.deliverReq || excelSerialToDot(req));
+                put(3, src.deliverAct || excelSerialToDot(String(row[3] ?? "")));
+            }
+            return next;
+        });
+    };
+    const fix = (n: any): any => ({
+        ...n,
+        tables: (n.tables || []).map((tb: any[]) => (Array.isArray(tb) ? fixTable(tb) : tb)),
+        children: (n.children || []).map(fix),
+    });
+    return (nodes || []).map(fix);
+};
+
+const latestDataDoc = (productId: number, docType: string) =>
+    Api.list_data_doc({ product_id: productId, doc_type: docType, page_index: 0, page_size: 1 })
+        .then((res: any) => (res && res.code === Api.C_OK ? (((res.data && res.data.rows) || [])[0] || null) : null))
+        .catch(() => null);
+
+const fillDd011Feedback = (productId: number, secs: any[]): Promise<any[]> => {
+    if (!productId) return Promise.resolve(secs);
+    return Promise.all([
+        latestDataDoc(productId, "md_003"),
+        latestDataDoc(productId, "dd_010"),
+        latestDataDoc(productId, "dd_012"),
+    ]).then(([md003, dd010, dd012]: any[]) => {
+        const req = parseMd003Req(md003 && md003.content);
+        const up = parseDd010Counts(dd010 && dd010.content);
+        const counts = { ...parseDd012Counts(dd012 && dd012.content), ...up.counts };
+        const peAct = qtyFromNames(counts, ["肺栓塞分割训练集", "肺栓塞分割调优集", "肺栓塞分诊测试集"]);
+        const lobeAct = qtyFromNames(counts, ["肺叶分割训练集", "肺叶分割调优集", "肺叶分割测试集"]);
+        const hasPeReq = !!(req.pe.train || req.pe.tune || req.pe.test);
+        const hasLobeReq = !!(req.lobe.train || req.lobe.tune || req.lobe.test);
+        const hasPeAct = !!(peAct.train || peAct.tune || peAct.test);
+        const hasLobeAct = !!(lobeAct.train || lobeAct.tune || lobeAct.test);
+        return applyDd011Table(secs, {
+            peTypeReq: hasPeReq ? "1.肺栓塞分割" : "",
+            peTypeAct: hasPeAct ? "1.肺栓塞分割/分诊" : "",
+            lobeTypeReq: hasLobeReq ? "2.肺叶分割" : "",
+            lobeTypeAct: hasLobeAct ? "2.肺叶分割" : "",
+            peQtyReq: fmtPeReq(req.pe),
+            lobeQtyReq: fmtLobeReq(req.lobe),
+            peQtyAct: fmtPeAct(peAct),
+            lobeQtyAct: fmtLobeAct(lobeAct),
+            deliverReq: req.deliver,
+            deliverAct: up.date || req.deliver,
+        });
+    }).catch(() => secs);
+};
+
 export default () => {
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
@@ -336,6 +575,25 @@ export default () => {
                     };
                 }) : secs;
                 const docType = String(type || doc.doc_type || "");
+                if (docType === "dd_011") {
+                    fillDd011Feedback(doc.product_id || 0, withNo).then((filled) => {
+                        if (JSON.stringify(stripKeys(filled)) === JSON.stringify(stripKeys(withNo))) {
+                            dispatch({ loading: false, doc, sections: withNo });
+                            return;
+                        }
+                        dispatch({ loading: false, doc, sections: filled });
+                        Api.update_data_doc({
+                            id: doc.id,
+                            content: { sections: stripKeys(filled) },
+                            product_id: doc.product_id,
+                            version: doc.version,
+                        }).then((up: any) => {
+                            if (up.code === Api.C_OK) message.success("已按标注需求/上传记录写入需求反馈");
+                            else message.error(up.msg || "写入需求反馈失败");
+                        });
+                    }).catch(() => dispatch({ loading: false, doc, sections: withNo }));
+                    return;
+                }
                 if (ANN_PID_TYPES.indexOf(docType) < 0) {
                     dispatch({ loading: false, doc, sections: withNo });
                     return;
@@ -397,7 +655,14 @@ export default () => {
         const product = (data.products || []).find((p: any) => p.id === newId) || {};
         const prevId = data.doc.product_id;
         dispatch({ loading: true, doc: { ...data.doc, product_id: newId, product_name: product.name, product_full_version: product.full_version } });
-        autofill(newId, data.sections, true, prevId).then((secs) => dispatch({ loading: false, sections: secs }));
+        autofill(newId, data.sections, true, prevId).then((secs) => {
+            if (String(type || data.doc.doc_type || "") !== "dd_011") {
+                dispatch({ loading: false, sections: secs });
+                return;
+            }
+            fillDd011Feedback(newId, secs).then((filled) => dispatch({ loading: false, sections: filled }))
+                .catch(() => dispatch({ loading: false, sections: secs }));
+        });
     };
 
     useEffect(() => { load(); }, [id, location.pathname]);

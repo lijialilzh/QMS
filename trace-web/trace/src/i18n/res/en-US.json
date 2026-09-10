@@ -15,6 +15,7 @@
         "project_timeline": "Timeline",
         "prod_runtime_env": "Runtime Env",
         "prod_device_res": "Device Resources",
+        "prod_hospitals": "Compliant Hospitals",
         "basedata": "Base Data",
         "version_rule": "Version Naming Rules",
         "company_infos": "Company Info",

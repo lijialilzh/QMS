@@ -213,6 +213,11 @@ export default () => {
                                 perm: "prod_device_view",
                             },
                             {
+                                key: "/prod_hospitals",
+                                label: ts("menu.prod_hospitals"),
+                                perm: "prod_hospital_view",
+                            },
+                            {
                                 key: "/prod_dhfs",
                                 label: ts("menu.prod_dhfs"),
                                 perm: "prod_dhf_view",

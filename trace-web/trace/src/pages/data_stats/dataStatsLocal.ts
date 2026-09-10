@@ -667,7 +667,7 @@ export const pidsFromRows = (rows: CaseRow[]): string[] => {
     const seen = new Set<string>();
     const out: string[] = [];
     (rows || []).forEach((r) => {
-        const pid = String(r.TXID || r.PatientID || "").trim();
+        const pid = String(r.PatientID || r.TXID || "").trim();
         if (!pid || pid === "none" || seen.has(pid)) return;
         seen.add(pid);
         out.push(pid);
@@ -709,6 +709,7 @@ export type AnnotFillMeta = {
     annotators: string[];
     reviewer: string;
     reviewers: string[];
+    arbiters: string[];
     project: string;
     dataType: string;
     status: string;
@@ -784,12 +785,17 @@ export const buildAnnotMeta = (docType: string, tlRows: any[], members: any[]): 
         .filter((m: any) => String(m.role || "").trim() === "审核医生")
         .map((m: any) => String(m.name || "").trim())
         .filter(Boolean);
+    const arbiters = (members || [])
+        .filter((m: any) => String(m.role || "").trim() === "仲裁医生")
+        .map((m: any) => String(m.name || "").trim())
+        .filter(Boolean);
     return {
         annotDate,
         reviewDate,
         annotators,
         reviewers,
         reviewer: reviewers[0] || "",
+        arbiters,
         project: annotProjectOf(docType),
         dataType: annotDataTypeOf(docType),
         status: "已标注",
@@ -816,6 +822,9 @@ const cellByLabel = (label: string, pid: string, index: number, meta?: AnnotFill
     if (label === "测试医生1") return meta.annotators[0] || "";
     if (label === "测试医生2") return meta.annotators[1] || "";
     if (label === "二合一结果") return "一致";
+    if (label === "仲裁医生") return meta.arbiters.length ? meta.arbiters[index % meta.arbiters.length] : "";
+    if (label === "仲裁时间") return meta.arbiters.length ? (meta.reviewDate || meta.annotDate) : "";
+    if (label === "仲裁状态") return meta.arbiters.length ? "无需仲裁" : "";
     return "";
 };
 
