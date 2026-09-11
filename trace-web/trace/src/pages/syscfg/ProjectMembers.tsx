@@ -26,6 +26,8 @@ const ROLES = [
     "标注人员",
     "审核医生",
     "仲裁医生",
+    "数据采集人员",
+    "脱敏+清洗人员",
 ];
 
 const ANNOTATOR_ROLE = "标注人员";
@@ -49,6 +51,10 @@ const REVIEWER_ROLE = "审核医生";
 const DEFAULT_REVIEWERS = ["苏婷", "韦人"];
 const ARBITER_ROLE = "仲裁医生";
 const DEFAULT_ARBITERS = ["韦人"];
+const COLLECTOR_ROLE = "数据采集人员";
+const DEFAULT_COLLECTORS = ["周中亚", "李鹏飞", "耿景辉", "刘新阳", "王振宇", "王慧阳"];
+const CLEANER_ROLE = "脱敏+清洗人员";
+const DEFAULT_CLEANERS = ["钏兴炳"];
 
 const DEFAULT_MODEL_MEMBERS = [
     { role: "模型部负责人", name: "王瑜" },
@@ -118,6 +124,20 @@ export default () => {
                     DEFAULT_ARBITERS.forEach((name) => {
                         sort += 1;
                         adds.push({ role: ARBITER_ROLE, name, sort_order: sort });
+                    });
+                }
+                const hasCollector = rows.some((r: any) => (r.role || "").trim() === COLLECTOR_ROLE);
+                if (!hasCollector && DEFAULT_COLLECTORS.length) {
+                    DEFAULT_COLLECTORS.forEach((name) => {
+                        sort += 1;
+                        adds.push({ role: COLLECTOR_ROLE, name, sort_order: sort });
+                    });
+                }
+                const hasCleaner = rows.some((r: any) => (r.role || "").trim() === CLEANER_ROLE);
+                if (!hasCleaner && DEFAULT_CLEANERS.length) {
+                    DEFAULT_CLEANERS.forEach((name) => {
+                        sort += 1;
+                        adds.push({ role: CLEANER_ROLE, name, sort_order: sort });
                     });
                 }
                 const existingRoles = new Set(rows.map((r: any) => String(r.role || "").trim()));

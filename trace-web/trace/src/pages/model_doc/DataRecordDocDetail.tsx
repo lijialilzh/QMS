@@ -1,14 +1,16 @@
-import { Button, Checkbox, Input, Space, Spin, Upload, message } from "antd";
+import { Button, Checkbox, DatePicker, Input, Select, Space, Spin, Upload, message } from "antd";
 import { DeleteOutlined, PlusOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import type { CSSProperties } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
+import dayjs from "dayjs";
 import { useData } from "@/common";
 import * as Api from "@/api/ApiDataDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiMember from "@/api/ApiProjectMember";
+import * as ApiHospital from "@/api/ApiProdHospital";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import { getDataDocMeta, DATA_STATS_IMPORT_TYPES } from "./DataDocTypes";
 import { ANN_PID_TYPES, annotTableSig, applyPidsToSections, buildAnnotMeta, pidsFromCache } from "../data_stats/dataStatsLocal";
@@ -91,6 +93,7 @@ const rowAllEmpty = (row: any[], cols: number) => {
 
 const isSignLabel = (s: string) => /^(评估人|复核人|记录人)/.test(String(s || "").trim());
 const isSignRow = (row: any[]) => (row || []).some((c: any) => isSignLabel(String(c ?? "")));
+const isDailyFootRow = (row: any[]) => (row || []).some((c: any) => /记录人签字|审核人签字/.test(String(c ?? "")));
 const isMetaLabelRow = (row: any[]) => /^(结论|问题描述)/.test(String(row?.[0] ?? "").trim());
 const stripPua = (s: any) => {
     if (typeof s !== "string" || s.startsWith("data:image")) return s;
@@ -119,14 +122,15 @@ const parseCheckItems = (s: any) => {
 const joinCheckItems = (items: Array<{ checked: boolean; label: string }>) =>
     items.map((it) => `${it.checked ? "☑" : "☐"}${it.label}`).join("\n");
 
-const computeRecordSpans = (grid: any[][]) => {
+const computeRecordSpans = (grid: any[][], emptyMergeRows?: Set<number>) => {
     const spans = computeGridSpans(grid);
     const rows = grid || [];
     const R = rows.length;
     const C = rows.reduce((m, r) => Math.max(m, Array.isArray(r) ? r.length : 0), 0);
     const at = (r: number, c: number) => String(rows[r]?.[c] ?? "");
+    const allowEmpty = (r: number) => !emptyMergeRows || emptyMergeRows.has(r);
     for (let r = 0; r < R; r++) {
-        if (rowAllEmpty(rows[r], C) || isSignRow(rows[r])) continue;
+        if (rowAllEmpty(rows[r], C) || isSignRow(rows[r]) || !allowEmpty(r)) continue;
         for (let c = 0; c < C; c++) {
             if (spans[r][c].skip) continue;
             let c2 = c + spans[r][c].colSpan - 1;
@@ -138,12 +142,13 @@ const computeRecordSpans = (grid: any[][]) => {
         }
     }
     for (let r = 0; r < R; r++) {
+        if (emptyMergeRows && !allowEmpty(r)) continue;
         for (let c = 0; c < C; c++) {
             if (spans[r][c].skip || !at(r, c).trim()) continue;
             const cs = spans[r][c].colSpan;
             let r2 = r;
             while (r2 + 1 < R) {
-                if (rowAllEmpty(rows[r2 + 1], C) || isSignRow(rows[r2 + 1])) break;
+                if (rowAllEmpty(rows[r2 + 1], C) || isSignRow(rows[r2 + 1]) || !allowEmpty(r2 + 1)) break;
                 let ok = true;
                 for (let k = 0; k < cs; k++) {
                     const cell = spans[r2 + 1]?.[c + k];
@@ -160,6 +165,25 @@ const computeRecordSpans = (grid: any[][]) => {
             }
         }
     }
+    return spans;
+};
+
+/** 名单块只合并左侧标签列（参与培训人员名单等），姓名格仍不横向撑开。 */
+const mergeNameLabelCol = (grid: any[][], spans: ReturnType<typeof computeRecordSpans> | null, nameRows: Set<number>) => {
+    if (!spans || !nameRows.size) return spans;
+    const rows = grid || [];
+    rows.forEach((row, r) => {
+        if (!nameRows.has(r)) return;
+        const label = String(row?.[0] ?? "").replace(/\s+/g, "");
+        if (!label) return;
+        let r2 = r;
+        while (nameRows.has(r2 + 1) && !String(rows[r2 + 1]?.[0] ?? "").replace(/\s+/g, "")) r2 += 1;
+        if (r2 <= r || !spans[r]?.[0] || spans[r][0].skip) return;
+        spans[r][0].rowSpan = r2 - r + 1;
+        for (let k = r + 1; k <= r2; k++) {
+            if (spans[k]?.[0]) spans[k][0].skip = true;
+        }
+    });
     return spans;
 };
 
@@ -499,6 +523,748 @@ const fillDd011Feedback = (productId: number, secs: any[]): Promise<any[]> => {
     }).catch(() => secs);
 };
 
+const recvDatesFromTimeline = (tlRows: any[]) => {
+    const seen: Record<string, true> = {};
+    const out: Array<{ k: number; s: string }> = [];
+    (tlRows || []).forEach((r: any) => {
+        if ((r.row_type || "date") !== "date") return;
+        const text = String((r.cells || {})["数据部"] || "");
+        if (!text.includes("回传") && !text.includes("多中心")) return;
+        const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
+        const y = num(r.year);
+        const m = num(r.month);
+        const d = num(r.day);
+        if (isNaN(y) || isNaN(m) || isNaN(d) || m < 1 || m > 12 || d < 1) return;
+        const k = y * 10000 + m * 100 + d;
+        const s = `${y}.${m}.${d}`;
+        if (seen[s]) return;
+        seen[s] = true;
+        out.push({ k, s });
+    });
+    return out.sort((a, b) => a.k - b.k).map((x) => x.s);
+};
+
+const examDatesFromTimeline = (tlRows: any[], docType: string) => {
+    if (!/^dd_013_0[1-4]$/.test(docType)) return [];
+    const kind = /dd_013_0[24]/.test(docType) ? "肺叶" : "肺栓塞";
+    const pick = (pred: (t: string) => boolean) => {
+        const seen: Record<string, true> = {};
+        const out: Array<{ k: number; s: string }> = [];
+        (tlRows || []).forEach((r: any) => {
+            if ((r.row_type || "date") !== "date") return;
+            const text = String((r.cells || {})["数据部"] || "");
+            if (!pred(text)) return;
+            const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
+            const y = num(r.year);
+            const m = num(r.month);
+            const d = num(r.day);
+            if (isNaN(y) || isNaN(m) || isNaN(d) || m < 1 || m > 12 || d < 1) return;
+            const k = y * 10000 + m * 100 + d;
+            const s = `${y}.${m}.${d}`;
+            if (seen[s]) return;
+            seen[s] = true;
+            out.push({ k, s });
+        });
+        return out.sort((a, b) => a.k - b.k).map((x) => x.s);
+    };
+    let dates = pick((t) => t.includes("考核") && t.includes(kind));
+    if (!dates.length) dates = pick((t) => (t.includes("人员培训") || t.includes("培训记录")) && t.includes(kind));
+    return dates;
+};
+
+const examTimeText = (docType: string, dates: string[]) => {
+    if (!dates.length) return "";
+    if (/^dd_013_0[12]$/.test(docType)) return dates[0];
+    return dates.join("\n");
+};
+
+const pad2 = (n: number) => (n < 10 ? `0${n}` : String(n));
+
+const toDashDate = (s: string) => {
+    const t = String(s || "").trim();
+    const m = t.match(/^(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})$/);
+    if (!m) return "";
+    const y = parseInt(m[1], 10);
+    const mo = parseInt(m[2], 10);
+    const d = parseInt(m[3], 10);
+    if (mo < 1 || mo > 12 || d < 1) return "";
+    return `${y}-${pad2(mo)}-${pad2(d)}`;
+};
+
+const nextDashDate = (s: string) => {
+    const dash = toDashDate(s);
+    if (!dash) return "";
+    const [y, mo, d] = dash.split("-").map((x) => parseInt(x, 10));
+    const dt = new Date(Date.UTC(y, mo - 1, d + 1));
+    return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
+};
+
+const dailyDatesFromTimeline = (tlRows: any[], docType: string) => {
+    if (!/^dd_013_0[567]$/.test(docType)) return [];
+    const pick = (pred: (t: string) => boolean) => {
+        const seen: Record<string, true> = {};
+        const out: Array<{ k: number; s: string }> = [];
+        (tlRows || []).forEach((r: any) => {
+            if ((r.row_type || "date") !== "date") return;
+            const text = String((r.cells || {})["数据部"] || "");
+            if (!pred(text)) return;
+            const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
+            const y = num(r.year);
+            const m = num(r.month);
+            const d = num(r.day);
+            if (isNaN(y) || isNaN(m) || isNaN(d) || m < 1 || m > 12 || d < 1) return;
+            const k = y * 10000 + m * 100 + d;
+            const s = `${y}-${pad2(m)}-${pad2(d)}`;
+            if (seen[s]) return;
+            seen[s] = true;
+            out.push({ k, s });
+        });
+        return out.sort((a, b) => a.k - b.k).map((x) => x.s);
+    };
+    const annot = (t: string) => {
+        if (docType === "dd_013_05") return t.includes("标注记录") && t.includes("肺栓塞分割") && !t.includes("试标注") && !t.includes("分诊");
+        if (docType === "dd_013_06") return t.includes("标注记录") && t.includes("肺叶") && !t.includes("试标注");
+        if (docType === "dd_013_07") return t.includes("标注记录") && t.includes("分诊") && !t.includes("试标注");
+        return false;
+    };
+    const kind = docType === "dd_013_06" ? "肺叶" : "肺栓塞";
+    let dates = pick(annot);
+    if (!dates.length) dates = pick((t) => t.includes("考核") && t.includes(kind));
+    if (!dates.length) dates = pick((t) => (t.includes("人员培训") || t.includes("培训记录")) && t.includes(kind));
+    return dates;
+};
+
+const applyDd002Hospitals = (nodes: any[], hospitals: Array<{ org_name: string; hospital_no: string }>, recvDates: string[], collectors: string[]) => {
+    if (!hospitals.length) return nodes;
+    const fixTable = (tb: any[]) => {
+        if (!Array.isArray(tb) || !tb.length) return tb;
+        const cols = tb.reduce((m, r) => Math.max(m, Array.isArray(r) ? r.length : 0), 0);
+        let headerIdx = -1;
+        let nameI = -1;
+        let noI = -1;
+        let typeI = -1;
+        let methodI = -1;
+        let dateI = -1;
+        let personI = -1;
+        tb.forEach((row, ri) => {
+            if (!Array.isArray(row) || headerIdx >= 0) return;
+            const cells = row.map((c) => String(c ?? "").trim());
+            if (cells.includes("数据来源") && cells.includes("医院编号")) {
+                headerIdx = ri;
+                nameI = cells.indexOf("数据来源");
+                noI = cells.indexOf("医院编号");
+                typeI = cells.indexOf("数据类型");
+                methodI = cells.indexOf("数据回传方式");
+                dateI = cells.indexOf("数据接收时间");
+                personI = cells.indexOf("数据采集负责人");
+            }
+        });
+        if (headerIdx < 0 || nameI < 0 || noI < 0) return tb;
+        let signIdx = tb.length;
+        for (let i = headerIdx + 1; i < tb.length; i++) {
+            if (isSignRow(tb[i])) { signIdx = i; break; }
+        }
+        let footerStart = signIdx;
+        while (footerStart > headerIdx + 1 && rowAllEmpty(tb[footerStart - 1], cols)) footerStart -= 1;
+        const oldData = tb.slice(headerIdx + 1, footerStart).filter((row) => Array.isArray(row) && !rowAllEmpty(row, cols));
+        const defaultType = typeI >= 0
+            ? String(oldData[0]?.[typeI] ?? "").trim()
+            : String(oldData[0]?.[0] ?? "").trim();
+        const used = new Set<number>();
+        const pick = (no: string, name: string) => {
+            let idx = oldData.findIndex((r, i) => !used.has(i) && no && String(r[noI] ?? "").trim() === no);
+            if (idx < 0) idx = oldData.findIndex((r, i) => !used.has(i) && name && String(r[nameI] ?? "").trim() === name);
+            if (idx < 0) return null;
+            used.add(idx);
+            return [...oldData[idx]];
+        };
+        let datePtr = 0;
+        let personPtr = 0;
+        const newData = hospitals.map((h) => {
+            const no = String(h.hospital_no || "").trim();
+            const name = String(h.org_name || "").trim();
+            const next = pick(no, name) || new Array(cols).fill("");
+            while (next.length < cols) next.push("");
+            next[nameI] = name;
+            next[noI] = no;
+            if (typeI >= 0 && !String(next[typeI] ?? "").trim() && defaultType) next[typeI] = defaultType;
+            if (methodI >= 0) next[methodI] = "硬盘邮寄";
+            if (dateI >= 0 && !String(next[dateI] ?? "").trim() && recvDates.length) {
+                next[dateI] = recvDates[datePtr % recvDates.length];
+                datePtr += 1;
+            }
+            if (personI >= 0 && !String(next[personI] ?? "").trim() && collectors.length) {
+                next[personI] = collectors[personPtr % collectors.length];
+                personPtr += 1;
+            }
+            return next;
+        });
+        return [...tb.slice(0, headerIdx + 1), ...newData, ...tb.slice(footerStart)];
+    };
+    const fix = (n: any): any => {
+        if (isMetaSection(n)) return { ...n, children: (n.children || []).map(fix) };
+        return {
+            ...n,
+            tables: (n.tables || []).map((tb: any[]) => (Array.isArray(tb) ? fixTable(tb) : tb)),
+            children: (n.children || []).map(fix),
+        };
+    };
+    return (nodes || []).map(fix);
+};
+
+const DEFAULT_COLLECTORS = ["周中亚", "李鹏飞", "耿景辉", "刘新阳", "王振宇", "王慧阳"];
+
+const ensureCollectors = (productId: number, members: any[]): Promise<string[]> => {
+    const existing = (members || [])
+        .filter((m: any) => String(m.role || "").trim() === "数据采集人员")
+        .map((m: any) => String(m.name || "").trim())
+        .filter(Boolean);
+    if (existing.length) return Promise.resolve(existing);
+    let sort = (members || []).reduce((m: number, r: any) => Math.max(m, r.sort_order || 0), 0);
+    return Promise.all(DEFAULT_COLLECTORS.map((name) => {
+        sort += 1;
+        return ApiMember.add_project_member({ prod_id: productId, role: "数据采集人员", name, sort_order: sort });
+    })).then(() => DEFAULT_COLLECTORS).catch(() => DEFAULT_COLLECTORS);
+};
+
+const fillDd002Hospitals = (productId: number, secs: any[]): Promise<any[]> => {
+    if (!productId) return Promise.resolve(secs);
+    return Promise.all([
+        ApiHospital.list_prod_hospital({ prod_id: productId, page_index: 0, page_size: 1000 }),
+        ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
+        ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
+    ]).then(([res, tl, mb]: any[]) => {
+        if (!res || res.code !== ApiHospital.C_OK) return secs;
+        const rows = ((res.data && res.data.rows) || [])
+            .filter((r: any) => String(r.org_name || "").trim() || String(r.hospital_no || "").trim())
+            .map((r: any) => ({ org_name: String(r.org_name || "").trim(), hospital_no: String(r.hospital_no || "").trim() }));
+        if (!rows.length) return secs;
+        const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
+        const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
+        return ensureCollectors(productId, members).then((collectors) =>
+            applyDd002Hospitals(secs, rows, recvDatesFromTimeline(tlRows), collectors)
+        );
+    }).catch(() => secs);
+};
+
+const parseDd002ReturnRows = (secs: any[]) => {
+    const list: { org: string; recv: string; qty: string }[] = [];
+    const seen = new Set<string>();
+    const txt = (s: any) => String(s ?? "").trim();
+    const walk = (nodes: any[]) => {
+        (nodes || []).forEach((n: any) => {
+            if (!n) return;
+            if (isMetaSection(n)) { walk(n.children || []); return; }
+            (n.tables || []).forEach((tb: any[]) => {
+                if (!Array.isArray(tb) || list.length) return;
+                let headerIdx = -1;
+                let iOrg = -1;
+                let iRecv = -1;
+                let iRet = -1;
+                let iAct = -1;
+                tb.forEach((row, ri) => {
+                    if (!Array.isArray(row) || headerIdx >= 0) return;
+                    const cells = row.map((c) => txt(c));
+                    if (!cells.includes("数据来源") || !cells.includes("医院编号")) return;
+                    headerIdx = ri;
+                    iOrg = cells.indexOf("数据来源");
+                    iRecv = cells.indexOf("数据接收时间");
+                    iRet = cells.indexOf("回传数据量");
+                    iAct = cells.indexOf("实际接收量");
+                });
+                if (headerIdx < 0) return;
+                for (let r = headerIdx + 1; r < tb.length; r++) {
+                    const row = tb[r] || [];
+                    if (isSignRow(row)) break;
+                    const org = txt(row[iOrg]);
+                    const key = org.replace(/\s+/g, "");
+                    if (!key || key === "无") continue;
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    const qty = txt(row[iRet]) || txt(row[iAct]);
+                    list.push({ org, recv: txt(row[iRecv]), qty });
+                }
+            });
+            walk(n.children || []);
+        });
+    };
+    walk(secs);
+    return list;
+};
+
+const applyDd003FromReturn = (nodes: any[], src: { org: string; recv: string; qty: string }[]) => {
+    if (!src.length) return nodes;
+    const txt = (s: any) => String(s ?? "").trim();
+    const norm = (s: any) => txt(s).replace(/\s+/g, "");
+    const fixTable = (tb: any[]) => {
+        if (!Array.isArray(tb) || !tb.length) return tb;
+        const cols = tb.reduce((m, r) => Math.max(m, Array.isArray(r) ? r.length : 0), 0);
+        let headerIdx = -1;
+        let iUnit = -1;
+        let iDate = -1;
+        let iProj = -1;
+        let iStaff = -1;
+        let iQty = -1;
+        let iWay = -1;
+        let iDev = -1;
+        let iProto = -1;
+        let iScene = -1;
+        let iConc = -1;
+        let iSign = -1;
+        tb.forEach((row, ri) => {
+            if (!Array.isArray(row) || headerIdx >= 0) return;
+            const cells = row.map((c) => txt(c));
+            const unit = cells.findIndex((c) => /采集单位/.test(c));
+            const date = cells.findIndex((c) => /清洗日期/.test(c));
+            if (unit < 0 || date < 0) return;
+            headerIdx = ri;
+            iUnit = unit;
+            iDate = date;
+            iProj = cells.findIndex((c) => /所属项目/.test(c));
+            iStaff = cells.findIndex((c) => /清洗人员/.test(c));
+        });
+        if (headerIdx < 0 || iUnit < 0) return tb;
+        const sub = tb[headerIdx + 1] || [];
+        const hasSub = Array.isArray(sub) && sub.some((c) => /数据量|检查方式/.test(txt(c)));
+        const headOf = (re: RegExp) => {
+            if (hasSub) {
+                const i = sub.findIndex((c: any) => re.test(txt(c)));
+                if (i >= 0) return i;
+            }
+            return (tb[headerIdx] || []).findIndex((c: any) => re.test(txt(c)));
+        };
+        if (hasSub) {
+            iQty = sub.findIndex((c) => /^数据量$/.test(txt(c)));
+            iWay = sub.findIndex((c) => /检查方式/.test(txt(c)));
+        } else {
+            iQty = (tb[headerIdx] || []).findIndex((c: any) => /^数据量$/.test(txt(c)));
+        }
+        iDev = headOf(/采集设备/);
+        iProto = headOf(/采集协议/);
+        iScene = headOf(/数据来源场景/);
+        iConc = headOf(/评估结论/);
+        iSign = headOf(/评估人员签字/);
+        const dataStart = headerIdx + (hasSub ? 2 : 1);
+        let footerStart = tb.length;
+        while (footerStart > dataStart && rowAllEmpty(tb[footerStart - 1], cols)) footerStart -= 1;
+        while (footerStart > dataStart) {
+            const row = tb[footerStart - 1] || [];
+            const blob = (row || []).map((c: any) => txt(c)).join("");
+            if (/文件编号|QR-RD-019/.test(blob) && onlyFirstRow(row, cols)) {
+                footerStart -= 1;
+                continue;
+            }
+            break;
+        }
+        const oldData = tb.slice(dataStart, footerStart).filter((row) => Array.isArray(row) && txt(row[iUnit]));
+        const first = oldData[0];
+        const along = [iProj, iStaff, iWay, iDev, iProto, iScene, iConc, iSign].filter((i) => i >= 0);
+        const complete = (row: any[]) => [iDev, iProto, iConc].some((i) => i >= 0 && txt(row[i]));
+        let tpl: any[] | undefined;
+        oldData.forEach((row) => { if (complete(row)) tpl = row; });
+        if (!tpl) tpl = first;
+        const fillAlong = (next: any[], onlyEmpty: boolean) => {
+            const srcRow = tpl;
+            if (!srcRow) return;
+            along.forEach((i) => {
+                if (onlyEmpty && txt(next[i])) return;
+                next[i] = txt(srcRow[i]);
+            });
+        };
+        const unused = src.slice();
+        const pick = (name: string) => {
+            const n = norm(name);
+            let i = unused.findIndex((x) => norm(x.org) === n);
+            if (i < 0) i = unused.findIndex((x) => n.indexOf(norm(x.org)) >= 0 || norm(x.org).indexOf(n) >= 0);
+            return i >= 0 ? unused.splice(i, 1)[0] : null;
+        };
+        const newData: any[] = [];
+        oldData.forEach((row) => {
+            const hit = pick(txt(row[iUnit]));
+            if (!hit) return;
+            const next = [...row];
+            while (next.length < cols) next.push("");
+            next[iUnit] = hit.org;
+            if (iDate >= 0) next[iDate] = hit.recv;
+            if (iQty >= 0) next[iQty] = hit.qty;
+            fillAlong(next, true);
+            newData.push(next);
+        });
+        unused.forEach((hit) => {
+            const next = new Array(cols).fill("");
+            next[iUnit] = hit.org;
+            if (iDate >= 0) next[iDate] = hit.recv;
+            if (iQty >= 0) next[iQty] = hit.qty;
+            fillAlong(next, false);
+            newData.push(next);
+        });
+        return [...tb.slice(0, dataStart), ...newData, ...tb.slice(footerStart)];
+    };
+    const fix = (n: any): any => {
+        if (isMetaSection(n)) return { ...n, children: (n.children || []).map(fix) };
+        return {
+            ...n,
+            tables: (n.tables || []).map((tb: any[]) => (Array.isArray(tb) ? fixTable(tb) : tb)),
+            children: (n.children || []).map(fix),
+        };
+    };
+    return (nodes || []).map(fix);
+};
+
+const fillDd003FromReturn = (productId: number, secs: any[]): Promise<any[]> => {
+    if (!productId) return Promise.resolve(secs);
+    return latestDataDoc(productId, "dd_002").then((doc) => {
+        const src = parseDd002ReturnRows((doc && doc.content && doc.content.sections) || []);
+        if (!src.length) return secs;
+        return applyDd003FromReturn(secs, src);
+    }).catch(() => secs);
+};
+
+const maintDatesFromTimeline = (tlRows: any[]) => {
+    const seen: Record<string, true> = {};
+    const out: Array<{ k: number; s: string }> = [];
+    (tlRows || []).forEach((r: any) => {
+        if ((r.row_type || "date") !== "date") return;
+        const text = String((r.cells || {})["数据部"] || "");
+        if (!text.includes("数据库维护")) return;
+        const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
+        const y = num(r.year);
+        const m = num(r.month);
+        const d = num(r.day);
+        if (isNaN(y) || isNaN(m) || isNaN(d) || m < 1 || m > 12 || d < 1) return;
+        const k = y * 10000 + m * 100 + d;
+        const s = `${y}.${m}.${d}`;
+        if (seen[s]) return;
+        seen[s] = true;
+        out.push({ k, s });
+    });
+    return out.sort((a, b) => a.k - b.k).map((x) => x.s);
+};
+
+const fillMaintCheckDate = (tb: any[], date: string) => {
+    if (!Array.isArray(tb)) return tb;
+    return tb.map((row) => {
+        if (!Array.isArray(row)) return row;
+        const i = row.findIndex((c: any) => String(c ?? "").trim() === "检查日期");
+        if (i < 0) return row;
+        const next = [...row];
+        while (next.length <= i + 1) next.push("");
+        next[i + 1] = date;
+        return next;
+    });
+};
+
+const secHasCheckDate = (n: any) =>
+    (n.tables || []).some((tb: any[]) => Array.isArray(tb) && tb.some((row: any[]) =>
+        Array.isArray(row) && row.some((c: any) => String(c ?? "").trim() === "检查日期")
+    ));
+
+const applyDd014Maint = (nodes: any[], dates: string[]) => {
+    if (!dates.length) return nodes;
+    const list = nodes || [];
+    const records = list.filter((n: any) => !isMetaSection(n) && secHasCheckDate(n));
+    if (!records.length) return list;
+    const tpl = records[records.length - 1];
+    const built = dates.map((date, idx) => {
+        const src = records[idx] || tpl;
+        return {
+            ...src,
+            _key: genKey(),
+            tables: (src.tables || []).map((tb: any[]) => fillMaintCheckDate(
+                JSON.parse(JSON.stringify(Array.isArray(tb) ? tb : [])),
+                date,
+            )),
+            children: (src.children || []).map((c: any) => ({ ...c })),
+        };
+    });
+    let used = false;
+    const out: any[] = [];
+    list.forEach((n: any) => {
+        if (isMetaSection(n) || !secHasCheckDate(n)) {
+            out.push(n);
+            return;
+        }
+        if (!used) {
+            out.push(...built);
+            used = true;
+        }
+    });
+    return out;
+};
+
+const fillDd014FromTimeline = (productId: number, secs: any[]): Promise<any[]> => {
+    if (!productId) return Promise.resolve(secs);
+    return ApiTimeline.list_timeline({ prod_id: productId }).then((tl: any) => {
+        const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
+        const dates = maintDatesFromTimeline(tlRows);
+        if (!dates.length) return secs;
+        return applyDd014Maint(secs, dates);
+    }).catch(() => secs);
+};
+
+const parseDd001Qty = (content: any) => {
+    let qty = "";
+    walkDocSections((content && content.sections) || [], (n) => {
+        const blob = `${stripNum(n.title)}\n${String(n.body || "")}`;
+        const m = blob.match(/总计需要采集至少(\d+)例/)
+            || blob.match(/综上[\s\S]{0,40}?至少(\d+)例数据/)
+            || blob.match(/不少于(\d+)例数据/);
+        if (m) qty = m[1];
+    });
+    return qty;
+};
+
+const applyDd004Numbers = (nodes: any[], src: { reqQty: string; hospCount: number; qtySum: number; hasReturn: boolean }) => {
+    const txt = (s: any) => String(s ?? "").trim();
+    const fixTable = (tb: any[]) => {
+        if (!Array.isArray(tb) || !tb.length) return tb;
+        let headerIdx = -1;
+        let iLabel = -1;
+        let iReq = -1;
+        let iAct = -1;
+        tb.forEach((row, ri) => {
+            if (!Array.isArray(row) || headerIdx >= 0) return;
+            const cells = row.map((c) => txt(c));
+            if (!cells.includes("评估要点") || !cells.includes("文档需求") || !cells.includes("实际情况")) return;
+            headerIdx = ri;
+            iLabel = cells.indexOf("评估要点");
+            iReq = cells.indexOf("文档需求");
+            iAct = cells.indexOf("实际情况");
+        });
+        if (headerIdx < 0 || iLabel < 0) return tb;
+        return tb.map((row, ri) => {
+            if (!Array.isArray(row) || ri <= headerIdx) return row;
+            const label = txt(row[iLabel]).replace(/[\uF000-\uF8FF]/g, "");
+            const next = [...row];
+            if (label === "数据来源" && src.hasReturn && iAct >= 0) {
+                next[iAct] = `来源于${src.hospCount}家医院`;
+            }
+            if (label === "数据量") {
+                if (src.reqQty && iReq >= 0) next[iReq] = `总计不少于${src.reqQty}例数据`;
+                if (src.hasReturn && iAct >= 0) next[iAct] = `总计约${src.qtySum}例`;
+            }
+            return next;
+        });
+    };
+    const fix = (n: any): any => {
+        if (isMetaSection(n)) return { ...n, children: (n.children || []).map(fix) };
+        return {
+            ...n,
+            tables: (n.tables || []).map((tb: any[]) => (Array.isArray(tb) ? fixTable(tb) : tb)),
+            children: (n.children || []).map(fix),
+        };
+    };
+    return (nodes || []).map(fix);
+};
+
+const fillDd004Numbers = (productId: number, secs: any[]): Promise<any[]> => {
+    if (!productId) return Promise.resolve(secs);
+    return Promise.all([
+        latestDataDoc(productId, "dd_001"),
+        latestDataDoc(productId, "dd_002"),
+    ]).then(([dd001, dd002]: any[]) => {
+        const reqQty = parseDd001Qty(dd001 && dd001.content);
+        const rows = parseDd002ReturnRows((dd002 && dd002.content && dd002.content.sections) || []);
+        if (!reqQty && !rows.length) return secs;
+        const qtySum = rows.reduce((s, r) => s + (parseInt(String(r.qty || "").replace(/[^\d]/g, ""), 10) || 0), 0);
+        return applyDd004Numbers(secs, { reqQty, hospCount: rows.length, qtySum, hasReturn: rows.length > 0 });
+    }).catch(() => secs);
+};
+
+const namesByRole = (members: any[], role: string) => {
+    const seen: Record<string, true> = {};
+    const names: string[] = [];
+    (members || []).forEach((m: any) => {
+        if (String(m.role || "").trim() !== role) return;
+        const name = String(m.name || "").trim();
+        if (!name || seen[name]) return;
+        seen[name] = true;
+        names.push(name);
+    });
+    return names;
+};
+
+const applyDd005Lists = (nodes: any[], annotators: string[], reviewers: string[], examTime = "", dailyDates: string[] = []) => {
+    const txt = (s: any) => String(s ?? "").replace(/\s+/g, "");
+    const fillBlock = (tb: any[], labelRe: RegExp, names: string[]) => {
+        const cols = tb.reduce((m, r) => Math.max(m, Array.isArray(r) ? r.length : 0), 0);
+        const slots = Math.max(1, cols - 1);
+        let start = -1;
+        tb.forEach((row, ri) => {
+            if (start >= 0 || !Array.isArray(row)) return;
+            if (labelRe.test(txt(row[0]))) start = ri;
+        });
+        if (start < 0) return tb;
+        let end = start + 1;
+        while (end < tb.length) {
+            const row = tb[end] || [];
+            if (txt(row[0])) break;
+            end += 1;
+        }
+        const label = tb[start][0];
+        const need = Math.max(1, Math.ceil((names.length || 0) / slots));
+        const rows: any[][] = [];
+        for (let i = 0; i < need; i++) {
+            const row = new Array(cols).fill("");
+            row[0] = i === 0 ? label : "";
+            for (let s = 0; s < slots; s++) row[s + 1] = names[i * slots + s] || "";
+            rows.push(row);
+        }
+        return [...tb.slice(0, start), ...rows, ...tb.slice(end)];
+    };
+    const ensureBlocks = (tb: any[]) => {
+        const look = tb.map((r) => txt(r?.[0])).join(" ");
+        if (!/参与培训人员名单|培训内容概述|培训内容详情/.test(look)) return tb;
+        if (tb.some((r) => /参与培训人员名单/.test(txt(r?.[0])))) return tb;
+        const cols = Math.max(6, tb.reduce((m, r) => Math.max(m, Array.isArray(r) ? r.length : 0), 0));
+        const row = (label: string, extra = "") => {
+            const next = new Array(cols).fill("");
+            next[0] = label;
+            if (extra) next[1] = extra;
+            return next;
+        };
+        const extra = [
+            row("参与培训人员名单"),
+            row("审核人员"),
+            row("培训考核方式", "标注人员对10例数据进行标注，由审核员进行评估。"),
+            row("考核通过人员名单"),
+        ];
+        let ins = tb.length;
+        tb.forEach((r, i) => { if (/^培训结果$/.test(txt(r?.[0]))) ins = i; });
+        return [...tb.slice(0, ins), ...extra, ...tb.slice(ins)];
+    };
+    const fillCount = (tb: any[], label: string, n: number | string) =>
+        tb.map((row) => {
+            if (!Array.isArray(row)) return row;
+            const i = row.findIndex((c: any) => txt(c) === label);
+            if (i < 0) return row;
+            const next = [...row];
+            while (next.length <= i + 1) next.push("");
+            next[i + 1] = String(n);
+            return next;
+        });
+    const fillDaily = (tb: any[]) => {
+        const cols = tb.reduce((m, r) => Math.max(m, Array.isArray(r) ? r.length : 0), 0);
+        let headerIdx = -1;
+        let iName = -1;
+        let iDoc = -1;
+        let iAttitude = -1;
+        let iScore = -1;
+        const gradeIs: number[] = [];
+        const dateIs: number[] = [];
+        tb.forEach((row, ri) => {
+            if (headerIdx >= 0 || !Array.isArray(row)) return;
+            const cells = row.map((c: any) => String(c ?? "").trim());
+            if (!cells.includes("标注人员姓名")) return;
+            headerIdx = ri;
+            iName = cells.indexOf("标注人员姓名");
+            iDoc = cells.indexOf("审核医生");
+            iAttitude = cells.indexOf("工作态度");
+            iScore = cells.indexOf("标注质量分数");
+            cells.forEach((lab, i) => { if (lab === "日期") dateIs.push(i); });
+            ["考勤", "工作专心度", "对反馈的态度", "标记规范程度评级"].forEach((lab) => {
+                const i = cells.indexOf(lab);
+                if (i >= 0) gradeIs.push(i);
+            });
+        });
+        if (headerIdx < 0 || iName < 0) return tb;
+        let footerStart = tb.length;
+        for (let i = headerIdx + 1; i < tb.length; i++) {
+            if (isSignRow(tb[i]) || (tb[i] || []).some((c: any) => /签字/.test(String(c ?? "")))) {
+                footerStart = i;
+                break;
+            }
+        }
+        while (footerStart > headerIdx + 1 && rowAllEmpty(tb[footerStart - 1], cols)) footerStart -= 1;
+        const oldData = tb.slice(headerIdx + 1, footerStart).filter((row) => Array.isArray(row) && String(row[iName] ?? "").trim() && !isDailyFootRow(row));
+        const unused = oldData.slice();
+        const pick = (name: string) => {
+            const i = unused.findIndex((r) => String(r[iName] ?? "").trim() === name);
+            return i >= 0 ? unused.splice(i, 1)[0] : null;
+        };
+        const iNorm = gradeIs.find((i) => String((tb[headerIdx] || [])[i] ?? "").trim() === "标记规范程度评级");
+        const putIfEmpty = (row: any[], i: number, val: string) => {
+            if (i < 0) return;
+            if (!String(row[i] ?? "").trim()) row[i] = val;
+        };
+        const fillScores = (row: any[]) => {
+            putIfEmpty(row, iAttitude, "合格");
+            const emptyGrades = gradeIs.filter((i) => !String(row[i] ?? "").trim());
+            const hasB = gradeIs.some((i) => String(row[i] ?? "").trim() === "B");
+            if (emptyGrades.length) {
+                const bAt = !hasB ? emptyGrades[Math.floor(Math.random() * emptyGrades.length)] : -1;
+                emptyGrades.forEach((i) => { row[i] = i === bAt ? "B" : "A"; });
+            }
+            if (iScore >= 0 && !String(row[iScore] ?? "").trim()) {
+                const normB = iNorm != null && String(row[iNorm] ?? "").trim() === "B";
+                const lo = 87;
+                const hi = normB ? 90 : 97;
+                row[iScore] = String(lo + Math.floor(Math.random() * (hi - lo + 1)));
+            }
+        };
+        const newData = annotators.map((name, idx) => {
+            const hit = pick(name);
+            const next = hit ? [...hit] : new Array(cols).fill("");
+            while (next.length < cols) next.push("");
+            next[iName] = name;
+            if (iDoc >= 0) next[iDoc] = reviewers.length ? reviewers[idx % reviewers.length] : "";
+            dateIs.forEach((i) => {
+                const norm = toDashDate(String(next[i] ?? ""));
+                if (norm) next[i] = norm;
+            });
+            if (dailyDates.length && dateIs.length) {
+                const work = dailyDates[idx % dailyDates.length];
+                if (!String(next[dateIs[0]] ?? "").trim()) next[dateIs[0]] = work;
+                if (dateIs[1] >= 0 && !String(next[dateIs[1]] ?? "").trim()) {
+                    const review = nextDashDate(String(next[dateIs[0]] ?? "") || work);
+                    if (review) next[dateIs[1]] = review;
+                }
+            }
+            fillScores(next);
+            return next;
+        });
+        return [...tb.slice(0, headerIdx + 1), ...newData, ...tb.slice(footerStart)];
+    };
+    const fixTable = (tb: any[]) => {
+        if (!Array.isArray(tb) || !tb.length) return tb;
+        let next = ensureBlocks(tb);
+        next = fillBlock(next, /参与培训人员名单/, annotators);
+        next = fillBlock(next, /^审核人员$/, reviewers);
+        next = fillBlock(next, /考核通过人员/, annotators);
+        next = fillBlock(next, /^参与考核人员$/, annotators);
+        next = fillCount(next, "参与考核人数", annotators.length);
+        if (examTime) next = fillCount(next, "考核时间", examTime);
+        next = fillDaily(next);
+        return next;
+    };
+    const fix = (n: any): any => {
+        if (isMetaSection(n)) return { ...n, children: (n.children || []).map(fix) };
+        return {
+            ...n,
+            tables: (n.tables || []).map((tb: any[]) => (Array.isArray(tb) ? fixTable(tb) : tb)),
+            children: (n.children || []).map(fix),
+        };
+    };
+    return (nodes || []).map(fix);
+};
+
+const fillDd005FromMembers = (productId: number, secs: any[], docType = ""): Promise<any[]> => {
+    if (!productId) return Promise.resolve(secs);
+    return Promise.all([
+        ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }),
+        /^dd_013_/.test(docType)
+            ? ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null)
+            : Promise.resolve(null),
+    ]).then(([res, tl]: any[]) => {
+        if (!res || res.code !== Api.C_OK) return secs;
+        const members = (res.data && res.data.rows) || [];
+        const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
+        const examTime = examTimeText(docType, examDatesFromTimeline(tlRows, docType));
+        const dailyDates = dailyDatesFromTimeline(tlRows, docType);
+        return applyDd005Lists(secs, namesByRole(members, "标注人员"), namesByRole(members, "审核医生"), examTime, dailyDates);
+    }).catch(() => secs);
+};
+
 export default () => {
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
@@ -514,6 +1280,8 @@ export default () => {
         doc: {} as any,
         sections: [] as any[],
         products: [] as any[],
+        annotators: [] as string[],
+        reviewers: [] as string[],
     });
 
     const autofill = (productId: number, secs: any[], replaceProduct = false, oldProductId = 0): Promise<any[]> =>
@@ -575,6 +1343,102 @@ export default () => {
                     };
                 }) : secs;
                 const docType = String(type || doc.doc_type || "");
+                if (/^dd_005_/.test(docType) || /^dd_013_/.test(docType)) {
+                    loadAnnotators(doc.product_id || 0);
+                    fillDd005FromMembers(doc.product_id || 0, withNo, docType).then((filled) => {
+                        if (JSON.stringify(stripKeys(filled)) === JSON.stringify(stripKeys(withNo))) {
+                            dispatch({ loading: false, doc, sections: withNo });
+                            return;
+                        }
+                        dispatch({ loading: false, doc, sections: filled });
+                        Api.update_data_doc({
+                            id: doc.id,
+                            content: { sections: stripKeys(filled) },
+                            product_id: doc.product_id,
+                            version: doc.version,
+                        }).then((up: any) => {
+                            if (up.code === Api.C_OK) message.success("已按参与人员写入名单");
+                            else message.error(up.msg || "写入名单失败");
+                        });
+                    }).catch(() => dispatch({ loading: false, doc, sections: withNo }));
+                    return;
+                }
+                if (docType === "dd_002") {
+                    fillDd002Hospitals(doc.product_id || 0, withNo).then((filled) => {
+                        if (JSON.stringify(stripKeys(filled)) === JSON.stringify(stripKeys(withNo))) {
+                            dispatch({ loading: false, doc, sections: withNo });
+                            return;
+                        }
+                        dispatch({ loading: false, doc, sections: filled });
+                        Api.update_data_doc({
+                            id: doc.id,
+                            content: { sections: stripKeys(filled) },
+                            product_id: doc.product_id,
+                            version: doc.version,
+                        }).then((up: any) => {
+                            if (up.code === Api.C_OK) message.success("已按合规医院列表写入回传记录");
+                            else message.error(up.msg || "写入回传记录失败");
+                        });
+                    }).catch(() => dispatch({ loading: false, doc, sections: withNo }));
+                    return;
+                }
+                if (docType === "dd_003") {
+                    fillDd003FromReturn(doc.product_id || 0, withNo).then((filled) => {
+                        if (JSON.stringify(stripKeys(filled)) === JSON.stringify(stripKeys(withNo))) {
+                            dispatch({ loading: false, doc, sections: withNo });
+                            return;
+                        }
+                        dispatch({ loading: false, doc, sections: filled });
+                        Api.update_data_doc({
+                            id: doc.id,
+                            content: { sections: stripKeys(filled) },
+                            product_id: doc.product_id,
+                            version: doc.version,
+                        }).then((up: any) => {
+                            if (up.code === Api.C_OK) message.success("已按回传记录写入整理表");
+                            else message.error(up.msg || "写入整理表失败");
+                        });
+                    }).catch(() => dispatch({ loading: false, doc, sections: withNo }));
+                    return;
+                }
+                if (docType === "dd_004") {
+                    fillDd004Numbers(doc.product_id || 0, withNo).then((filled) => {
+                        if (JSON.stringify(stripKeys(filled)) === JSON.stringify(stripKeys(withNo))) {
+                            dispatch({ loading: false, doc, sections: withNo });
+                            return;
+                        }
+                        dispatch({ loading: false, doc, sections: filled });
+                        Api.update_data_doc({
+                            id: doc.id,
+                            content: { sections: stripKeys(filled) },
+                            product_id: doc.product_id,
+                            version: doc.version,
+                        }).then((up: any) => {
+                            if (up.code === Api.C_OK) message.success("已按采集需求/回传记录写入需求反馈");
+                            else message.error(up.msg || "写入需求反馈失败");
+                        });
+                    }).catch(() => dispatch({ loading: false, doc, sections: withNo }));
+                    return;
+                }
+                if (docType === "dd_014") {
+                    fillDd014FromTimeline(doc.product_id || 0, withNo).then((filled) => {
+                        if (JSON.stringify(stripKeys(filled)) === JSON.stringify(stripKeys(withNo))) {
+                            dispatch({ loading: false, doc, sections: withNo });
+                            return;
+                        }
+                        dispatch({ loading: false, doc, sections: filled });
+                        Api.update_data_doc({
+                            id: doc.id,
+                            content: { sections: stripKeys(filled) },
+                            product_id: doc.product_id,
+                            version: doc.version,
+                        }).then((up: any) => {
+                            if (up.code === Api.C_OK) message.success("已按时间线写入检查日期");
+                            else message.error(up.msg || "写入检查日期失败");
+                        });
+                    }).catch(() => dispatch({ loading: false, doc, sections: withNo }));
+                    return;
+                }
                 if (docType === "dd_011") {
                     fillDd011Feedback(doc.product_id || 0, withNo).then((filled) => {
                         if (JSON.stringify(stripKeys(filled)) === JSON.stringify(stripKeys(withNo))) {
@@ -656,7 +1520,34 @@ export default () => {
         const prevId = data.doc.product_id;
         dispatch({ loading: true, doc: { ...data.doc, product_id: newId, product_name: product.name, product_full_version: product.full_version } });
         autofill(newId, data.sections, true, prevId).then((secs) => {
-            if (String(type || data.doc.doc_type || "") !== "dd_011") {
+            const docType = String(type || data.doc.doc_type || "");
+            if (/^dd_005_/.test(docType) || /^dd_013_/.test(docType)) {
+                loadAnnotators(newId);
+                fillDd005FromMembers(newId, secs, docType).then((filled) => dispatch({ loading: false, sections: filled }))
+                    .catch(() => dispatch({ loading: false, sections: secs }));
+                return;
+            }
+            if (docType === "dd_002") {
+                fillDd002Hospitals(newId, secs).then((filled) => dispatch({ loading: false, sections: filled }))
+                    .catch(() => dispatch({ loading: false, sections: secs }));
+                return;
+            }
+            if (docType === "dd_003") {
+                fillDd003FromReturn(newId, secs).then((filled) => dispatch({ loading: false, sections: filled }))
+                    .catch(() => dispatch({ loading: false, sections: secs }));
+                return;
+            }
+            if (docType === "dd_004") {
+                fillDd004Numbers(newId, secs).then((filled) => dispatch({ loading: false, sections: filled }))
+                    .catch(() => dispatch({ loading: false, sections: secs }));
+                return;
+            }
+            if (docType === "dd_014") {
+                fillDd014FromTimeline(newId, secs).then((filled) => dispatch({ loading: false, sections: filled }))
+                    .catch(() => dispatch({ loading: false, sections: secs }));
+                return;
+            }
+            if (docType !== "dd_011") {
                 dispatch({ loading: false, sections: secs });
                 return;
             }
@@ -677,9 +1568,25 @@ export default () => {
     const patchNode = (key: string, patch: any) =>
         setSections(mapNode(data.sections, key, (n: any) => ({ ...n, ...patch })));
 
-    const setCell = (key: string, ti: number, r: number, ci: number, val: string, colSpan = 1, rowSpan = 1) => {
-        patchNode(key, {
-            tables: ((data.sections && findTables(data.sections, key)) || []).map((tb: any[], i: number) => {
+    const loadAnnotators = (productId: number) => {
+        if (!productId) {
+            dispatch({ annotators: [], reviewers: [] });
+            return;
+        }
+        ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).then((res: any) => {
+            if (res.code !== Api.C_OK) {
+                dispatch({ annotators: [], reviewers: [] });
+                return;
+            }
+            const members = (res.data && res.data.rows) || [];
+            dispatch({ annotators: namesByRole(members, "标注人员"), reviewers: namesByRole(members, "审核医生") });
+        }).catch(() => dispatch({ annotators: [], reviewers: [] }));
+    };
+
+    const applyCell = (sections: any[], key: string, ti: number, r: number, ci: number, val: string, colSpan = 1, rowSpan = 1) =>
+        mapNode(sections, key, (n: any) => ({
+            ...n,
+            tables: ((n.tables) || []).map((tb: any[], i: number) => {
                 if (i !== ti) return tb;
                 const cs = Math.max(1, colSpan);
                 const rs = Math.max(1, rowSpan);
@@ -690,6 +1597,26 @@ export default () => {
                     return next.map((cell: any, cc: number) => (cc < ci || cc >= ci + cs ? cell : val));
                 });
             }),
+        }));
+
+    const setCell = (key: string, ti: number, r: number, ci: number, val: string, colSpan = 1, rowSpan = 1) => {
+        setSections(applyCell(data.sections, key, ti, r, ci, val, colSpan, rowSpan));
+    };
+
+    const setCellAndSave = (key: string, ti: number, r: number, ci: number, val: string, colSpan = 1, rowSpan = 1) => {
+        const next = applyCell(data.sections, key, ti, r, ci, val, colSpan, rowSpan);
+        dispatch({ sections: next });
+        if (!id) return;
+        dispatch({ saving: true });
+        Api.update_data_doc({
+            id,
+            content: { sections: stripKeys(next) },
+            product_id: data.doc.product_id,
+            version: data.doc.version,
+        }).then((res: any) => {
+            dispatch({ saving: false });
+            if (res.code === Api.C_OK) message.success(ts("save_success"));
+            else message.error(res.msg);
         });
     };
 
@@ -775,12 +1702,58 @@ export default () => {
     const renderTable = (n: any, ti: number, tb: any[]) => {
         const docType = String(type || data.doc.doc_type || "");
         const isUpload = docType === "dd_010";
-        const noCellMerge = docType === "dd_eq" || isUpload || /^(dd_008_|dd_009_)/.test(docType);
-        const spans = noCellMerge ? null : computeRecordSpans(tb);
+        const noCellMerge = docType === "dd_eq" || docType === "dd_002" || isUpload
+            || /^(dd_008_|dd_009_|dd_013_0[567])/.test(docType);
         const cols = tb.reduce((m: number, row: any[]) => Math.max(m, Array.isArray(row) ? row.length : 0), 0);
         const firstBody = tb.findIndex((row: any[]) =>
             !onlyFirstRow(row, cols) && (row || []).some((c: any) => String(c ?? "").trim())
         );
+        const headerMergeRows = new Set<number>();
+        if (docType === "dd_003" && firstBody >= 0) {
+            headerMergeRows.add(firstBody);
+            const sub = tb[firstBody + 1] || [];
+            if (!String(sub[0] ?? "").trim() && sub.slice(1).some((c: any) => String(c ?? "").trim())) {
+                headerMergeRows.add(firstBody + 1);
+            }
+        }
+        const nameBlockRows = new Set<number>();
+        let inNameBlock = false;
+        tb.forEach((row, r) => {
+            const a = String(row?.[0] ?? "").replace(/\s+/g, "");
+            if (/^(参与考核人员|参与培训人员名单|审核人员|检查人员)$/.test(a) || /^考核通过人员/.test(a)) {
+                inNameBlock = true;
+                nameBlockRows.add(r);
+                return;
+            }
+            if (inNameBlock && !a) {
+                nameBlockRows.add(r);
+                return;
+            }
+            inNameBlock = false;
+        });
+        const leftTextRows = new Set<number>();
+        let inLeftText = false;
+        tb.forEach((row, r) => {
+            const a = String(row?.[0] ?? "").replace(/\s+/g, "");
+            if (/^(考核要点|本次考核细则|培训内容概述|培训内容详情|培训考核方式)$/.test(a)) {
+                inLeftText = true;
+                leftTextRows.add(r);
+                return;
+            }
+            if (inLeftText && !a) {
+                leftTextRows.add(r);
+                return;
+            }
+            inLeftText = false;
+        });
+        let emptyMergeRows: Set<number> | undefined;
+        if (docType === "dd_003") emptyMergeRows = headerMergeRows;
+        else if (nameBlockRows.size) {
+            emptyMergeRows = new Set<number>();
+            tb.forEach((_: any, r: number) => { if (!nameBlockRows.has(r)) emptyMergeRows!.add(r); });
+        }
+        const baseSpans = noCellMerge ? null : computeRecordSpans(tb, emptyMergeRows);
+        const spans = mergeNameLabelCol(tb, baseSpans, nameBlockRows);
         const headerRow = firstBody >= 0 ? (tb[firstBody] || []) : [];
         return (
             <div key={ti} style={{ marginBottom: 8, overflowX: isUpload ? "auto" : "visible" }}>
@@ -792,6 +1765,7 @@ export default () => {
                             if (banner && (looksLikeFileNo(bannerText) || bannerText === meta.title || r <= 1)) return null;
                             const emptyRow = rowAllEmpty(row, cols);
                             if (emptyRow) return null;
+                            if (isDailyFootRow(row)) return null;
                             const allSkip = Array.from({ length: cols }, (_, ci) => !!spans?.[r]?.[ci]?.skip).every(Boolean);
                             if (allSkip) return <tr key={r} />;
                             const subHead = firstBody >= 0 && r === firstBody + 1
@@ -811,11 +1785,21 @@ export default () => {
                                     const cs = sp?.colSpan || 1;
                                     const rs = sp?.rowSpan || 1;
                                     const colLabel = String(headerRow[ci] ?? "").trim();
+                                    const prevLabel = String(row[ci - 1] ?? "").trim();
+                                    const isDailyEval = /^dd_013_0[567]$/.test(docType);
+                                    const personPick = !isHeadRow && !sign && !isDailyFootRow(row) && (
+                                        (/^dd_005_/.test(docType) && /^(讲解人员|记录人)$/.test(prevLabel))
+                                        || (isDailyEval && (colLabel === "标注人员姓名" || colLabel === "审核医生"))
+                                    );
+                                    const datePick = isDailyEval && !isHeadRow && !sign && !isDailyFootRow(row) && colLabel === "日期";
+                                    const pickNames = colLabel === "审核医生" ? (data.reviewers || []) : (data.annotators || []);
                                     const isPath = isUpload && PATH_LABELS.has(colLabel);
-                                    const align = sign || isPath ? "left" : "center";
+                                    const leftText = leftTextRows.has(r) && ci > 0;
+                                    const align = sign || isPath || leftText ? "left" : "center";
                                     const st: CSSProperties = {
                                         ...(isHeadRow ? tdHead : tdValue),
                                         textAlign: isHeadRow ? "center" : align,
+                                        ...(leftText ? { paddingLeft: 12 } : {}),
                                         ...(isUpload ? { minWidth: uploadColMin(colLabel), ...(isPath ? { wordBreak: "break-all" } : {}) } : {}),
                                     };
                                     return (
@@ -827,6 +1811,33 @@ export default () => {
                                         >
                                             {typeof cell === "string" && cell.startsWith("data:image") ? (
                                                 <img src={cell} alt="" style={{ maxHeight: 36 }} />
+                                            ) : personPick ? (
+                                                <Select
+                                                    variant="borderless"
+                                                    value={String(cell ?? "").trim() || undefined}
+                                                    disabled={readonly}
+                                                    placeholder={colLabel === "审核医生" ? "选择审核医生" : "选择标注人员"}
+                                                    style={{ width: "100%", textAlign: "center", fontSize: 13 }}
+                                                    options={(String(cell ?? "").trim() && pickNames.indexOf(String(cell ?? "").trim()) < 0
+                                                        ? [String(cell ?? "").trim(), ...pickNames]
+                                                        : pickNames
+                                                    ).map((name: string) => ({ value: name, label: name }))}
+                                                    onChange={(v) => setCellAndSave(n._key, ti, r, ci, v || "", cs, rs)}
+                                                />
+                                            ) : datePick ? (
+                                                <DatePicker
+                                                    variant="borderless"
+                                                    allowClear
+                                                    value={(() => {
+                                                        const dash = toDashDate(String(cell ?? ""));
+                                                        return dash ? dayjs(dash) : null;
+                                                    })()}
+                                                    disabled={readonly}
+                                                    placeholder="选择日期"
+                                                    format="YYYY-MM-DD"
+                                                    style={{ width: "100%" }}
+                                                    onChange={(d) => setCellAndSave(n._key, ti, r, ci, d ? d.format("YYYY-MM-DD") : "", cs, rs)}
+                                                />
                                             ) : checkItems ? (
                                                 <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
                                                     {checkItems.map((it, ii) => (
