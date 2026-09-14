@@ -54,7 +54,7 @@ const DEFAULT_ARBITERS = ["韦人"];
 const COLLECTOR_ROLE = "数据采集人员";
 const DEFAULT_COLLECTORS = ["周中亚", "李鹏飞", "耿景辉", "刘新阳", "王振宇", "王慧阳"];
 const CLEANER_ROLE = "脱敏+清洗人员";
-const DEFAULT_CLEANERS = ["钏兴炳"];
+const DEFAULT_CLEANERS = ["谷雷涛"];
 
 const DEFAULT_MODEL_MEMBERS = [
     { role: "模型部负责人", name: "王瑜" },

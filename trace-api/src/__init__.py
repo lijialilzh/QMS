@@ -19,7 +19,7 @@ from .api import web_auth, web_session, api_user, api_role, api_project, api_haz
     api_srs_doc, api_sds_doc, api_test_set, api_test_case, api_doc_file_flow, api_doc_file_topo, api_doc_file_struct, api_doc_file_ui, api_doc_file_home, \
     api_prod_haz, api_prod_rcm, api_prod_cst, api_srs_req, api_srs_reqd, api_prod_dhf, api_sds_reqd, api_sds_trace, \
     api_srs_type, api_doc_file, api_risk_mgmt_doc, api_cybersec_doc, api_ai_support, \
-    api_project_member, api_project_timeline, api_prod_runtime_env, api_prod_device_res, api_prod_hospital, api_pdp_doc, api_pir_doc, \
+    api_project_member, api_project_timeline, api_prod_runtime_env, api_prod_device_res, api_prod_hospital, api_prod_algo_module, api_pdp_doc, api_pir_doc, \
     api_model_doc, api_data_doc, \
     api_vuh_doc, api_version_rule, api_ptr_doc, api_company_info, api_label_doc, api_release_note, api_pha_doc, \
     api_cyber_cap_doc, api_research_doc, api_nsr_doc, api_acc_doc, api_nsmp_doc, api_rmp_doc, api_sd_doc, \
@@ -88,6 +88,7 @@ def create_app():
     main_router.include_router(api_prod_runtime_env.router, prefix="/prod_runtime_env", tags=["运行环境"])
     main_router.include_router(api_prod_device_res.router, prefix="/prod_device_res", tags=["设备资源"])
     main_router.include_router(api_prod_hospital.router, prefix="/prod_hospital", tags=["合规医院"])
+    main_router.include_router(api_prod_algo_module.router, prefix="/prod_algo_module", tags=["算法模块"])
     main_router.include_router(api_pdp_doc.router, prefix="/pdp_doc", tags=["产品开发计划"])
     main_router.include_router(api_pir_doc.router, prefix="/pir_doc", tags=["产品立项报告"])
     main_router.include_router(api_model_doc.router, prefix="/model_doc", tags=["模型文件"])

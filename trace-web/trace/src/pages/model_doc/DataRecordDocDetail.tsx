@@ -693,7 +693,7 @@ const applyDd002Hospitals = (nodes: any[], hospitals: Array<{ org_name: string; 
                 next[dateI] = recvDates[datePtr % recvDates.length];
                 datePtr += 1;
             }
-            if (personI >= 0 && !String(next[personI] ?? "").trim() && collectors.length) {
+            if (personI >= 0 && collectors.length) {
                 next[personI] = collectors[personPtr % collectors.length];
                 personPtr += 1;
             }
@@ -792,8 +792,7 @@ const parseDd002ReturnRows = (secs: any[]) => {
     return list;
 };
 
-const applyDd003FromReturn = (nodes: any[], src: { org: string; recv: string; qty: string }[]) => {
-    if (!src.length) return nodes;
+const applyDd003FromReturn = (nodes: any[], src: { org: string; recv: string; qty: string }[], cleaners: string[] = []) => {
     const txt = (s: any) => String(s ?? "").trim();
     const norm = (s: any) => txt(s).replace(/\s+/g, "");
     const fixTable = (tb: any[]) => {
@@ -858,7 +857,9 @@ const applyDd003FromReturn = (nodes: any[], src: { org: string; recv: string; qt
         }
         const oldData = tb.slice(dataStart, footerStart).filter((row) => Array.isArray(row) && txt(row[iUnit]));
         const first = oldData[0];
-        const along = [iProj, iStaff, iWay, iDev, iProto, iScene, iConc, iSign].filter((i) => i >= 0);
+        const hasCleaners = cleaners.length > 0;
+        const along = [iProj, iStaff, iWay, iDev, iProto, iScene, iConc, iSign]
+            .filter((i) => i >= 0 && !(hasCleaners && i === iStaff));
         const complete = (row: any[]) => [iDev, iProto, iConc].some((i) => i >= 0 && txt(row[i]));
         let tpl: any[] | undefined;
         oldData.forEach((row) => { if (complete(row)) tpl = row; });
@@ -871,12 +872,28 @@ const applyDd003FromReturn = (nodes: any[], src: { org: string; recv: string; qt
                 next[i] = txt(srcRow[i]);
             });
         };
+        // 无回传记录：只按参与人员覆盖「脱敏检查、清洗人员」列，不重建行、不改其它列。
+        if (!src.length) {
+            if (iStaff < 0 || !hasCleaners) return tb;
+            let ptr = 0;
+            return tb.map((row, ri) => {
+                if (ri < dataStart || ri >= footerStart || !Array.isArray(row)) return row;
+                const next = [...row];
+                next[iStaff] = cleaners[ptr % cleaners.length];
+                ptr += 1;
+                return next;
+            });
+        }
         const unused = src.slice();
         const pick = (name: string) => {
             const n = norm(name);
             let i = unused.findIndex((x) => norm(x.org) === n);
             if (i < 0) i = unused.findIndex((x) => n.indexOf(norm(x.org)) >= 0 || norm(x.org).indexOf(n) >= 0);
             return i >= 0 ? unused.splice(i, 1)[0] : null;
+        };
+        let staffPtr = 0;
+        const putCleaner = (next: any[]) => {
+            if (iStaff >= 0 && hasCleaners) next[iStaff] = cleaners[staffPtr % cleaners.length];
         };
         const newData: any[] = [];
         oldData.forEach((row) => {
@@ -887,16 +904,20 @@ const applyDd003FromReturn = (nodes: any[], src: { org: string; recv: string; qt
             next[iUnit] = hit.org;
             if (iDate >= 0) next[iDate] = hit.recv;
             if (iQty >= 0) next[iQty] = hit.qty;
+            putCleaner(next);
             fillAlong(next, true);
             newData.push(next);
+            if (hasCleaners) staffPtr += 1;
         });
         unused.forEach((hit) => {
             const next = new Array(cols).fill("");
             next[iUnit] = hit.org;
             if (iDate >= 0) next[iDate] = hit.recv;
             if (iQty >= 0) next[iQty] = hit.qty;
+            putCleaner(next);
             fillAlong(next, false);
             newData.push(next);
+            if (hasCleaners) staffPtr += 1;
         });
         return [...tb.slice(0, dataStart), ...newData, ...tb.slice(footerStart)];
     };
@@ -913,10 +934,15 @@ const applyDd003FromReturn = (nodes: any[], src: { org: string; recv: string; qt
 
 const fillDd003FromReturn = (productId: number, secs: any[]): Promise<any[]> => {
     if (!productId) return Promise.resolve(secs);
-    return latestDataDoc(productId, "dd_002").then((doc) => {
+    return Promise.all([
+        latestDataDoc(productId, "dd_002"),
+        ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
+    ]).then(([doc, mb]: any[]) => {
         const src = parseDd002ReturnRows((doc && doc.content && doc.content.sections) || []);
-        if (!src.length) return secs;
-        return applyDd003FromReturn(secs, src);
+        const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
+        const cleaners = namesByRole(members, "脱敏+清洗人员");
+        if (!src.length && !cleaners.length) return secs;
+        return applyDd003FromReturn(secs, src, cleaners);
     }).catch(() => secs);
 };
 

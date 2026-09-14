@@ -70,6 +70,9 @@ from .prod_device_res import ProdDeviceRes  # noqa: E402,F401
 # 合规医院列表（按产品）。详见 docs/function_docs/102_合规医院列表.md。
 from .prod_hospital import ProdHospital  # noqa: E402,F401
 
+# 算法模块管理（按产品）。详见 docs/function_docs/103_算法模块管理.md。
+from .prod_algo_module import ProdAlgoModule  # noqa: E402,F401
+
 # 产品开发计划（独立文档模块）。详见 docs/function_docs/52_产品开发计划.md。
 from .pdp_doc import PdpDoc  # noqa: E402,F401
 

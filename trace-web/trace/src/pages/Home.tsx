@@ -218,6 +218,11 @@ export default () => {
                                 perm: "prod_hospital_view",
                             },
                             {
+                                key: "/prod_algo_modules",
+                                label: ts("menu.prod_algo_modules"),
+                                perm: "prod_algo_module_view",
+                            },
+                            {
                                 key: "/prod_dhfs",
                                 label: ts("menu.prod_dhfs"),
                                 perm: "prod_dhf_view",
