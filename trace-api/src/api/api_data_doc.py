@@ -58,10 +58,12 @@ async def delete_data_doc(id: int):
 @router.get("/list_data_doc", summary="查询数据文件列表", response_model=Resp[Page[DataDocObj]])
 @try_log(perm=Perms.data_doc_view)
 async def list_data_doc(product_id: int = 0, version: str = None, doc_type: str = None,
+                         doc_type_prefix: str = None, doc_types: str = None,
                          page_index: int = 0, page_size: int = 10):
     op_user = CtxUser.get()
     return await server.list_data_doc(
         op_user=op_user, product_id=product_id, version=version, doc_type=doc_type,
+        doc_type_prefix=doc_type_prefix, doc_types=doc_types,
         page_index=page_index, page_size=page_size,
     )
 

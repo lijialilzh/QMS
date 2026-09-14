@@ -9,7 +9,7 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as echarts from "echarts";
 import * as Api from "@/api/ApiModelDoc";
 import * as ApiProduct from "@/api/ApiProduct";
-import { getModelDocMeta } from "./ModelDocTypes";
+import { getModelDocMeta, getModelDocListType } from "./ModelDocTypes";
 import "../pdp/PdpDocDetail.less";
 
 const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", marginBottom: 16, tableLayout: "fixed" };
@@ -308,7 +308,7 @@ export default () => {
                 <Space>
                     {!readonly && <Button type="primary" loading={data.saving} onClick={doSave}>{ts("save")}</Button>}
                     <Button loading={data.exporting} onClick={doExport}>导出</Button>
-                    <Button onClick={() => navigate(`/model_docs/${type}`)}>{ts("back")}</Button>
+                    <Button onClick={() => navigate(`/model_docs/${getModelDocListType(type)}`)}>{ts("back")}</Button>
                 </Space>
             </div>
 

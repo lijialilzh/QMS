@@ -1062,10 +1062,17 @@ class Server(object):
         return self.scan_dicom_dir(used, username, password)
 
     async def list_data_doc(self, op_user: UserObj = None, product_id: int = 0, version: str = None,
-                             doc_type: str = None, page_index: int = 0, page_size: int = 10):
+                             doc_type: str = None, doc_type_prefix: str = None, doc_types: str = None,
+                             page_index: int = 0, page_size: int = 10):
         wheres = []
         if doc_type:
             wheres.append(DataDoc.doc_type == doc_type)
+        if doc_type_prefix:
+            wheres.append(DataDoc.doc_type.like(f"{doc_type_prefix}%"))
+        if doc_types:
+            types = [t.strip() for t in (doc_types or "").split(",") if t.strip()]
+            if types:
+                wheres.append(DataDoc.doc_type.in_(types))
         if product_id:
             wheres.append(DataDoc.product_id == product_id)
         if version:

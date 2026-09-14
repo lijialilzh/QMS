@@ -9,7 +9,8 @@ import { createDocBatchDelete, getDocTableRowSelection } from "../doc_shared/doc
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiModelDoc";
 import * as ApiProduct from "@/api/ApiProduct";
-import { getModelDocMeta } from "./ModelDocTypes";
+import * as ApiAlgo from "@/api/ApiProdAlgoModule";
+import { isModelDocGroup, getModelDocNavTitle } from "./ModelDocTypes";
 import "../risk_mgmt/RiskMgmtDocs.less";
 
 const pageSizeOptions = [20, 50, 100];
@@ -31,11 +32,23 @@ const loadProducts = (data: any, dispatch: any) => {
     });
 };
 
+/** md_008_01 → 第 1 个模块；md_008_02 → 第 2 个模块 */
+const moduleNameOf = (modules: string[], docType: string): string => {
+    const m = String(docType || "").match(/^.+_(\d+)$/);
+    if (!m) return "";
+    const idx = parseInt(m[1], 10) - 1;
+    const name = modules[idx] || "";
+    return name || `模块${idx + 1}`;
+};
+
+const docTypeOf = (group: string, idx: number): string => `${group}_${String(idx + 1).padStart(2, "0")}`;
+
 export default () => {
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
     const { type } = useParams();
-    const meta = getModelDocMeta(type);
+    const isGroup = isModelDocGroup(type);
+    const navTitle = getModelDocNavTitle(type);
     const [queryForm] = Form.useForm();
     const [addForm] = Form.useForm();
     const [data, dispatch] = useData({
@@ -45,6 +58,7 @@ export default () => {
         rows: [],
         targetRow: {},
         products: [],
+        modules: [] as string[],
         versionOptions: [] as { value: string; label: string }[],
         exportingId: 0,
         editingFileNoId: 0,
@@ -55,13 +69,28 @@ export default () => {
     });
 
     const productId = Form.useWatch("product_id", queryForm);
+    const moduleFilter = Form.useWatch("module", queryForm);
     useEffect(() => {
         if (!productId) {
             queryForm.setFieldValue("version", undefined);
-            dispatch({ versionOptions: [] });
+            dispatch({ versionOptions: [], modules: [] });
             return;
         }
-        Api.list_model_doc({ product_id: productId, doc_type: type, page_index: 0, page_size: 10000 }).then((res: any) => {
+        // 分组类型：拉取算法模块 + 该组所有版本
+        if (isGroup) {
+            ApiAlgo.list_prod_algo_module({ prod_id: productId, page_index: 0, page_size: 1000 }).then((res: any) => {
+                const modules = (res && res.code === ApiAlgo.C_OK && (res.data?.rows || []).length)
+                    ? (res.data.rows as any[]).sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0)).map((r: any) => String(r.name || "").trim()).filter(Boolean)
+                    : [];
+                dispatch({ modules });
+            }).catch(() => dispatch({ modules: [] }));
+        }
+        Api.list_model_doc({
+            product_id: productId,
+            ...(isGroup ? { doc_type_prefix: type } : { doc_type: type }),
+            page_index: 0,
+            page_size: 10000,
+        }).then((res: any) => {
             if (res.code === Api.C_OK && res.data?.rows?.length) {
                 const versions = [...new Set((res.data.rows as any[]).map((row: any) => row.version).filter(Boolean))].sort();
                 dispatch({ versionOptions: versions.map((version: string) => ({ value: version, label: version })) });
@@ -72,8 +101,27 @@ export default () => {
     }, [productId, type]);
 
     const doSearch = (params: any = {}, pageIndex: any = data.pageIndex, pageSize: any = data.pageSize) => {
+        // 未选产品：清空列表，不请求（列表按产品展示）
+        if (!params.product_id) {
+            dispatch({ loading: false, rows: [], total: 0, pageIndex, pageSize });
+            return;
+        }
         dispatch({ loading: true });
-        Api.list_model_doc({ ...params, doc_type: type, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
+        const moduleIdx = params.module !== undefined && params.module !== null ? Number(params.module) : -1;
+        const req: any = {
+            ...params,
+            doc_type: undefined,
+            doc_type_prefix: undefined,
+            page_index: pageIndex - 1,
+            page_size: pageSize,
+        };
+        if (isGroup) {
+            req.doc_type_prefix = moduleIdx >= 0 ? docTypeOf(type || "", moduleIdx) : (type || "");
+        } else {
+            req.doc_type = type;
+        }
+        delete req.module;
+        Api.list_model_doc(req).then((res: any) => {
             if (res.code === Api.C_OK) {
                 dispatch({ loading: false, total: res.data.total, rows: res.data.rows || [], pageIndex, pageSize });
             } else {
@@ -85,20 +133,47 @@ export default () => {
 
     useEffect(() => {
         loadProducts(data, dispatch);
-        doSearch({}, 1, data.pageSize);
+        // 切换文档类型：重置模块/版本筛选，清空列表，并按当前产品（不带筛选）重新查询
+        queryForm.setFieldValue("module", undefined);
+        queryForm.setFieldValue("version", undefined);
+        dispatch({ rows: [], total: 0 });
+        if (productId) {
+            doSearch({ product_id: productId }, 1, data.pageSize);
+        }
     }, [type]);
+
+    // 选中产品后自动刷新列表（产品变化即重新查询）
+    useEffect(() => {
+        if (productId) {
+            // 换产品：清掉模块筛选（各产品模块不同），再查询
+            queryForm.setFieldValue("module", undefined);
+            doSearch({ product_id: productId }, 1, data.pageSize);
+        }
+    }, [productId]);
+
+    // 模块筛选变化后自动刷新
+    useEffect(() => {
+        if (productId) {
+            doSearch(queryForm.getFieldsValue(), 1, data.pageSize);
+        }
+    }, [moduleFilter]);
 
     const doAdd = () => {
         addForm.validateFields().then((values) => {
             dispatch({ adding: true });
-            Api.add_model_doc({ ...values, doc_type: type }).then((res: any) => {
+            let docType = type || "";
+            if (isGroup) {
+                const moduleIdx = Number(values.module ?? 0);
+                docType = docTypeOf(type || "", moduleIdx);
+            }
+            Api.add_model_doc({ ...values, doc_type: docType }).then((res: any) => {
                 dispatch({ adding: false });
                 if (res.code === Api.C_OK) {
                     message.success(ts("save_success"));
                     dispatch({ dlgType: null });
                     const newId = res.data?.id;
                     if (newId) {
-                        navigate(`/model_docs/${type}/edit/${newId}`);
+                        navigate(`/model_docs/${docType}/edit/${newId}`);
                     } else {
                         doSearch(queryForm.getFieldsValue(), 1, data.pageSize);
                     }
@@ -204,13 +279,28 @@ export default () => {
     };
 
     const columns: any[] = [
-        { title: ts("product.name"), dataIndex: "product_name", width: "18%" },
-        { title: ts("product.version"), dataIndex: "product_full_version", width: "11%" },
-        { title: "文档版本", dataIndex: "version", width: "8%" },
+        { title: ts("product.name"), dataIndex: "product_name", width: "13%" },
+        { title: ts("product.version"), dataIndex: "product_full_version", width: "9%" },
+        ...(isGroup ? [{
+            title: "算法模块",
+            dataIndex: "doc_type",
+            width: "12%",
+            render: (value: string) => {
+                const name = moduleNameOf(data.modules, value);
+                return (
+                    <span
+                        title={name}
+                        style={{ display: "block", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "#1677ff" }}>
+                        {name}
+                    </span>
+                );
+            },
+        }] : []),
+        { title: "文档版本", dataIndex: "version", width: "9%" },
         {
             title: "文件编号",
             dataIndex: "file_no",
-            width: "16%",
+            width: "20%",
             render: (value: string, row: any) => {
                 const isEditing = data.editingFileNoId === row.id;
                 const isSaving = data.savingFileNoId === row.id;
@@ -231,25 +321,25 @@ export default () => {
                 return (
                     <span
                         className="risk-doc-file-no-cell"
-                        title="单击编辑文件编号"
+                        title={value ? `${value}（单击编辑）` : "单击编辑文件编号"}
                         onClick={() => handleStartEditFileNo(row)}>
                         {value || "-"}
                     </span>
                 );
             },
         },
-        { title: "变更说明", dataIndex: "change_log", width: "11%" },
-        { title: ts("create_time"), dataIndex: "create_time", width: "14%" },
+        { title: "变更说明", dataIndex: "change_log", width: "9%" },
+        { title: ts("create_time"), dataIndex: "create_time", width: "11%" },
         {
             title: ts("action"),
-            width: "24%",
+            width: "18%",
             className: "risk-doc-action-col",
             render: (_: any, row: any) => (
                 <Space size={4} className="risk-doc-action-space">
-                    <Button type="link" size="small" onClick={() => navigate(`/model_docs/${type}/view/${row.id}`)}>
+                    <Button type="link" size="small" onClick={() => navigate(`/model_docs/${row.doc_type}/view/${row.id}`)}>
                         {ts("view")}
                     </Button>
-                    <Button type="link" size="small" onClick={() => navigate(`/model_docs/${type}/edit/${row.id}`)}>
+                    <Button type="link" size="small" onClick={() => navigate(`/model_docs/${row.doc_type}/edit/${row.id}`)}>
                         {ts("edit")}
                     </Button>
                     <Button type="link" size="small" onClick={() => doDuplicate(row)}>
@@ -288,6 +378,18 @@ export default () => {
                                 />
                             </Form.Item>
                         </Col>
+                        {isGroup && (
+                            <Col>
+                                <Form.Item label="算法模块" name="module">
+                                    <Select
+                                        placeholder="全部模块"
+                                        allowClear
+                                        style={{ minWidth: 150 }}
+                                        options={data.modules.map((name: string, i: number) => ({ value: i, label: name }))}
+                                    />
+                                </Form.Item>
+                            </Col>
+                        )}
                         <Col>
                             <Form.Item label={ts("srs_doc.doc_version")} name="version">
                                 <Select
@@ -306,6 +408,7 @@ export default () => {
                     <Button type="primary" onClick={() => {
                         addForm.resetFields();
                         addForm.setFieldValue("version", "A0");
+                        addForm.setFieldValue("module", 0);
                         dispatch({ dlgType: DlgTypes.add });
                         loadProducts(data, dispatch);
                     }}>
@@ -343,7 +446,7 @@ export default () => {
             <Modal
                 width={620}
                 centered
-                title={`新增${meta.title}`}
+                title={`新增${navTitle}`}
                 open={data.dlgType === DlgTypes.add}
                 confirmLoading={data.adding}
                 onOk={doAdd}
@@ -364,6 +467,17 @@ export default () => {
                             onChange={(value) => addForm.setFieldValue("product_id", value)}
                         />
                     </Form.Item>
+                    {isGroup && (
+                        <Form.Item
+                            label="算法模块"
+                            name="module"
+                            rules={[{ required: true, message: sprintf(ts("msg_select"), { label: "算法模块" }) }]}>
+                            <Select
+                                placeholder="请选择算法模块"
+                                options={data.modules.map((name: string, i: number) => ({ value: i, label: name }))}
+                            />
+                        </Form.Item>
+                    )}
                     <Form.Item
                         label="文档版本"
                         name="version"

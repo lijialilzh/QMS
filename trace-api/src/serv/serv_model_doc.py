@@ -2802,10 +2802,13 @@ class Server(object):
         return Resp.resp_ok(data=obj)
 
     async def list_model_doc(self, op_user: UserObj = None, product_id: int = 0, version: str = None,
-                             doc_type: str = None, page_index: int = 0, page_size: int = 10):
+                             doc_type: str = None, doc_type_prefix: str = None,
+                             page_index: int = 0, page_size: int = 10):
         wheres = []
         if doc_type:
             wheres.append(ModelDoc.doc_type == doc_type)
+        if doc_type_prefix:
+            wheres.append(ModelDoc.doc_type.like(f"{doc_type_prefix}%"))
         if product_id:
             wheres.append(ModelDoc.product_id == product_id)
         if version:

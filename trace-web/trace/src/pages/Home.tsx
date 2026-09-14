@@ -11,8 +11,8 @@ import AiAssistant from "@/views/AiAssistant";
 import * as Api from "@/api/ApiUser";
 import { Root, actions, useDispatch, useSelector } from "@/store";
 import Loading from "@/views/Loading";
-import { MODEL_DOC_MENU, MODEL_DOC_TYPES } from "./model_doc/ModelDocTypes";
-import { DATA_DOC_MENU, DATA_DOC_TYPES } from "./model_doc/DataDocTypes";
+import { MODEL_DOC_MENU, MODEL_DOC_TYPES, getModelDocNavTitle, getModelDocMenuKey } from "./model_doc/ModelDocTypes";
+import { DATA_DOC_MENU, DATA_DOC_TYPES, getDataDocNavTitle, getDataDocMenuKey } from "./model_doc/DataDocTypes";
 
 enum DlgTypes {
     menu = "menu",
@@ -543,7 +543,7 @@ export default () => {
                     label: item.group,
                     children: item.types.map((code) => ({
                         key: `/model_docs/${code}`,
-                        label: MODEL_DOC_TYPES[code].title,
+                        label: getModelDocNavTitle(code),
                         perm: "model_doc_view",
                     })),
                 })),
@@ -557,7 +557,7 @@ export default () => {
                     label: item.group,
                     children: item.types.map((code) => ({
                         key: `/data_docs/${code}`,
-                        label: DATA_DOC_TYPES[code].title,
+                        label: getDataDocNavTitle(code),
                         perm: "data_doc_view",
                     })),
                 })),
@@ -628,18 +628,25 @@ export default () => {
         const isDataDoc = pathParts[0] === "data_docs";
         const isTypedDoc = isModelDoc || isDataDoc;
         const isDetailPage = isTypedDoc ? pathParts.length > 2 : pathParts.length > 1;
+        // 模型/数据文件子类型（如 md_008_01、dd_005_01）归一到分组入口高亮
+        const rawTypeKey = isTypedDoc && pathParts.length >= 2 ? pathParts[1] : "";
+        const typeKey = isModelDoc
+            ? getModelDocMenuKey(rawTypeKey)
+            : isDataDoc
+            ? getDataDocMenuKey(rawTypeKey)
+            : rawTypeKey;
         const menuSelectedKey = isTypedDoc
-            ? (pathParts.length >= 2 ? `/${pathParts[0]}/${pathParts[1]}` : path)
+            ? `/${pathParts[0]}/${typeKey}`
             : (isDetailPage ? `/${pathParts[0]}` : path);
 
         let pageKey = path.replace(/\//, "").replace("-", "_");
         if (isDetailPage) {
             pageKey = pathParts[0].replace("-", "_");
         }
-        const pageName = isModelDoc && pathParts[1] && MODEL_DOC_TYPES[pathParts[1]]
-            ? MODEL_DOC_TYPES[pathParts[1]].title
-            : isDataDoc && pathParts[1] && DATA_DOC_TYPES[pathParts[1]]
-            ? DATA_DOC_TYPES[pathParts[1]].title
+        const pageName = isModelDoc && pathParts[1]
+            ? (MODEL_DOC_TYPES[pathParts[1]] ? MODEL_DOC_TYPES[pathParts[1]].title : getModelDocNavTitle(pathParts[1]))
+            : isDataDoc && pathParts[1]
+            ? (DATA_DOC_TYPES[pathParts[1]] ? DATA_DOC_TYPES[pathParts[1]].title : getDataDocNavTitle(pathParts[1]))
             : ts(`menu.${pageKey}`);
         dispatch({ path: location.pathname, pageName, isDetailPage, menuSelectedKey });
     }, [location, i18n.language]);

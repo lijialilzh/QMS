@@ -48,11 +48,11 @@ async def delete_model_doc(id: int):
 @router.get("/list_model_doc", summary="查询模型文件列表", response_model=Resp[Page[ModelDocObj]])
 @try_log(perm=Perms.model_doc_view)
 async def list_model_doc(product_id: int = 0, version: str = None, doc_type: str = None,
-                         page_index: int = 0, page_size: int = 10):
+                         doc_type_prefix: str = None, page_index: int = 0, page_size: int = 10):
     op_user = CtxUser.get()
     return await server.list_model_doc(
         op_user=op_user, product_id=product_id, version=version, doc_type=doc_type,
-        page_index=page_index, page_size=page_size,
+        doc_type_prefix=doc_type_prefix, page_index=page_index, page_size=page_size,
     )
 
 

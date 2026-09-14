@@ -42,7 +42,7 @@ const ANN_PID_DOCS = [
     { type: "dd_008_02", title: "肺叶分割试标注记录" },
     { type: "dd_009_01", title: "肺栓塞分割标注记录" },
     { type: "dd_009_02", title: "肺叶分割标注记录" },
-    { type: "dd_009_03", title: "肺栓塞分诊标注记录" },
+    { type: "dd_009_03", title: "肺栓塞分诊评测记录" },
 ];
 
 const stripNum = (title: string) => String(title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();

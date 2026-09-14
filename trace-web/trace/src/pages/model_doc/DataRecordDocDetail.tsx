@@ -12,7 +12,7 @@ import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiHospital from "@/api/ApiProdHospital";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
-import { getDataDocMeta, DATA_STATS_IMPORT_TYPES } from "./DataDocTypes";
+import { getDataDocMeta, DATA_STATS_IMPORT_TYPES, getDataDocListType } from "./DataDocTypes";
 import { ANN_PID_TYPES, annotTableSig, applyPidsToSections, buildAnnotMeta, pidsFromCache } from "../data_stats/dataStatsLocal";
 import { computeGridSpans } from "./gridSpans";
 import "../pdp/PdpDocDetail.less";
@@ -1723,7 +1723,7 @@ export default () => {
         return false;
     };
 
-    const backPath = `/data_docs/${type || data.doc.doc_type || "dd_002"}`;
+    const backPath = `/data_docs/${getDataDocListType(type || data.doc.doc_type) || "dd_002"}`;
 
     const renderTable = (n: any, ti: number, tb: any[]) => {
         const docType = String(type || data.doc.doc_type || "");

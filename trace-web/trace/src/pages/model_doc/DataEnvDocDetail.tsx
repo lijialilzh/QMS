@@ -10,7 +10,7 @@ import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
-import { getDataDocMeta } from "./DataDocTypes";
+import { getDataDocMeta, getDataDocListType } from "./DataDocTypes";
 import {
     buildEnvCheckTable, collectAssetCodes, computeDataEnvWeeks, envCheckGroups, envCheckLeafCols,
     envCheckTitle, isEnvCheckGrid, parseEqAssets, prevEnvCheckRows,
@@ -359,7 +359,7 @@ export default () => {
                 <Space>
                     {!readonly && <Button type="primary" loading={data.saving} onClick={doSave}>{ts("save")}</Button>}
                     <Button loading={data.exporting} onClick={doExport}>导出</Button>
-                    <Button onClick={() => navigate(`/data_docs/${docType}`)}>{ts("back")}</Button>
+                    <Button onClick={() => navigate(`/data_docs/${getDataDocListType(docType) || docType}`)}>{ts("back")}</Button>
                 </Space>
             </div>
 

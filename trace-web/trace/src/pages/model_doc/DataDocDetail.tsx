@@ -10,7 +10,7 @@ import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
-import { getDataDocMeta, DATA_STATS_IMPORT_TYPES } from "./DataDocTypes";
+import { getDataDocMeta, DATA_STATS_IMPORT_TYPES, getDataDocListType } from "./DataDocTypes";
 import { computeGridSpans, isReviewRecordGrid } from "./gridSpans";
 import "../pdp/PdpDocDetail.less";
 
@@ -512,7 +512,7 @@ export default () => {
     };
 
     const numbers = computeNumbers(data.sections);
-    const backPath = `/data_docs/${type || data.doc.doc_type || "dd_001"}`;
+    const backPath = `/data_docs/${getDataDocListType(type || data.doc.doc_type) || "dd_001"}`;
 
     const renderNav = (nodes: any[], depth: number) =>
         (nodes || []).map((n: any) => {

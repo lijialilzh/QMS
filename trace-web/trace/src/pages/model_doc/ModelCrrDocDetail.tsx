@@ -11,7 +11,7 @@ import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
-import { getModelDocMeta } from "./ModelDocTypes";
+import { getModelDocMeta, getModelDocListType } from "./ModelDocTypes";
 import "../pdp/PdpDocDetail.less";
 
 const CATEGORIES = ["结构", "文档", "变量", "算法操作", "循环和分支"];
@@ -236,7 +236,7 @@ export default () => {
                 <Space>
                     {!readonly && <Button type="primary" loading={data.saving} onClick={doSave}>{ts("save")}</Button>}
                     <Button loading={data.exporting} onClick={doExport}>导出</Button>
-                    <Button onClick={() => navigate(`/model_docs/${type}`)}>{ts("back")}</Button>
+                    <Button onClick={() => navigate(`/model_docs/${getModelDocListType(type)}`)}>{ts("back")}</Button>
                 </Space>
             </div>
 

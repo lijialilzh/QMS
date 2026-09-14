@@ -12,9 +12,9 @@ export const DATA_DOC_TYPES: Record<string, { title: string; keywords: string[] 
     dd_007: { title: "人员考核评价方法", keywords: ["人员考核评价方法"] },
     dd_008_01: { title: "肺栓塞分割试标注记录", keywords: ["试标注记录", "肺栓塞分割试标注"] },
     dd_008_02: { title: "肺叶分割试标注记录", keywords: ["试标注记录", "肺叶分割试标注"] },
-    dd_009_01: { title: "肺栓塞分割标注记录", keywords: ["数据标注记录", "肺栓塞分割标注记录"] },
+    dd_009_01: { title: "肺栓塞分诊标注记录", keywords: ["数据标注记录", "肺栓塞分诊标注记录"] },
     dd_009_02: { title: "肺叶分割标注记录", keywords: ["数据标注记录", "肺叶分割标注记录"] },
-    dd_009_03: { title: "肺栓塞分诊标注记录", keywords: ["数据标注记录", "肺栓塞分诊标注记录"] },
+    dd_009_03: { title: "肺栓塞分诊评测记录", keywords: ["数据标注记录", "肺栓塞分诊评测记录"] },
     dd_010: { title: "数据库上传记录", keywords: ["数据库上传记录"] },
     dd_011: { title: "数据标注需求反馈", keywords: ["数据标注需求反馈"] },
     dd_012: { title: "训练集测试集查重记录", keywords: ["查重记录", "训练集测试集查重"] },
@@ -39,6 +39,44 @@ export const DATA_DOC_TYPES: Record<string, { title: string; keywords: string[] 
 /** 数据文件左侧菜单：按工作阶段做二级分组。名称不改。 */
 export type DataDocMenuNode = { group: string; key: string; types: string[] };
 
+/** 按算法模块分组的文档类型：一个入口，列表页展示该组下所有模块的文档。 */
+export const DATA_DOC_GROUPS: Record<string, { title: string; types: string[] }> = {
+    dd_005: { title: "人员培训记录", types: ["dd_005_01", "dd_005_02"] },
+    dd_008: { title: "试标注记录", types: ["dd_008_01", "dd_008_02"] },
+    dd_009: { title: "数据标注记录", types: ["dd_009_01", "dd_009_02"] },
+    dd_013_first: { title: "初次考核记录", types: ["dd_013_01", "dd_013_02"] },
+    dd_013_periodic: { title: "定期考核记录", types: ["dd_013_03", "dd_013_04"] },
+    dd_013_daily: { title: "日常考核", types: ["dd_013_05", "dd_013_06", "dd_013_07"] },
+};
+
+/** 子类型 → 分组 key。 */
+export const DATA_DOC_TYPE_GROUP: Record<string, string> = (() => {
+    const map: Record<string, string> = {};
+    Object.entries(DATA_DOC_GROUPS).forEach(([group, cfg]) => {
+        cfg.types.forEach((t) => { map[t] = group; });
+    });
+    return map;
+})();
+
+export const isDataDocGroup = (type?: string) => !!type && type in DATA_DOC_GROUPS;
+
+/** 分组 → 子类型列表。 */
+export const getDataDocGroupTypes = (type?: string): string[] =>
+    (type && DATA_DOC_GROUPS[type]?.types) || [];
+
+/** 菜单 key / 高亮用：子类型归一到分组 key，其余原样返回。 */
+export const getDataDocMenuKey = (type?: string) => DATA_DOC_TYPE_GROUP[type || ""] || type || "";
+
+/** 列表页路径：分组子类型归一到分组入口。 */
+export const getDataDocListType = (type?: string) => getDataDocMenuKey(type);
+
+/** 左侧导航显示名称（不带模块名）。分组类型用组标题，其余用文档标题。 */
+export const getDataDocNavTitle = (type?: string) => {
+    if (!type) return "数据文件";
+    if (isDataDocGroup(type)) return DATA_DOC_GROUPS[type].title;
+    return DATA_DOC_TYPES[type]?.title || "数据文件";
+};
+
 export const DATA_DOC_MENU: DataDocMenuNode[] = [
     {
         group: "规范",
@@ -49,18 +87,13 @@ export const DATA_DOC_MENU: DataDocMenuNode[] = [
     {
         group: "人员记录",
         key: "data_people",
-        types: [
-            "dd_005_01", "dd_005_02",
-            "dd_013_01", "dd_013_02", "dd_013_03", "dd_013_04",
-            "dd_013_05", "dd_013_06", "dd_013_07",
-        ],
+        types: ["dd_005", "dd_013_first", "dd_013_periodic", "dd_013_daily"],
     },
     {
         group: "入库记录",
         key: "data_inbound",
         types: [
-            "dd_008_01", "dd_008_02",
-            "dd_009_01", "dd_009_02", "dd_009_03",
+            "dd_008", "dd_009", "dd_009_03",
             "dd_011", "dd_010", "dd_012",
         ],
     },
