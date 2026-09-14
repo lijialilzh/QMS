@@ -35,6 +35,10 @@ from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
 from .data_doc_templates import DOC_META, DEFAULT_CONTENTS, REVIEW_TABLES
+from .serv_data_stats_scan import (
+    StatsScanError, common_parent_paths, host_of, paths_from_dd010,
+    resolve_stats_path, scan_case_rows, scan_case_rows_sftp, strip_host,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1014,6 +1018,48 @@ class Server(object):
         if not sections or not any((s.get("tables") or [None])[0] for s in sections):
             return Resp.resp_err(msg="Excel 无有效表格")
         return Resp.resp_ok(data={"sections": sections})
+
+    def resolve_dd010_path(self, product_id: int = 0, kind: str = "raw"):
+        kind = kind if kind in ("raw", "base", "ann") else "raw"
+        if not product_id:
+            return ""
+        row = db.session.execute(
+            select(DataDoc).where(DataDoc.product_id == product_id, DataDoc.doc_type == "dd_010")
+            .order_by(DataDoc.id.desc())
+        ).scalars().first()
+        if not row:
+            return ""
+        content = row.content if isinstance(row.content, dict) else {}
+        return common_parent_paths(paths_from_dd010(content, kind))
+
+    def scan_dicom_dir(self, path: str = "", username: str = "", password: str = ""):
+        used = str(path or "").strip()
+        if not used:
+            return Resp.resp_err(msg="请填写服务器路径，或先选择产品并确保已有数据库上传记录")
+        root = resolve_stats_path(used)
+        if root:
+            rows = scan_case_rows(root)
+            if not rows:
+                return Resp.resp_err(msg="未找到病例文件夹")
+            return Resp.resp_ok(data={"path": used, "root": root, "rows": rows})
+        host = host_of(used)
+        remote = strip_host(used)
+        if host and str(remote).startswith("/"):
+            if not str(username or "").strip() or not str(password or ""):
+                return Resp.resp_err(msg="请填写服务器用户名和密码")
+            try:
+                rows = scan_case_rows_sftp(host, remote, str(username).strip(), str(password))
+            except StatsScanError as exc:
+                return Resp.resp_err(msg=exc.msg)
+            if not rows:
+                return Resp.resp_err(msg="未找到病例文件夹")
+            return Resp.resp_ok(data={"path": used, "root": f"{host}:{remote}", "rows": rows})
+        return Resp.resp_err(msg=f"服务器上找不到该目录：{used}")
+
+    def scan_dicom_stats(self, path: str = "", product_id: int = 0, kind: str = "raw",
+                         username: str = "", password: str = ""):
+        used = str(path or "").strip() or self.resolve_dd010_path(product_id, kind)
+        return self.scan_dicom_dir(used, username, password)
 
     async def list_data_doc(self, op_user: UserObj = None, product_id: int = 0, version: str = None,
                              doc_type: str = None, page_index: int = 0, page_size: int = 10):

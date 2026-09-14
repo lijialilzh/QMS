@@ -1,6 +1,6 @@
 import "./DataStats.less";
 import { Button, Input, Radio, Space, Spin, Table, Tabs, message } from "antd";
-import { FolderOpenOutlined, DownloadOutlined } from "@ant-design/icons";
+import { FolderOpenOutlined, DownloadOutlined, CloudServerOutlined } from "@ant-design/icons";
 import { useMemo, useRef, useEffect } from "react";
 import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
@@ -62,22 +62,27 @@ export default () => {
         dataType: "",
         disease: "",
         person: "",
+        source: "",
         productId: 0,
         products: [] as any[],
         writing: false,
+        serverPath: "",
+        serverUser: "",
+        serverPass: "",
     });
     const ctxRef = useRef(data);
     ctxRef.current = data;
     const quotaWarned = useRef(false);
     const wroteOnLoad = useRef(false);
 
-    const persistRows = (rows: CaseRow[], extra?: { person?: string; dataType?: string; disease?: string }) => {
+    const persistRows = (rows: CaseRow[], extra?: { person?: string; dataType?: string; disease?: string; source?: string }) => {
         const cur = ctxRef.current;
         const ok = saveStatsCache(cur.productId || 0, cur.kind as StatsKind, {
             rows,
             person: extra?.person ?? cur.person ?? "",
             dataType: extra?.dataType ?? cur.dataType ?? "",
             disease: extra?.disease ?? cur.disease ?? "",
+            source: extra?.source ?? cur.source ?? "",
         });
         if (!ok && !quotaWarned.current) {
             quotaWarned.current = true;
@@ -105,6 +110,7 @@ export default () => {
             person: last.item.person || "",
             dataType: last.item.dataType || "",
             disease: last.item.disease || "",
+            source: last.item.source || "",
         });
     }, []);
 
@@ -125,12 +131,14 @@ export default () => {
                     person: item.person || cur.person,
                     dataType: item.dataType || cur.dataType,
                     disease: item.disease || cur.disease,
+                    source: item.source || cur.source,
                 });
                 saveStatsCache(productId, kind, {
                     rows: item.rows,
                     person: item.person || cur.person || "",
                     dataType: item.dataType || cur.dataType || "",
                     disease: item.disease || cur.disease || "",
+                    source: item.source || cur.source || "",
                 });
             });
         });
@@ -139,21 +147,28 @@ export default () => {
     const switchSlot = (productId: number, kind: StatsKind) => {
         const hit = readStatsCache(productId, kind);
         if (hit) {
-            dispatch({ productId, kind, rows: hit.rows, person: hit.person, dataType: hit.dataType, disease: hit.disease });
+            dispatch({
+                productId, kind, rows: hit.rows, person: hit.person, dataType: hit.dataType,
+                disease: hit.disease, source: hit.source,
+            });
             return;
         }
         const keep = data.rows || [];
         if (keep.length) {
-            dispatch({ productId, kind, rows: keep, person: data.person, dataType: data.dataType, disease: data.disease });
+            dispatch({
+                productId, kind, rows: keep, person: data.person, dataType: data.dataType,
+                disease: data.disease, source: data.source,
+            });
             saveStatsCache(productId, kind, {
                 rows: keep,
                 person: data.person || "",
                 dataType: data.dataType || "",
                 disease: data.disease || "",
+                source: data.source || "",
             });
             return;
         }
-        dispatch({ productId, kind, rows: [], person: data.person, dataType: data.dataType, disease: data.disease });
+        dispatch({ productId, kind, rows: [], person: data.person, dataType: data.dataType, disease: data.disease, source: "" });
         loadFromDoc(productId, kind);
     };
 
@@ -195,6 +210,7 @@ export default () => {
                     person: cur.person || "",
                     dataType: cur.dataType || "",
                     disease: cur.disease || "",
+                    source: cur.source || "",
                 })];
                 return Api.update_data_doc({
                     id: hit.id,
@@ -290,10 +306,10 @@ export default () => {
     }, [data.productId, data.rows]);
 
     const title = STATS_TITLES[data.kind as StatsKind];
-    const extra = { dataType: data.dataType, disease: data.disease, person: data.person };
+    const extra = { dataType: data.dataType, disease: data.disease, person: data.person, source: data.source };
     const sheets: SheetAoa[] = useMemo(
         () => (data.rows || []).length ? buildWorkbookSheets(title, data.rows, extra) : [],
-        [title, data.rows, data.dataType, data.disease, data.person],
+        [title, data.rows, data.dataType, data.disease, data.person, data.source],
     );
     const statsGrid = useMemo(() => buildStatsGrid(title, data.rows || [], extra), [title, data.rows, extra.dataType, extra.disease, extra.person]);
     const tableRows = useMemo(() => distRowsFromGrid(statsGrid), [statsGrid]);
@@ -313,10 +329,58 @@ export default () => {
         key: r.key, Item: r.Item, Catgory: r.Catgory, pos_cases: r.pos_cases, neg_cases: r.neg_cases,
     })), [triageRows]);
 
+    const applyRows = (rows: CaseRow[], okMsg: string, source = "") => {
+        if (!rows.length) {
+            dispatch({ loading: false, progress: "", rows: [] });
+            message.warning("未找到病例或无法读取 DICOM");
+            return;
+        }
+        dispatch({ loading: false, progress: "", rows, source });
+        persistRows(rows, { source });
+        message.success(okMsg);
+        writeDataFiles(rows);
+    };
+
     const pickFolder = () => {
         if (!folderRef.current) return;
         folderRef.current.value = "";
         folderRef.current.click();
+    };
+
+    const scanServer = () => {
+        const cur = ctxRef.current;
+        if (!String(cur.serverPath || "").trim() && !cur.productId) {
+            message.warning("请填写服务器路径，或先选择产品以便从上传记录带出");
+            return;
+        }
+        const path = String(cur.serverPath || "").trim();
+        const remote = /^[\w.-]+:\//.test(path);
+        if (remote && (!String(cur.serverUser || "").trim() || !String(cur.serverPass || ""))) {
+            message.warning("请填写服务器用户名和密码");
+            return;
+        }
+        dispatch({ loading: true, progress: "正在读取服务器 DICOM…", rows: [] });
+        Api.scan_dicom_stats({
+            path: cur.serverPath || "",
+            product_id: cur.productId || 0,
+            kind: cur.kind,
+            username: cur.serverUser || "",
+            password: cur.serverPass || "",
+        }).then((res: any) => {
+            if (res.code !== Api.C_OK) {
+                dispatch({ loading: false, progress: "" });
+                message.error(res.msg || "读取失败");
+                return;
+            }
+            const rows = ((res.data && res.data.rows) || []) as CaseRow[];
+            const used = String((res.data && (res.data.path || res.data.root)) || cur.serverPath || "");
+            if (used) dispatch({ serverPath: used });
+            const source = String((res.data && (res.data.path || res.data.root)) || "");
+            applyRows(rows, `已统计 ${rows.length} 个序列，请在下方页签查看`, source);
+        }).catch(() => {
+            dispatch({ loading: false, progress: "" });
+            message.error("读取失败");
+        });
     };
 
     const saveXlsx = (list: SheetAoa[], fileTitle: string) => {
@@ -334,15 +398,7 @@ export default () => {
         statsFromFiles(fileList, (done, all) => {
             dispatch({ progress: `正在读取 ${done}/${all}` });
         }).then((rows) => {
-            if (!rows.length) {
-                dispatch({ loading: false, progress: "", rows: [] });
-                message.warning("未找到病例或无法读取 DICOM，请确认选的是病例根目录");
-                return;
-            }
-            dispatch({ loading: false, progress: "", rows });
-            persistRows(rows);
-            message.success(`已统计 ${rows.length} 个序列，请在下方页签查看`);
-            writeDataFiles(rows);
+            applyRows(rows, `已统计 ${rows.length} 个序列，请在下方页签查看`);
         }).catch(() => {
             dispatch({ loading: false, progress: "", rows: [] });
             message.error("读取失败");
@@ -370,7 +426,7 @@ export default () => {
                 onChange={(e) => onFolder(e.target.files)}
             />
             <div className="data-stats-toolbar">
-                <span className="data-stats-title">数据统计</span>
+                <span className="data-stats-label">选择产品：</span>
                 <span className="data-stats-product">
                     <ProductVersionSelect
                         products={data.products}
@@ -400,31 +456,37 @@ export default () => {
                     </Button>
                 </Space>
             </div>
-            <div className="data-stats-hint">
-                每个病例一个文件夹。选完后在本页查看；病例明细写入该产品统计表（图像不保存）。刷新或换浏览器后，选同一产品即可从数据文件读回。已选产品同时写入数据分布，并把 PID 写入已有试标注/标注记录。
-                {total ? `　当前 ${total} 个序列。` : ""}
+            <div className="data-stats-path">
+                <Input
+                    placeholder="服务器路径，如 172.16.8.93:/data/dicom/ct-dr-hj"
+                    value={data.serverPath}
+                    onChange={(e) => dispatch({ serverPath: e.target.value })}
+                    onPressEnter={scanServer}
+                />
+                <Input
+                    placeholder="用户名"
+                    value={data.serverUser}
+                    onChange={(e) => dispatch({ serverUser: e.target.value })}
+                    onPressEnter={scanServer}
+                    style={{ width: 160, maxWidth: 160, minWidth: 140 }}
+                />
+                <Input.Password
+                    placeholder="密码"
+                    value={data.serverPass}
+                    onChange={(e) => dispatch({ serverPass: e.target.value })}
+                    onPressEnter={scanServer}
+                    className="data-stats-pass"
+                    style={{ width: 160, maxWidth: 160, minWidth: 140 }}
+                    visibilityToggle
+                />
+                <Button icon={<CloudServerOutlined />} loading={data.loading || data.writing} onClick={scanServer}>
+                    从服务器读取
+                </Button>
             </div>
-            <div className="data-stats-fields">
-                <span>统计人</span>
-                <Input placeholder="选填" value={data.person} onChange={(e) => {
-                    const person = e.target.value;
-                    dispatch({ person });
-                    if ((data.rows || []).length) persistRows(data.rows, { person });
-                }} />
-                <span>数据类型</span>
-                <Input placeholder="如 胸部CTPA" value={data.dataType} onChange={(e) => {
-                    const dataType = e.target.value;
-                    dispatch({ dataType });
-                    if ((data.rows || []).length) persistRows(data.rows, { dataType });
-                }} />
-                <span>疾病构成</span>
-                <Input placeholder="选填" value={data.disease} onChange={(e) => {
-                    const disease = e.target.value;
-                    dispatch({ disease });
-                    if ((data.rows || []).length) persistRows(data.rows, { disease });
-                }} />
-                {data.progress ? <span className="data-stats-progress">{data.progress}</span> : null}
-            </div>
+            {data.source ? (
+                <div className="data-stats-source">数据来源：{data.source}</div>
+            ) : null}
+            {data.progress ? <span className="data-stats-progress">{data.progress}</span> : null}
             <Spin spinning={data.loading} wrapperClassName="data-stats-table">
                 <Tabs
                     animated={{ inkBar: true, tabPane: false }}
@@ -436,11 +498,11 @@ export default () => {
                                 <Table
                                     size="small"
                                     pagination={{ pageSize: 50 }}
-                                    scroll={{ x: 2400 }}
+                                    scroll={{ x: 1300 }}
                                     dataSource={detailRows}
-                                    columns={["TXID", "PatientName", ...DETAIL_COLUMNS.filter((c) => c !== "TXID")].map((c) => ({
-                                        title: c === "TXID" ? "TXID（病例文件夹）" : (c === "PatientName" ? "姓名" : c),
-                                        dataIndex: c, ellipsis: true, width: c === "TXID" || c === "PatientName" ? 180 : 130,
+                                    columns={DETAIL_COLUMNS.map((c) => ({
+                                        title: c === "TXID" ? "TXID（病例文件夹）" : c,
+                                        dataIndex: c, ellipsis: true, width: c === "TXID" ? 180 : 130,
                                     }))}
                                     locale={{ emptyText: "请选择病例文件夹" }}
                                 />
@@ -489,19 +551,24 @@ export default () => {
                             key: "device",
                             label: "设备分布",
                             children: (
-                                <Table
-                                    size="small"
-                                    pagination={false}
-                                    scroll={{ x: 640 }}
-                                    dataSource={deviceRows}
-                                    columns={[
-                                        { title: "Item", dataIndex: "Item", width: 160 },
-                                        { title: "Catgory", dataIndex: "Catgory" },
-                                        { title: "pos_cases", dataIndex: "pos_cases", width: 110 },
-                                        { title: "neg_cases", dataIndex: "neg_cases", width: 110 },
-                                    ]}
-                                    locale={{ emptyText: total ? "暂无设备分布" : "请选择病例文件夹" }}
-                                />
+                                <div className="data-stats-device">
+                                    {data.source ? (
+                                        <div className="data-stats-source">数据来源：{data.source}</div>
+                                    ) : null}
+                                    <Table
+                                        size="small"
+                                        pagination={false}
+                                        scroll={{ x: 640 }}
+                                        dataSource={deviceRows}
+                                        columns={[
+                                            { title: "Item", dataIndex: "Item", width: 160 },
+                                            { title: "Catgory", dataIndex: "Catgory" },
+                                            { title: "pos_cases", dataIndex: "pos_cases", width: 110 },
+                                            { title: "neg_cases", dataIndex: "neg_cases", width: 110 },
+                                        ]}
+                                        locale={{ emptyText: total ? "暂无设备分布" : "请选择病例文件夹" }}
+                                    />
+                                </div>
                             ),
                         },
                     ]}

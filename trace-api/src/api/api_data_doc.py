@@ -8,7 +8,9 @@ import urllib.parse
 from datetime import datetime
 from typing import Any
 from fastapi import APIRouter, File, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
@@ -19,6 +21,14 @@ from . import CtxUser, try_log
 
 router = APIRouter()
 server = Server()
+
+
+class ScanDicomForm(BaseModel):
+    path: str = Field(default="", title="服务器路径")
+    product_id: int = Field(default=0, title="产品ID")
+    kind: str = Field(default="raw", title="原始/基础/标注")
+    username: str = Field(default="", title="服务器用户名")
+    password: str = Field(default="", title="服务器密码")
 
 
 @router.post("/add_data_doc", summary="添加数据文件", response_model=Resp[DataDocForm])
@@ -85,3 +95,12 @@ async def export_data_doc(id: int = 0):
 async def import_stats_excel(file: UploadFile = File(...)):
     raw = await file.read()
     return server.parse_stats_excel(raw)
+
+
+@router.post("/scan_dicom_stats", summary="从服务器路径读取 DICOM 头（不含图像）")
+@try_log(perm=Perms.data_doc_edit)
+async def scan_dicom_stats(form: ScanDicomForm):
+    used = (form.path or "").strip() or server.resolve_dd010_path(form.product_id or 0, form.kind or "raw")
+    return await run_in_threadpool(
+        server.scan_dicom_dir, used, form.username or "", form.password or "",
+    )

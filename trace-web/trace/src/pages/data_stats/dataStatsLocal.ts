@@ -11,16 +11,12 @@ export const STATS_TITLES: Record<StatsKind, string> = {
 };
 
 export const DETAIL_COLUMNS = [
-    "PatientID", "SeriesInstanceUID", "study date", "ACC NO", "SEX", "DEVICE",
-    "ConvolutionKernel", "Series Description", "ManufacturerModelName", "PatientPosition",
-    "Body Part Examined", "PhotometricInterpretation", "AGE", "KVP", "THICKNESS", "wc_ww",
-    "Columns", "Rows", "SeriesNumber", "CTDIvol", "Exposure", "ImageOrientation",
-    "PixelSpacing", "SpacingBetweenSlices", "TXID", "image slices", "contiue",
+    "TXID", "PatientID", "SeriesInstanceUID", "SEX", "DEVICE", "ConvolutionKernel",
+    "PhotometricInterpretation", "AGE", "KVP", "THICKNESS", "PixelSpacing",
 ];
 
 export const DETAIL_PREVIEW_COLUMNS = [
     "TXID", "SEX", "AGE", "DEVICE", "KVP", "THICKNESS", "ConvolutionKernel",
-    "image slices", "Series Description",
 ];
 
 const HEADER_BYTES = 512 * 1024;
@@ -358,8 +354,26 @@ function mergeByStudy(rows: CaseRow[]): CaseRow[] {
         row.TXID = (txidCount.get(g.txid) || 0) > 1 ? (pid || g.txid) : g.txid;
         row["image slices"] = g.slices;
         delete row._key;
-        return row;
+        return trimCaseRow(row);
     });
+}
+
+/** 病例明细只保留指定列；统计用小写字段从保留列推导补齐。 */
+export const KEEP_CASE_KEYS = [
+    "TXID", "PatientID", "SeriesInstanceUID", "SEX", "DEVICE", "ConvolutionKernel",
+    "PhotometricInterpretation", "AGE", "KVP", "THICKNESS", "PixelSpacing",
+];
+
+function trimCaseRow(row: CaseRow): CaseRow {
+    const keep = new Set([...KEEP_CASE_KEYS, "study date", "ACC NO", "image slices", "医院"]);
+    const out: CaseRow = {};
+    keep.forEach((k) => { if (row[k] != null) out[k] = row[k]; });
+    out.sex = out.SEX || "";
+    out.age = out.AGE == null || out.AGE === "" ? null : out.AGE;
+    out.device = out.DEVICE && out.DEVICE !== "none" ? out.DEVICE : "";
+    out.kvp = out.KVP == null ? "" : String(out.KVP);
+    out.thickness = out.THICKNESS == null ? "" : String(out.THICKNESS);
+    return out;
 }
 
 export const normalizeStatsRows = (rows: CaseRow[]): CaseRow[] => mergeByStudy(rows || []);
@@ -525,12 +539,7 @@ const rowsFromDetailAoa = (aoa: any[][]): CaseRow[] => {
     return aoa.slice(1).map((row: any[]) => {
         const r: CaseRow = {};
         header.forEach((k, i) => { r[k] = row?.[i]; });
-        r.sex = r.SEX || "";
-        r.age = r.AGE == null || r.AGE === "" ? null : r.AGE;
-        r.device = r.DEVICE && r.DEVICE !== "none" ? r.DEVICE : "";
-        r.kvp = r.KVP == null ? "" : String(r.KVP);
-        r.thickness = r.THICKNESS == null ? "" : String(r.THICKNESS);
-        return r;
+        return trimCaseRow(r);
     }).filter((r) => DETAIL_COLUMNS.some((k) => String(r[k] ?? "").trim()));
 };
 
@@ -541,6 +550,7 @@ export const attachCaseRows = (section: any, item: StatsCacheItem) => ({
         person: item.person || "",
         dataType: item.dataType || "",
         disease: item.disease || "",
+        source: item.source || "",
     },
 });
 
@@ -560,12 +570,13 @@ export const caseRowsFromContent = (content: any): StatsCacheItem | null => {
                     person: String(m.person || ""),
                     dataType: String(m.dataType || ""),
                     disease: String(m.disease || ""),
+                    source: String(m.source || ""),
                 };
             }
             const tables = n?.tables || [];
             for (let t = 0; t < tables.length; t++) {
                 const rows = rowsFromDetailAoa(tables[t]);
-                if (rows.length) return { rows, person: "", dataType: "", disease: "" };
+                if (rows.length) return { rows, person: "", dataType: "", disease: "", source: "" };
             }
             const nested = walk(n.children || []);
             if (nested) return nested;
@@ -596,10 +607,13 @@ export function buildTriageAoa(rows: CaseRow[]) {
 export function buildWorkbookSheets(
     title: string,
     rows: CaseRow[],
-    extra?: { dataType?: string; disease?: string; person?: string },
+    extra?: { dataType?: string; disease?: string; person?: string; source?: string },
 ): SheetAoa[] {
     const triage = buildTriageAoa(rows);
-    const device = [triage[0].slice(0, 4), ...triage.slice(1).map((r) => r.slice(0, 4))];
+    const deviceHead: any[][] = extra?.source
+        ? [["数据来源", extra.source, "", ""], triage[0].slice(0, 4)]
+        : [triage[0].slice(0, 4)];
+    const device = [...deviceHead, ...triage.slice(1).map((r) => r.slice(0, 4))];
     return [
         { name: "病例明细", rows: buildDetailAoa(rows) },
         { name: "数据分布", rows: buildStatsGrid(title, rows, extra) },
@@ -627,6 +641,7 @@ export type StatsCacheItem = {
     person: string;
     dataType: string;
     disease: string;
+    source: string;
 };
 
 type StatsStore = {
@@ -650,7 +665,11 @@ export const loadStatsStore = (): StatsStore => {
 export const readStatsCache = (productId: number, kind: StatsKind): StatsCacheItem | null => {
     const hit = loadStatsStore().caches?.[slotKey(productId, kind)];
     if (!hit || !Array.isArray(hit.rows) || !hit.rows.length) return null;
-    return { ...hit, rows: normalizeStatsRows(hit.rows) };
+    return {
+        ...hit,
+        rows: normalizeStatsRows(hit.rows),
+        source: String(hit.source || ""),
+    };
 };
 
 export const readLastStats = (): { productId: number; kind: StatsKind; item: StatsCacheItem } | null => {
@@ -912,6 +931,7 @@ export const saveStatsCache = (productId: number, kind: StatsKind, item: StatsCa
             person: item.person || "",
             dataType: item.dataType || "",
             disease: item.disease || "",
+            source: item.source || "",
         };
         localStorage.setItem(STATS_STORE_KEY, JSON.stringify({
             last: { productId: productId || 0, kind },

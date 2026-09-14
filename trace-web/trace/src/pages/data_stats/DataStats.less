@@ -22,6 +22,51 @@
     display: inline-block;
 }
 
+.data-stats-label {
+    color: #333;
+    font-size: 14px;
+}
+
+.data-stats-path {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.data-stats-path .ant-input {
+    min-width: 120px;
+}
+
+/* 服务器路径行：输入框可收缩，按钮不收缩、文字不换行 */
+.data-stats-path > .ant-input:first-of-type {
+    flex: 1 1 auto;
+    min-width: 180px;
+    max-width: 720px;
+}
+
+.data-stats-path .ant-btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+/* 密码框小眼睛在输入框内且上下居中：内部 input 不撑宽，wrapper 保持默认 flex 居中 */
+.data-stats-path .data-stats-pass.ant-input-affix-wrapper {
+    display: inline-flex;
+    align-items: center;
+    padding-right: 11px;
+}
+
+.data-stats-path .data-stats-pass.ant-input-affix-wrapper .ant-input-suffix {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 0;
+}
+
+.data-stats-path .data-stats-pass.ant-input-affix-wrapper .ant-input {
+    min-width: 0;
+    padding-right: 4px;
+}
+
 .data-stats-hint {
     color: #666;
     font-size: 13px;
@@ -43,18 +88,44 @@
     font-size: 13px;
 }
 
+.data-stats-source {
+    color: #1d39c4;
+    font-size: 13px;
+    word-break: break-all;
+}
+
+.data-stats-device .data-stats-source {
+    margin-bottom: 8px;
+}
+
 .data-stats-table {
     flex: 1;
     min-height: 400px;
     overflow: auto;
 }
 
+/* 只有一个滚动条：由外层 .data-stats-table 统一滚动，表格自然撑开完整显示（横向仍由表格内部处理） */
 .data-stats-table .ant-spin-container {
+    display: block;
+    height: auto;
     min-height: 400px;
+}
+
+.data-stats-table .ant-table-wrapper {
+    height: auto;
+}
+
+.data-stats-table .ant-spin-nested-loading {
+    height: auto;
+}
+
+.data-stats-table .ant-table {
+    flex: none;
+    overflow: visible;
 }
 
 .data-stats-table .ant-tabs-content-holder,
 .data-stats-table .ant-tabs-tabpane {
-    min-height: 320px;
-    overflow: auto;
+    min-height: 0;
+    overflow: visible;
 }

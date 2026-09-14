@@ -35,3 +35,7 @@ export const import_stats_excel = async (file: File) => {
     form.append("file", file);
     return await httpPost("/trace-api/data_doc/import_stats_excel", form);
 };
+
+export const scan_dicom_stats = async (params: any) => {
+    return await httpPost("/trace-api/data_doc/scan_dicom_stats", params);
+};
