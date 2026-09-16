@@ -1,6 +1,6 @@
 import "./DataStats.less";
 import { Button, Input, Radio, Space, Spin, Table, Tabs, message } from "antd";
-import { FolderOpenOutlined, DownloadOutlined, CloudServerOutlined } from "@ant-design/icons";
+import { FolderOpenOutlined, DownloadOutlined, CloudServerOutlined, UploadOutlined } from "@ant-design/icons";
 import { useMemo, useRef, useEffect } from "react";
 import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
@@ -29,6 +29,7 @@ import {
     AnnotFillMeta,
     attachCaseRows,
     caseRowsFromContent,
+    importGpdExcel,
 } from "./dataStatsLocal";
 
 const KIND_DOC: Record<StatsKind, { type: string; title: string }> = {
@@ -54,6 +55,7 @@ const isMetaSection = (n: any) => {
 
 export default () => {
     const folderRef = useRef<HTMLInputElement>(null);
+    const gpdExcelRef = useRef<HTMLInputElement>(null);
     const [data, dispatch] = useData({
         kind: "raw" as StatsKind,
         rows: [] as CaseRow[],
@@ -66,9 +68,9 @@ export default () => {
         productId: 0,
         products: [] as any[],
         writing: false,
-        serverPath: "",
-        serverUser: "",
-        serverPass: "",
+        serverPath: "10.10.1.11:/media/tx-deepocean/Data1/DATA/dr/dr全身骨折注册/肋骨骨折2/test",
+        serverUser: "tx-deepocean",
+        serverPass: "tuixiang2017",
     });
     const ctxRef = useRef(data);
     ctxRef.current = data;
@@ -321,12 +323,23 @@ export default () => {
     const triageRows = useMemo(() => {
         const aoa = buildTriageAoa(data.rows || []);
         if (aoa.length < 2) return [];
-        return aoa.slice(1).map((r, i) => ({
+        const list = aoa.slice(1).map((r, i) => ({
             key: i, Item: r[0], Catgory: r[1], pos_cases: r[2], neg_cases: r[3], Sen: r[4], Spe: r[5],
         }));
+        // Item 相同的连续行合并：首行计算 rowSpan，后续行 rowSpan=0 隐藏
+        const spans: Record<number, number> = {};
+        let start = 0;
+        for (let i = 1; i <= list.length; i++) {
+            if (i === list.length || list[i].Item !== list[start].Item) {
+                spans[start] = i - start;
+                start = i;
+            }
+        }
+        return list.map((r, i) => ({ ...r, itemSpan: spans[i] || 0 }));
     }, [data.rows]);
     const deviceRows = useMemo(() => triageRows.map((r) => ({
         key: r.key, Item: r.Item, Catgory: r.Catgory, pos_cases: r.pos_cases, neg_cases: r.neg_cases,
+        itemSpan: (r as any).itemSpan,
     })), [triageRows]);
 
     const applyRows = (rows: CaseRow[], okMsg: string, source = "") => {
@@ -345,6 +358,38 @@ export default () => {
         if (!folderRef.current) return;
         folderRef.current.value = "";
         folderRef.current.click();
+    };
+
+    // 导入 gt/pred/dice Excel：按 TXID 匹配行填充三列
+    const pickGpdExcel = () => {
+        if (!total) {
+            message.warning("请先选择病例文件夹或从服务器读取数据");
+            return;
+        }
+        if (!gpdExcelRef.current) return;
+        gpdExcelRef.current.value = "";
+        gpdExcelRef.current.click();
+    };
+
+    const onGpdExcel = (fileList: FileList | null) => {
+        const file = fileList && fileList[0];
+        if (!file) return;
+        dispatch({ loading: true, progress: "正在解析 Excel…" });
+        importGpdExcel(data.rows || [], file).then((r) => {
+            dispatch({ loading: false, progress: "" });
+            if (!r.matched) {
+                message.error("Excel 中的 TXID 与病例明细均不匹配，请检查 TXID 列");
+                return;
+            }
+            dispatch({ rows: r.rows });
+            persistRows(r.rows);
+            let tip = `已匹配 ${r.matched} 行，已填入 gt/pred/dice`;
+            if (r.unmatched.length) tip += `；${r.unmatched.length} 个 TXID 未匹配到病例`;
+            message.success(tip, 6);
+        }).catch((e: any) => {
+            dispatch({ loading: false, progress: "" });
+            message.error(e?.message || "导入失败，请检查 Excel 格式");
+        });
     };
 
     const scanServer = () => {
@@ -425,6 +470,13 @@ export default () => {
                 webkitdirectory=""
                 onChange={(e) => onFolder(e.target.files)}
             />
+            <input
+                ref={gpdExcelRef}
+                type="file"
+                accept=".xlsx,.xls"
+                style={{ display: "none" }}
+                onChange={(e) => onGpdExcel(e.target.files)}
+            />
             <div className="data-stats-toolbar">
                 <span className="data-stats-label">选择产品：</span>
                 <span className="data-stats-product">
@@ -450,6 +502,9 @@ export default () => {
                     </Button>
                     <Button type="primary" icon={<DownloadOutlined />} disabled={!total} onClick={downloadXlsx}>
                         下载 Excel
+                    </Button>
+                    <Button icon={<UploadOutlined />} disabled={!total} loading={data.loading || data.writing} onClick={pickGpdExcel}>
+                        导入 gt/pred/dice
                     </Button>
                     <Button disabled={!total} loading={data.writing} onClick={() => writeDataFiles(data.rows)}>
                         写入数据文件
@@ -503,6 +558,9 @@ export default () => {
                                     columns={DETAIL_COLUMNS.map((c) => ({
                                         title: c === "TXID" ? "TXID（病例文件夹）" : c,
                                         dataIndex: c, ellipsis: true, width: c === "TXID" ? 180 : 130,
+                                        render: (c === "gt" || c === "pred" || c === "dice")
+                                            ? (v: any) => (v == null || String(v).trim() === "" ? "/" : v)
+                                            : undefined,
                                     }))}
                                     locale={{ emptyText: "请选择病例文件夹" }}
                                 />
@@ -536,12 +594,15 @@ export default () => {
                                     scroll={{ x: 720 }}
                                     dataSource={triageRows}
                                     columns={[
-                                        { title: "Item", dataIndex: "Item", width: 160 },
-                                        { title: "Catgory", dataIndex: "Catgory" },
-                                        { title: "pos_cases", dataIndex: "pos_cases", width: 110 },
-                                        { title: "neg_cases", dataIndex: "neg_cases", width: 110 },
-                                        { title: "Sen", dataIndex: "Sen", width: 80 },
-                                        { title: "Spe", dataIndex: "Spe", width: 80 },
+                                        {
+                                            title: "因素", dataIndex: "Item", width: 120,
+                                            onCell: (r: any) => ({ rowSpan: (r as any).itemSpan || 0 }),
+                                        },
+                                        { title: "类别", dataIndex: "Catgory" },
+                                        { title: "阳性病例数", dataIndex: "pos_cases", width: 110 },
+                                        { title: "阴性病例数", dataIndex: "neg_cases", width: 110 },
+                                        { title: "灵敏度", dataIndex: "Sen", width: 80 },
+                                        { title: "特异度", dataIndex: "Spe", width: 80 },
                                     ]}
                                     locale={{ emptyText: total ? "暂无统计结果" : "请选择病例文件夹" }}
                                 />
@@ -552,19 +613,19 @@ export default () => {
                             label: "设备分布",
                             children: (
                                 <div className="data-stats-device">
-                                    {data.source ? (
-                                        <div className="data-stats-source">数据来源：{data.source}</div>
-                                    ) : null}
                                     <Table
                                         size="small"
                                         pagination={false}
                                         scroll={{ x: 640 }}
                                         dataSource={deviceRows}
                                         columns={[
-                                            { title: "Item", dataIndex: "Item", width: 160 },
-                                            { title: "Catgory", dataIndex: "Catgory" },
-                                            { title: "pos_cases", dataIndex: "pos_cases", width: 110 },
-                                            { title: "neg_cases", dataIndex: "neg_cases", width: 110 },
+                                            {
+                                                title: "因素", dataIndex: "Item", width: 120,
+                                                onCell: (r: any) => ({ rowSpan: (r as any).itemSpan || 0 }),
+                                            },
+                                            { title: "类别", dataIndex: "Catgory" },
+                                            { title: "阳性病例数", dataIndex: "pos_cases", width: 110 },
+                                            { title: "阴性病例数", dataIndex: "neg_cases", width: 110 },
                                         ]}
                                         locale={{ emptyText: total ? "暂无设备分布" : "请选择病例文件夹" }}
                                     />

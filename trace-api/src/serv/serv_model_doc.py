@@ -1354,6 +1354,45 @@ class Server(object):
         ).scalars().first()
         return row.content if row else None
 
+    def __parse_dd015_dist(self, content):
+        for _title, tables in self.__iter_content_tables(content):
+            for tb in tables:
+                if not isinstance(tb, list):
+                    continue
+                header_i = -1
+                for i, row in enumerate(tb):
+                    if not isinstance(row, list):
+                        continue
+                    cells = [str(c or "").strip() for c in row]
+                    if len(cells) >= 3 and cells[0] == "因素" and cells[1] == "类别":
+                        header_i = i
+                        break
+                if header_i < 0:
+                    continue
+                out = [["因素", "类别", "数量", "占比"]]
+                for row in tb[header_i + 1:]:
+                    if not isinstance(row, list):
+                        continue
+                    cells = self.__build_pad_row(row)
+                    a, b, c, d = [x.strip() for x in cells]
+                    if a == "总计":
+                        break
+                    if a in ("数据分布", "统计人", "数据总量（序列）", "疾病构成"):
+                        continue
+                    if not a and not b and not c:
+                        continue
+                    out.append([a, b, c, self.__build_fmt_pct(d)])
+                if len(out) > 1:
+                    return self.__build_fill_total(out)
+        return None
+
+    def __dd015_dist_for_product(self, product_id):
+        for dt in ("dd_015_03", "dd_015_02", "dd_015_01"):
+            dist = self.__parse_dd015_dist(self.__latest_data_content(product_id, dt))
+            if dist:
+                return dist
+        return None
+
     def __iter_content_tables(self, content):
         def walk(ns):
             for n in ns or []:
@@ -1433,6 +1472,9 @@ class Server(object):
             qty = self.__dataset_qty(product_id, BUILD_DATASET_NAME.get(doc_type))
             if qty:
                 content["case_count"] = qty
+            dist = self.__dd015_dist_for_product(product_id)
+            if dist:
+                content["dist_rows"] = dist
             return content
         if doc_type in TRAIN_DOC_TYPES:
             build_type = TRAIN_BUILD_TYPE.get(doc_type)

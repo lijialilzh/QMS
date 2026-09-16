@@ -460,6 +460,24 @@ def parse_age(raw):
     return n if n < 1000 else None
 
 
+def parse_thickness(raw, default):
+    s = str(raw or "").strip()
+    if re.search(r"mm$", s, re.I):
+        s = s[:-2].strip()
+    if not s:
+        return default
+    inner = s.strip("[]").strip()
+    if re.search(r"[-~～—至]", inner) and not re.match(r"^-?\d+(\.\d+)?$", inner):
+        compact = re.sub(r"\s*至\s*", "-", inner)
+        compact = re.sub(r"[～—~]", "-", compact)
+        compact = re.sub(r"\s+", "", compact)
+        return "[%s]" % compact
+    try:
+        return float(s)
+    except Exception:
+        return default
+
+
 def age_from_dates(birth, study):
     b = re.sub(r"\D", "", str(birth or ""))
     s = re.sub(r"\D", "", str(study or ""))
@@ -501,7 +519,10 @@ def tags_to_row(tags):
             if age is not None:
                 row["AGE"] = age
             continue
-        if key in ("KVP", "THICKNESS", "CTDIvol", "SpacingBetweenSlices"):
+        if key == "THICKNESS":
+            row[key] = parse_thickness(raw, lookup[key][3])
+            continue
+        if key in ("KVP", "CTDIvol", "SpacingBetweenSlices"):
             try:
                 row[key] = float(raw)
             except Exception:

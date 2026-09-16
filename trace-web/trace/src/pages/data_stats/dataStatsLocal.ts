@@ -1,5 +1,7 @@
 // 本机解析 DICOM 头并汇总。口径对齐 scripts/data_stats，见 docs/function_docs/101_数据统计.md。
 
+import * as XLSX from "xlsx";
+
 export type CaseRow = Record<string, any>;
 export type StatsKind = "raw" | "base" | "ann";
 export type SheetAoa = { name: string; rows: any[][] };
@@ -13,6 +15,7 @@ export const STATS_TITLES: Record<StatsKind, string> = {
 export const DETAIL_COLUMNS = [
     "TXID", "PatientID", "SeriesInstanceUID", "SEX", "DEVICE", "ConvolutionKernel",
     "PhotometricInterpretation", "AGE", "KVP", "THICKNESS", "PixelSpacing",
+    "gt", "pred", "dice",
 ];
 
 export const DETAIL_PREVIEW_COLUMNS = [
@@ -20,7 +23,7 @@ export const DETAIL_PREVIEW_COLUMNS = [
 ];
 
 const HEADER_BYTES = 512 * 1024;
-const AGE_BINS = [0, 18, 40, 60, 110];
+const AGE_BINS = [0, 17, 40, 90];
 const SKIP_EXT = /\.(txt|json|xml|csv|xlsx|xls|png|jpg|jpeg|gif|bmp|html|md|zip|pdf)$/i;
 const LONG_VR = new Set(["OB", "OW", "OF", "SQ", "UT", "UN", "OD", "OL", "UC", "UR", "OV"]);
 
@@ -218,6 +221,20 @@ function parseAge(raw: string): number | null {
     return Number.isFinite(n) ? n : null;
 }
 
+/** 层厚：单一数字显示绝对值；tag 为 1-3 / [1-3] 等区间则保留区间。 */
+function parseThickness(raw: any, def: any) {
+    let s = String(raw ?? "").trim();
+    if (/mm$/i.test(s)) s = s.replace(/mm$/i, "").trim();
+    if (!s) return def;
+    const inner = s.replace(/^\[/, "").replace(/\]$/, "").trim();
+    if (/[-~～—至]/.test(inner) && !/^-?\d+(\.\d+)?$/.test(inner)) {
+        const compact = inner.replace(/\s*至\s*/g, "-").replace(/[～—~]/g, "-").replace(/\s+/g, "");
+        return `[${compact}]`;
+    }
+    const n = parseFloat(s);
+    return Number.isFinite(n) ? n : def;
+}
+
 function ageFromDates(birth: string, study: string): number | null {
     const b = String(birth).replace(/\D/g, "");
     const s = String(study).replace(/\D/g, "");
@@ -236,7 +253,7 @@ function ageFromDates(birth: string, study: string): number | null {
 
 function ageBinLabel(age: number) {
     for (let i = 1; i < AGE_BINS.length; i++) {
-        if (age <= AGE_BINS[i]) return `(${AGE_BINS[i - 1]}.0, ${AGE_BINS[i]}.0]`;
+        if (age <= AGE_BINS[i]) return `(${AGE_BINS[i - 1]}, ${AGE_BINS[i]}]`;
     }
     return "";
 }
@@ -266,7 +283,11 @@ function tagsToRow(tags: Record<string, string>): CaseRow | null {
             if (age != null) row.AGE = age;
             return;
         }
-        if (t.key === "KVP" || t.key === "THICKNESS" || t.key === "CTDIvol" || t.key === "SpacingBetweenSlices") {
+        if (t.key === "THICKNESS") {
+            row[t.key] = parseThickness(raw, t.def);
+            return;
+        }
+        if (t.key === "KVP" || t.key === "CTDIvol" || t.key === "SpacingBetweenSlices") {
             const n = parseFloat(raw);
             row[t.key] = Number.isFinite(n) ? n : t.def;
             return;
@@ -362,6 +383,7 @@ function mergeByStudy(rows: CaseRow[]): CaseRow[] {
 export const KEEP_CASE_KEYS = [
     "TXID", "PatientID", "SeriesInstanceUID", "SEX", "DEVICE", "ConvolutionKernel",
     "PhotometricInterpretation", "AGE", "KVP", "THICKNESS", "PixelSpacing",
+    "gt", "pred", "dice",
 ];
 
 function trimCaseRow(row: CaseRow): CaseRow {
@@ -377,6 +399,74 @@ function trimCaseRow(row: CaseRow): CaseRow {
 }
 
 export const normalizeStatsRows = (rows: CaseRow[]): CaseRow[] => mergeByStudy(rows || []);
+
+/**
+ * 解析上传的 Excel（含 TXID、gt、pred、dice 列），按 TXID 匹配行并覆盖这三列
+ * （Excel 空单元格覆盖为空，数值 0 覆盖为 0）。未出现在 Excel 中的病例保持原值。
+ * 表头列名兼容大小写与空格（如 GT/Pred/DICE）。
+ */
+export const importGpdExcel = async (rows: CaseRow[], file: File): Promise<{ rows: CaseRow[]; matched: number; unmatched: string[] }> => {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: "array" });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    if (!sheet) throw new Error("Excel 无有效工作表");
+    const aoa: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true });
+    if (!aoa.length) throw new Error("Excel 内容为空");
+    // 表头定位：TXID / gt / pred / dice（列名兼容大小写与空格）
+    const header = (aoa[0] || []).map((c) => String(c ?? "").trim().toLowerCase());
+    const colOf = (names: string[]) => header.findIndex((h) => names.includes(h));
+    const txCol = colOf(["txid", "tx id", "病例文件夹"]);
+    const gtCol = colOf(["gt", "g/t", "金标准"]);
+    const predCol = colOf(["pred", "prediction", "预测"]);
+    const diceCol = colOf(["dice", "dice值", "dci系数", "dci"]);
+    const missing: string[] = [];
+    if (txCol < 0) missing.push("TXID");
+    if (gtCol < 0) missing.push("gt");
+    if (predCol < 0) missing.push("pred");
+    if (diceCol < 0) missing.push("dice");
+    if (missing.length) {
+        throw new Error(`Excel 不符合模板，缺少列：${missing.join("、")}。第 1 行应为 TXID、gt、pred、dice`);
+    }
+    // 读入映射表：TXID -> { gt, pred, dice }；空单元格记为空字符串，0 记为 "0"，匹配到的行整列覆盖
+    const cellText = (v: any) => {
+        if (v == null) return "";
+        const s = String(v).trim();
+        return (!s || s === "/") ? "" : s;
+    };
+    const gpd = new Map<string, { gt: string; pred: string; dice: string }>();
+    for (let i = 1; i < aoa.length; i++) {
+        const r = aoa[i] || [];
+        const tx = String(r[txCol] ?? "").trim();
+        if (!tx) continue;
+        gpd.set(tx, { gt: cellText(r[gtCol]), pred: cellText(r[predCol]), dice: cellText(r[diceCol]) });
+    }
+    if (!gpd.size) throw new Error("Excel 没有数据行");
+    // 按 TXID 匹配填充
+    let matched = 0;
+    const used = new Set<string>();
+    const next = (rows || []).map((row) => {
+        const tx = String(row.TXID || "").trim();
+        if (!tx) return row;
+        // 先精确匹配，再尝试去掉常见前后缀（如尾缀 -1/_1 等）匹配
+        let hit = gpd.get(tx);
+        if (!hit) {
+            for (const [k] of gpd) {
+                if (k === tx || k.replace(/[\s_-]+$/, "") === tx.replace(/[\s_-]+$/, "")) { hit = gpd.get(k); used.add(k); break; }
+            }
+        } else {
+            used.add(tx);
+        }
+        if (!hit) return row;
+        matched += 1;
+        const out = { ...row };
+        out.gt = hit.gt;
+        out.pred = hit.pred;
+        out.dice = hit.dice;
+        return out;
+    });
+    const unmatched = Array.from(gpd.keys()).filter((k) => !used.has(k));
+    return { rows: next, matched, unmatched };
+};
 
 function caseKey(dirParts: string[]) {
     let end = dirParts.length;
@@ -457,8 +547,8 @@ export async function statsFromFiles(
 function addFactor(grid: any[][], item: string, counts: Map<string, number>, total: number) {
     let first = true;
     counts.forEach((count, cat) => {
-        const ratio = total ? Math.round((count / total) * 1e6) / 1e6 : 0;
-        grid.push([first ? item : "", cat, count, ratio]);
+        const ratio = total ? (count / total) : 0;
+        grid.push([first ? item : "", cat, count, ratio.toFixed(2)]);
         first = false;
     });
 }
@@ -483,6 +573,7 @@ function countByAll(rows: CaseRow[], getter: (r: CaseRow) => string) {
     });
     return map;
 }
+void countByAll;
 
 export function buildStatsGrid(
     title: string,
@@ -511,7 +602,15 @@ export function buildStatsGrid(
         hasAge = true;
         ageMap.set(label, (ageMap.get(label) || 0) + 1);
     });
-    if (hasAge) addFactor(grid, "年龄", ageMap, total);
+    if (hasAge) {
+        // 年龄分箱按区间顺序展示（0-17 → 17-40 → 40-90），空区间也显示（数量0）
+        const sortedAgeMap = new Map<string, number>();
+        AGE_BINS.slice(1).forEach((_, i) => {
+            const label = `(${AGE_BINS[i]}, ${AGE_BINS[i + 1]}]`;
+            sortedAgeMap.set(label, ageMap.get(label) || 0);
+        });
+        addFactor(grid, "年龄", sortedAgeMap, total);
+    }
     addFactor(grid, "设备", countBy(rows, (r) => r.device || ""), total);
     addFactor(grid, "KVP", countBy(rows, (r) => r.kvp || ""), total);
     addFactor(grid, "层厚", countBy(rows, (r) => r.thickness || ""), total);
@@ -520,7 +619,11 @@ export function buildStatsGrid(
 
 export function buildDetailAoa(rows: CaseRow[]) {
     const aoa: any[][] = [DETAIL_COLUMNS];
-    rows.forEach((r) => aoa.push(DETAIL_COLUMNS.map((c) => (r[c] == null ? "" : r[c]))));
+    rows.forEach((r) => aoa.push(DETAIL_COLUMNS.map((c) => {
+        const v = r[c] == null ? "" : r[c];
+        if ((c === "gt" || c === "pred" || c === "dice") && String(v).trim() === "") return "/";
+        return v;
+    })));
     return aoa;
 }
 
@@ -590,15 +693,40 @@ export function buildTriageAoa(rows: CaseRow[]) {
     const header = ["Item", "Catgory", "pos_cases", "neg_cases", "Sen", "Spe"];
     const body: any[][] = [];
     const keys: Array<{ item: string; getter: (r: CaseRow) => string }> = [
-        { item: "SEX", getter: (r) => r.SEX == null ? String(r.sex || "") : String(r.SEX) },
-        { item: "DEVICE", getter: (r) => r.DEVICE == null ? String(r.device || "") : String(r.DEVICE) },
+        { item: "性别", getter: (r) => r.SEX == null ? String(r.sex || "") : String(r.SEX) },
+        { item: "设备", getter: (r) => r.DEVICE == null ? String(r.device || "") : String(r.DEVICE) },
         { item: "KVP", getter: (r) => r.KVP == null ? String(r.kvp || "") : String(r.KVP) },
-        { item: "THICKNESS", getter: (r) => r.THICKNESS == null ? String(r.thickness || "") : String(r.THICKNESS) },
-        { item: "ConvolutionKernel", getter: (r) => r.ConvolutionKernel == null ? "" : String(r.ConvolutionKernel) },
+        { item: "层厚", getter: (r) => r.THICKNESS == null ? String(r.thickness || "") : String(r.THICKNESS) },
+        { item: "重建算法", getter: (r) => r.ConvolutionKernel == null ? "" : String(r.ConvolutionKernel) },
     ];
+    // gt 值：1=阳性，0=阴性（无 gt 视为阳性，保持总数口径）
+    const gtPos = (r: CaseRow) => String(r.gt ?? "").trim() !== "0";
+    const predPos = (r: CaseRow) => String(r.pred ?? "").trim() === "1";
     keys.forEach(({ item, getter }) => {
-        countByAll(rows, getter).forEach((count, cat) => {
-            body.push([item, cat, count, 0, "", ""]);
+        const cats = new Map<string, { pos: number; neg: number; tp: number; fn: number; fp: number; tn: number }>();
+        rows.forEach((r) => {
+            const cat = getter(r) || "(空)";
+            let hit = cats.get(cat);
+            if (!hit) {
+                hit = { pos: 0, neg: 0, tp: 0, fn: 0, fp: 0, tn: 0 };
+                cats.set(cat, hit);
+            }
+            const isPos = gtPos(r);
+            if (isPos) hit.pos += 1; else hit.neg += 1;
+            // 灵敏度/特异度四格表（有 gt+pred 才计入）
+            const hasGt = String(r.gt ?? "").trim() !== "";
+            const hasPred = String(r.pred ?? "").trim() !== "";
+            if (hasGt && hasPred) {
+                const p = predPos(r);
+                if (isPos) { p ? hit.tp += 1 : hit.fn += 1; }
+                else { p ? hit.fp += 1 : hit.tn += 1; }
+            }
+        });
+        cats.forEach((hit, cat) => {
+            // 灵敏度 = TP/(TP+FN)；特异度 = TN/(TN+FP)；无法计算时用 / 占位
+            const sen = hit.tp + hit.fn ? Math.round((hit.tp / (hit.tp + hit.fn)) * 1000) / 1000 : "/";
+            const spe = hit.tn + hit.fp ? Math.round((hit.tn / (hit.tn + hit.fp)) * 1000) / 1000 : "/";
+            body.push([item, cat, hit.pos, hit.neg, sen, spe]);
         });
     });
     return [header, ...body];
