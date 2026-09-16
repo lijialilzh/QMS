@@ -51,9 +51,12 @@ class Perms(Enum):
     prod_hospital_view = PermForm(code="prod_hospital_view", name="查看", p_code=prod_hospital.code)
     prod_hospital_edit = PermForm(code="prod_hospital_edit", name="编辑", p_code=prod_hospital.code)
 
-    prod_algo_module = PermForm(code="prod_algo_module", name="产品管理/算法模块管理")
+    prod_algo_module = PermForm(code="prod_algo_module", name="产品管理/导航模块管理")
     prod_algo_module_view = PermForm(code="prod_algo_module_view", name="查看", p_code=prod_algo_module.code)
     prod_algo_module_edit = PermForm(code="prod_algo_module_edit", name="编辑", p_code=prod_algo_module.code)
+    prod_algo_chapter = PermForm(code="prod_algo_chapter", name="产品管理/章节模块管理")
+    prod_algo_chapter_view = PermForm(code="prod_algo_chapter_view", name="查看", p_code=prod_algo_chapter.code)
+    prod_algo_chapter_edit = PermForm(code="prod_algo_chapter_edit", name="编辑", p_code=prod_algo_chapter.code)
 
     haz = PermForm(code="haz", name="基础数据/HAZ管理")
     haz_view = PermForm(code="haz_view", name="查看", p_code=haz.code)
@@ -363,6 +366,7 @@ def get_default_role_perm_codes():
         "prod_device", "prod_device_view", "prod_device_edit",
         "prod_hospital", "prod_hospital_view", "prod_hospital_edit",
         "prod_algo_module", "prod_algo_module_view", "prod_algo_module_edit",
+        "prod_algo_chapter", "prod_algo_chapter_view", "prod_algo_chapter_edit",
     }
 
     # 产品管理权限（开发/测试/RA仅查看）
@@ -374,6 +378,7 @@ def get_default_role_perm_codes():
         "prod_device", "prod_device_view",
         "prod_hospital", "prod_hospital_view",
         "prod_algo_module", "prod_algo_module_view",
+        "prod_algo_chapter", "prod_algo_chapter_view",
     }
 
     # 风险追溯管理权限

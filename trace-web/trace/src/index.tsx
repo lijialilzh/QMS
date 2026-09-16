@@ -26,6 +26,7 @@ import PrintServiceCfg from "./pages/syscfg/PrintServiceCfg";
 import ProdDeviceRes from "./pages/syscfg/ProdDeviceRes";
 import ProdHospitals from "./pages/syscfg/ProdHospitals";
 import ProdAlgoModules from "./pages/syscfg/ProdAlgoModules";
+import ProdAlgoChapters from "./pages/syscfg/ProdAlgoChapters";
 import Hazs from "./pages/basedata/Hazs";
 import Rcms from "./pages/basedata/Rcms";
 import Csts from "./pages/basedata/Csts";
@@ -148,6 +149,7 @@ const router = createRouter([
             { path: "/prod_device_res", element: <ProdDeviceRes /> },
             { path: "/prod_hospitals", element: <ProdHospitals /> },
             { path: "/prod_algo_modules", element: <ProdAlgoModules /> },
+            { path: "/prod_algo_chapters", element: <ProdAlgoChapters /> },
 
             { path: "/hazs", element: <Hazs /> },
             { path: "/rcms", element: <Rcms /> },

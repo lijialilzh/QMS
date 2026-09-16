@@ -5,10 +5,10 @@ import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
-import * as Api from "@/api/ApiProdAlgoModule";
+import * as Api from "@/api/ApiProdAlgoChapter";
 import * as ApiProduct from "@/api/ApiProduct";
 
-const DEFAULT_MODULES = ["肺栓塞分割", "肺叶分割"];
+const DEFAULT_MODULES = ["肺栓塞分诊", "肺叶分割"];
 
 export default () => {
     const { t: ts } = useTranslation();
@@ -36,7 +36,7 @@ export default () => {
             return;
         }
         dispatch({ loading: true });
-        Api.list_prod_algo_module({ prod_id: prodId, page_index: 0, page_size: 1000 }).then((res: any) => {
+        Api.list_prod_algo_chapter({ prod_id: prodId, page_index: 0, page_size: 1000 }).then((res: any) => {
             if (res.code !== Api.C_OK) {
                 dispatch({ loading: false, rows: [] });
                 message.error(res.msg);
@@ -45,7 +45,7 @@ export default () => {
             const rows = res.data.rows || [];
             if (allowSeed && !rows.length && DEFAULT_MODULES.length) {
                 const jobs = DEFAULT_MODULES.map((name, i) =>
-                    Api.add_prod_algo_module({ prod_id: prodId, name, sort_order: i + 1 })
+                    Api.add_prod_algo_chapter({ prod_id: prodId, name, sort_order: i + 1 })
                 );
                 Promise.all(jobs).then(() => loadModules(prodId, false)).catch(() => {
                     dispatch({ loading: false, rows });
@@ -62,7 +62,7 @@ export default () => {
             return;
         }
         const maxSort = (data.rows || []).reduce((m: number, r: any) => Math.max(m, r.sort_order || 0), 0);
-        Api.add_prod_algo_module({
+        Api.add_prod_algo_chapter({
             prod_id: data.targetProdId,
             name: "",
             sort_order: maxSort + 1,
@@ -81,7 +81,7 @@ export default () => {
             title: ts("action"),
             content: ts("confirm_delete"),
             onOk: () => {
-                Api.delete_prod_algo_modules({ id: row.id }).then((res: any) => {
+                Api.delete_prod_algo_chapters({ id: row.id }).then((res: any) => {
                     if (res.code === Api.C_OK) {
                         message.success(res.msg);
                         loadModules(data.targetProdId, false);
@@ -110,8 +110,8 @@ export default () => {
         const targetSort = target.sort_order || swapIdx + 1;
         dispatch({ updating: true });
         Promise.all([
-            Api.update_prod_algo_module({ id: cur.id, prod_id: cur.prod_id, name: cur.name, sort_order: targetSort }),
-            Api.update_prod_algo_module({ id: target.id, prod_id: target.prod_id, name: target.name, sort_order: curSort }),
+            Api.update_prod_algo_chapter({ id: cur.id, prod_id: cur.prod_id, name: cur.name, sort_order: targetSort }),
+            Api.update_prod_algo_chapter({ id: target.id, prod_id: target.prod_id, name: target.name, sort_order: curSort }),
         ]).then((results: any[]) => {
             if (results.every((r: any) => r.code === Api.C_OK)) {
                 dispatch({ updating: false });
@@ -131,7 +131,7 @@ export default () => {
         const edit = { ...data.targetEdit };
         if (!edit?.id || data.updating) return;
         dispatch({ updating: true });
-        Api.update_prod_algo_module({ ...edit }).then((res: any) => {
+        Api.update_prod_algo_chapter({ ...edit }).then((res: any) => {
             if (res.code === Api.C_OK) {
                 const rows = (data.rows || []).map((r: any) => (r.id === edit.id ? { ...r, ...edit } : r));
                 dispatch({ updating: false, targetEdit: {}, editingField: null, rows });

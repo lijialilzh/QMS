@@ -280,13 +280,13 @@ export default () => {
                         {/* 测试记录列表 */}
                         <div style={{ marginBottom: 8, fontSize: 14, fontWeight: 600, color: "#333" }}>测试项目</div>
                         <Table
-                            className="ftr-record-table"
                             columns={columns}
                             dataSource={records}
                             pagination={false}
                             size="small"
                             bordered
                             rowKey="key"
+                            scroll={{ x: 700 }}
                         />
                     </div>
                 </div>

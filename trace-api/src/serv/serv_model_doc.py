@@ -27,6 +27,7 @@ from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..model.project_member import ProjectMember
 from ..model.srs_doc import SrsDoc
 from ..model.srs_req import SrsReq
+from ..model.prod_algo_chapter import ProdAlgoChapter
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
 from ..obj.vobj_user import UserObj
@@ -220,7 +221,7 @@ def _empty_template(doc_type):
 
 class Server(object):
 
-    def __default_content(self, doc_type):
+    def __default_content(self, doc_type, product_id=None):
         if doc_type in EQ_DOC_TYPES:
             return {"rows": self.__eq_default_rows(doc_type)}
         if doc_type in CRR_DOC_TYPES:
@@ -232,7 +233,10 @@ class Server(object):
         if doc_type in TEST_DOC_TYPES:
             return self.__test_default_content(doc_type)
         if doc_type in PKG_DOC_TYPES:
-            return self.__pkg_default_content(doc_type)
+            content = self.__pkg_default_content(doc_type)
+            if doc_type in ("md_016", "md_018"):
+                self.__fill_model_func_row(content, product_id, doc_type)
+            return content
         raw = DEFAULT_CONTENTS.get(doc_type)
         content = copy.deepcopy(raw) if raw else _empty_template(doc_type)
         self.__drop_product_info(content)
@@ -241,12 +245,286 @@ class Server(object):
             self.__fill_md007_algo_info(content)
         if doc_type in ("md_019", "md_020"):
             self.__complete_env_maint_chapter(content, doc_type)
+        if doc_type == "pd_003":
+            self.__fill_algo_chapters(content, product_id, "pd_003")
+        if doc_type == "md_004":
+            self.__fill_algo_chapters(content, product_id, "md_004")
+        if doc_type in ("md_007", "md_014", "md_016", "md_018"):
+            self.__fill_algo_chapters(content, product_id, doc_type)
         return content
+
+    def __fill_algo_chapters(self, content, product_id=None, doc_type=None):
+        """pd_003/md_004/md_007/md_014/md_016/md_018：模块/模型功能从章节模块管理获取。
+        pd_003: 「算法描述及要求」下的二级章节
+        md_004: 「各功能模块设计」下的二级章节
+        md_007/md_014: 顶级模块章节（xxx模块/xxx测试）整章替换
+        md_016/md_018: 表格中的「模型功能」/「功能」字段值自动填充
+        """
+        if not isinstance(content, dict):
+            return
+        if doc_type in ("md_007", "md_014"):
+            self.__fill_md007_chapters(content, product_id, doc_type)
+            return
+        if doc_type in ("md_016", "md_018"):
+            self.__fill_model_func_row(content, product_id, doc_type)
+            return
+        if not isinstance(content.get("sections"), list):
+            return
+        # 不同 doc_type 对应的目标章节名
+        target_title = "算法描述及要求" if doc_type == "pd_003" else "各功能模块设计"
+        # 找到目标章节
+        algo_section = None
+        for s in content["sections"]:
+            if target_title in str(s.get("title") or ""):
+                algo_section = s
+                break
+            for c in (s.get("children") or []):
+                if target_title in str(c.get("title") or ""):
+                    algo_section = c
+                    break
+            if algo_section:
+                break
+        if not algo_section:
+            return
+        # 从章节模块管理获取模块列表
+        modules = []
+        if product_id:
+            rows = db.session.execute(
+                select(ProdAlgoChapter)
+                .where(ProdAlgoChapter.prod_id == product_id)
+                .order_by(ProdAlgoChapter.sort_order.asc(), ProdAlgoChapter.id.asc())
+            ).scalars().all()
+            modules = [r.name for r in rows if r.name]
+        if not modules:
+            return  # 没有章节模块数据时保留模板默认
+        # 保留原有模块的子章节内容（算法描述/算法要求），作为模板
+        old_children = algo_section.get("children") or []
+        default_template = old_children[0] if old_children else {
+            "title": "", "body": "", "tables": [], "children": [
+                {"title": "算法描述", "body": "", "tables": [], "children": []},
+                {"title": "算法要求", "body": "", "tables": [], "children": []},
+            ],
+        }
+        # 建立旧模块名 → 旧 child 的映射，用于按名匹配（保留用户编辑过的内容）
+        # 先精确匹配完整名，再去掉"模块"后缀模糊匹配
+        old_map_exact = {}
+        old_map_fuzzy = {}
+        for oc in old_children:
+            old_name = str(oc.get("title") or "").strip()
+            if old_name:
+                old_map_exact[old_name] = oc
+            old_key = old_name.replace("模块", "").strip()
+            if old_key and old_key not in old_map_fuzzy:
+                old_map_fuzzy[old_key] = oc
+        # 用章节模块名重建二级章节，保留已有模块的内容
+        new_children = []
+        for name in modules:
+            match_key = name.replace("模块", "").strip()
+            if name in old_map_exact:
+                # 精确匹配，保留原有完整内容，不改 title
+                child = copy.deepcopy(old_map_exact[name])
+            elif match_key in old_map_fuzzy:
+                # 模糊匹配（去掉"模块"后缀相同），保留原有内容，只改 title
+                child = copy.deepcopy(old_map_fuzzy[match_key])
+                child["title"] = name
+            else:
+                # 相似度匹配：找最长公共子串≥3字的旧模块（如"肺栓塞分诊"~"肺栓塞分割"）
+                best_oc = None
+                best_len = 0
+                for old_key, oc in old_map_fuzzy.items():
+                    # 计算最长公共子串长度
+                    m, n = len(match_key), len(old_key)
+                    if m == 0 or n == 0:
+                        continue
+                    # DP求最长公共子串
+                    prev = [0] * (n + 1)
+                    cur = [0] * (n + 1)
+                    common = 0
+                    for i in range(1, m + 1):
+                        cur = [0] * (n + 1)
+                        for j in range(1, n + 1):
+                            if match_key[i - 1] == old_key[j - 1]:
+                                cur[j] = prev[j - 1] + 1
+                                if cur[j] > common:
+                                    common = cur[j]
+                        prev = cur
+                    if common >= 3 and common > best_len:
+                        best_len = common
+                        best_oc = oc
+                if best_oc is not None:
+                    # 相似匹配到旧模块，复用其内容，只改 title
+                    child = copy.deepcopy(best_oc)
+                    child["title"] = name
+                else:
+                    # 未匹配，用第一个旧 child 做模板，把旧关键词替换为新模块名
+                    child = copy.deepcopy(default_template)
+                    old_keyword = str(default_template.get("title") or "").replace("模块", "").strip()
+                    child["title"] = name
+                    # 替换三级目录 body 中的旧模块关键词为新模块名
+                    for sub in (child.get("children") or []):
+                        if sub.get("body"):
+                            sub["body"] = sub["body"].replace(old_keyword, name)
+                    # 替换本节点 body 中的旧关键词
+                    if child.get("body"):
+                        child["body"] = child["body"].replace(old_keyword, name)
+            new_children.append(child)
+        algo_section["children"] = new_children
+
+    def __fill_model_func_row(self, content, product_id=None, doc_type=None):
+        """md_016模型工程封装记录/md_018模型服务提交记录：「模型功能」从章节模块管理填充。
+        md_016: 扁平表单结构，字段 model_func
+        md_018: sections 结构，表格中「功能」行
+        """
+        # 从章节模块管理获取模块列表，逗号拼接
+        modules = []
+        if product_id:
+            rows = db.session.execute(
+                select(ProdAlgoChapter)
+                .where(ProdAlgoChapter.prod_id == product_id)
+                .order_by(ProdAlgoChapter.sort_order.asc(), ProdAlgoChapter.id.asc())
+            ).scalars().all()
+            modules = [r.name for r in rows if r.name]
+        if not modules:
+            return
+        func_value = "，".join(modules)
+        # 扁平表单结构（md_016）：model_func 字段
+        if isinstance(content, dict) and isinstance(content.get("model_func"), str):
+            content["model_func"] = func_value
+            logger.info("md_016 model_func filled from prod_algo_chapter: %s", func_value)
+            return
+        # sections 表格结构（md_018）：表格中「模型功能」/「功能」行
+        labels = ("模型功能", "功能")
+        filled = False
+        for s in (content.get("sections") or []):
+            for tbl in (s.get("tables") or []):
+                for r in tbl:
+                    if not isinstance(r, list) or not r:
+                        continue
+                    key = str(r[0]).strip()
+                    if key in labels and len(r) >= 2:
+                        r[1] = func_value
+                        filled = True
+        if filled:
+            logger.info("md_018 model func row filled from prod_algo_chapter: %s", func_value)
+
+    def __fill_md007_chapters(self, content, product_id=None, doc_type=None):
+        """md_007/md_014：顶级模块章节按章节模块管理重建，保留匹配模块的内容。
+        md_007: xxx模块（算法介绍/模块设计描述）
+        md_014: xxx测试/xxx模型测试（测试指标/测试数据/测试结果等）
+        """
+        sections = content.get("sections") or []
+        # 固定章节名（两个文档共有的固定章节）
+        fixed_titles = {
+            "算法方案详细设计", "文件修订记录", "产品信息", "概述", "算法基本信息", "参考文献", "算法介绍",
+            "模型测试报告", "参考文件", "引言", "测试环境", "硬件环境", "软件环境", "附件1 评审记录",
+            "测试目的", "测试背景", "测试范围", "术语及缩略语",
+        }
+        # md_014 模块章节特征：子章节含"测试指标"，或标题以"测试"/"模型测试"结尾
+        sub_markers = ["算法介绍", "测试指标"]
+        module_indexes = []
+        for i, s in enumerate(sections):
+            title = str(s.get("title") or "").strip()
+            if not title or title in fixed_titles:
+                continue
+            if s.get("ref_type") in ("cover", "revision", "basic_info"):
+                continue
+            # 顶级模块章节：子章节含特征标记，或标题以"模块"/"测试"结尾
+            child_titles = [str(c.get("title") or "") for c in (s.get("children") or [])]
+            has_marker = any(m in child_titles for m in sub_markers)
+            if has_marker or title.endswith("模块") or title.endswith("测试"):
+                module_indexes.append(i)
+        if not module_indexes:
+            return
+        # 从章节模块管理获取模块列表
+        modules = []
+        if product_id:
+            rows = db.session.execute(
+                select(ProdAlgoChapter)
+                .where(ProdAlgoChapter.prod_id == product_id)
+                .order_by(ProdAlgoChapter.sort_order.asc(), ProdAlgoChapter.id.asc())
+            ).scalars().all()
+            modules = [r.name for r in rows if r.name]
+        if not modules:
+            return
+        old_module_sections = [sections[i] for i in module_indexes]
+        first_idx = module_indexes[0]
+        default_template = old_module_sections[0]
+        # 建立旧模块名映射（精确+去"模块"后缀模糊）
+        old_map_exact = {}
+        old_map_fuzzy = {}
+        for oc in old_module_sections:
+            old_name = str(oc.get("title") or "").strip()
+            if old_name:
+                old_map_exact[old_name] = oc
+            old_key = old_name.replace("模块", "").strip()
+            if old_key and old_key not in old_map_fuzzy:
+                old_map_fuzzy[old_key] = oc
+
+        def best_fuzzy(name):
+            """相似度匹配：最长公共子串≥3字"""
+            mk = name.replace("模块", "").strip()
+            best_oc, best_len = None, 0
+            for old_key, oc in old_map_fuzzy.items():
+                m, n = len(mk), len(old_key)
+                if m == 0 or n == 0:
+                    continue
+                prev = [0] * (n + 1)
+                common = 0
+                for i in range(1, m + 1):
+                    cur = [0] * (n + 1)
+                    for j in range(1, n + 1):
+                        if mk[i - 1] == old_key[j - 1]:
+                            cur[j] = prev[j - 1] + 1
+                            if cur[j] > common:
+                                common = cur[j]
+                    prev = cur
+                if common >= 3 and common > best_len:
+                    best_len = common
+                    best_oc = oc
+            return best_oc
+
+        # 按章节模块名重建顶级模块章节
+        new_sections = []
+        for name in modules:
+            match_key = name.replace("模块", "").strip()
+            if name in old_map_exact:
+                sec = copy.deepcopy(old_map_exact[name])
+            elif match_key in old_map_fuzzy:
+                sec = copy.deepcopy(old_map_fuzzy[match_key])
+                sec["title"] = name
+            else:
+                best_oc = best_fuzzy(name)
+                if best_oc is not None:
+                    sec = copy.deepcopy(best_oc)
+                    sec["title"] = name
+                else:
+                    sec = copy.deepcopy(default_template)
+                    sec["title"] = name
+                    old_title = str(default_template.get("title") or "").strip()
+                    old_keyword = old_title.replace("模块", "").strip()
+                    # 替换各级内容中的旧关键词为新模块名（先替换带"模块"的全名，再替换短名）
+                    def replace_kw(node):
+                        if node.get("body"):
+                            node["body"] = node["body"].replace(old_title, name).replace(old_keyword, name)
+                        for tbl in (node.get("tables") or []):
+                            for r in tbl:
+                                for i in range(len(r)):
+                                    if isinstance(r[i], str):
+                                        r[i] = r[i].replace(old_title, name).replace(old_keyword, name)
+                        for c in (node.get("children") or []):
+                            replace_kw(c)
+                    replace_kw(sec)
+            new_sections.append(sec)
+        # 替换原模块章节区间：删除旧的，在原第一个模块章节位置插入新的
+        content["sections"] = sections[:first_idx] + new_sections + sections[module_indexes[-1] + 1:]
 
     def __to_obj(self, row: ModelDoc, product: Product = None):
         obj = ModelDocObj(**row.dict())
-        obj.content = self.__normalize_content(obj.content, row.doc_type)
+        obj.content = self.__normalize_content(obj.content, row.doc_type, product_id=row.product_id)
         key = row.doc_type or ""
+        # pd_003/md_004/md_007/md_014/md_016/md_018：查看时从章节模块管理自动获取（不修改数据库，只影响返回内容）
+        if key in ("pd_003", "md_004", "md_007", "md_014", "md_016", "md_018"):
+            self.__fill_algo_chapters(obj.content, row.product_id, key)
         if key not in EQ_DOC_TYPES and key not in CRR_DOC_TYPES and key not in BUILD_DOC_TYPES and key not in TRAIN_DOC_TYPES and key not in TEST_DOC_TYPES and key not in PKG_DOC_TYPES:
             self.__fill_cover_meta(obj.content, obj.version)
             serv_review_util.fill_cover_dates(
@@ -1177,7 +1455,7 @@ class Server(object):
             return
         obj.content = self.__apply_dataset_counts(obj.content or {}, obj.doc_type, obj.product_id)
 
-    def __normalize_content(self, content, doc_type=None):
+    def __normalize_content(self, content, doc_type=None, product_id=None):
         if doc_type in EQ_DOC_TYPES:
             return self.__normalize_eq_content(content, doc_type)
         if doc_type in CRR_DOC_TYPES:
@@ -1191,7 +1469,7 @@ class Server(object):
         if doc_type in PKG_DOC_TYPES:
             return self.__normalize_pkg_content(content, doc_type)
         if not isinstance(content, dict) or not isinstance(content.get("sections"), list):
-            return self.__default_content(doc_type)
+            return self.__default_content(doc_type, product_id=product_id)
         out = {"sections": [self.__normalize_node(s) for s in content["sections"]]}
         if doc_type == "md_001":
             self.__relocate_md001_tables(out)
@@ -2702,7 +2980,7 @@ class Server(object):
             row = ModelDoc(**payload)
             row.id = None
             row.file_no = serv_review_util.resolve_doc_file_no(form.product_id, form.file_no, form.version, doc_type) or None
-            row.content = self.__normalize_content(row.content, doc_type)
+            row.content = self.__normalize_content(row.content, doc_type, product_id=form.product_id)
             row.content = self.__apply_dataset_counts(row.content, doc_type, form.product_id)
             db.session.add(row)
             db.session.commit()
@@ -2743,7 +3021,7 @@ class Server(object):
                     version,
                 ) or None,
                 change_log=fromdoc.change_log,
-                content=copy.deepcopy(self.__normalize_content(fromdoc.content, fromdoc.doc_type)),
+                content=copy.deepcopy(self.__normalize_content(fromdoc.content, fromdoc.doc_type, product_id=target_pid)),
             )
             db.session.add(newdoc)
             db.session.commit()
@@ -2767,14 +3045,14 @@ class Server(object):
                     return Resp.resp_err(msg=ts("msg_obj_exist"))
             if next_pid != row.product_id or "content" in payload:
                 raw = payload.get("content", row.content)
-                filled = self.__normalize_content(raw, row.doc_type)
+                filled = self.__normalize_content(raw, row.doc_type, product_id=next_pid)
                 filled = self.__apply_dataset_counts(filled, row.doc_type, next_pid)
                 payload["content"] = filled
             for key, value in payload.items():
                 if key == "id":
                     continue
                 if key == "content":
-                    value = self.__normalize_content(value, row.doc_type)
+                    value = self.__normalize_content(value, row.doc_type, product_id=next_pid)
                     value = self.__apply_dataset_counts(value, row.doc_type, next_pid)
                 setattr(row, key, value)
             db.session.commit()
@@ -3600,7 +3878,9 @@ class Server(object):
             Document().save(output)
             output.seek(0)
             return "模型文件", "docx"
-        c = self.__autofill_for_export(self.__normalize_content(obj.content, obj.doc_type), obj)
+        c = self.__autofill_for_export(self.__normalize_content(obj.content, obj.doc_type, product_id=obj.product_id), obj)
+        if obj.doc_type in ("pd_003", "md_004", "md_007", "md_014", "md_016", "md_018"):
+            self.__fill_algo_chapters(c, obj.product_id, obj.doc_type)
         title = doc_title(obj.doc_type)
         if obj.doc_type in CRR_DOC_TYPES:
             self.__export_crr_docx(output, obj, c)

@@ -23,6 +23,7 @@ from ..model.product import Product
 from ..model.data_doc import DataDoc
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..model.project_member import ProjectMember
+from ..model.prod_algo_chapter import ProdAlgoChapter
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
 from ..obj.vobj_user import UserObj
@@ -151,18 +152,98 @@ def _empty_template(doc_type):
 
 class Server(object):
 
-    def __default_content(self, doc_type):
+    def __default_content(self, doc_type, product_id=None):
         raw = DEFAULT_CONTENTS.get(doc_type)
         content = copy.deepcopy(raw) if raw else _empty_template(doc_type)
         self.__drop_product_info(content)
         self.__ensure_review_annex(content, doc_type)
         if doc_type in ENV_DOC_TYPES:
             self.__complete_env_maint_chapter(content, doc_type)
+        if doc_type == "dd_007":
+            self.__fill_dd007_chapters(content, product_id)
         return content
+
+    def __fill_dd007_chapters(self, content, product_id=None):
+        """dd_007人员考核评价方法：模块相关章节（考核要点/考核细则/考核结果评价下的「（N）xxx」子章节）
+        及考核项目/考核人员正文，从章节模块管理自动获取。保留可匹配模块的原有内容。"""
+        if not isinstance(content, dict) or not isinstance(content.get("sections"), list):
+            return
+        modules = []
+        if product_id:
+            rows = db.session.execute(
+                select(ProdAlgoChapter)
+                .where(ProdAlgoChapter.prod_id == product_id)
+                .order_by(ProdAlgoChapter.sort_order.asc(), ProdAlgoChapter.id.asc())
+            ).scalars().all()
+            modules = [r.name for r in rows if r.name]
+        if not modules:
+            return
+
+        def match_module(name, old_titles):
+            """按名匹配旧「（N）xxx」子章节，去掉编号后比较，含模糊匹配。"""
+            key = re.sub(r"^[（(]\d+[）)]", "", str(name)).strip()
+            for ot in old_titles:
+                old_key = re.sub(r"^[（(]\d+[）)]", "", str(ot)).strip()
+                old_core = old_key.replace("模块", "").strip()
+                key_core = key.replace("模块", "").strip()
+                if old_key == key or old_core == key_core:
+                    return ot
+                # 相似度：最长公共子串≥3字
+                m, n = len(key_core), len(old_core)
+                if m == 0 or n == 0:
+                    continue
+                prev = [0] * (n + 1)
+                common = 0
+                for i in range(1, m + 1):
+                    cur = [0] * (n + 1)
+                    for j in range(1, n + 1):
+                        if key_core[i - 1] == old_core[j - 1]:
+                            cur[j] = prev[j - 1] + 1
+                            if cur[j] > common:
+                                common = cur[j]
+                    prev = cur
+                if common >= 3:
+                    return ot
+            return None
+
+        # 「考核项目」body 用模块列表拼接
+        for s in content["sections"]:
+            if "考核项目" == str(s.get("title") or "").strip():
+                s["body"] = f"本方法适用于{'、'.join(modules)}的考核场景。"
+        # 「考核要点」/「考核细则」/「考核结果评价」下的（N）xxx 子章节按模块重建
+        for s in content["sections"]:
+            if "考核流程" not in str(s.get("title") or ""):
+                continue
+            for sub in (s.get("children") or []):
+                if str(sub.get("title") or "") not in ("考核要点", "考核细则", "考核结果评价"):
+                    continue
+                old_children = sub.get("children") or []
+                if not old_children:
+                    continue
+                old_map = {str(oc.get("title") or ""): oc for oc in old_children}
+                old_titles = list(old_map.keys())
+                default_template = old_children[0]
+                new_children = []
+                for idx, name in enumerate(modules, start=1):
+                    matched_title = match_module(name, old_titles)
+                    if matched_title:
+                        child = copy.deepcopy(old_map[matched_title])
+                        child["title"] = f"（{idx}）{name}"
+                    else:
+                        child = copy.deepcopy(default_template)
+                        child["title"] = f"（{idx}）{name}"
+                        old_keyword = re.sub(r"^[（(]\d+[）)]", "", str(default_template.get("title") or "")).strip()
+                        if child.get("body"):
+                            child["body"] = child["body"].replace(old_keyword, name)
+                    new_children.append(child)
+                sub["children"] = new_children
 
     def __to_obj(self, row: DataDoc, product: Product = None):
         obj = DataDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content, row.doc_type)
+        # dd_007：查看时从章节模块管理自动获取模块章节（不修改数据库，只影响返回内容）
+        if (row.doc_type or "") == "dd_007":
+            self.__fill_dd007_chapters(obj.content, row.product_id)
         self.__fill_cover_meta(obj.content, obj.version)
         key = row.doc_type or ""
         serv_review_util.fill_cover_dates(
@@ -229,9 +310,9 @@ class Server(object):
         result["children"] = [self.__normalize_node(c) for c in children] if isinstance(children, list) else []
         return result
 
-    def __normalize_content(self, content, doc_type=None):
+    def __normalize_content(self, content, doc_type=None, product_id=None):
         if not isinstance(content, dict) or not isinstance(content.get("sections"), list):
-            return self.__default_content(doc_type)
+            return self.__default_content(doc_type, product_id=product_id)
         out = {"sections": [self.__normalize_node(s) for s in content["sections"]]}
         self.__drop_product_info(out)
         self.__ensure_review_annex(out, doc_type)
@@ -897,7 +978,7 @@ class Server(object):
             row = DataDoc(**payload)
             row.id = None
             row.file_no = serv_review_util.resolve_doc_file_no(form.product_id, form.file_no, form.version, doc_type) or None
-            row.content = self.__normalize_content(row.content, doc_type)
+            row.content = self.__normalize_content(row.content, doc_type, product_id=form.product_id)
             db.session.add(row)
             db.session.commit()
             return Resp.resp_ok(data=DataDocForm(id=row.id))
@@ -1362,6 +1443,8 @@ class Server(object):
             output.seek(0)
             return "数据文件", "docx"
         c = self.__autofill_for_export(self.__normalize_content(obj.content, obj.doc_type), obj)
+        if (obj.doc_type or "") == "dd_007":
+            self.__fill_dd007_chapters(c, obj.product_id)
         title = doc_title(obj.doc_type)
         if doc_format(obj.doc_type) == "xlsx":
             if obj.doc_type in RECORD_DOC_TYPES:

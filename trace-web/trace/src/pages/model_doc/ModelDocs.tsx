@@ -133,13 +133,9 @@ export default () => {
 
     useEffect(() => {
         loadProducts(data, dispatch);
-        // 切换文档类型：重置模块/版本筛选，清空列表，并按当前产品（不带筛选）重新查询
-        queryForm.setFieldValue("module", undefined);
-        queryForm.setFieldValue("version", undefined);
+        // 切换文档类型：清空全部筛选条件（产品/模块/版本），清空列表
+        queryForm.resetFields();
         dispatch({ rows: [], total: 0 });
-        if (productId) {
-            doSearch({ product_id: productId }, 1, data.pageSize);
-        }
     }, [type]);
 
     // 选中产品后自动刷新列表（产品变化即重新查询）

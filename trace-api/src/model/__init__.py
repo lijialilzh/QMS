@@ -73,6 +73,9 @@ from .prod_hospital import ProdHospital  # noqa: E402,F401
 # 算法模块管理（按产品）。详见 docs/function_docs/103_算法模块管理.md。
 from .prod_algo_module import ProdAlgoModule  # noqa: E402,F401
 
+# 章节模块管理（按产品）。与算法模块结构一致，独立表。
+from .prod_algo_chapter import ProdAlgoChapter  # noqa: E402,F401
+
 # 产品开发计划（独立文档模块）。详见 docs/function_docs/52_产品开发计划.md。
 from .pdp_doc import PdpDoc  # noqa: E402,F401
 
