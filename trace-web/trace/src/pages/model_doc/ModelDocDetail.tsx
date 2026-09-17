@@ -16,6 +16,7 @@ import * as ApiSrsReq from "@/api/ApiSrsReq";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import { getModelDocMeta } from "./ModelDocTypes";
 import { computeGridSpans, computeCodeReviewSpans, isReviewRecordGrid, isCodeReviewChecklistGrid } from "./gridSpans";
+import { ChapterBlocks } from "@/common/DocBlocks";
 import {
     buildEnvCheckTable, collectAssetCodes, computeDevTestWeeks, envCheckGroups, envCheckLeafCols,
     envCheckTitle, isEnvCheckGrid, parseEqAssets, prevEnvCheckRows,
@@ -1125,19 +1126,17 @@ export default () => {
                                         onChange={(e) => patchNode(active._key, { title: e.target.value })}
                                     />
                                 </div>
-                                <div className="pdp-field">
-                                    <div className="pdp-label">正文</div>
-                                    <Input.TextArea
-                                        autoSize={{ minRows: 3, maxRows: 20 }}
-                                        value={active.body ?? ""}
-                                        disabled={readonly}
-                                        placeholder="本章节正文内容，可多行"
-                                        onChange={(e) => patchNode(active._key, { body: e.target.value })}
-                                    />
-                                </div>
-
-                                {(active.tables || []).map((tb: any[], ti: number) => (
-                                    isEnvCheckGrid(tb) ? (() => {
+                                <ChapterBlocks
+                                    body={active.body ?? ""}
+                                    tables={active.tables || []}
+                                    images={active.images}
+                                    readonly={readonly}
+                                    onBodyChange={(body) => patchNode(active._key, { body })}
+                                    renderTable={(ti: number) => {
+                                        const tb = (active.tables || [])[ti];
+                                        if (!tb) return null;
+                                        return (
+                                isEnvCheckGrid(tb) ? (() => {
                                         const kind = (String(tb[0][1] || "dev") === "server" ? "server" : "dev") as "server" | "dev";
                                         const groups = envCheckGroups(type || "md_019", kind);
                                         const cols = envCheckLeafCols(type || "md_019", kind);
@@ -1319,7 +1318,9 @@ export default () => {
                                         </table>
                                     </div>
                                     )
-                                ))}
+                                        );
+                                    }}
+                                />
 
                                 {!readonly && (
                                     <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>

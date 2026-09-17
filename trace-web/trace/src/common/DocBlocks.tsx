@@ -5,6 +5,8 @@
  * 完全不影响后端 autofill/replace_name/rebind_product 等功能。
  */
 
+import { Input } from "antd";
+
 // 把 body + tables + images 切分为交错序列（纯渲染用，不修改原数据）
 // 返回 [{type:"text", text:"..."}, {type:"table", tableIndex:0}, {type:"image", imageIndex:0}, ...]
 export const splitBodyTables = (body: string, tables: any[], images?: any[]): any[] => {
@@ -26,6 +28,12 @@ export const splitBodyTables = (body: string, tables: any[], images?: any[]): an
 
     for (const ln of lines) {
         const s = ln.trim();
+        if (s === "{{IMG}}" && imgIdx < imagesArr.length) {
+            flushText();
+            segments.push({ type: "image", imageIndex: imgIdx });
+            imgIdx++;
+            continue;
+        }
         // 遇到"见下表/如下表/下表"行，先加入正文再 flush，然后插入表格
         if (/见下表|如下表|下表/.test(s) && tableIdx < tablesArr.length) {
             buf.push(ln);  // 保留"见下表"行作为正文
@@ -90,11 +98,61 @@ export const reassembleBody = (segments: any[], editedIndex: number, newText: st
                 parts.push("见下表");
             }
         } else if (seg.type === "image") {
-            const last = parts[parts.length - 1];
-            if (!last || !/见下图|如下图|下图/.test(last)) {
-                parts.push("见下图");
+            if (seg.caption) {
+                parts.push(seg.caption);
+            } else {
+                const last = parts[parts.length - 1];
+                if (!last || !/见下图|如下图|下图|\{\{IMG\}\}/.test(last)) {
+                    parts.push("见下图");
+                }
             }
         }
     });
     return parts.join("\n");
+};
+
+export const ChapterBlocks = (props: {
+    body: string;
+    tables: any[];
+    images?: any[];
+    readonly?: boolean;
+    renderTable: (ti: number) => any;
+    onBodyChange: (body: string) => void;
+}) => {
+    const images = Array.isArray(props.images) ? props.images : [];
+    const tables = Array.isArray(props.tables) ? props.tables : [];
+    let segs = splitBodyTables(props.body, tables, images);
+    if (!segs.length) segs = [{ type: "text", text: props.body || "" }];
+    return (
+        <>
+            {segs.map((seg: any, si: number) => {
+                if (seg.type === "text") {
+                    return (
+                        <div className="pdp-field" key={si}>
+                            <Input.TextArea
+                                autoSize={{ minRows: 2, maxRows: 20 }}
+                                value={seg.text}
+                                disabled={!!props.readonly}
+                                placeholder="本段正文内容，可多行"
+                                onChange={(e) => props.onBodyChange(reassembleBody(segs, si, e.target.value))}
+                            />
+                        </div>
+                    );
+                }
+                if (seg.type === "image") {
+                    const url = images[seg.imageIndex];
+                    if (!url) return null;
+                    return (
+                        <div key={si} style={{ margin: "8px 0 12px", textAlign: "center" }}>
+                            <img src={url} alt="" style={{ maxWidth: "100%", maxHeight: 480, objectFit: "contain" }} />
+                            {seg.caption ? (
+                                <div style={{ textAlign: "center", fontSize: 13, color: "#444", margin: "4px 0 8px" }}>{seg.caption}</div>
+                            ) : null}
+                        </div>
+                    );
+                }
+                return <div key={si}>{props.renderTable(seg.tableIndex)}</div>;
+            })}
+        </>
+    );
 };

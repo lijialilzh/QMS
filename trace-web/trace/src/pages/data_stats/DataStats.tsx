@@ -384,6 +384,7 @@ export default () => {
             }
             dispatch({ rows: r.rows });
             persistRows(r.rows);
+            writeDataFiles(r.rows);
             let tip = `已匹配 ${r.matched} 行，已填入 gt/pred/dice`;
             if (r.unmatched.length) tip += `；${r.unmatched.length} 个 TXID 未匹配到病例`;
             message.success(tip, 6);

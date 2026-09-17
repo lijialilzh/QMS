@@ -35,6 +35,7 @@ from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
+from .serv_utils.doc_blocks import fill_chapter_images, split_body_blocks
 from .data_doc_templates import DOC_META, DEFAULT_CONTENTS, REVIEW_TABLES
 from .serv_data_stats_scan import (
     StatsScanError, common_parent_paths, host_of, paths_from_dd010,
@@ -238,12 +239,167 @@ class Server(object):
                     new_children.append(child)
                 sub["children"] = new_children
 
+    MD003_DATASETS = {
+        "lobe": (
+            ("训练数据量要求", "肺叶分割训练集"),
+            ("测试数据量要求", "肺叶分割测试集"),
+            ("调优数据量要求", "肺叶分割调优集"),
+        ),
+        "pe": (
+            ("训练数据量要求", "肺栓塞分割训练集"),
+            ("测试数据量要求", "肺栓塞分诊测试集"),
+            ("调优数据量要求", "肺栓塞分割调优集"),
+        ),
+    }
+
+    def __plain_title(self, title):
+        t = str(title or "").strip()
+        t = re.sub(r"^\d+(?:\.\d+)*[、.\s]*", "", t)
+        t = re.sub(r"^[（(]\d+[）)]\s*", "", t)
+        return t.strip()
+
+    def __latest_data_content(self, product_id, doc_type):
+        if not product_id or not doc_type:
+            return {}
+        row = db.session.execute(
+            select(DataDoc).where(DataDoc.product_id == product_id, DataDoc.doc_type == doc_type)
+            .order_by(DataDoc.id.desc())
+        ).scalars().first()
+        if not row:
+            return {}
+        return row.content if isinstance(row.content, dict) else {}
+
+    def __iter_content_tables(self, content):
+        def walk(ns):
+            for n in ns or []:
+                if not isinstance(n, dict):
+                    continue
+                yield str(n.get("title") or ""), n.get("tables") or []
+                yield from walk(n.get("children") or [])
+        yield from walk((content or {}).get("sections") or [])
+
+    def __parse_dd010_counts(self, content):
+        out = {}
+        for title, tables in self.__iter_content_tables(content):
+            t = title.replace(" ", "")
+            for tb in tables:
+                if not isinstance(tb, list) or not tb:
+                    continue
+                first = "".join(str(c or "") for c in (tb[0] if isinstance(tb[0], list) else []))
+                if t not in ("标注",) and "标注数据库" not in first:
+                    continue
+                header = None
+                name_i = qty_i = None
+                for row in tb:
+                    if not isinstance(row, list):
+                        continue
+                    cells = [str(c or "").strip() for c in row]
+                    if "数据集" in cells and any("数据量" in x for x in cells):
+                        header = cells
+                        name_i = cells.index("数据集")
+                        qty_i = next(i for i, x in enumerate(cells) if "数据量" in x)
+                        continue
+                    if header is None or name_i is None or qty_i is None:
+                        continue
+                    name = cells[name_i] if name_i < len(cells) else ""
+                    qty = cells[qty_i] if qty_i < len(cells) else ""
+                    if name and qty and name not in ("数据集",):
+                        out[name] = qty.split(".")[0] if qty.replace(".", "", 1).isdigit() else qty
+        return out
+
+    def __parse_dd012_counts(self, content):
+        out = {}
+        for _title, tables in self.__iter_content_tables(content):
+            for tb in tables:
+                if not isinstance(tb, list):
+                    continue
+                header = None
+                name_i = qty_i = None
+                for row in tb:
+                    if not isinstance(row, list):
+                        continue
+                    cells = [str(c or "").strip() for c in row]
+                    if "批次" in cells and "数据量" in cells:
+                        header = cells
+                        name_i = cells.index("批次")
+                        qty_i = cells.index("数据量")
+                        continue
+                    if header is None:
+                        continue
+                    name = cells[name_i] if name_i < len(cells) else ""
+                    qty = cells[qty_i] if qty_i < len(cells) else ""
+                    if name and qty and name not in ("批次",):
+                        out[name] = qty.split(".")[0] if qty.replace(".", "", 1).isdigit() else qty
+        return out
+
+    def __norm_qty(self, qty):
+        s = str(qty or "").strip()
+        if not s:
+            return ""
+        if s.replace(".", "", 1).isdigit():
+            return s.split(".")[0]
+        m = re.search(r"\d+", s)
+        return m.group(0) if m else ""
+
+    def __md003_qty_map(self, product_id):
+        counts = self.__parse_dd010_counts(self.__latest_data_content(product_id, "dd_010"))
+        if not counts:
+            counts = self.__parse_dd012_counts(self.__latest_data_content(product_id, "dd_012"))
+        return counts or {}
+
+    def __fill_md003_qty_line(self, body, label, qty):
+        n = self.__norm_qty(qty)
+        if not n:
+            return body
+        pat = rf"{re.escape(label)}[：:]\s*\d+\s*例?\s*左右?"
+        if not re.search(pat, body):
+            return body
+        return re.sub(pat, f"{label}：{n}例左右", body, count=1)
+
+    def __apply_md003_qty(self, content, product_id):
+        if not product_id or not isinstance(content, dict):
+            return
+        counts = self.__md003_qty_map(product_id)
+        if not counts:
+            return
+        last_kind = ""
+
+        def walk(nodes):
+            nonlocal last_kind
+            for n in nodes or []:
+                if not isinstance(n, dict):
+                    continue
+                title = self.__plain_title(n.get("title"))
+                body = str(n.get("body") or "")
+                blob = title + body
+                if title == "标注规则" or "肺叶" in title or "肺栓塞" in title:
+                    if "肺叶" in blob:
+                        last_kind = "lobe"
+                    if "肺栓塞" in blob:
+                        last_kind = "pe"
+                if title == "数据":
+                    kind = last_kind
+                    if "交付时间" in body:
+                        kind = "pe"
+                    elif not kind:
+                        kind = "lobe" if "肺叶" in body else "pe"
+                    new_body = body
+                    for label, ds_name in self.MD003_DATASETS.get(kind) or ():
+                        new_body = self.__fill_md003_qty_line(new_body, label, counts.get(ds_name) or "")
+                    n["body"] = new_body
+                walk(n.get("children") or [])
+
+        walk(content.get("sections") or [])
+
     def __to_obj(self, row: DataDoc, product: Product = None):
         obj = DataDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content, row.doc_type)
         # dd_007：查看时从章节模块管理自动获取模块章节（不修改数据库，只影响返回内容）
         if (row.doc_type or "") == "dd_007":
             self.__fill_dd007_chapters(obj.content, row.product_id)
+        if (row.doc_type or "") == "md_003":
+            self.__apply_md003_qty(obj.content, row.product_id)
+        fill_chapter_images(obj.content, row.doc_type or "")
         self.__fill_cover_meta(obj.content, obj.version)
         key = row.doc_type or ""
         serv_review_util.fill_cover_dates(
@@ -532,6 +688,9 @@ class Server(object):
         serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, key))
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, key))
         serv_review_util.fill_annex_reviews(content, prod_id, key, getattr(product, "name", "") or "")
+        if key == "md_003":
+            self.__apply_md003_qty(content, prod_id)
+        fill_chapter_images(content, key)
         return content
 
     def __collect_autofill(self, prod_id, product, doc_version, doc_type):
@@ -1649,14 +1808,63 @@ class Server(object):
             p.paragraph_format.space_after = Pt(0)
             docx_util.fonted_txt(p, title, font_size=size, bold=True)
 
+        def png_wh(raw):
+            if raw[:8] == b"\x89PNG\r\n\x1a\n" and len(raw) >= 24:
+                return int.from_bytes(raw[16:20], "big"), int.from_bytes(raw[20:24], "big")
+            return 0, 0
+
+        def add_picture_fit(run, raw, max_w, max_h):
+            w, h = png_wh(raw)
+            if w > 0 and h > 0 and (h * max_w) > (w * max_h):
+                run.add_picture(BytesIO(raw), height=Inches(max_h))
+            else:
+                run.add_picture(BytesIO(raw), width=Inches(max_w))
+
+        def add_chapter_image(url, caption=""):
+            s = str(url or "")
+            if s.startswith("data:image"):
+                try:
+                    raw = base64.b64decode(s.split(",", 1)[1] if "," in s else "")
+                    p = document.add_paragraph()
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    w, h = png_wh(raw)
+                    inch_w = (w / 96.0) if w else 5.5
+                    inch_h = (h / 96.0) if h else 3.6
+                    if inch_w > 5.5 or inch_h > 3.6:
+                        add_picture_fit(p.add_run(), raw, 5.5, 3.6)
+                    else:
+                        p.add_run().add_picture(BytesIO(raw), width=Inches(max(inch_w, 0.9)))
+                except Exception:
+                    logger.exception("export_chapter_image_failed")
+            if str(caption or "").strip():
+                cap = document.add_paragraph()
+                cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                docx_util.fonted_txt(cap, str(caption), font_size=10.5)
+
         def render_body_section(node, level, number=""):
             name = self.__strip_num(node.get("title"))
             heading = f"{number} {name}".strip() if number else name
             add_body_heading(heading, level=max(1, min(level, 9)))
-            if (node.get("body") or "").strip():
-                add_text(node.get("body"))
-            for table in (node.get("tables") or []):
-                add_grid(table)
+            blocks = split_body_blocks(node.get("body"), node.get("tables"), node.get("images"))
+            if blocks:
+                for b in blocks:
+                    if b.get("type") == "text":
+                        add_text(b.get("text"))
+                    elif b.get("type") == "image":
+                        add_chapter_image(b.get("url"), b.get("caption") or "")
+                    elif b.get("type") == "table":
+                        tb = b.get("table")
+                        if tb is None:
+                            t_i = b.get("tableIndex") or 0
+                            tbs = node.get("tables") or []
+                            tb = tbs[t_i] if t_i < len(tbs) else None
+                        if tb:
+                            add_grid(tb)
+            else:
+                if (node.get("body") or "").strip():
+                    add_text(node.get("body"))
+                for table in (node.get("tables") or []):
+                    add_grid(table)
             idx = 0
             for child in (node.get("children") or []):
                 idx += 1

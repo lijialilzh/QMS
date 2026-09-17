@@ -42,6 +42,7 @@ from . import serv_review_util
 from .serv_prod_runtime_env import DEFAULT_RUNTIME_ENV
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
+from .serv_utils.doc_blocks import fill_chapter_images, split_body_blocks
 from .model_doc_templates import DOC_META as WORD_META, DEFAULT_CONTENTS as WORD_CONTENTS, REVIEW_TABLES as WORD_REVIEW_TABLES
 from .model_doc_xlsx_templates import XLSX_META, XLSX_CONTENTS
 from .model_doc_build_templates import BUILD_DOC_TYPES, BUILD_DEFAULTS
@@ -536,6 +537,7 @@ class Server(object):
         # pd_003/md_004/md_007/md_014/md_016/md_018：查看时从章节模块管理自动获取（不修改数据库，只影响返回内容）
         if key in ("pd_003", "md_004", "md_007", "md_014", "md_016", "md_018"):
             self.__fill_algo_chapters(obj.content, row.product_id, key)
+        fill_chapter_images(obj.content, key)
         if key not in EQ_DOC_TYPES and key not in CRR_DOC_TYPES and key not in BUILD_DOC_TYPES and key not in TRAIN_DOC_TYPES and key not in TEST_DOC_TYPES and key not in PKG_DOC_TYPES:
             self.__fill_cover_meta(obj.content, obj.version)
             serv_review_util.fill_cover_dates(
@@ -1756,13 +1758,25 @@ class Server(object):
             age = float(raw)
         except Exception:
             return ""
-        if age <= 17:
-            return "(0, 17]"
-        if age <= 40:
-            return "(17, 40]"
-        if age <= 60:
-            return "(40, 60]"
-        return ">60"
+        bins = (0, 18, 40, 60, 110)
+        for i in range(1, len(bins)):
+            if bins[i - 1] < age <= bins[i]:
+                return "(%s, %s]" % (bins[i - 1], bins[i])
+        return ""
+
+    @staticmethod
+    def __flag_num(v):
+        s = str(v if v is not None else "").strip()
+        if not s or s.lower() in ("/", "-", "none", "nan"):
+            return None
+        try:
+            return float(s)
+        except Exception:
+            return None
+
+    def __is_flag(self, v, num):
+        n = self.__flag_num(v)
+        return n is not None and abs(n - num) < 1e-9
 
     def __case_device(self, row):
         s = str(self.__case_cell(row, "DEVICE", "device") or "").strip()
@@ -1804,24 +1818,23 @@ class Server(object):
 
     def __add_test_case(self, bucket, row):
         bucket["n"] += 1
+        gt_v = self.__case_cell(row, "gt", "GT")
+        pred_v = self.__case_cell(row, "pred", "PRED", "Pred")
         d = self.__parse_dice_val(self.__case_cell(row, "dice", "DICE", "Dice"))
         if d is not None:
             bucket["dices"].append(d)
-        gt_s = str(self.__case_cell(row, "gt", "GT") or "").strip()
-        pred_s = str(self.__case_cell(row, "pred", "PRED", "Pred") or "").strip()
-        is_pos = gt_s != "0"
-        if is_pos:
+        if self.__is_flag(gt_v, 1):
             bucket["pos"] += 1
-        else:
+        elif self.__is_flag(gt_v, 0):
             bucket["neg"] += 1
-        if gt_s != "" and pred_s != "" and gt_s != "/" and pred_s != "/":
-            p = pred_s == "1"
-            if is_pos:
+        if self.__flag_num(gt_v) is not None and self.__flag_num(pred_v) is not None:
+            p = self.__is_flag(pred_v, 1)
+            if self.__is_flag(gt_v, 1):
                 if p:
                     bucket["tp"] += 1
                 else:
                     bucket["fn"] += 1
-            else:
+            elif self.__is_flag(gt_v, 0):
                 if p:
                     bucket["fp"] += 1
                 else:
@@ -1863,13 +1876,15 @@ class Server(object):
 
     @staticmethod
     def __dice_mean_std(vals):
-        n = len(vals or [])
+        """与 pandas 一致：Mean=算术平均；Std=样本标准差 ddof=1。仅 1 例时方差写 0.0000。"""
+        nums = [float(x) for x in (vals or []) if x is not None]
+        n = len(nums)
         if n <= 0:
             return "", ""
-        mean = sum(vals) / float(n)
+        mean = sum(nums) / float(n)
         if n < 2:
-            return "%.4f" % mean, ""
-        var = sum((x - mean) ** 2 for x in vals) / float(n - 1)
+            return "%.4f" % mean, "0.0000"
+        var = sum((x - mean) ** 2 for x in nums) / float(n - 1)
         return "%.4f" % mean, "%.4f" % math.sqrt(var)
 
     @staticmethod
@@ -1936,6 +1951,59 @@ class Server(object):
         out.append(total)
         return self.__test_fill_total(out, doc_type)
 
+    def __parse_ci(self, s):
+        m = re.match(r"^\s*([\d.]+)\(\s*([\d.]+)\s*,\s*([\d.]+)\s*\)\s*$", str(s or ""))
+        if not m:
+            return None
+        return float(m.group(1)), float(m.group(2)), float(m.group(3))
+
+    def __test_conclusion(self, rows, doc_type):
+        rows = [r for r in (rows or []) if isinstance(r, list)]
+        if doc_type == "md_013_02":
+            means = []
+            for r in rows[1:]:
+                if str(r[0] or "").strip() == "总计":
+                    continue
+                m = self.__parse_dice_val(r[3] if len(r) > 3 else "")
+                if m is not None:
+                    means.append(m)
+            if not means:
+                return ""
+            if all(m > 0.97 for m in means):
+                return "每个分段的平均dice都大于0.97，满足测试指标。"
+            return "并非每个分段的平均dice都大于0.97，不满足测试指标。"
+        total = next((r for r in rows if str(r[0] or "").strip() == "总计"), None)
+        if not total or len(total) < 6:
+            return ""
+        sen = self.__parse_ci(total[4])
+        spe = self.__parse_ci(total[5])
+        if not sen or not spe:
+            return ""
+        sen_ok = sen[1] > 0.8
+        spe_ok = spe[1] > 0.8
+        both = sen_ok and spe_ok
+
+        def num(x):
+            s = ("%.3f" % x).rstrip("0").rstrip(".")
+            if s == "1":
+                return "1.0"
+            if s == "0":
+                return "0.0"
+            return s
+
+        return (
+            "灵敏度为%s，95%CI低值%s%s目标值0.8；特异度为%s，95%CI低值%s%s目标值0.8，%s测试指标。"
+            % (
+                str(total[4]).strip(),
+                num(sen[1]),
+                ">" if sen_ok else "≤",
+                str(total[5]).strip(),
+                num(spe[1]),
+                ">" if spe_ok else "≤",
+                "均满足" if both else "不满足",
+            )
+        )
+
     def __apply_test_autofill(self, content, doc_type, product_id):
         if not isinstance(content, dict) or not product_id:
             return content
@@ -1962,6 +2030,436 @@ class Server(object):
         rows = self.__test_result_from_cases(self.__dd015_cases_for_product(product_id), doc_type)
         if rows:
             content["result_rows"] = rows
+            conc = self.__test_conclusion(rows, doc_type)
+            if conc:
+                content["conclusion"] = conc
+        return content
+
+    @staticmethod
+    def __md014_kind(title):
+        t = str(title or "")
+        if "重建" in t:
+            return "recon"
+        if "分诊" in t:
+            return "triage"
+        if "分割" in t:
+            return "seg"
+        return ""
+
+    @staticmethod
+    def __md014_dice_target(title):
+        return 0.97 if "肺叶" in str(title or "") else 0.8
+
+    @staticmethod
+    def __md014_mod_name(title):
+        t = re.sub(r"(模型)?测试$", "", str(title or "").strip())
+        return t.replace("模块", "").strip() or str(title or "").strip()
+
+    @staticmethod
+    def __md014_num(x):
+        if abs(x - round(x)) < 1e-9:
+            return str(int(round(x)))
+        return ("%.4f" % x).rstrip("0").rstrip(".")
+
+    @staticmethod
+    def __md014_caption(old_body, fallback=""):
+        for ln in reversed(str(old_body or "").splitlines()):
+            s = ln.strip()
+            if s.startswith("表"):
+                return s
+        return fallback
+
+    @staticmethod
+    def __md014_lead(old_body):
+        lines = [ln for ln in str(old_body or "").splitlines() if not ln.strip().startswith("表")]
+        return "\n".join(lines).strip()
+
+    def __md014_factor_table(self, rows, mode):
+        if not rows:
+            return []
+        thick = "层厚" if mode == "dice" else "层厚（mm）"
+        factors = [
+            ("性别", lambda r: self.__case_sex(r), False),
+            ("年龄", lambda r: self.__case_age_bin(r), False),
+            ("设备", lambda r: self.__case_device(r), False),
+            ("重建算法", lambda r: self.__case_kernel_label(r), True),
+            ("管电压", lambda r: self.__case_kvp(r), False),
+            (thick, lambda r: self.__case_thickness(r), False),
+        ]
+        all_b = self.__new_test_bucket()
+        for r in rows:
+            self.__add_test_case(all_b, r)
+        total_n = all_b["n"] or 0
+        if mode == "dist":
+            header = ["因素", "类别", "阳性样本量", "阴性样本量", "总样本量", "总样本量占比"]
+        elif mode == "triage":
+            header = ["因素", "类别", "阳性样本量", "阴性样本量", "总样本量", "灵敏度(95%CI)", "特异度（95%CI)"]
+        else:
+            header = ["因素", "类别", "样本量", "dice均值", "dice标准差"]
+        out = [header]
+        last_start = 1
+        for name, getter, merge_small in factors:
+            groups = self.__group_test_factor(rows, getter, merge_small=merge_small)
+            if not groups:
+                continue
+            last_start = len(out)
+            first = True
+            for lab, b in groups:
+                if mode == "dist":
+                    pct = "%.2f%%" % (100.0 * b["n"] / total_n) if total_n else "0.00%"
+                    out.append([name if first else "", lab, str(b["pos"]), str(b["neg"]), str(b["n"]), pct])
+                elif mode == "triage":
+                    sen = self.__fmt_rate_ci(b["tp"], b["tp"] + b["fn"])
+                    spe = self.__fmt_rate_ci(b["tn"], b["tn"] + b["fp"])
+                    out.append([name if first else "", lab, str(b["pos"]), str(b["neg"]), str(b["n"]), sen, spe])
+                else:
+                    mean, std = self.__dice_mean_std(b["dices"])
+                    out.append([name if first else "", lab, str(b["n"]), mean, std])
+                first = False
+        if len(out) <= 1:
+            return []
+        qty_idx = [2, 3, 4] if mode != "dice" else [2]
+        sums = {i: 0 for i in qty_idx}
+        for r in out[last_start:]:
+            for i in qty_idx:
+                try:
+                    sums[i] += int(str(r[i]).strip() or "0")
+                except Exception:
+                    pass
+        if mode == "dist":
+            out.append(["总计", "", str(sums[2]), str(sums[3]), str(sums[4]), "100.00%"])
+        elif mode == "triage":
+            sen = self.__fmt_rate_ci(all_b["tp"], all_b["tp"] + all_b["fn"])
+            spe = self.__fmt_rate_ci(all_b["tn"], all_b["tn"] + all_b["fp"])
+            out.append(["总计", "", str(sums[2]), str(sums[3]), str(sums[4]), sen, spe])
+        else:
+            mean, std = self.__dice_mean_std(all_b["dices"])
+            out.append(["总计", "", str(sums[2]), mean, std])
+        return out
+
+    def __md014_dist_body(self, rows, old_body, title):
+        all_b = self.__new_test_bucket()
+        for r in rows:
+            self.__add_test_case(all_b, r)
+        n, pos, neg = all_b["n"], all_b["pos"], all_b["neg"]
+        devices, seen = [], set()
+        for r in rows:
+            d = self.__case_device(r)
+            if d and d not in seen:
+                seen.add(d)
+                devices.append(d)
+        age_old = 0
+        for r in rows:
+            if self.__case_age_bin(r) in ("(40, 60]", "(60, 110]"):
+                age_old += 1
+        ths = []
+        for r in rows:
+            try:
+                ths.append(float(self.__case_thickness(r)))
+            except Exception:
+                pass
+        kvp_groups = self.__group_test_factor(rows, lambda r: self.__case_kvp(r), False)
+        extra = []
+        if devices:
+            extra.append("数据涵盖%s设备" % "、".join(devices))
+        if n and age_old / float(n) >= 0.5:
+            extra.append("年龄多分布在40岁以上")
+        if ths and max(ths) <= 2:
+            extra.append("层厚小于等于2mm")
+        elif ths:
+            extra.append("层厚分布在%s～%smm" % (self.__md014_num(min(ths)), self.__md014_num(max(ths))))
+        if kvp_groups:
+            vals = []
+            for lab, b in kvp_groups:
+                try:
+                    vals.append((float(lab), b["n"], lab))
+                except Exception:
+                    continue
+            if vals:
+                mn, mx = min(v[0] for v in vals), max(v[0] for v in vals)
+                top = sorted(vals, key=lambda x: -x[1])[:2]
+                extra.append(
+                    "管电压分布在%skvp至%skvp，多为%s"
+                    % (self.__md014_num(mn), self.__md014_num(mx), "及".join("%sKVP" % v[2] for v in top))
+                )
+        pos_lab = "肺栓塞阳性数据" if "肺叶" in str(title or "") else "阳性数据"
+        prefix = "根据数据入排标准，标记后的" if "根据数据入排标准" in str(old_body or "") else ""
+        head = "%s测试数据总计%d例。其中%s%d例，阴性数据%d例。" % (prefix, n, pos_lab, pos, neg)
+        if extra:
+            head += "，".join(extra) + "。"
+        cap = self.__md014_caption(old_body, "")
+        if cap.startswith("表"):
+            m = re.match(r"表\s*(\d+)", cap)
+            if m:
+                return head + "具体分布信息如表 %s所示。\n%s" % (m.group(1), cap)
+            return head + "具体分布信息如下表所示。\n" + cap
+        return head + "具体分布信息如下表所示。"
+
+    def __md014_triage_conc(self, rows):
+        all_b = self.__new_test_bucket()
+        for r in rows:
+            self.__add_test_case(all_b, r)
+        sen_n = all_b["tp"] + all_b["fn"]
+        spe_n = all_b["tn"] + all_b["fp"]
+        sen = self.__fmt_rate_ci(all_b["tp"], sen_n)
+        spe = self.__fmt_rate_ci(all_b["tn"], spe_n)
+        parsed_s = self.__parse_ci(sen)
+        parsed_p = self.__parse_ci(spe)
+        if not parsed_s or not parsed_p:
+            return ""
+
+        def wrap(s):
+            m = re.match(r"^([\d.]+)\(([\d.]+),\s*([\d.]+)\)$", s)
+            if not m:
+                return s
+            return "%s(95%%CI:%s, %s)" % (m.group(1), m.group(2), m.group(3))
+
+        def num(x):
+            s = ("%.3f" % x).rstrip("0").rstrip(".")
+            if s == "1":
+                return "1.0"
+            if s == "0":
+                return "0.0"
+            return s
+
+        sen_ok = parsed_s[1] > 0.8
+        spe_ok = parsed_p[1] > 0.8
+        return (
+            "灵敏度为%s，95%%CI低值%s%s目标值0.8；特异度为%s，95%%CI低值%s%s目标值0.8，%s测试指标。"
+            % (
+                wrap(sen),
+                num(parsed_s[1]),
+                ">" if sen_ok else "≤",
+                wrap(spe),
+                num(parsed_p[1]),
+                ">" if spe_ok else "≤",
+                "均满足" if sen_ok and spe_ok else "不满足",
+            )
+        )
+
+    def __md014_seg_conc(self, rows, title, chapter):
+        all_b = self.__new_test_bucket()
+        for r in rows:
+            self.__add_test_case(all_b, r)
+        mean, _std = self.__dice_mean_std(all_b["dices"])
+        if not mean:
+            return ""
+        target = self.__md014_dice_target(title)
+        name = self.__md014_mod_name(title)
+        m = float(mean)
+        ok = m > target
+        groups = self.__md014_factor_table(rows, "dice")
+        means = []
+        for r in groups[1:]:
+            if str(r[0]).strip() == "总计":
+                continue
+            v = self.__parse_dice_val(r[3] if len(r) > 3 else "")
+            if v is not None:
+                means.append(v)
+        all_ok = bool(means) and all(x > target for x in means) and ok
+        target_s = "0.97" if abs(target - 0.97) < 1e-9 else self.__md014_num(target)
+        if chapter == "结论":
+            return (
+                "我们通过客观的分割精度测试，验证了%s的分割精度和分割效果。分割精度测试集%d例，DICE系数为%s，各亚组%s测试指标。"
+                % (name, all_b["n"], mean, "也均满足" if all_ok else "未全部满足")
+            )
+        if chapter == "结果及结论":
+            return (
+                "经测试，平均%s的DICE值为%s%s目标值%s，%s测试指标。"
+                % (name, mean, ">" if ok else "≤", target_s, "满足" if all_ok else "不满足")
+            )
+        return (
+            "经测试，平均%s的DICE值为%s%s目标值%s。对不同设备、层厚、管电压、性别以及年龄亚组的分析见下表，%s测试指标。"
+            % (name, mean, ">" if ok else "≤", target_s, "满足" if all_ok else "不满足")
+        )
+
+    def __md014_lobe_table(self, rows):
+        lobes = (
+            ("右肺上叶", ("右肺上叶", "RUL", "rul", "dice_rul")),
+            ("右肺下叶", ("右肺下叶", "RLL", "rll", "dice_rll")),
+            ("右肺中叶", ("右肺中叶", "RML", "rml", "dice_rml")),
+            ("左肺上叶", ("左肺上叶", "LUL", "lul", "dice_lul")),
+            ("左肺下叶", ("左肺下叶", "LLL", "lll", "dice_lll")),
+        )
+        names = [x[0] for x in lobes]
+        per = []
+        any_per = False
+        for _name, keys in lobes:
+            vals = []
+            for r in rows or []:
+                v = self.__parse_dice_val(self.__case_cell(r, *keys))
+                if v is not None:
+                    vals.append(v)
+            if vals:
+                any_per = True
+            per.append(vals)
+        if any_per:
+            means, stds = [], []
+            for vals in per:
+                m, s = self.__dice_mean_std(vals) if vals else ("", "")
+                means.append(m)
+                stds.append(s)
+        else:
+            all_b = self.__new_test_bucket()
+            for r in rows or []:
+                self.__add_test_case(all_b, r)
+            m, s = self.__dice_mean_std(all_b["dices"])
+            if not m:
+                return []
+            means = [m] * 5
+            stds = [s] * 5
+        return [
+            ["肺叶"] + names,
+            ["dice均值"] + means,
+            ["dice标准差"] + stds,
+        ]
+
+    def __md014_module_sections(self, content):
+        sections = (content or {}).get("sections") or []
+        fixed = {
+            "算法方案详细设计", "文件修订记录", "产品信息", "概述", "算法基本信息", "参考文献", "算法介绍",
+            "模型测试报告", "参考文件", "引言", "测试环境", "硬件环境", "软件环境", "附件1 评审记录",
+            "测试目的", "测试背景", "测试范围", "术语及缩略语",
+        }
+        out = []
+        for s in sections:
+            if not isinstance(s, dict):
+                continue
+            title = str(s.get("title") or "").strip()
+            if not title or title in fixed or s.get("ref_type") in ("cover", "revision", "basic_info"):
+                continue
+            child_titles = [str(c.get("title") or "") for c in (s.get("children") or [])]
+            has_marker = any(("测试指标" in t or "测试数据" in t or "测试结果" in t) for t in child_titles)
+            if has_marker or title.endswith("模块") or title.endswith("测试"):
+                out.append(s)
+        return out
+
+    def __md014_env_bodies(self, product_id):
+        data = dict(DEFAULT_RUNTIME_ENV)
+        if product_id:
+            row = db.session.execute(select(ProdRuntimeEnv).where(ProdRuntimeEnv.prod_id == product_id)).scalars().first()
+            if row:
+                data.update(row.dict(exclude_null=True) or {})
+        gpu = self.__one_line_env(data.get("srv_gpu") or "")
+        cpu = self.__one_line_env(data.get("srv_cpu") or "")
+        mem = self.__one_line_env(data.get("srv_memory") or "").rstrip("。")
+        disk = self.__one_line_env(data.get("srv_disk") or "").rstrip("。")
+        nic = self.__one_line_env(data.get("srv_nic") or "").rstrip("。")
+        hw = "".join(
+            p
+            for p in (
+                ("GPU型号为%s。" % gpu) if gpu else "",
+                ("CPU为%s。" % cpu) if cpu else "",
+                ("内存%s。" % mem) if mem else "",
+                ("硬盘%s。" % disk) if disk else "",
+                ("网卡为%s。" % nic) if nic else "",
+            )
+            if p
+        )
+        os_name = str(data.get("srv_os") or "").strip()
+        cuda = str(data.get("srv_cuda") or "").strip()
+        if cuda and "CUDA" not in cuda.upper():
+            cuda = "CUDA " + cuda
+        cuda_drv = (cuda + "驱动程序") if cuda else "CUDA驱动程序"
+        sw = ""
+        if os_name:
+            sw = (
+                "%s作为操作系统，安装英伟达GPU驱动程序，%s，cuDNN，numpy，scipy深度学习工具库以及PyTorch深度学习框架。开发语言选择Python3.7。"
+                % (os_name, cuda_drv)
+            )
+        return hw, sw
+
+    def __md014_fill_env(self, content, product_id):
+        hw, sw = self.__md014_env_bodies(product_id)
+        for s in (content or {}).get("sections") or []:
+            if not isinstance(s, dict):
+                continue
+            if self.__strip_num(s.get("title")) != "测试环境":
+                continue
+            for c in s.get("children") or []:
+                if not isinstance(c, dict):
+                    continue
+                k = self.__strip_num(c.get("title"))
+                if k == "硬件环境" and hw:
+                    c["body"] = hw
+                elif k == "软件环境" and sw:
+                    c["body"] = sw
+
+    def __apply_md014_autofill(self, content, product_id):
+        if not isinstance(content, dict) or not product_id:
+            return content
+        self.__md014_fill_env(content, product_id)
+        rows = self.__dd015_cases_for_product(product_id)
+        if not rows:
+            return content
+        recon_txt = "三维重建为传统算法，无客观测试指标。"
+        for sec in self.__md014_module_sections(content):
+            kind = self.__md014_kind(sec.get("title"))
+            for child in (sec.get("children") or []):
+                if not isinstance(child, dict):
+                    continue
+                key = self.__strip_num(child.get("title")).replace(" ", "")
+                if key == "测试数据":
+                    tb = self.__md014_factor_table(rows, "dist")
+                    if tb:
+                        child["tables"] = [tb]
+                        child["body"] = self.__md014_dist_body(rows, child.get("body"), sec.get("title"))
+                    continue
+                if kind == "recon" and (
+                    key in ("测试结果及结论", "测试结果", "结论") or "不同影响因素" in key
+                ):
+                    child["body"] = recon_txt
+                    child["tables"] = []
+                    continue
+                if key == "测试结果及结论":
+                    if kind == "triage":
+                        conc = self.__md014_triage_conc(rows)
+                        if conc:
+                            child["body"] = conc
+                    elif kind == "seg":
+                        conc = self.__md014_seg_conc(rows, sec.get("title"), "结果及结论")
+                        if conc:
+                            child["body"] = conc
+                    continue
+                if "不同影响因素" in key:
+                    if kind == "triage":
+                        tb = self.__md014_factor_table(rows, "triage")
+                    elif kind == "seg":
+                        tb = self.__md014_factor_table(rows, "dice")
+                    else:
+                        tb = []
+                    if tb:
+                        lead = self.__md014_lead(child.get("body"))
+                        cap = self.__md014_caption(child.get("body"), "表 2 内部测试集的不同影响因素分析")
+                        child["tables"] = [tb]
+                        child["body"] = (lead + ("\n" + cap if cap else "")).strip()
+                    continue
+                if key == "测试结果":
+                    if kind == "seg":
+                        tb = self.__md014_factor_table(rows, "dice")
+                        if tb:
+                            extra = self.__md014_lobe_table(rows) if "肺叶" in str(sec.get("title") or "") else []
+                            child["tables"] = [tb] + ([extra] if extra else [])
+                            conc = self.__md014_seg_conc(rows, sec.get("title"), "结果")
+                            if conc:
+                                child["body"] = conc
+                    elif kind == "triage":
+                        conc = self.__md014_triage_conc(rows)
+                        if conc:
+                            child["body"] = conc
+                        tb = self.__md014_factor_table(rows, "triage")
+                        if tb:
+                            child["tables"] = [tb]
+                    continue
+                if key == "结论":
+                    if kind == "seg":
+                        conc = self.__md014_seg_conc(rows, sec.get("title"), "结论")
+                        if conc:
+                            child["body"] = conc
+                    elif kind == "triage":
+                        conc = self.__md014_triage_conc(rows)
+                        if conc:
+                            child["body"] = conc
         return content
 
     def __apply_dataset_counts(self, content, doc_type, product_id):
@@ -2005,9 +2503,14 @@ class Server(object):
             return content
         if doc_type in TEST_DOC_TYPES:
             return self.__apply_test_autofill(content, doc_type, product_id)
+        if doc_type == "md_014":
+            return self.__apply_md014_autofill(content, product_id)
         return content
 
     def __apply_dataset_autofill(self, obj: ModelDocObj):
+        if obj.doc_type == "md_014":
+            obj.content = self.__apply_md014_autofill(obj.content or {}, obj.product_id)
+            return
         if obj.doc_type not in BUILD_DOC_TYPES and obj.doc_type not in TRAIN_DOC_TYPES and obj.doc_type not in TEST_DOC_TYPES:
             return
         obj.content = self.__apply_dataset_counts(obj.content or {}, obj.doc_type, obj.product_id)
@@ -2828,6 +3331,7 @@ class Server(object):
         serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, key))
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, key))
         serv_review_util.fill_annex_reviews(content, prod_id, key, getattr(product, "name", "") or "")
+        fill_chapter_images(content, obj.doc_type)
         return content
 
     def __collect_autofill(self, prod_id, product, doc_version, doc_type):
@@ -4451,6 +4955,8 @@ class Server(object):
         c = self.__autofill_for_export(self.__normalize_content(obj.content, obj.doc_type, product_id=obj.product_id), obj)
         if obj.doc_type in ("pd_003", "md_004", "md_007", "md_014", "md_016", "md_018"):
             self.__fill_algo_chapters(c, obj.product_id, obj.doc_type)
+        if obj.doc_type == "md_014":
+            self.__apply_md014_autofill(c, obj.product_id)
         title = doc_title(obj.doc_type)
         if obj.doc_type in CRR_DOC_TYPES:
             self.__export_crr_docx(output, obj, c)
@@ -4700,14 +5206,51 @@ class Server(object):
             p.paragraph_format.space_after = Pt(0)
             docx_util.fonted_txt(p, title, font_size=size, bold=True)
 
+        def add_chapter_image(url, caption=""):
+            s = str(url or "")
+            if s.startswith("data:image"):
+                try:
+                    raw = base64.b64decode(s.split(",", 1)[1] if "," in s else "")
+                    p = document.add_paragraph()
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    w, h = png_wh(raw)
+                    inch_w = (w / 96.0) if w else 5.5
+                    inch_h = (h / 96.0) if h else 3.6
+                    if inch_w > 5.5 or inch_h > 3.6:
+                        add_picture_fit(p.add_run(), raw, 5.5, 3.6)
+                    else:
+                        p.add_run().add_picture(BytesIO(raw), width=Inches(max(inch_w, 0.9)))
+                except Exception:
+                    logger.exception("export_chapter_image_failed")
+            if str(caption or "").strip():
+                cap = document.add_paragraph()
+                cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                docx_util.fonted_txt(cap, str(caption), font_size=10.5)
+
         def render_body_section(node, level, number=""):
             name = self.__strip_num(node.get("title"))
             heading = f"{number} {name}".strip() if number else name
             add_body_heading(heading, level=max(1, min(level, 9)))
-            if (node.get("body") or "").strip():
-                add_text(node.get("body"))
-            for table in (node.get("tables") or []):
-                add_grid(table)
+            blocks = split_body_blocks(node.get("body"), node.get("tables"), node.get("images"))
+            if blocks:
+                for b in blocks:
+                    if b.get("type") == "text":
+                        add_text(b.get("text"))
+                    elif b.get("type") == "image":
+                        add_chapter_image(b.get("url"), b.get("caption") or "")
+                    elif b.get("type") == "table":
+                        tb = b.get("table")
+                        if tb is None:
+                            t_i = b.get("tableIndex") or 0
+                            tbs = node.get("tables") or []
+                            tb = tbs[t_i] if t_i < len(tbs) else None
+                        if tb:
+                            add_grid(tb)
+            else:
+                if (node.get("body") or "").strip():
+                    add_text(node.get("body"))
+                for table in (node.get("tables") or []):
+                    add_grid(table)
             idx = 0
             for child in (node.get("children") or []):
                 idx += 1
