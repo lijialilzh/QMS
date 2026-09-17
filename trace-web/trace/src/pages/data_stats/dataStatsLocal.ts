@@ -221,6 +221,18 @@ function parseAge(raw: string): number | null {
     return Number.isFinite(n) ? n : null;
 }
 
+/** 卷积核多值只取第一项：I26f\3、['I26f','3']、IMR1,Routine → I26f / IMR1。 */
+function parseKernel(raw: any) {
+    let s = String(raw ?? "").trim();
+    if (!s || s === "none") return "";
+    if (s.charAt(0) === "[") {
+        const inner = s.replace(/^\[/, "").replace(/\]$/, "");
+        s = inner.split(",")[0].replace(/^['"]|['"]$/g, "").trim() || s;
+    }
+    s = s.split("\\")[0].split(",")[0].split("/")[0].split(";")[0].trim();
+    return s.replace(/^['"]|['"]$/g, "").trim();
+}
+
 /** 层厚：单一数字显示绝对值；tag 为 1-3 / [1-3] 等区间则保留区间。 */
 function parseThickness(raw: any, def: any) {
     let s = String(raw ?? "").trim();
@@ -285,6 +297,10 @@ function tagsToRow(tags: Record<string, string>): CaseRow | null {
         }
         if (t.key === "THICKNESS") {
             row[t.key] = parseThickness(raw, t.def);
+            return;
+        }
+        if (t.key === "ConvolutionKernel") {
+            row[t.key] = parseKernel(raw) || t.def;
             return;
         }
         if (t.key === "KVP" || t.key === "CTDIvol" || t.key === "SpacingBetweenSlices") {
@@ -612,6 +628,7 @@ export function buildStatsGrid(
         addFactor(grid, "年龄", sortedAgeMap, total);
     }
     addFactor(grid, "设备", countBy(rows, (r) => r.device || ""), total);
+    addFactor(grid, "重建算法", countBy(rows, (r) => parseKernel(r.ConvolutionKernel)), total);
     addFactor(grid, "KVP", countBy(rows, (r) => r.kvp || ""), total);
     addFactor(grid, "层厚", countBy(rows, (r) => r.thickness || ""), total);
     return grid;
@@ -697,7 +714,7 @@ export function buildTriageAoa(rows: CaseRow[]) {
         { item: "设备", getter: (r) => r.DEVICE == null ? String(r.device || "") : String(r.DEVICE) },
         { item: "KVP", getter: (r) => r.KVP == null ? String(r.kvp || "") : String(r.KVP) },
         { item: "层厚", getter: (r) => r.THICKNESS == null ? String(r.thickness || "") : String(r.THICKNESS) },
-        { item: "重建算法", getter: (r) => r.ConvolutionKernel == null ? "" : String(r.ConvolutionKernel) },
+        { item: "重建算法", getter: (r) => parseKernel(r.ConvolutionKernel) },
     ];
     // gt 值：1=阳性，0=阴性（无 gt 视为阳性，保持总数口径）
     const gtPos = (r: CaseRow) => String(r.gt ?? "").trim() !== "0";

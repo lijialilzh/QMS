@@ -68,6 +68,7 @@ export default () => {
         productId: 0,
         products: [] as any[],
         writing: false,
+        pageSize: 50,
         serverPath: "10.10.1.11:/media/tx-deepocean/Data1/DATA/dr/dr全身骨折注册/肋骨骨折2/test",
         serverUser: "tx-deepocean",
         serverPass: "tuixiang2017",
@@ -552,7 +553,14 @@ export default () => {
                             children: (
                                 <Table
                                     size="small"
-                                    pagination={{ pageSize: 50 }}
+                                    pagination={{
+                                        pageSize: data.pageSize || 50,
+                                        showSizeChanger: true,
+                                        pageSizeOptions: [10, 20, 50, 100],
+                                        onChange: (_page, size) => {
+                                            if (size) dispatch({ pageSize: size });
+                                        },
+                                    }}
                                     scroll={{ x: 1300 }}
                                     dataSource={detailRows}
                                     columns={DETAIL_COLUMNS.map((c) => ({

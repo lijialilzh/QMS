@@ -102,6 +102,7 @@ import ModelDocPage from "./pages/model_doc/ModelDocPage";
 import DataDocs from "./pages/model_doc/DataDocs";
 import DataDocPage from "./pages/model_doc/DataDocPage";
 import DataStats from "./pages/data_stats/DataStats";
+import DataCheck from "./pages/data_check/DataCheck";
 import VuhDocs from "./pages/vuh/VuhDocs";
 import VuhDocDetail from "./pages/vuh/VuhDocDetail";
 import PtrDocs from "./pages/ptr/PtrDocs";
@@ -271,6 +272,7 @@ const router = createRouter([
             { path: "/data_docs/:type/edit/:id", element: <DataDocPage /> },
             { path: "/data_docs/:type/view/:id", element: <DataDocPage /> },
             { path: "/data_stats", element: <DataStats /> },
+            { path: "/data_check", element: <DataCheck /> },
             { path: "/vuh_docs", element: <VuhDocs /> },
             { path: "/vuh_docs/edit/:id", element: <VuhDocDetail /> },
             { path: "/vuh_docs/view/:id", element: <VuhDocDetail /> },

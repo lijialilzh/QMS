@@ -7,9 +7,10 @@
 import base64
 import copy
 import logging
+import math
 import os
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from io import BytesIO
 from typing import List
 from sqlalchemy import delete, func, select
@@ -28,6 +29,7 @@ from ..model.project_member import ProjectMember
 from ..model.srs_doc import SrsDoc
 from ..model.srs_req import SrsReq
 from ..model.prod_algo_chapter import ProdAlgoChapter
+from ..model.prod_runtime_env import ProdRuntimeEnv
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
 from ..obj.vobj_user import UserObj
@@ -37,6 +39,7 @@ from ..utils.i18n import ts
 from ..utils.sql_ctx import db
 from . import msg_err_db
 from . import serv_review_util
+from .serv_prod_runtime_env import DEFAULT_RUNTIME_ENV
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
 from .model_doc_templates import DOC_META as WORD_META, DEFAULT_CONTENTS as WORD_CONTENTS, REVIEW_TABLES as WORD_REVIEW_TABLES
@@ -58,6 +61,14 @@ BUILD_DATASET_NAME = {
     "md_010_02": "肺叶分割调优集",
     "md_011_01": "肺栓塞分诊测试集",
     "md_011_02": "肺叶分割测试集",
+}
+BUILD_AUTHOR_ROLE = {
+    "md_009_01": "algo",
+    "md_009_02": "algo",
+    "md_010_01": "algo",
+    "md_010_02": "algo",
+    "md_011_01": "modeler",
+    "md_011_02": "modeler",
 }
 TRAIN_BUILD_TYPE = {"md_012_01": "md_009_01", "md_012_02": "md_009_02"}
 _CRR_CATEGORIES = ("结构", "文档", "变量", "算法操作", "循环和分支")
@@ -533,6 +544,9 @@ class Server(object):
             serv_review_util.fill_cover_signers(
                 obj.content, serv_review_util.cover_signers(row.product_id, key) if row.product_id else {}
             )
+            serv_review_util.fill_annex_reviews(
+                obj.content, row.product_id, key, getattr(product, "name", "") or ""
+            )
         if product:
             obj.product_name = product.name
             obj.product_version = product.full_version
@@ -849,6 +863,147 @@ class Server(object):
         else:
             rows.append(total_row)
         return rows
+
+    def __kernel_first(self, raw):
+        s = str(raw or "").strip()
+        if not s or s in ("none", "(空)"):
+            return ""
+        if s.startswith("["):
+            inner = s.strip("[]")
+            s = inner.split(",")[0].strip().strip("'\"") or s
+        for sep in ("\\", ",", "/", ";"):
+            if sep in s:
+                s = s.split(sep)[0].strip()
+                break
+        return s.strip("'\"")
+
+    def __iter_case_rows(self, content):
+        def walk(ns):
+            for n in ns or []:
+                if not isinstance(n, dict):
+                    continue
+                rows = n.get("case_rows")
+                if isinstance(rows, list):
+                    for r in rows:
+                        if isinstance(r, dict):
+                            yield r
+                yield from walk(n.get("children") or [])
+        yield from walk((content or {}).get("sections") or [])
+
+    def __kernel_series_prefix(self, name):
+        u = str(name or "").strip().upper()
+        if u.endswith("系列"):
+            u = u[:-2]
+        if not u or u in ("LUNG", "SOFT"):
+            return None
+        if u == "B" or re.match(r"^B[A-Z]{0,2}\d", u):
+            return "B"
+        if u == "Y" or re.match(r"^Y[A-Z0-9]", u):
+            return "Y"
+        if u == "FC" or re.match(r"^FC\d", u):
+            return "FC"
+        if u == "I" or re.match(r"^I\d", u):
+            return "I"
+        return None
+
+    def __kernel_rows_from_pairs(self, pairs, total_n):
+        counts = {}
+        order = []
+        for raw, qty in pairs or []:
+            name = self.__kernel_first(raw)
+            if not name:
+                continue
+            q = float(qty or 0)
+            if q <= 0:
+                continue
+            u = name.strip()
+            up = u.upper()
+            prefix = self.__kernel_series_prefix(name)
+            if prefix:
+                lab = "%s系列" % prefix
+            elif up in ("LUNG", "SOFT"):
+                lab = up
+            else:
+                lab = name
+            if lab not in counts:
+                order.append(lab)
+                counts[lab] = 0.0
+            counts[lab] += q
+        if not counts or total_n <= 0:
+            return []
+        kept = []
+        other = 0.0
+        for lab in order:
+            c = counts[lab]
+            if lab.endswith("系列"):
+                kept.append((lab, c))
+                continue
+            if lab == "其他" or c < 5:
+                other += c
+                continue
+            kept.append((lab, c))
+        if other > 0:
+            kept.append(("其他", other))
+        out = []
+        first = True
+        for lab, c in kept:
+            qty_s = str(int(round(c))) if abs(c - round(c)) < 1e-9 else str(c)
+            out.append(["重建算法" if first else "", lab, qty_s, self.__build_fmt_pct(c / total_n)])
+            first = False
+        return out
+
+    def __kernel_dist_from_content(self, content):
+        pairs = []
+        n = 0
+        any_real = False
+        for row in self.__iter_case_rows(content):
+            n += 1
+            raw = row.get("ConvolutionKernel")
+            if self.__kernel_first(raw):
+                any_real = True
+                pairs.append((raw, 1))
+        if not any_real or n <= 0:
+            return []
+        return self.__kernel_rows_from_pairs(pairs, n)
+
+    def __ensure_kernel_dist(self, dist, content):
+        rows = [self.__build_pad_row(r) for r in (dist or []) if isinstance(r, list)]
+        if not rows:
+            return dist
+        old_pairs = []
+        i = 1
+        while i < len(rows):
+            a = str(rows[i][0]).strip()
+            if a == "总计":
+                break
+            if a in ("重建算法", "卷积核"):
+                j = i + 1
+                while j < len(rows) and not str(rows[j][0]).strip():
+                    j += 1
+                for k in range(i, j):
+                    old_pairs.append((rows[k][1], self.__build_parse_qty(rows[k][2])))
+                rows[i:j] = []
+                continue
+            i += 1
+        block = self.__kernel_dist_from_content(content)
+        if not block and old_pairs:
+            total = sum(q for _, q in old_pairs) or 1.0
+            block = self.__kernel_rows_from_pairs(old_pairs, total)
+        if block:
+            total_at = next((k for k, r in enumerate(rows) if str(r[0]).strip() == "总计"), len(rows))
+            insert_at = total_at
+            t = 1
+            while t < total_at:
+                a = str(rows[t][0]).strip()
+                if a == "设备":
+                    j = t + 1
+                    while j < total_at and not str(rows[j][0]).strip():
+                        j += 1
+                    insert_at = j
+                    break
+                t += 1
+            rows[insert_at:insert_at] = block
+        return self.__build_fill_total(rows)
 
     def __extract_build_from_grid(self, tb):
         if not isinstance(tb, list):
@@ -1388,9 +1543,10 @@ class Server(object):
 
     def __dd015_dist_for_product(self, product_id):
         for dt in ("dd_015_03", "dd_015_02", "dd_015_01"):
-            dist = self.__parse_dd015_dist(self.__latest_data_content(product_id, dt))
+            content = self.__latest_data_content(product_id, dt)
+            dist = self.__parse_dd015_dist(content)
             if dist:
-                return dist
+                return self.__ensure_kernel_dist(dist, content)
         return None
 
     def __iter_content_tables(self, content):
@@ -1402,7 +1558,25 @@ class Server(object):
                 yield from walk(n.get("children") or [])
         yield from walk((content or {}).get("sections") or [])
 
-    def __parse_dd010_counts(self, content):
+    def __norm_build_date(self, s):
+        raw = str(s or "").strip()
+        if not raw:
+            return ""
+        if re.search(r"年", raw):
+            return self.__to_dotted_date(raw)
+        m = re.match(r"^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$", raw)
+        if m:
+            return "%s.%d.%d" % (m.group(1), int(m.group(2)), int(m.group(3)))
+        num = raw.replace(",", "")
+        if num.replace(".", "", 1).isdigit() and float(num) > 20000:
+            try:
+                dt = datetime(1899, 12, 30) + timedelta(days=int(float(num)))
+                return "%s.%d.%d" % (dt.year, dt.month, dt.day)
+            except Exception:
+                return raw
+        return raw
+
+    def __parse_dd010_rows(self, content):
         out = {}
         for title, tables in self.__iter_content_tables(content):
             t = title.replace(" ", "")
@@ -1413,7 +1587,7 @@ class Server(object):
                 if t not in ("标注",) and "标注数据库" not in first:
                     continue
                 header = None
-                name_i = qty_i = None
+                name_i = qty_i = date_i = None
                 for row in tb:
                     if not isinstance(row, list):
                         continue
@@ -1422,14 +1596,24 @@ class Server(object):
                         header = cells
                         name_i = cells.index("数据集")
                         qty_i = next(i for i, x in enumerate(cells) if "数据量" in x)
+                        date_i = next((i for i, x in enumerate(cells) if "日期" in x), None)
                         continue
                     if header is None or name_i is None or qty_i is None:
                         continue
                     name = cells[name_i] if name_i < len(cells) else ""
                     qty = cells[qty_i] if qty_i < len(cells) else ""
                     if name and qty and name not in ("数据集",):
-                        out[name] = qty.split(".")[0] if qty.replace(".", "", 1).isdigit() else qty
+                        rec = {
+                            "qty": qty.split(".")[0] if qty.replace(".", "", 1).isdigit() else qty,
+                            "date": "",
+                        }
+                        if date_i is not None and date_i < len(cells):
+                            rec["date"] = self.__norm_build_date(cells[date_i])
+                        out[name] = rec
         return out
+
+    def __parse_dd010_counts(self, content):
+        return {k: (v or {}).get("qty") or "" for k, v in (self.__parse_dd010_rows(content) or {}).items()}
 
     def __parse_dd012_counts(self, content):
         out = {}
@@ -1456,25 +1640,353 @@ class Server(object):
                         out[name] = qty.split(".")[0] if qty.replace(".", "", 1).isdigit() else qty
         return out
 
-    def __dataset_qty(self, product_id, dataset_name):
+    def __dataset_row(self, product_id, dataset_name):
         if not product_id or not dataset_name:
-            return ""
-        counts = self.__parse_dd010_counts(self.__latest_data_content(product_id, "dd_010"))
-        if dataset_name in counts:
-            return counts[dataset_name]
+            return {}
+        rows = self.__parse_dd010_rows(self.__latest_data_content(product_id, "dd_010"))
+        if dataset_name in rows:
+            return rows[dataset_name] or {}
         counts = self.__parse_dd012_counts(self.__latest_data_content(product_id, "dd_012"))
-        return counts.get(dataset_name) or ""
+        qty = counts.get(dataset_name) or ""
+        return {"qty": qty, "date": ""} if qty else {}
+
+    def __dataset_qty(self, product_id, dataset_name):
+        return (self.__dataset_row(product_id, dataset_name) or {}).get("qty") or ""
+
+    def __dist_total_qty(self, dist):
+        for r in reversed(dist or []):
+            if isinstance(r, list) and str(r[0] or "").strip() == "总计":
+                return str(r[2] or "").strip()
+        return ""
+
+    def __build_write_date(self, product_id, doc_type):
+        if not product_id or not doc_type:
+            return ""
+        product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+        info = self.__collect_autofill(product_id, product, "", doc_type)
+        return self.__to_dotted_date(info.get("file_date") or "")
+
+    def __build_author(self, product_id, doc_type):
+        kind = BUILD_AUTHOR_ROLE.get(doc_type)
+        if not product_id or not kind:
+            return ""
+        members = db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == product_id)).scalars().all()
+        if kind == "algo":
+            names = self.__member_names(members, lambda r: r == "算法工程师")
+        else:
+            names = self.__member_names(members, lambda r: r == "模型负责人")
+            if not names:
+                names = self.__member_names(members, lambda r: r == "模型部负责人")
+        return names[0] if names else ""
+
+    def __model_lead_name(self, product_id):
+        if not product_id:
+            return ""
+        members = db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == product_id)).scalars().all()
+        names = self.__member_names(members, lambda r: r == "模型负责人")
+        if not names:
+            names = self.__member_names(members, lambda r: r == "模型部负责人")
+        return names[0] if names else ""
+
+    @staticmethod
+    def __one_line_env(s):
+        parts = [p.strip() for p in re.split(r"[\r\n]+", str(s or "")) if p.strip()]
+        return "，".join(parts)
+
+    @staticmethod
+    def __fmt_short_date(s):
+        m = re.match(r"^(\d{4})\.(\d{1,2})\.(\d{1,2})$", str(s or "").strip())
+        if m:
+            return "%s.%d.%d" % (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        return str(s or "").strip()
+
+    def __test_runtime_env(self, product_id):
+        data = dict(DEFAULT_RUNTIME_ENV)
+        if product_id:
+            row = db.session.execute(select(ProdRuntimeEnv).where(ProdRuntimeEnv.prod_id == product_id)).scalars().first()
+            if row:
+                data.update(row.dict(exclude_null=True) or {})
+        hw = self.__one_line_env(data.get("srv_gpu") or "")
+        os_name = str(data.get("srv_os") or "").strip()
+        cuda = str(data.get("srv_cuda") or "").strip()
+        if cuda and "CUDA" not in cuda.upper():
+            cuda = "CUDA " + cuda
+        sw = os_name
+        if cuda:
+            sw = (os_name + "，" + cuda) if os_name else cuda
+        return hw, sw
+
+    def __dd015_cases_for_product(self, product_id):
+        for dt in ("dd_015_03", "dd_015_02", "dd_015_01"):
+            content = self.__latest_data_content(product_id, dt)
+            rows = list(self.__iter_case_rows(content)) if content else []
+            if rows:
+                return rows
+        return []
+
+    @staticmethod
+    def __case_cell(row, *keys):
+        for k in keys:
+            if not isinstance(row, dict):
+                continue
+            v = row.get(k)
+            if v is None:
+                continue
+            s = str(v).strip()
+            if s and s.lower() not in ("none", "nan"):
+                return v
+        return ""
+
+    def __parse_dice_val(self, v):
+        s = str(v if v is not None else "").strip()
+        if not s or s in ("/", "none", "nan", "-"):
+            return None
+        try:
+            return float(s)
+        except Exception:
+            return None
+
+    def __case_sex(self, row):
+        s = str(self.__case_cell(row, "SEX", "sex") or "").strip()
+        return s if s and s.lower() != "none" else ""
+
+    def __case_age_bin(self, row):
+        raw = self.__case_cell(row, "AGE", "age")
+        try:
+            age = float(raw)
+        except Exception:
+            return ""
+        if age <= 17:
+            return "(0, 17]"
+        if age <= 40:
+            return "(17, 40]"
+        if age <= 60:
+            return "(40, 60]"
+        return ">60"
+
+    def __case_device(self, row):
+        s = str(self.__case_cell(row, "DEVICE", "device") or "").strip()
+        return s if s and s.lower() != "none" else ""
+
+    def __case_kvp(self, row):
+        raw = self.__case_cell(row, "KVP", "kvp")
+        if raw in ("", None):
+            return ""
+        try:
+            n = float(raw)
+            if abs(n - round(n)) < 1e-9:
+                return str(int(round(n)))
+            return str(n)
+        except Exception:
+            s = str(raw).strip()
+            return s if s.lower() != "none" else ""
+
+    def __case_thickness(self, row):
+        raw = self.__case_cell(row, "THICKNESS", "thickness")
+        if raw in ("", None):
+            return ""
+        s = str(raw).strip()
+        return s if s and s.lower() != "none" else ""
+
+    def __case_kernel_label(self, row):
+        name = self.__kernel_first(self.__case_cell(row, "ConvolutionKernel"))
+        if not name:
+            return ""
+        prefix = self.__kernel_series_prefix(name)
+        if prefix:
+            return "%s系列" % prefix
+        if name.upper() in ("LUNG", "SOFT"):
+            return name.upper()
+        return name
+
+    def __new_test_bucket(self):
+        return {"n": 0, "dices": [], "pos": 0, "neg": 0, "tp": 0, "fn": 0, "fp": 0, "tn": 0}
+
+    def __add_test_case(self, bucket, row):
+        bucket["n"] += 1
+        d = self.__parse_dice_val(self.__case_cell(row, "dice", "DICE", "Dice"))
+        if d is not None:
+            bucket["dices"].append(d)
+        gt_s = str(self.__case_cell(row, "gt", "GT") or "").strip()
+        pred_s = str(self.__case_cell(row, "pred", "PRED", "Pred") or "").strip()
+        is_pos = gt_s != "0"
+        if is_pos:
+            bucket["pos"] += 1
+        else:
+            bucket["neg"] += 1
+        if gt_s != "" and pred_s != "" and gt_s != "/" and pred_s != "/":
+            p = pred_s == "1"
+            if is_pos:
+                if p:
+                    bucket["tp"] += 1
+                else:
+                    bucket["fn"] += 1
+            else:
+                if p:
+                    bucket["fp"] += 1
+                else:
+                    bucket["tn"] += 1
+
+    def __merge_test_bucket(self, dst, src):
+        dst["n"] += src["n"]
+        dst["dices"].extend(src["dices"])
+        for k in ("pos", "neg", "tp", "fn", "fp", "tn"):
+            dst[k] += src[k]
+
+    def __group_test_factor(self, rows, getter, merge_small=False):
+        buckets = {}
+        order = []
+        for r in rows or []:
+            lab = getter(r)
+            if not lab:
+                continue
+            if lab not in buckets:
+                order.append(lab)
+                buckets[lab] = self.__new_test_bucket()
+            self.__add_test_case(buckets[lab], r)
+        if not merge_small:
+            return [(lab, buckets[lab]) for lab in order if buckets[lab]["n"] > 0]
+        kept = []
+        other = self.__new_test_bucket()
+        for lab in order:
+            b = buckets[lab]
+            if lab.endswith("系列"):
+                kept.append((lab, b))
+                continue
+            if lab == "其他" or b["n"] < 5:
+                self.__merge_test_bucket(other, b)
+                continue
+            kept.append((lab, b))
+        if other["n"] > 0:
+            kept.append(("其他", other))
+        return kept
+
+    @staticmethod
+    def __dice_mean_std(vals):
+        n = len(vals or [])
+        if n <= 0:
+            return "", ""
+        mean = sum(vals) / float(n)
+        if n < 2:
+            return "%.4f" % mean, ""
+        var = sum((x - mean) ** 2 for x in vals) / float(n - 1)
+        return "%.4f" % mean, "%.4f" % math.sqrt(var)
+
+    @staticmethod
+    def __fmt_rate_ci(success, n):
+        if not n:
+            return ""
+        p = success / float(n)
+        se = math.sqrt(p * (1 - p) / n) if n else 0.0
+        lo = max(0.0, p - 1.96 * se)
+        hi = min(1.0, p + 1.96 * se)
+
+        def t(x):
+            s = ("%.3f" % x).rstrip("0").rstrip(".")
+            if s == "1":
+                return "1.0"
+            if s == "0":
+                return "0.0"
+            return s
+
+        return "%s(%s, %s)" % (t(p), t(lo), t(hi))
+
+    def __test_result_from_cases(self, rows, doc_type):
+        if not rows:
+            return []
+        thick_name = "层厚（mm）" if doc_type == "md_013_01" else "层厚"
+        factors = [
+            ("性别", lambda r: self.__case_sex(r), False),
+            ("年龄", lambda r: self.__case_age_bin(r), False),
+            ("设备", lambda r: self.__case_device(r), False),
+            ("重建算法", lambda r: self.__case_kernel_label(r), True),
+            ("管电压", lambda r: self.__case_kvp(r), False),
+            (thick_name, lambda r: self.__case_thickness(r), False),
+        ]
+        header = self.__test_header(doc_type)
+        n = self.__test_ncols(doc_type)
+        out = [header[:]]
+        all_b = self.__new_test_bucket()
+        for r in rows:
+            self.__add_test_case(all_b, r)
+        for name, getter, merge_small in factors:
+            groups = self.__group_test_factor(rows, getter, merge_small=merge_small)
+            if not groups:
+                continue
+            first = True
+            for lab, b in groups:
+                if doc_type == "md_013_01":
+                    sen = self.__fmt_rate_ci(b["tp"], b["tp"] + b["fn"])
+                    spe = self.__fmt_rate_ci(b["tn"], b["tn"] + b["fp"])
+                    out.append([name if first else "", lab, str(b["pos"]), str(b["neg"]), sen, spe][:n])
+                else:
+                    mean, std = self.__dice_mean_std(b["dices"])
+                    out.append([name if first else "", lab, str(b["n"]), mean, std][:n])
+                first = False
+        if len(out) <= 1:
+            return []
+        total = ["总计"] + [""] * (n - 1)
+        if doc_type == "md_013_01":
+            total[4] = self.__fmt_rate_ci(all_b["tp"], all_b["tp"] + all_b["fn"])
+            total[5] = self.__fmt_rate_ci(all_b["tn"], all_b["tn"] + all_b["fp"])
+        else:
+            mean, std = self.__dice_mean_std(all_b["dices"])
+            total[3] = mean
+            total[4] = std
+        out.append(total)
+        return self.__test_fill_total(out, doc_type)
+
+    def __apply_test_autofill(self, content, doc_type, product_id):
+        if not isinstance(content, dict) or not product_id:
+            return content
+        lead = self.__model_lead_name(product_id)
+        if lead:
+            content["author"] = lead
+            content["auditor"] = lead
+        kws = serv_review_util.COVER_KEYWORDS.get(doc_type) or []
+        lo, hi = serv_review_util.date_range(product_id, kws)
+        if lo or hi:
+            a = self.__fmt_short_date(lo)
+            b = self.__fmt_short_date(hi)
+            if b:
+                content["write_date"] = b
+            if a and b:
+                content["test_time"] = a if a == b else "%s-%s" % (a, b)
+            elif a or b:
+                content["test_time"] = a or b
+        hw, sw = self.__test_runtime_env(product_id)
+        if hw:
+            content["hw_env"] = hw
+        if sw:
+            content["sw_env"] = sw
+        rows = self.__test_result_from_cases(self.__dd015_cases_for_product(product_id), doc_type)
+        if rows:
+            content["result_rows"] = rows
+        return content
 
     def __apply_dataset_counts(self, content, doc_type, product_id):
         if not isinstance(content, dict) or not product_id:
             return content
         if doc_type in BUILD_DOC_TYPES:
-            qty = self.__dataset_qty(product_id, BUILD_DATASET_NAME.get(doc_type))
-            if qty:
-                content["case_count"] = qty
+            row = self.__dataset_row(product_id, BUILD_DATASET_NAME.get(doc_type))
+            qty = (row or {}).get("qty") or ""
+            upload_date = (row or {}).get("date") or ""
             dist = self.__dd015_dist_for_product(product_id)
             if dist:
                 content["dist_rows"] = dist
+                total = self.__dist_total_qty(dist)
+                if total:
+                    content["case_count"] = total
+                elif qty:
+                    content["case_count"] = qty
+            elif qty:
+                content["case_count"] = qty
+            write_date = self.__build_write_date(product_id, doc_type) or upload_date
+            if write_date:
+                content["write_date"] = write_date
+            author = self.__build_author(product_id, doc_type)
+            if author:
+                content["author"] = author
             return content
         if doc_type in TRAIN_DOC_TYPES:
             build_type = TRAIN_BUILD_TYPE.get(doc_type)
@@ -1490,10 +2002,13 @@ class Server(object):
                     qty = str((self.__normalize_build_content(row.content, build_type) or {}).get("case_count") or "").strip()
             if qty:
                 content["case_count"] = qty
+            return content
+        if doc_type in TEST_DOC_TYPES:
+            return self.__apply_test_autofill(content, doc_type, product_id)
         return content
 
     def __apply_dataset_autofill(self, obj: ModelDocObj):
-        if obj.doc_type not in BUILD_DOC_TYPES and obj.doc_type not in TRAIN_DOC_TYPES:
+        if obj.doc_type not in BUILD_DOC_TYPES and obj.doc_type not in TRAIN_DOC_TYPES and obj.doc_type not in TEST_DOC_TYPES:
             return
         obj.content = self.__apply_dataset_counts(obj.content or {}, obj.doc_type, obj.product_id)
 
@@ -2294,7 +2809,8 @@ class Server(object):
             c = self.__normalize_train_content(content, obj.doc_type)
             return self.__apply_dataset_counts(c, obj.doc_type, obj.product_id)
         if obj.doc_type in TEST_DOC_TYPES:
-            return self.__normalize_test_content(content, obj.doc_type)
+            c = self.__normalize_test_content(content, obj.doc_type)
+            return self.__apply_dataset_counts(c, obj.doc_type, obj.product_id)
         if obj.doc_type in PKG_DOC_TYPES:
             return self.__normalize_pkg_content(content, obj.doc_type)
         sections = (content or {}).get("sections") or []
@@ -2311,6 +2827,7 @@ class Server(object):
         key = obj.doc_type or ""
         serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, key))
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, key))
+        serv_review_util.fill_annex_reviews(content, prod_id, key, getattr(product, "name", "") or "")
         return content
 
     def __collect_autofill(self, prod_id, product, doc_version, doc_type):
@@ -3524,7 +4041,7 @@ class Server(object):
         set_cell(cells[2], "审核人签字（日期）", bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
         set_cell(cells[3], c.get("auditor_sign") or "", align=WD_ALIGN_PARAGRAPH.CENTER)
 
-        col_dxa = [1600, 2800, 1600, 2800]
+        col_dxa = [1400, 3600, 1400, 2400]
         tbl.autofit = False
         _tblPr = tbl._tbl.tblPr
         _layout = _tblPr.find(qn("w:tblLayout"))
@@ -3540,6 +4057,17 @@ class Server(object):
                 _gc = OxmlElement("w:gridCol")
                 _gc.set(qn("w:w"), str(_w))
                 _grid.append(_gc)
+        for _r in tbl.rows:
+            _cells = _r.cells
+            for _i, _w in enumerate(col_dxa):
+                if _i < len(_cells):
+                    _tcpr = _cells[_i]._tc.get_or_add_tcPr()
+                    _tcw = _tcpr.find(qn("w:tcW"))
+                    if _tcw is None:
+                        _tcw = OxmlElement("w:tcW")
+                        _tcpr.append(_tcw)
+                    _tcw.set(qn("w:w"), str(_w))
+                    _tcw.set(qn("w:type"), "dxa")
 
         document.save(output)
         output.seek(0)

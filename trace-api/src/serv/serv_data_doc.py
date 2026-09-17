@@ -252,6 +252,9 @@ class Server(object):
         serv_review_util.fill_cover_signers(
             obj.content, serv_review_util.cover_signers(row.product_id, key) if row.product_id else {}
         )
+        serv_review_util.fill_annex_reviews(
+            obj.content, row.product_id, key, getattr(product, "name", "") or ""
+        )
         if product:
             obj.product_name = product.name
             obj.product_version = product.full_version
@@ -528,6 +531,7 @@ class Server(object):
         key = obj.doc_type or ""
         serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, key))
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, key))
+        serv_review_util.fill_annex_reviews(content, prod_id, key, getattr(product, "name", "") or "")
         return content
 
     def __collect_autofill(self, prod_id, product, doc_version, doc_type):

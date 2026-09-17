@@ -1165,6 +1165,122 @@ def autofill_review_person_table(tbl, key="", rev_date="", prod_id=None):
     return tbl
 
 
+def _is_annex_review_grid(tb):
+    return isinstance(tb, list) and tb and isinstance(tb[0], list) and "评审记录" in str(tb[0][0] or "")
+
+
+def _is_annex_dept(s):
+    t = str(s or "").strip()
+    if not t or t in ("评审内容", "评审结论", "评审时间", "项目名称", "参评人员"):
+        return False
+    if t in ("模型部", "产品部", "产品开发部", "数据部", "客户服务部", "其他部门"):
+        return True
+    return t.endswith("部")
+
+
+def _person_key(name):
+    n = str(name or "").strip()
+    if len(n) == 2 and n[1] in ("微", "薇"):
+        return n[0] + "薇"
+    return n
+
+
+def _annex_dept_people(members):
+    def names(*exact, contains=None):
+        out = []
+        seen = set()
+        for m in members or []:
+            role = str(getattr(m, "role", "") or "").strip()
+            name = _person_key(getattr(m, "name", "") or "")
+            if not name:
+                continue
+            hit = False
+            if exact and role in exact:
+                hit = True
+            elif contains and contains in role:
+                hit = True
+            if hit and name not in seen:
+                seen.add(name)
+                out.append(name)
+        return " ".join(out)
+
+    tpm = names("TPM") or names(contains="TPM") or names(contains="开发人员")
+    return {
+        "模型部": names("模型部负责人", "模型负责人", "高级算法工程师", "算法工程师", "项目专员"),
+        "产品部": names(contains="产品经理"),
+        "产品开发部": tpm,
+        "数据部": names(contains="数据"),
+        "客户服务部": names(contains="客户"),
+        "其他部门": "",
+    }
+
+
+def fill_annex_review_grid(tb, prod_id, doc_type, prod_name=""):
+    """模型/数据文件「附件 1 评审记录」五列表：评审时间←时间线，参评人员←参与人员，批准人←研发负责人+日期。"""
+    if not _is_annex_review_grid(tb) or not prod_id:
+        return tb
+    rev = cover_date(prod_id, doc_type) or ""
+    members = db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == prod_id)).scalars().all()
+    dept_map = _annex_dept_people(members)
+    approver = review_approver(doc_type, prod_id, rev) or ""
+    for row in tb:
+        if not isinstance(row, list) or not row:
+            continue
+        while len(row) < 5:
+            row.append("")
+        a = str(row[0] or "").strip()
+        if a == "项目名称":
+            if prod_name:
+                row[1] = prod_name
+                row[2] = prod_name
+            for i, c in enumerate(row):
+                if str(c or "").strip() == "评审时间" and i + 1 < len(row) and rev:
+                    row[i + 1] = rev
+            continue
+        if a == "参评人员":
+            dept1 = str(row[1] or "").strip()
+            if _is_annex_dept(dept1):
+                names = dept_map.get(dept1) or "无"
+                row[2] = names
+                if not _is_annex_dept(row[3]):
+                    for i in range(3, len(row)):
+                        row[i] = names
+            dept2 = str(row[3] or "").strip()
+            if _is_annex_dept(dept2) and len(row) > 4:
+                row[4] = dept_map.get(dept2) or "无"
+            continue
+        if a.startswith("批准人"):
+            text = "批准人（签字/日期）："
+            tail = " ".join(x for x in (approver, rev) if x).strip()
+            if tail:
+                text = text + tail
+            for i in range(len(row)):
+                row[i] = text
+            continue
+        if a.startswith("参评人签字"):
+            for i in range(len(row)):
+                row[i] = "参评人签字："
+    return tb
+
+
+def fill_annex_reviews(content, prod_id, doc_type, prod_name=""):
+    if not isinstance(content, dict) or not prod_id:
+        return content
+
+    def walk(ns):
+        for n in ns or []:
+            if not isinstance(n, dict):
+                continue
+            tables = n.get("tables") or []
+            for i, tb in enumerate(tables):
+                if _is_annex_review_grid(tb):
+                    tables[i] = fill_annex_review_grid(tb, prod_id, doc_type, prod_name)
+            walk(n.get("children") or [])
+
+    walk(content.get("sections") or [])
+    return content
+
+
 def ensure_review(content, key, rev_date="", prod_id=None):
     """在 content.sections 末尾放置「评审记录」章节。内容为模板化，每次按最新格式重建，
     保证样式一致并带最新评审时间（同时清理历史遗留的旧格式）。"""

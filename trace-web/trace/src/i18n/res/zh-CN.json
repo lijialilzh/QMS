@@ -39,6 +39,7 @@
         "manage_model_doc": "模型文件",
         "manage_data_doc": "数据文件",
         "data_stats": "数据统计",
+        "data_check": "数据自查",
         "data_docs": "数据文件",
         "data_docs_placeholder": "即将接入",
         "dev_files": "开发文件",

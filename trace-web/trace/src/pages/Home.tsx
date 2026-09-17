@@ -580,6 +580,12 @@ export default () => {
                 perm: "data_doc_view",
             },
             {
+                key: "/data_check",
+                label: ts("menu.data_check"),
+                icon: <img src="assets/icon/menu-create.svg" />,
+                perm: "data_doc_view",
+            },
+            {
                 key: "/prod_overview",
                 label: ts("menu.prod_overview"),
                 icon: <img src="assets/icon/menu-create.svg" />,

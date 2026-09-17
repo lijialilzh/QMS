@@ -39,6 +39,7 @@
         "manage_model_doc": "Model Files",
         "manage_data_doc": "Data Files",
         "data_stats": "Data Statistics",
+        "data_check": "Data Self-Check",
         "data_docs": "Data Files",
         "data_docs_placeholder": "Coming soon",
         "dev_files": "Dev Files",
