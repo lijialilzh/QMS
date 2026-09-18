@@ -1189,18 +1189,25 @@ const mergeDd004ReqAct = (tb: any[][], spans: ReturnType<typeof computeRecordSpa
 const mergeDd010ProductName = (tb: any[][], spans: ReturnType<typeof computeRecordSpans> | null, firstBody: number) => {
     if (!Array.isArray(tb) || firstBody < 0) return spans;
     const txt = (s: any) => String(s ?? "").trim();
+    const cols = tb.reduce((m, r) => Math.max(m, Array.isArray(r) ? r.length : 0), 0);
+    let next = spans;
+    tb.forEach((row, r) => {
+        if (!onlyFirstRow(row, cols)) return;
+        if (!/数据库上传记录/.test(txt(row[0]))) return;
+        next = spanRowCols(next || blankRecordSpans(tb), r, 0, cols - 1);
+    });
     const head = tb[firstBody] || [];
     const hospI = head.findIndex((c: any) => /数据所属医院/.test(txt(c)));
     const setI = head.findIndex((c: any) => txt(c) === "数据集");
     const projI = head.findIndex((c: any) => /数据所属项目/.test(txt(c)));
     const personI = head.findIndex((c: any) => /上传人员/.test(txt(c)));
-    if (projI < 0 || (hospI < 0 && setI < 0)) return spans;
+    if (projI < 0 || (hospI < 0 && setI < 0)) return next;
     const dataStart = firstBody + 1;
     const row = tb[dataStart] || [];
-    if (!txt(row[projI])) return spans;
-    if (hospI >= 0 && txt(row[hospI])) return spans;
-    if (setI >= 0 && txt(row[setI])) return spans;
-    const next = spans || blankRecordSpans(tb);
+    if (!txt(row[projI])) return next;
+    if (hospI >= 0 && txt(row[hospI])) return next;
+    if (setI >= 0 && txt(row[setI])) return next;
+    next = next || blankRecordSpans(tb);
     const end = personI >= 0 ? personI : Math.max(projI, (row || []).length - 1);
     return spanRowCols(next, dataStart, projI, end);
 };
@@ -2850,7 +2857,8 @@ export default () => {
                         {tb.map((row: any[], r: number) => {
                             const banner = onlyFirstRow(row, cols);
                             const bannerText = String(row[0] ?? "").trim();
-                            if (banner && (looksLikeFileNo(bannerText) || bannerText === meta.title || r <= 1)) return null;
+                            if (banner && (looksLikeFileNo(bannerText) || bannerText === meta.title)) return null;
+                            if (banner && r <= 1 && !(isUpload && /数据库上传记录/.test(bannerText))) return null;
                             const emptyRow = rowAllEmpty(row, cols);
                             if (emptyRow) return null;
                             if (isDailyFootRow(row)) return null;
