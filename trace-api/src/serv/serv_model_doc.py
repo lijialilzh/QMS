@@ -3585,7 +3585,7 @@ class Server(object):
         tpm = (self.__member_names(members, lambda r: "TPM" in r.upper()) or [""])[0]
         if not tpm:
             tpm = " ".join(self.__member_names(members, lambda r: "开发人员" in r))
-        data_names = " ".join(self.__member_names(members, lambda r: "数据" in r))
+        data_names = " ".join(self.__member_names(members, lambda r: r == "脱敏+清洗人员"))
         model_dept = " ".join(r[1] for r in staff_rows)
 
         if title == "项目简介" and pm:

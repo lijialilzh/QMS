@@ -13,7 +13,7 @@ import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiHospital from "@/api/ApiProdHospital";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import { getDataDocMeta, DATA_STATS_IMPORT_TYPES, getDataDocListType } from "./DataDocTypes";
-import { ANN_PID_TYPES, annotTableSig, applyPidsToSections, attachCaseRows, autoStatsExtra, buildAnnotMeta, buildStatsGrid, caseRowsFromContent, pidsFromCache, readStatsCache, STATS_TITLES, StatsKind } from "../data_stats/dataStatsLocal";
+import { ANN_PID_TYPES, annotTableSig, applyPidsToSections, attachCaseRows, autoStatsExtra, buildAnnotMeta, buildStatsGrid, caseRowsFromContent, pidsFromCache, readLastStats, readStatsCache, STATS_TITLES, StatsKind } from "../data_stats/dataStatsLocal";
 import { computeGridSpans } from "./gridSpans";
 import "../pdp/PdpDocDetail.less";
 
@@ -1835,6 +1835,10 @@ const shortDeviceName = (raw: string) => {
 
 const loadCaseRowsForDoc = (productId: number): Promise<any[]> => {
     if (!productId) return Promise.resolve([]);
+    const last = readLastStats();
+    if (last && last.productId === productId && last.item.rows && last.item.rows.length) {
+        return Promise.resolve(last.item.rows);
+    }
     const cached = readStatsCache(productId, "raw") || readStatsCache(productId, "base") || readStatsCache(productId, "ann");
     if (cached && cached.rows && cached.rows.length) return Promise.resolve(cached.rows);
     const types = ["dd_015_01", "dd_015_02", "dd_015_03"];
@@ -2034,12 +2038,26 @@ const fillDd004Numbers = (productId: number, secs: any[]): Promise<any[]> => {
             no: r.no,
             region: byNo.get(String(r.no || "").trim().toUpperCase()) || "",
         }));
-        const qtySum = rows.reduce((s, r) => s + (parseInt(String(r.qty || "").replace(/[^\d]/g, ""), 10) || 0), 0)
-            || ((cases || []).length);
+        const returnSum = rows.reduce((s, r) => s + (parseInt(String(r.qty || "").replace(/[^\d]/g, ""), 10) || 0), 0);
+        const qtySum = (cases || []).length || returnSum;
         if (!rows.length && !(cases || []).length) return secs;
         const act = summarizeDd004Actual(hospitals, cases || [], qtySum);
         return applyDd004Numbers(secs, { act, hasReturn: rows.length > 0 });
     }).catch(() => secs);
+};
+
+const uniqNames = (...lists: string[][]) => {
+    const seen: Record<string, true> = {};
+    const names: string[] = [];
+    lists.forEach((arr) => {
+        (arr || []).forEach((n) => {
+            const name = String(n || "").trim();
+            if (!name || seen[name]) return;
+            seen[name] = true;
+            names.push(name);
+        });
+    });
+    return names;
 };
 
 const namesByRole = (members: any[], role: string) => {
@@ -2253,6 +2271,9 @@ export default () => {
         products: [] as any[],
         annotators: [] as string[],
         reviewers: [] as string[],
+        arbitrators: [] as string[],
+        collectors: [] as string[],
+        cleaners: [] as string[],
     });
 
     const autofill = (productId: number, secs: any[], replaceProduct = false, oldProductId = 0): Promise<any[]> =>
@@ -2612,18 +2633,25 @@ export default () => {
         setSections(mapNode(data.sections, key, (n: any) => ({ ...n, ...patch })));
 
     const loadAnnotators = (productId: number) => {
+        const empty = { annotators: [] as string[], reviewers: [] as string[], arbitrators: [] as string[], collectors: [] as string[], cleaners: [] as string[] };
         if (!productId) {
-            dispatch({ annotators: [], reviewers: [] });
+            dispatch(empty);
             return;
         }
         ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).then((res: any) => {
             if (res.code !== Api.C_OK) {
-                dispatch({ annotators: [], reviewers: [] });
+                dispatch(empty);
                 return;
             }
             const members = (res.data && res.data.rows) || [];
-            dispatch({ annotators: namesByRole(members, "标注人员"), reviewers: namesByRole(members, "审核医生") });
-        }).catch(() => dispatch({ annotators: [], reviewers: [] }));
+            dispatch({
+                annotators: namesByRole(members, "标注人员"),
+                reviewers: namesByRole(members, "审核医生"),
+                arbitrators: namesByRole(members, "仲裁医生"),
+                collectors: namesByRole(members, "数据采集人员"),
+                cleaners: namesByRole(members, "脱敏+清洗人员"),
+            });
+        }).catch(() => dispatch(empty));
     };
 
     const applyCell = (sections: any[], key: string, ti: number, r: number, ci: number, val: string, colSpan = 1, rowSpan = 1) =>
@@ -2745,6 +2773,7 @@ export default () => {
     const renderTable = (n: any, ti: number, tb: any[]) => {
         const docType = String(type || data.doc.doc_type || "");
         const isUpload = docType === "dd_010";
+        const isDailyEval = /^dd_013_0[567]$/.test(docType);
         const noCellMerge = docType === "dd_eq" || docType === "dd_002" || isUpload
             || /^(dd_008_|dd_009_|dd_013_0[567])/.test(docType);
         const cols = tb.reduce((m: number, row: any[]) => Math.max(m, Array.isArray(row) ? row.length : 0), 0);
@@ -2815,8 +2844,8 @@ export default () => {
             && (tb[firstBody + 1] || []).some((c: any) => /检查方式|数据量/.test(String(c ?? "")));
         const dd003DataStart = firstBody >= 0 ? firstBody + (dd003HasSub ? 2 : 1) : -1;
         return (
-            <div key={ti} style={{ marginBottom: 8, overflowX: isUpload ? "auto" : "visible" }}>
-                <table style={isUpload ? { ...tableStyle, tableLayout: "auto", minWidth: 1280 } : tableStyle}>
+            <div key={ti} style={{ marginBottom: 8, overflowX: (isUpload || isDailyEval) ? "auto" : "visible" }}>
+                <table style={(isUpload || isDailyEval) ? { ...tableStyle, tableLayout: "auto", minWidth: isUpload ? 1280 : 1180 } : tableStyle}>
                     <tbody>
                         {tb.map((row: any[], r: number) => {
                             const banner = onlyFirstRow(row, cols);
@@ -2848,13 +2877,37 @@ export default () => {
                                     const rs = sp?.rowSpan || 1;
                                     const colLabel = String(headerRow[ci] ?? "").trim();
                                     const prevLabel = String(row[ci - 1] ?? "").trim();
-                                    const isDailyEval = /^dd_013_0[567]$/.test(docType);
+                                    const rotatePerson = (
+                                        colLabel === "标注人员"
+                                        || colLabel === "审核医生"
+                                        || colLabel === "标注人员姓名"
+                                        || colLabel === "仲裁医生"
+                                        || colLabel === "数据采集负责人"
+                                        || colLabel === "脱敏检查、清洗人员"
+                                        || colLabel === "上传人员"
+                                        || colLabel === "检查人"
+                                        || /^测试医生/.test(colLabel)
+                                    );
                                     const personPick = !isHeadRow && !sign && !isDailyFootRow(row) && (
                                         (/^dd_005_/.test(docType) && /^(讲解人员|记录人)$/.test(prevLabel))
-                                        || (isDailyEval && (colLabel === "标注人员姓名" || colLabel === "审核医生"))
+                                        || rotatePerson
                                     );
                                     const datePick = isDailyEval && !isHeadRow && !sign && !isDailyFootRow(row) && colLabel === "日期";
-                                    const pickNames = colLabel === "审核医生" ? (data.reviewers || []) : (data.annotators || []);
+                                    const testers = uniqNames(data.reviewers || [], data.arbitrators || []);
+                                    const pickNames = /^测试医生/.test(colLabel) ? testers
+                                        : colLabel === "审核医生" ? (data.reviewers || [])
+                                        : colLabel === "仲裁医生" ? (data.arbitrators || [])
+                                        : colLabel === "数据采集负责人" ? (data.collectors || [])
+                                        : (colLabel === "脱敏检查、清洗人员" || colLabel === "上传人员" || colLabel === "检查人")
+                                            ? (data.cleaners || [])
+                                            : (data.annotators || []);
+                                    const pickPh = /^测试医生/.test(colLabel) ? "选择测试医生"
+                                        : colLabel === "审核医生" ? "选择审核医生"
+                                        : colLabel === "仲裁医生" ? "选择仲裁医生"
+                                        : colLabel === "数据采集负责人" ? "选择采集负责人"
+                                        : (colLabel === "脱敏检查、清洗人员" || colLabel === "上传人员" || colLabel === "检查人")
+                                            ? "选择人员"
+                                            : "选择标注人员";
                                     const isPath = isUpload && PATH_LABELS.has(colLabel);
                                     const leftText = leftTextRows.has(r) && ci > 0;
                                     const align = /^(评估人|复核人)/.test(String(cell ?? "").trim()) || isPath || leftText ? "left" : "center";
@@ -2863,6 +2916,7 @@ export default () => {
                                         textAlign: isHeadRow ? "center" : align,
                                         ...(leftText ? { paddingLeft: 12 } : {}),
                                         ...(isUpload ? { minWidth: uploadColMin(colLabel), ...(isPath ? { wordBreak: "break-all" } : {}) } : {}),
+                                        ...(datePick ? { minWidth: 148, whiteSpace: "nowrap", padding: "4px 6px" } : {}),
                                     };
                                     return (
                                         <td
@@ -2878,7 +2932,7 @@ export default () => {
                                                     variant="borderless"
                                                     value={String(cell ?? "").trim() || undefined}
                                                     disabled={readonly}
-                                                    placeholder={colLabel === "审核医生" ? "选择审核医生" : "选择标注人员"}
+                                                    placeholder={pickPh}
                                                     style={{ width: "100%", textAlign: "center", fontSize: 13 }}
                                                     options={(String(cell ?? "").trim() && pickNames.indexOf(String(cell ?? "").trim()) < 0
                                                         ? [String(cell ?? "").trim(), ...pickNames]
@@ -2897,7 +2951,7 @@ export default () => {
                                                     disabled={readonly}
                                                     placeholder="选择日期"
                                                     format="YYYY-MM-DD"
-                                                    style={{ width: "100%" }}
+                                                    style={{ width: 138 }}
                                                     onChange={(d) => setCellAndSave(n._key, ti, r, ci, d ? d.format("YYYY-MM-DD") : "", cs, rs)}
                                                 />
                                             ) : checkItems ? (

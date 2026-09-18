@@ -108,7 +108,7 @@ const fillMd006People = (nodes: any[], members: any[]): any[] => {
     const algos = memberNames(members, (r) => r === "算法工程师");
     const tpm = memberNames(members, (r) => r.toUpperCase() === "TPM" || r.includes("TPM"))[0]
         || memberNames(members, (r) => r.includes("开发人员")).join(" ");
-    const dataNames = memberNames(members, (r) => r.includes("数据")).join(" ");
+    const dataNames = memberNames(members, (r) => r === "脱敏+清洗人员").join(" ");
     const modelDeptNames = staffRows.map((r) => r[1]).join(" ");
 
     const fillReview = (tb: any[]): any[] => {

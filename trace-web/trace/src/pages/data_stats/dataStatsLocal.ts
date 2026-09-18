@@ -1043,6 +1043,7 @@ export type AnnotFillMeta = {
     reviewer: string;
     reviewers: string[];
     arbiters: string[];
+    testers: string[];
     project: string;
     dataType: string;
     status: string;
@@ -1122,6 +1123,13 @@ export const buildAnnotMeta = (docType: string, tlRows: any[], members: any[]): 
         .filter((m: any) => String(m.role || "").trim() === "仲裁医生")
         .map((m: any) => String(m.name || "").trim())
         .filter(Boolean);
+    const testers: string[] = [];
+    const seenT: Record<string, true> = {};
+    reviewers.concat(arbiters).forEach((n) => {
+        if (!n || seenT[n]) return;
+        seenT[n] = true;
+        testers.push(n);
+    });
     return {
         annotDate,
         reviewDate,
@@ -1129,6 +1137,7 @@ export const buildAnnotMeta = (docType: string, tlRows: any[], members: any[]): 
         reviewers,
         reviewer: reviewers[0] || "",
         arbiters,
+        testers,
         project: annotProjectOf(docType),
         dataType: annotDataTypeOf(docType),
         status: "已标注",
@@ -1152,8 +1161,8 @@ const cellByLabel = (label: string, pid: string, index: number, meta?: AnnotFill
     if (label === "审核结果") return meta.result;
     if (label === "评测日期") return meta.annotDate;
     if (label === "评测项目") return meta.project;
-    if (label === "测试医生1") return meta.annotators[0] || "";
-    if (label === "测试医生2") return meta.annotators[1] || "";
+    if (label === "测试医生1") return (meta.testers || [])[0] || "";
+    if (label === "测试医生2") return (meta.testers || [])[1] || "";
     if (label === "二合一结果") return "一致";
     if (label === "仲裁医生") return meta.arbiters.length ? meta.arbiters[index % meta.arbiters.length] : "";
     if (label === "仲裁时间") return meta.arbiters.length ? (meta.reviewDate || meta.annotDate) : "";

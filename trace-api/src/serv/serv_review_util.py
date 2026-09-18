@@ -1209,7 +1209,7 @@ def _annex_dept_people(members):
         "模型部": names("模型部负责人", "模型负责人", "高级算法工程师", "算法工程师", "项目专员"),
         "产品部": names(contains="产品经理"),
         "产品开发部": tpm,
-        "数据部": names(contains="数据"),
+        "数据部": names("脱敏+清洗人员"),
         "客户服务部": names(contains="客户"),
         "其他部门": "",
     }
