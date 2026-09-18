@@ -225,7 +225,10 @@ async def test_print_conn(id: int = 0):
 @router.get("/ipp_print_doc", summary="打印单个文档：生成docx后直接发到默认打印机")
 @try_log(perm=Perms.product_view)
 async def ipp_print_doc(module_key: str, doc_id: int, with_sign: bool = True):
-    from .api_doc_integrate import _SERVERS, _DOC_MODULES, _build_doc_name
+    from .api_doc_integrate import _SERVERS, _DOC_MODULES, _build_doc_name, md_data_module_denied
+    denied = md_data_module_denied(module_key)
+    if denied:
+        return Resp.resp_err(msg=denied)
     srv = _SERVERS.get(module_key)
     if not srv:
         return Resp.resp_err(msg=f"不支持的文档模块：{module_key}")

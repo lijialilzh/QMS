@@ -5,6 +5,7 @@ import { useEffect, useMemo } from "react";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { renderOneLineWithTooltip, useData } from "@/common";
+import { Root, useSelector } from "@/store";
 import * as Api from "@/api/ApiProduct";
 import * as ApiProdDhf from "@/api/ApiProdDhf";
 import * as ApiProject from "@/api/ApiProject";
@@ -260,6 +261,8 @@ const DetailDlg = ({ data, dispatch, onSaved }: any) => {
 
 export default () => {
     const { t: ts } = useTranslation();
+    const user = useSelector((state: Root) => state.user);
+    const canEdit = (user?.role_perms || []).includes("product_edit");
     const [queryForm] = Form.useForm();
     const [data, dispatch] = useData({
         total: 0,
@@ -564,6 +567,9 @@ export default () => {
             title: ts("action"),
             width: 150,
             render: (_value: any, row: any) => {
+                if (!canEdit) {
+                    return null;
+                }
                 return (
                     <Space>
                         <Button type="link" size="small" onClick={() => dispatch({ dlgType: DlgTypes.edit, targetRow: row })}>
@@ -621,21 +627,25 @@ export default () => {
                         }}>
                         {ts("export")}
                     </Button>
-                    <Button type="primary" onClick={() => dispatch({ dlgType: DlgTypes.add, targetRow: {} })}>
-                        {ts("add")}
-                    </Button>
-                    <Button disabled={!(data.selectedRowKeys || []).length} danger onClick={doBatchDelete}>
-                        {ts("batch_delete")}
-                    </Button>
+                    {canEdit ? (
+                        <>
+                            <Button type="primary" onClick={() => dispatch({ dlgType: DlgTypes.add, targetRow: {} })}>
+                                {ts("add")}
+                            </Button>
+                            <Button disabled={!(data.selectedRowKeys || []).length} danger onClick={doBatchDelete}>
+                                {ts("batch_delete")}
+                            </Button>
+                        </>
+                    ) : null}
                 </div>
             </div>
             <Table
                 className="expand"
                 tableLayout="fixed"
-                rowSelection={{
+                rowSelection={canEdit ? {
                     selectedRowKeys: data.selectedRowKeys || [],
                     onChange: (keys: any) => dispatch({ selectedRowKeys: keys }),
-                }}
+                } : undefined}
                 columns={columns}
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}

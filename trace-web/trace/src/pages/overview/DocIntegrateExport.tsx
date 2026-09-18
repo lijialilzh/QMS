@@ -13,6 +13,8 @@ const GROUP_TITLES: Record<string, string> = {
     test_files: "测试文件",
     cybersec_files: "网络安全文件",
     trace_files: "追溯文件",
+    model_files: "模型文件",
+    data_files: "数据文件",
 };
 const GROUP_COLORS: Record<string, string> = {
     product_files: "blue",
@@ -20,6 +22,8 @@ const GROUP_COLORS: Record<string, string> = {
     test_files: "orange",
     cybersec_files: "purple",
     trace_files: "cyan",
+    model_files: "geekblue",
+    data_files: "gold",
 };
 
 export default () => {

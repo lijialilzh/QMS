@@ -5,6 +5,7 @@ import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { useNavigate } from "react-router-dom";
 import { useData } from "@/common";
+import { Root, useSelector } from "@/store";
 import { createDocBatchDelete, getDocTableRowSelection } from "../doc_shared/docBatchDelete";
 import * as Api from "@/api/ApiSrsDoc";
 import * as ApiProduct from "@/api/ApiProduct";
@@ -36,6 +37,8 @@ const doSearchProducts = (data: any, dispatch: any) => {
 export default () => {
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
+    const user = useSelector((state: Root) => state.user);
+    const canEdit = (user?.role_perms || []).includes("srs_doc_edit");
     const [queryForm] = Form.useForm();
     const [importForm] = Form.useForm();
     const [addForm] = Form.useForm();
@@ -302,9 +305,9 @@ export default () => {
                 }
                 return (
                     <span
-                        style={{ cursor: "text", display: "inline-block", minWidth: 80 }}
-                        title="单击编辑文件编号"
-                        onClick={() => handleStartEditFileNo(row)}>
+                        style={{ cursor: canEdit ? "text" : "default", display: "inline-block", minWidth: 80 }}
+                        title={canEdit ? "单击编辑文件编号" : undefined}
+                        onClick={canEdit ? () => handleStartEditFileNo(row) : undefined}>
                         {value || "-"}
                     </span>
                 );
@@ -326,12 +329,16 @@ export default () => {
                         <Button type="link" size="small" onClick={() => navigate(`/srs_docs/view/${row.id}`)}>
                             {ts("view")}
                         </Button>
-                        <Button type="link" onClick={() => navigate(`/srs_docs/edit/${row.id}`)}>
-                            {ts("edit")}
-                        </Button>
-                        <Button type="link" size="small" onClick={() => handleCopy(row)}>
-                            {ts("srs_doc.copy")}
-                        </Button>
+                        {canEdit ? (
+                            <>
+                                <Button type="link" onClick={() => navigate(`/srs_docs/edit/${row.id}`)}>
+                                    {ts("edit")}
+                                </Button>
+                                <Button type="link" size="small" onClick={() => handleCopy(row)}>
+                                    {ts("srs_doc.copy")}
+                                </Button>
+                            </>
+                        ) : null}
                         <Button
                             type="link"
                             size="small"
@@ -339,9 +346,11 @@ export default () => {
                             onClick={() => handleExport(row)}>
                             {ts("export")}
                         </Button>
-                        <Button type="link" danger onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
-                            {ts("delete")}
-                        </Button>
+                        {canEdit ? (
+                            <Button type="link" danger onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
+                                {ts("delete")}
+                            </Button>
+                        ) : null}
                     </Space>
                 );
             },
@@ -394,19 +403,23 @@ export default () => {
                     </Row>
                 </Form>
                 <Space>
-                    <Button type="primary" onClick={() => dispatch({ dlgType: DlgTypes.import })}>
-                        导入
-                    </Button>
-                    <Button type="primary" onClick={openAddModal}>
-                        {ts("add")}
-                    </Button>
-                                    <Button disabled={!(data.selectedRowKeys || []).length} danger onClick={doBatchDelete}>
-                        {ts("batch_delete")}
-                    </Button>
+                    {canEdit ? (
+                        <>
+                            <Button type="primary" onClick={() => dispatch({ dlgType: DlgTypes.import })}>
+                                导入
+                            </Button>
+                            <Button type="primary" onClick={openAddModal}>
+                                {ts("add")}
+                            </Button>
+                            <Button disabled={!(data.selectedRowKeys || []).length} danger onClick={doBatchDelete}>
+                                {ts("batch_delete")}
+                            </Button>
+                        </>
+                    ) : null}
                 </Space>
             </div>
             <Table
-                rowSelection={getDocTableRowSelection(data, dispatch)}
+                rowSelection={canEdit ? getDocTableRowSelection(data, dispatch) : undefined}
                 className="expand"
                 columns={columns}
                 rowKey={(item: any) => item.id}

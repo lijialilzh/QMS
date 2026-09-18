@@ -71,6 +71,7 @@ class Perms(Enum):
     cst_edit = PermForm(code="cst_edit", name="编辑", p_code=cst.code)
 
     version_rule = PermForm(code="version_rule", name="基础配置/版本命名规则")
+    version_rule_view = PermForm(code="version_rule_view", name="查看", p_code=version_rule.code)
     version_rule_edit = PermForm(code="version_rule_edit", name="编辑", p_code=version_rule.code)
 
     company_info = PermForm(code="company_info", name="基础配置/公司基本信息")
@@ -301,6 +302,8 @@ class Roles(Enum):
     product_manager = RoleForm(code="product_manager", name="产品经理")
     developer = RoleForm(code="developer", name="开发人员")
     tester = RoleForm(code="tester", name="测试人员")
+    model_staff = RoleForm(code="model_staff", name="模型人员")
+    data_staff = RoleForm(code="data_staff", name="数据人员")
 
 
 def get_all_perm_codes():
@@ -409,6 +412,19 @@ def get_default_role_perm_codes():
     # 开发人员/测试人员/RA：可以看到产品（仅查看）、开发、测试文件（+ 图表文件 + 网络安全 + 风险追溯）
     dev_tester_ra_perms = product_mgmt_perms_view | product_file_perms | dev_test_file_perms | doc_file_perms | cybersec_perms | risk_trace_perms
 
+    # 已有固定角色保留「版本命名规则」菜单
+    version_rule_view_perm = {"version_rule", "version_rule_view"}
+    product_manager_perms = product_manager_perms | version_rule_view_perm
+    dev_tester_ra_perms = dev_tester_ra_perms | version_rule_view_perm
+
+    # 模型人员 / 数据人员：基本信息只读、SRS 只读；模型文件/数据文件/数据统计/数据自查可读写；一键导出/打印仅模型和数据文件
+    model_data_staff_perms = product_mgmt_perms_view | {
+        "prod_dhf", "prod_dhf_view",
+        "srs_doc", "srs_doc_view",
+        "model_doc", "model_doc_view", "model_doc_edit",
+        "data_doc", "data_doc_view", "data_doc_edit",
+    }
+
     return {
         Roles.root.value.code: sorted(all_perms),
         Roles.dqa.value.code: sorted(all_perms),
@@ -417,8 +433,14 @@ def get_default_role_perm_codes():
         Roles.product_manager.value.code: sorted(product_manager_perms),
         Roles.developer.value.code: sorted(dev_tester_ra_perms),
         Roles.tester.value.code: sorted(dev_tester_ra_perms),
+        Roles.model_staff.value.code: sorted(model_data_staff_perms),
+        Roles.data_staff.value.code: sorted(model_data_staff_perms),
     }
 
 
 def get_fixed_role_codes():
     return [role.value.code for role in Roles]
+
+
+def get_md_data_role_codes():
+    return [Roles.model_staff.value.code, Roles.data_staff.value.code]

@@ -143,6 +143,7 @@ export default () => {
                     {
                         key: "/version_rule",
                         label: ts("menu.version_rule"),
+                        perm: "version_rule_view",
                     },
                     {
                         key: "/company_infos",
@@ -541,7 +542,7 @@ export default () => {
                     {
                         key: "/srs_doc_trace",
                         label: ts("menu.srs_doc_trace"),
-                        perm: "srs_doc_view",
+                        perm: "srs_doc_edit",
                     },
                 ],
             },
@@ -599,7 +600,7 @@ export default () => {
                     {
                         key: "/doc_comparison",
                         label: "文档内容比对",
-                        perm: "product_view",
+                        perm: "pir_doc_view",
                     },
                     {
                         key: "doc_integrate_export",

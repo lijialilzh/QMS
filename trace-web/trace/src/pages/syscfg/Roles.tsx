@@ -69,7 +69,7 @@ const matchModuleCodes = (moduleName: string, items: Array<{ code: string; name:
                 code.startsWith("prod_rcm") ||
                 code.startsWith("prod_cst") ||
                 code.startsWith("prod_dhf") ||
-                ["project_member", "project_timeline", "prod_runtime", "prod_device"].some((k) => code.startsWith(k))
+                ["project_member", "project_timeline", "prod_runtime", "prod_device", "prod_hospital", "prod_algo_module", "prod_algo_chapter"].some((k) => code.startsWith(k))
             );
         if (moduleName === "产品文件管理")
             return (
