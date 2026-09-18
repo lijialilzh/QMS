@@ -326,8 +326,8 @@ const MD022_DHF_KEYWORDS: Record<string, string[]> = {
     md_010_02: ["调优集构建记录", "肺叶分割模型调优集"],
     md_011_01: ["测试集构建记录", "肺栓塞分诊模型测试集"],
     md_011_02: ["测试集构建记录", "肺叶分割模型测试集"],
-    md_012_01: ["模型训练记录", "肺栓塞分割模型训练"],
-    md_012_02: ["模型训练记录", "肺叶分割模型训练"],
+    md_012_01: ["肺栓塞分割模型训练记录", "模型训练记录"],
+    md_012_02: ["肺叶分割模型训练记录", "模型训练记录"],
     md_013_01: ["模型测试记录", "肺栓塞分诊模型测试记录"],
     md_013_02: ["模型测试记录", "肺叶分割模型测试记录"],
 };
@@ -351,38 +351,46 @@ const matchDhfCode = (rows: any[], keywords: string[]): string => {
     return "";
 };
 
-const collectMd022FileNos = (docs: any[], dhfRows: any[]): Record<string, string> => {
-    const byType: Record<string, string> = {};
-    (docs || []).forEach((d: any) => {
-        const t = String(d.doc_type || "").trim();
-        const no = String(d.file_no || "").trim();
-        if (t && no && !byType[t]) byType[t] = no;
-    });
+const collectMd022FileNos = (_docs: any[], dhfRows: any[]): Record<string, string> => {
     const out: Record<string, string> = {};
     Object.keys(MD022_DHF_KEYWORDS).forEach((t) => {
-        out[t] = byType[t] || matchDhfCode(dhfRows, MD022_DHF_KEYWORDS[t]) || "";
+        out[t] = matchDhfCode(dhfRows, MD022_DHF_KEYWORDS[t]) || "";
     });
     return out;
 };
 
-const collectMd022Srs = (reqs: any[]): Record<string, string> => {
-    const out: Record<string, string> = {};
-    MD022_MODULES.forEach((m) => { out[m] = ""; });
-    const blob = (r: any) => [r.module, r.function, r.sub_function].map((v) => String(v || "")).join(" ");
-    let fallback = "";
-    MD022_MODULES.forEach((module) => {
-        const hits = (reqs || [])
-            .filter((r: any) => String(r.type_code || "") !== "reqd" && blob(r).includes(module) && String(r.code || "").trim().toUpperCase().startsWith("SRS-"))
-            .map((r: any) => String(r.code || "").trim())
-            .sort();
-        if (hits.length) {
-            out[module] = hits[0];
-            if (!fallback) fallback = hits[0];
+const isMd022AlgoSrsText = (txt: any): boolean => {
+    const compact = String(txt || "").replace(/\s+/g, "");
+    return compact.includes("算法和数据要求") || compact.includes("算法需求");
+};
+
+const pickMd022SrsCode = (code: any): string => {
+    const txt = String(code || "").trim();
+    return txt.toUpperCase().startsWith("SRS-") ? txt : "";
+};
+
+const collectMd022Srs = (reqs: any[], srsNodes: any[] = []): Record<string, string> => {
+    let code = "";
+    for (const r of reqs || []) {
+        if (String(r.type_code || "") === "reqd") continue;
+        const blob = [r.module, r.function, r.sub_function, r.location, r.name].map((v) => String(v || "")).join("");
+        if (isMd022AlgoSrsText(blob)) {
+            code = pickMd022SrsCode(r.code || r.srs_code);
+            if (code) break;
         }
-    });
-    if (fallback) {
-        MD022_MODULES.forEach((m) => { if (!out[m]) out[m] = fallback; });
     }
+    const walk = (nodes: any[]) => {
+        (nodes || []).forEach((n: any) => {
+            if (code) return;
+            if (isMd022AlgoSrsText(n.title) || isMd022AlgoSrsText(n.label)) {
+                code = pickMd022SrsCode(n.srs_code);
+            }
+            if (!code) walk(n.children || []);
+        });
+    };
+    if (!code) walk(srsNodes);
+    const out: Record<string, string> = {};
+    MD022_MODULES.forEach((m) => { out[m] = code; });
     return out;
 };
 
@@ -848,12 +856,15 @@ export default () => {
                     const docRows = mdList && mdList.code === Api.C_OK ? ((mdList.data && mdList.data.rows) || []) : [];
                     const dhfRows = dhfList && dhfList.code === Api.C_OK ? ((dhfList.data && dhfList.data.rows) || []) : [];
                     let srsReqs: any[] = [];
+                    let srsNodes: any[] = [];
                     const srsDoc = srsList && srsList.code === Api.C_OK ? (((srsList.data && srsList.data.rows) || [])[0] || null) : null;
                     if (srsDoc && srsDoc.id) {
                         const reqRes: any = await ApiSrsReq.list_srs_req({ doc_id: srsDoc.id, page_index: 0, page_size: 10000 }).catch(() => null);
                         srsReqs = reqRes && reqRes.code === Api.C_OK ? ((reqRes.data && reqRes.data.rows) || []) : [];
+                        const srsDetail: any = await ApiSrsDoc.get_srs_doc({ id: srsDoc.id }).catch(() => null);
+                        srsNodes = srsDetail && srsDetail.code === Api.C_OK ? ((srsDetail.data && srsDetail.data.content) || []) : [];
                     }
-                    out = fillMd022Trace(out, collectMd022FileNos(docRows, dhfRows), collectMd022Srs(srsReqs));
+                    out = fillMd022Trace(out, collectMd022FileNos(docRows, dhfRows), collectMd022Srs(srsReqs, srsNodes));
                 }
                 if (type === "md_008_01" || type === "md_008_02") {
                     out = fillMd008Meta(out, members, fileDate, signMap);

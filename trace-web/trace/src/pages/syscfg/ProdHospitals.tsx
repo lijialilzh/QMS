@@ -1,4 +1,4 @@
-import { Button, Table, message, Row, Col, Space, Input, AutoComplete, Modal } from "antd";
+import { Button, Table, message, Row, Col, Space, Input, AutoComplete, Modal, Upload } from "antd";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
@@ -31,6 +31,7 @@ export default () => {
         targetEdit: {},
         editingField: null,
         updating: false,
+        importing: false,
     });
 
     const loadProducts = () => {
@@ -47,7 +48,7 @@ export default () => {
             return;
         }
         dispatch({ loading: true });
-        Api.list_prod_hospital({ prod_id: prodId, fuzzy: fuzzy || undefined, page_index: 0, page_size: 1000 }).then((res: any) => {
+        Api.list_prod_hospital({ prod_id: prodId, fuzzy: fuzzy || undefined, page_index: 0, page_size: 5000 }).then((res: any) => {
             if (res.code !== Api.C_OK) {
                 dispatch({ loading: false, rows: [] });
                 message.error(res.msg);
@@ -79,6 +80,8 @@ export default () => {
             org_name: "",
             hospital_no: "",
             region: "",
+            province: "",
+            city: "",
             sort_order: maxSort + 1,
         }).then((res: any) => {
             if (res.code === Api.C_OK) {
@@ -88,6 +91,32 @@ export default () => {
                 message.error(res.msg);
             }
         });
+    };
+
+    const doImport = (file: any) => {
+        if (!data.targetProdId) {
+            message.warning("请先选择产品");
+            return false;
+        }
+        Modal.confirm({
+            title: "导入合规医院列表",
+            content: "导入将覆盖当前产品已有的医院，确认导入？",
+            onOk: () => {
+                dispatch({ importing: true });
+                Api.import_prod_hospitals({ prod_id: data.targetProdId, replace: true, file: { fileList: [file] } }).then(
+                    (res: any) => {
+                        dispatch({ importing: false });
+                        if (res.code === Api.C_OK) {
+                            message.success(`导入成功，共 ${res.data?.imported ?? 0} 家`);
+                            loadHospitals(data.targetProdId, data.fuzzy, false);
+                        } else {
+                            message.error(res.msg);
+                        }
+                    }
+                );
+            },
+        });
+        return false;
     };
 
     const doDelete = (row: any) => {
@@ -155,11 +184,9 @@ export default () => {
     });
 
     const columns = [
-        textCol("合同编号", "contract_no", "22%"),
-        textCol("对方单位名称", "org_name"),
-        textCol("医院编号", "hospital_no", "16%"),
+        textCol("医院名称", "org_name"),
         {
-            title: "区域",
+            title: "区域划分",
             dataIndex: "region",
             width: "12%",
             render: (value: any, row: any) => {
@@ -178,6 +205,9 @@ export default () => {
                 );
             },
         },
+        textCol("医院编号", "hospital_no", "14%"),
+        textCol("省份", "province", "12%"),
+        textCol("城市信息", "city", "14%"),
         {
             title: ts("action"),
             width: 90,
@@ -217,7 +247,7 @@ export default () => {
                             </div>
                             <Input.Search
                                 allowClear
-                                placeholder="合同编号 / 单位名称 / 医院编号"
+                                placeholder="医院名称 / 医院编号 / 省份 / 城市"
                                 style={{ width: 280 }}
                                 disabled={!data.targetProdId}
                                 value={data.fuzzy}
@@ -228,6 +258,11 @@ export default () => {
                     </Col>
                 </Row>
                 <div className="div-h hspace">
+                    <Upload showUploadList={false} accept=".xls,.xlsx" beforeUpload={doImport}>
+                        <Button type="primary" disabled={!data.targetProdId} loading={data.importing}>
+                            导入
+                        </Button>
+                    </Upload>
                     <Button disabled={!data.targetProdId} onClick={doAdd}>
                         {ts("add")}
                     </Button>

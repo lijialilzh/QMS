@@ -35,6 +35,8 @@ def create_tables():
                 sql_ctx.db.session.execute(expression.text("ALTER TABLE IF EXISTS sds_node ALTER COLUMN img_url TYPE TEXT"))
                 sql_ctx.db.session.execute(expression.text("ALTER TABLE IF EXISTS srs_doc ADD COLUMN IF NOT EXISTS folder_name VARCHAR(128)"))
                 sql_ctx.db.session.execute(expression.text("ALTER TABLE IF EXISTS company_info ADD COLUMN IF NOT EXISTS representative VARCHAR(128)"))
+                sql_ctx.db.session.execute(expression.text("ALTER TABLE IF EXISTS prod_hospital ADD COLUMN IF NOT EXISTS province VARCHAR(64)"))
+                sql_ctx.db.session.execute(expression.text("ALTER TABLE IF EXISTS prod_hospital ADD COLUMN IF NOT EXISTS city VARCHAR(128)"))
                 sql_ctx.db.session.commit()
             Base.metadata.create_all(bind=engine)
 

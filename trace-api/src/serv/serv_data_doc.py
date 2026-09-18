@@ -347,6 +347,68 @@ class Server(object):
             counts = self.__parse_dd012_counts(self.__latest_data_content(product_id, "dd_012"))
         return counts or {}
 
+    def __count_case_rows(self, content):
+        n = 0
+
+        def walk(ns):
+            nonlocal n
+            for node in ns or []:
+                if not isinstance(node, dict):
+                    continue
+                rows = node.get("case_rows")
+                if isinstance(rows, list):
+                    n += sum(1 for r in rows if isinstance(r, dict))
+                walk(node.get("children") or [])
+
+        walk((content or {}).get("sections") or [])
+        return n
+
+    def __parse_dd002_qty_sum(self, content):
+        total = 0
+        found = False
+        for _title, tables in self.__iter_content_tables(content):
+            for tb in tables:
+                if not isinstance(tb, list) or not tb:
+                    continue
+                header = None
+                i_org = i_no = i_ret = i_act = None
+                for row in tb:
+                    if not isinstance(row, list):
+                        continue
+                    cells = [str(c or "").strip() for c in row]
+                    if header is None and "数据来源" in cells and "医院编号" in cells:
+                        header = cells
+                        i_org = cells.index("数据来源")
+                        i_no = cells.index("医院编号")
+                        i_ret = cells.index("回传数据量") if "回传数据量" in cells else None
+                        i_act = cells.index("实际接收量") if "实际接收量" in cells else None
+                        continue
+                    if header is None:
+                        continue
+                    if any("签字" in x for x in cells):
+                        break
+                    org = cells[i_org] if i_org is not None and i_org < len(cells) else ""
+                    no = cells[i_no] if i_no is not None and i_no < len(cells) else ""
+                    if not no or not org or org in ("数据来源", "无"):
+                        continue
+                    qty = ""
+                    if i_ret is not None and i_ret < len(cells):
+                        qty = cells[i_ret]
+                    if not self.__norm_qty(qty) and i_act is not None and i_act < len(cells):
+                        qty = cells[i_act]
+                    n = self.__norm_qty(qty)
+                    if n:
+                        total += int(n)
+                        found = True
+        return str(total) if found else ""
+
+    def __md003_actual_qty(self, product_id):
+        for dt in ("dd_015_01", "dd_015_02", "dd_015_03"):
+            n = self.__count_case_rows(self.__latest_data_content(product_id, dt))
+            if n:
+                return str(n)
+        return self.__parse_dd002_qty_sum(self.__latest_data_content(product_id, "dd_002")) or ""
+
     def __fill_md003_qty_line(self, body, label, qty):
         n = self.__norm_qty(qty)
         if not n:
@@ -359,10 +421,12 @@ class Server(object):
     def __apply_md003_qty(self, content, product_id):
         if not product_id or not isinstance(content, dict):
             return
-        counts = self.__md003_qty_map(product_id)
-        if not counts:
+        actual = self.__md003_actual_qty(product_id)
+        counts = {} if actual else self.__md003_qty_map(product_id)
+        if not actual and not counts:
             return
         last_kind = ""
+        qty_labels = ("训练数据量要求", "测试数据量要求", "调优数据量要求")
 
         def walk(nodes):
             nonlocal last_kind
@@ -378,14 +442,18 @@ class Server(object):
                     if "肺栓塞" in blob:
                         last_kind = "pe"
                 if title == "数据":
-                    kind = last_kind
-                    if "交付时间" in body:
-                        kind = "pe"
-                    elif not kind:
-                        kind = "lobe" if "肺叶" in body else "pe"
                     new_body = body
-                    for label, ds_name in self.MD003_DATASETS.get(kind) or ():
-                        new_body = self.__fill_md003_qty_line(new_body, label, counts.get(ds_name) or "")
+                    if actual:
+                        for label in qty_labels:
+                            new_body = self.__fill_md003_qty_line(new_body, label, actual)
+                    else:
+                        kind = last_kind
+                        if "交付时间" in body:
+                            kind = "pe"
+                        elif not kind:
+                            kind = "lobe" if "肺叶" in body else "pe"
+                        for label, ds_name in self.MD003_DATASETS.get(kind) or ():
+                            new_body = self.__fill_md003_qty_line(new_body, label, counts.get(ds_name) or "")
                     n["body"] = new_body
                 walk(n.get("children") or [])
 
@@ -1355,6 +1423,211 @@ class Server(object):
             yield node
 
     @staticmethod
+    def __clamp_dd003_prod_banner(rows, spans):
+        def cell(r, c):
+            if r >= len(rows) or c >= len(rows[r] or []):
+                return ""
+            return str((rows[r] or [None])[c] or "").strip()
+
+        header = -1
+        unit = staff = proj = -1
+        for r, row in enumerate(rows or []):
+            cells = [str(c or "").strip() for c in (row or [])]
+            if any("采集单位" in x for x in cells) and any("所属项目" in x for x in cells):
+                header = r
+                unit = next((i for i, x in enumerate(cells) if "采集单位" in x), -1)
+                staff = next((i for i, x in enumerate(cells) if "清洗人员" in x), -1)
+                proj = next((i for i, x in enumerate(cells) if "所属项目" in x), 0)
+                break
+        if header < 0 or unit < 0 or staff < 0 or not spans:
+            return rows, spans
+        sub = rows[header + 1] if header + 1 < len(rows) else []
+        has_sub = any(re.search(r"数据量|检查方式", str(c or "")) for c in (sub or []))
+        data_start = header + (2 if has_sub else 1)
+        if data_start >= len(rows):
+            return rows, spans
+        name = cell(data_start, proj if proj >= 0 else 0)
+        if not name or cell(data_start, unit):
+            return rows, spans
+        start_c = proj if proj >= 0 else 0
+        want = staff - start_c + 1
+        if want < 2 or data_start >= len(spans) or start_c >= len(spans[data_start]):
+            return rows, spans
+        sp = spans[data_start][start_c]
+        if sp.get("skip"):
+            return rows, spans
+        old_cs = int(sp.get("col") or 1)
+        if old_cs > want:
+            for c in range(start_c + want, start_c + old_cs):
+                if c < len(spans[data_start]):
+                    spans[data_start][c]["skip"] = False
+                    spans[data_start][c]["col"] = 1
+            sp["col"] = want
+        elif old_cs < want:
+            for c in range(start_c + old_cs, start_c + want):
+                if c < len(spans[data_start]) and not cell(data_start, c) and not spans[data_start][c].get("skip"):
+                    spans[data_start][c]["skip"] = True
+                    sp["col"] = int(sp.get("col") or 1) + 1
+                else:
+                    break
+        return rows, spans
+
+    @staticmethod
+    def __span_row_cols(spans, r, start, end):
+        if not spans or r >= len(spans) or start > end or start >= len(spans[r]):
+            return
+        sp = spans[r][start]
+        if sp.get("skip"):
+            return
+        want = end - start + 1
+        old = int(sp.get("col") or 1)
+        if old > want:
+            for c in range(start + want, start + old):
+                if c < len(spans[r]):
+                    spans[r][c]["skip"] = False
+                    spans[r][c]["col"] = 1
+            sp["col"] = want
+        elif old < want:
+            for c in range(start + old, start + want):
+                if c < len(spans[r]) and not spans[r][c].get("skip"):
+                    spans[r][c]["skip"] = True
+                    sp["col"] = int(sp.get("col") or 1) + 1
+                else:
+                    break
+        for c in range(start + 1, end + 1):
+            if c < len(spans[r]):
+                spans[r][c]["skip"] = True
+        sp["col"] = want
+
+    @staticmethod
+    def __clamp_dd004_req_act(rows, spans):
+        header = req = act = ok = -1
+        for r, row in enumerate(rows or []):
+            cells = [str(c or "").strip() for c in (row or [])]
+            if "文档需求" in cells and "实际情况" in cells:
+                header = r
+                req = cells.index("文档需求")
+                act = cells.index("实际情况")
+                ok = cells.index("是否符合需求") if "是否符合需求" in cells else -1
+                break
+        if header < 0 or req < 0 or act < 0 or not spans:
+            return rows, spans
+        end_req = act - 1
+        end_act = (ok - 1) if ok > act else act
+        last = ok if ok >= 0 else end_act
+        for r in range(header, len(rows or [])):
+            cells = [str(c or "").strip() for c in (rows[r] or [])]
+            if any(re.match(r"^(评估人|复核人|记录人)", x) for x in cells):
+                break
+            if cells and cells[0] == "结论":
+                Server.__span_row_cols(spans, r, req, last)
+                continue
+            if end_req > req:
+                Server.__span_row_cols(spans, r, req, end_req)
+            if end_act > act:
+                Server.__span_row_cols(spans, r, act, end_act)
+        return rows, spans
+
+    @staticmethod
+    def __clamp_dd010_prod_banner(rows, spans):
+        header = hosp = dataset = proj = person = -1
+        for r, row in enumerate(rows or []):
+            cells = [str(c or "").strip() for c in (row or [])]
+            if "数据所属项目" not in cells:
+                continue
+            if "数据所属医院" in cells or "数据集" in cells:
+                header = r
+                proj = cells.index("数据所属项目")
+                hosp = cells.index("数据所属医院") if "数据所属医院" in cells else -1
+                dataset = cells.index("数据集") if "数据集" in cells else -1
+                person = next((i for i, x in enumerate(cells) if "上传人员" in x), -1)
+                break
+        if header < 0 or proj < 0 or not spans:
+            return rows, spans
+        data_start = header + 1
+        if data_start >= len(rows):
+            return rows, spans
+
+        def cell(r, c):
+            if r >= len(rows) or c >= len(rows[r] or []):
+                return ""
+            return str((rows[r] or [None])[c] or "").strip()
+
+        if not cell(data_start, proj):
+            return rows, spans
+        if hosp >= 0 and cell(data_start, hosp):
+            return rows, spans
+        if dataset >= 0 and cell(data_start, dataset):
+            return rows, spans
+        end = person if person >= 0 else proj
+        Server.__span_row_cols(spans, data_start, proj, end)
+        return rows, spans
+
+    @staticmethod
+    def __clamp_dd012_body(rows, spans):
+        if not spans:
+            return rows, spans
+        header = time_i = qty_i = -1
+        vcols = []
+        for r, row in enumerate(rows or []):
+            cells = [str(c or "").strip() for c in (row or [])]
+            if "批次" in cells and "数据量" in cells:
+                header = r
+                time_i = cells.index("时间") if "时间" in cells else -1
+                qty_i = cells.index("数据量")
+                for name in ("时间", "查重结果", "检查人", "检查时间", "复核人", "复核时间"):
+                    if name in cells:
+                        vcols.append(cells.index(name))
+                break
+        if header < 0:
+            return rows, spans
+
+        def cell(r, c):
+            if r >= len(rows) or c >= len(rows[r] or []):
+                return ""
+            return str((rows[r] or [None])[c] or "").strip()
+
+        if qty_i >= 0:
+            for r in range(header + 1, len(rows or [])):
+                cells = [str(c or "").strip() for c in (rows[r] or [])]
+                if any(re.match(r"^(评估人|复核人|记录人)", x) for x in cells):
+                    break
+                if not cell(r, qty_i) or r >= len(spans) or qty_i >= len(spans[r]) or spans[r][qty_i].get("skip"):
+                    continue
+                sp = spans[r][qty_i]
+                old = int(sp.get("col") or 1)
+                if old <= 1:
+                    continue
+                for c in range(qty_i + 1, qty_i + old):
+                    if c < len(spans[r]):
+                        spans[r][c]["skip"] = False
+                        spans[r][c]["col"] = 1
+                        spans[r][c]["row"] = 1
+                sp["col"] = 1
+        r = header + 1
+        while r < len(rows or []):
+            cells = [str(c or "").strip() for c in (rows[r] or [])]
+            if any(re.match(r"^(评估人|复核人|记录人)", x) for x in cells):
+                break
+            r2 = r
+            if time_i >= 0 and cell(r, time_i):
+                while r2 + 1 < len(rows):
+                    below = [str(c or "").strip() for c in (rows[r2 + 1] or [])]
+                    if any(re.match(r"^(评估人|复核人|记录人)", x) for x in below) or (time_i < len(below) and below[time_i]):
+                        break
+                    r2 += 1
+            if r2 > r:
+                for c in vcols:
+                    if r >= len(spans) or c >= len(spans[r]) or spans[r][c].get("skip"):
+                        continue
+                    spans[r][c]["row"] = r2 - r + 1
+                    for k in range(r + 1, r2 + 1):
+                        if k < len(spans) and c < len(spans[k]):
+                            spans[k][c]["skip"] = True
+            r = r2 + 1
+        return rows, spans
+
+    @staticmethod
     def __grid_spans(grid):
         rows = [r if isinstance(r, list) else [] for r in (grid or [])]
         r_n = len(rows)
@@ -1445,6 +1718,14 @@ class Server(object):
 
         def write_table(ws, grid, start_row=1):
             rows, spans = self.__grid_spans(grid)
+            if str(getattr(obj, "doc_type", "") or "") == "dd_003":
+                rows, spans = self.__clamp_dd003_prod_banner(rows, spans)
+            elif str(getattr(obj, "doc_type", "") or "") == "dd_004":
+                rows, spans = self.__clamp_dd004_req_act(rows, spans)
+            elif str(getattr(obj, "doc_type", "") or "") == "dd_010":
+                rows, spans = self.__clamp_dd010_prod_banner(rows, spans)
+            elif str(getattr(obj, "doc_type", "") or "") == "dd_012":
+                rows, spans = self.__clamp_dd012_body(rows, spans)
             r_n = len(rows)
             c_n = max((len(r) for r in rows), default=0)
 
@@ -1456,7 +1737,7 @@ class Server(object):
 
             def cell_align(s, r):
                 t = str(s or "")
-                if t.startswith("评估人") or t.startswith("复核人") or t.startswith("记录人"):
+                if t.startswith("评估人") or t.startswith("复核人"):
                     return left_mid
                 if row_only_first(r) and re.search(r"TX-|DD-|MD-", t):
                     return center
@@ -1474,9 +1755,10 @@ class Server(object):
                         s = str(obj.file_no).strip()
                     if s.startswith("data:image"):
                         s = "[签名]"
-                    is_title = only_first and c == 0 and not re.search(r"TX-|DD-|MD-", s)
+                    is_title = only_first and c == 0 and not re.search(r"TX-|DD-|MD-", s) and not re.match(r"^(评估人|复核人|记录人|审核人)", s)
                     cell = ws.cell(start_row + r, c + 1, s)
-                    cell.font = Font(name="宋体", bold=bool(is_title), size=16 if is_title else (12 if only_first else 10))
+                    font = Font(name="宋体", bold=bool(is_title), size=16 if is_title else (12 if only_first else 10))
+                    cell.font = font
                     cell.alignment = cell_align(s, r)
                     cell.border = thin
                     cs, rs = sp["col"], sp["row"]
@@ -1491,8 +1773,7 @@ class Server(object):
                             cur = ws.cell(rr, cc)
                             cur.border = thin
                             cur.alignment = align
-                            if rr == start_row + r and cc == c + 1:
-                                cur.font = cell.font
+                            cur.font = font
                 if row_only_first(r):
                     ws.row_dimensions[start_row + r].height = 22
                 elif r <= 3:

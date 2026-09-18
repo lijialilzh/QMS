@@ -26,7 +26,7 @@ from ..model.model_doc import ModelDoc
 from ..model.data_doc import DataDoc
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..model.project_member import ProjectMember
-from ..model.srs_doc import SrsDoc
+from ..model.srs_doc import SrsDoc, SrsNode
 from ..model.srs_req import SrsReq
 from ..model.prod_algo_chapter import ProdAlgoChapter
 from ..model.prod_runtime_env import ProdRuntimeEnv
@@ -538,6 +538,18 @@ class Server(object):
         if key in ("pd_003", "md_004", "md_007", "md_014", "md_016", "md_018"):
             self.__fill_algo_chapters(obj.content, row.product_id, key)
         fill_chapter_images(obj.content, key)
+        if key == "md_022" and row.product_id:
+            info = {
+                "doc_type": key,
+                "md022_file_nos": {t: self.__md022_file_no(row.product_id, obj.version, t) for t in MD022_FILE_TYPES},
+                "md022_srs": self.__md022_srs_by_module(row.product_id),
+            }
+            def walk_md022(n):
+                self.__fill_md022_trace_node(n, info)
+                for c in (n.get("children") or []):
+                    walk_md022(c)
+            for n in (obj.content or {}).get("sections") or []:
+                walk_md022(n)
         if key not in EQ_DOC_TYPES and key not in CRR_DOC_TYPES and key not in BUILD_DOC_TYPES and key not in TRAIN_DOC_TYPES and key not in TEST_DOC_TYPES and key not in PKG_DOC_TYPES:
             self.__fill_cover_meta(obj.content, obj.version)
             serv_review_util.fill_cover_dates(
@@ -1992,7 +2004,7 @@ class Server(object):
             return s
 
         return (
-            "灵敏度为%s，95%CI低值%s%s目标值0.8；特异度为%s，95%CI低值%s%s目标值0.8，%s测试指标。"
+            "灵敏度为%s，95%%CI低值%s%s目标值0.8；特异度为%s，95%%CI低值%s%s目标值0.8，%s测试指标。"
             % (
                 str(total[4]).strip(),
                 num(sen[1]),
@@ -3665,17 +3677,35 @@ class Server(object):
         node["tables"] = tables
 
     def __md022_file_no(self, prod_id, version, doc_type):
-        row = db.session.execute(
-            select(ModelDoc).where(ModelDoc.product_id == prod_id, ModelDoc.doc_type == doc_type).order_by(ModelDoc.id.desc())
-        ).scalars().first()
-        stored = (row.file_no or "").strip() if row else ""
-        ver = version or ((row.version or "") if row else "")
-        return serv_review_util.resolve_doc_file_no(prod_id, stored, ver, doc_type) or ""
+        kws = list(serv_review_util.COVER_KEYWORDS.get(doc_type) or [])
+        # 「肺栓塞分割模型训练」会命中「训练集构建记录」，训练 ID 须用完整「训练记录」名。
+        if doc_type == "md_012_01":
+            kws = ["肺栓塞分割模型训练记录"] + kws
+        elif doc_type == "md_012_02":
+            kws = ["肺叶分割模型训练记录"] + kws
+        return serv_review_util.dhf_file_no(
+            prod_id,
+            kws,
+            serv_review_util.DHF_NAME_EXCLUDES.get(doc_type, ()),
+        ) or ""
 
     def __md022_srs_by_module(self, prod_id):
-        out = {m: "" for m in MD022_MODULES}
+        code = self.__md022_algo_srs_code(prod_id)
+        return {m: code for m in MD022_MODULES}
+
+    @staticmethod
+    def __is_md022_algo_srs_text(txt):
+        compact = re.sub(r"\s+", "", str(txt or ""))
+        return "算法和数据要求" in compact or "算法需求" in compact
+
+    @staticmethod
+    def __md022_pick_srs_code(code):
+        txt = str(code or "").strip()
+        return txt if txt.upper().startswith("SRS-") else ""
+
+    def __md022_algo_srs_code(self, prod_id):
         if not prod_id:
-            return out
+            return ""
         doc = db.session.execute(
             select(SrsDoc).where(
                 SrsDoc.product_id == prod_id,
@@ -3683,31 +3713,23 @@ class Server(object):
             ).order_by(SrsDoc.id.desc())
         ).scalars().first()
         if not doc:
-            return out
+            return ""
         reqs = db.session.execute(
             select(SrsReq).where(SrsReq.doc_id == doc.id, SrsReq.type_code != "reqd")
         ).scalars().all()
-
-        def blob(row):
-            return " ".join(str(getattr(row, f, "") or "") for f in ("module", "function", "sub_function"))
-
-        fallback = ""
-        for module in MD022_MODULES:
-            hits = [
-                str(r.code or "").strip()
-                for r in reqs
-                if module in blob(r) and str(r.code or "").strip().upper().startswith("SRS-")
-            ]
-            if hits:
-                hits.sort()
-                out[module] = hits[0]
-                if not fallback:
-                    fallback = hits[0]
-        if fallback:
-            for module in MD022_MODULES:
-                if not out[module]:
-                    out[module] = fallback
-        return out
+        for row in reqs:
+            blob = " ".join(str(getattr(row, f, "") or "") for f in ("module", "function", "sub_function", "location"))
+            if self.__is_md022_algo_srs_text(blob):
+                code = self.__md022_pick_srs_code(row.code)
+                if code:
+                    return code
+        nodes = db.session.execute(select(SrsNode).where(SrsNode.doc_id == doc.id)).scalars().all()
+        for node in nodes:
+            if self.__is_md022_algo_srs_text(node.title) or self.__is_md022_algo_srs_text(node.label):
+                code = self.__md022_pick_srs_code(node.srs_code)
+                if code:
+                    return code
+        return ""
 
     def __fill_md022_trace_node(self, node, info):
         if self.__strip_num(node.get("title")) != "模型可追溯性分析表":

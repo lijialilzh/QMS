@@ -23,7 +23,7 @@ export const DETAIL_PREVIEW_COLUMNS = [
 ];
 
 const HEADER_BYTES = 512 * 1024;
-const AGE_BINS = [0, 17, 40, 90];
+const AGE_BIN_LABELS = ["(0, 17]", "(17, 40]", "(40, 60]", ">60"];
 const SKIP_EXT = /\.(txt|json|xml|csv|xlsx|xls|png|jpg|jpeg|gif|bmp|html|md|zip|pdf)$/i;
 const LONG_VR = new Set(["OB", "OW", "OF", "SQ", "UT", "UN", "OD", "OL", "UC", "UR", "OV"]);
 
@@ -136,36 +136,77 @@ function parseDicomTags(buf: ArrayBuffer): Record<string, string> {
         return { tag, vr: VR_OF[tag] || "", len: view.getUint32(o + 4, le), valOff: o + 8 };
     };
 
-    const skipSq = (start: number, expl: boolean, le: boolean, seqLen: number): number => {
-        if (seqLen !== 0xffffffff) return start + Math.max(0, seqLen);
+    const takeWant = (h: { tag: number; vr: string; len: number; valOff: number }, takeInner: boolean) => {
+        if (!takeInner || h.vr === "SQ" || h.len === 0xffffffff) return;
+        const key = want[h.tag];
+        if (!key || out[key] != null || h.len < 0 || h.len > 2048 || h.valOff + h.len > u8.length) return;
+        const vr = h.vr || VR_OF[h.tag] || "LO";
+        const v = readValue(vr, view, u8, h.valOff, h.len, leFromHdr);
+        if (v) out[key] = v;
+    };
+    let leFromHdr = true;
+
+    const skipSq = (start: number, expl: boolean, le: boolean, seqLen: number, takeInner: boolean): number => {
+        leFromHdr = le;
+        const step = (o: number): number => {
+            const h = readHdr(o, expl, le);
+            if (!h) return u8.length;
+            takeWant(h, takeInner);
+            if (h.tag === TAG_SEQ_DELIM) return h.valOff;
+            if (h.tag === TAG_ITEM) {
+                if (h.len === 0xffffffff) return skipItem(h.valOff, expl, le, takeInner);
+                if (takeInner && h.len > 0) skipSq(h.valOff, expl, le, h.len, takeInner);
+                return h.valOff + Math.max(0, h.len);
+            }
+            if (h.vr === "SQ" || h.len === 0xffffffff) return skipSq(h.valOff, expl, le, h.len, takeInner);
+            return h.valOff + Math.max(0, h.len);
+        };
+        if (seqLen !== 0xffffffff) {
+            const end = start + Math.max(0, seqLen);
+            let o = start;
+            while (o + 8 <= end && o + 8 <= u8.length) {
+                const next = step(o);
+                if (next <= o) break;
+                o = next;
+            }
+            return end;
+        }
         let o = start;
         while (o + 8 <= u8.length) {
             const h = readHdr(o, expl, le);
             if (!h) return u8.length;
+            takeWant(h, takeInner);
             if (h.tag === TAG_SEQ_DELIM) return h.valOff;
             if (h.tag === TAG_ITEM) {
-                o = h.len === 0xffffffff ? skipItem(h.valOff, expl, le) : h.valOff + Math.max(0, h.len);
+                if (h.len === 0xffffffff) o = skipItem(h.valOff, expl, le, takeInner);
+                else {
+                    if (takeInner && h.len > 0) skipSq(h.valOff, expl, le, h.len, takeInner);
+                    o = h.valOff + Math.max(0, h.len);
+                }
                 continue;
             }
-            if (h.vr === "SQ" || h.len === 0xffffffff) o = skipSq(h.valOff, expl, le, h.len);
+            if (h.vr === "SQ" || h.len === 0xffffffff) o = skipSq(h.valOff, expl, le, h.len, takeInner);
             else o = h.valOff + Math.max(0, h.len);
         }
         return u8.length;
     };
 
-    const skipItem = (start: number, expl: boolean, le: boolean): number => {
+    const skipItem = (start: number, expl: boolean, le: boolean, takeInner: boolean): number => {
+        leFromHdr = le;
         let o = start;
         while (o + 8 <= u8.length) {
             const h = readHdr(o, expl, le);
             if (!h) return u8.length;
+            takeWant(h, takeInner);
             if (h.tag === TAG_ITEM_DELIM) return h.valOff;
-            if (h.vr === "SQ" || h.len === 0xffffffff) o = skipSq(h.valOff, expl, le, h.len);
+            if (h.vr === "SQ" || h.len === 0xffffffff) o = skipSq(h.valOff, expl, le, h.len, takeInner);
             else o = h.valOff + Math.max(0, h.len);
         }
         return u8.length;
     };
 
     const walk = (start: number, expl: boolean, le: boolean, take: boolean, onlyGroup?: number) => {
+        leFromHdr = le;
         let o = start;
         let ts = "";
         let metaEnd = -1;
@@ -176,11 +217,15 @@ function parseDicomTags(buf: ArrayBuffer): Record<string, string> {
             if (onlyGroup != null && group !== onlyGroup) break;
             if (h.tag === TAG_PIXEL || h.tag === TAG_SEQ_DELIM || h.tag === TAG_ITEM_DELIM) break;
             if (h.tag === TAG_ITEM) {
-                o = h.len === 0xffffffff ? skipItem(h.valOff, expl, le) : h.valOff + Math.max(0, h.len);
+                if (h.len === 0xffffffff) o = skipItem(h.valOff, expl, le, take);
+                else {
+                    if (take && h.len > 0) skipSq(h.valOff, expl, le, h.len, take);
+                    o = h.valOff + Math.max(0, h.len);
+                }
                 continue;
             }
             if (h.vr === "SQ" || h.len === 0xffffffff) {
-                o = skipSq(h.valOff, expl, le, h.len);
+                o = skipSq(h.valOff, expl, le, h.len, take);
                 continue;
             }
             if (h.len < 0 || h.valOff + h.len > u8.length) break;
@@ -264,10 +309,117 @@ function ageFromDates(birth: string, study: string): number | null {
 }
 
 function ageBinLabel(age: number) {
-    for (let i = 1; i < AGE_BINS.length; i++) {
-        if (age <= AGE_BINS[i]) return `(${AGE_BINS[i - 1]}, ${AGE_BINS[i]}]`;
+    if (age <= 17) return "(0, 17]";
+    if (age <= 40) return "(17, 40]";
+    if (age <= 60) return "(40, 60]";
+    return ">60";
+}
+
+/** 与构建记录同一口径：ConvolutionKernel 多值取首项；仅 B/Y/FC/I 并系列，STANDARD→STAND系列（原表），LUNG/SOFT 保留；空不写「未知」。 */
+function kernelSeriesPrefix(name: string) {
+    const u = String(name || "").trim().toUpperCase();
+    if (u.endsWith("系列")) return u.slice(0, -2) || null;
+    if (!u || u === "LUNG" || u === "SOFT") return null;
+    if (u === "B" || /^B[A-Z]{0,2}\d/.test(u)) return "B";
+    if (u === "Y" || /^Y[A-Z0-9]/.test(u)) return "Y";
+    if (u === "FC" || /^FC\d/.test(u)) return "FC";
+    if (u === "I" || /^I\d/.test(u)) return "I";
+    if (/^STAND/.test(u)) return "STAND";
+    if (/^[A-Z]\d/.test(u) || (u.length <= 2 && /^[A-Z]+$/.test(u))) return u[0];
+    const m = u.match(/^([A-Z]{1,2})/);
+    if (m && m[1].length <= 2 && m[1] !== "UA" && m[1] !== "HR") return m[1];
+    return null;
+}
+
+function kernelSeriesLabel(raw: any) {
+    const s = parseKernel(raw);
+    if (!s) return "";
+    const prefix = kernelSeriesPrefix(s);
+    if (prefix) return prefix + "系列";
+    if (s.toUpperCase() === "LUNG" || s.toUpperCase() === "SOFT") return s.toUpperCase();
+    return s;
+}
+
+function kernelCounts(rows: CaseRow[]) {
+    const map = new Map<string, number>();
+    rows.forEach((r) => {
+        const lab = kernelSeriesLabel(r.ConvolutionKernel);
+        if (!lab) return;
+        map.set(lab, (map.get(lab) || 0) + 1);
+    });
+    const out = new Map<string, number>();
+    let other = 0;
+    map.forEach((c, lab) => {
+        if (lab.endsWith("系列")) {
+            out.set(lab, c);
+            return;
+        }
+        if (lab === "其他" || c < 5) {
+            other += c;
+            return;
+        }
+        out.set(lab, c);
+    });
+    if (other) out.set("其他", (out.get("其他") || 0) + other);
+    if (!out.size && rows.length) out.set("未知", rows.length);
+    return out;
+}
+
+function timelineDates(tlRows: any[], key: string) {
+    const seen: Record<string, true> = {};
+    const out: Array<{ k: number; s: string }> = [];
+    (tlRows || []).forEach((r: any) => {
+        if ((r.row_type || "date") !== "date") return;
+        const text = String((r.cells || {})["数据部"] || "");
+        if (!text.includes(key)) return;
+        const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
+        const y = num(r.year);
+        const m = num(r.month);
+        const d = num(r.day);
+        if (isNaN(y) || isNaN(m) || isNaN(d) || m < 1 || m > 12 || d < 1) return;
+        const kk = y * 10000 + m * 100 + d;
+        const s = `${y}.${m}.${d}`;
+        if (seen[s]) return;
+        seen[s] = true;
+        out.push({ k: kk, s });
+    });
+    return out.sort((a, b) => a.k - b.k).map((x) => x.s);
+}
+
+export function autoStatsExtra(
+    kind: StatsKind,
+    members: any[],
+    tlRows: any[],
+    extra?: { dataType?: string; disease?: string; person?: string; date?: string },
+) {
+    const keys = kind === "base"
+        ? ["基础数据库统计表", "基础数据库上传记录"]
+        : kind === "ann"
+            ? ["标注数据库统计表", "标注数据库上传记录"]
+            : ["原始数据库统计表", "原始数据库上传记录"];
+    let date = String(extra?.date || "").trim();
+    if (!date) {
+        for (let i = 0; i < keys.length; i++) {
+            const ds = timelineDates(tlRows, keys[i]);
+            if (ds.length) {
+                date = ds[ds.length - 1];
+                break;
+            }
+        }
     }
-    return "";
+    const names: string[] = [];
+    (members || []).forEach((m: any) => {
+        if (String(m.role || "").trim() !== "脱敏+清洗人员") return;
+        const name = String(m.name || "").trim();
+        if (!name || names.indexOf(name) >= 0) return;
+        names.push(name);
+    });
+    return {
+        person: String(extra?.person || "").trim() || names[0] || "",
+        date,
+        dataType: String(extra?.dataType || "").trim() || "胸部CTPA",
+        disease: String(extra?.disease || "").trim() || "肺栓塞层阳性+阴性",
+    };
 }
 
 function mergeWwWc(ww: string, wc: string) {
@@ -560,13 +712,22 @@ export async function statsFromFiles(
     return mergeByStudy(rows);
 }
 
+function fmtPct(ratio: number) {
+    if (!Number.isFinite(ratio) || ratio <= 0) return "0.00%";
+    if (Math.abs(ratio - 1) < 1e-9) return "100.00%";
+    return `${(ratio * 100).toFixed(2)}%`;
+}
+
 function addFactor(grid: any[][], item: string, counts: Map<string, number>, total: number) {
     let first = true;
     counts.forEach((count, cat) => {
         const ratio = total ? (count / total) : 0;
-        grid.push([first ? item : "", cat, count, ratio.toFixed(2)]);
+        grid.push([first ? item : "", cat, String(count), fmtPct(ratio)]);
         first = false;
     });
+    if (!counts.size) {
+        grid.push([item, "未知", String(total || 0), fmtPct(total ? 1 : 0)]);
+    }
 }
 
 function countBy(rows: CaseRow[], getter: (r: CaseRow) => string) {
@@ -594,43 +755,51 @@ void countByAll;
 export function buildStatsGrid(
     title: string,
     rows: CaseRow[],
-    extra?: { dataType?: string; disease?: string; person?: string },
+    extra?: { dataType?: string; disease?: string; person?: string; date?: string; fileNo?: string },
 ) {
     const total = rows.length;
-    const today = new Date().toISOString().slice(0, 10);
-    const sites = new Set(rows.map((r) => r["医院"]).filter(Boolean));
+    const sites = new Set(rows.map((r) => {
+        const h = String(r["医院"] || "").trim();
+        if (h) return h;
+        const tx = String(r.TXID || "").trim();
+        return tx.split("-")[0] || "";
+    }).filter(Boolean));
+    const distTitle = title.includes("基础") ? "基础数据库数据分布"
+        : title.includes("标注") ? "标注数据库数据分布"
+            : "原始数据库数据分布";
     const grid: any[][] = [
         [title, "", "", ""],
-        ["", "", "", ""],
-        ["统计人", extra?.person || "", "统计日期", today],
-        ["数据总量（序列）", total, "数据类型", extra?.dataType || ""],
-        ["疾病构成", extra?.disease || "", "医院数量", sites.size || ""],
-        ["数据分布", "", "", ""],
+        [extra?.fileNo || "", "", "", ""],
+        ["统计人", extra?.person || "", "统计日期", extra?.date || ""],
+        ["数据总量（序列）", String(total), "数据类型", extra?.dataType || "胸部CTPA"],
+        ["疾病构成", extra?.disease || "肺栓塞层阳性+阴性", "医院数量", String(sites.size || "")],
+        [distTitle, "", "", ""],
         ["因素", "类别", "序列数", "占比"],
     ];
-    addFactor(grid, "性别", countBy(rows, (r) => r.sex || ""), total);
+    addFactor(grid, "性别", countBy(rows, (r) => String(r.sex || r.SEX || "")), total);
     const ageMap = new Map<string, number>();
-    let hasAge = false;
     rows.forEach((r) => {
-        if (r.age == null) return;
-        const label = ageBinLabel(r.age);
+        const age = r.age == null ? r.AGE : r.age;
+        if (age == null || age === "") return;
+        const n = typeof age === "number" ? age : parseFloat(String(age));
+        if (isNaN(n)) return;
+        const label = ageBinLabel(n);
         if (!label) return;
-        hasAge = true;
         ageMap.set(label, (ageMap.get(label) || 0) + 1);
     });
-    if (hasAge) {
-        // 年龄分箱按区间顺序展示（0-17 → 17-40 → 40-90），空区间也显示（数量0）
-        const sortedAgeMap = new Map<string, number>();
-        AGE_BINS.slice(1).forEach((_, i) => {
-            const label = `(${AGE_BINS[i]}, ${AGE_BINS[i + 1]}]`;
-            sortedAgeMap.set(label, ageMap.get(label) || 0);
-        });
-        addFactor(grid, "年龄", sortedAgeMap, total);
-    }
-    addFactor(grid, "设备", countBy(rows, (r) => r.device || ""), total);
-    addFactor(grid, "重建算法", countBy(rows, (r) => parseKernel(r.ConvolutionKernel)), total);
-    addFactor(grid, "KVP", countBy(rows, (r) => r.kvp || ""), total);
-    addFactor(grid, "层厚", countBy(rows, (r) => r.thickness || ""), total);
+    const sortedAgeMap = new Map<string, number>();
+    AGE_BIN_LABELS.forEach((label) => {
+        sortedAgeMap.set(label, ageMap.get(label) || 0);
+    });
+    addFactor(grid, "年龄", sortedAgeMap, total);
+    addFactor(grid, "设备", countBy(rows, (r) => String(r.device || r.DEVICE || "")), total);
+    addFactor(grid, "重建算法", kernelCounts(rows), total);
+    addFactor(grid, "管电压", countBy(rows, (r) => String(r.kvp || r.KVP || "")), total);
+    addFactor(grid, "层厚", countBy(rows, (r) => String(r.thickness || r.THICKNESS || "")), total);
+    grid.push(["总计", "", String(total), fmtPct(total ? 1 : 0)]);
+    grid.push(["", "", "记录人", ""]);
+    grid.push(["", "", "", ""]);
+    grid.push(["", "", "审核人", ""]);
     return grid;
 }
 

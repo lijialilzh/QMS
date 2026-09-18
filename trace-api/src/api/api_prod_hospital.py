@@ -4,7 +4,7 @@
 
 
 from typing import Any
-from fastapi import APIRouter
+from fastapi import APIRouter, File, Form, UploadFile
 from ..obj.tobj_prod_hospital import ProdHospitalForm
 from ..obj.vobj_prod_hospital import ProdHospitalObj
 from ..obj.tobj_role import Perms
@@ -38,3 +38,10 @@ async def delete_prod_hospitals(id: str):
 @try_log(perm=Perms.prod_hospital_view)
 async def list_prod_hospital(prod_id: int = None, fuzzy: str = None, page_index: int = 0, page_size: int = 10):
     return await server.list_prod_hospital(prod_id, fuzzy, page_index, page_size)
+
+
+@router.post("/import_prod_hospitals", summary="导入合规医院列表", response_model=Resp[Any])
+@try_log(perm=Perms.prod_hospital_edit)
+async def import_prod_hospitals(prod_id: int = Form(...), replace: bool = Form(True), file: UploadFile = File(...)):
+    content = await file.read()
+    return await server.import_prod_hospitals(prod_id, content, replace)

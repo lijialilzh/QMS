@@ -19,7 +19,7 @@ services:
       - -lc
       - |
         python -m pip install --disable-pip-version-check --no-index --find-links=/work/wheels lxml==5.3.0 python-docx==1.2.0 typing-extensions==4.15.0
-        python -m pip install --disable-pip-version-check paramiko
+        python -m pip install --disable-pip-version-check paramiko xlrd==2.0.1
         python main_init.py
         exec python main_app.py
     environment:

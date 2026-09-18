@@ -14,6 +14,7 @@ import {
     StatsKind,
     DETAIL_COLUMNS,
     buildStatsGrid,
+    autoStatsExtra,
     buildWorkbookSheets,
     buildTriageAoa,
     distRowsFromGrid,
@@ -180,7 +181,11 @@ export default () => {
         const productId = cur.productId;
         const meta = KIND_DOC[cur.kind as StatsKind];
         const title = STATS_TITLES[cur.kind as StatsKind];
-        return Api.list_data_doc({ product_id: productId, doc_type: meta.type, page_index: 0, page_size: 1 }).then((list: any) => {
+        return Promise.all([
+            Api.list_data_doc({ product_id: productId, doc_type: meta.type, page_index: 0, page_size: 1 }),
+            ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
+            ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
+        ]).then(([list, tl, mb]: any[]) => {
             if (list.code !== Api.C_OK) {
                 message.error(list.msg || "查询数据文件失败");
                 return;
@@ -190,6 +195,11 @@ export default () => {
                 message.warning(`请先在数据文件新增「${meta.title}」，本次未写入统计表`);
                 return;
             }
+            const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
+            const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
+            const auto = autoStatsExtra(cur.kind as StatsKind, members, tlRows, {
+                person: cur.person, dataType: cur.dataType, disease: cur.disease,
+            });
             return Api.get_data_doc({ id: hit.id }).then((got: any) => {
                 if (got.code !== Api.C_OK) {
                     message.error(got.msg || "打开统计表失败");
@@ -199,20 +209,17 @@ export default () => {
                 const secs = (doc.content && doc.content.sections) || [];
                 const kept = secs.filter((n: any) => isMetaSection(n));
                 const rec = secs.find((n: any) => !isMetaSection(n));
-                const grid = buildStatsGrid(title, rows, {
-                    dataType: cur.dataType, disease: cur.disease, person: cur.person,
-                });
-                const table = [grid[0], [doc.file_no || "", "", "", ""], ...grid.slice(1)];
+                const grid = buildStatsGrid(title, rows, { ...auto, fileNo: doc.file_no || "" });
                 const next = [...kept, attachCaseRows({
                     title: rec?.title || "数据分布",
                     body: "",
-                    tables: [table],
+                    tables: [grid],
                     children: [],
                 }, {
                     rows,
-                    person: cur.person || "",
-                    dataType: cur.dataType || "",
-                    disease: cur.disease || "",
+                    person: auto.person || "",
+                    dataType: auto.dataType || "",
+                    disease: auto.disease || "",
                     source: cur.source || "",
                 })];
                 return Api.update_data_doc({
