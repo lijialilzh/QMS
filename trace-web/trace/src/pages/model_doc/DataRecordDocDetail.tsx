@@ -79,6 +79,21 @@ const maxTableCols = (nodes: any[]): number =>
         return Math.max(m, t, maxTableCols(n.children || []));
     }, 0);
 
+const countPidRows = (tb: any[][], headerIdx: number, cols: number) => {
+    if (headerIdx < 0) return 0;
+    const header = tb[headerIdx] || [];
+    const pidCol = header.findIndex((c: any) => String(c ?? "").trim() === "PID");
+    let n = 0;
+    for (let r = headerIdx + 1; r < tb.length; r++) {
+        const row = tb[r] || [];
+        if (isSignRow(row) || isDailyFootRow(row) || onlyFirstRow(row, cols) || rowAllEmpty(row, cols)) continue;
+        if (pidCol >= 0) {
+            if (String(row[pidCol] ?? "").trim()) n += 1;
+        } else if ((row || []).some((c: any) => String(c ?? "").trim())) n += 1;
+    }
+    return n;
+};
+
 const looksLikeFileNo = (s: string) => /TX-|DD-|MD-/.test(String(s || ""));
 
 const onlyFirstRow = (row: any[], cols: number) => {
@@ -345,6 +360,10 @@ const parseMd003Req = (content: any) => {
         if (title === "标注规则" || title.includes("肺叶") || title.includes("肺栓塞")) {
             if (blob.includes("肺叶")) lastKind = "lobe";
             if (blob.includes("肺栓塞")) lastKind = "pe";
+        }
+        if (title === "交付时间") {
+            const dm = body.match(/(\d{4}[.年/\-]\d{1,2}[.月/\-]\d{1,2})/);
+            if (dm) deliver = parseDotDate(dm[1]) || deliver;
         }
         if (title !== "数据") return;
         let kind = lastKind;
@@ -2850,8 +2869,29 @@ export default () => {
             && Array.isArray(tb[firstBody + 1])
             && (tb[firstBody + 1] || []).some((c: any) => /检查方式|数据量/.test(String(c ?? "")));
         const dd003DataStart = firstBody >= 0 ? firstBody + (dd003HasSub ? 2 : 1) : -1;
+        const isAnnotPid = ANN_PID_TYPES.indexOf(docType) >= 0;
+        const tableCount = isAnnotPid ? countPidRows(tb, firstBody, cols) : 0;
+        const importCount = isAnnotPid ? pidsFromCache(data.doc.product_id || 0).length : 0;
+        const countMismatch = importCount > 0 && tableCount !== importCount;
         return (
             <div key={ti} style={{ marginBottom: 8, overflowX: (isUpload || isDailyEval) ? "auto" : "visible" }}>
+                {isAnnotPid ? (
+                    <div style={{
+                        margin: "0 0 8px",
+                        padding: "6px 10px",
+                        fontSize: 13,
+                        borderRadius: 4,
+                        background: countMismatch ? "#fff7e6" : "#f6ffed",
+                        border: `1px solid ${countMismatch ? "#ffd591" : "#b7eb8f"}`,
+                        color: countMismatch ? "#ad4e00" : "#389e0d",
+                    }}>
+                        {importCount > 0
+                            ? (countMismatch
+                                ? `本表 ${tableCount} 条，导入 ${importCount} 条，数量不一致，请核对`
+                                : `本表 ${tableCount} 条，导入 ${importCount} 条`)
+                            : `本表 ${tableCount} 条`}
+                    </div>
+                ) : null}
                 <table style={(isUpload || isDailyEval) ? { ...tableStyle, tableLayout: "auto", minWidth: isUpload ? 1280 : 1180 } : tableStyle}>
                     <tbody>
                         {tb.map((row: any[], r: number) => {

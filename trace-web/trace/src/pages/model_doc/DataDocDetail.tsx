@@ -116,13 +116,22 @@ const replaceKeywords = (nodes: any[], pairs: Array<[string, string]>): any[] =>
     return (nodes || []).map(fix);
 };
 
+const walkUnnumbered = (nodes: any[], map: Record<string, string>) => {
+    (nodes || []).forEach((n: any) => {
+        map[n._key] = "";
+        walkUnnumbered(n.children || [], map);
+    });
+};
+
 const computeNumbers = (nodes: any[]): Record<string, string> => {
     const map: Record<string, string> = {};
     let bodyIdx = 0;
     (nodes || []).forEach((n: any) => {
-        if (n.ref_type === "cover" || n.ref_type === "revision") {
+        const t = stripNum(n.title);
+        if (n.ref_type === "cover" || n.ref_type === "revision"
+            || n.ref_type === "basic_info" || t === "产品信息" || t.startsWith("附件")) {
             map[n._key] = "";
-            walkChildren(n.children || [], "", map);
+            walkUnnumbered(n.children || [], map);
             return;
         }
         bodyIdx += 1;

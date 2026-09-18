@@ -162,6 +162,8 @@ class Server(object):
             self.__complete_env_maint_chapter(content, doc_type)
         if doc_type == "dd_007":
             self.__fill_dd007_chapters(content, product_id)
+        if doc_type == "md_003":
+            self.__fill_md003_chapters(content, product_id)
         return content
 
     def __fill_dd007_chapters(self, content, product_id=None):
@@ -238,6 +240,120 @@ class Server(object):
                             child["body"] = child["body"].replace(old_keyword, name)
                     new_children.append(child)
                 sub["children"] = new_children
+
+    def __fill_md003_chapters(self, content, product_id=None):
+        """md_003 顶级模块章从章节模块管理获取；子树仍为任务分类/描述及规则～数据。无模块则保留原树。"""
+        if not isinstance(content, dict) or not isinstance(content.get("sections"), list):
+            return
+        modules = []
+        if product_id:
+            rows = db.session.execute(
+                select(ProdAlgoChapter)
+                .where(ProdAlgoChapter.prod_id == product_id)
+                .order_by(ProdAlgoChapter.sort_order.asc(), ProdAlgoChapter.id.asc())
+            ).scalars().all()
+            modules = [r.name for r in rows if r.name]
+        if not modules:
+            return
+
+        def plain(n):
+            return self.__strip_num(n.get("title"))
+
+        def is_meta(n):
+            t = plain(n)
+            return n.get("ref_type") in ("cover", "revision", "basic_info") or t in ("文件修订记录", "产品信息")
+
+        def is_fixed(n):
+            t = plain(n)
+            return t == "交付时间" or t.startswith("附件") or self.__is_annex_title(t)
+
+        sections = content["sections"]
+        meta = [n for n in sections if is_meta(n)]
+        body = [n for n in sections if not is_meta(n)]
+        module_secs = [n for n in body if not is_fixed(n)]
+        fixed = [n for n in body if is_fixed(n)]
+        if not module_secs:
+            return
+
+        old_map_exact = {}
+        old_map_fuzzy = {}
+        for oc in module_secs:
+            old_name = plain(oc)
+            if old_name:
+                old_map_exact[old_name] = oc
+            old_key = old_name.replace("模块", "").strip()
+            if old_key and old_key not in old_map_fuzzy:
+                old_map_fuzzy[old_key] = oc
+
+        def best_fuzzy(name):
+            mk = name.replace("模块", "").strip()
+            best_oc, best_len = None, 0
+            for old_key, oc in old_map_fuzzy.items():
+                m, nlen = len(mk), len(old_key)
+                if m == 0 or nlen == 0:
+                    continue
+                prev = [0] * (nlen + 1)
+                common = 0
+                for i in range(1, m + 1):
+                    cur = [0] * (nlen + 1)
+                    for j in range(1, nlen + 1):
+                        if mk[i - 1] == old_key[j - 1]:
+                            cur[j] = prev[j - 1] + 1
+                            if cur[j] > common:
+                                common = cur[j]
+                    prev = cur
+                if common >= 3 and common > best_len:
+                    best_len = common
+                    best_oc = oc
+            return best_oc
+
+        def pick_template(name):
+            if "肺叶" in name:
+                for s in module_secs:
+                    if "肺叶" in plain(s):
+                        return s
+            if "肺栓塞" in name:
+                for s in module_secs:
+                    if "肺栓塞" in plain(s):
+                        return s
+            return module_secs[0]
+
+        def replace_kw(node, old_title, new_name):
+            old_keyword = old_title.replace("模块", "").strip()
+            if node.get("body"):
+                node["body"] = node["body"].replace(old_title, new_name).replace(old_keyword, new_name)
+            for tbl in (node.get("tables") or []):
+                for r in tbl:
+                    for i in range(len(r)):
+                        if isinstance(r[i], str):
+                            r[i] = r[i].replace(old_title, new_name).replace(old_keyword, new_name)
+            for c in (node.get("children") or []):
+                replace_kw(c, old_title, new_name)
+
+        used_ids = set()
+        new_secs = []
+        for name in modules:
+            match_key = name.replace("模块", "").strip()
+            src = None
+            if name in old_map_exact and id(old_map_exact[name]) not in used_ids:
+                src = old_map_exact[name]
+            elif match_key in old_map_fuzzy and id(old_map_fuzzy[match_key]) not in used_ids:
+                src = old_map_fuzzy[match_key]
+            else:
+                cand = best_fuzzy(name)
+                if cand is not None and id(cand) not in used_ids:
+                    src = cand
+            if src is not None:
+                sec = copy.deepcopy(src)
+                used_ids.add(id(src))
+                sec["title"] = name
+            else:
+                tmpl = pick_template(name)
+                sec = copy.deepcopy(tmpl)
+                sec["title"] = name
+                replace_kw(sec, plain(tmpl), name)
+            new_secs.append(sec)
+        content["sections"] = meta + new_secs + fixed
 
     MD003_DATASETS = {
         "lobe": (
@@ -436,6 +552,12 @@ class Server(object):
                 title = self.__plain_title(n.get("title"))
                 body = str(n.get("body") or "")
                 blob = title + body
+                kid_titles = [self.__plain_title(c.get("title")) for c in (n.get("children") or [])]
+                if "标注任务分类" in kid_titles or "标注任务描述" in kid_titles:
+                    if "肺叶" in title:
+                        last_kind = "lobe"
+                    elif "肺栓塞" in title:
+                        last_kind = "pe"
                 if title == "标注规则" or "肺叶" in title or "肺栓塞" in title:
                     if "肺叶" in blob:
                         last_kind = "lobe"
@@ -466,6 +588,7 @@ class Server(object):
         if (row.doc_type or "") == "dd_007":
             self.__fill_dd007_chapters(obj.content, row.product_id)
         if (row.doc_type or "") == "md_003":
+            self.__fill_md003_chapters(obj.content, row.product_id)
             self.__apply_md003_qty(obj.content, row.product_id)
         fill_chapter_images(obj.content, row.doc_type or "")
         self.__fill_cover_meta(obj.content, obj.version)
@@ -545,6 +668,8 @@ class Server(object):
         self.__ensure_review_annex(out, doc_type)
         if doc_type == "dd_006":
             self.__flatten_dd006_process(out)
+        if doc_type == "md_003":
+            self.__reshape_md003_tree(out)
         if doc_type in ENV_DOC_TYPES:
             self.__complete_env_maint_chapter(out, doc_type)
         return out
@@ -576,6 +701,132 @@ class Server(object):
                         n["children"] = []
                 walk(n.get("children") or [])
         walk((content or {}).get("sections") or [])
+
+    @classmethod
+    def __reshape_md003_tree(cls, content):
+        """原 Word：1 肺叶分割 / 2 肺栓塞（各含任务分类、任务描述及规则～数据）/ 3 交付时间 / 附件不编号。扁平旧稿收成该树。"""
+        sections = (content or {}).get("sections")
+        if not isinstance(sections, list):
+            return
+
+        def plain(n):
+            return cls.__strip_num(n.get("title"))
+
+        def is_meta(n):
+            t = plain(n)
+            return n.get("ref_type") in ("cover", "revision", "basic_info") or t in ("文件修订记录", "产品信息")
+
+        body = [n for n in sections if isinstance(n, dict) and not is_meta(n)]
+        nested = False
+        for n in body:
+            t = plain(n)
+            if t == "交付时间" or t.startswith("附件"):
+                continue
+            if any(plain(k) in ("标注任务分类", "标注任务描述") for k in (n.get("children") or [])):
+                nested = True
+                break
+        if nested:
+            return
+
+        found = {"标注规则": [], "标注人员": [], "标注工具": [], "标注环节": [], "数据": []}
+
+        def collect(ns):
+            for n in ns or []:
+                if not isinstance(n, dict):
+                    continue
+                t = plain(n)
+                if t in found:
+                    found[t].append(n)
+                collect(n.get("children") or [])
+
+        collect(sections)
+        if len(found["标注规则"]) < 2 and len(found["数据"]) < 2:
+            return
+
+        lobe_class = (
+            "本标注任务根据数据模态属于图像标注，数据模态CTPA图像；执行主体为人工标注。"
+            "本标注任务属于结构化标注；标注结果以nii格式进行存储。"
+            "标注结果给出肺叶分割的mask，作为肺叶分割模块的训练调优测试数据。"
+        )
+        pe_class = (
+            "本标注任务根据数据模态属于图像标注，数据模态为CTPA图像；执行主体为人工标注。"
+            "本标注任务属于结构化标注；标注结果以nii格式进行存储。"
+            "标注结果给出栓子的分割mask，作为肺栓塞分割的训练调优数据。\n"
+            "肺栓塞分诊的测试集只需要标记有无肺栓塞。"
+        )
+        lobe_data_fb = "训练数据量要求：3500例左右\n测试数据量要求：600例左右\n调优数据量要求：280例左右"
+        pe_data_fb = "训练数据量要求：5900例左右\n测试数据量要求：600例左右\n调优数据量要求：280例左右"
+        lobe_people = (
+            "标注相关人员要求：标注人员要求为经过主治医生培训和考核的质控人员，培训由5年以上临床经验的医生进行。"
+            "审核人员要求7年以上临床经验的医生，职称在中级及以上。仲裁人员要求职称在副主任医师及以上。"
+        )
+        pe_people = "训练集调优集" + lobe_people
+        lobe_step = "请1位标注人员标记训练、调优和测试影像，标记肉眼可见的肺叶边缘，之后审核医生对标注人员的标记做审核，并且针对标记的边缘做调整。"
+        pe_step = (
+            "训练集调优集：请1位标注人员标记测试影像，标记肺栓塞栓子标签，之后审核医生对标注人员的标记做审核，并且针对分割标记做调整。\n"
+            "测试集标记：两个标记人员背靠背标记有无肺栓塞，两个标记人员不一致的由仲裁医生仲裁。"
+        )
+
+        def qty_only(body, fallback):
+            lines = []
+            for ln in str(body or "").splitlines():
+                s = ln.strip()
+                if s.startswith("训练数据量要求") or s.startswith("测试数据量要求") or s.startswith("调优数据量要求"):
+                    lines.append(s)
+            return "\n".join(lines) if lines else fallback
+
+        def node(title, body="", tables=None, children=None, images=None):
+            out = {"title": title, "body": body or "", "tables": tables or [], "children": children or []}
+            if images:
+                out["images"] = images
+            return out
+
+        def take(src, title, default_body=""):
+            if not src:
+                return node(title, default_body)
+            return node(title, src.get("body") or default_body, src.get("tables") or [], [], src.get("images") or [])
+
+        datas = found["数据"]
+        lobe_data_src = datas[0] if datas else None
+        pe_data_src = datas[1] if len(datas) > 1 else None
+        lobe_data_body = qty_only(lobe_data_src.get("body") if lobe_data_src else "", lobe_data_fb)
+        pe_raw = pe_data_src.get("body") if pe_data_src else ""
+        pe_data_body = qty_only(pe_raw, pe_data_fb)
+
+        deliver_src = next((n for n in body if plain(n) == "交付时间"), None)
+        deliver_body = str((deliver_src or {}).get("body") or "").strip()
+        if not deliver_body:
+            m = re.search(r"交付时间\s*\n\s*([^\n]+)", pe_raw or "")
+            deliver_body = (m.group(1).strip() if m else "") or "2023.1.17下班前。"
+
+        annex = next((n for n in body if cls.__is_annex_title(n.get("title"))), None)
+        rules, people, tools, steps = found["标注规则"], found["标注人员"], found["标注工具"], found["标注环节"]
+
+        lobe_desc = [
+            take(rules[0] if rules else None, "标注规则", "见《肺叶分割数据标注规则》。"),
+            take(people[0] if people else None, "标注人员", lobe_people),
+            take(tools[0] if tools else None, "标注工具", "标注工具：3D Slicer（4.10.2）。"),
+            take(steps[0] if steps else None, "标注环节", lobe_step),
+            take(lobe_data_src, "数据", lobe_data_fb),
+        ]
+        lobe_desc[-1]["body"] = lobe_data_body
+        pe_desc = [
+            take(rules[1] if len(rules) > 1 else None, "标注规则", "见《肺栓塞分割数据标注规则》。"),
+            take(people[1] if len(people) > 1 else None, "标注人员", pe_people),
+            take(tools[1] if len(tools) > 1 else None, "标注工具", "训练调优标注工具：3D Slicer（4.10.2）。\n测试数据标记工具：fancyviewer"),
+            take(steps[1] if len(steps) > 1 else None, "标注环节", pe_step),
+            take(pe_data_src, "数据", pe_data_fb),
+        ]
+        pe_desc[-1]["body"] = pe_data_body
+
+        new_body = [
+            node("肺叶分割", "", [], [node("标注任务分类", lobe_class), node("标注任务描述", "", [], lobe_desc)]),
+            node("肺栓塞", "", [], [node("标注任务分类", pe_class), node("标注任务描述", "", [], pe_desc)]),
+            node("交付时间", deliver_body),
+        ]
+        if annex:
+            new_body.append(annex)
+        content["sections"] = [n for n in sections if is_meta(n)] + new_body
 
     @classmethod
     def __drop_product_info(cls, content):
@@ -757,6 +1008,7 @@ class Server(object):
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, key))
         serv_review_util.fill_annex_reviews(content, prod_id, key, getattr(product, "name", "") or "")
         if key == "md_003":
+            self.__fill_md003_chapters(content, prod_id)
             self.__apply_md003_qty(content, prod_id)
         fill_chapter_images(content, key)
         return content
@@ -2176,8 +2428,14 @@ class Server(object):
         docx_util.insert_toc_field(document)
 
         document.add_page_break()
-        for i, node in enumerate(body):
-            render_body_section(node, 1, str(i + 1))
+        idx = 0
+        for node in body:
+            name = self.__strip_num(node.get("title"))
+            if node.get("ref_type") == "basic_info" or name == "产品信息" or self.__is_annex_title(name) or name.startswith("附件"):
+                render_body_section(node, 1, "")
+                continue
+            idx += 1
+            render_body_section(node, 1, str(idx))
 
         docx_util.fill_toc_cache(document)
         document.save(output)
