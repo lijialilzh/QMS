@@ -994,15 +994,21 @@ async function findProductBoundDocFileRowForUpdate(
     docVersion?: string,
     productVersion?: string,
 ): Promise<any | undefined> {
-    const res: any = await ApiDocFile.list_doc_file(fileType, {
+    const query = {
         product_id: productId,
-        doc_version: docVersion,
         product_version: productVersion,
         page_index: 0,
         page_size: 1000,
-    });
-    if (res?.code !== ApiDocFile.C_OK) return undefined;
-    return pickProductBoundDocFileRow(res?.data?.rows || [], docVersion, productVersion, fileType);
+    };
+    const res: any = await ApiDocFile.list_doc_file(fileType, { ...query, doc_version: docVersion });
+    if (res?.code === ApiDocFile.C_OK) {
+        const picked = pickProductBoundDocFileRow(res?.data?.rows || [], docVersion, productVersion, fileType);
+        if (picked) return picked;
+    }
+    const resAll: any = await ApiDocFile.list_doc_file(fileType, query);
+    if (resAll?.code !== ApiDocFile.C_OK) return undefined;
+    const rows = resAll?.data?.rows || [];
+    return pickProductBoundDocFileRow(rows, docVersion, productVersion, fileType) || sortDocFileRowsByLatest(rows)[0];
 }
 
 export async function fetchProductBoundDocImageMap(
@@ -1938,7 +1944,7 @@ const TreeNodeItem = ({
                 ? await ApiDocFile.update_doc_file(productBoundImageRefType, { ...payload, id: matchedRow.id })
                 : await ApiDocFile.add_doc_file(productBoundImageRefType, payload);
             if (saveRes?.code !== ApiDocFile.C_OK) {
-                throw new Error(saveRes?.msg || ts("upload_failed"));
+                throw new Error(saveRes?.msg || "上传失败");
             }
             if (matchedRow?.id) {
                 const detailRes: any = await ApiDocFile.get_doc_file(productBoundImageRefType, { id: matchedRow.id });
@@ -1949,17 +1955,16 @@ const TreeNodeItem = ({
                 matchedRow = await findProductBoundDocFileRowForUpdate(productBoundImageRefType, productId, docVersion, productVersion);
             }
             const imgUrl = buildProductBoundDocFileUrl(matchedRow);
-            if (!imgUrl) {
-                throw new Error(ts("upload_failed"));
+            if (imgUrl) {
+                onImageChange(imageTargetId, imgUrl);
+                setFileList([{
+                    uid: `${Date.now()}`,
+                    name: namedFile.name,
+                    status: "done",
+                    url: resolveFileUrl(imgUrl),
+                }]);
             }
-            onImageChange(imageTargetId, imgUrl);
-            setFileList([{
-                uid: `${Date.now()}`,
-                name: namedFile.name,
-                status: "done",
-                url: resolveFileUrl(imgUrl),
-            }]);
-            message.success(ts("upload_success"));
+            message.success(ts("upload_success") === "upload_success" ? "上传成功" : ts("upload_success"));
         } finally {
             URL.revokeObjectURL(localPreview);
         }
@@ -2018,7 +2023,7 @@ const TreeNodeItem = ({
                 await uploadProductBoundDocImage(file);
             } catch (error: any) {
                 console.error("产品绑定图片上传失败:", error);
-                message.error(error?.message || ts("upload_failed"));
+                message.error((error?.message && error.message !== "upload_failed") ? error.message : "上传失败");
             } finally {
                 setUploadLoading(false);
             }

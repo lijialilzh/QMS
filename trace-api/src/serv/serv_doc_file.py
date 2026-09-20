@@ -199,7 +199,7 @@ class Server(object):
         if img_url.startswith("data:"):
             return self.__extract_data_url_blob(img_url)
         # 兼容已落盘图片路径（例如 SDS 导入后节点图片）
-        path = img_url
+        path = img_url[1:] if img_url.startswith("/") else img_url
         if not os.path.exists(path):
             return None, None
         ext = os.path.splitext(path)[1] or ".png"
@@ -314,7 +314,8 @@ class Server(object):
             if not img_url:
                 continue
             img_str = str(img_url).strip()
-            if not img_str.startswith("data:") and not os.path.exists(img_str):
+            img_path = img_str[1:] if img_str.startswith("/") else img_str
+            if not img_str.startswith("data:") and not os.path.exists(img_path):
                 continue
             title = self.__normalize_text(getattr(node, "title", "") or "")
             if re.match(r"^导入图片\d*$", title):
@@ -325,6 +326,9 @@ class Server(object):
                 heading_match = img_url
         # 章节节点无图时不覆盖 doc_file，避免手工上传后被空节点或导入图片子节点冲掉
         if not heading_match:
+            return
+        # 已有图表文件时不再用 SRS 节点图覆盖：手工编辑和需求文档改图都走 update_doc_file
+        if row and str(getattr(row, "file_url", "") or "").strip():
             return
         matched_data_url = heading_match
 
@@ -500,7 +504,10 @@ class Server(object):
         self.__sync_sds_nodes_from_doc_file(row, doc_version)
         self.__sync_srs_nodes_from_doc_file(row, doc_version)
 
-    def __build_preserved_doc_file_name(self, row: DocFile, category: str, ext: str, doc_version: str = None):
+    def __build_preserved_doc_file_name(self, row: DocFile, category: str, ext: str, doc_version: str = None, uploaded_name: str = None):
+        uploaded_name = os.path.basename(str(uploaded_name or "").strip())
+        if uploaded_name and category and f"_{category}" in uploaded_name:
+            return uploaded_name
         normalized_doc_version = self.__normalize_doc_version(
             doc_version or self.__extract_doc_version_from_file_name(getattr(row, "file_name", "") or "", category)
         )
@@ -540,7 +547,9 @@ class Server(object):
             if file_url:
                 row.file_size = file_size
                 ext = os.path.splitext(str(getattr(file, "filename", "") or ""))[1] or os.path.splitext(file_url)[1] or ".png"
-                row.file_name = self.__build_preserved_doc_file_name(row, row.category, ext)
+                row.file_name = self.__build_preserved_doc_file_name(
+                    row, row.category, ext, uploaded_name=str(getattr(file, "filename", "") or "")
+                )
                 row.file_url = file_url
                 row.update_time = datetime.now()
             self.__sync_doc_nodes_from_doc_file(row)
@@ -575,7 +584,9 @@ class Server(object):
             if file_url:
                 row.file_size = file_size
                 ext = os.path.splitext(str(getattr(file, "filename", "") or ""))[1] or os.path.splitext(file_url)[1] or ".png"
-                row.file_name = self.__build_preserved_doc_file_name(row, category, ext, old_doc_version)
+                row.file_name = self.__build_preserved_doc_file_name(
+                    row, category, ext, old_doc_version, str(getattr(file, "filename", "") or "")
+                )
                 row.file_url = file_url
                 row.update_time = datetime.now()
             self.__sync_doc_nodes_from_doc_file(row, old_doc_version)

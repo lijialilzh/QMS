@@ -25,8 +25,10 @@ const DetailDlg = ({ fileType, data, dispatch, onSaved }: any) => {
     const doEdit = () => {
         editForm.validateFields().then((values) => {
             dispatch({ loading: true });
+            const rawFile = (data.files || [])[0];
+            const file = rawFile?.originFileObj || rawFile;
             const fn_request = data.dlgType === DlgTypes.edit ? Api.update_doc_file : Api.add_doc_file;
-            fn_request(fileType, values).then((res: any) => {
+            fn_request(fileType, { ...values, file }).then((res: any) => {
                 if (res.code === Api.C_OK) {
                     onSaved();
                     dispatch({ loading: false, dlgType: null });
@@ -101,7 +103,7 @@ const DetailDlg = ({ fileType, data, dispatch, onSaved }: any) => {
                                     }}
                                     beforeUpload={(file) => {
                                         dispatch({ files: [file] });
-                                        return true;
+                                        return false;
                                     }}>
                                     <Button icon={<UploadOutlined />}> {ts("select_file")}</Button>
                                 </Upload>
@@ -265,9 +267,16 @@ export default ({ fileType }: any) => {
         });
     };
 
+    const fileViewUrl = (row: any) => {
+        const raw = String(row?.file_url || "").replace(/^\//, "");
+        if (!raw) return "";
+        const token = [row?.id, row?.file_size, row?.update_time || row?.create_time, Date.now()].filter(Boolean).join("_");
+        return `/${raw}?t=${encodeURIComponent(token)}`;
+    };
+
     const doDownload = async (row: any) => {
         try {
-            const resp = await fetch(`/${row.file_url}`);
+            const resp = await fetch(fileViewUrl(row) || `/${row.file_url}`);
             if (!resp.ok) throw new Error("download failed");
             const blob = await resp.blob();
             const url = URL.createObjectURL(blob);
@@ -334,7 +343,7 @@ export default ({ fileType }: any) => {
                             onClick={() =>
                                 dispatch({
                                     previewOpen: true,
-                                    previewUrl: `/${row.file_url}`,
+                                    previewUrl: fileViewUrl(row),
                                     previewName: formatDisplayFileName(row),
                                 })
                             }>
