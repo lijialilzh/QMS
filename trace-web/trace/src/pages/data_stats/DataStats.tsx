@@ -32,6 +32,7 @@ import {
     caseRowsFromContent,
     importGpdExcel,
 } from "./dataStatsLocal";
+import { fillDd002Hospitals, fillDd003FromReturn, stripKeys } from "../model_doc/DataRecordDocDetail";
 
 const KIND_DOC: Record<StatsKind, { type: string; title: string }> = {
     raw: { type: "dd_015_01", title: "原始数据库统计表" },
@@ -293,6 +294,54 @@ export default () => {
         else if (missing) message.warning("请先在数据文件新增试标注或标注记录，本次未写入");
     };
 
+    const writeOneCollect = (productId: number, meta: { type: string; title: string }, fill: (secs: any[]) => Promise<any[]>) =>
+        Api.list_data_doc({ product_id: productId, doc_type: meta.type, page_index: 0, page_size: 1 }).then((list: any) => {
+            if (list.code !== Api.C_OK) return { title: meta.title, status: "error", msg: list.msg };
+            const hit = ((list.data && list.data.rows) || [])[0];
+            if (!hit) return { title: meta.title, status: "skip", msg: "" };
+            return Api.get_data_doc({ id: hit.id }).then((got: any) => {
+                if (got.code !== Api.C_OK) return { title: meta.title, status: "error", msg: got.msg };
+                const doc = got.data || {};
+                const secs = (doc.content && doc.content.sections) || [];
+                return fill(secs).then((filled) => {
+                    const next = stripKeys(filled);
+                    if (JSON.stringify(next) === JSON.stringify(stripKeys(secs))) {
+                        return { title: meta.title, status: "ok", msg: "" };
+                    }
+                    return Api.update_data_doc({
+                        id: hit.id,
+                        content: { sections: next },
+                        product_id: doc.product_id,
+                        version: doc.version,
+                    }).then((up: any) => {
+                        if (up.code !== Api.C_OK) return { title: meta.title, status: "error", msg: up.msg };
+                        return { title: meta.title, status: "ok", msg: "" };
+                    });
+                });
+            });
+        });
+
+    const writeCollectDocs = async (rows: CaseRow[]) => {
+        const productId = ctxRef.current.productId;
+        if (!productId || !(rows || []).length) return;
+        const r002 = await writeOneCollect(
+            productId,
+            { type: "dd_002", title: "多中心数据回传记录" },
+            (secs) => fillDd002Hospitals(productId, secs, rows),
+        );
+        if (r002.status === "error") message.error(r002.msg || "写入「多中心数据回传记录」失败");
+        const r003 = await writeOneCollect(
+            productId,
+            { type: "dd_003", title: "数据整理记录" },
+            (secs) => fillDd003FromReturn(productId, secs),
+        );
+        if (r003.status === "error") message.error(r003.msg || "写入「数据整理记录」失败");
+        const ok = [r002, r003].filter((r) => r.status === "ok").map((r) => r.title);
+        const missing = [r002, r003].filter((r) => r.status === "skip").map((r) => r.title);
+        if (ok.length) message.success(`已写入采集记录：${ok.join("、")}`);
+        if (missing.length) message.warning(`请先在数据文件新增「${missing.join("、")}」，本次未写入`);
+    };
+
     const writeDataFiles = (rows: CaseRow[]) => {
         const productId = ctxRef.current.productId;
         if (!productId) {
@@ -302,6 +351,7 @@ export default () => {
         dispatch({ writing: true });
         return writeStatsDoc(rows)
             .then(() => writeAnnotPids(rows))
+            .then(() => writeCollectDocs(rows))
             .catch(() => {
                 message.error("写入数据文件失败");
             })

@@ -15,6 +15,7 @@ from ..model.test_set import TestSet
 from ..model.sds_doc import SdsDoc
 from ..obj.vobj_product import ProductObj, TraceObj
 from ..model.product import UserProd, Product
+from ..model.user import User
 from ..model.srs_doc import SrsDoc
 from ..obj.tobj_product import ProductForm
 from ..utils.sql_ctx import db
@@ -25,7 +26,36 @@ from .serv_utils import new_version
 
 logger = logging.getLogger(__name__)
 
-# 与 serv_srs_doc.DELETED_SRS_VERSION_PREFIX 保持一致：列表已隐藏，不算用户可见的引用
+
+def is_root_user(op_user: UserObj) -> bool:
+    if not op_user:
+        return False
+    return op_user.id == 1 or op_user.role_code == Roles.root.value.code
+
+
+def srs_visible_product_ids(op_user: UserObj):
+    """需求规格说明可见产品。None=全部（仅超级管理员）；否则为产品 id 列表（prod_user ∪ 本人创建）。"""
+    if is_root_user(op_user):
+        return None
+    if not op_user or not op_user.id:
+        return []
+    assigned = db.session.execute(select(UserProd.product_id).where(UserProd.user_id == op_user.id)).scalars().all()
+    created = db.session.execute(select(Product.id).where(Product.create_user_id == op_user.id)).scalars().all()
+    ids = set()
+    for x in list(assigned or []) + list(created or []):
+        if x:
+            ids.add(int(x))
+    return list(ids)
+
+
+def can_access_srs_product(op_user: UserObj, product_id: int) -> bool:
+    if not product_id:
+        return False
+    ids = srs_visible_product_ids(op_user)
+    if ids is None:
+        return True
+    return int(product_id) in set(ids)
+
 DELETED_SRS_VERSION_PREFIX = "__deleted_srs__"
 
 DOC_FILE_CATEGORY_LABELS = {
@@ -346,7 +376,7 @@ class Server(object):
             result_dict.setdefault(row_srs.product_id, []).append(trace)
         return result_dict
 
-    async def list_product(self, op_user: UserObj, export = False, fuzzy: str = None, with_trace: int = 0, page_index: int = 0, page_size: int = 10):
+    async def list_product(self, op_user: UserObj, export = False, fuzzy: str = None, with_trace: int = 0, page_index: int = 0, page_size: int = 10, for_srs: int = 0):
         def __query_users(prod_ids: List[int]):
             result_dict = dict()
             if prod_ids:
@@ -375,8 +405,15 @@ class Server(object):
                     Product.note.like(f"%{fuzzy}%"),
                 )
             )
-        # 数据可见范围：产品经理只看自己创建的产品；超管及其它角色（DQA/RA/QA/开发/测试）查看全部产品
-        if op_user.id != 1 and op_user.role_code == Roles.product_manager.value.code:
+        # 需求规格说明下拉：按 prod_user ∪ 本人创建；仅超级管理员看全部
+        if for_srs:
+            ids = srs_visible_product_ids(op_user)
+            if ids is not None:
+                if not ids:
+                    return Resp.resp_ok(data=Page(total=0, rows=[], page_index=page_index, page_size=page_size))
+                sql = sql.where(Product.id.in_(ids))
+        # 其它列表：产品经理只看自己创建的产品；超管及其它角色查看全部产品
+        elif op_user.id != 1 and op_user.role_code == Roles.product_manager.value.code:
             sql = sql.where(Product.create_user_id == op_user.id)
         
         total = 0
@@ -430,4 +467,61 @@ class Server(object):
                 ws.cell(row=ridx, column=cidx, value=value)
         wb.save(output)
         output.seek(0)
+
+    async def list_srs_viewer_map(self, op_user: UserObj):
+        if not is_root_user(op_user):
+            return Resp.resp_err(msg=ts("msg_no_perm"))
+        rows = db.session.execute(select(UserProd.user_id, UserProd.product_id)).all()
+        mp = {}
+        for uid, pid in rows:
+            if not uid or not pid:
+                continue
+            mp.setdefault(int(uid), []).append(int(pid))
+        created_rows = db.session.execute(select(Product.create_user_id, Product.id)).all()
+        created_mp = {}
+        for uid, pid in created_rows:
+            if not uid or not pid:
+                continue
+            created_mp.setdefault(int(uid), []).append(int(pid))
+        user_ids = set(list(mp.keys()) + list(created_mp.keys()))
+        data = []
+        for uid in user_ids:
+            created_ids = created_mp.get(uid) or []
+            pids = list(dict.fromkeys((mp.get(uid) or []) + created_ids))
+            data.append({"user_id": uid, "product_ids": pids, "created_product_ids": created_ids})
+        return Resp.resp_ok(data=data)
+
+    async def save_srs_viewers(self, op_user: UserObj, user_id: int, product_ids: List[int] = None):
+        if not is_root_user(op_user):
+            return Resp.resp_err(msg=ts("msg_no_perm"))
+        if not user_id:
+            return Resp.resp_err(msg="请选择用户")
+        target: User = db.session.execute(select(User).where(User.id == user_id)).scalars().first()
+        if not target:
+            return Resp.resp_err(msg=ts("msg_obj_null"))
+        if target.id == 1 or (target.role_code or "") == Roles.root.value.code or (target.name or "") == "master":
+            return Resp.resp_err(msg="超级管理员默认可见全部产品，无需分配")
+        ids = []
+        for x in product_ids or []:
+            try:
+                n = int(x)
+            except (TypeError, ValueError):
+                continue
+            if n > 0:
+                ids.append(n)
+        created = db.session.execute(select(Product.id).where(Product.create_user_id == user_id)).scalars().all()
+        for x in created or []:
+            if x:
+                ids.append(int(x))
+        ids = list(dict.fromkeys(ids))
+        try:
+            db.session.execute(delete(UserProd).where(UserProd.user_id == user_id))
+            if ids:
+                db.session.add_all([UserProd(user_id=user_id, product_id=pid) for pid in ids])
+            db.session.commit()
+            return Resp.resp_ok()
+        except Exception:
+            logger.exception("")
+            db.session.rollback()
+        return Resp.resp_err(msg=ts(msg_err_db))
         

@@ -22,6 +22,14 @@ export const list_product = async (params: any) => {
     return await httpGet("/trace-api/product/list_product", params);
 };
 
+export const list_srs_viewer_map = async (params: any = {}) => {
+    return await httpGet("/trace-api/product/list_srs_viewer_map", params);
+};
+
+export const save_srs_viewers = async (params: any) => {
+    return await httpPost("/trace-api/product/save_srs_viewers", params);
+};
+
 export const get_product = async (params: any) => {
     return await httpGet("/trace-api/product/get_product", params);
 };

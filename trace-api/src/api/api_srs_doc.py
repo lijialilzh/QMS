@@ -95,9 +95,13 @@ async def add_doc_file(doc_id: int = Form(...), file: UploadFile = File(default=
 @try_log(perm=Perms.srs_doc_view)
 async def export_srs_doc(id: int = 0):
     resp = await server.get_srs_doc(id, with_tree=False)
+    if resp.code != 1:
+        return resp
     doc = resp.data or SrsDocObj()
     output = io.BytesIO()
-    await server.export_srs_doc(output, id)
+    result = await server.export_srs_doc(output, id)
+    if result is not None and getattr(result, "code", None) is not None and result.code != 1:
+        return result
     output.seek(0)
     raw_name = _srs_export_filename(doc.file_no, doc.folder_name)
     filename = urllib.parse.quote(raw_name)
@@ -115,7 +119,9 @@ async def export_srs_doc(id: int = 0):
 @try_log(perm=Perms.srs_doc_view)
 async def export_srs_doc_snapshot(form: SrsDocForm):
     output = io.BytesIO()
-    await server.export_srs_doc(output, form.id or 0, snapshot=form)
+    result = await server.export_srs_doc(output, form.id or 0, snapshot=form)
+    if result is not None and getattr(result, "code", None) is not None and result.code != 1:
+        return result
     output.seek(0)
     raw_name = _srs_export_filename(form.file_no, form.folder_name)
     filename = urllib.parse.quote(raw_name)

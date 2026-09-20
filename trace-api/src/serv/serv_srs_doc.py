@@ -67,6 +67,21 @@ from .serv_doc_file import build_doc_image_file_name, pick_doc_image_file_row, s
 from . import msg_err_db, save_file, serv_review_util
 
 logger = logging.getLogger(__name__)
+
+
+def _srs_scope_err(product_id: int):
+    from .serv_product import can_access_srs_product
+    from ..api import CtxUser
+    if can_access_srs_product(CtxUser.get(), product_id):
+        return None
+    return Resp.resp_err(msg=ts("msg_no_perm"))
+
+
+def _srs_scope_err_doc(doc_id: int):
+    pid = db.session.execute(select(SrsDoc.product_id).where(SrsDoc.id == doc_id)).scalar()
+    if not pid:
+        return Resp.resp_err(msg=ts("msg_obj_null"))
+    return _srs_scope_err(pid)
 srsreq_serv = ServSrsReq()
 srsreqd_serv = ServSrsReqd()
 DELETED_SRS_VERSION_PREFIX = "__deleted_srs__"
@@ -2705,6 +2720,9 @@ class Server(object):
         return roots, heading_rows
 
     async def import_srs_doc_word(self, product_id: int, version: str, change_log: str, file):
+        denied = _srs_scope_err(product_id)
+        if denied:
+            return denied
         if Document is None or DocxTable is None or Paragraph is None:
             return Resp.resp_err(msg="当前环境缺少 python-docx 依赖，暂不可用 Word 导入。")
         try:
@@ -3298,6 +3316,9 @@ class Server(object):
         db.session.commit()
 
     async def add_srs_doc(self, form: SrsDocForm):
+        denied = _srs_scope_err(form.product_id)
+        if denied:
+            return denied
         try:
             sql = select(func.count(SrsDoc.id)).where(SrsDoc.product_id == form.product_id, SrsDoc.version == form.version)
             count = db.session.execute(sql).scalar()
@@ -3326,11 +3347,17 @@ class Server(object):
         return Resp.resp_err(msg=ts(msg_err_db))
     
     async def duplicate_srs_doc(self, id: int, product_id: int = None):
-        fromdoc:SrsDocObj = (await self.get_srs_doc(id, with_tree=True)).data
+        src_resp = await self.get_srs_doc(id, with_tree=True)
+        if src_resp.code != 1:
+            return src_resp
+        fromdoc:SrsDocObj = src_resp.data
         if not fromdoc:
             return Resp.resp_err(msg=ts("msg_obj_null"))
         # 复制目标产品：默认沿用原产品，跨产品复制时使用指定产品
         target_pid = product_id or fromdoc.product_id
+        denied = _srs_scope_err(target_pid)
+        if denied:
+            return denied
         # 自动计算新版本号（不允许手动指定）
         all_versions = db.session.execute(select(SrsDoc.version).where(SrsDoc.product_id == target_pid)).scalars().all()
         existing_set = {v for v in all_versions if v}
@@ -3405,6 +3432,9 @@ class Server(object):
         return Resp.resp_err(msg=ts(msg_err_db))
    
     async def delete_srs_doc(self, id):
+        denied = _srs_scope_err_doc(id)
+        if denied:
+            return denied
         try:
             sql = select(func.count(SdsDoc.id)).where(SdsDoc.srsdoc_id == id)
             count = db.session.execute(sql).scalar()
@@ -3442,6 +3472,9 @@ class Server(object):
         if not result:
             return Resp.resp_err(msg=ts("msg_obj_null"))
         _, doc = result
+        denied = _srs_scope_err(doc.product_id)
+        if denied:
+            return denied
         doc.n_id += 1
         table = json.loads(node.table.json()) if node.table else None
         row = SrsNode(doc_id=doc.id, n_id=doc.n_id, p_id=node.p_id, priority=doc.n_id, 
@@ -3453,6 +3486,9 @@ class Server(object):
         return Resp.resp_ok(data=SrsNodeForm(**data))
     
     async def delete_srs_node(self, doc_id, n_id):
+        denied = _srs_scope_err_doc(doc_id)
+        if denied:
+            return denied
         db.session.execute(delete(SrsNode).where(SrsNode.doc_id == doc_id, SrsNode.n_id == n_id))
         db.session.commit()
         return Resp.resp_ok()
@@ -3468,6 +3504,13 @@ class Server(object):
             row:SrsDoc = db.session.execute(sql).scalars().first()
             if not row:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
+            denied = _srs_scope_err(row.product_id)
+            if denied:
+                return denied
+            if form.product_id:
+                denied2 = _srs_scope_err(form.product_id)
+                if denied2:
+                    return denied2
             if form.content is None:
                 logger.warning("update_srs_doc missing content: doc_id=%s", form.id)
                 return Resp.resp_err(msg="保存失败：未收到文档结构内容，请刷新后重试")
@@ -3505,6 +3548,9 @@ class Server(object):
             row: SrsDoc = db.session.execute(sql).scalars().first()
             if not row:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
+            denied = _srs_scope_err(row.product_id)
+            if denied:
+                return denied
             row.file_no = serv_review_util.resolve_doc_file_no(row.product_id, file_no, "", "srs") or None
             db.session.commit()
             return Resp.resp_ok()
@@ -3740,6 +3786,9 @@ class Server(object):
             return Resp.resp_err(msg=ts("msg_obj_null"))
         if (row.version or "").startswith(DELETED_SRS_VERSION_PREFIX):
             return Resp.resp_err(msg=ts("msg_obj_null"))
+        denied = _srs_scope_err(row.product_id)
+        if denied:
+            return denied
         objs_dict, tree = self.__tree(row) if with_tree else (None, [])
         if with_tree and self.__sync_change_req_tables_from_db(row.id, tree):
             row.n_id = 0
@@ -3800,13 +3849,18 @@ class Server(object):
     
         sql = select(SrsDoc, Product).outerjoin(Product, SrsDoc.product_id == Product.id)
         sql = sql.where(~SrsDoc.version.like(f"{DELETED_SRS_VERSION_PREFIX}%"))
+        from .serv_product import srs_visible_product_ids, can_access_srs_product
+        visible_ids = srs_visible_product_ids(op_user)
         if product_id:
+            if not can_access_srs_product(op_user, product_id):
+                return Resp.resp_ok(data=Page(total=0, page_size=page_size, rows=[], page_index=page_index))
             sql = sql.where(SrsDoc.product_id == product_id)
+        elif visible_ids is not None:
+            if not visible_ids:
+                return Resp.resp_ok(data=Page(total=0, page_size=page_size, rows=[], page_index=page_index))
+            sql = sql.where(Product.id.in_(visible_ids))
         if version:
             sql = sql.where(SrsDoc.version.like(f"%{version}%"))
-        if not product_id and op_user.id != 1:
-            subquery = select(UserProd.product_id).where(UserProd.user_id == op_user.id).scalar_subquery()
-            sql = sql.where(Product.id.in_(subquery))
         
         sql_count = select(func.count()).select_from(sql)
         total = db.session.execute(sql_count).scalars().first()
@@ -3864,6 +3918,10 @@ class Server(object):
         rows: List[Tuple[SrsDoc, Product]] = db.session.execute(sql).all()
         if not rows:
             return Resp.resp_err(msg=ts("msg_obj_null"))
+        for doc_row, _prod in rows:
+            denied = _srs_scope_err(doc_row.product_id)
+            if denied:
+                return denied
 
         feature_dict, feature_name_dict = __query_feature_maps()
         features0 = feature_dict.get(id0) or set()
@@ -3961,6 +4019,14 @@ class Server(object):
             serv_review_util.render_review_grid(docx, table, set_cell, merge_col0=(t_idx == 0), merge_full=True)
 
     async def export_srs_doc(self, output, doc_id, snapshot: SrsDocForm = None, *args, **kwargs):
+        if doc_id:
+            denied = _srs_scope_err_doc(doc_id)
+            if denied:
+                return denied
+        elif snapshot and snapshot.product_id:
+            denied = _srs_scope_err(snapshot.product_id)
+            if denied:
+                return denied
         if Document is None or Pt is None or dox_enum is None:
             return
         from .serv_utils import docx_util
@@ -5282,6 +5348,9 @@ class Server(object):
             output.seek(0)
 
     async def add_doc_file(self, doc_id: int, file):
+        denied = _srs_scope_err_doc(doc_id)
+        if denied:
+            return denied
         size, path = await save_file("srs_node_img", doc_id, file)
         return Resp.resp_ok(data=path)  
 

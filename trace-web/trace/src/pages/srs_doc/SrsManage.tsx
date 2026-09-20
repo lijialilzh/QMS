@@ -52,7 +52,7 @@ export default () => {
 
     // 加载产品列表
     useEffect(() => {
-        ApiProduct.list_product({ page_index: 0, page_size: 1000 }).then((res: any) => {
+        ApiProduct.list_product({ page_index: 0, page_size: 1000, for_srs: 1 }).then((res: any) => {
             if (res.code === ApiProduct.C_OK) {
                 dispatch({ products: res.data.rows });
             }

@@ -10,6 +10,7 @@
         "syscfg": "系统配置",
         "roles": "角色管理",
         "users": "用户管理",
+        "srs_viewers": "需求可见范围",
         "projects": "产品线管理",
         "project_members": "参与人员",
         "project_timeline": "时间逻辑线",

@@ -124,6 +124,12 @@ export default () => {
                         perm: "user_view",
                     },
                     {
+                        key: "/srs_viewers",
+                        label: ts("menu.srs_viewers"),
+                        perm: "user_view",
+                        hidden: !(user?.id === 1 || user?.role_code === "root"),
+                    },
+                    {
                         key: "/projects",
                         label: ts("menu.projects"),
                         perm: "project_view",
@@ -637,7 +643,7 @@ export default () => {
                 ],
             }
         ];
-    }, [i18n.language]);
+    }, [i18n.language, user?.id, user?.role_code]);
 
     useEffect(() => {
         const path = location.pathname;

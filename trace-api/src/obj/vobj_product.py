@@ -10,6 +10,7 @@ class TraceObj(BaseModel):
 
 
 class ProductObj(ProductForm):
+    create_user_id: Optional[int] = Field(title="创建人ID")
     create_time: Optional[datetime] = Field(title="创建时间")
 
     country: Optional[str] = Field(title="国家")

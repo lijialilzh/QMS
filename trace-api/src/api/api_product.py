@@ -11,7 +11,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from ..obj.vobj_user import UserObj
 from ..obj.vobj_product import ProductObj
-from ..obj.tobj_product import ProductForm
+from ..obj.tobj_product import ProductForm, SrsViewerForm
 from ..obj.tobj_role import Perms
 from ..obj import Resp, Page
 from ..serv.serv_product import Server
@@ -57,9 +57,23 @@ async def duplicate_product(id: int, product_id: int = None, name: str = None, f
 
 @router.get("/list_product", summary="查询产品列表", response_model=Resp[Page[ProductObj]])
 @try_log(perm=[Perms.product_view, Perms.srs_doc_view, Perms.sds_doc_view])
-async def list_product(fuzzy: str = None, with_trace:int = 0, page_index: int = 0, page_size: int = 10):
+async def list_product(fuzzy: str = None, with_trace:int = 0, page_index: int = 0, page_size: int = 10, for_srs: int = 0):
     op_user: UserObj = CtxUser.get()
-    return await server.list_product(op_user, fuzzy=fuzzy, with_trace=with_trace, page_index=page_index, page_size=page_size)
+    return await server.list_product(op_user, fuzzy=fuzzy, with_trace=with_trace, page_index=page_index, page_size=page_size, for_srs=for_srs)
+
+
+@router.get("/list_srs_viewer_map", summary="需求可见范围：用户-产品对照")
+@try_log(perm=Perms.user_view)
+async def list_srs_viewer_map():
+    op_user: UserObj = CtxUser.get()
+    return await server.list_srs_viewer_map(op_user)
+
+
+@router.post("/save_srs_viewers", summary="需求可见范围：保存某用户可见产品")
+@try_log(perm=Perms.user_edit)
+async def save_srs_viewers(form: SrsViewerForm):
+    op_user: UserObj = CtxUser.get()
+    return await server.save_srs_viewers(op_user, form.user_id or 0, form.product_ids)
 
 
 @router.get("/get_product", summary="查询产品详情", response_model=Resp[ProductObj])

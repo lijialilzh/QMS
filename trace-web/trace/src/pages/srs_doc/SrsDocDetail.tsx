@@ -643,7 +643,7 @@ export default () => {
         if (!productId) return undefined;
         const cached = (data.products as any[]).find((p: any) => p.id === productId);
         if (cached) return cached;
-        const res: any = await ApiProduct.list_product({ page_index: 0, page_size: 1000 });
+        const res: any = await ApiProduct.list_product({ page_index: 0, page_size: 1000, for_srs: 1 });
         if (res.code !== ApiProduct.C_OK) return undefined;
         const rows = res.data?.rows || [];
         dispatch({ products: rows });
@@ -746,7 +746,7 @@ export default () => {
 
     // 加载产品列表
     useEffect(() => {
-        ApiProduct.list_product({ page_index: 0, page_size: 1000 }).then((res: any) => {
+        ApiProduct.list_product({ page_index: 0, page_size: 1000, for_srs: 1 }).then((res: any) => {
             if (res.code === ApiProduct.C_OK) {
                 dispatch({ products: res.data.rows });
             }

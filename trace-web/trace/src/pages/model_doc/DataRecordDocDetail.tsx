@@ -46,7 +46,7 @@ const ensureKeys = (nodes: any[]): any[] =>
         children: ensureKeys(n.children || []),
     }));
 
-const stripKeys = (nodes: any[]): any[] =>
+export const stripKeys = (nodes: any[]): any[] =>
     (nodes || []).map(({ _key, ...rest }: any) => ({ ...rest, children: stripKeys(rest.children || []) }));
 
 const mapNode = (nodes: any[], key: string, fn: (n: any) => any): any[] =>
@@ -842,13 +842,16 @@ const ensureCollectors = (productId: number, members: any[]): Promise<string[]> 
     })).then(() => DEFAULT_COLLECTORS).catch(() => DEFAULT_COLLECTORS);
 };
 
-const fillDd002Hospitals = (productId: number, secs: any[]): Promise<any[]> => {
+export const fillDd002Hospitals = (productId: number, secs: any[], caseRows?: any[]): Promise<any[]> => {
     if (!productId) return Promise.resolve(secs);
+    const casesP = (caseRows && caseRows.length)
+        ? Promise.resolve(packDd002Cases(caseRows))
+        : loadDd002Cases(productId).catch(() => null);
     return Promise.all([
         ApiHospital.list_prod_hospital({ prod_id: productId, page_index: 0, page_size: 5000 }),
         ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
         ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
-        loadDd002Cases(productId).catch(() => null),
+        casesP,
     ]).then(([res, tl, mb, cases]: any[]) => {
         if (!res || res.code !== ApiHospital.C_OK) return secs;
         const all = ((res.data && res.data.rows) || [])
@@ -1121,7 +1124,7 @@ const applyDd003FromReturn = (nodes: any[], src: { org: string; recv: string; qt
     return (nodes || []).map(fix);
 };
 
-const fillDd003FromReturn = (productId: number, secs: any[]): Promise<any[]> => {
+export const fillDd003FromReturn = (productId: number, secs: any[]): Promise<any[]> => {
     if (!productId) return Promise.resolve(secs);
     return Promise.all([
         latestDataDoc(productId, "dd_002"),

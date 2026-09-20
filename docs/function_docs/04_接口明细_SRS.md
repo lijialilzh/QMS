@@ -152,7 +152,7 @@
 ### GET `/srs_doc/list_srs_doc`
 - 权限：`srs_doc_view`
 - 入参 Query：`product_id`(默认0)、`version`、分页
-- 出参：`Resp[Page[SrsDocObj]]`（**不含 content 树**）；排除软删；非 admin 按产品权限过滤
+- 出参：`Resp[Page[SrsDocObj]]`（**不含 content 树**）；排除软删；按需求可见范围过滤（超级管理员看全部；其他人看 `prod_user` ∪ 本人创建；指定产品时无权限则返回空页）
 
 ### GET `/srs_doc/get_srs_doc`
 - 权限：`srs_doc_view` / 入参：Query `id`

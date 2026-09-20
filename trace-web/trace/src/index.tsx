@@ -18,6 +18,7 @@ import Home from "./pages/Home";
 import DashBoard from "./pages/DashBoard";
 import Roles from "./pages/syscfg/Roles";
 import Users from "./pages/syscfg/Users";
+import SrsViewers from "./pages/syscfg/SrsViewers";
 import Projects from "./pages/syscfg/Projects";
 import ProjectMembers from "./pages/syscfg/ProjectMembers";
 import ProjectTimeline from "./pages/syscfg/ProjectTimeline";
@@ -142,6 +143,7 @@ const router = createRouter([
             
             { path: "/roles", element: <Roles /> },
             { path: "/users", element: <Users /> },
+            { path: "/srs_viewers", element: <SrsViewers /> },
             { path: "/projects", element: <Projects /> },
             { path: "/project_members", element: <ProjectMembers /> },
             { path: "/project_timeline", element: <ProjectTimeline /> },

@@ -23,7 +23,7 @@ enum DlgTypes {
 const doSearchProducts = (data: any, dispatch: any) => {
     if (data.products.length === 0) {
         dispatch({ loadingProducts: true });
-        ApiProduct.list_product({ page_size: 1000 }).then((res: any) => {
+        ApiProduct.list_product({ page_size: 1000, for_srs: 1 }).then((res: any) => {
             if (res.code === ApiProduct.C_OK) {
                 dispatch({ loadingProducts: false, products: res.data.rows || [] });
             } else {
@@ -39,6 +39,7 @@ export default () => {
     const navigate = useNavigate();
     const user = useSelector((state: Root) => state.user);
     const canEdit = (user?.role_perms || []).includes("srs_doc_edit");
+    const isRoot = user?.id === 1 || user?.role_code === "root";
     const [queryForm] = Form.useForm();
     const [importForm] = Form.useForm();
     const [addForm] = Form.useForm();
@@ -99,7 +100,7 @@ export default () => {
     };
 
     useEffect(() => {
-        ApiProduct.list_product({ page_index: 0, page_size: 1000 }).then((res: any) => {
+        ApiProduct.list_product({ page_index: 0, page_size: 1000, for_srs: 1 }).then((res: any) => {
             if (res.code === ApiProduct.C_OK) {
                 dispatch({ products: res.data.rows || [] });
             }
@@ -403,6 +404,11 @@ export default () => {
                     </Row>
                 </Form>
                 <Space>
+                    {isRoot ? (
+                        <Button onClick={() => navigate("/srs_viewers")}>
+                            {ts("menu.srs_viewers")}
+                        </Button>
+                    ) : null}
                     {canEdit ? (
                         <>
                             <Button type="primary" onClick={() => dispatch({ dlgType: DlgTypes.import })}>
