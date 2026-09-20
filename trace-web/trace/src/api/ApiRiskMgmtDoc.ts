@@ -50,6 +50,14 @@ export const delete_risk_participant = async (params: any) => {
     return await httpDelete("/trace-api/risk_mgmt_doc/delete_risk_participant", params);
 };
 
+export const ensure_default_risk_participants = async (params: any) => {
+    return await httpPost("/trace-api/risk_mgmt_doc/ensure_default_risk_participants", params);
+};
+
+export const delete_risk_participants_by_product_id = async (params: any) => {
+    return await httpPost("/trace-api/risk_mgmt_doc/delete_risk_participants_by_product_id", params);
+};
+
 export const list_risk_participant = async (params: any) => {
     return await httpGet("/trace-api/risk_mgmt_doc/list_risk_participant", params);
 };

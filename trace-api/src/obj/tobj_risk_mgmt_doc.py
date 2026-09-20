@@ -16,6 +16,7 @@ class RiskMgmtDocForm(BaseModel):
 
 class RiskParticipantForm(BaseModel):
     id: Optional[int] = Field(title="ID")
+    product_id: Optional[int] = Field(title="产品ID")
     role: Optional[str] = Field(title="项目角色")
     name: Optional[str] = Field(title="姓名")
 

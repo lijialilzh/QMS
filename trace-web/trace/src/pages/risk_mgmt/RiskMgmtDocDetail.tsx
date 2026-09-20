@@ -514,8 +514,12 @@ const loadProducts = (data: any, dispatch: any) => {
     });
 };
 
-const loadParticipantOptions = (dispatch: any) => {
-    Api.list_risk_participant({ page_index: 0, page_size: 10000 }).then((res: any) => {
+const loadParticipantOptions = (dispatch: any, productId?: any) => {
+    if (!productId) {
+        dispatch({ participantOptions: [] });
+        return;
+    }
+    Api.list_risk_participant({ product_id: productId, page_index: 0, page_size: 10000 }).then((res: any) => {
         if (res.code === Api.C_OK) {
             dispatch({ participantOptions: res.data?.rows || [] });
         }
@@ -551,12 +555,11 @@ export default () => {
 
     useEffect(() => {
         loadProducts(data, dispatch);
-        loadParticipantOptions(dispatch);
         if (isAdd) {
             form.resetFields();
             const content = cloneTemplateContent();
             const defaultSection = (content.sections || []).find((section: any) => !isCoverSection(section) && !isRevisionSection(section));
-            dispatch({ detail: {}, content, participants: [], selectedParticipantIds: [], participantsTouched: false, activeSectionKey: sectionKey(defaultSection) });
+            dispatch({ detail: {}, content, participants: [], selectedParticipantIds: [], participantsTouched: false, activeSectionKey: sectionKey(defaultSection), participantOptions: [] });
             return;
         }
         if (!params.id) return;
@@ -572,6 +575,7 @@ export default () => {
                 form.setFieldsValue(detail);
                 dispatch({ loading: false, detail, content, participants, selectedParticipantIds, participantsTouched: false, activeSectionKey: sectionKey(defaultSection), selectedProductId: detail.product_id });
                 loadRiskLookupData(detail.product_id);
+                loadParticipantOptions(dispatch, detail.product_id);
             } else {
                 dispatch({ loading: false });
                 message.error(res.msg);
@@ -1621,6 +1625,7 @@ export default () => {
                                                 form.setFieldValue("product_id", value);
                                                 dispatch({ selectedProductId: value });
                                                 loadRiskLookupData(value);
+                                                loadParticipantOptions(dispatch, value);
                                                 const selectedProduct = (data.products || []).find((p: any) => p.id === value);
                                                 const productName = selectedProduct?.name || "";
                                                 const version = form.getFieldValue("version") || data.detail?.version || "";

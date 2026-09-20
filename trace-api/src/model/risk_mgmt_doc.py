@@ -20,11 +20,12 @@ class RiskMgmtDoc(Model):
 
 class RiskParticipant(Model):
     __tablename__ = "risk_participant"
+    product_id = Column(Integer, nullable=False, comment="产品ID")
     role = Column(String(256), nullable=False, comment="项目角色")
     name = Column(String(256), nullable=False, comment="姓名")
 
     __table_args__ = (
-        UniqueConstraint("role", "name"),
+        UniqueConstraint("product_id", "role", "name"),
     )
 
 

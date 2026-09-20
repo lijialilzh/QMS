@@ -98,10 +98,22 @@ async def delete_risk_participant(id: int):
     return await server.delete_risk_participant(id)
 
 
+@router.post("/ensure_default_risk_participants", summary="产品人员库为空时写入默认参与人员", response_model=Resp[Any])
+@try_log(perm=Perms.risk_mgmt_doc_edit)
+async def ensure_default_risk_participants(form: RiskParticipantForm):
+    return await server.ensure_default_risk_participants(form.product_id)
+
+
+@router.post("/delete_risk_participants_by_product_id", summary="删除产品全部风险参与人员", response_model=Resp[Any])
+@try_log(perm=Perms.risk_mgmt_doc_edit)
+async def delete_risk_participants_by_product_id(form: RiskParticipantForm):
+    return await server.delete_risk_participants_by_product_id(form.product_id)
+
+
 @router.get("/list_risk_participant", summary="查询风险分析参与人员列表", response_model=Resp[Page[RiskParticipantObj]])
 @try_log(perm=Perms.risk_mgmt_doc_view)
-async def list_risk_participant(keyword: str = None, page_index: int = 0, page_size: int = 10):
-    return await server.list_risk_participant(keyword=keyword, page_index=page_index, page_size=page_size)
+async def list_risk_participant(product_id: int = 0, keyword: str = None, page_index: int = 0, page_size: int = 10):
+    return await server.list_risk_participant(product_id=product_id, keyword=keyword, page_index=page_index, page_size=page_size)
 
 
 @router.post("/add_risk_analysis", summary="添加风险分析矩阵", response_model=Resp[RiskAnalysisForm])

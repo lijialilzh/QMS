@@ -8,7 +8,7 @@ import io
 import os
 import re
 from typing import List
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, inspect, select, text
 from docx import Document
 from docx.table import Table as DocxTable
 from docx.text.paragraph import Paragraph
@@ -55,6 +55,22 @@ RISK_ACCEPTANCE_TABLE = [
     ["红色", "不可接受：这类风险本质上不可接受。必须寻求风险降低措施。", "", "", "", "", "", ""],
     ["橙色", "进一步降低的研究：这类风险必须降低到合理可行的最低限度才可视为可接受。", "", "", "", "", "", ""],
     ["绿色", "可忽略：这类风险实际上可接受，但只可挑选一步寻求风险降低措施。", "", "", "", "", "", ""],
+]
+
+
+DEFAULT_RISK_PARTICIPANTS = [
+    ("风险管理组长", "林金贵"),
+    ("产品经理", "杨静"),
+    ("模型负责人", "王瑜"),
+    ("软件开发负责人", "宁随军"),
+    ("RA负责人", "张淑芳"),
+    ("QA负责人", "林金贵"),
+    ("测试负责人", "王小敏"),
+    ("验证和确认负责人", "李佳励"),
+    ("执行负责人", "张冉冉"),
+    ("临床专家", "齐济"),
+    ("RA负责人", "李娜"),
+    ("测试负责人", "孙家旭"),
 ]
 
 
@@ -1075,16 +1091,42 @@ class Server(object):
         rows: List[RiskMgmtDocObj] = [self.__to_obj(doc, product, with_autofill=False) for doc, product in db.session.execute(sql).all()]
         return Resp.resp_ok(data=Page(total=total, rows=rows, page_index=page_index, page_size=page_size))
 
+    def __ensure_risk_participant_product_id(self):
+        bind = db.session.get_bind()
+        cols = {c["name"] for c in inspect(bind).get_columns("risk_participant")}
+        if "product_id" in cols:
+            return
+        db.session.execute(text("ALTER TABLE risk_participant ADD COLUMN product_id INTEGER"))
+        prod_id = db.session.execute(text("SELECT product_id FROM risk_mgmt_doc ORDER BY id LIMIT 1")).scalar()
+        if prod_id is None:
+            prod_id = db.session.execute(text("SELECT id FROM product ORDER BY id LIMIT 1")).scalar()
+        if prod_id is not None:
+            db.session.execute(text("UPDATE risk_participant SET product_id = :p WHERE product_id IS NULL"), {"p": prod_id})
+            db.session.execute(text("ALTER TABLE risk_participant ALTER COLUMN product_id SET NOT NULL"))
+        db.session.execute(text("ALTER TABLE risk_participant DROP CONSTRAINT IF EXISTS risk_participant_role_name_key"))
+        db.session.execute(text(
+            "ALTER TABLE risk_participant ADD CONSTRAINT risk_participant_product_id_role_name_key UNIQUE (product_id, role, name)"
+        ))
+        db.session.commit()
+
     async def add_risk_participant(self, form: RiskParticipantForm):
         try:
+            self.__ensure_risk_participant_product_id()
+            product_id = form.product_id
             role = (form.role or "").strip()
             name = (form.name or "").strip()
+            if not product_id:
+                return Resp.resp_err(msg="请先选择产品")
             if not role or not name:
                 return Resp.resp_err(msg="请填写项目角色和姓名")
-            sql = select(func.count(RiskParticipant.id)).where(RiskParticipant.role == role, RiskParticipant.name == name)
+            sql = select(func.count(RiskParticipant.id)).where(
+                RiskParticipant.product_id == product_id,
+                RiskParticipant.role == role,
+                RiskParticipant.name == name,
+            )
             if db.session.execute(sql).scalar() > 0:
                 return Resp.resp_err(msg=ts("msg_obj_exist"))
-            row = RiskParticipant(role=role, name=name)
+            row = RiskParticipant(product_id=product_id, role=role, name=name)
             db.session.add(row)
             db.session.commit()
             return Resp.resp_ok()
@@ -1095,6 +1137,7 @@ class Server(object):
 
     async def update_risk_participant(self, form: RiskParticipantForm):
         try:
+            self.__ensure_risk_participant_product_id()
             row: RiskParticipant = db.session.execute(select(RiskParticipant).where(RiskParticipant.id == form.id)).scalars().first()
             if not row:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
@@ -1103,6 +1146,7 @@ class Server(object):
             if not role or not name:
                 return Resp.resp_err(msg="请填写项目角色和姓名")
             sql = select(func.count(RiskParticipant.id)).where(
+                RiskParticipant.product_id == row.product_id,
                 RiskParticipant.role == role,
                 RiskParticipant.name == name,
                 RiskParticipant.id != form.id,
@@ -1123,38 +1167,80 @@ class Server(object):
         db.session.commit()
         return Resp.resp_ok()
 
+    async def ensure_default_risk_participants(self, product_id: int):
+        try:
+            self.__ensure_risk_participant_product_id()
+            if not product_id:
+                return Resp.resp_err(msg="请先选择产品")
+            existing = db.session.execute(
+                select(func.count(RiskParticipant.id)).where(RiskParticipant.product_id == product_id)
+            ).scalar() or 0
+            if existing > 0:
+                return Resp.resp_ok()
+            db.session.add_all([
+                RiskParticipant(product_id=product_id, role=role, name=name)
+                for role, name in DEFAULT_RISK_PARTICIPANTS
+            ])
+            db.session.commit()
+            return Resp.resp_ok()
+        except Exception:
+            logger.exception("")
+            db.session.rollback()
+        return Resp.resp_err(msg=ts(msg_err_db))
+
+    async def delete_risk_participants_by_product_id(self, product_id: int):
+        try:
+            if not product_id:
+                return Resp.resp_err(msg="请先选择产品")
+            db.session.execute(delete(RiskParticipant).where(RiskParticipant.product_id == product_id))
+            db.session.commit()
+            return Resp.resp_ok()
+        except Exception:
+            logger.exception("")
+            db.session.rollback()
+        return Resp.resp_err(msg=ts(msg_err_db))
+
     def __seed_risk_participants_from_docs(self):
-        if (db.session.execute(select(func.count(RiskParticipant.id))).scalar() or 0) > 0:
-            return
-        exists = set()
-        rows = []
         docs = db.session.execute(select(RiskMgmtDoc)).scalars().all()
+        by_prod: dict = {}
         for doc in docs:
+            pid = doc.product_id
+            if not pid:
+                continue
             content = self.__normalize_content(doc.content)
             for item in content.get("participants") or []:
                 role = str(item.get("role") or "").strip()
                 name = str(item.get("name") or "").strip()
-                key = (role, name)
-                if role and name and key not in exists:
-                    exists.add(key)
-                    rows.append(RiskParticipant(role=role, name=name))
-        if rows:
-            db.session.add_all(rows)
+                if role and name:
+                    by_prod.setdefault(pid, set()).add((role, name))
+        added = False
+        for pid, pairs in by_prod.items():
+            existing = db.session.execute(
+                select(func.count(RiskParticipant.id)).where(RiskParticipant.product_id == pid)
+            ).scalar() or 0
+            if existing > 0:
+                continue
+            db.session.add_all([RiskParticipant(product_id=pid, role=role, name=name) for role, name in pairs])
+            added = True
+        if added:
             db.session.commit()
 
-    async def list_risk_participant(self, keyword: str = None, page_index: int = 0, page_size: int = 10):
-        self.__seed_risk_participants_from_docs()
+    async def list_risk_participant(self, product_id: int = None, keyword: str = None, page_index: int = 0, page_size: int = 10):
+        self.__ensure_risk_participant_product_id()
         wheres = []
+        if product_id:
+            wheres.append(RiskParticipant.product_id == product_id)
         if keyword:
             like = f"%{keyword}%"
             wheres.append((RiskParticipant.role.like(like)) | (RiskParticipant.name.like(like)))
-        total = db.session.execute(select(func.count(RiskParticipant.id)).where(*wheres)).scalar() or 0
+        count_sql = select(func.count(RiskParticipant.id))
+        list_sql = select(RiskParticipant).order_by(RiskParticipant.id.asc())
+        if wheres:
+            count_sql = count_sql.where(*wheres)
+            list_sql = list_sql.where(*wheres)
+        total = db.session.execute(count_sql).scalar() or 0
         rows = db.session.execute(
-            select(RiskParticipant)
-            .where(*wheres)
-            .order_by(RiskParticipant.id.desc())
-            .offset(page_index * page_size)
-            .limit(page_size)
+            list_sql.offset(page_index * page_size).limit(page_size)
         ).scalars().all()
         return Resp.resp_ok(data=Page(
             total=total,

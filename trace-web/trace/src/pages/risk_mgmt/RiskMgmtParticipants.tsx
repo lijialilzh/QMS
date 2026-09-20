@@ -1,113 +1,233 @@
-import { Button, Form, Input, Modal, Space, Table, message } from "antd";
+import { Form, Button, Table, message, Row, Col, Modal, Space } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
+import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
-import { useData } from "@/common";
+import { renderOneLineWithTooltip, useData } from "@/common";
+import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiRiskMgmtDoc";
+import * as ApiProduct from "@/api/ApiProduct";
+import RiskMgmtParticipantDetail from "./RiskMgmtParticipantDetail";
+import "./RiskMgmtParticipants.less";
+
+const pageSizeOptions = [20, 50, 100];
 
 enum DlgTypes {
-    edit = "edit",
+    add = "add",
     delete = "delete",
 }
 
-const makeRowKey = () => `${Date.now()}-${Math.random()}`;
-const pageSizeOptions = [20, 50, 100];
+const buildCountMap = (rows: any[] = []) => {
+    const map = new Map<number, number>();
+    rows.forEach((row) => {
+        const pid = Number(row.product_id);
+        if (!pid) return;
+        map.set(pid, (map.get(pid) || 0) + 1);
+    });
+    return map;
+};
+
+const loadProducts = (data: any, dispatch: any) => {
+    if ((data.products || []).length > 0) return;
+    ApiProduct.list_product({ page_size: 10000 }).then((res: any) => {
+        if (res.code === ApiProduct.C_OK) {
+            dispatch({ products: res.data.rows || [] });
+        } else {
+            message.error(res.msg);
+        }
+    }).catch(() => {
+        message.error("加载产品列表失败");
+    });
+};
 
 export default () => {
     const { t: ts } = useTranslation();
     const [queryForm] = Form.useForm();
-    const [editForm] = Form.useForm();
+    const [addForm] = Form.useForm();
     const [data, dispatch] = useData({
-        loading: false,
-        saving: false,
         total: 0,
         pageIndex: 1,
         pageSize: pageSizeOptions[0],
-        rows: [] as any[],
-        targetRow: {},
-        editMode: "add",
+        rows: [],
+        loading: false,
+        products: [],
+        countMap: new Map<number, number>(),
+        addProductId: undefined as number | undefined,
+        filterProductId: undefined as number | undefined,
+        filterProductName: undefined as string | undefined,
+        targetRow: {} as any,
+        dlgType: null as string | null,
+        expandedKeys: [] as number[],
     });
 
-    useEffect(() => {
-        doSearch({}, 1, data.pageSize);
-    }, []);
-
-    const doSearch = (params: any = queryForm.getFieldsValue(), pageIndex = data.pageIndex, pageSize = data.pageSize) => {
-        dispatch({ loading: true });
-        Api.list_risk_participant({ ...params, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
+    const loadCounts = () => {
+        return Api.list_risk_participant({ page_index: 0, page_size: 100000 }).then((res: any) => {
             if (res.code === Api.C_OK) {
-                dispatch({
-                    loading: false,
-                    total: res.data?.total || 0,
-                    rows: (res.data?.rows || []).map((row: any) => ({ ...row, _rowKey: makeRowKey() })),
-                    pageIndex,
-                    pageSize,
-                });
-            } else {
-                dispatch({ loading: false, total: 0, rows: [] });
-                message.error(res.msg || "加载失败");
+                const map = buildCountMap(res.data?.rows || []);
+                dispatch({ countMap: map });
+                return map;
             }
-        }).catch(() => {
-            dispatch({ loading: false, total: 0, rows: [] });
-            message.error("加载失败");
+            return data.countMap || new Map<number, number>();
+        }).catch(() => data.countMap || new Map<number, number>());
+    };
+
+    const doSearch = (params: any, pageIndex: any, pageSize: any, countMap?: Map<number, number>) => {
+        dispatch({ loading: true });
+        const mapPromise = countMap ? Promise.resolve(countMap) : loadCounts();
+        mapPromise.then((map) => {
+            ApiProduct.list_product({ page_index: 0, page_size: 10000 }).then((res: any) => {
+                if (res.code === ApiProduct.C_OK) {
+                    const productRows = res.data.rows || [];
+                    let allRows = productRows.filter((row: any) => (map.get(row.id) || 0) > 0);
+                    const productId = params?.product_id;
+                    const productName = params?.product_name;
+                    if (productId) {
+                        allRows = allRows.filter((row: any) => Number(row.id) === Number(productId));
+                    } else if (productName) {
+                        allRows = allRows.filter((row: any) => row.name === productName);
+                    }
+                    const total = allRows.length;
+                    const start = (pageIndex - 1) * pageSize;
+                    const rows = allRows.slice(start, start + pageSize);
+                    dispatch({
+                        loading: false,
+                        pageIndex,
+                        pageSize,
+                        total,
+                        rows,
+                        products: productRows,
+                        countMap: map,
+                    });
+                } else {
+                    dispatch({ loading: false, pageIndex, pageSize, total: 0, rows: [] });
+                    message.error(res.msg);
+                }
+            }).catch(() => {
+                dispatch({ loading: false });
+                message.error("加载产品列表失败");
+            });
         });
     };
 
-    const openEdit = (row?: any) => {
-        editForm.resetFields();
-        editForm.setFieldsValue(row || { role: "", name: "" });
-        dispatch({ dlgType: DlgTypes.edit, targetRow: row || {}, editMode: row ? "edit" : "add" });
+    const openAddModal = () => {
+        addForm.resetFields();
+        loadProducts(data, dispatch);
+        dispatch({ dlgType: DlgTypes.add, addProductId: undefined });
     };
 
-    const doSave = () => {
-        editForm.validateFields().then((values) => {
-            dispatch({ saving: true });
-            const request = data.editMode === "edit"
-                ? Api.update_risk_participant({ ...data.targetRow, ...values })
-                : Api.add_risk_participant(values);
-            request.then((res: any) => {
-                dispatch({ saving: false });
+    const toggleExpand = (prodId: number) => {
+        if (!prodId) return;
+        const keys = data.expandedKeys || [];
+        dispatch({ expandedKeys: keys.includes(prodId) ? [] : [prodId] });
+    };
+
+    const refreshAfterPeopleChange = () => {
+        loadCounts().then((map) => {
+            doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, data.pageIndex, data.pageSize, map);
+        });
+    };
+
+    const doAddNavigate = () => {
+        addForm.validateFields().then((values) => {
+            const prodId = values.prod_id;
+            if (!prodId) {
+                message.warning(sprintf(ts("msg_select"), { label: ts("product.product") }));
+                return;
+            }
+            dispatch({ loading: true });
+            Api.ensure_default_risk_participants({ product_id: prodId }).then((res: any) => {
+                dispatch({ loading: false });
                 if (res.code === Api.C_OK) {
-                    message.success(ts("save_success"));
-                    dispatch({ dlgType: null, targetRow: {} });
-                    doSearch({}, data.pageIndex, data.pageSize);
+                    dispatch({ dlgType: null, expandedKeys: [prodId] });
+                    loadCounts().then((map) => {
+                        doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, 1, data.pageSize, map);
+                    });
                 } else {
-                    message.error(res.msg || "保存失败");
+                    message.error(res.msg || "初始化失败");
                 }
             }).catch(() => {
-                dispatch({ saving: false });
-                message.error("保存失败");
+                dispatch({ loading: false });
+                message.error("初始化失败");
             });
         });
     };
 
     const doDelete = () => {
-        dispatch({ saving: true });
-        Api.delete_risk_participant({ id: data.targetRow.id }).then((res: any) => {
-            dispatch({ saving: false });
+        const row = data.targetRow || {};
+        if (!row.id) return;
+        dispatch({ loading: true });
+        Api.delete_risk_participants_by_product_id({ product_id: row.id }).then((res: any) => {
+            dispatch({ loading: false });
             if (res.code === Api.C_OK) {
-                message.success("删除成功");
-                dispatch({ dlgType: null, targetRow: {} });
-                doSearch({}, data.pageIndex, data.pageSize);
+                dispatch({ dlgType: null, expandedKeys: (data.expandedKeys || []).filter((id: number) => id !== row.id) });
+                message.success(res.msg || ts("save_success"));
+                doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, data.pageIndex, data.pageSize);
             } else {
-                message.error(res.msg || "删除失败");
+                message.error(res.msg);
             }
         }).catch(() => {
-            dispatch({ saving: false });
+            dispatch({ loading: false });
             message.error("删除失败");
         });
     };
 
-    const columns: any[] = [
-        { title: "项目角色", dataIndex: "role", width: 260 },
-        { title: "姓名", dataIndex: "name", width: 220 },
+    useEffect(() => {
+        doSearch({}, data.pageIndex, data.pageSize);
+        loadCounts();
+    }, []);
+
+    const columns = [
+        {
+            title: ts("product.name"),
+            dataIndex: "name",
+            width: "22%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: ts("product.full_version"),
+            dataIndex: "full_version",
+            width: "14%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: ts("product.release_version"),
+            dataIndex: "release_version",
+            width: "12%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: ts("product.type_code"),
+            dataIndex: "type_code",
+            width: "14%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: "人数",
+            dataIndex: "id",
+            width: "10%",
+            render: (_: any, row: any) => data.countMap.get(row.id) || 0,
+        },
         {
             title: ts("action"),
-            width: 120,
+            width: 140,
+            className: "risk-part-list-action-col",
+            onCell: () => ({ className: "risk-part-list-action-col" }),
             render: (_: any, row: any) => (
-                <Space size={4}>
-                    <Button type="link" size="small" onClick={() => openEdit(row)}>{ts("edit")}</Button>
-                    <Button type="link" size="small" danger onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>{ts("delete")}</Button>
+                <Space size={4} className="risk-part-list-row-actions" onClick={(e) => e.stopPropagation()}>
+                    <Button type="link" size="small" onClick={() => toggleExpand(row.id)}>
+                        {ts("edit")}
+                    </Button>
+                    <Button
+                        type="link"
+                        size="small"
+                        danger
+                        onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
+                        {ts("delete")}
+                    </Button>
                 </Space>
             ),
         },
@@ -116,55 +236,111 @@ export default () => {
     return (
         <div className="page div-v">
             <div className="div-h searchbar list-searchbar-align">
-                <Form form={queryForm} className="expand" onFinish={doSearch}>
-                    <Space>
-                        <Form.Item name="keyword">
-                            <Input allowClear placeholder="项目角色/姓名" />
-                        </Form.Item>
-                        <Button icon={<SearchOutlined />} type="primary" htmlType="submit">{ts("fuzzy")}</Button>
-                    </Space>
+                <Form
+                    form={queryForm}
+                    className="expand"
+                    onFinish={() => doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, 1, data.pageSize)}>
+                    <Row gutter={20}>
+                        <Col>
+                            <Form.Item label={ts("srs_doc.select_product")}>
+                                <ProductVersionSelect
+                                    products={data.products}
+                                    value={data.filterProductId}
+                                    initialName={data.filterProductName}
+                                    allowClear
+                                    deferChangeUntilVersionSelect
+                                    namePlaceholder={ts("product.name")}
+                                    versionPlaceholder={ts("product.full_version")}
+                                    onNameChange={(name) => {
+                                        dispatch({ filterProductName: name, filterProductId: undefined });
+                                        doSearch({ product_id: undefined, product_name: name }, 1, data.pageSize);
+                                    }}
+                                    onChange={(value) => {
+                                        dispatch({ filterProductId: value });
+                                        doSearch({ product_id: value, product_name: data.filterProductName }, 1, data.pageSize);
+                                    }}
+                                />
+                            </Form.Item>
+                        </Col>
+                        <Col>
+                            <Button shape="circle" icon={<SearchOutlined />} htmlType="submit" />
+                        </Col>
+                    </Row>
                 </Form>
-                <Button type="primary" onClick={() => openEdit()}>
+                <Button type="primary" onClick={openAddModal}>
                     {ts("add")}
                 </Button>
             </div>
             <Table
-                className="expand"
-                rowKey="_rowKey"
-                loading={data.loading}
+                className="expand risk-part-list-table"
                 columns={columns}
+                rowKey={(item: any) => item.id}
                 dataSource={data.rows}
+                loading={data.loading}
                 pagination={{
                     total: data.total,
                     current: data.pageIndex,
-                    pageSize: data.pageSize,
-                    pageSizeOptions,
                     showSizeChanger: true,
-                    onChange: (page, pageSize) => doSearch(queryForm.getFieldsValue(), page, pageSize),
+                    defaultPageSize: pageSizeOptions[0],
+                    pageSizeOptions,
+                    hideOnSinglePage: false,
+                    onShowSizeChange: (page, pageSize) => {
+                        dispatch({ pageIndex: page, pageSize });
+                    },
+                    showTotal: (total: number) => sprintf(ts("total_items"), { total }),
+                }}
+                onChange={(pager) => {
+                    doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, pager.current, pager.pageSize);
+                }}
+                expandable={{
+                    expandedRowKeys: data.expandedKeys || [],
+                    showExpandColumn: false,
+                    expandedRowRender: (row) => (
+                        <RiskMgmtParticipantDetail prodId={row.id} onChanged={refreshAfterPeopleChange} />
+                    ),
                 }}
             />
             <Modal
-                title={`${data.editMode === "edit" ? ts("edit") : ts("add")}风险分析参与人员`}
-                open={data.dlgType === DlgTypes.edit}
-                confirmLoading={data.saving}
-                onOk={doSave}
+                centered
+                width={520}
+                title="新增风险参与人员"
+                open={data.dlgType === DlgTypes.add}
+                maskClosable={false}
+                confirmLoading={data.loading}
+                onOk={doAddNavigate}
                 onCancel={() => dispatch({ dlgType: null })}>
-                <Form form={editForm} layout="vertical">
-                    <Form.Item name="role" label="项目角色" rules={[{ required: true, message: "请输入项目角色" }]}>
-                        <Input allowClear />
+                <Form form={addForm} layout="vertical">
+                    <Form.Item
+                        label={ts("product.product")}
+                        name="prod_id"
+                        rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
+                        <ProductVersionSelect
+                            products={data.products}
+                            value={data.addProductId}
+                            namePlaceholder={ts("product.name")}
+                            versionPlaceholder={ts("product.full_version")}
+                            onChange={(value: any) => {
+                                addForm.setFieldValue("prod_id", value);
+                                dispatch({ addProductId: value });
+                            }}
+                        />
                     </Form.Item>
-                    <Form.Item name="name" label="姓名" rules={[{ required: true, message: "请输入姓名" }]}>
-                        <Input allowClear />
-                    </Form.Item>
+                    <div style={{ color: "#888" }}>选择产品后在本页展开该产品人员；若该产品还没有人，将写入默认参与人员。</div>
                 </Form>
             </Modal>
             <Modal
-                title={ts("confirm_delete")}
+                centered
+                title={ts("action")}
                 open={data.dlgType === DlgTypes.delete}
-                confirmLoading={data.saving}
+                maskClosable={false}
+                confirmLoading={data.loading}
                 onOk={doDelete}
                 onCancel={() => dispatch({ dlgType: null })}>
-                确认删除该参与人员吗？
+                <div>
+                    确定删除产品「{data.targetRow?.name || "-"}」
+                    {data.targetRow?.full_version ? `（${data.targetRow.full_version}）` : ""}
+                    的全部风险参与人员（共 {data.countMap.get(data.targetRow?.id) || 0} 条）吗？
+                </div>
             </Modal>
         </div>
     );
