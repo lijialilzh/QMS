@@ -221,24 +221,27 @@ class Server(object):
             digits = re.sub(r"[^\d]", "", str(v or ""))
             return int(digits) if digits else None
 
-        date_rows = [r for r in tl_rows if (r.row_type or "date") == "date" and to_int(r.year) and to_int(r.month)]
+        # 只匹配「产品开发计划」，避免关键字「开发计划」误命中「软件开发计划」
+        pdp_kws = ["产品开发计划"]
+        dated = [(r, y) for r, y in serv_review_util._timeline_date_rows_with_year(tl_rows) if to_int(r.month)]
 
-        def date_key(r):
-            return to_int(r.year) * 10000 + to_int(r.month) * 100 + (to_int(r.day) or 0)
+        def date_key(item):
+            r, year = item
+            return year * 10000 + to_int(r.month) * 100 + (to_int(r.day) or 0)
 
         cycle = ""
-        if date_rows:
-            start = min(date_rows, key=date_key)
-            out_rows = [r for r in date_rows if any(str(v or "").strip() for v in cell_map.get(r.id, []))]
-            pool = out_rows or date_rows
-            end = max(pool, key=date_key)
-            cycle = f"{to_int(start.year)} 年 {to_int(start.month)} 月~{to_int(end.year)} 年 {to_int(end.month)} 月"
+        if dated:
+            start_r, start_y = min(dated, key=date_key)
+            out_rows = [it for it in dated if any(str(v or "").strip() for v in cell_map.get(it[0].id, []))]
+            pool = out_rows or dated
+            end_r, end_y = max(pool, key=date_key)
+            cycle = f"{start_y} 年 {to_int(start_r.month)} 月~{end_y} 年 {to_int(end_r.month)} 月"
 
-        file_rows = [r for r in date_rows if any("产品开发计划" in str(v or "") for v in cell_map.get(r.id, []))]
+        file_rows = [it for it in dated if any("产品开发计划" in str(v or "") for v in cell_map.get(it[0].id, []))]
         file_date = ""
         if file_rows:
-            fr = min(file_rows, key=date_key)
-            file_date = f"{to_int(fr.year)}年{to_int(fr.month)}月{to_int(fr.day)}日"
+            fr, fy = min(file_rows, key=date_key)
+            file_date = f"{fy}年{to_int(fr.month)}月{to_int(fr.day) or 1}日"
 
         # 参与人员
         members = db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == prod_id)).scalars().all()
@@ -259,12 +262,16 @@ class Server(object):
             children = node.get("children") or []
             is_overview = ref == "prod_overview" or (title == "产品概况" and not children)
             is_cycle = ref == "prod_cycle" or (title == "产品开发周期" and not children)
+            cur = str(node.get("body") or "").strip()
             if (ref == "prod_name" or title == "产品简介") and prod_name:
-                node["body"] = f"产品名称：{prod_name}"
+                if not cur or cur == "产品名称：":
+                    node["body"] = f"产品名称：{prod_name}"
             elif is_overview and overall_desc:
-                node["body"] = overall_desc
+                if not cur:
+                    node["body"] = overall_desc
             elif is_cycle and cycle:
-                node["body"] = cycle
+                if not cur:
+                    node["body"] = cycle
             if ref == "revision" or title == "文件修订记录":
                 tables = node.get("tables") or []
                 if tables and isinstance(tables[0], list):
@@ -288,22 +295,23 @@ class Server(object):
         for node in sections:
             fill(node)
         serv_review_util.ensure_review(
-            content, "pdp", serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS["pdp"]["name_keywords"]), prod_id
+            content, "pdp", serv_review_util.review_date(prod_id, pdp_kws), prod_id
         )
-        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, "pdp"))
+        serv_review_util.fill_cover_dates(content, serv_review_util.review_date(prod_id, pdp_kws))
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, "pdp"))
         return content
 
     def __to_obj(self, row: PdpDoc, product: Product = None):
         obj = PdpDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content)
+        pdp_kws = ["产品开发计划"]
         serv_review_util.ensure_review(
             obj.content, "pdp",
-            serv_review_util.review_date(row.product_id, serv_review_util.REVIEW_DEFS["pdp"]["name_keywords"]) if row.product_id else "",
+            serv_review_util.review_date(row.product_id, pdp_kws) if row.product_id else "",
             row.product_id,
         )
         serv_review_util.fill_cover_dates(
-            obj.content, serv_review_util.cover_date(row.product_id, "pdp") if row.product_id else ""
+            obj.content, serv_review_util.review_date(row.product_id, pdp_kws) if row.product_id else ""
         )
         serv_review_util.fill_cover_signers(
             obj.content, serv_review_util.cover_signers(row.product_id, "pdp") if row.product_id else {}

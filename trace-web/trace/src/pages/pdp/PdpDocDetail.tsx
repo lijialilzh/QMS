@@ -21,21 +21,59 @@ const ROLE_ALIAS: Record<string, string> = {
     "测试人员": "软件测试工程师",
     "软件测试": "软件测试工程师",
     "测试工程师": "软件测试工程师",
+    "测试负责人": "软件测试工程师",
+    "软件测试负责人": "软件测试工程师",
+    "开发人员": "软件开发工程师",
+    "软件开发负责人": "软件开发工程师",
+    "开发负责人": "软件开发工程师",
+    "QA": "质量工程师",
+    "质量负责人": "质量工程师",
+    "QA负责人": "质量工程师",
+    "算法负责人": "算法研究员及算法工程师",
+    "模型负责人": "算法研究员及算法工程师",
 };
 const resolveRole = (role: string): string => {
     const k = String(role || "").trim();
     return ROLE_ALIAS[k] || k;
 };
 
+const timelineNum = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
+const cellText = (v: any) => {
+    if (v == null) return "";
+    if (typeof v === "object") return String(v.output_result ?? "");
+    return String(v);
+};
+
+// 日期行补全年份（年份行向下填充），与后端 _timeline_date_rows_with_year 同口径
+const datedTimelineRows = (rows: any[]) => {
+    const sorted = [...(rows || [])].sort((a: any, b: any) =>
+        (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0) || (Number(a.id) || 0) - (Number(b.id) || 0)
+    );
+    let lastYear: number | undefined;
+    const out: { row: any; y: number; m: number; d: number }[] = [];
+    sorted.forEach((r: any) => {
+        const rtype = r.row_type || "date";
+        if (rtype === "year") {
+            const y = timelineNum(r.milestone_text || r.year);
+            if (!isNaN(y)) lastYear = y;
+            return;
+        }
+        if (rtype !== "date") return;
+        const explicit = timelineNum(r.year);
+        if (!isNaN(explicit)) lastYear = explicit;
+        const y = !isNaN(explicit) ? explicit : lastYear;
+        const m = timelineNum(r.month);
+        if (y == null || isNaN(y) || isNaN(m)) return;
+        out.push({ row: r, y, m, d: timelineNum(r.day) });
+    });
+    return out;
+};
+
 // 从「产品时间逻辑线」的日期行计算开发周期：开始=最早日期，结束=最后一个「有文件输出」行的日期
 // 输出「YYYY 年 M 月~YYYY 年 M 月」
 const computeCycle = (rows: any[]): string => {
-    const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
-    const hasOutput = (r: any) => Object.values(r.cells || {}).some((v: any) => String(v || "").trim());
-    const dates = (rows || [])
-        .filter((r: any) => (r.row_type || "date") === "date")
-        .map((r: any) => ({ y: num(r.year), m: num(r.month), d: num(r.day), out: hasOutput(r) }))
-        .filter((x: any) => !isNaN(x.y) && !isNaN(x.m));
+    const hasOutput = (r: any) => Object.values(r.cells || {}).some((v: any) => cellText(v).trim());
+    const dates = datedTimelineRows(rows).map((x) => ({ ...x, out: hasOutput(x.row) }));
     if (!dates.length) return "";
     const key = (x: any) => x.y * 10000 + x.m * 100 + (isNaN(x.d) ? 0 : x.d);
     let min = dates[0];
@@ -50,15 +88,14 @@ const computeCycle = (rows: any[]): string => {
 
 // 从时间线里找「产品开发计划」文件所在行的日期（取最早匹配行），格式「YYYY年M月D日」
 const computeFileDate = (rows: any[], keyword = "产品开发计划"): string => {
-    const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
-    const matches = (rows || []).filter((r: any) =>
-        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => String(v || "").includes(keyword))
+    const matches = datedTimelineRows(rows).filter((x) =>
+        Object.values(x.row.cells || {}).some((v: any) => cellText(v).includes(keyword))
     );
     if (!matches.length) return "";
-    const key = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
+    const key = (x: any) => x.y * 10000 + x.m * 100 + (isNaN(x.d) ? 0 : x.d);
     let best = matches[0];
-    matches.forEach((r: any) => { if (key(r) < key(best)) best = r; });
-    return `${num(best.year)}年${num(best.month)}月${num(best.day)}日`;
+    matches.forEach((x: any) => { if (key(x) < key(best)) best = x; });
+    return `${best.y}年${best.m}月${isNaN(best.d) ? 1 : best.d}日`;
 };
 
 const ensureKeys = (nodes: any[]): any[] =>
@@ -140,10 +177,16 @@ export default () => {
     });
 
     // 加载时按产品自动填充：产品简介=「产品名称：xxx」，产品概况=总体描述，产品开发周期=时间逻辑线最早~最晚
-    const autoFillProduct = (nodes: any[], info: { name?: string; desc?: string; cycle?: string }): any[] => {
+    // 默认仅填空、不覆盖已填（文档 52/53）；切换产品时 overwrite=true 覆盖产品相关字段
+    const autoFillProduct = (nodes: any[], info: { name?: string; desc?: string; cycle?: string }, overwrite = false): any[] => {
         const name = String(info.name || "").trim();
         const desc = String(info.desc || "").trim();
         const cycle = String(info.cycle || "").trim();
+        const isBlank = (s: any) => !String(s || "").trim();
+        const isNamePlaceholder = (s: any) => {
+            const cur = String(s || "").trim();
+            return !cur || cur === "产品名称：" || /^产品名称：\s*$/.test(cur);
+        };
         const fix = (n: any): any => {
             let body = n.body;
             const isOverview = n.ref_type === "prod_overview"
@@ -151,12 +194,13 @@ export default () => {
             const isCycle = n.ref_type === "prod_cycle"
                 || (stripNum(n.title) === "产品开发周期" && (n.children || []).length === 0);
             if ((n.ref_type === "prod_name" || stripNum(n.title) === "产品简介") && name) {
-                body = `产品名称：${name}`;
+                if (overwrite || isNamePlaceholder(body)) body = `产品名称：${name}`;
             } else if (isOverview) {
-                // 产品概况始终以「总体描述」为准覆盖（即使为空也补位/清空，避免残留旧产品文案）
-                body = desc;
+                if (overwrite || isBlank(body)) {
+                    if (overwrite || desc) body = desc;
+                }
             } else if (isCycle && cycle) {
-                body = cycle;
+                if (overwrite || isBlank(body)) body = cycle;
             }
             return { ...n, body, children: (n.children || []).map(fix) };
         };
@@ -187,8 +231,8 @@ export default () => {
     };
 
     // 封面「编制人/审核人/批准人」签名：编制人=产品经理，审核/批准=夏晨（与后端一致）。
-    // 有签名图放图，无签名图回退姓名；切换产品时按新产品参与人员重新获取，覆盖旧值。
-    const fillCoverSigners = (nodes: any[], pmName: string, signMap: Record<string, string>): any[] => {
+    // 有签名图放图，无签名图回退姓名；默认仅填空，切换产品时覆盖旧值。
+    const fillCoverSigners = (nodes: any[], pmName: string, signMap: Record<string, string>, overwrite = false): any[] => {
         const resolve = (label: string): string => {
             const who = label === "编制人" ? pmName : "夏晨";
             if (!who) return "";
@@ -200,7 +244,8 @@ export default () => {
                 t.forEach((row: any[]) => {
                     const label = String(row[0] ?? "").trim();
                     if (label === "编制人" || label === "审核人" || label === "批准人") {
-                        row[1] = resolve(label);
+                        const next = resolve(label);
+                        if (next && (overwrite || !String(row[1] || "").trim())) row[1] = next;
                     }
                 });
                 return { ...n, tables: [t, ...n.tables.slice(1)], children: (n.children || []).map(fix) };
@@ -211,7 +256,7 @@ export default () => {
     };
 
     // 按产品重新获取并填充所有自动获取内容（产品简介/概况/开发周期 + 文件修订记录 + 封面签名）
-    const autofill = (productId: number, secs: any[], version: string): Promise<any[]> =>
+    const autofill = (productId: number, secs: any[], version: string, overwrite = false): Promise<any[]> =>
         new Promise((resolve) => {
             if (!productId) { resolve(secs); return; }
             Promise.all([
@@ -235,14 +280,14 @@ export default () => {
                     name: prod.name,
                     desc: prod.overall_desc,
                     cycle: computeCycle(tlRows),
-                });
+                }, overwrite);
                 out = fillRevision(out, {
                     fileDate: computeFileDate(tlRows),
                     version,
                     pm,
                     approver: findRole((r) => r.includes("负责人") && r.includes("产品")),
                 });
-                out = fillCoverSigners(out, pm, signMap);
+                out = fillCoverSigners(out, pm, signMap, overwrite);
                 resolve(out);
             }).catch(() => resolve(secs));
         });
@@ -268,7 +313,7 @@ export default () => {
     const rebindProduct = (newId: number) => {
         const product = (data.products || []).find((p: any) => p.id === newId) || {};
         dispatch({ loading: true, doc: { ...data.doc, product_id: newId, product_name: product.name, product_full_version: product.full_version, country: product.country } });
-        autofill(newId, data.sections, data.doc.version).then((secs) => dispatch({ loading: false, sections: secs }));
+        autofill(newId, data.sections, data.doc.version, true).then((secs) => dispatch({ loading: false, sections: secs }));
     };
 
     useEffect(() => {
