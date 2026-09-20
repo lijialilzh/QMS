@@ -9,12 +9,13 @@ import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiDocFile from "@/api/ApiDocFile";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
+import { isRuntimeLockedNode } from "../pdp/runtimeEnvLock";
 
 const emptyContent = { sections: [], productName: "" };
 
 // 自动获取（只读）章节的 ref_type 集合；cover/revision 属模板表格，可编辑。
 const AUTO_REFS = new Set(["sw_ident", "func_module", "arch_func", "rt_hw", "rt_sw", "rt_net", "update_history", "version_rule"]);
-const isAutoNode = (node: any) => AUTO_REFS.has(node?.ref_type) || !!node?.img_category;
+const isAutoNode = (node: any) => AUTO_REFS.has(node?.ref_type) || !!node?.img_category || isRuntimeLockedNode(node);
 
 const assignKeys = (nodes: any[], prefix = ""): any[] => {
     (nodes || []).forEach((n: any, i: number) => {
@@ -241,7 +242,9 @@ export default () => {
                     {!readonly && (
                         <span className="pdp-nav-ops" onClick={(e) => e.stopPropagation()}>
                             <PlusOutlined title="添加子章节" onClick={() => addChild(n._key)} />
-                            <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
+                            {!isRuntimeLockedNode(n) && (
+                                <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
+                            )}
                         </span>
                     )}
                 </div>

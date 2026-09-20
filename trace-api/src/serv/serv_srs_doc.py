@@ -64,7 +64,7 @@ from .serv_sds_trace import NAME_DICT
 from .serv_utils import new_version
 from .serv_utils.tree_util import find_parent, iter_tree
 from .serv_doc_file import build_doc_image_file_name, pick_doc_image_file_row, sanitize_doc_image_token
-from .serv_prod_runtime_env import apply_runtime_to_srs_tree, get_runtime_payload, upsert_runtime_from_srs_tree
+from .serv_prod_runtime_env import apply_runtime_to_srs_tree, get_runtime_payload
 from . import msg_err_db, save_file, serv_review_util
 
 logger = logging.getLogger(__name__)
@@ -2829,7 +2829,6 @@ class Server(object):
                 row = db.session.execute(select(SrsDoc).where(SrsDoc.id == resp.data.id)).scalars().first()
                 if row:
                     self.__fix_rcms(row)
-                    upsert_runtime_from_srs_tree(product_id, content)
                     db.session.commit()
             return resp
         except Exception:
@@ -3539,7 +3538,6 @@ class Server(object):
             self.__sync_srs_req_names_from_doc_nodes(row.id, form.content or [])
             self.__upsert_imported_srs_reqds(row.id, self.__extract_srs_reqds_from_nodes(form.content or []))
             self.__fix_rcms(row)
-            upsert_runtime_from_srs_tree(row.product_id, form.content or [])
             db.session.commit()
             return Resp.resp_ok()
         except Exception:

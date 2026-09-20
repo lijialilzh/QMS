@@ -29,7 +29,6 @@ from ..model.cybersec_plan_doc import CybersecPlanDoc
 from ..model.company_info import CompanyInfo
 from ..model.project_member import ProjectMember
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
-from ..model.prod_runtime_env import ProdRuntimeEnv
 from ..model.doc_file import DocFile
 from ..model.prod_dhf import ProdDhf
 from ..obj import Page, Resp
@@ -40,7 +39,7 @@ from ..utils.sql_ctx import db
 from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version, docx_util
-from .serv_prod_runtime_env import DEFAULT_RUNTIME_ENV
+from .serv_prod_runtime_env import apply_runtime_to_pdp_content
 from .serv_doc_file import pick_doc_image_file_row
 
 logger = logging.getLogger(__name__)
@@ -446,76 +445,9 @@ class Server(object):
                     row[c_plan] = norm_cell(row[c_plan], plan_date)
         return content
 
-    # ---------------- 自动获取：运行环境（参考 serv_ftr_doc.__fill_runtime_env） ----------------
+    # ---------------- 自动获取：运行环境（整表覆盖 tables_json） ----------------
     def __autofill_runtime_env(self, content, product_id):
-        if not isinstance(content, dict) or not product_id:
-            return content
-        env = dict(DEFAULT_RUNTIME_ENV)
-        row = db.session.execute(select(ProdRuntimeEnv).where(ProdRuntimeEnv.prod_id == product_id)).scalars().first()
-        if row:
-            for key in DEFAULT_RUNTIME_ENV.keys():
-                val = getattr(row, key, None)
-                if val is not None and str(val).strip():
-                    env[key] = val
-
-        def overwrite_col1(table, label_map):
-            for r in table:
-                if not isinstance(r, list) or len(r) < 2:
-                    continue
-                key = str(r[0]).strip()
-                if key in label_map and str(label_map[key] or "").strip():
-                    r[1] = label_map[key]
-
-        def fill_node(node):
-            title = str(node.get("title") or "")
-            tables = node.get("tables") or []
-            if "运行环境" in title and len(tables) >= 4:
-                # 表1 服务器硬件（2列：配置/要求）
-                t1 = tables[0]
-                for r in t1:
-                    if not isinstance(r, list) or len(r) < 2:
-                        continue
-                    key = str(r[0]).strip()
-                    if key == "CPU": r[1] = env.get("srv_cpu", "")
-                    elif key == "内存": r[1] = env.get("srv_memory", "")
-                    elif key == "GPU": r[1] = env.get("srv_gpu", "")
-                    elif key == "硬盘": r[1] = env.get("srv_disk", "")
-                    elif key == "网卡": r[1] = env.get("srv_nic", "")
-                # 表2 服务器软件（2列：操作系统/CUDA）
-                t2 = tables[1]
-                if len(t2) >= 3 and isinstance(t2[2], list) and len(t2[2]) >= 2:
-                    t2[2][0] = env.get("srv_os", "")
-                    t2[2][1] = env.get("srv_cuda", "")
-                # 表3 用户端（2列：配置/要求）
-                t3 = tables[2]
-                for r in t3:
-                    if not isinstance(r, list) or len(r) < 2:
-                        continue
-                    key = str(r[0]).strip()
-                    if key == "CPU": r[1] = env.get("cli_cpu", "")
-                    elif key == "内存": r[1] = env.get("cli_memory", "")
-                    elif key == "显示器分辨率": r[1] = env.get("cli_resolution", "")
-                    elif key == "操作系统": r[1] = env.get("cli_os", "")
-                    elif key == "浏览器": r[1] = env.get("cli_browser", "")
-                # 表4 网络（3列：配置/局域网/广域网）
-                t4 = tables[3]
-                for r in t4:
-                    if not isinstance(r, list) or len(r) < 3:
-                        continue
-                    if str(r[0]).strip() == "带宽":
-                        r[1] = env.get("net_lan", "")
-                        r[2] = env.get("net_wan", "")
-            for c in (node.get("children") or []):
-                fill_node(c)
-
-        for s in (content.get("sections") or []):
-            if "运行环境" in str(s.get("title") or ""):
-                fill_node(s)
-            else:
-                for c in (s.get("children") or []):
-                    if "运行环境" in str(c.get("title") or ""):
-                        fill_node(c)
-        return content
+        return apply_runtime_to_pdp_content(content, product_id)
 
     # ---------------- 自动获取：产品信息/适用范围/产品描述 ----------------
     def __autofill_product_info(self, content, product_id):

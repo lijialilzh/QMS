@@ -1,3 +1,4 @@
+import copy
 import json
 import logging
 import re
@@ -163,6 +164,138 @@ def get_runtime_payload(prod_id):
             out[key] = payload[key]
     out["tables"] = payload.get("tables") or default_tables(out)
     return out
+
+
+_CHILD_TABLE_KEYS = (
+    ("srv_hw", ("表1", "服务器硬件")),
+    ("srv_sw", ("表2", "服务器软件")),
+    ("cli", ("表3", "用户端")),
+    ("net", ("表4", "网络")),
+)
+_RUNTIME_TABLE_KEYS = ("srv_hw", "srv_sw", "cli", "net")
+
+
+def _is_runtime_section(title):
+    text = str(title or "")
+    plain = _plain_title(text)
+    if "确认运行环境" in text or "确认运行环境" in plain:
+        return False
+    return "运行环境" in text or plain == "运行环境"
+
+
+def _is_title_row(row):
+    return isinstance(row, list) and len(row) == 1 and str(row[0] or "").strip().startswith("表")
+
+
+def _wrap_cells_like(old_table, cells, title=""):
+    new_cells = copy.deepcopy(cells) if cells else []
+    if isinstance(old_table, list) and old_table and _is_title_row(old_table[0]):
+        cap = title or str(old_table[0][0] or "")
+        return [[cap]] + new_cells
+    return new_cells
+
+
+def _patch_arch_text(text, arch):
+    if not arch:
+        return text
+    raw = str(text or "")
+    if not raw.strip():
+        return text
+    lines = raw.split("\n")
+    first = lines[0]
+    if not any(token in first for token in ("B/S", "C/S", "架构")):
+        return raw
+    arch_text = str(arch)
+    if not arch_text.endswith(("。", ".", "！", "？")):
+        arch_text += "。"
+    if first.startswith("本软件"):
+        rest = arch_text[2:] if arch_text.startswith("软件") else arch_text
+        if not rest.startswith("为"):
+            rest = "为" + rest
+        lines[0] = "本软件" + rest
+    else:
+        lines[0] = arch_text
+    return "\n".join(lines)
+
+
+def _runtime_tables_ordered(payload):
+    env_tables = [t for t in (payload.get("tables") or []) if isinstance(t, dict)]
+    by_key = {t.get("key"): t for t in env_tables if t.get("key")}
+    ordered = [by_key[k] for k in _RUNTIME_TABLE_KEYS if k in by_key]
+    if len(ordered) < 4:
+        ordered = env_tables[:4]
+    return ordered
+
+
+def _match_child_key(title, plain):
+    for key, words in _CHILD_TABLE_KEYS:
+        if any(word in title or word in plain for word in words):
+            return key
+    return None
+
+
+def _apply_runtime_captions(node, titles, count):
+    for field in ("table_captions", "table_titles"):
+        caps = node.get(field)
+        if not isinstance(caps, list) or not caps:
+            continue
+        new_caps = list(caps)
+        for i in range(min(count, len(new_caps), len(titles))):
+            if titles[i]:
+                new_caps[i] = titles[i]
+        node[field] = new_caps
+
+
+def apply_runtime_to_pdp_content(content, prod_id):
+    """PDP/章节树：用运行环境 tables_json 整表覆盖「运行环境」章节。
+
+    - 父节点挂多张表（STP/UTP/FTR/网络安全计划）：按顺序覆盖前 4 张，其余保留。
+    - 子节点各挂 1 张表（安装维护手册等）：按标题匹配覆盖。
+    - 同步已有 table_captions / table_titles；架构说明只改已有正文首行。
+    """
+    if not isinstance(content, dict):
+        return content
+    payload = get_runtime_payload(prod_id)
+    ordered = _runtime_tables_ordered(payload)
+    by_key = {t.get("key"): t for t in ordered if t.get("key")}
+    cells_list = [copy.deepcopy(t.get("cells") or []) for t in ordered]
+    titles = [t.get("title") or "" for t in ordered]
+    arch = payload.get("arch") or ""
+
+    def fill_node(node, in_runtime=False):
+        if not isinstance(node, dict):
+            return
+        title = str(node.get("title") or "")
+        plain = _plain_title(title)
+        is_runtime = in_runtime or _is_runtime_section(title)
+        tables = node.get("tables") if isinstance(node.get("tables"), list) else []
+
+        if is_runtime and arch:
+            if node.get("body") is not None:
+                node["body"] = _patch_arch_text(node.get("body"), arch)
+            if node.get("text") is not None:
+                node["text"] = _patch_arch_text(node.get("text"), arch)
+
+        if is_runtime and len(tables) >= 4:
+            new_tables = list(tables)
+            n = min(4, len(cells_list))
+            for i in range(n):
+                new_tables[i] = _wrap_cells_like(tables[i], cells_list[i], titles[i] if i < len(titles) else "")
+            node["tables"] = new_tables
+            _apply_runtime_captions(node, titles, n)
+        else:
+            child_key = _match_child_key(title, plain) if is_runtime else None
+            item = by_key.get(child_key) if child_key else None
+            if item and tables and item.get("cells"):
+                node["tables"] = [_wrap_cells_like(tables[0], item.get("cells"), item.get("title") or "")]
+                _apply_runtime_captions(node, [item.get("title") or ""], 1)
+
+        for child in (node.get("children") or []):
+            fill_node(child, is_runtime)
+
+    for section in (content.get("sections") or []):
+        fill_node(section, False)
+    return content
 
 
 def _nget(node, key, default=None):

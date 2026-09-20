@@ -155,6 +155,17 @@
         margin-bottom: 16px;
     }
 
+    // 运行环境等只读字段仍用 disabled 防改，文字保持正文色，避免灰到看不清
+    .pdp-editor {
+        .ant-input-disabled,
+        .ant-input[disabled],
+        textarea.ant-input[disabled] {
+            color: #1f2d3d !important;
+            -webkit-text-fill-color: #1f2d3d;
+            cursor: default;
+        }
+    }
+
     .pdp-label {
         font-size: 13px;
         font-weight: 600;

@@ -24,7 +24,6 @@ from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from ..model.product import Product
 from ..model.imm_doc import ImmDoc
 from ..model.prod_dhf import ProdDhf
-from ..model.prod_runtime_env import ProdRuntimeEnv
 from ..model.project_member import ProjectMember
 from ..model.doc_file import DocFile
 from ..obj import Page, Resp
@@ -36,7 +35,7 @@ from ..utils.i18n import ts
 from ..utils.sql_ctx import db
 from . import msg_err_db
 from . import serv_review_util
-from .serv_prod_runtime_env import DEFAULT_RUNTIME_ENV
+from .serv_prod_runtime_env import apply_runtime_to_pdp_content
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
 
@@ -183,89 +182,13 @@ class Server(object):
             ).scalars().first()
         return (row.code or "").strip() if row and row.code else ""
 
-    def __runtime_env(self, prod_id):
-        """从产品运行环境配置读取（无记录时用运行环境模板默认值）。"""
-        env = dict(DEFAULT_RUNTIME_ENV)
-        if not prod_id:
-            return env
-        row = db.session.execute(
-            select(ProdRuntimeEnv).where(ProdRuntimeEnv.prod_id == prod_id)
-        ).scalars().first()
-        if row:
-            for key in DEFAULT_RUNTIME_ENV.keys():
-                val = getattr(row, key, None)
-                if val is not None and str(val).strip():
-                    env[key] = val
-        return env
-
     @staticmethod
     def __strip_section_title(title):
         return re.sub(r"^\s*\d+(?:\.\d+)*[\.、\s]*", "", str(title or "")).strip()
 
-    @staticmethod
-    def __overwrite_col1(table, label_map):
-        for row in table:
-            if not isinstance(row, list) or len(row) < 2:
-                continue
-            key = str(row[0]).strip()
-            if key in label_map and str(label_map[key] or "").strip():
-                row[1] = label_map[key]
-
-    def __fill_runtime_node(self, node, rt):
-        if not isinstance(node, dict) or not rt:
-            return
-        title = str(node.get("title") or "")
-        plain = self.__strip_section_title(title)
-        if "表1" in title or plain.startswith("服务器硬件"):
-            for tbl in (node.get("tables") or []):
-                self.__overwrite_col1(tbl, {
-                    "CPU": rt.get("srv_cpu"),
-                    "内存": rt.get("srv_memory"),
-                    "GPU": rt.get("srv_gpu"),
-                    "硬盘": rt.get("srv_disk"),
-                    "网卡": rt.get("srv_nic"),
-                })
-        elif "表2" in title or "服务器软件" in plain:
-            for tbl in (node.get("tables") or []):
-                if len(tbl) >= 2 and isinstance(tbl[1], list) and len(tbl[1]) >= 3:
-                    if str(rt.get("srv_os") or "").strip():
-                        tbl[1][1] = rt["srv_os"]
-                    if str(rt.get("srv_cuda") or "").strip():
-                        tbl[1][2] = rt["srv_cuda"]
-        elif "表3" in title or plain.startswith("用户端"):
-            for tbl in (node.get("tables") or []):
-                self.__overwrite_col1(tbl, {
-                    "CPU": rt.get("cli_cpu"),
-                    "内存": rt.get("cli_memory"),
-                    "显示器分辨率": rt.get("cli_resolution"),
-                    "操作系统": rt.get("cli_os"),
-                    "浏览器": rt.get("cli_browser"),
-                })
-        elif "表4" in title or "网络" in plain:
-            for tbl in (node.get("tables") or []):
-                for row in tbl:
-                    if not isinstance(row, list) or str(row[0]).strip() != "带宽" or len(row) < 3:
-                        continue
-                    if str(rt.get("net_lan") or "").strip():
-                        row[1] = rt["net_lan"]
-                    if str(rt.get("net_wan") or "").strip():
-                        row[2] = rt["net_wan"]
-        for child in (node.get("children") or []):
-            self.__fill_runtime_node(child, rt)
-
     def __fill_runtime_env(self, content, prod_id):
-        if not prod_id or not isinstance(content, dict):
-            return content
-        rt = self.__runtime_env(prod_id)
-        for section in (content.get("sections") or []):
-            plain = self.__strip_section_title(section.get("title"))
-            if plain == "概述" or "运行环境" in plain:
-                self.__fill_runtime_node(section, rt)
-            else:
-                for child in (section.get("children") or []):
-                    if "运行环境" in str(child.get("title") or ""):
-                        self.__fill_runtime_node(child, rt)
-        return content
+        """运行环境表从产品 prod_runtime_env 整表覆盖（含增删行列后的结构）。"""
+        return apply_runtime_to_pdp_content(content, prod_id)
 
     def __fill_revision(self, content, prod_id, version, force=False):
         """文件修订记录首行：修改日期(评审/封面日期)、版本号、首次发布、修订人(TPM)、批准人(研发负责人)。

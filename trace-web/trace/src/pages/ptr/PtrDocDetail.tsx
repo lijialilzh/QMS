@@ -11,6 +11,7 @@ import * as ApiRuntime from "@/api/ApiProdRuntimeEnv";
 import * as ApiDocFile from "@/api/ApiDocFile";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
+import { isRuntimeLockedBody, isRuntimeLockedNode, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
 
 const IMG_CATEGORY_LABEL: Record<string, string> = {
     img_struct: "体系结构图",
@@ -395,6 +396,7 @@ export default () => {
     };
 
     const active = findNode(data.sections, data.activeKey);
+    const rtNodeLock = readonly || isRuntimeLockedNode(active);
     const updateTables = (tables: any[]) => patchNode(data.activeKey, { tables });
     const setCell = (ti: number, r: number, ci: number, val: string) => {
         const tables = (active.tables || []).map((tb: any[], i: number) =>
@@ -561,7 +563,9 @@ export default () => {
                     {!readonly && (
                         <span className="pdp-nav-ops" onClick={(e) => e.stopPropagation()}>
                             <PlusOutlined title="添加子章节" onClick={() => addChild(n._key)} />
-                            <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
+                            {!isRuntimeLockedNode(n) && (
+                                <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
+                            )}
                         </span>
                     )}
                 </div>
@@ -639,7 +643,7 @@ export default () => {
                                     <Input
                                         addonBefore={numbers[active._key] || undefined}
                                         value={stripNum(active.title)}
-                                        disabled={readonly}
+                                        disabled={rtNodeLock}
                                         placeholder="只填名称，如：性能指标"
                                         onChange={(e) => patchNode(active._key, { title: e.target.value })}
                                     />
@@ -653,7 +657,7 @@ export default () => {
                                                 <Input.TextArea
                                                     autoSize={{ minRows: 3, maxRows: 20 }}
                                                     value={active.body ?? ""}
-                                                    disabled={readonly}
+                                                    disabled={readonly || isRuntimeLockedBody(active)}
                                                     placeholder="本章节正文内容，可多行"
                                                     onChange={(e) => patchNode(active._key, { body: e.target.value })}
                                                 />
@@ -670,7 +674,7 @@ export default () => {
                                                 <Input.TextArea
                                                     autoSize={{ minRows: 2, maxRows: 20 }}
                                                     value={p}
-                                                    disabled={readonly}
+                                                    disabled={readonly || isRuntimeLockedBody(active)}
                                                     placeholder={i === 0 ? "图片前的正文内容，可多行" : "图片后的正文内容，可多行"}
                                                     onChange={(e) => setSegment(i, e.target.value)}
                                                 />
@@ -680,11 +684,13 @@ export default () => {
                                     ));
                                 })()}
 
-                                {(active.tables || []).map((tb: any[], ti: number) => (
+                                {(active.tables || []).map((tb: any[], ti: number) => {
+                                    const rtLock = readonly || isRuntimeLockedTable(active, ti);
+                                    return (
                                     <div className="pdp-table-block" key={ti}>
                                         <div className="pdp-table-bar">
-                                            <span className="pdp-label">表格 {ti + 1}</span>
-                                            {!readonly && (
+                                            <span className="pdp-label">表格 {ti + 1}{rtLock && !readonly ? "（运行环境自动获取，只读）" : ""}</span>
+                                            {!rtLock && (
                                                 <Space size={4}>
                                                     <Button size="small" onClick={() => addCol(ti)}>＋列</Button>
                                                     <Button size="small" disabled={(tb[0] || []).length <= 1} onClick={() => delCol(ti, (tb[0] || []).length - 1)}>－列</Button>
@@ -702,12 +708,12 @@ export default () => {
                                                                     className="pdp-cell"
                                                                     autoSize={{ minRows: 1, maxRows: 8 }}
                                                                     value={cell ?? ""}
-                                                                    disabled={readonly}
+                                                                    disabled={rtLock}
                                                                     onChange={(e) => setCell(ti, r, ci, e.target.value)}
                                                                 />
                                                             </td>
                                                         ))}
-                                                        {!readonly && (
+                                                        {!rtLock && (
                                                             <td className="pdp-row-op">
                                                                 <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
                                                                 {tb.length > 1 && (
@@ -720,9 +726,10 @@ export default () => {
                                             </tbody>
                                         </table>
                                     </div>
-                                ))}
+                                    );
+                                })}
 
-                                {!readonly && (
+                                {!readonly && !isRuntimeLockedNode(active) && (
                                     <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
                                         添加表格
                                     </Button>

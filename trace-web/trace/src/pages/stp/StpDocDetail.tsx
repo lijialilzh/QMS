@@ -12,6 +12,7 @@ import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import ReviewTable from "@/common/ReviewTable";
 import "../pdp/PdpDocDetail.less";
+import { isRuntimeLockedBody, isRuntimeLockedNode, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
@@ -530,7 +531,9 @@ export default () => {
                     {!readonly && (
                         <span className="pdp-nav-ops" onClick={(e) => e.stopPropagation()}>
                             <PlusOutlined title="添加子章节" onClick={() => addChild(n._key)} />
-                            <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
+                            {!isRuntimeLockedNode(n) && (
+                                <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
+                            )}
                         </span>
                     )}
                 </div>
@@ -608,12 +611,13 @@ export default () => {
                                     <Input
                                         addonBefore={numbers[active._key] || undefined}
                                         value={stripNum(active.title)}
-                                        disabled={readonly}
+                                        disabled={readonly || isRuntimeLockedNode(active)}
                                         placeholder="只填名称，如：开发方法"
                                         onChange={(e) => patchNode(active._key, { title: e.target.value })}
                                     />
                                 </div>
                                 {(() => {
+                                    const rtBodyLock = readonly || isRuntimeLockedBody(active);
                                     const images: string[] = Array.isArray(active.images) ? active.images : [];
                                     const segments = splitBodyTables(active.body, active.tables, images);
                                     const hasInterleave = (segments.some((s) => s.type === "table") || segments.some((s) => s.type === "image")) && segments.some((s) => s.type === "text");
@@ -627,7 +631,7 @@ export default () => {
                                                         <Input.TextArea
                                                             autoSize={{ minRows: 3, maxRows: 20 }}
                                                             value={seg.text}
-                                                            disabled={readonly}
+                                                            disabled={rtBodyLock}
                                                             placeholder="本段正文内容，可多行"
                                                             onChange={(e) => {
                                                                 const newBody = reassembleBody(segments, si, e.target.value);
@@ -651,11 +655,12 @@ export default () => {
                                             const ti = seg.tableIndex;
                                             const tb = (active.tables || [])[ti];
                                             if (!tb) return null;
+                                            const rtLock = readonly || isRuntimeLockedTable(active, ti);
                                             return (
                                                 <div className="pdp-table-block" key={si}>
                                                     <div className="pdp-table-bar">
-                                                        <span className="pdp-label">表格 {ti + 1}</span>
-                                                        {!readonly && (
+                                                        <span className="pdp-label">表格 {ti + 1}{rtLock ? "（运行环境自动获取，只读）" : ""}</span>
+                                                        {!rtLock && (
                                                             <Space size={4}>
                                                                 <Button size="small" onClick={() => addCol(ti)}>＋列</Button>
                                                                 <Button size="small" disabled={(tb[0] || []).length <= 1} onClick={() => delCol(ti, (tb[0] || []).length - 1)}>－列</Button>
@@ -666,7 +671,7 @@ export default () => {
                                                     <Input.TextArea
                                                         autoSize={{ minRows: 1, maxRows: 6 }}
                                                         value={(active.table_captions && active.table_captions[ti]) || ""}
-                                                        disabled={readonly}
+                                                        disabled={rtLock}
                                                         placeholder="表格上方说明/表名（显示在此表上方，可空）"
                                                         style={{ marginBottom: 6, fontSize: 13 }}
                                                         onChange={(e) => setCaption(ti, e.target.value)}
@@ -680,7 +685,7 @@ export default () => {
                                                                             {typeof cell === "string" && cell.startsWith("data:image") ? (
                                                                                 <span style={{ position: "relative", display: "inline-block" }}>
                                                                                     <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
-                                                                                    {!readonly && (
+                                                                                    {!rtLock && (
                                                                                         <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />
                                                                                     )}
                                                                                 </span>
@@ -689,13 +694,13 @@ export default () => {
                                                                                     className="pdp-cell"
                                                                                     autoSize={{ minRows: 1, maxRows: 8 }}
                                                                                     value={cell ?? ""}
-                                                                                    disabled={readonly}
+                                                                                    disabled={rtLock}
                                                                                     onChange={(e) => setCell(ti, r, ci, e.target.value)}
                                                                                 />
                                                                             )}
                                                                         </td>
                                                                     ))}
-                                                                    {!readonly && (
+                                                                    {!rtLock && (
                                                                         <td className="pdp-row-op">
                                                                             <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
                                                                             {tb.length > 1 && (
@@ -715,11 +720,11 @@ export default () => {
                                     return (
                                         <>
                                             <div className="pdp-field">
-                                                <div className="pdp-label">正文</div>
+                                                <div className="pdp-label">正文{rtBodyLock ? "（运行环境自动获取，只读）" : ""}</div>
                                                 <Input.TextArea
                                                     autoSize={{ minRows: 3, maxRows: 20 }}
                                                     value={active.body ?? ""}
-                                                    disabled={readonly}
+                                                    disabled={rtBodyLock}
                                                     placeholder="本章节正文内容，可多行"
                                                     onChange={(e) => patchNode(active._key, { body: e.target.value })}
                                                 />
@@ -733,11 +738,13 @@ export default () => {
                                                         <ReviewTable grid={tb} />
                                                     </div>
                                                 ))
-                                                : (active.tables || []).map((tb: any[], ti: number) => (
+                                                : (active.tables || []).map((tb: any[], ti: number) => {
+                                                    const rtLock = readonly || isRuntimeLockedTable(active, ti);
+                                                    return (
                                                     <div className="pdp-table-block" key={ti}>
                                                         <div className="pdp-table-bar">
-                                                            <span className="pdp-label">表格 {ti + 1}</span>
-                                                            {!readonly && (
+                                                            <span className="pdp-label">表格 {ti + 1}{rtLock ? "（运行环境自动获取，只读）" : ""}</span>
+                                                            {!rtLock && (
                                                                 <Space size={4}>
                                                                     <Button size="small" onClick={() => addCol(ti)}>＋列</Button>
                                                                     <Button size="small" disabled={(tb[0] || []).length <= 1} onClick={() => delCol(ti, (tb[0] || []).length - 1)}>－列</Button>
@@ -748,7 +755,7 @@ export default () => {
                                                         <Input.TextArea
                                                             autoSize={{ minRows: 1, maxRows: 6 }}
                                                             value={(active.table_captions && active.table_captions[ti]) || ""}
-                                                            disabled={readonly}
+                                                            disabled={rtLock}
                                                             placeholder="表格上方说明/表名（显示在此表上方，可空）"
                                                             style={{ marginBottom: 6, fontSize: 13 }}
                                                             onChange={(e) => setCaption(ti, e.target.value)}
@@ -762,7 +769,7 @@ export default () => {
                                                                                 {typeof cell === "string" && cell.startsWith("data:image") ? (
                                                                                     <span style={{ position: "relative", display: "inline-block" }}>
                                                                                         <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
-                                                                                        {!readonly && (
+                                                                                        {!rtLock && (
                                                                                             <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />
                                                                                         )}
                                                                                     </span>
@@ -771,13 +778,13 @@ export default () => {
                                                                                         className="pdp-cell"
                                                                                         autoSize={{ minRows: 1, maxRows: 8 }}
                                                                                         value={cell ?? ""}
-                                                                                        disabled={readonly}
+                                                                                        disabled={rtLock}
                                                                                         onChange={(e) => setCell(ti, r, ci, e.target.value)}
                                                                                     />
                                                                                 )}
                                                                             </td>
                                                                         ))}
-                                                                        {!readonly && (
+                                                                        {!rtLock && (
                                                                             <td className="pdp-row-op">
                                                                                 <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
                                                                                 {tb.length > 1 && (
@@ -790,8 +797,9 @@ export default () => {
                                                             </tbody>
                                                         </table>
                                                     </div>
-                                                ))}
-                                            {!readonly && active.ref_type !== "review" && (
+                                                    );
+                                                })}
+                                            {!readonly && active.ref_type !== "review" && !isRuntimeLockedBody(active) && (
                                                 <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
                                                     添加表格
                                                 </Button>
@@ -802,7 +810,7 @@ export default () => {
                                                     <Input.TextArea
                                                         autoSize={{ minRows: 1, maxRows: 12 }}
                                                         value={active.body_tail ?? ""}
-                                                        disabled={readonly}
+                                                        disabled={rtBodyLock}
                                                         placeholder="最后一张表之后的正文（可空）"
                                                         onChange={(e) => patchNode(active._key, { body_tail: e.target.value })}
                                                     />

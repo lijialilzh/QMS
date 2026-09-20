@@ -9,6 +9,7 @@ import * as Api from "@/api/ApiCybersecPlanDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiDocFile from "@/api/ApiDocFile";
 import "../pdp/PdpDocDetail.less";
+import { isRuntimeLockedNode, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
 
 const emptyContent = { sections: [], productName: "" };
 
@@ -316,7 +317,9 @@ export default () => {
                         {!isView && (
                             <span className="pdp-nav-ops" onClick={(e) => e.stopPropagation()}>
                                 <PlusOutlined title="添加子章节" onClick={() => addChild(n._key)} />
-                                <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
+                                {!isRuntimeLockedNode(n) && (
+                                    <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
+                                )}
                             </span>
                         )}
                     </div>
@@ -387,7 +390,7 @@ export default () => {
                                 <div className="pdp-field">
                                     <div className="pdp-label">章节标题{numbers[active._key] ? `（编号 ${numbers[active._key]} 自动生成）` : ""}</div>
                                     <Input addonBefore={numbers[active._key] || undefined}
-                                        value={stripSectionNo(active.title)} disabled={isView}
+                                        value={stripSectionNo(active.title)} disabled={isView || isRuntimeLockedNode(active)}
                                         placeholder="只填名称"
                                         onChange={(e) => patchNode(active._key, { title: e.target.value })} />
                                 </div>
@@ -403,7 +406,7 @@ export default () => {
                                                     <div className="pdp-field">
                                                         <div className="pdp-label">正文</div>
                                                         <Input.TextArea autoSize={{ minRows: 3, maxRows: 24 }}
-                                                            value={active.text ?? ""} disabled={isView}
+                                                            value={active.text ?? ""} disabled={isView || isRuntimeLockedNode(active)}
                                                             onChange={(e) => patchNode(active._key, { text: e.target.value })} />
                                                     </div>
                                                     <div className="pdp-field">
@@ -430,7 +433,7 @@ export default () => {
                                                 <div className="pdp-field">
                                                     <div className="pdp-label">{segLabel(i)}</div>
                                                     <Input.TextArea autoSize={{ minRows: 2, maxRows: 20 }}
-                                                        value={p} disabled={isView}
+                                                        value={p} disabled={isView || isRuntimeLockedNode(active)}
                                                         placeholder={i === 0 ? "图片前的正文内容" : "图片后的正文内容"}
                                                         onChange={(e) => setSegment(i, e.target.value)} />
                                                 </div>
@@ -464,7 +467,7 @@ export default () => {
                                                     <div className="pdp-table-block" key={`blk-${bi}`}>
                                                         <div className="pdp-table-bar">
                                                             <span className="pdp-label">表格 {bi + 1}</span>
-                                                            {!isView && (
+                                                            {!isView && !isRuntimeLockedNode(active) && (
                                                                 <Space size={4}>
                                                                     <Button size="small" danger onClick={() => delBlock(bi)}>删除此表</Button>
                                                                 </Space>
@@ -497,7 +500,7 @@ export default () => {
                                                                             {mergeRow ? (
                                                                                 <td colSpan={maxCols} style={{ textAlign: "center", fontWeight: "bold", background: "#f5f8fc" }}>
                                                                                     <Input.TextArea className="pdp-cell" autoSize={{ minRows: 1, maxRows: 4 }}
-                                                                                        value={row[0] ?? ""} disabled={isView}
+                                                                                        value={row[0] ?? ""} disabled={isView || isRuntimeLockedNode(active)}
                                                                                         style={{ textAlign: "center", fontWeight: "bold" }}
                                                                                         onChange={(e) => setBlockCell(bi, r, 0, e.target.value)} />
                                                                                 </td>
@@ -505,13 +508,13 @@ export default () => {
                                                                                 <>
                                                                                     <td style={labelBg}>
                                                                                         <Input.TextArea className="pdp-cell" autoSize={{ minRows: 1, maxRows: 4 }}
-                                                                                            value={row[0] ?? ""} disabled={isView}
+                                                                                            value={row[0] ?? ""} disabled={isView || isRuntimeLockedNode(active)}
                                                                                             style={{ textAlign: "left", fontWeight: "bold" }}
                                                                                             onChange={(e) => setBlockCell(bi, r, 0, e.target.value)} />
                                                                                     </td>
                                                                                     <td colSpan={maxCols - 1}>
                                                                                         <Input.TextArea className="pdp-cell" autoSize={{ minRows: 1, maxRows: 4 }}
-                                                                                            value={row[1] ?? ""} disabled={isView}
+                                                                                            value={row[1] ?? ""} disabled={isView || isRuntimeLockedNode(active)}
                                                                                             onChange={(e) => setBlockCell(bi, r, 1, e.target.value)} />
                                                                                     </td>
                                                                                 </>
@@ -530,13 +533,13 @@ export default () => {
                                                                                     return (
                                                                                     <td key={ci} className={isHeaderRow ? "head" : ""} style={cellBg}>
                                                                                         <Input.TextArea className="pdp-cell" autoSize={{ minRows: 1, maxRows: 8 }}
-                                                                                            value={cell ?? ""} disabled={isView}
+                                                                                            value={cell ?? ""} disabled={isView || isRuntimeLockedNode(active)}
                                                                                             onChange={(e) => setBlockCell(bi, r, ci, e.target.value)} />
                                                                                     </td>
                                                                                     );
                                                                                 })
                                                                             )}
-                                                                            {!isView && (
+                                                                            {!isView && !isRuntimeLockedNode(active) && (
                                                                                 <td className="pdp-row-op">
                                                                                     <PlusOutlined title="在下方插入行" onClick={() => insertBlockRowAfter(bi, r)} />
                                                                                     {tb.length > 1 && (
@@ -557,13 +560,13 @@ export default () => {
                                                 <div className="pdp-field" key={`blk-${bi}`}>
                                                     <div className="pdp-label">正文 {bi + 1}</div>
                                                     <Input.TextArea autoSize={{ minRows: 3, maxRows: 24 }}
-                                                        value={textVal} disabled={isView}
+                                                        value={textVal} disabled={isView || isRuntimeLockedNode(active)}
                                                         placeholder="本段正文内容，可多行"
                                                         onChange={(e) => setBlockText(bi, e.target.value)} />
                                                 </div>
                                             );
                                         })}
-                                        {!isView && (
+                                        {!isView && !isRuntimeLockedNode(active) && (
                                             <Space style={{ marginTop: 8 }}>
                                                 <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addBlockTable}>添加表格</Button>
                                                 <Button className="pdp-add-table" type="dashed" onClick={addBlockText}>添加正文</Button>
@@ -576,7 +579,7 @@ export default () => {
                                         <div className="pdp-field">
                                             <div className="pdp-label">正文</div>
                                             <Input.TextArea autoSize={{ minRows: 3, maxRows: 24 }}
-                                                value={active.text ?? ""} disabled={isView}
+                                                value={active.text ?? ""} disabled={isView || isRuntimeLockedNode(active)}
                                                 placeholder="本章节正文内容，可多行"
                                                 onChange={(e) => patchNode(active._key, { text: e.target.value })} />
                                         </div>
@@ -587,7 +590,7 @@ export default () => {
                                             <div className="pdp-table-block" key={ti}>
                                                 <div className="pdp-table-bar">
                                                     <span className="pdp-label">表格 {ti + 1}</span>
-                                                    {!isView && (
+                                                    {!isView && !isRuntimeLockedTable(active, ti) && (
                                                         <Space size={4}>
                                                             <Button size="small" onClick={() => addCol(ti)}>＋列</Button>
                                                             <Button size="small" disabled={(tb[0] || []).length <= 1} onClick={() => delCol(ti, (tb[0] || []).length - 1)}>－列</Button>
@@ -628,7 +631,7 @@ export default () => {
                                                                                 className="pdp-cell"
                                                                                 autoSize={{ minRows: 1, maxRows: 4 }}
                                                                                 value={row[0] ?? ""}
-                                                                                disabled={isView}
+                                                                                disabled={isView || isRuntimeLockedNode(active)}
                                                                                 style={{ textAlign: "center", fontWeight: "bold" }}
                                                                                 onChange={(e) => setCell(ti, r, 0, e.target.value)}
                                                                             />
@@ -639,17 +642,17 @@ export default () => {
                                                                                 {typeof cell === "string" && cell.startsWith("data:image") ? (
                                                                                     <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                                                                                         <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain" }} />
-                                                                                        {!isView && <DeleteOutlined style={{ color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />}
+                                                                                        {!isView && !isRuntimeLockedTable(active, ti) && <DeleteOutlined style={{ color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />}
                                                                                     </span>
                                                                                 ) : (
                                                                                     <Input.TextArea className="pdp-cell" autoSize={{ minRows: 1, maxRows: 8 }}
-                                                                                        value={cell ?? ""} disabled={isView}
+                                                                                        value={cell ?? ""} disabled={isView || isRuntimeLockedNode(active)}
                                                                                         onChange={(e) => setCell(ti, r, ci, e.target.value)} />
                                                                                 )}
                                                                             </td>
                                                                         ))
                                                                     )}
-                                                                    {!isView && (
+                                                                    {!isView && !isRuntimeLockedTable(active, ti) && (
                                                                         <td className="pdp-row-op">
                                                                             <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
                                                                             {tb.length > 1 && (
@@ -666,7 +669,7 @@ export default () => {
                                             );
                                         })}
 
-                                        {!isView && (
+                                        {!isView && !isRuntimeLockedNode(active) && (
                                             <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>添加表格</Button>
                                         )}
                                     </>

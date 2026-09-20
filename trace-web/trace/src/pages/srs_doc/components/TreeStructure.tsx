@@ -12,6 +12,7 @@ import * as XLSX from "xlsx";
 import * as Api from "@/api/ApiSrsDoc";
 import * as ApiDocFile from "@/api/ApiDocFile";
 import ReviewTable from "@/common/ReviewTable";
+import { isRuntimeLockedNode } from "../../pdp/runtimeEnvLock";
 
 // 表格数据结构（匹配后端接口，允许空对象表示无表格数据）
 interface TableData {
@@ -2081,7 +2082,8 @@ const TreeNodeItem = ({
     );
     const isLockedOtherReqChapter = !readOnly && isOtherReqManagedChapterNode(node, srsReqPreview?.other || []);
     const isLockedChapterMeta = !readOnly && isChapterMetaLockedNode(node, srsReqPreview?.other || []);
-    const canEditNodeContent = !readOnly && (!isLockedReqHierarchyNode || isLockedOtherReqChapter);
+    const isRuntimeLocked = isRuntimeLockedNode(node);
+    const canEditNodeContent = !readOnly && (!isLockedReqHierarchyNode || isLockedOtherReqChapter) && !isRuntimeLocked;
     const lockedChapterSrsCode = isLockedChapterMeta
         ? normalizeSrsCodeValue(node.srs_code || extractSrsCodeFromText(node.text) || "")
         : "";
@@ -2649,10 +2651,10 @@ const TreeNodeItem = ({
                   ) : (
                       <span className="node-expand-placeholder" />
                   )}
-                  {useNavChapterEditor && !readOnly && !isLockedReqHierarchyNode && !isLockedChapterMeta && (
+                  {useNavChapterEditor && !readOnly && !isLockedReqHierarchyNode && !isLockedChapterMeta && !isRuntimeLocked && (
                       <span className="node-title-prefix">{autoNavChapterNo || ""}</span>
                   )}
-                  {readOnly || isLockedReqHierarchyNode || isLockedChapterMeta ? (
+                  {readOnly || isLockedReqHierarchyNode || isLockedChapterMeta || isRuntimeLocked ? (
                       <div className={`node-title${hasRcm ? " with-rcm" : ""}${hasRcmText ? " with-rcm-text" : ""}`}>{navReadOnlyTitle}</div>
                   ) : (
                       <Input
@@ -2856,7 +2858,7 @@ const TreeNodeItem = ({
                   {/* {node.ref_type === 'srs_reqds' && (
                       <Tag color="geekblue" style={{padding: '5px'}}>{ts('srs_doc.req_list')}</Tag>
                   )} */}
-                  {!readOnly && !disableHierarchyActions && !isLockedReqHierarchyNode && (
+                  {!readOnly && !disableHierarchyActions && !isLockedReqHierarchyNode && !isRuntimeLocked && (
                   <Space className="node-actions" size={8}>
                       {!(isProductBoundDocImageNode || (node.ref_type && (isImgRefType(node.ref_type) || node.ref_type === 'srs_reqs' || node.ref_type === 'srs_reqs_2'))) && (
                       <Button
@@ -2929,7 +2931,7 @@ const TreeNodeItem = ({
                                 showHeader={!(tbl.table?.show_header === 0 || isFunctionalKvTable(tbl.table))}
                             />
                                 )}
-                            {!readOnly && (
+                            {!readOnly && !isRuntimeLocked && (
                             <Space className="node-table-actions" size={8}>
                                 <Button
                                     size="small"
@@ -7055,11 +7057,13 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                                         />
                                     </Tooltip>
                                 )}
+                                {!isRuntimeLockedNode(node) && (
                                 <DeleteOutlined
                                     className="srs-nav-delete-child"
                                     title={ts("delete") || "删除章节"}
                                     onClick={() => handleDeleteFromNav(node.id)}
                                 />
+                                )}
                             </span>
                         )}
                     </div>

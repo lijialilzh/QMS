@@ -24,8 +24,7 @@ from ..model.product import Product
 from ..model.utp_doc import UtpDoc
 from ..model.prod_dhf import ProdDhf
 from ..model.project_member import ProjectMember
-from ..model.prod_runtime_env import ProdRuntimeEnv
-from .serv_prod_runtime_env import DEFAULT_RUNTIME_ENV
+from .serv_prod_runtime_env import apply_runtime_to_pdp_content
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
 from ..obj.vobj_user import UserObj
@@ -326,64 +325,8 @@ class Server(object):
         return content
 
     def __fill_runtime_env(self, content, prod_id, force=False):
-        """运行环境表从产品 prod_runtime_env 获取。
-        force=False：有值则覆盖，无则保留模板默认；force=True：强制覆盖，无则置空。"""
-        if not isinstance(content, dict):
-            return content
-        env = dict(DEFAULT_RUNTIME_ENV)
-        if prod_id:
-            row = db.session.execute(select(ProdRuntimeEnv).where(ProdRuntimeEnv.prod_id == prod_id)).scalars().first()
-            if row:
-                for key in DEFAULT_RUNTIME_ENV.keys():
-                    val = getattr(row, key, None)
-                    if val is not None and str(val).strip():
-                        env[key] = val
-        def strip_title(title):
-            return re.sub(r"^\s*\d+(?:\.\d+)*[\.、\s]*", "", str(title or "")).strip()
-        def overwrite_col1(table, label_map):
-            for r in table:
-                if not isinstance(r, list) or len(r) < 2:
-                    continue
-                key = str(r[0]).strip()
-                if force:
-                    r[1] = label_map.get(key, "") or ""
-                elif key in label_map and str(label_map[key] or "").strip():
-                    r[1] = label_map[key]
-        def fill_node(node):
-            title = str(node.get("title") or "")
-            plain = strip_title(title)
-            if "表1" in title or plain.startswith("服务器硬件"):
-                for tbl in (node.get("tables") or []):
-                    overwrite_col1(tbl, {"CPU": env.get("srv_cpu"), "内存": env.get("srv_memory"), "GPU": env.get("srv_gpu"), "硬盘": env.get("srv_disk"), "网卡": env.get("srv_nic")})
-            elif "表2" in title or "服务器软件" in plain:
-                for tbl in (node.get("tables") or []):
-                    if len(tbl) >= 2 and isinstance(tbl[1], list) and len(tbl[1]) >= 3:
-                        if force or str(env.get("srv_os") or "").strip(): tbl[1][1] = env.get("srv_os", "")
-                        if force or str(env.get("srv_cuda") or "").strip(): tbl[1][2] = env.get("srv_cuda", "")
-            elif "表3" in title or plain.startswith("用户端"):
-                for tbl in (node.get("tables") or []):
-                    overwrite_col1(tbl, {"CPU": env.get("cli_cpu"), "内存": env.get("cli_memory"), "显示器分辨率": env.get("cli_resolution"), "操作系统": env.get("cli_os"), "浏览器": env.get("cli_browser")})
-            elif "表4" in title or "网络" in plain:
-                for tbl in (node.get("tables") or []):
-                    for r in tbl:
-                        if not isinstance(r, list) or str(r[0]).strip() != "带宽" or len(r) < 3:
-                            continue
-                        if force:
-                            r[1] = env.get("net_lan", "")
-                            r[2] = env.get("net_wan", "")
-                        else:
-                            if str(env.get("net_lan") or "").strip(): r[1] = env["net_lan"]
-                            if str(env.get("net_wan") or "").strip(): r[2] = env["net_wan"]
-            for c in (node.get("children") or []):
-                fill_node(c)
-        for s in (content.get("sections") or []):
-            if "运行环境" in str(s.get("title") or ""):
-                fill_node(s)
-            else:
-                for c in (s.get("children") or []):
-                    if "运行环境" in str(c.get("title") or ""):
-                        fill_node(c)
-        return content
+        """运行环境表从产品 prod_runtime_env 整表覆盖（含增删行列后的结构）。"""
+        return apply_runtime_to_pdp_content(content, prod_id)
 
     def __autofill(self, content, prod_id, product=None, version="", force=False):
         if not isinstance(content, dict):
