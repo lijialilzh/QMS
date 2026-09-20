@@ -7,6 +7,7 @@ import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProdAlgoModule";
 import * as ApiProduct from "@/api/ApiProduct";
+import SelectProductEmpty from "@/views/SelectProductEmpty";
 
 const DEFAULT_MODULES = ["肺栓塞分割", "肺叶分割"];
 
@@ -230,6 +231,7 @@ export default () => {
                     </Button>
                 </div>
             </div>
+            {data.targetProdId ? (
             <Table
                 className="expand"
                 columns={columns}
@@ -239,6 +241,9 @@ export default () => {
                 pagination={false}
                 footer={() => sprintf(ts("total_items"), { total: (data.rows || []).length })}
             />
+            ) : (
+                <SelectProductEmpty />
+            )}
         </div>
     );
 };

@@ -5,6 +5,7 @@ import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProdDeviceRes";
 import * as ApiProduct from "@/api/ApiProduct";
+import SelectProductEmpty from "@/views/SelectProductEmpty";
 import "./ProdRuntimeEnv.less";
 
 export default () => {
@@ -103,6 +104,7 @@ export default () => {
                 {data.saving ? <span className="env-saving">保存中…</span> : null}
             </div>
 
+            {data.prodId ? (
             <Spin spinning={data.loading} wrapperClassName="env-scroll">
                 <div className="env-body">
                     <h2 className="env-title">设备资源</h2>
@@ -127,6 +129,9 @@ export default () => {
                     </table>
                 </div>
             </Spin>
+            ) : (
+                <SelectProductEmpty />
+            )}
         </div>
     );
 };

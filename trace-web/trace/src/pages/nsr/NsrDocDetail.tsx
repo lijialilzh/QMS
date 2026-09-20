@@ -335,10 +335,10 @@ export default () => {
         );
     };
 
-    const addRow = (ti: number) => updateNode(active._key, (n) => {
-        const tb = n.tables[ti] || [];
+    const insertRowAfter = (ti: number, r: number) => updateNode(active._key, (n) => {
+        const tb = [...(n.tables[ti] || [])];
         const cols = (tb[0] || []).length || 1;
-        tb.push(new Array(cols).fill(""));
+        tb.splice(r + 1, 0, new Array(cols).fill(""));
         n.tables[ti] = tb;
     });
     const addCol = (ti: number) => updateNode(active._key, (n) => {
@@ -374,8 +374,8 @@ export default () => {
                         onChange={(e) => setTableTitle(ti, e.target.value)}
                     />
                     <Space size={4}>
-                        <Button size="small" icon={<PlusOutlined />} onClick={() => addRow(ti)}>行</Button>
-                        <Button size="small" icon={<PlusOutlined />} onClick={() => addCol(ti)}>列</Button>
+                        <Button size="small" onClick={() => addCol(ti)}>＋列</Button>
+                        <Button size="small" disabled={cols <= 1} onClick={() => delCol(ti, cols - 1)}>－列</Button>
                     </Space>
                 </div>
                 <table className="pdp-grid">
@@ -415,15 +415,13 @@ export default () => {
                                                 })}
                                             />
                                             )}
-                                            {ri === 0 && cols > 1 && (
-                                                <DeleteOutlined className="pdp-col-del" title="删除该列" onClick={() => delCol(ti, ci)} />
-                                            )}
                                         </td>
                                     );
                                 })}
                                 <td className="pdp-row-op">
+                                    <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, ri)} />
                                     {(rows || []).length > 1 && (
-                                        <DeleteOutlined title="删除该行" onClick={() => delRow(ti, ri)} />
+                                        <Button type="link" danger size="small" onClick={() => delRow(ti, ri)}>删除</Button>
                                     )}
                                 </td>
                             </tr>

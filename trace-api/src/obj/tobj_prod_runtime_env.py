@@ -3,7 +3,7 @@
 # @author: ZengLei
 
 
-from typing import Optional
+from typing import Optional, Any
 from pydantic import BaseModel, Field
 
 
@@ -11,6 +11,7 @@ class ProdRuntimeEnvForm(BaseModel):
     id: Optional[int] = Field(title="ID")
     prod_id: Optional[int] = Field(title="产品ID")
     arch: Optional[str] = Field(title="架构说明")
+    tables: Optional[Any] = Field(title="表格结构")
     srv_cpu: Optional[str] = Field(title="服务器CPU")
     srv_memory: Optional[str] = Field(title="服务器内存")
     srv_gpu: Optional[str] = Field(title="服务器GPU")

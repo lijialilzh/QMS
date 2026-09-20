@@ -446,11 +446,13 @@ export default () => {
         });
         updateTables(tables);
     };
-    const addRow = (ti: number) => {
+    const insertRowAfter = (ti: number, r: number) => {
         const tables = (active.tables || []).map((tb: any[], i: number) => {
             if (i !== ti) return tb;
             const cols = tb[0] ? tb[0].length : 1;
-            return [...tb, new Array(cols).fill("")];
+            const next = [...tb];
+            next.splice(r + 1, 0, new Array(cols).fill(""));
+            return next;
         });
         updateTables(tables);
     };
@@ -643,8 +645,8 @@ export default () => {
                                             <span className="pdp-label">表格 {ti + 1}</span>
                                             {!readonly && (
                                                 <Space size={4}>
-                                                    <Button size="small" onClick={() => addRow(ti)}>＋行</Button>
                                                     <Button size="small" onClick={() => addCol(ti)}>＋列</Button>
+                                                    <Button size="small" disabled={(tb[0] || []).length <= 1} onClick={() => delCol(ti, (tb[0] || []).length - 1)}>－列</Button>
                                                     <Button size="small" danger onClick={() => delTable(ti)}>删除此表</Button>
                                                 </Space>
                                             )}
@@ -687,16 +689,14 @@ export default () => {
                                                                         onChange={(e) => setCell(ti, r, ci, e.target.value, cs, rs)}
                                                                     />
                                                                 )}
-                                                                {!readonly && r === 0 && tb[0].length > 1 && (
-                                                                    <DeleteOutlined className="pdp-col-del" title="删除该列" onClick={() => delCol(ti, ci)} />
-                                                                )}
                                                             </td>
                                                             );
                                                         })}
                                                         {!readonly && (
                                                             <td className="pdp-row-op">
+                                                                <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
                                                                 {tb.length > 1 && (
-                                                                    <DeleteOutlined title="删除该行" onClick={() => delRow(ti, r)} />
+                                                                    <Button type="link" danger size="small" onClick={() => delRow(ti, r)}>删除</Button>
                                                                 )}
                                                             </td>
                                                         )}

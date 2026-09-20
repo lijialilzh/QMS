@@ -7,6 +7,7 @@ import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProjectTimeline";
 import * as ApiProduct from "@/api/ApiProduct";
+import SelectProductEmpty from "@/views/SelectProductEmpty";
 import "./ProjectTimeline.less";
 
 export default () => {
@@ -383,6 +384,7 @@ export default () => {
                 </div>
             </div>
 
+            {data.targetProdId ? (
             <Spin spinning={data.loading}>
                 <div className="tl-table-wrap">
                     <table className="tl-table">
@@ -494,6 +496,9 @@ export default () => {
                     </table>
                 </div>
             </Spin>
+            ) : (
+                <SelectProductEmpty />
+            )}
         </div>
     );
 };

@@ -3,14 +3,15 @@
 # @author: ZengLei
 
 
-from sqlalchemy import Column, Integer, String, TEXT
+from sqlalchemy import Column, Integer, TEXT
 from . import Model
 
 
 class ProdRuntimeEnv(Model):
     __tablename__ = "prod_runtime_env"
     prod_id = Column(Integer, nullable=False, unique=True, index=True, comment="产品ID")
-    arch = Column(String(256), comment="架构说明")
+    arch = Column(TEXT, comment="架构说明")
+    tables_json = Column(TEXT, comment="四张表完整结构JSON")
     # 表1 服务器硬件
     srv_cpu = Column(TEXT, comment="服务器CPU")
     srv_memory = Column(TEXT, comment="服务器内存")

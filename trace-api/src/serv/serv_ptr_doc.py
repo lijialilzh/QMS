@@ -34,6 +34,7 @@ from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
 from .serv_version_rule import DEFAULT_VERSION_RULE
+from .serv_prod_runtime_env import get_runtime_payload
 from .serv_doc_file import pick_doc_image_file_row
 
 logger = logging.getLogger(__name__)
@@ -127,13 +128,7 @@ class Server(object):
         vr_content = vr.content if vr and isinstance(vr.content, dict) else DEFAULT_VERSION_RULE
         naming_body = self.__build_naming_body(vr_content)
 
-        env = db.session.execute(select(ProdRuntimeEnv).where(ProdRuntimeEnv.prod_id == prod_id)).scalars().first()
-        runtime = {}
-        if env:
-            for k in ("arch", "srv_cpu", "srv_memory", "srv_gpu", "srv_disk", "srv_nic", "srv_os", "srv_cuda",
-                      "cli_cpu", "cli_memory", "cli_resolution", "cli_os", "cli_browser", "net_lan", "net_wan"):
-                runtime[k] = (getattr(env, k, "") or "").strip()
-
+        runtime = get_runtime_payload(prod_id)
         return {
             "prod_name": prod_name, "full_version": full_version, "release_version": release_version,
             "naming_body": naming_body, "runtime": runtime, "version": doc_version, "overview": overview,
@@ -152,6 +147,26 @@ class Server(object):
             key = str(row[0]).strip()
             if key in label_map and str(label_map[key] or "").strip():
                 row[1] = label_map[key]
+
+    @staticmethod
+    def __table_cells(rt, key):
+        for item in (rt.get("tables") or []):
+            if isinstance(item, dict) and item.get("key") == key and item.get("cells"):
+                return copy.deepcopy(item["cells"])
+        return None
+
+    @staticmethod
+    def __overwrite_by_header(table, header_map):
+        if not table or len(table) < 2 or not isinstance(table[0], list):
+            return
+        headers = [str(h or "").strip() for h in table[0]]
+        data = table[1]
+        if not isinstance(data, list):
+            return
+        for i, name in enumerate(headers):
+            val = header_map.get(name)
+            if val is not None and str(val).strip() and i < len(data):
+                data[i] = val
 
     def __fill_node(self, node, info):
         ref = node.get("ref_type")
@@ -173,25 +188,33 @@ class Server(object):
             if rt.get("arch"):
                 node["body"] = rt["arch"]
         elif ref == "rt_srv_hw":
-            for t in (node.get("tables") or []):
-                self.__overwrite_col1(t, {"CPU": rt.get("srv_cpu"), "内存": rt.get("srv_memory"), "GPU": rt.get("srv_gpu"), "硬盘": rt.get("srv_disk"), "网卡": rt.get("srv_nic")})
+            cells = self.__table_cells(rt, "srv_hw")
+            if cells:
+                node["tables"] = [cells]
+            else:
+                for t in (node.get("tables") or []):
+                    self.__overwrite_col1(t, {"CPU": rt.get("srv_cpu"), "内存": rt.get("srv_memory"), "GPU": rt.get("srv_gpu"), "硬盘": rt.get("srv_disk"), "网卡": rt.get("srv_nic")})
         elif ref == "rt_srv_sw":
-            for t in (node.get("tables") or []):
-                if len(t) >= 2 and len(t[1]) >= 3:
-                    if str(rt.get("srv_os") or "").strip():
-                        t[1][1] = rt["srv_os"]
-                    if str(rt.get("srv_cuda") or "").strip():
-                        t[1][2] = rt["srv_cuda"]
+            cells = self.__table_cells(rt, "srv_sw")
+            if cells:
+                node["tables"] = [cells]
+            else:
+                for t in (node.get("tables") or []):
+                    self.__overwrite_by_header(t, {"操作系统": rt.get("srv_os"), "CUDA": rt.get("srv_cuda")})
         elif ref == "rt_client":
-            for t in (node.get("tables") or []):
-                self.__overwrite_col1(t, {"CPU": rt.get("cli_cpu"), "内存": rt.get("cli_memory"), "显示器分辨率": rt.get("cli_resolution"), "操作系统": rt.get("cli_os"), "浏览器": rt.get("cli_browser")})
+            cells = self.__table_cells(rt, "cli")
+            if cells:
+                node["tables"] = [cells]
+            else:
+                for t in (node.get("tables") or []):
+                    self.__overwrite_col1(t, {"CPU": rt.get("cli_cpu"), "内存": rt.get("cli_memory"), "显示器分辨率": rt.get("cli_resolution"), "操作系统": rt.get("cli_os"), "浏览器": rt.get("cli_browser")})
         elif ref == "rt_net":
-            for t in (node.get("tables") or []):
-                if len(t) >= 2 and len(t[1]) >= 3:
-                    if str(rt.get("net_lan") or "").strip():
-                        t[1][1] = rt["net_lan"]
-                    if str(rt.get("net_wan") or "").strip():
-                        t[1][2] = rt["net_wan"]
+            cells = self.__table_cells(rt, "net")
+            if cells:
+                node["tables"] = [cells]
+            else:
+                for t in (node.get("tables") or []):
+                    self.__overwrite_by_header(t, {"局域网": rt.get("net_lan"), "广域网": rt.get("net_wan")})
         for child in (node.get("children") or []):
             self.__fill_node(child, info)
 

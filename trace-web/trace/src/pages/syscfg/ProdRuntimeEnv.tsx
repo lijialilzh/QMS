@@ -1,10 +1,12 @@
-import { message, Space, Input, Spin } from "antd";
+import { Button, message, Space, Input, Spin } from "antd";
+import { PlusOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProdRuntimeEnv";
 import * as ApiProduct from "@/api/ApiProduct";
+import SelectProductEmpty from "@/views/SelectProductEmpty";
 import "./ProdRuntimeEnv.less";
 
 const FIELDS = [
@@ -14,6 +16,8 @@ const FIELDS = [
     "cli_cpu", "cli_memory", "cli_resolution", "cli_os", "cli_browser",
     "net_lan", "net_wan",
 ];
+
+const cloneTables = (tables: any[]) => JSON.parse(JSON.stringify(tables || []));
 
 export default () => {
     const { t: ts } = useTranslation();
@@ -53,16 +57,15 @@ export default () => {
         dispatch({ form: { ...data.form, [field]: value } });
     };
 
-    const saveField = (field: string) => {
+    const saveForm = (next: any) => {
         if (!data.prodId) return;
-        if ((data.form[field] ?? "") === (data.snapshot[field] ?? "")) return;
-        dispatch({ saving: true });
-        const payload: any = { prod_id: data.prodId };
-        FIELDS.forEach((k) => (payload[k] = data.form[k] ?? ""));
+        dispatch({ saving: true, form: next });
+        const payload: any = { prod_id: data.prodId, tables: next.tables || [] };
+        FIELDS.forEach((k) => (payload[k] = next[k] ?? ""));
         Api.save_prod_runtime_env(payload).then((res: any) => {
             dispatch({ saving: false });
             if (res.code === Api.C_OK) {
-                dispatch({ snapshot: { ...data.form } });
+                dispatch({ snapshot: { ...next } });
                 message.success(ts("msg_ok"));
             } else {
                 message.error(res.msg);
@@ -70,21 +73,62 @@ export default () => {
         });
     };
 
+    const saveField = (field: string) => {
+        if (!data.prodId) return;
+        if ((data.form[field] ?? "") === (data.snapshot[field] ?? "")) return;
+        saveForm(data.form);
+    };
+
+    const saveIfTablesChanged = (tables: any[]) => {
+        if (!data.prodId) return;
+        const next = { ...data.form, tables };
+        if (JSON.stringify(tables) === JSON.stringify(data.snapshot.tables || [])) return;
+        saveForm(next);
+    };
+
+    const setTables = (tables: any[], persist: boolean) => {
+        const next = { ...data.form, tables };
+        dispatch({ form: next });
+        if (persist) saveIfTablesChanged(tables);
+    };
+
+    const setTitle = (ti: number, title: string) => {
+        const tables = cloneTables(data.form.tables || []);
+        if (!tables[ti]) return;
+        tables[ti].title = title;
+        dispatch({ form: { ...data.form, tables } });
+    };
+
+    const setCell = (ti: number, r: number, ci: number, val: string) => {
+        const tables = cloneTables(data.form.tables || []);
+        if (!tables[ti] || !tables[ti].cells || !tables[ti].cells[r]) return;
+        tables[ti].cells[r][ci] = val;
+        dispatch({ form: { ...data.form, tables } });
+    };
+
+    const insertRowAfter = (ti: number, r: number) => {
+        const tables = cloneTables(data.form.tables || []);
+        const cells = tables[ti]?.cells || [];
+        const cols = cells[0] ? cells[0].length : 1;
+        const next = [...cells];
+        next.splice(r + 1, 0, new Array(cols).fill(""));
+        tables[ti].cells = next;
+        setTables(tables, true);
+    };
+
+    const delRow = (ti: number, r: number) => {
+        const tables = cloneTables(data.form.tables || []);
+        const cells = tables[ti]?.cells || [];
+        if (cells.length <= 1) return;
+        tables[ti].cells = cells.filter((_: any, i: number) => i !== r);
+        setTables(tables, true);
+    };
+
     useEffect(() => {
         loadProducts();
     }, []);
 
-    const cell = (field: string) => (
-        <Input.TextArea
-            className="env-input"
-            autoSize={{ minRows: 1, maxRows: 8 }}
-            value={data.form[field] ?? ""}
-            disabled={!data.prodId}
-            onChange={(e) => onChange(field, e.target.value)}
-            onBlur={() => saveField(field)}
-            placeholder={data.prodId ? "" : "请先选择产品"}
-        />
-    );
+    const tables: any[] = data.form.tables || [];
 
     return (
         <div className="page div-v prod-runtime-env">
@@ -108,75 +152,74 @@ export default () => {
                 {data.saving ? <span className="env-saving">保存中…</span> : null}
             </div>
 
+            {data.prodId ? (
             <Spin spinning={data.loading} wrapperClassName="env-scroll">
                 <div className="env-body">
                     <h2 className="env-title">运行环境</h2>
                     <div className="env-arch">
-                        {cell("arch")}
+                        <Input.TextArea
+                            className="env-input env-arch-input"
+                            autoSize={{ minRows: 1, maxRows: 4 }}
+                            value={data.form.arch ?? ""}
+                            onChange={(e) => onChange("arch", e.target.value)}
+                            onBlur={() => saveField("arch")}
+                            placeholder="例如：软件为B/S架构"
+                        />
                     </div>
 
-                    <h3 className="env-cap">表1 服务器硬件配置要求</h3>
-                    <table className="env-table">
-                        <colgroup>
-                            <col style={{ width: 140 }} />
-                            <col />
-                        </colgroup>
-                        <thead>
-                            <tr><th>配置</th><th>要求</th></tr>
-                        </thead>
-                        <tbody>
-                            <tr><td className="lbl">CPU</td><td>{cell("srv_cpu")}</td></tr>
-                            <tr><td className="lbl">内存</td><td>{cell("srv_memory")}</td></tr>
-                            <tr><td className="lbl">GPU</td><td>{cell("srv_gpu")}</td></tr>
-                            <tr><td className="lbl">硬盘</td><td>{cell("srv_disk")}</td></tr>
-                            <tr><td className="lbl">网卡</td><td>{cell("srv_nic")}</td></tr>
-                        </tbody>
-                    </table>
-
-                    <h3 className="env-cap">表2 服务器软件配置要求</h3>
-                    <table className="env-table">
-                        <thead>
-                            <tr><th>操作系统</th><th>CUDA</th></tr>
-                        </thead>
-                        <tbody>
-                            <tr><td>{cell("srv_os")}</td><td>{cell("srv_cuda")}</td></tr>
-                        </tbody>
-                    </table>
-
-                    <h3 className="env-cap">表3 用户端配置要求</h3>
-                    <table className="env-table">
-                        <colgroup>
-                            <col style={{ width: 140 }} />
-                            <col />
-                        </colgroup>
-                        <thead>
-                            <tr><th>配置</th><th>要求</th></tr>
-                        </thead>
-                        <tbody>
-                            <tr><td className="lbl">CPU</td><td>{cell("cli_cpu")}</td></tr>
-                            <tr><td className="lbl">内存</td><td>{cell("cli_memory")}</td></tr>
-                            <tr><td className="lbl">显示器分辨率</td><td>{cell("cli_resolution")}</td></tr>
-                            <tr><td className="lbl">操作系统</td><td>{cell("cli_os")}</td></tr>
-                            <tr><td className="lbl">浏览器</td><td>{cell("cli_browser")}</td></tr>
-                        </tbody>
-                    </table>
-
-                    <h3 className="env-cap">表4 网络要求</h3>
-                    <table className="env-table">
-                        <colgroup>
-                            <col style={{ width: 140 }} />
-                            <col />
-                            <col />
-                        </colgroup>
-                        <thead>
-                            <tr><th>配置</th><th>局域网</th><th>广域网</th></tr>
-                        </thead>
-                        <tbody>
-                            <tr><td className="lbl">带宽</td><td>{cell("net_lan")}</td><td>{cell("net_wan")}</td></tr>
-                        </tbody>
-                    </table>
+                    {tables.map((tb: any, ti: number) => {
+                        const cells: any[][] = tb.cells || [];
+                        return (
+                            <div className="env-table-block" key={tb.key || ti}>
+                                <div className="env-table-bar">
+                                    <Input
+                                        className="env-cap-input"
+                                        value={tb.title || ""}
+                                        onChange={(e) => setTitle(ti, e.target.value)}
+                                        onBlur={() => saveIfTablesChanged(data.form.tables || [])}
+                                    />
+                                </div>
+                                <table className="env-table">
+                                    <tbody>
+                                        {cells.map((row: any[], r: number) => (
+                                            <tr key={r}>
+                                                {row.map((cell: any, ci: number) => (
+                                                    <td key={ci} className={r === 0 ? "lbl" : ""}>
+                                                        <Input.TextArea
+                                                            className="env-input"
+                                                            autoSize={{ minRows: 1, maxRows: 8 }}
+                                                            value={cell ?? ""}
+                                                            onChange={(e) => setCell(ti, r, ci, e.target.value)}
+                                                            onBlur={() => saveIfTablesChanged(data.form.tables || [])}
+                                                        />
+                                                    </td>
+                                                ))}
+                                                <td className={r === 0 ? "lbl env-row-op" : "env-row-op"}>
+                                                    {r === 0 ? (
+                                                        "操作"
+                                                    ) : (
+                                                        <>
+                                                            <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
+                                                            {cells.length > 1 ? (
+                                                                <Button type="link" danger size="small" onClick={() => delRow(ti, r)}>
+                                                                    删除
+                                                                </Button>
+                                                            ) : null}
+                                                        </>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        );
+                    })}
                 </div>
             </Spin>
+            ) : (
+                <SelectProductEmpty />
+            )}
         </div>
     );
 };

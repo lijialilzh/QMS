@@ -239,14 +239,22 @@ export default () => {
                 }
                 return row;
             });
-        const overwriteRow1 = (table: any[], v1: any, v2: any) =>
-            table.map((row: any[], ri: number) => {
-                if (ri !== 1 || !Array.isArray(row) || row.length < 3) return row;
+        const overwriteByHeader = (table: any[], map: Record<string, any>) => {
+            if (!Array.isArray(table) || table.length < 2 || !Array.isArray(table[0])) return table;
+            const headers = table[0].map((h: any) => String(h ?? "").trim());
+            return table.map((row: any[], ri: number) => {
+                if (ri === 0 || !Array.isArray(row)) return row;
                 const next = [...row];
-                if (String(v1 || "").trim()) next[1] = v1;
-                if (String(v2 || "").trim()) next[2] = v2;
+                headers.forEach((h: string, i: number) => {
+                    if (map[h] !== undefined && String(map[h] || "").trim() && i < next.length) next[i] = map[h];
+                });
                 return next;
             });
+        };
+        const tableCells = (key: string) => {
+            const t = ((env && env.tables) || []).find((x: any) => x && x.key === key);
+            return t && Array.isArray(t.cells) ? t.cells : null;
+        };
         const fix = (n: any): any => {
             let body = n.body;
             let tables = n.tables;
@@ -264,13 +272,17 @@ export default () => {
             } else if (env && (ref === "runtime" || t === "运行环境")) {
                 if (String(env.arch || "").trim()) body = env.arch;
             } else if (env && ref === "rt_srv_hw") {
-                tables = (n.tables || []).map((tb: any[]) => overwriteCol1(tb, { CPU: env.srv_cpu, "内存": env.srv_memory, GPU: env.srv_gpu, "硬盘": env.srv_disk, "网卡": env.srv_nic }));
+                const cells = tableCells("srv_hw");
+                tables = cells ? [cells] : (n.tables || []).map((tb: any[]) => overwriteCol1(tb, { CPU: env.srv_cpu, "内存": env.srv_memory, GPU: env.srv_gpu, "硬盘": env.srv_disk, "网卡": env.srv_nic }));
             } else if (env && ref === "rt_srv_sw") {
-                tables = (n.tables || []).map((tb: any[]) => overwriteRow1(tb, env.srv_os, env.srv_cuda));
+                const cells = tableCells("srv_sw");
+                tables = cells ? [cells] : (n.tables || []).map((tb: any[]) => overwriteByHeader(tb, { "操作系统": env.srv_os, CUDA: env.srv_cuda }));
             } else if (env && ref === "rt_client") {
-                tables = (n.tables || []).map((tb: any[]) => overwriteCol1(tb, { CPU: env.cli_cpu, "内存": env.cli_memory, "显示器分辨率": env.cli_resolution, "操作系统": env.cli_os, "浏览器": env.cli_browser }));
+                const cells = tableCells("cli");
+                tables = cells ? [cells] : (n.tables || []).map((tb: any[]) => overwriteCol1(tb, { CPU: env.cli_cpu, "内存": env.cli_memory, "显示器分辨率": env.cli_resolution, "操作系统": env.cli_os, "浏览器": env.cli_browser }));
             } else if (env && ref === "rt_net") {
-                tables = (n.tables || []).map((tb: any[]) => overwriteRow1(tb, env.net_lan, env.net_wan));
+                const cells = tableCells("net");
+                tables = cells ? [cells] : (n.tables || []).map((tb: any[]) => overwriteByHeader(tb, { "局域网": env.net_lan, "广域网": env.net_wan }));
             }
             return { ...n, body, tables, children: (n.children || []).map(fix) };
         };
@@ -392,11 +404,13 @@ export default () => {
         );
         updateTables(tables);
     };
-    const addRow = (ti: number) => {
+    const insertRowAfter = (ti: number, r: number) => {
         const tables = (active.tables || []).map((tb: any[], i: number) => {
             if (i !== ti) return tb;
             const cols = tb[0] ? tb[0].length : 1;
-            return [...tb, new Array(cols).fill("")];
+            const next = [...tb];
+            next.splice(r + 1, 0, new Array(cols).fill(""));
+            return next;
         });
         updateTables(tables);
     };
@@ -672,8 +686,8 @@ export default () => {
                                             <span className="pdp-label">表格 {ti + 1}</span>
                                             {!readonly && (
                                                 <Space size={4}>
-                                                    <Button size="small" onClick={() => addRow(ti)}>＋行</Button>
                                                     <Button size="small" onClick={() => addCol(ti)}>＋列</Button>
+                                                    <Button size="small" disabled={(tb[0] || []).length <= 1} onClick={() => delCol(ti, (tb[0] || []).length - 1)}>－列</Button>
                                                     <Button size="small" danger onClick={() => delTable(ti)}>删除此表</Button>
                                                 </Space>
                                             )}
@@ -691,15 +705,13 @@ export default () => {
                                                                     disabled={readonly}
                                                                     onChange={(e) => setCell(ti, r, ci, e.target.value)}
                                                                 />
-                                                                {!readonly && r === 0 && tb[0].length > 1 && (
-                                                                    <DeleteOutlined className="pdp-col-del" title="删除该列" onClick={() => delCol(ti, ci)} />
-                                                                )}
                                                             </td>
                                                         ))}
                                                         {!readonly && (
                                                             <td className="pdp-row-op">
+                                                                <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
                                                                 {tb.length > 1 && (
-                                                                    <DeleteOutlined title="删除该行" onClick={() => delRow(ti, r)} />
+                                                                    <Button type="link" danger size="small" onClick={() => delRow(ti, r)}>删除</Button>
                                                                 )}
                                                             </td>
                                                         )}

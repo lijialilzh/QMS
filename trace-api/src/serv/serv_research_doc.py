@@ -45,7 +45,7 @@ from ..utils.sql_ctx import db
 from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version, docx_util
-from .serv_prod_runtime_env import DEFAULT_RUNTIME_ENV
+from .serv_prod_runtime_env import DEFAULT_RUNTIME_ENV, get_runtime_payload
 
 logger = logging.getLogger(__name__)
 
@@ -213,14 +213,49 @@ class Server(object):
         return "\n".join(lines)
 
     def __runtime_env(self, product_id):
-        row = db.session.execute(select(ProdRuntimeEnv).where(ProdRuntimeEnv.prod_id == product_id)).scalars().first()
-        env = dict(DEFAULT_RUNTIME_ENV)
-        if row:
-            for key in DEFAULT_RUNTIME_ENV.keys():
-                val = getattr(row, key, None)
-                if val is not None and str(val).strip():
-                    env[key] = val
-        return env
+        return get_runtime_payload(product_id)
+
+    def __runtime_tables(self, kind, env):
+        by_key = {t.get("key"): t for t in (env.get("tables") or []) if isinstance(t, dict)}
+        if kind == "rt_hw":
+            hw = (by_key.get("srv_hw") or {}).get("cells")
+            cli = (by_key.get("cli") or {}).get("cells")
+            if hw or cli:
+                return [item for item in (hw, cli) if item]
+            return [
+                [["配置", "要求"], ["CPU", env.get("srv_cpu", "")], ["内存", env.get("srv_memory", "")],
+                 ["GPU", env.get("srv_gpu", "")], ["硬盘", env.get("srv_disk", "")], ["网卡", env.get("srv_nic", "")]],
+                [["配置", "要求"], ["CPU", env.get("cli_cpu", "")], ["内存", env.get("cli_memory", "")],
+                 ["显示器分辨率", env.get("cli_resolution", "")]],
+            ]
+        if kind == "rt_sw":
+            sw = (by_key.get("srv_sw") or {}).get("cells")
+            if sw:
+                return [sw]
+            return [
+                [["类别", "操作系统", "其他"],
+                 ["服务器", env.get("srv_os", ""), f"CUDA {env.get('srv_cuda', '')}"],
+                 ["用户端", env.get("cli_os", ""), f"浏览器 {env.get('cli_browser', '')}"]],
+            ]
+        if kind == "rt_net":
+            net = (by_key.get("net") or {}).get("cells")
+            if net:
+                return [net]
+            return [
+                [["网络", "要求"], ["架构", env.get("arch", "")],
+                 ["局域网", env.get("net_lan", "")], ["广域网", env.get("net_wan", "")]],
+            ]
+        return []
+
+    def __runtime_titles(self, kind, env):
+        by_key = {t.get("key"): t for t in (env.get("tables") or []) if isinstance(t, dict)}
+        if kind == "rt_hw":
+            return [(by_key.get("srv_hw") or {}).get("title") or "", (by_key.get("cli") or {}).get("title") or ""]
+        if kind == "rt_sw":
+            return [(by_key.get("srv_sw") or {}).get("title") or ""]
+        if kind == "rt_net":
+            return [(by_key.get("net") or {}).get("title") or ""]
+        return []
 
     def __release_date(self, product_id):
         rows = db.session.execute(
@@ -360,27 +395,6 @@ class Server(object):
             },
         }
 
-    def __runtime_tables(self, kind, env):
-        if kind == "rt_hw":
-            return [
-                [["配置", "要求"], ["CPU", env.get("srv_cpu", "")], ["内存", env.get("srv_memory", "")],
-                 ["GPU", env.get("srv_gpu", "")], ["硬盘", env.get("srv_disk", "")], ["网卡", env.get("srv_nic", "")]],
-                [["配置", "要求"], ["CPU", env.get("cli_cpu", "")], ["内存", env.get("cli_memory", "")],
-                 ["显示器分辨率", env.get("cli_resolution", "")]],
-            ]
-        if kind == "rt_sw":
-            return [
-                [["类别", "操作系统", "其他"],
-                 ["服务器", env.get("srv_os", ""), f"CUDA {env.get('srv_cuda', '')}"],
-                 ["用户端", env.get("cli_os", ""), f"浏览器 {env.get('cli_browser', '')}"]],
-            ]
-        if kind == "rt_net":
-            return [
-                [["网络", "要求"], ["架构", env.get("arch", "")],
-                 ["局域网", env.get("net_lan", "")], ["广域网", env.get("net_wan", "")]],
-            ]
-        return []
-
     @staticmethod
     def __split_image_blocks(text, image_urls, img_category=None):
         # 统一图文版式，使图与正文位置和原 Word 一致：
@@ -476,7 +490,7 @@ class Server(object):
                     # 运行环境：按原文「正文 → 表格」交替排版（每段正文紧跟其对应表格）
                     tables = self.__runtime_tables(rt, auto.get("runtime", {}))
                     lines = str(node.get("text") or "").split("\n")
-                    titles = node.get("table_titles") or []
+                    titles = self.__runtime_titles(rt, auto.get("runtime", {})) or node.get("table_titles") or []
                     blocks = []
                     for i, tbl in enumerate(tables):
                         if i < len(lines) and lines[i].strip():

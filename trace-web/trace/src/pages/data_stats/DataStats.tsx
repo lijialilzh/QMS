@@ -4,6 +4,7 @@ import { FolderOpenOutlined, DownloadOutlined, CloudServerOutlined, UploadOutlin
 import { useMemo, useRef, useEffect } from "react";
 import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
+import SelectProductEmpty from "@/views/SelectProductEmpty";
 import * as XLSX from "xlsx";
 import * as Api from "@/api/ApiDataDoc";
 import * as ApiProduct from "@/api/ApiProduct";
@@ -650,6 +651,7 @@ export default () => {
                 <div className="data-stats-source">数据来源：{data.source}</div>
             ) : null}
             {data.progress ? <span className="data-stats-progress">{data.progress}</span> : null}
+            {data.productId ? (
             <Spin spinning={data.loading} wrapperClassName="data-stats-table">
                 <Tabs
                     animated={{ inkBar: true, tabPane: false }}
@@ -750,6 +752,9 @@ export default () => {
                     ]}
                 />
             </Spin>
+            ) : (
+                <SelectProductEmpty />
+            )}
         </div>
     );
 };
