@@ -11,7 +11,7 @@ import * as I18N from "./i18n";
 import { useData } from "./common";
 import { Provider } from "react-redux";
 import { store } from "./store";
-import { ANT_LOCALES } from "./i18n/anti18n";
+import { getAntLocale } from "./i18n/anti18n";
 
 import Login from "./pages/Login";
 import Home from "./pages/Home";
@@ -132,6 +132,18 @@ import PersonSigns from "./pages/basedata/PersonSigns";
 
 const DEF_LANG = localStorage.getItem("lang") || I18N.DEF_LANG;
 I18N.init(DEF_LANG);
+
+const applyAntLocale = (lang: string) => {
+    const locale = getAntLocale(lang);
+    ConfigProvider.config({
+        holderRender: (children) => (
+            <ConfigProvider locale={locale}>{children}</ConfigProvider>
+        ),
+    });
+    return locale;
+};
+
+applyAntLocale(DEF_LANG);
 
 const router = createRouter([
     { path: "/login", element: <Login /> },
@@ -320,11 +332,11 @@ const router = createRouter([
 ]);
 
 const App = () => {
-    const [data, dispatch] = useData({ antLocale: ANT_LOCALES[DEF_LANG] });
+    const [data, dispatch] = useData({ antLocale: getAntLocale(DEF_LANG) });
     const { i18n, t: ts } = useTranslation();
 
     useEffect(() => {
-        dispatch({ antLocale: ANT_LOCALES[i18n.language] });
+        dispatch({ antLocale: applyAntLocale(i18n.language) });
         document.title = ts("html_title");
     }, [i18n.language]);
 
