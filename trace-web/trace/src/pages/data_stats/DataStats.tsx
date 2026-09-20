@@ -7,9 +7,12 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import SelectProductEmpty from "@/views/SelectProductEmpty";
 import * as XLSX from "xlsx";
 import * as Api from "@/api/ApiDataDoc";
+import * as ApiModel from "@/api/ApiModelDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiMember from "@/api/ApiProjectMember";
+import { DATA_DOC_MENU, getDataDocGroupTypes } from "../model_doc/DataDocTypes";
+import { MODEL_DOC_MENU, getModelDocGroupTypes } from "../model_doc/ModelDocTypes";
 import {
     STATS_TITLES,
     StatsKind,
@@ -49,6 +52,64 @@ const ANN_PID_DOCS = [
     { type: "dd_009_02", title: "肺叶分割标注记录" },
     { type: "dd_009_03", title: "肺栓塞分诊评测记录" },
 ];
+
+const AUTO_DOC_VERSION = "A0";
+const AUTO_CHANGE_LOG = "数据统计自动建档";
+
+const expandMenuTypes = (menu: { types: string[] }[], groupTypes: (t: string) => string[]) => {
+    const out: string[] = [];
+    menu.forEach((item) => {
+        item.types.forEach((t) => {
+            const kids = groupTypes(t);
+            (kids.length ? kids : [t]).forEach((x) => {
+                if (x && !x.endsWith("_qr") && !out.includes(x)) out.push(x);
+            });
+        });
+    });
+    return out;
+};
+const STATS_DATA_DOC_TYPES = expandMenuTypes(DATA_DOC_MENU, getDataDocGroupTypes);
+const STATS_MODEL_DOC_TYPES = expandMenuTypes(MODEL_DOC_MENU, getModelDocGroupTypes);
+
+const isAlreadyExist = (msg: any) => /exist|已存在|msg_obj_exist/i.test(String(msg || ""));
+
+const ensureOneDoc = async (
+    kind: "data" | "model",
+    productId: number,
+    doc_type: string,
+): Promise<{ status: "ok" | "skip" | "error"; type: string; msg?: string }> => {
+    const listFn = kind === "data" ? Api.list_data_doc : ApiModel.list_model_doc;
+    const addFn = kind === "data" ? Api.add_data_doc : ApiModel.add_model_doc;
+    const list: any = await listFn({ product_id: productId, doc_type, page_index: 0, page_size: 1 });
+    if (list.code !== Api.C_OK) return { status: "error", type: doc_type, msg: list.msg };
+    if (((list.data && list.data.rows) || []).length) return { status: "skip", type: doc_type };
+    const add: any = await addFn({
+        product_id: productId,
+        doc_type,
+        version: AUTO_DOC_VERSION,
+        change_log: AUTO_CHANGE_LOG,
+    });
+    if (add.code === Api.C_OK) return { status: "ok", type: doc_type };
+    if (isAlreadyExist(add.msg)) return { status: "skip", type: doc_type };
+    return { status: "error", type: doc_type, msg: add.msg || `新建「${doc_type}」失败` };
+};
+
+const ensureMissingDocs = async (productId: number) => {
+    const jobs: { kind: "data" | "model"; type: string }[] = [
+        ...STATS_DATA_DOC_TYPES.map((type) => ({ kind: "data" as const, type })),
+        ...STATS_MODEL_DOC_TYPES.map((type) => ({ kind: "model" as const, type })),
+    ];
+    const results: { status: "ok" | "skip" | "error"; type: string; msg?: string }[] = [];
+    const chunk = 4;
+    for (let i = 0; i < jobs.length; i += chunk) {
+        const part = await Promise.all(jobs.slice(i, i + chunk).map((j) => ensureOneDoc(j.kind, productId, j.type)));
+        results.push(...part);
+    }
+    return {
+        created: results.filter((r) => r.status === "ok").length,
+        errors: results.filter((r) => r.status === "error").map((r) => r.msg || `新建「${r.type}」失败`),
+    };
+};
 
 const stripNum = (title: string) => String(title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();
 const isMetaSection = (n: any) => {
@@ -387,7 +448,11 @@ export default () => {
             return Promise.resolve();
         }
         dispatch({ writing: true });
-        return writeStatsDoc(rows)
+        return ensureMissingDocs(productId).then((ens) => {
+            ens.errors.forEach((msg) => message.warning(msg));
+            if (ens.created) message.success(`已按模板新建 ${ens.created} 份缺失文档`);
+            return writeStatsDoc(rows);
+        })
             .then((stats: any) => writeAnnotPids(rows).then((ann: any) => ({ stats, ann })))
             .then(({ stats, ann }: any) => writeCollectDocs(rows).then((col: any) => ({ stats, ann, col })))
             .then(({ stats, ann, col }: any) => {
