@@ -593,7 +593,6 @@ export default () => {
     return (
         <div className="div-v page data-stats">
             <div className="data-stats-toolbar">
-                <span className="data-stats-title">数据自查</span>
                 <span className="data-stats-label">选择产品：</span>
                 <span className="data-stats-product">
                     <ProductVersionSelect
