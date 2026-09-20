@@ -3,10 +3,7 @@ import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
-import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProdHospital";
-import * as ApiProduct from "@/api/ApiProduct";
-import SelectProductEmpty from "@/views/SelectProductEmpty";
 
 const REGIONS = ["东区", "南区", "西区", "北区"];
 
@@ -26,8 +23,6 @@ export default () => {
     const [data, dispatch] = useData({
         rows: [],
         loading: false,
-        products: [],
-        targetProdId: null,
         fuzzy: "",
         targetEdit: {},
         editingField: null,
@@ -35,21 +30,9 @@ export default () => {
         importing: false,
     });
 
-    const loadProducts = () => {
-        ApiProduct.list_product({ page_index: 0, page_size: 1000 }).then((res: any) => {
-            if (res.code === ApiProduct.C_OK) {
-                dispatch({ products: res.data.rows || [] });
-            }
-        });
-    };
-
-    const loadHospitals = (prodId: any, fuzzy = "", allowSeed = true) => {
-        if (!prodId) {
-            dispatch({ rows: [] });
-            return;
-        }
+    const loadHospitals = (fuzzy = "", allowSeed = true) => {
         dispatch({ loading: true });
-        Api.list_prod_hospital({ prod_id: prodId, fuzzy: fuzzy || undefined, page_index: 0, page_size: 5000 }).then((res: any) => {
+        Api.list_prod_hospital({ fuzzy: fuzzy || undefined, page_index: 0, page_size: 5000 }).then((res: any) => {
             if (res.code !== Api.C_OK) {
                 dispatch({ loading: false, rows: [] });
                 message.error(res.msg);
@@ -58,9 +41,9 @@ export default () => {
             const rows = res.data.rows || [];
             if (allowSeed && !String(fuzzy || "").trim() && !rows.length && DEFAULT_HOSPITALS.length) {
                 const jobs = DEFAULT_HOSPITALS.map((h, i) =>
-                    Api.add_prod_hospital({ prod_id: prodId, ...h, sort_order: i + 1 })
+                    Api.add_prod_hospital({ prod_id: 0, ...h, sort_order: i + 1 })
                 );
-                Promise.all(jobs).then(() => loadHospitals(prodId, "", false)).catch(() => {
+                Promise.all(jobs).then(() => loadHospitals("", false)).catch(() => {
                     dispatch({ loading: false, rows });
                 });
                 return;
@@ -70,13 +53,9 @@ export default () => {
     };
 
     const doAdd = () => {
-        if (!data.targetProdId) {
-            message.warning("请先选择产品");
-            return;
-        }
         const maxSort = (data.rows || []).reduce((m: number, r: any) => Math.max(m, r.sort_order || 0), 0);
         Api.add_prod_hospital({
-            prod_id: data.targetProdId,
+            prod_id: 0,
             contract_no: "",
             org_name: "",
             hospital_no: "",
@@ -87,7 +66,7 @@ export default () => {
         }).then((res: any) => {
             if (res.code === Api.C_OK) {
                 message.success(res.msg || ts("msg_ok"));
-                loadHospitals(data.targetProdId, data.fuzzy, false);
+                loadHospitals(data.fuzzy, false);
             } else {
                 message.error(res.msg);
             }
@@ -95,21 +74,17 @@ export default () => {
     };
 
     const doImport = (file: any) => {
-        if (!data.targetProdId) {
-            message.warning("请先选择产品");
-            return false;
-        }
         Modal.confirm({
             title: "导入合规医院列表",
-            content: "导入将覆盖当前产品已有的医院，确认导入？",
+            content: "导入将覆盖当前全部医院，确认导入？",
             onOk: () => {
                 dispatch({ importing: true });
-                Api.import_prod_hospitals({ prod_id: data.targetProdId, replace: true, file: { fileList: [file] } }).then(
+                Api.import_prod_hospitals({ prod_id: 0, replace: true, file: { fileList: [file] } }).then(
                     (res: any) => {
                         dispatch({ importing: false });
                         if (res.code === Api.C_OK) {
                             message.success(`导入成功，共 ${res.data?.imported ?? 0} 家`);
-                            loadHospitals(data.targetProdId, data.fuzzy, false);
+                            loadHospitals(data.fuzzy, false);
                         } else {
                             message.error(res.msg);
                         }
@@ -128,7 +103,7 @@ export default () => {
                 Api.delete_prod_hospitals({ id: row.id }).then((res: any) => {
                     if (res.code === Api.C_OK) {
                         message.success(res.msg);
-                        loadHospitals(data.targetProdId, data.fuzzy, false);
+                        loadHospitals(data.fuzzy, false);
                     } else {
                         message.error(res.msg);
                     }
@@ -223,7 +198,7 @@ export default () => {
     ];
 
     useEffect(() => {
-        loadProducts();
+        loadHospitals("", true);
     }, []);
 
     return (
@@ -231,45 +206,27 @@ export default () => {
             <div className="div-h searchbar list-searchbar-align">
                 <Row gutter={10} className="expand">
                     <Col>
-                        <Space>
-                            <span>{ts("srs_doc.select_product")}：</span>
-                            <div style={{ minWidth: 360 }}>
-                                <ProductVersionSelect
-                                    products={data.products}
-                                    allowClear
-                                    value={data.targetProdId}
-                                    namePlaceholder={ts("product.name")}
-                                    versionPlaceholder={ts("product.version")}
-                                    onChange={(v: any) => {
-                                        dispatch({ targetProdId: v ?? null, targetEdit: {}, editingField: null, fuzzy: "" });
-                                        loadHospitals(v ?? null, "", true);
-                                    }}
-                                />
-                            </div>
-                            <Input.Search
-                                allowClear
-                                placeholder="医院名称 / 医院编号 / 省份 / 城市"
-                                style={{ width: 280 }}
-                                disabled={!data.targetProdId}
-                                value={data.fuzzy}
-                                onChange={(e) => dispatch({ fuzzy: e.target.value })}
-                                onSearch={(v) => loadHospitals(data.targetProdId, v, true)}
-                            />
-                        </Space>
+                        <Input.Search
+                            allowClear
+                            placeholder="医院名称 / 医院编号 / 省份 / 城市"
+                            style={{ width: 280 }}
+                            value={data.fuzzy}
+                            onChange={(e) => dispatch({ fuzzy: e.target.value })}
+                            onSearch={(v) => loadHospitals(v, true)}
+                        />
                     </Col>
                 </Row>
                 <div className="div-h hspace">
                     <Upload showUploadList={false} accept=".xls,.xlsx" beforeUpload={doImport}>
-                        <Button type="primary" disabled={!data.targetProdId} loading={data.importing}>
+                        <Button type="primary" loading={data.importing}>
                             导入
                         </Button>
                     </Upload>
-                    <Button disabled={!data.targetProdId} onClick={doAdd}>
+                    <Button onClick={doAdd}>
                         {ts("add")}
                     </Button>
                 </div>
             </div>
-            {data.targetProdId ? (
             <Table
                 className="expand"
                 columns={columns}
@@ -279,9 +236,6 @@ export default () => {
                 pagination={false}
                 footer={() => sprintf(ts("total_items"), { total: (data.rows || []).length })}
             />
-            ) : (
-                <SelectProductEmpty />
-            )}
         </div>
     );
 };

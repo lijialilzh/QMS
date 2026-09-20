@@ -62,10 +62,11 @@ class Server(object):
 
     async def add_prod_hospital(self, form: ProdHospitalForm):
         try:
-            if not form.prod_id:
-                return Resp.resp_err(msg=ts("msg_err_param"))
+            if form.prod_id is None:
+                form.prod_id = 0
             row = ProdHospital(**form.dict())
             row.id = None
+            row.prod_id = form.prod_id or 0
             db.session.add(row)
             db.session.commit()
             return Resp.resp_ok()
@@ -103,10 +104,8 @@ class Server(object):
                                  page_index: int = 0, page_size: int = 10):
         page_index = page_index if page_index >= 0 else 0
         page_size = page_size if page_size > 0 else 10
-        if not prod_id:
-            return Resp.resp_ok(data=Page(total=0, page_size=page_size, rows=[], page_index=page_index))
-
-        sql = select(ProdHospital).where(ProdHospital.prod_id == prod_id)
+        # 全局清单：不按产品过滤
+        sql = select(ProdHospital)
         kw = (fuzzy or "").strip()
         if kw:
             like = f"%{kw}%"
@@ -130,8 +129,6 @@ class Server(object):
 
     async def import_prod_hospitals(self, prod_id: int, file_bytes: bytes, replace: bool = True):
         try:
-            if not prod_id:
-                return Resp.resp_err(msg=ts("msg_err_param"))
             grid = _read_excel_grid(file_bytes)
             header_idx, header_cells = _header_index(grid)
             if header_idx is None:
@@ -142,7 +139,7 @@ class Server(object):
                 if field and field not in col_map:
                     col_map[field] = i
             if replace:
-                db.session.execute(delete(ProdHospital).where(ProdHospital.prod_id == prod_id))
+                db.session.execute(delete(ProdHospital))
             imported = 0
             sort_order = 0
             seen_nos = set()
@@ -163,7 +160,7 @@ class Server(object):
                     seen_nos.add(no_key)
                 sort_order += 1
                 db.session.add(ProdHospital(
-                    prod_id=prod_id,
+                    prod_id=0,
                     contract_no=cell("contract_no"),
                     org_name=org_name,
                     hospital_no=hospital_no,

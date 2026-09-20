@@ -61,7 +61,7 @@ const matchModuleCodes = (moduleName: string, items: Array<{ code: string; name:
             );
         if (moduleName === "基础配置")
             return code.startsWith("print_cfg") || ["version_rule", "company_info", "person_sign"].some((k) => code.startsWith(k));
-        if (moduleName === "基础数据") return name.startsWith("基础数据/") || ["haz", "rcm", "cst"].some((k) => code.startsWith(k));
+        if (moduleName === "基础数据") return name.startsWith("基础数据/") || ["haz", "rcm", "cst", "prod_hospital"].some((k) => code.startsWith(k));
         if (moduleName === "产品管理")
             return (
                 code.startsWith("product") ||
@@ -69,7 +69,7 @@ const matchModuleCodes = (moduleName: string, items: Array<{ code: string; name:
                 code.startsWith("prod_rcm") ||
                 code.startsWith("prod_cst") ||
                 code.startsWith("prod_dhf") ||
-                ["project_member", "project_timeline", "prod_runtime", "prod_device", "prod_hospital", "prod_algo_module", "prod_algo_chapter"].some((k) => code.startsWith(k))
+                ["project_member", "project_timeline", "prod_runtime", "prod_device", "prod_algo_module", "prod_algo_chapter"].some((k) => code.startsWith(k))
             );
         if (moduleName === "产品文件管理")
             return (

@@ -183,6 +183,11 @@ export default () => {
                         label: ts("menu.csts"),
                         perm: "cst_view",
                     },
+                    {
+                        key: "/prod_hospitals",
+                        label: ts("menu.prod_hospitals"),
+                        perm: "prod_hospital_view",
+                    },
                 ],
             },
             {
@@ -218,11 +223,6 @@ export default () => {
                                 key: "/prod_device_res",
                                 label: ts("menu.prod_device_res"),
                                 perm: "prod_device_view",
-                            },
-                            {
-                                key: "/prod_hospitals",
-                                label: ts("menu.prod_hospitals"),
-                                perm: "prod_hospital_view",
                             },
                             {
                                 key: "prod_algo_mgmt",

@@ -47,7 +47,7 @@ class Perms(Enum):
     prod_device_view = PermForm(code="prod_device_view", name="查看", p_code=prod_device.code)
     prod_device_edit = PermForm(code="prod_device_edit", name="编辑", p_code=prod_device.code)
 
-    prod_hospital = PermForm(code="prod_hospital", name="产品管理/合规医院列表")
+    prod_hospital = PermForm(code="prod_hospital", name="基础数据/合规医院列表")
     prod_hospital_view = PermForm(code="prod_hospital_view", name="查看", p_code=prod_hospital.code)
     prod_hospital_edit = PermForm(code="prod_hospital_edit", name="编辑", p_code=prod_hospital.code)
 
