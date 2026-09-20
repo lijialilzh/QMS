@@ -72,10 +72,13 @@ function resolveFileUrl(url: string | undefined): string {
     return `${window.location.origin}/${url.replace(/^\//, "")}`;
 }
 
+function isImportedImageTitle(title?: string): boolean {
+    const t = String(title || "").trim().replace(/^\d+(?:\.\d+)*\s+/, "");
+    return /^导入图片\d*$/.test(t);
+}
+
 function isImportedImageNode(node: TreeNode): boolean {
-    const title = (node.title || "").trim();
-    const onlyImage = !!node.img_url && !node.text && (!node.table || !node.table.headers?.length) && (!node.children || node.children.length === 0);
-    return /^导入图片\d*$/.test(title) && onlyImage;
+    return isImportedImageTitle(node.title);
 }
 
 function isEmbeddedImageNode(node: TreeNode): boolean {
@@ -1043,11 +1046,14 @@ export async function remapProductBoundDocImages(
     const walk = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
         const boundType = resolveProductBoundDocImageRefType(node);
         const mappedUrl = boundType ? fileMaps.get(boundType) : undefined;
+        const nextChildren = boundType
+            ? (node.children || []).filter((child) => !isImportedImageNode(child))
+            : (node.children || []);
         return {
             ...node,
             ...(boundType && !node.ref_type ? { ref_type: boundType } : {}),
             img_url: boundType ? (mappedUrl || "") : (node.img_url || ""),
-            children: walk(node.children || []),
+            children: walk(nextChildren),
         };
     });
     return walk(treeNodes);
@@ -4796,11 +4802,13 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
 
     const handleImageChange = (id: number, img_url: string) => {
         const clearEmbeddedImages = (children: TreeNode[] = []): TreeNode[] => (
-            children.map((child) => (
-                isEmbeddedImageNode(child)
-                    ? { ...child, img_url: "" }
-                    : { ...child, children: clearEmbeddedImages(child.children || []) }
-            ))
+            children
+                .filter((child) => !isImportedImageNode(child))
+                .map((child) => (
+                    isEmbeddedImageNode(child)
+                        ? { ...child, img_url: "" }
+                        : { ...child, children: clearEmbeddedImages(child.children || []) }
+                ))
         );
         const updateImageById = (nodeList: TreeNode[]): TreeNode[] => {
             return nodeList.map((node) => {
