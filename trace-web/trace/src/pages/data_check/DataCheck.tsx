@@ -616,9 +616,9 @@ export default () => {
                 共 12 项：亚组、回传总数、基础库总量、三库例数、回传与实际接收、回传/整理医院、整理数据量、上传记录与统计表、查重与标注上传、病例标识、TXID 与回传医院、关键字段完整。不改任何数据文件。
             </div>
             <Spin spinning={data.loading}>
-                <Space direction="vertical" style={{ width: "100%", marginTop: 12 }} size={8}>
+                <Space className="data-check-items" direction="vertical" size={4}>
                     {(data.items || []).map((it: CheckItem, idx: number) => (
-                        <Alert key={`${idx}-${it.title}`} type={it.ok ? "success" : "error"} showIcon message={it.title} description={it.detail} />
+                        <Alert key={`${idx}-${it.title}`} type={it.ok ? "success" : "error"} showIcon message={`${it.title}：${it.detail}`} />
                     ))}
                     {!!(data.fails || []).length && (
                         <Table

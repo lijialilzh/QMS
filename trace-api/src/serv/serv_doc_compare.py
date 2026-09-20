@@ -6,6 +6,7 @@
 import copy
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import select, func
 from sqlalchemy.sql import text
@@ -86,8 +87,11 @@ class Server(object):
         if not cfg:
             return Resp.resp_err(msg=ts("msg_err_param"))
         table = cfg["table"]
-        sql = text(f"SELECT id, version, file_no, change_log, create_time FROM {table} WHERE product_id = :pid ORDER BY id DESC")
-        rows = db.session.execute(sql, {"pid": product_id}).fetchall()
+        sql = text(
+            f"SELECT id, version, file_no, change_log, create_time FROM {table} "
+            f"WHERE product_id = :pid AND (version IS NULL OR version NOT LIKE :deleted) ORDER BY id DESC"
+        )
+        rows = db.session.execute(sql, {"pid": product_id, "deleted": "__deleted_%"}).fetchall()
         result = []
         for row in rows:
             result.append({
@@ -171,10 +175,11 @@ class Server(object):
 
             title_a = sa["title"] if sa else "(无)"
             title_b = sb["title"] if sb else "(无)"
+            label = title_a if title_a and title_a != "(无)" else (title_b if title_b and title_b != "(无)" else f"未命名章节{i+1}")
             title_same = 1 if self.__normalize_text(title_a) == self.__normalize_text(title_b) else 0
             results.append(CompareObj(
                 column_code=f"section_{i}_title",
-                column_name=f"章节{i+1}标题",
+                column_name=label,
                 same_flag=title_same,
                 values=[title_a, title_b],
             ))
@@ -184,23 +189,216 @@ class Server(object):
             body_same = 1 if self.__normalize_text(body_a) == self.__normalize_text(body_b) else 0
             results.append(CompareObj(
                 column_code=f"section_{i}_body",
-                column_name=f"章节{i+1}正文",
+                column_name=f"{label} 正文",
                 same_flag=body_same,
                 values=[body_a[:200] + ("..." if len(body_a) > 200 else ""),
                         body_b[:200] + ("..." if len(body_b) > 200 else "")],
             ))
 
-            # 比对表格
             tables_a = sa["table_texts"] if sa else []
             tables_b = sb["table_texts"] if sb else []
             table_count_same = 1 if len(tables_a) == len(tables_b) else 0
             results.append(CompareObj(
                 column_code=f"section_{i}_table_count",
-                column_name=f"章节{i+1}表格项数",
+                column_name=f"{label} 表格项数",
                 same_flag=table_count_same,
                 values=[str(len(tables_a)), str(len(tables_b))],
             ))
 
+        return results
+
+    def __clip_text(self, value: Any, limit: int = 400) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return "-"
+        if len(text) <= limit:
+            return text
+        return text[:limit] + "…"
+
+    def __diff_snippets(self, left: str, right: str, window: int = 160) -> Tuple[str, str]:
+        a = str(left or "").strip()
+        b = str(right or "").strip()
+        if not a and not b:
+            return "-", "-"
+        if self.__normalize_text(a) == self.__normalize_text(b):
+            return a or "-", b or "-"
+        n = min(len(a), len(b))
+        i = 0
+        while i < n and a[i] == b[i]:
+            i += 1
+        start = max(0, i - 20)
+
+        def piece(s: str, empty: str) -> str:
+            if not s:
+                return empty
+            out = ("…" if start else "") + s[start:start + window]
+            if start + window < len(s):
+                out += "…"
+            return out
+
+        return piece(a, "(无此章)"), piece(b, "(无此章)")
+
+    def __strip_chapter_prefix(self, title: str) -> str:
+        stripped = str(title or "").strip()
+        prev = None
+        while stripped != prev:
+            prev = stripped
+            stripped = re.sub(r"^\s*\d+(?:\.\d+)*(?:[、.\s　]+|(?=[\u4e00-\u9fffA-Za-z]))", "", stripped).strip()
+        return stripped
+
+    def __flatten_table(self, tbl: Any) -> str:
+        if tbl is None:
+            return ""
+        if isinstance(tbl, str):
+            raw = tbl.strip()
+            if not raw:
+                return ""
+            try:
+                tbl = json.loads(raw)
+            except Exception:
+                return raw
+        cells: List[str] = []
+
+        def walk(node: Any):
+            if node is None:
+                return
+            if isinstance(node, str):
+                s = node.strip()
+                if s:
+                    cells.append(s)
+                return
+            if isinstance(node, dict):
+                for key in ("name", "title", "value", "text"):
+                    if key in node:
+                        walk(node[key])
+                for key in ("headers", "rows", "data", "children"):
+                    if key in node:
+                        walk(node[key])
+                return
+            if isinstance(node, list):
+                for item in node:
+                    walk(item)
+
+        walk(tbl)
+        return " ".join(cells)
+
+    def __is_unnumbered_node(self, title: str, ref_type: str) -> bool:
+        compact = str(title or "").replace(" ", "")
+        ref = str(ref_type or "")
+        if ref in ("cover", "revision", "review") or compact in ("封面", "文件修订记录", "评审记录", "附件一评审结论"):
+            return True
+        if compact.startswith("附件一") or "评审记录" in compact:
+            return True
+        if re.match(r"^表\d+", str(title or "").strip()):
+            return True
+        return False
+
+    def __is_embedded_node(self, title: str, ref_type: str) -> bool:
+        t = str(title or "").strip()
+        ref = str(ref_type or "")
+        if ref in ("srs_reqs", "srs_reqs_2", "srs_reqds", "img_flow"):
+            return True
+        if re.match(r"^导入表格\d*$", t) or re.match(r"^导入图片\d*$", t) or re.match(r"^图\s*\d+", t):
+            return True
+        return False
+
+    def __extract_node_chapters(self, node_table: str, doc_id: int) -> List[Dict]:
+        sql = text(
+            f'SELECT n_id, p_id, title, priority, text, "table", ref_type FROM {node_table} '
+            f"WHERE doc_id = :doc_id ORDER BY priority, n_id"
+        )
+        rows = db.session.execute(sql, {"doc_id": doc_id}).fetchall()
+        children: Dict[int, List] = {}
+        for row in rows:
+            children.setdefault(int(row[1] or 0), []).append(row)
+
+        def node_blob(row) -> str:
+            parts = [str(row[4] or "").strip(), self.__flatten_table(row[5])]
+            for child in children.get(int(row[0]), []):
+                title = str(child[2] or "").strip()
+                ref = str(child[6] or "")
+                if self.__is_embedded_node(title, ref) or re.match(r"^表\d+", title):
+                    nested = node_blob(child)
+                    if nested:
+                        parts.append(nested)
+            return "\n".join([p for p in parts if p])
+
+        chapters: List[Dict] = []
+
+        def walk(nodes: List, prefix: str):
+            idx = 0
+            for row in nodes or []:
+                title = str(row[2] or "").strip()
+                ref = str(row[6] or "")
+                if self.__is_embedded_node(title, ref):
+                    continue
+                kids = children.get(int(row[0]), [])
+                if self.__is_unnumbered_node(title, ref):
+                    name = self.__strip_chapter_prefix(title) or title or "未命名"
+                    chapters.append({"num": "", "name": name, "title": name, "text": node_blob(row)})
+                    walk(kids, prefix)
+                    continue
+                idx += 1
+                num = f"{prefix}.{idx}" if prefix else str(idx)
+                name = self.__strip_chapter_prefix(title) or f"章节{num}"
+                chapters.append({
+                    "num": num,
+                    "name": name,
+                    "title": f"{num} {name}".strip(),
+                    "text": node_blob(row),
+                })
+                walk(kids, num)
+
+        walk(children.get(0, []), "")
+        return chapters
+
+    def __compare_node_chapters(self, node_table: str, id0: int, id1: int) -> List[CompareObj]:
+        a_list = self.__extract_node_chapters(node_table, id0)
+        b_list = self.__extract_node_chapters(node_table, id1)
+        unused_b = list(b_list)
+        pairs = []
+        for a in a_list:
+            hit = -1
+            key = self.__normalize_text(a["name"])
+            for i, b in enumerate(unused_b):
+                if self.__normalize_text(b["name"]) == key:
+                    hit = i
+                    break
+            if hit >= 0:
+                pairs.append((a, unused_b.pop(hit)))
+            else:
+                pairs.append((a, None))
+        for b in unused_b:
+            pairs.append((None, b))
+
+        results = []
+        results.append(CompareObj(
+            column_code="section_count",
+            column_name="章节数量",
+            same_flag=1 if len(a_list) == len(b_list) else 0,
+            values=[str(len(a_list)), str(len(b_list))],
+        ))
+        for i, (a, b) in enumerate(pairs):
+            text_a = a["text"] if a else ""
+            text_b = b["text"] if b else ""
+            same_text = self.__normalize_text(text_a) == self.__normalize_text(text_b)
+            if a and b and same_text:
+                continue
+            if a and b:
+                label = a["title"] if a["title"] == b["title"] else f"{a['title']} / {b['title']}"
+                va, vb = self.__diff_snippets(text_a, text_b)
+            elif a:
+                label = a["title"]
+                va, vb = self.__clip_text(text_a or a["title"]), "(无此章)"
+            else:
+                label = b["title"]
+                va, vb = "(无此章)", self.__clip_text(text_b or b["title"])
+            results.append(CompareObj(
+                column_code=f"chapter_{i}",
+                column_name=label,
+                same_flag=0,
+                values=[va, vb],
+            ))
         return results
 
     async def compare_doc(self, doc_type: str, id0: int, id1: int):
@@ -210,14 +408,26 @@ class Server(object):
             return Resp.resp_err(msg=ts("msg_err_param"))
         table = cfg["table"]
 
-        # SRS/SDS 没有 content 字段，需要从节点表查询
-        is_node_doc = doc_type in ("srs", "sds")
-        node_table = "srs_node" if doc_type == "srs" else "sds_node"
+        if doc_type in ("srs", "sds"):
+            if doc_type == "srs":
+                from .serv_srs_doc import Server as SrsServer
+                feat = await SrsServer().compare_srs_doc(id0, id1)
+                node_table = "srs_node"
+            else:
+                from .serv_sds_doc import Server as SdsServer
+                feat = await SdsServer().compare_sds_doc(id0, id1)
+                node_table = "sds_node"
+            if feat.code != 1:
+                return feat
+            results = list(feat.data or [])
+            results.extend(self.__compare_node_chapters(node_table, id0, id1))
+            return Resp.resp_ok(data=results)
 
-        if is_node_doc:
-            sql = text(f"SELECT t.id, t.product_id, t.version, t.file_no, t.change_log, p.name as product_name, p.full_version as product_version, p.type_code as product_type_code FROM {table} t JOIN product p ON t.product_id = p.id WHERE t.id IN (:id0, :id1)")
-        else:
-            sql = text(f"SELECT t.id, t.product_id, t.version, t.file_no, t.change_log, t.content, p.name as product_name, p.full_version as product_version, p.type_code as product_type_code FROM {table} t JOIN product p ON t.product_id = p.id WHERE t.id IN (:id0, :id1)")
+        sql = text(
+            f"SELECT t.id, t.product_id, t.version, t.file_no, t.change_log, t.content, "
+            f"p.name as product_name, p.full_version as product_version, p.type_code as product_type_code "
+            f"FROM {table} t JOIN product p ON t.product_id = p.id WHERE t.id IN (:id0, :id1)"
+        )
         rows = db.session.execute(sql, {"id0": id0, "id1": id1}).fetchall()
         if len(rows) != 2:
             return Resp.resp_err(msg=ts("msg_obj_null"))
@@ -233,7 +443,6 @@ class Server(object):
 
         results = []
 
-        # 1. 比对基本信息
         base_fields = [
             ("product_name", "产品名称"),
             ("product_type_code", "产品型号"),
@@ -252,53 +461,15 @@ class Server(object):
                 values=[v0, v1],
             ))
 
-        # 2. 比对章节内容
-        if is_node_doc:
-            # SRS/SDS：从节点表提取章节标题
-            node_sql = text(f"SELECT n_id, p_id, title, priority FROM {node_table} WHERE doc_id = :doc_id ORDER BY priority, n_id")
-            nodes0 = db.session.execute(node_sql, {"doc_id": id0}).fetchall()
-            nodes1 = db.session.execute(node_sql, {"doc_id": id1}).fetchall()
+        try:
+            content0 = json.loads(doc0[5]) if isinstance(doc0[5], str) else (doc0[5] or {})
+            content1 = json.loads(doc1[5]) if isinstance(doc1[5], str) else (doc1[5] or {})
+        except Exception:
+            content0 = doc0[5] or {}
+            content1 = doc1[5] or {}
 
-            def extract_titles(nodes):
-                titles = []
-                for n in nodes:
-                    t = str(n[2] or "").strip()
-                    if t:
-                        titles.append(t)
-                return titles
-
-            titles0 = extract_titles(nodes0)
-            titles1 = extract_titles(nodes1)
-
-            results.append(CompareObj(
-                column_code="section_count",
-                column_name="章节数量",
-                same_flag=1 if len(titles0) == len(titles1) else 0,
-                values=[str(len(titles0)), str(len(titles1))],
-            ))
-
-            max_len = max(len(titles0), len(titles1))
-            for i in range(max_len):
-                ta = titles0[i] if i < len(titles0) else "(无)"
-                tb = titles1[i] if i < len(titles1) else "(无)"
-                results.append(CompareObj(
-                    column_code=f"section_{i}_title",
-                    column_name=f"章节{i+1}",
-                    same_flag=1 if self.__normalize_text(ta) == self.__normalize_text(tb) else 0,
-                    values=[ta, tb],
-                ))
-        else:
-            # content(JSON) 文档
-            try:
-                content0 = json.loads(doc0[5]) if isinstance(doc0[5], str) else (doc0[5] or {})
-                content1 = json.loads(doc1[5]) if isinstance(doc1[5], str) else (doc1[5] or {})
-            except Exception:
-                content0 = doc0[5] or {}
-                content1 = doc1[5] or {}
-
-            sections_a = self.__extract_section_texts(content0)
-            sections_b = self.__extract_section_texts(content1)
-            section_results = self.__compare_sections(sections_a, sections_b)
-            results.extend(section_results)
+        sections_a = self.__extract_section_texts(content0)
+        sections_b = self.__extract_section_texts(content1)
+        results.extend(self.__compare_sections(sections_a, sections_b))
 
         return Resp.resp_ok(data=results)

@@ -189,9 +189,7 @@ export default () => {
                     <Spin spinning={data.loading}>
                         {data.rows.length > 0 && (
                             <div style={{ marginBottom: 8, color: "#888", fontSize: 13 }}>
-                                共 {data.rows.length} 项比对结果
-                                &nbsp;|&nbsp;
-                                不同项：{data.rows.filter((r: any) => r.same_flag !== 1).length} 项
+                                共比对 {data.rows.length} 项，仅展示不同项 {data.rows.filter((r: any) => r.same_flag !== 1).length} 项
                             </div>
                         )}
                         <div className="comparison-table-wrap">
@@ -211,7 +209,7 @@ export default () => {
                                     <col style={{ width: "14%" }} />
                                 </colgroup>
                                 <tbody>
-                                    {(data.rows || []).map((row: any) => (
+                                    {(data.rows || []).filter((r: any) => r.same_flag !== 1).map((row: any) => (
                                         <tr key={row.column_code}>
                                             <td title={toCellText(row.column_name)}>
                                                 <span className="comparison-cell-text">{toCellText(row.column_name)}</span>
@@ -222,18 +220,19 @@ export default () => {
                                             <td title={toCellText(row.values?.[1])}>
                                                 <span className="comparison-cell-text" style={{ whiteSpace: "pre-wrap" }}>{toCellText(row.values?.[1])}</span>
                                             </td>
-                                            <td title={row.same_flag === 1 ? "相同" : "不同"}>
-                                                {row.same_flag === 1 ? (
-                                                    <span className="comparison-tag same">相同</span>
-                                                ) : (
-                                                    <span className="comparison-tag diff">不同</span>
-                                                )}
+                                            <td title="不同">
+                                                <span className="comparison-tag diff">不同</span>
                                             </td>
                                         </tr>
                                     ))}
                                     {(!data.rows || data.rows.length === 0) && !data.loading && (
                                         <tr>
                                             <td colSpan={4} className="comparison-empty-cell">请选择文档名称、产品和版本后点击"开始比对"</td>
+                                        </tr>
+                                    )}
+                                    {!!(data.rows || []).length && (data.rows || []).every((r: any) => r.same_flag === 1) && !data.loading && (
+                                        <tr>
+                                            <td colSpan={4} className="comparison-empty-cell">全部相同，无不同项</td>
                                         </tr>
                                     )}
                                 </tbody>

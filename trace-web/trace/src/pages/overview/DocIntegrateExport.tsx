@@ -218,8 +218,7 @@ export default () => {
         <div className="page div-v doc-integrate">
             <div className="div-h doc-integrate-toolbar">
                 <div className="doc-integrate-title">
-                    <span style={{ fontSize: 18, fontWeight: 700, color: "#1e3a8a" }}>整合导出</span>
-                    <span style={{ marginLeft: 16, width: 360, display: "inline-block" }}>
+                    <span style={{ width: 360, display: "inline-block" }}>
                         <ProductVersionSelect
                             products={products}
                             value={productId}

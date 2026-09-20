@@ -1,4 +1,4 @@
-import { Button, Space, Table, Tag, Tooltip, message } from "antd";
+import { Button, Table, Tag, Tooltip, message } from "antd";
 import { useEffect, useState } from "react";
 import * as ApiIntegrate from "@/api/ApiDocIntegrate";
 import "./DocRecords.less";
@@ -39,13 +39,10 @@ export default () => {
 
     return (
         <div className="page div-v doc-records-page">
-            <div className="div-h doc-records-toolbar">
-                <span style={{ fontSize: 18, fontWeight: 700, color: "#1e3a8a" }}>导出记录</span>
-                <Space style={{ marginLeft: "auto" }}>
-                    <Button onClick={load}>刷新</Button>
-                </Space>
-            </div>
             <div className="doc-records-body">
+                <div className="doc-records-actions">
+                    <Button size="small" onClick={load}>刷新</Button>
+                </div>
                 <Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={false} size="small" />
             </div>
         </div>

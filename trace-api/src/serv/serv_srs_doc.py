@@ -3930,8 +3930,6 @@ class Server(object):
         added1_keys = sorted(features1 - features0)
         added0 = [feature_name_dict.get(id0, {}).get(key, key) for key in added0_keys]
         added1 = [feature_name_dict.get(id1, {}).get(key, key) for key in added1_keys]
-        removed0 = added1
-        removed1 = added0
 
         infos = {}
         for row_srsdoc, row_prd in rows:
@@ -3959,12 +3957,6 @@ class Server(object):
                 column_name="新增功能",
                 same_flag=1 if not added0 and not added1 else 0,
                 values=[__to_text(added0), __to_text(added1)],
-            ),
-            CompareObj(
-                column_code="feature_removed",
-                column_name="减少功能",
-                same_flag=1 if not removed0 and not removed1 else 0,
-                values=[__to_text(removed0), __to_text(removed1)],
             ),
         ]
         return Resp.resp_ok(data=results)
