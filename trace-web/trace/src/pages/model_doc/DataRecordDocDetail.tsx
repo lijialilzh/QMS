@@ -514,7 +514,15 @@ const applyDd011Table = (nodes: any[], src: {
 
 const latestDataDoc = (productId: number, docType: string) =>
     Api.list_data_doc({ product_id: productId, doc_type: docType, page_index: 0, page_size: 1 })
-        .then((res: any) => (res && res.code === Api.C_OK ? (((res.data && res.data.rows) || [])[0] || null) : null))
+        .then((res: any) => {
+            if (!res || res.code !== Api.C_OK) return null;
+            const hit = ((res.data && res.data.rows) || [])[0];
+            if (!hit) return null;
+            if (hit.content && Array.isArray(hit.content.sections) && hit.content.sections.length) return hit;
+            return Api.get_data_doc({ id: hit.id }).then((got: any) =>
+                (got && got.code === Api.C_OK ? (got.data || null) : null)
+            );
+        })
         .catch(() => null);
 
 const fillDd011Feedback = (productId: number, secs: any[]): Promise<any[]> => {
@@ -882,7 +890,7 @@ const parseDd002ReturnRows = (secs: any[]) => {
             if (!n) return;
             if (isMetaSection(n)) { walk(n.children || []); return; }
             (n.tables || []).forEach((tb: any[]) => {
-                if (!Array.isArray(tb) || list.length) return;
+                if (!Array.isArray(tb)) return;
                 let headerIdx = -1;
                 let iOrg = -1;
                 let iRecv = -1;
@@ -1501,21 +1509,46 @@ const parseDd015TotalQty = (content: any): string => {
     return total;
 };
 
-const fillDd010FromReturn = (productId: number, secs: any[]): Promise<any[]> => {
+const srcFromCases = (cases: { qty: Record<string, number>; order: string[] } | null, hp: any) => {
+    if (!cases || !cases.order || !cases.order.length) return [] as { org: string; recv: string; qty: string; no: string }[];
+    const rows = hp && hp.code === ApiHospital.C_OK ? ((hp.data && hp.data.rows) || []) : [];
+    const byNo = new Map<string, { org_name: string; hospital_no: string }>();
+    rows.forEach((r: any) => {
+        const key = String(r.hospital_no || "").trim().toUpperCase();
+        if (key && !byNo.has(key)) {
+            byNo.set(key, { org_name: String(r.org_name || "").trim(), hospital_no: String(r.hospital_no || "").trim() });
+        }
+    });
+    return cases.order.map((no) => {
+        const key = String(no || "").trim().toUpperCase();
+        const h = byNo.get(key);
+        if (!h) return null;
+        return { org: h.org_name, recv: "", qty: String(cases.qty[key] || 0), no: h.hospital_no };
+    }).filter(Boolean) as { org: string; recv: string; qty: string; no: string }[];
+};
+
+export const fillDd010FromReturn = (productId: number, secs: any[], caseRows?: any[]): Promise<any[]> => {
     if (!productId) return Promise.resolve(secs);
+    const hasRows = !!(caseRows && caseRows.length);
+    const casesP = hasRows ? Promise.resolve(packDd002Cases(caseRows || [])) : Promise.resolve(null);
     return Promise.all([
         latestDataDoc(productId, "dd_002"),
-        latestDataDoc(productId, "dd_015_03"),
+        hasRows ? Promise.resolve(null) : latestDataDoc(productId, "dd_015_03"),
         ApiProduct.get_product({ id: productId }).catch(() => null),
         ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
         ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
-    ]).then(([doc, dd01503, pr, tl, mb]: any[]) => {
-        const src = parseDd002ReturnRows((doc && doc.content && doc.content.sections) || []);
+        ApiHospital.list_prod_hospital({ prod_id: productId, page_index: 0, page_size: 5000 }).catch(() => null),
+        casesP,
+    ]).then(([doc, dd01503, pr, tl, mb, hp, cases]: any[]) => {
+        let src = srcFromCases(cases, hp);
+        if (!src.length) src = parseDd002ReturnRows((doc && doc.content && doc.content.sections) || []);
         const productName = pr && pr.code === ApiProduct.C_OK ? String((pr.data || {}).name || "").trim() : "";
         const cached = readStatsCache(productId, "ann");
-        const annQty = (cached && cached.rows && cached.rows.length)
-            ? String(cached.rows.length)
-            : parseDd015TotalQty(dd01503 && dd01503.content);
+        const annQty = hasRows
+            ? String((caseRows || []).length)
+            : (cached && cached.rows && cached.rows.length)
+                ? String(cached.rows.length)
+                : parseDd015TotalQty(dd01503 && dd01503.content);
         const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
         const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
         const extra = {
@@ -1527,7 +1560,17 @@ const fillDd010FromReturn = (productId: number, secs: any[]): Promise<any[]> => 
         if (!src.length && !productName && !annQty && !extra.rawDates.length && !extra.baseDates.length
             && !extra.annDates.length && !extra.cleaners.length) return secs;
         return applyDd010FromReturn(secs, src, productName, annQty, extra);
-    }).catch(() => secs);
+    }).catch(() => {
+        if (!hasRows) return secs;
+        const cases = packDd002Cases(caseRows || []);
+        const src = (cases && cases.order || []).map((no) => ({
+            org: no,
+            recv: "",
+            qty: String((cases && cases.qty && cases.qty[no]) || 0),
+            no,
+        }));
+        return applyDd010FromReturn(secs, src, "", String((caseRows || []).length), {});
+    });
 };
 
 const applyDd012Project = (
@@ -1626,7 +1669,7 @@ const applyDd012Project = (
     return (nodes || []).map(fix);
 };
 
-const fillDd012FromProduct = (productId: number, secs: any[]): Promise<any[]> => {
+export const fillDd012FromProduct = (productId: number, secs: any[]): Promise<any[]> => {
     if (!productId) return Promise.resolve(secs);
     return Promise.all([
         ApiProduct.get_product({ id: productId }).catch(() => null),

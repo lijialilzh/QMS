@@ -32,13 +32,14 @@ import {
     caseRowsFromContent,
     importGpdExcel,
 } from "./dataStatsLocal";
-import { fillDd002Hospitals, fillDd003FromReturn, stripKeys } from "../model_doc/DataRecordDocDetail";
+import { fillDd002Hospitals, fillDd003FromReturn, fillDd010FromReturn, fillDd012FromProduct, stripKeys } from "../model_doc/DataRecordDocDetail";
 
 const KIND_DOC: Record<StatsKind, { type: string; title: string }> = {
     raw: { type: "dd_015_01", title: "原始数据库统计表" },
     base: { type: "dd_015_02", title: "基础数据库统计表" },
     ann: { type: "dd_015_03", title: "标注数据库统计表" },
 };
+const STATS_KINDS: StatsKind[] = ["raw", "base", "ann"];
 
 const ANN_PID_DOCS = [
     { type: "dd_008_01", title: "肺栓塞分割试标注记录" },
@@ -78,16 +79,19 @@ export default () => {
     const ctxRef = useRef(data);
     ctxRef.current = data;
     const quotaWarned = useRef(false);
-    const wroteOnLoad = useRef(false);
 
     const persistRows = (rows: CaseRow[], extra?: { person?: string; dataType?: string; disease?: string; source?: string }) => {
         const cur = ctxRef.current;
-        const ok = saveStatsCache(cur.productId || 0, cur.kind as StatsKind, {
+        const item = {
             rows,
             person: extra?.person ?? cur.person ?? "",
             dataType: extra?.dataType ?? cur.dataType ?? "",
             disease: extra?.disease ?? cur.disease ?? "",
             source: extra?.source ?? cur.source ?? "",
+        };
+        let ok = true;
+        STATS_KINDS.forEach((kind) => {
+            if (!saveStatsCache(cur.productId || 0, kind, item)) ok = false;
         });
         if (!ok && !quotaWarned.current) {
             quotaWarned.current = true;
@@ -177,34 +181,25 @@ export default () => {
         loadFromDoc(productId, kind);
     };
 
-    const writeStatsDoc = (rows: CaseRow[]) => {
+    const writeOneStatsDoc = (kind: StatsKind, rows: CaseRow[], tlRows: any[], members: any[]) => {
         const cur = ctxRef.current;
         const productId = cur.productId;
-        const meta = KIND_DOC[cur.kind as StatsKind];
-        const title = STATS_TITLES[cur.kind as StatsKind];
-        return Promise.all([
-            Api.list_data_doc({ product_id: productId, doc_type: meta.type, page_index: 0, page_size: 1 }),
-            ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
-            ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
-        ]).then(([list, tl, mb]: any[]) => {
+        const meta = KIND_DOC[kind];
+        const title = STATS_TITLES[kind];
+        return Api.list_data_doc({ product_id: productId, doc_type: meta.type, page_index: 0, page_size: 1 }).then((list: any) => {
             if (list.code !== Api.C_OK) {
-                message.error(list.msg || "查询数据文件失败");
-                return;
+                return { status: "error", title: meta.title, msg: list.msg || "查询数据文件失败" };
             }
             const hit = ((list.data && list.data.rows) || [])[0];
             if (!hit) {
-                message.warning(`请先在数据文件新增「${meta.title}」，本次未写入统计表`);
-                return;
+                return { status: "skip", title: meta.title, msg: `请先在数据文件新增「${meta.title}」，本次未写入统计表` };
             }
-            const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
-            const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
-            const auto = autoStatsExtra(cur.kind as StatsKind, members, tlRows, {
+            const auto = autoStatsExtra(kind, members, tlRows, {
                 person: cur.person, dataType: cur.dataType, disease: cur.disease,
             });
             return Api.get_data_doc({ id: hit.id }).then((got: any) => {
                 if (got.code !== Api.C_OK) {
-                    message.error(got.msg || "打开统计表失败");
-                    return;
+                    return { status: "error", title: meta.title, msg: got.msg || "打开统计表失败" };
                 }
                 const doc = got.data || {};
                 const secs = (doc.content && doc.content.sections) || [];
@@ -229,9 +224,31 @@ export default () => {
                     product_id: doc.product_id,
                     version: doc.version,
                 }).then((up: any) => {
-                    if (up.code !== Api.C_OK) message.error(up.msg || "写入统计表失败");
-                    else message.success(`已写入「${meta.title}」`);
+                    if (up.code !== Api.C_OK) return { status: "error", title: meta.title, msg: up.msg || "写入统计表失败" };
+                    return { status: "ok", title: meta.title, msg: "" };
                 });
+            });
+        });
+    };
+
+    const writeStatsDoc = (rows: CaseRow[]) => {
+        const productId = ctxRef.current.productId;
+        return Promise.all([
+            ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
+            ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
+        ]).then(([tl, mb]: any[]) => {
+            const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
+            const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
+            return Promise.all(STATS_KINDS.map((kind) => writeOneStatsDoc(kind, rows, tlRows, members))).then((results) => {
+                const ok = results.filter((r) => r.status === "ok");
+                const skip = results.filter((r) => r.status === "skip");
+                const failed = results.filter((r) => r.status === "error");
+                return {
+                    status: failed.length && !ok.length ? "error" : (ok.length ? "ok" : "skip"),
+                    title: ok.map((r) => r.title).join("、"),
+                    msg: skip.length ? `请先在数据文件新增「${skip.map((r) => r.title).join("、")}」，本次未写入统计表` : "",
+                    errors: failed.map((r) => r.msg || `写入「${r.title}」失败`),
+                };
             });
         });
     };
@@ -271,8 +288,7 @@ export default () => {
         const productId = ctxRef.current.productId;
         const pids = pidsFromRows(rows);
         if (!pids.length) {
-            message.warning("病例明细没有可用 PID，未写入试标注/标注记录");
-            return;
+            return { ok: [] as string[], missing: 0, errors: [] as string[], warn: "病例明细没有可用 PID，未写入试标注/标注记录" };
         }
         const [tl, mb] = await Promise.all([
             ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
@@ -281,6 +297,7 @@ export default () => {
         const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
         const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
         const ok: string[] = [];
+        const errors: string[] = [];
         let missing = 0;
         for (let i = 0; i < ANN_PID_DOCS.length; i++) {
             const item = ANN_PID_DOCS[i];
@@ -288,10 +305,14 @@ export default () => {
             const r = await writeOneAnnot(productId, item, pids, fill);
             if (r.status === "ok") ok.push(r.title);
             else if (r.status === "skip") missing += 1;
-            else message.error(r.msg || `写入「${r.title}」失败`);
+            else errors.push(r.msg || `写入「${r.title}」失败`);
         }
-        if (ok.length) message.success(`已写入标注记录：${ok.join("、")}`);
-        else if (missing) message.warning("请先在数据文件新增试标注或标注记录，本次未写入");
+        return {
+            ok,
+            missing,
+            errors,
+            warn: !ok.length && missing ? "请先在数据文件新增试标注或标注记录，本次未写入" : "",
+        };
     };
 
     const writeOneCollect = (productId: number, meta: { type: string; title: string }, fill: (secs: any[]) => Promise<any[]>) =>
@@ -323,47 +344,76 @@ export default () => {
 
     const writeCollectDocs = async (rows: CaseRow[]) => {
         const productId = ctxRef.current.productId;
-        if (!productId || !(rows || []).length) return;
+        if (!productId || !(rows || []).length) return { ok: [] as string[], missing: [] as string[], errors: [] as string[], warn: "" };
         const r002 = await writeOneCollect(
             productId,
             { type: "dd_002", title: "多中心数据回传记录" },
             (secs) => fillDd002Hospitals(productId, secs, rows),
         );
-        if (r002.status === "error") message.error(r002.msg || "写入「多中心数据回传记录」失败");
         const r003 = await writeOneCollect(
             productId,
             { type: "dd_003", title: "数据整理记录" },
             (secs) => fillDd003FromReturn(productId, secs),
         );
-        if (r003.status === "error") message.error(r003.msg || "写入「数据整理记录」失败");
-        const ok = [r002, r003].filter((r) => r.status === "ok").map((r) => r.title);
-        const missing = [r002, r003].filter((r) => r.status === "skip").map((r) => r.title);
-        if (ok.length) message.success(`已写入采集记录：${ok.join("、")}`);
-        if (missing.length) message.warning(`请先在数据文件新增「${missing.join("、")}」，本次未写入`);
+        const r010 = await writeOneCollect(
+            productId,
+            { type: "dd_010", title: "数据库上传记录" },
+            (secs) => fillDd010FromReturn(productId, secs, rows),
+        );
+        const r012 = await writeOneCollect(
+            productId,
+            { type: "dd_012", title: "训练集测试集查重记录" },
+            (secs) => fillDd012FromProduct(productId, secs),
+        );
+        const ok = [r002, r003, r010, r012].filter((r) => r.status === "ok").map((r) => r.title);
+        const missing = [r002, r003, r010, r012].filter((r) => r.status === "skip").map((r) => r.title);
+        const errors = [r002, r003, r010, r012]
+            .filter((r) => r.status === "error")
+            .map((r) => r.msg || `写入「${r.title}」失败`);
+        return {
+            ok,
+            missing,
+            errors,
+            warn: missing.length ? `请先在数据文件新增「${missing.join("、")}」，本次未写入` : "",
+        };
     };
 
-    const writeDataFiles = (rows: CaseRow[]) => {
+    const writeDataFiles = (rows: CaseRow[], tip?: string | false) => {
         const productId = ctxRef.current.productId;
         if (!productId) {
-            message.warning("请先选择产品，统计结果未写入数据文件");
+            if (typeof tip === "string") message.success(tip.replace(/，并已写入数据文件$/, ""));
+            else if (tip !== false) message.warning("请先选择产品，统计结果未写入数据文件");
             return Promise.resolve();
         }
         dispatch({ writing: true });
         return writeStatsDoc(rows)
-            .then(() => writeAnnotPids(rows))
-            .then(() => writeCollectDocs(rows))
+            .then((stats: any) => writeAnnotPids(rows).then((ann: any) => ({ stats, ann })))
+            .then(({ stats, ann }: any) => writeCollectDocs(rows).then((col: any) => ({ stats, ann, col })))
+            .then(({ stats, ann, col }: any) => {
+                const errors = [
+                    ...((stats && stats.errors) || (stats?.status === "error" ? [stats.msg || "写入统计表失败"] : [])),
+                    ...((ann && ann.errors) || []),
+                    ...((col && col.errors) || []),
+                ].filter(Boolean);
+                const warns = [
+                    stats?.msg,
+                    ann && ann.warn,
+                    col && col.warn,
+                ].filter(Boolean);
+                errors.forEach((msg: string) => message.error(msg));
+                warns.forEach((msg: string) => message.warning(msg));
+                if (tip === false) return;
+                if (tip) {
+                    message.success(errors.length ? String(tip).replace(/，并已写入数据文件$/, "") : tip);
+                } else if (stats?.status === "ok" || (ann && ann.ok && ann.ok.length) || (col && col.ok && col.ok.length)) {
+                    message.success("已写入数据文件");
+                }
+            })
             .catch(() => {
                 message.error("写入数据文件失败");
             })
             .finally(() => dispatch({ writing: false }));
     };
-
-    useEffect(() => {
-        if (wroteOnLoad.current) return;
-        if (!data.productId || !(data.rows || []).length) return;
-        wroteOnLoad.current = true;
-        writeDataFiles(data.rows);
-    }, [data.productId, data.rows]);
 
     const title = STATS_TITLES[data.kind as StatsKind];
     const extra = { dataType: data.dataType, disease: data.disease, person: data.person, source: data.source };
@@ -400,7 +450,7 @@ export default () => {
         itemSpan: (r as any).itemSpan,
     })), [triageRows]);
 
-    const applyRows = (rows: CaseRow[], okMsg: string, source = "") => {
+    const applyRows = (rows: CaseRow[], source = "") => {
         if (!rows.length) {
             dispatch({ loading: false, progress: "", rows: [] });
             message.warning("未找到病例或无法读取 DICOM");
@@ -408,8 +458,7 @@ export default () => {
         }
         dispatch({ loading: false, progress: "", rows, source });
         persistRows(rows, { source });
-        message.success(okMsg);
-        writeDataFiles(rows);
+        writeDataFiles(rows, `已统计 ${rows.length} 个序列，并已写入数据文件`);
     };
 
     const pickFolder = () => {
@@ -441,10 +490,9 @@ export default () => {
             }
             dispatch({ rows: r.rows });
             persistRows(r.rows);
-            writeDataFiles(r.rows);
             let tip = `已匹配 ${r.matched} 行，已填入 gt/pred/dice`;
             if (r.unmatched.length) tip += `；${r.unmatched.length} 个 TXID 未匹配到病例`;
-            message.success(tip, 6);
+            writeDataFiles(r.rows, false).then(() => message.success(tip, 6));
         }).catch((e: any) => {
             dispatch({ loading: false, progress: "" });
             message.error(e?.message || "导入失败，请检查 Excel 格式");
@@ -480,7 +528,7 @@ export default () => {
             const used = String((res.data && (res.data.path || res.data.root)) || cur.serverPath || "");
             if (used) dispatch({ serverPath: used });
             const source = String((res.data && (res.data.path || res.data.root)) || "");
-            applyRows(rows, `已统计 ${rows.length} 个序列，请在下方页签查看`, source);
+            applyRows(rows, source);
         }).catch(() => {
             dispatch({ loading: false, progress: "" });
             message.error("读取失败");
@@ -502,7 +550,7 @@ export default () => {
         statsFromFiles(fileList, (done, all) => {
             dispatch({ progress: `正在读取 ${done}/${all}` });
         }).then((rows) => {
-            applyRows(rows, `已统计 ${rows.length} 个序列，请在下方页签查看`);
+            applyRows(rows);
         }).catch(() => {
             dispatch({ loading: false, progress: "", rows: [] });
             message.error("读取失败");
@@ -516,6 +564,7 @@ export default () => {
         }
         saveXlsx(sheets, title);
         message.success(`已下载「${title}.xlsx」，请看 Excel 底部的多个工作表`, 8);
+        if (ctxRef.current.productId) writeDataFiles(data.rows, false);
     };
 
     return (
