@@ -1893,7 +1893,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                               pagination={false}
                               size="small"
                               bordered
-                              tableLayout="fixed"
+                              tableLayout="auto"
                           />
                               )}
                           </div>
@@ -1942,7 +1942,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                               pagination={false}
                                               size="small"
                                               bordered
-                                              tableLayout="fixed"
+                                              tableLayout="auto"
                                           />
                                               )}
                                       </div>
@@ -1981,7 +1981,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       pagination={false}
                                       size="small"
                                       bordered
-                                      tableLayout="fixed"
+                                      tableLayout="auto"
                                   />
                               </div>
                               {!readOnly && (
@@ -2078,7 +2078,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       pagination={false}
                                       size="small"
                                       bordered
-                                      tableLayout="fixed"
+                                      tableLayout="auto"
                                   />
                               </div>
                               {!readOnly && (
@@ -2175,7 +2175,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       pagination={false}
                                       size="small"
                                       bordered
-                                      tableLayout="fixed"
+                                      tableLayout="auto"
                                   />
                               </div>
                               {!readOnly && (
@@ -2230,7 +2230,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                             pagination={false}
                             size="small"
                             bordered
-                            tableLayout="fixed"
+                            tableLayout="auto"
                         />
                     </div>
                     {!readOnly && (
@@ -2263,7 +2263,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                             pagination={false}
                             size="small"
                             bordered
-                            tableLayout="fixed"
+                            tableLayout="auto"
                         />
                     </div>
                     {!readOnly && (

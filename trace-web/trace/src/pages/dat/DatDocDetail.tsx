@@ -10,7 +10,7 @@ import * as Api from "@/api/ApiDatDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import "../pdp/PdpDocDetail.less";
 
-const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", tableLayout: "fixed", marginBottom: 12 };
+const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", tableLayout: "auto", marginBottom: 12 };
 const tdBase: CSSProperties = { border: "1px solid #d9d9d9", padding: "6px 10px", fontSize: 13, verticalAlign: "middle" };
 const tdLabel: CSSProperties = { ...tdBase, background: "#fafafa", color: "#555", fontWeight: 500, textAlign: "center", whiteSpace: "nowrap" };
 const tdValue: CSSProperties = { ...tdBase, color: "#333" };

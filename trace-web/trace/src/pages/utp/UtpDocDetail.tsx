@@ -12,7 +12,7 @@ import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import ReviewTable from "@/common/ReviewTable";
 import "../pdp/PdpDocDetail.less";
-import { isRuntimeLockedBody, isRuntimeLockedNode, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
+import { isRuntimeLockedBody, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
@@ -531,9 +531,7 @@ export default () => {
                     {!readonly && (
                         <span className="pdp-nav-ops" onClick={(e) => e.stopPropagation()}>
                             <PlusOutlined title="添加子章节" onClick={() => addChild(n._key)} />
-                            {!isRuntimeLockedNode(n) && (
-                                <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
-                            )}
+                            <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
                         </span>
                     )}
                 </div>
@@ -611,7 +609,7 @@ export default () => {
                                     <Input
                                         addonBefore={numbers[active._key] || undefined}
                                         value={stripNum(active.title)}
-                                        disabled={readonly || isRuntimeLockedNode(active)}
+                                        disabled={readonly}
                                         placeholder="只填名称，如：开发方法"
                                         onChange={(e) => patchNode(active._key, { title: e.target.value })}
                                     />
@@ -832,7 +830,7 @@ export default () => {
                                                 </div>
                                                 );
                                             })}
-                                            {!readonly && active.ref_type !== "review" && !isRuntimeLockedBody(active) && (
+                                            {!readonly && active.ref_type !== "review" && (
                                                 <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
                                                     添加表格
                                                 </Button>

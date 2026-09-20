@@ -11,7 +11,7 @@ import * as ApiRuntime from "@/api/ApiProdRuntimeEnv";
 import * as ApiDocFile from "@/api/ApiDocFile";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
-import { isRuntimeLockedBody, isRuntimeLockedNode, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
+import { isRuntimeLockedBody, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
 
 const IMG_CATEGORY_LABEL: Record<string, string> = {
     img_struct: "体系结构图",
@@ -396,7 +396,6 @@ export default () => {
     };
 
     const active = findNode(data.sections, data.activeKey);
-    const rtNodeLock = readonly || isRuntimeLockedNode(active);
     const updateTables = (tables: any[]) => patchNode(data.activeKey, { tables });
     const setCell = (ti: number, r: number, ci: number, val: string) => {
         const tables = (active.tables || []).map((tb: any[], i: number) =>
@@ -563,9 +562,7 @@ export default () => {
                     {!readonly && (
                         <span className="pdp-nav-ops" onClick={(e) => e.stopPropagation()}>
                             <PlusOutlined title="添加子章节" onClick={() => addChild(n._key)} />
-                            {!isRuntimeLockedNode(n) && (
-                                <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
-                            )}
+                            <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
                         </span>
                     )}
                 </div>
@@ -643,7 +640,7 @@ export default () => {
                                     <Input
                                         addonBefore={numbers[active._key] || undefined}
                                         value={stripNum(active.title)}
-                                        disabled={rtNodeLock}
+                                        disabled={readonly}
                                         placeholder="只填名称，如：性能指标"
                                         onChange={(e) => patchNode(active._key, { title: e.target.value })}
                                     />
@@ -729,7 +726,7 @@ export default () => {
                                     );
                                 })}
 
-                                {!readonly && !isRuntimeLockedNode(active) && (
+                                {!readonly && (
                                     <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
                                         添加表格
                                     </Button>

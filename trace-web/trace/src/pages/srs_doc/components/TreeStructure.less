@@ -569,6 +569,13 @@
                 }
             }
 
+            &:not(.node-table--functional-kv) {
+                .ant-table,
+                .ant-table-content > table {
+                    table-layout: auto !important;
+                }
+            }
+
             .node-table-header {
                 display: flex;
                 align-items: flex-start;
@@ -641,7 +648,7 @@
         .pdp-grid {
             width: 100%;
             border-collapse: collapse;
-            table-layout: fixed;
+            table-layout: auto;
 
             td {
                 border: 1px solid #e8edf2;

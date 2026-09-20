@@ -90,7 +90,7 @@
         width: 100%;
         border-collapse: separate;
         border-spacing: 0;
-        table-layout: fixed;
+        table-layout: auto;
         border: 1px solid #e8edf2;
         border-radius: 10px;
         overflow: hidden;
@@ -133,10 +133,28 @@
             padding: 0;
         }
 
+        td:first-child:not(.env-row-op) {
+            width: 1%;
+
+            .env-input {
+                field-sizing: content;
+                width: auto !important;
+                min-width: 2em !important;
+                max-width: 10em;
+                white-space: nowrap;
+                overflow: hidden;
+            }
+        }
+
+        td:not(:first-child):not(.env-row-op) .env-input {
+            min-width: 0 !important;
+            width: 100% !important;
+        }
+
         td.env-row-op {
-            width: 88px;
-            min-width: 88px;
-            padding: 0 8px;
+            width: 116px;
+            min-width: 116px;
+            padding: 0 12px;
             text-align: center;
             vertical-align: middle;
             white-space: nowrap;
@@ -152,7 +170,7 @@
             .anticon {
                 color: #1677ff;
                 cursor: pointer;
-                margin-right: 4px;
+                margin-right: 8px;
                 font-size: 14px;
             }
         }

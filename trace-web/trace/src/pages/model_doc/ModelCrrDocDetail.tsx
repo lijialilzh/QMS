@@ -20,7 +20,7 @@ const isCategory = (row: any[]) =>
     Array.isArray(row) && CATEGORIES.includes(String(row[0] ?? "").trim())
     && row.slice(1).every((c: any) => !String(c ?? "").trim());
 
-const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", marginBottom: 16, tableLayout: "fixed" };
+const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", marginBottom: 16, tableLayout: "auto" };
 const tdBase: CSSProperties = { border: "1px solid #d9d9d9", padding: "6px 10px", fontSize: 13, verticalAlign: "middle" };
 const tdLabel: CSSProperties = { ...tdBase, background: "#fafafa", color: "#555", whiteSpace: "nowrap", fontWeight: 500, textAlign: "center" };
 const tdValue: CSSProperties = { ...tdBase, color: "#333", whiteSpace: "pre-wrap" };

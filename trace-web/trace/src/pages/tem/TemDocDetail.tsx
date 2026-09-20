@@ -52,7 +52,7 @@ const leafCols = (kind: string): LeafCol[] => {
     return out;
 };
 
-const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", marginBottom: 8, tableLayout: "fixed" };
+const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", marginBottom: 8, tableLayout: "auto" };
 const tdBase: CSSProperties = { border: "1px solid #d9d9d9", padding: "4px 6px", fontSize: 12, verticalAlign: "middle" };
 const tdValue: CSSProperties = { ...tdBase, color: "#333", whiteSpace: "pre-wrap" };
 const barCell: CSSProperties = { ...tdBase, background: "#f0f5ff", fontWeight: 600, color: "#1d39c4", textAlign: "center" };

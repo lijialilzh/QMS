@@ -17,7 +17,7 @@ import { ANN_PID_TYPES, annotTableSig, applyPidsToSections, attachCaseRows, auto
 import { computeGridSpans } from "./gridSpans";
 import "../pdp/PdpDocDetail.less";
 
-const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", marginBottom: 16, tableLayout: "fixed" };
+const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", marginBottom: 16, tableLayout: "auto" };
 const PATH_LABELS = new Set(["存储路径"]);
 const uploadColMin = (label: string) => {
     const t = String(label || "").trim();

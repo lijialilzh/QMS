@@ -2651,10 +2651,10 @@ const TreeNodeItem = ({
                   ) : (
                       <span className="node-expand-placeholder" />
                   )}
-                  {useNavChapterEditor && !readOnly && !isLockedReqHierarchyNode && !isLockedChapterMeta && !isRuntimeLocked && (
+                  {useNavChapterEditor && !readOnly && !isLockedReqHierarchyNode && !isLockedChapterMeta && (
                       <span className="node-title-prefix">{autoNavChapterNo || ""}</span>
                   )}
-                  {readOnly || isLockedReqHierarchyNode || isLockedChapterMeta || isRuntimeLocked ? (
+                  {readOnly || isLockedReqHierarchyNode || isLockedChapterMeta ? (
                       <div className={`node-title${hasRcm ? " with-rcm" : ""}${hasRcmText ? " with-rcm-text" : ""}`}>{navReadOnlyTitle}</div>
                   ) : (
                       <Input
@@ -2858,9 +2858,9 @@ const TreeNodeItem = ({
                   {/* {node.ref_type === 'srs_reqds' && (
                       <Tag color="geekblue" style={{padding: '5px'}}>{ts('srs_doc.req_list')}</Tag>
                   )} */}
-                  {!readOnly && !disableHierarchyActions && !isLockedReqHierarchyNode && !isRuntimeLocked && (
+                  {!readOnly && !disableHierarchyActions && !isLockedReqHierarchyNode && (
                   <Space className="node-actions" size={8}>
-                      {!(isProductBoundDocImageNode || (node.ref_type && (isImgRefType(node.ref_type) || node.ref_type === 'srs_reqs' || node.ref_type === 'srs_reqs_2'))) && (
+                      {!isRuntimeLocked && !(isProductBoundDocImageNode || (node.ref_type && (isImgRefType(node.ref_type) || node.ref_type === 'srs_reqs' || node.ref_type === 'srs_reqs_2'))) && (
                       <Button
                           size="small"
                           icon={<TableOutlined />}
@@ -2868,7 +2868,7 @@ const TreeNodeItem = ({
                           {ts('srs_doc.table')}
                       </Button>
                       )}
-                      {!(isProductBoundDocImageNode || (node.ref_type && (isImgRefType(node.ref_type) || node.ref_type === 'srs_reqs' || node.ref_type === 'srs_reqs_2'))) && (
+                      {!isRuntimeLocked && !(isProductBoundDocImageNode || (node.ref_type && (isImgRefType(node.ref_type) || node.ref_type === 'srs_reqs' || node.ref_type === 'srs_reqs_2'))) && (
                       <Upload {...tableImportProps}>
                           <Button
                               size="small"
@@ -2927,7 +2927,7 @@ const TreeNodeItem = ({
                                 pagination={false}
                                 size="small"
                                 bordered
-                                tableLayout="fixed"
+                                tableLayout="auto"
                                 showHeader={!(tbl.table?.show_header === 0 || isFunctionalKvTable(tbl.table))}
                             />
                                 )}
@@ -3001,7 +3001,7 @@ const TreeNodeItem = ({
                                     pagination={false}
                                     size="small"
                                     bordered
-                                    tableLayout="fixed"
+                                    tableLayout="auto"
                                 />
                                     )}
                             </div>
@@ -3025,7 +3025,7 @@ const TreeNodeItem = ({
                               pagination={false}
                               size="small"
                               bordered
-                              tableLayout="fixed"
+                              tableLayout={isFunctionalKvTable(subNode.table) ? "fixed" : "auto"}
                               showHeader={!(subNode.table?.show_header === 0 || isFunctionalKvTable(subNode.table))}
                           />
                       </div>
@@ -3072,7 +3072,7 @@ const TreeNodeItem = ({
                               pagination={false}
                               size="small"
                               bordered
-                              tableLayout="fixed"
+                              tableLayout="auto"
                               rowKey="key"
                           />
                       </div>
@@ -7057,13 +7057,11 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                                         />
                                     </Tooltip>
                                 )}
-                                {!isRuntimeLockedNode(node) && (
                                 <DeleteOutlined
                                     className="srs-nav-delete-child"
                                     title={ts("delete") || "删除章节"}
                                     onClick={() => handleDeleteFromNav(node.id)}
                                 />
-                                )}
                             </span>
                         )}
                     </div>

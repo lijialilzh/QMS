@@ -11,7 +11,7 @@ import * as ApiProduct from "@/api/ApiProduct";
 import { getModelDocMeta, getModelDocListType } from "./ModelDocTypes";
 import "../pdp/PdpDocDetail.less";
 
-const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", marginBottom: 16, tableLayout: "fixed" };
+const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", marginBottom: 16, tableLayout: "auto" };
 const tdBase: CSSProperties = { border: "1px solid #d9d9d9", padding: "6px 8px", fontSize: 13, verticalAlign: "middle" };
 const tdLabel: CSSProperties = { ...tdBase, background: "#fafafa", color: "#555", whiteSpace: "nowrap", fontWeight: 500, textAlign: "center" };
 const tdValue: CSSProperties = { ...tdBase, color: "#333", whiteSpace: "pre-wrap", textAlign: "center" };

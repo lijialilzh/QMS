@@ -9,13 +9,13 @@ import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiDocFile from "@/api/ApiDocFile";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
-import { isRuntimeLockedNode } from "../pdp/runtimeEnvLock";
+import { isRuntimeLockedBody, isRuntimeLockedNode, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
 
 const emptyContent = { sections: [], productName: "" };
 
 // 自动获取（只读）章节的 ref_type 集合；cover/revision 属模板表格，可编辑。
-const AUTO_REFS = new Set(["sw_ident", "func_module", "arch_func", "rt_hw", "rt_sw", "rt_net", "update_history", "version_rule"]);
-const isAutoNode = (node: any) => AUTO_REFS.has(node?.ref_type) || !!node?.img_category || isRuntimeLockedNode(node);
+const AUTO_REFS = new Set(["sw_ident", "func_module", "arch_func", "update_history", "version_rule"]);
+const isAutoNode = (node: any) => AUTO_REFS.has(node?.ref_type) || !!node?.img_category;
 
 const assignKeys = (nodes: any[], prefix = ""): any[] => {
     (nodes || []).forEach((n: any, i: number) => {
@@ -242,9 +242,7 @@ export default () => {
                     {!readonly && (
                         <span className="pdp-nav-ops" onClick={(e) => e.stopPropagation()}>
                             <PlusOutlined title="添加子章节" onClick={() => addChild(n._key)} />
-                            {!isRuntimeLockedNode(n) && (
-                                <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
-                            )}
+                            <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
                         </span>
                     )}
                 </div>
@@ -432,6 +430,7 @@ export default () => {
         if (!active) return <div className="pdp-empty">请选择左侧章节</div>;
         const auto = isAutoNode(active);
         const editable = !readonly && !auto;
+        const rtContentLock = isRuntimeLockedNode(active);
         const blocks: any[] = Array.isArray(active.blocks) ? active.blocks : [];
 
         return (
@@ -471,7 +470,7 @@ export default () => {
                                 : <div key={bi} style={{ textAlign: "center", fontSize: 13, color: "#444", margin: "4px 0 12px" }}>{b.text}</div>;
                         }
                         if (b?.type === "table") return <div className="pdp-table-block" key={bi}>{renderReadonlyTable(b.table || [], b.title || "")}</div>;
-                        if (editable) {
+                        if (editable && !rtContentLock) {
                             return <div className="pdp-field" key={bi}><Input.TextArea autoSize={{ minRows: 2, maxRows: 20 }} value={b?.text ?? ""} placeholder="本段正文内容，可多行" onChange={(e) => setBlockText(bi, e.target.value)} /></div>;
                         }
                         return b?.text
@@ -481,7 +480,7 @@ export default () => {
                 ) : (
                     <>
                         <div className="pdp-field">
-                            {editable ? (
+                            {editable && !isRuntimeLockedBody(active) ? (
                                 <Input.TextArea
                                     autoSize={{ minRows: 3, maxRows: 20 }}
                                     value={active.text ?? ""}
@@ -512,7 +511,7 @@ export default () => {
                                 <div className="pdp-table-block" key={ti}>
                                     {isAuto
                                         ? renderDevAmountTable(rows, ti, title)
-                                        : (editable ? renderEditableTable(rows, ti) : renderReadonlyTable(rows, title))}
+                                        : (editable && !isRuntimeLockedTable(active, ti) ? renderEditableTable(rows, ti) : renderReadonlyTable(rows, title))}
                                 </div>
                             );
                         })}

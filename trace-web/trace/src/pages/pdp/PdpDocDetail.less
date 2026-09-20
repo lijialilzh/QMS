@@ -189,41 +189,100 @@
     .pdp-grid {
         width: 100%;
         border-collapse: collapse;
-        table-layout: fixed;
+        table-layout: auto;
 
         td {
             border: 1px solid #e8edf2;
             padding: 0;
             vertical-align: top;
             position: relative;
+            word-break: break-word;
 
             &.head {
                 background: #f5f8fc;
             }
         }
 
+        // 首列按格子里的文字收窄（编号、人员、配置等），其余列吃剩余宽度并换行
+        td:first-child:not(.pdp-row-op) {
+            width: 1%;
+            vertical-align: middle;
+
+            .pdp-cell,
+            textarea.pdp-cell,
+            textarea.ant-input {
+                field-sizing: content;
+                width: auto !important;
+                min-width: 2em !important;
+                max-width: 10em;
+                white-space: nowrap;
+                overflow: hidden;
+            }
+        }
+
+        td:not(:first-child):not(.pdp-row-op) {
+            .pdp-cell,
+            textarea.pdp-cell,
+            textarea.ant-input {
+                min-width: 0 !important;
+                width: 100% !important;
+            }
+        }
+
         td.pdp-row-op {
-            border: none;
-            width: auto;
-            min-width: 0;
+            width: 1%;
+            min-width: 116px;
+            padding: 0 12px;
             white-space: nowrap;
             text-align: center;
             vertical-align: middle;
+            background: #fff;
 
             .anticon {
                 color: #1677ff;
                 cursor: pointer;
-                margin-right: 4px;
+                margin-right: 8px;
                 font-size: 14px;
+            }
+
+            .ant-btn {
+                padding: 0 4px;
             }
         }
 
-        .pdp-cell {
+        tbody tr:first-child td.pdp-row-op {
+            background: #f5f8fc;
+            font-weight: 600;
+            color: #2b3a4b;
+            font-size: 13px;
+
+            .anticon,
+            .ant-btn {
+                display: none;
+            }
+
+            &::before {
+                content: "操作";
+            }
+        }
+
+        tbody tr:first-child:only-child td.pdp-row-op .anticon {
+            display: inline-block;
+            margin-left: 6px;
+        }
+
+        .pdp-cell,
+        textarea.pdp-cell,
+        textarea.ant-input,
+        .ant-input-textarea {
             border: none;
             box-shadow: none;
             background: transparent;
             padding: 4px 8px;
             resize: none;
+            width: 100%;
+            min-width: 0 !important;
+            box-sizing: border-box;
 
             &:hover,
             &:focus {
@@ -231,10 +290,29 @@
             }
         }
 
-        // 封面表：各行统一行高，内容垂直居中，打印更规整
-        .pdp-cover-grid td {
-            height: 56px;
-            vertical-align: middle;
+        // 封面表：均分列宽，各行统一行高
+        &.pdp-cover-grid {
+            table-layout: fixed;
+
+            td:first-child:not(.pdp-row-op) {
+                width: auto;
+                white-space: normal;
+
+                .pdp-cell,
+                textarea.pdp-cell,
+                textarea.ant-input {
+                    field-sizing: fixed;
+                    width: 100% !important;
+                    min-width: 0 !important;
+                    max-width: none;
+                    white-space: normal;
+                }
+            }
+
+            td {
+                height: 56px;
+                vertical-align: middle;
+            }
         }
 
         .pdp-sign-cell {
@@ -265,6 +343,20 @@
                     color: #ff4d4f;
                 }
             }
+        }
+    }
+
+    // 非 pdp-grid 的文档表（模型文档、CRR 等）同样按内容收窄首列
+    table:not(.pdp-grid):not(.pdp-cover-grid):not(.pdp-record-grid) {
+        table-layout: auto;
+
+        td:first-child textarea.ant-input {
+            field-sizing: content;
+            width: auto !important;
+            min-width: 2em !important;
+            max-width: 10em;
+            white-space: nowrap;
+            overflow: hidden;
         }
     }
 

@@ -680,7 +680,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
               columns={buildTableColumns()}
               bordered
               pagination={false}
-              tableLayout="fixed"
+              tableLayout="auto"
               size="small"
             />
           </div>

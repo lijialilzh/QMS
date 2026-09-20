@@ -21,7 +21,7 @@ const thCell: CSSProperties = { ...tdBase, background: "#fafafa", color: "#555",
 const seqCell: CSSProperties = { ...tdBase, textAlign: "center", color: "#666", whiteSpace: "nowrap" };
 const qCell: CSSProperties = { ...tdBase, color: "#333" };
 const subHeaderCell: CSSProperties = { ...tdBase, background: "#f7f7f7", color: "#333", fontWeight: 500 };
-const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", marginBottom: 16, tableLayout: "fixed" };
+const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", marginBottom: 16, tableLayout: "auto" };
 
 // 把题号与问题正文拆开（如 "1-1.2 用户是否..." -> 序号 "1-1.2" + 正文）
 const splitSeq = (label: string): { seq: string; text: string } => {

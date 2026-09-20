@@ -1,4 +1,4 @@
-/** 文档内运行环境章节：只读，统一从「产品管理 → 运行环境」获取，不允许改/删。 */
+/** 文档内运行环境：章节可改标题/可删；自动获取的正文与表格只读。 */
 
 export function stripRuntimeTitle(title: string): string {
     return String(title || "").replace(/^\s*\d+(?:\.\d+)*[\.、\s]*/, "").trim();
