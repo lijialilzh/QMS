@@ -33,9 +33,26 @@ def is_root_user(op_user: UserObj) -> bool:
     return op_user.id == 1 or op_user.role_code == Roles.root.value.code
 
 
-def srs_visible_product_ids(op_user: UserObj):
-    """需求规格说明可见产品。None=全部（仅超级管理员）；否则为产品 id 列表（prod_user ∪ 本人创建）。"""
+def can_config_srs_viewers(op_user: UserObj) -> bool:
+    if not op_user:
+        return False
     if is_root_user(op_user):
+        return True
+    return op_user.role_code == Roles.dqa.value.code
+
+
+def is_srs_unrestricted_user(op_user: UserObj) -> bool:
+    """超级管理员与 DQA 看需求规格说明不受产品勾选限制，默认可见全部。"""
+    if not op_user:
+        return False
+    if is_root_user(op_user):
+        return True
+    return op_user.role_code == Roles.dqa.value.code
+
+
+def srs_visible_product_ids(op_user: UserObj):
+    """需求规格说明可见产品。None=全部（超级管理员、DQA）；否则为产品 id 列表（prod_user ∪ 本人创建）。"""
+    if is_srs_unrestricted_user(op_user):
         return None
     if not op_user or not op_user.id:
         return []
@@ -469,7 +486,7 @@ class Server(object):
         output.seek(0)
 
     async def list_srs_viewer_map(self, op_user: UserObj):
-        if not is_root_user(op_user):
+        if not can_config_srs_viewers(op_user):
             return Resp.resp_err(msg=ts("msg_no_perm"))
         rows = db.session.execute(select(UserProd.user_id, UserProd.product_id)).all()
         mp = {}
@@ -492,15 +509,15 @@ class Server(object):
         return Resp.resp_ok(data=data)
 
     async def save_srs_viewers(self, op_user: UserObj, user_id: int, product_ids: List[int] = None):
-        if not is_root_user(op_user):
+        if not can_config_srs_viewers(op_user):
             return Resp.resp_err(msg=ts("msg_no_perm"))
         if not user_id:
             return Resp.resp_err(msg="请选择用户")
         target: User = db.session.execute(select(User).where(User.id == user_id)).scalars().first()
         if not target:
             return Resp.resp_err(msg=ts("msg_obj_null"))
-        if target.id == 1 or (target.role_code or "") == Roles.root.value.code or (target.name or "") == "master":
-            return Resp.resp_err(msg="超级管理员默认可见全部产品，无需分配")
+        if target.id == 1 or (target.role_code or "") in (Roles.root.value.code, Roles.dqa.value.code) or (target.name or "") == "master":
+            return Resp.resp_err(msg="超级管理员与 DQA 默认可见全部产品，无需分配")
         ids = []
         for x in product_ids or []:
             try:

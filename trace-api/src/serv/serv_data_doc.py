@@ -2299,7 +2299,7 @@ class Server(object):
                     cells = table.add_row().cells
                     for c_idx in range(cols):
                         set_cell(cells[c_idx], row[c_idx] if c_idx < len(row) else "", bold=(r_idx == 0))
-                    fit_sign_row(table.rows[r_idx], row)
+                        fit_sign_row(table.rows[r_idx], row)
             document.add_paragraph()
 
         def fit_sign_row(row, src):
@@ -2398,11 +2398,11 @@ class Server(object):
                     add_text(node.get("body"))
                 for table in (node.get("tables") or []):
                     add_grid(table)
-            idx = 0
-            for child in (node.get("children") or []):
-                idx += 1
-                child_num = f"{number}.{idx}" if number else f"{idx}"
-                render_body_section(child, level + 1, child_num)
+                idx = 0
+                for child in (node.get("children") or []):
+                    idx += 1
+                    child_num = f"{number}.{idx}" if number else f"{idx}"
+                    render_body_section(child, level + 1, child_num)
 
         cover = next((s for s in sections if s.get("ref_type") == "cover"), None)
         revision = next((s for s in sections if s.get("ref_type") == "revision"), None)

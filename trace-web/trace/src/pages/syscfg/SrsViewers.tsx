@@ -6,14 +6,14 @@ import { Root, useSelector } from "@/store";
 import * as ApiUser from "@/api/ApiUser";
 import * as ApiProduct from "@/api/ApiProduct";
 
-const isRootAccount = (row: any) => {
-    return row?.id === 1 || row?.role_code === "root" || row?.name === "master";
+const isUnrestrictedAccount = (row: any) => {
+    return row?.id === 1 || row?.role_code === "root" || row?.role_code === "dqa" || row?.name === "master";
 };
 
 export default () => {
     const { t: ts } = useTranslation();
     const user = useSelector((state: Root) => state.user);
-    const canConfig = user?.id === 1 || user?.role_code === "root";
+    const canConfig = user?.id === 1 || user?.role_code === "root" || user?.role_code === "dqa";
     const [data, dispatch] = useData({
         users: [] as any[],
         products: [] as any[],
@@ -34,7 +34,7 @@ export default () => {
         ]).then(([userRes, prodRes, mapRes]: any[]) => {
             const next: any = { loading: false };
             if (userRes.code === ApiUser.C_OK) {
-                next.users = (userRes.data?.rows || []).filter((row: any) => !isRootAccount(row));
+                next.users = (userRes.data?.rows || []).filter((row: any) => !isUnrestrictedAccount(row));
             } else {
                 message.error(userRes.msg);
             }
@@ -120,7 +120,7 @@ export default () => {
     return (
         <div className="page div-v">
             <div style={{ marginBottom: 12, color: "#666", lineHeight: 1.8 }}>
-                按用户勾选其可见的需求规格说明产品。本人创建的产品默认可见且不可取消。未勾选的产品在需求规格说明中不可见。超级管理员始终可见全部产品，无需配置。
+                从左侧选择用户，勾选该用户可查看需求规格说明的产品。未勾选的产品，该用户在需求规格说明中看不到。超级管理员与 DQA 默认可见全部产品，不在此列表中配置。
             </div>
             <div className="div-h expand" style={{ gap: 16, minHeight: 0 }}>
                 <div className="div-v" style={{ width: 420 }}>

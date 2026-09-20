@@ -127,7 +127,7 @@ export default () => {
                         key: "/srs_viewers",
                         label: ts("menu.srs_viewers"),
                         perm: "user_view",
-                        hidden: !(user?.id === 1 || user?.role_code === "root"),
+                        hidden: !(user?.id === 1 || user?.role_code === "root" || user?.role_code === "dqa"),
                     },
                     {
                         key: "/projects",

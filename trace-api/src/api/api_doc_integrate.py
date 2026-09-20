@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func
 
 from ..obj import Resp, Page
-from ..obj.tobj_role import Perms, get_md_data_role_codes
+from ..obj.tobj_role import Perms, Roles, get_md_data_role_codes
 from ..utils.sql_ctx import db
 from ..utils.i18n import ts
 from . import CtxUser, CtxPerm, try_log
@@ -182,6 +182,22 @@ def _is_md_data_role() -> bool:
     return code in set(get_md_data_role_codes())
 
 
+def _can_see_md_data_groups() -> bool:
+    """master / DQA / QA / RA 在整合导出、一键打印中同时可见模型文件和数据文件。"""
+    user = CtxUser.get()
+    if not user:
+        return False
+    if getattr(user, "id", None) == 1:
+        return True
+    code = (getattr(user, "role_code", None) or "")
+    return code in {
+        Roles.root.value.code,
+        Roles.dqa.value.code,
+        Roles.qa.value.code,
+        Roles.ra.value.code,
+    }
+
+
 def _filter_doc_keys_for_role(doc_keys: str) -> str:
     if not _is_md_data_role():
         return doc_keys or ""
@@ -295,9 +311,16 @@ async def list_integrate_docs(product_id: int):
         "data_files": "data_doc_view",
     }
     if _is_md_data_role():
-        visible_groups = [g for g in _MD_DATA_GROUPS if group_perm_map[g] in user_perms]
+        candidate_groups = list(_MD_DATA_GROUPS)
     else:
-        visible_groups = [g for g in _DEFAULT_GROUPS if g not in group_perm_map or group_perm_map[g] in user_perms]
+        candidate_groups = list(_DEFAULT_GROUPS)
+        if _can_see_md_data_groups():
+            candidate_groups.extend([g for g in _MD_DATA_GROUPS if g not in candidate_groups])
+    visible_groups = []
+    for g in candidate_groups:
+        need_perm = group_perm_map.get(g)
+        if not need_perm or need_perm in user_perms or (g in _MD_DATA_GROUPS and _can_see_md_data_groups()):
+            visible_groups.append(g)
     groups = {g: [] for g in visible_groups}
     for module_key, module_name, group, model_cls in _DOC_MODULES:
         if group not in visible_groups:
