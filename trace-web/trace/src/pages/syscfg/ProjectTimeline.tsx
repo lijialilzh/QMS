@@ -1,3 +1,4 @@
+import { PlusOutlined } from "@ant-design/icons";
 import { Button, message, Space, Input, Upload, Modal, Spin, DatePicker, Checkbox } from "antd";
 import dayjs from "dayjs";
 import { useEffect } from "react";
@@ -51,19 +52,56 @@ export default () => {
             return;
         }
         Api.add_timeline_row({ prod_id: data.targetProdId, row_type }).then((res: any) => {
-            if (res.code === Api.C_OK) loadTimeline(data.targetProdId);
-            else message.error(res.msg);
+            if (res.code === Api.C_OK) {
+                message.success("已新增一行");
+                loadTimeline(data.targetProdId);
+            } else message.error(res.msg);
         });
     };
 
+    const insertRowAfter = (row: any) => {
+        if (!data.targetProdId) {
+            message.warning("请先选择产品");
+            return;
+        }
+        Api.add_timeline_row({
+            prod_id: data.targetProdId,
+            row_type: "date",
+            sort_order: Number(row.sort_order || 0) + 1,
+            year: row.year || "",
+            month: row.month || "",
+        }).then((res: any) => {
+            if (res.code === Api.C_OK) {
+                message.success("已插入一行");
+                loadTimeline(data.targetProdId);
+            } else message.error(res.msg);
+        });
+    };
+
+    const rowOps = (row: any) => (
+        <td className="tl-ops">
+            <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(row)} />
+            <Button type="link" danger size="small" onClick={() => deleteRow(row)}>
+                {ts("delete")}
+            </Button>
+        </td>
+    );
+
     const deleteRow = (row: any) => {
         Modal.confirm({
-            title: ts("action"),
+            title: "确认删除",
             content: ts("confirm_delete"),
+            okText: "删除",
+            okButtonProps: { danger: true },
+            cancelText: "取消",
             onOk: () => {
-                Api.delete_timeline_row({ id: row.id }).then((res: any) => {
-                    if (res.code === Api.C_OK) loadTimeline(data.targetProdId);
-                    else message.error(res.msg);
+                return Api.delete_timeline_row({ id: row.id }).then((res: any) => {
+                    if (res.code === Api.C_OK) {
+                        message.success("已删除");
+                        loadTimeline(data.targetProdId);
+                    } else {
+                        message.error(res.msg);
+                    }
                 });
             },
         });
@@ -120,6 +158,7 @@ export default () => {
             if (res.code === Api.C_OK) {
                 const rows = (data.rows || []).map((r: any) => (r.id === edit.rowId ? { ...r, ...patch } : r));
                 dispatch({ saving: false, edit: null, editVal: "", rows });
+                message.success("保存成功");
             } else {
                 dispatch({ saving: false });
                 message.error(res.msg);
@@ -136,6 +175,7 @@ export default () => {
                             ids.includes(r.id) ? { ...r, cells: { ...(r.cells || {}), [dept]: val } } : r
                         );
                         dispatch({ saving: false, edit: null, editVal: "", rows });
+                        message.success("保存成功");
                     } else {
                         dispatch({ saving: false });
                         message.error((results.find((r: any) => r.code !== Api.C_OK) || {}).msg);
@@ -169,6 +209,7 @@ export default () => {
             if (res.code === Api.C_OK) {
                 const rows = (data.rows || []).map((r: any) => (r.id === row.id ? { ...r, ...patch } : r));
                 dispatch({ saving: false, edit: null, rows });
+                message.success("保存成功");
             } else {
                 dispatch({ saving: false });
                 message.error(res.msg);
@@ -269,26 +310,8 @@ export default () => {
     const allChecked = (data.rows || []).length > 0 && selectedIds.length === (data.rows || []).length;
     const indeterminate = selectedIds.length > 0 && !allChecked;
 
-    // 计算「年」「月」相同的连续日期行的纵向合并跨度（被非日期行打断则分组重置）
+    const isDateRow = (a: any) => a && a.row_type !== "year" && a.row_type !== "milestone";
     const rowsArr: any[] = data.rows || [];
-    const mergeMeta: Record<number, { showYear: boolean; yearSpan: number; showMonth: boolean; monthSpan: number }> = {};
-    rowsArr.forEach((r: any, i: number) => {
-        if (r.row_type !== "date") return;
-        const prev = rowsArr[i - 1];
-        const sameYear = (a: any) => a && a.row_type === "date" && String(a.year ?? "") === String(r.year ?? "");
-        const sameMonth = (a: any) => sameYear(a) && String(a.month ?? "") === String(r.month ?? "");
-        let yearSpan = 0;
-        let showYear = !sameYear(prev);
-        if (showYear) {
-            for (let j = i; j < rowsArr.length && sameYear(rowsArr[j]); j++) yearSpan++;
-        }
-        let monthSpan = 0;
-        let showMonth = !sameMonth(prev);
-        if (showMonth) {
-            for (let j = i; j < rowsArr.length && sameMonth(rowsArr[j]); j++) monthSpan++;
-        }
-        mergeMeta[r.id] = { showYear, yearSpan, showMonth, monthSpan };
-    });
 
     // 各部门「输出结果」连续相同且非空的纵向合并（空值不合并、可单独编辑）
     const deptMeta: Record<string, Record<number, { show: boolean; span: number; groupIds: any[] }>> = {};
@@ -297,7 +320,7 @@ export default () => {
         let i = 0;
         while (i < rowsArr.length) {
             const r = rowsArr[i];
-            if (r.row_type !== "date") {
+            if (!isDateRow(r)) {
                 i += 1;
                 continue;
             }
@@ -311,7 +334,7 @@ export default () => {
             let j = i;
             while (
                 j + 1 < rowsArr.length &&
-                rowsArr[j + 1].row_type === "date" &&
+                isDateRow(rowsArr[j + 1]) &&
                 ((rowsArr[j + 1].cells || {})[dept] || "") === val
             ) {
                 j += 1;
@@ -344,9 +367,6 @@ export default () => {
                     </div>
                 </Space>
                 <div className="div-h hspace">
-                    <Button disabled={!data.targetProdId} onClick={() => addRow("date")}>
-                        新增行
-                    </Button>
                     <Upload showUploadList={false} accept=".xlsx" beforeUpload={doImport}>
                         <Button type="primary" disabled={!data.targetProdId} loading={data.importing}>
                             导入模板
@@ -374,11 +394,11 @@ export default () => {
                             {depts.map((d) => (
                                 <col key={d} style={{ width: 150 }} />
                             ))}
-                            <col style={{ width: 64 }} />
+                            <col style={{ width: 92 }} />
                         </colgroup>
                         <thead>
                             <tr>
-                                <th rowSpan={2} style={{ width: 42 }}>
+                                <th style={{ width: 42 }}>
                                     <Checkbox
                                         checked={allChecked}
                                         indeterminate={indeterminate}
@@ -386,28 +406,23 @@ export default () => {
                                         onChange={(e) => toggleSelectAll(e.target.checked)}
                                     />
                                 </th>
-                                <th colSpan={3}>时间</th>
+                                <th>年</th>
+                                <th>月</th>
+                                <th>日</th>
                                 {depts.map((d) => (
                                     <th key={d}>{d}</th>
                                 ))}
-                                <th rowSpan={2} style={{ width: 70 }}>
-                                    {ts("action")}
-                                </th>
-                            </tr>
-                            <tr>
-                                <th style={{ width: 84 }}>年</th>
-                                <th style={{ width: 84 }}>月</th>
-                                <th style={{ width: 84 }}>日</th>
-                                {depts.map((d) => (
-                                    <th key={d}>输出结果</th>
-                                ))}
+                                <th style={{ width: 92 }}>{ts("action")}</th>
                             </tr>
                         </thead>
                         <tbody>
                             {(data.rows || []).length === 0 && (
                                 <tr>
-                                    <td colSpan={totalCols} style={{ textAlign: "center", color: "#999" }}>
+                                    <td colSpan={totalCols - 1} style={{ textAlign: "center", color: "#999" }}>
                                         暂无数据
+                                    </td>
+                                    <td className="tl-ops">
+                                        <PlusOutlined title="新增行" onClick={() => addRow("date")} />
                                     </td>
                                 </tr>
                             )}
@@ -422,11 +437,7 @@ export default () => {
                                                 />
                                             </td>
                                             <td colSpan={3 + depts.length}>{editCell(row.id, "milestone", row.milestone_text, false)}</td>
-                                            <td>
-                                                <Button type="link" danger size="small" onClick={() => deleteRow(row)}>
-                                                    {ts("delete")}
-                                                </Button>
-                                            </td>
+                                            {rowOps(row)}
                                         </tr>
                                     );
                                 }
@@ -438,22 +449,12 @@ export default () => {
                                                 onChange={(e) => toggleSelect(row.id, e.target.checked)}
                                             />
                                         </td>
-                                        {mergeMeta[row.id]?.showYear && (
-                                            <td
-                                                className="tl-date-cell tl-merge"
-                                                rowSpan={mergeMeta[row.id].yearSpan}
-                                                onClick={() => startEdit(row.id, "date", null)}>
-                                                {row.year ? String(row.year) : <span style={{ color: "#d9d9d9" }}>—</span>}
-                                            </td>
-                                        )}
-                                        {mergeMeta[row.id]?.showMonth && (
-                                            <td
-                                                className="tl-date-cell tl-merge"
-                                                rowSpan={mergeMeta[row.id].monthSpan}
-                                                onClick={() => startEdit(row.id, "date", null)}>
-                                                {row.month ? String(row.month) : <span style={{ color: "#d9d9d9" }}>—</span>}
-                                            </td>
-                                        )}
+                                        <td className="tl-date-cell" onClick={() => startEdit(row.id, "date", null)}>
+                                            {row.year ? String(row.year) : <span style={{ color: "#d9d9d9" }}>—</span>}
+                                        </td>
+                                        <td className="tl-date-cell" onClick={() => startEdit(row.id, "date", null)}>
+                                            {row.month ? String(row.month) : <span style={{ color: "#d9d9d9" }}>—</span>}
+                                        </td>
                                         {isEditing(row.id, "date") ? (
                                             <td className="tl-date-edit">
                                                 <div className="tl-date-pop">
@@ -485,11 +486,7 @@ export default () => {
                                                 </td>
                                             );
                                         })}
-                                        <td>
-                                            <Button type="link" danger size="small" onClick={() => deleteRow(row)}>
-                                                {ts("delete")}
-                                            </Button>
-                                        </td>
+                                        {rowOps(row)}
                                     </tr>
                                 );
                             })}

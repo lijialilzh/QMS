@@ -2,7 +2,7 @@ import logging
 import re
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
-from sqlalchemy import select, delete, func
+from sqlalchemy import select, delete, func, update
 from sqlalchemy.sql import asc
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..obj.tobj_project_timeline import TimelineRowForm, TimelineCellForm
@@ -60,6 +60,15 @@ class Server(object):
                     )
                 ).scalar()
                 form.sort_order = int(max_sort or 0) + 1
+            else:
+                db.session.execute(
+                    update(ProjectTimelineRow)
+                    .where(
+                        ProjectTimelineRow.prod_id == form.prod_id,
+                        ProjectTimelineRow.sort_order >= form.sort_order,
+                    )
+                    .values(sort_order=ProjectTimelineRow.sort_order + 1)
+                )
             if not form.row_type:
                 form.row_type = "date"
             row = ProjectTimelineRow(**form.dict())
@@ -79,7 +88,7 @@ class Server(object):
             ).scalars().first()
             if not row:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
-            for key, value in form.dict().items():
+            for key, value in form.dict(exclude_none=True).items():
                 if key in ("id", "prod_id"):
                     continue
                 setattr(row, key, value)
