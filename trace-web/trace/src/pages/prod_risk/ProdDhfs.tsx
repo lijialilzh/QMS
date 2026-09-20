@@ -1,4 +1,4 @@
-import { Form, Input, Button, Table, message, Row, Col, Modal, Space } from "antd";
+import { Form, Button, Table, message, Row, Col, Modal, Space } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
@@ -54,6 +54,8 @@ export default () => {
         products: [],
         dhfCountMap: new Map<number, number>(),
         addProductId: undefined as number | undefined,
+        filterProductId: undefined as number | undefined,
+        filterProductName: undefined as string | undefined,
         targetRow: {} as any,
         copyProductId: undefined as number | undefined,
         copyModalOpen: false,
@@ -76,9 +78,17 @@ export default () => {
         dispatch({ loading: true });
         const mapPromise = countMap ? Promise.resolve(countMap) : loadDhfCounts();
         mapPromise.then((map) => {
-            ApiProduct.list_product({ ...params, page_index: 0, page_size: 10000 }).then((res: any) => {
+            ApiProduct.list_product({ page_index: 0, page_size: 10000 }).then((res: any) => {
                 if (res.code === ApiProduct.C_OK) {
-                    const allRows = (res.data.rows || []).filter((row: any) => (map.get(row.id) || 0) > 0);
+                    const productRows = res.data.rows || [];
+                    let allRows = productRows.filter((row: any) => (map.get(row.id) || 0) > 0);
+                    const productId = params?.product_id;
+                    const productName = params?.product_name;
+                    if (productId) {
+                        allRows = allRows.filter((row: any) => Number(row.id) === Number(productId));
+                    } else if (productName) {
+                        allRows = allRows.filter((row: any) => row.name === productName);
+                    }
                     const total = allRows.length;
                     const start = (pageIndex - 1) * pageSize;
                     const rows = allRows.slice(start, start + pageSize);
@@ -88,6 +98,7 @@ export default () => {
                         pageSize,
                         total,
                         rows,
+                        products: productRows,
                         dhfCountMap: map,
                     });
                 } else {
@@ -173,7 +184,7 @@ export default () => {
             if (res.code === Api.C_OK) {
                 closeCopyModal();
                 message.success(res.msg || "复制成功");
-                doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
+                doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, data.pageIndex, data.pageSize);
             } else {
                 message.error(res.msg || "复制失败");
             }
@@ -198,7 +209,7 @@ export default () => {
             if (res.code === Api.C_OK) {
                 dispatch({ dlgType: null });
                 message.success(res.msg || ts("save_success"));
-                doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
+                doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, data.pageIndex, data.pageSize);
             } else {
                 message.error(res.msg);
             }
@@ -209,7 +220,7 @@ export default () => {
     };
 
     useEffect(() => {
-        doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
+        doSearch({}, data.pageIndex, data.pageSize);
         loadDhfCounts();
     }, []);
 
@@ -292,11 +303,27 @@ export default () => {
                 <Form
                     form={queryForm}
                     className="expand"
-                    onFinish={(values) => doSearch(values, 1, data.pageSize)}>
-                    <Row gutter={10}>
+                    onFinish={() => doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, 1, data.pageSize)}>
+                    <Row gutter={20}>
                         <Col>
-                            <Form.Item label={ts("fuzzy")} name="fuzzy">
-                                <Input allowClear placeholder="产品名称/版本/型号" />
+                            <Form.Item label={ts("srs_doc.select_product")}>
+                                <ProductVersionSelect
+                                    products={data.products}
+                                    value={data.filterProductId}
+                                    initialName={data.filterProductName}
+                                    allowClear
+                                    deferChangeUntilVersionSelect
+                                    namePlaceholder={ts("product.name")}
+                                    versionPlaceholder={ts("product.full_version")}
+                                    onNameChange={(name) => {
+                                        dispatch({ filterProductName: name, filterProductId: undefined });
+                                        doSearch({ product_id: undefined, product_name: name }, 1, data.pageSize);
+                                    }}
+                                    onChange={(value) => {
+                                        dispatch({ filterProductId: value });
+                                        doSearch({ product_id: value, product_name: data.filterProductName }, 1, data.pageSize);
+                                    }}
+                                />
                             </Form.Item>
                         </Col>
                         <Col>
@@ -327,7 +354,7 @@ export default () => {
                     showTotal: (total: number) => sprintf(ts("total_items"), { total }),
                 }}
                 onChange={(pager) => {
-                    doSearch(queryForm.getFieldsValue(), pager.current, pager.pageSize);
+                    doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, pager.current, pager.pageSize);
                 }}
             />
             <Modal

@@ -39,6 +39,7 @@
         "manage_sds_doc": "Dev & Test Files",
         "manage_model_doc": "Model Files",
         "manage_data_doc": "Data Files",
+        "data_qc": "Data Quality Control",
         "data_stats": "Data Statistics",
         "data_check": "Data Self-Check",
         "data_docs": "Data Files",

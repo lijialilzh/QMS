@@ -581,16 +581,21 @@ export default () => {
                 })),
             },
             {
-                key: "/data_stats",
-                label: ts("menu.data_stats"),
+                key: "/data_qc",
+                label: ts("menu.data_qc"),
                 icon: <img src="assets/icon/menu-create.svg" />,
-                perm: "data_doc_view",
-            },
-            {
-                key: "/data_check",
-                label: ts("menu.data_check"),
-                icon: <img src="assets/icon/menu-create.svg" />,
-                perm: "data_doc_view",
+                children: [
+                    {
+                        key: "/data_stats",
+                        label: ts("menu.data_stats"),
+                        perm: "data_doc_view",
+                    },
+                    {
+                        key: "/data_check",
+                        label: ts("menu.data_check"),
+                        perm: "data_doc_view",
+                    },
+                ],
             },
             {
                 key: "/prod_overview",

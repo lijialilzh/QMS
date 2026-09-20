@@ -39,6 +39,7 @@
         "manage_sds_doc": "开发测试文件管理",
         "manage_model_doc": "模型文件",
         "manage_data_doc": "数据文件",
+        "data_qc": "数据质控",
         "data_stats": "数据统计",
         "data_check": "数据自查",
         "data_docs": "数据文件",
