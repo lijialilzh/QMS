@@ -1,6 +1,6 @@
 import io
 import logging
-from sqlalchemy import select, delete, func, or_
+from sqlalchemy import select, delete, func, or_, and_
 from sqlalchemy.sql import asc
 from openpyxl import load_workbook
 from ..model.prod_hospital import ProdHospital
@@ -101,11 +101,34 @@ class Server(object):
         return Resp.resp_ok()
 
     async def list_prod_hospital(self, prod_id: int = None, fuzzy: str = None,
+                                 org_name: str = None, hospital_no: str = None,
+                                 region: str = None, province: str = None, city: str = None,
                                  page_index: int = 0, page_size: int = 10):
         page_index = page_index if page_index >= 0 else 0
         page_size = page_size if page_size > 0 else 10
         # 全局清单：不按产品过滤
         sql = select(ProdHospital)
+        conds = []
+        def like_of(value):
+            text = (value or "").strip()
+            return f"%{text}%" if text else None
+        org_like = like_of(org_name)
+        no_like = like_of(hospital_no)
+        region_like = like_of(region)
+        province_like = like_of(province)
+        city_like = like_of(city)
+        if org_like:
+            conds.append(ProdHospital.org_name.like(org_like))
+        if no_like:
+            conds.append(ProdHospital.hospital_no.like(no_like))
+        if region_like:
+            conds.append(ProdHospital.region.like(region_like))
+        if province_like:
+            conds.append(ProdHospital.province.like(province_like))
+        if city_like:
+            conds.append(ProdHospital.city.like(city_like))
+        if conds:
+            sql = sql.where(and_(*conds))
         kw = (fuzzy or "").strip()
         if kw:
             like = f"%{kw}%"

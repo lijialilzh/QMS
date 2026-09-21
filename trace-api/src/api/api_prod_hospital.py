@@ -36,8 +36,13 @@ async def delete_prod_hospitals(id: str):
 
 @router.get("/list_prod_hospital", summary="查询合规医院列表", response_model=Resp[Page[ProdHospitalObj]])
 @try_log(perm=Perms.prod_hospital_view)
-async def list_prod_hospital(prod_id: int = None, fuzzy: str = None, page_index: int = 0, page_size: int = 10):
-    return await server.list_prod_hospital(prod_id, fuzzy, page_index, page_size)
+async def list_prod_hospital(prod_id: int = None, fuzzy: str = None,
+                             org_name: str = None, hospital_no: str = None,
+                             region: str = None, province: str = None, city: str = None,
+                             page_index: int = 0, page_size: int = 10):
+    return await server.list_prod_hospital(
+        prod_id, fuzzy, org_name, hospital_no, region, province, city, page_index, page_size
+    )
 
 
 @router.post("/import_prod_hospitals", summary="导入合规医院列表", response_model=Resp[Any])

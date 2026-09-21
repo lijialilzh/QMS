@@ -1,4 +1,4 @@
-import { Button, Table, message, Row, Col, Space, Input, AutoComplete, Modal, Upload } from "antd";
+import { Button, Table, message, Row, Col, Space, Input, AutoComplete, Modal, Upload, Form, Select } from "antd";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
@@ -18,42 +18,102 @@ const DEFAULT_HOSPITALS = [
     { contract_no: "TX-XS-KY-22010331", org_name: "福建医科大学附属协和医院", hospital_no: "CS591003", region: "南区" },
 ];
 
+const queryParams = (query: any = {}) => {
+    const pick = (...keys: string[]) => {
+        for (const key of keys) {
+            const text = String(query?.[key] || "").trim();
+            if (text) return text;
+        }
+        return undefined;
+    };
+    return {
+        org_name: pick("q_org", "org_name"),
+        hospital_no: pick("q_no", "hospital_no"),
+        province: pick("q_prov", "province"),
+        city: pick("q_area", "city"),
+    };
+};
+
+const uniqOptions = (rows: any[], key: string) => {
+    const seen = new Set<string>();
+    const out: { label: string; value: string }[] = [];
+    (rows || []).forEach((row) => {
+        const value = String(row?.[key] || "").trim();
+        if (!value || seen.has(value)) return;
+        seen.add(value);
+        out.push({ label: value, value });
+    });
+    return out.sort((a, b) => a.value.localeCompare(b.value, "zh-CN"));
+};
+
+const filterRows = (rows: any[], query: any = {}) => {
+    const q = queryParams(query);
+    return (rows || []).filter((row) => {
+        if (q.org_name && !String(row.org_name || "").includes(q.org_name)) return false;
+        if (q.hospital_no && !String(row.hospital_no || "").toUpperCase().includes(q.hospital_no.toUpperCase())) return false;
+        if (q.province && String(row.province || "").trim() !== q.province) return false;
+        if (q.city && String(row.city || "").trim() !== q.city) return false;
+        return true;
+    });
+};
+
 export default () => {
     const { t: ts } = useTranslation();
+    const [queryForm] = Form.useForm();
     const [data, dispatch] = useData({
+        allRows: [],
         rows: [],
         loading: false,
-        fuzzy: "",
         targetEdit: {},
         editingField: null,
         updating: false,
         importing: false,
     });
 
-    const loadHospitals = (fuzzy = "", allowSeed = true) => {
+    const applyQuery = (query: any = queryForm.getFieldsValue(), allRows = data.allRows) => {
+        const next = { ...query };
+        const province = String(next.q_prov || next.province || "").trim();
+        const city = String(next.q_area || next.city || "").trim();
+        if (province && city) {
+            const cities = uniqOptions(
+                (allRows || []).filter((row: any) => String(row.province || "").trim() === province),
+                "city"
+            ).map((item) => item.value);
+            if (!cities.includes(city)) {
+                next.q_area = undefined;
+                next.city = undefined;
+                queryForm.setFieldsValue({ q_area: undefined });
+            }
+        }
+        dispatch({ rows: filterRows(allRows, next) });
+    };
+
+    const loadHospitals = (allowSeed = true) => {
         dispatch({ loading: true });
-        Api.list_prod_hospital({ fuzzy: fuzzy || undefined, page_index: 0, page_size: 5000 }).then((res: any) => {
+        Api.list_prod_hospital({ page_index: 0, page_size: 5000 }).then((res: any) => {
             if (res.code !== Api.C_OK) {
-                dispatch({ loading: false, rows: [] });
+                dispatch({ loading: false, allRows: [], rows: [] });
                 message.error(res.msg);
                 return;
             }
-            const rows = res.data.rows || [];
-            if (allowSeed && !String(fuzzy || "").trim() && !rows.length && DEFAULT_HOSPITALS.length) {
+            const allRows = res.data.rows || [];
+            if (allowSeed && !allRows.length && DEFAULT_HOSPITALS.length) {
                 const jobs = DEFAULT_HOSPITALS.map((h, i) =>
                     Api.add_prod_hospital({ prod_id: 0, ...h, sort_order: i + 1 })
                 );
-                Promise.all(jobs).then(() => loadHospitals("", false)).catch(() => {
-                    dispatch({ loading: false, rows });
+                Promise.all(jobs).then(() => loadHospitals(false)).catch(() => {
+                    dispatch({ loading: false, allRows, rows: allRows });
                 });
                 return;
             }
-            dispatch({ loading: false, rows });
+            dispatch({ loading: false, allRows, rows: filterRows(allRows, queryForm.getFieldsValue()) });
         });
     };
 
+    const reload = () => loadHospitals(false);
+
     const doAdd = () => {
-        const maxSort = (data.rows || []).reduce((m: number, r: any) => Math.max(m, r.sort_order || 0), 0);
+        const maxSort = (data.allRows || data.rows || []).reduce((m: number, r: any) => Math.max(m, r.sort_order || 0), 0);
         Api.add_prod_hospital({
             prod_id: 0,
             contract_no: "",
@@ -66,7 +126,7 @@ export default () => {
         }).then((res: any) => {
             if (res.code === Api.C_OK) {
                 message.success(res.msg || ts("msg_ok"));
-                loadHospitals(data.fuzzy, false);
+                reload();
             } else {
                 message.error(res.msg);
             }
@@ -84,7 +144,7 @@ export default () => {
                         dispatch({ importing: false });
                         if (res.code === Api.C_OK) {
                             message.success(`导入成功，共 ${res.data?.imported ?? 0} 家`);
-                            loadHospitals(data.fuzzy, false);
+                            reload();
                         } else {
                             message.error(res.msg);
                         }
@@ -103,7 +163,7 @@ export default () => {
                 Api.delete_prod_hospitals({ id: row.id }).then((res: any) => {
                     if (res.code === Api.C_OK) {
                         message.success(res.msg);
-                        loadHospitals(data.fuzzy, false);
+                        reload();
                     } else {
                         message.error(res.msg);
                     }
@@ -123,8 +183,8 @@ export default () => {
         dispatch({ updating: true });
         Api.update_prod_hospital({ ...edit }).then((res: any) => {
             if (res.code === Api.C_OK) {
-                const rows = (data.rows || []).map((r: any) => (r.id === edit.id ? { ...r, ...edit } : r));
-                dispatch({ updating: false, targetEdit: {}, editingField: null, rows });
+                const allRows = (data.allRows || []).map((r: any) => (r.id === edit.id ? { ...r, ...edit } : r));
+                dispatch({ updating: false, targetEdit: {}, editingField: null, allRows, rows: filterRows(allRows, queryForm.getFieldsValue()) });
                 message.success(res.msg || ts("msg_ok"));
             } else {
                 dispatch({ updating: false });
@@ -198,24 +258,62 @@ export default () => {
     ];
 
     useEffect(() => {
-        loadHospitals("", true);
+        loadHospitals(true);
     }, []);
+
+    const selectedProvince = String(Form.useWatch("q_prov", queryForm) || "").trim();
+    const provinceOptions = uniqOptions(data.allRows, "province");
+    const cityOptions = uniqOptions(
+        selectedProvince
+            ? (data.allRows || []).filter((row: any) => String(row.province || "").trim() === selectedProvince)
+            : data.allRows,
+        "city"
+    );
 
     return (
         <div className="page div-v">
             <div className="div-h searchbar list-searchbar-align">
-                <Row gutter={10} className="expand">
-                    <Col>
-                        <Input.Search
-                            allowClear
-                            placeholder="医院名称 / 医院编号 / 省份 / 城市"
-                            style={{ width: 280 }}
-                            value={data.fuzzy}
-                            onChange={(e) => dispatch({ fuzzy: e.target.value })}
-                            onSearch={(v) => loadHospitals(v, true)}
-                        />
-                    </Col>
-                </Row>
+                <Form
+                    form={queryForm}
+                    className="expand"
+                    autoComplete="off"
+                    onValuesChange={(_changed, values) => applyQuery(values)}
+                    onFinish={(values) => applyQuery(values)}>
+                    <Row gutter={10}>
+                        <Col>
+                            <Form.Item label="医院名称" name="q_org">
+                                <Input allowClear autoComplete="off" style={{ width: 180 }} />
+                            </Form.Item>
+                        </Col>
+                        <Col>
+                            <Form.Item label="医院编号" name="q_no">
+                                <Input allowClear autoComplete="off" style={{ width: 140 }} />
+                            </Form.Item>
+                        </Col>
+                        <Col>
+                            <Form.Item label="省份" name="q_prov">
+                                <Select
+                                    allowClear
+                                    placeholder="请选择"
+                                    options={provinceOptions}
+                                    autoComplete="off"
+                                    style={{ width: 140 }}
+                                />
+                            </Form.Item>
+                        </Col>
+                        <Col>
+                            <Form.Item label="城市" name="q_area">
+                                <Select
+                                    allowClear
+                                    placeholder="请选择"
+                                    options={cityOptions}
+                                    autoComplete="off"
+                                    style={{ width: 140 }}
+                                />
+                            </Form.Item>
+                        </Col>
+                    </Row>
+                </Form>
                 <div className="div-h hspace">
                     <Upload showUploadList={false} accept=".xls,.xlsx" beforeUpload={doImport}>
                         <Button type="primary" loading={data.importing}>
