@@ -1,5 +1,5 @@
 import { Button, message, Input, Spin } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
@@ -166,14 +166,27 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
                                                     {r === 0 ? (
                                                         "操作"
                                                     ) : (
-                                                        <>
-                                                            <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
+                                                        <span className="risk-part-row-actions">
+                                                            <Button
+                                                                type="text"
+                                                                size="small"
+                                                                className="risk-part-action-btn"
+                                                                icon={<PlusOutlined />}
+                                                                title="在下方插入行"
+                                                                onClick={() => insertRowAfter(ti, r)}
+                                                            />
                                                             {cells.length > 1 ? (
-                                                                <Button type="link" danger size="small" onClick={() => delRow(ti, r)}>
-                                                                    删除
-                                                                </Button>
+                                                                <Button
+                                                                    type="text"
+                                                                    size="small"
+                                                                    danger
+                                                                    className="risk-part-action-btn"
+                                                                    icon={<DeleteOutlined />}
+                                                                    title="删除"
+                                                                    onClick={() => delRow(ti, r)}
+                                                                />
                                                             ) : null}
-                                                        </>
+                                                        </span>
                                                     )}
                                                 </td>
                                             </tr>

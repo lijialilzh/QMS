@@ -1,5 +1,5 @@
 import { Button, message, Input, Spin } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
@@ -151,13 +151,12 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
             {data.saving ? <span className="env-saving">保存中…</span> : null}
             <Spin spinning={data.loading} wrapperClassName="env-scroll">
                 <div className="env-body">
-                    <h2 className="env-title">设备资源</h2>
                     <table className="env-table env-table-device">
                         <colgroup>
                             <col style={{ width: 160 }} />
                             <col />
                             <col style={{ width: 88 }} />
-                            <col style={{ width: 116 }} />
+                            <col style={{ width: 80 }} />
                         </colgroup>
                         <thead>
                             <tr>
@@ -174,12 +173,27 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
                                     <td>{cell(idx, "name")}</td>
                                     <td>{cell(idx, "qty", true)}</td>
                                     <td className="env-row-op">
-                                        <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(idx)} />
-                                        {data.items.length > 1 ? (
-                                            <Button type="link" danger size="small" onClick={() => delRow(idx)}>
-                                                删除
-                                            </Button>
-                                        ) : null}
+                                        <span className="risk-part-row-actions">
+                                            <Button
+                                                type="text"
+                                                size="small"
+                                                className="risk-part-action-btn"
+                                                icon={<PlusOutlined />}
+                                                title="在下方插入行"
+                                                onClick={() => insertRowAfter(idx)}
+                                            />
+                                            {data.items.length > 1 ? (
+                                                <Button
+                                                    type="text"
+                                                    size="small"
+                                                    danger
+                                                    className="risk-part-action-btn"
+                                                    icon={<DeleteOutlined />}
+                                                    title="删除"
+                                                    onClick={() => delRow(idx)}
+                                                />
+                                            ) : null}
+                                        </span>
                                     </td>
                                 </tr>
                             ))}
