@@ -1,14 +1,15 @@
 import { Form, Button, Table, message, Row, Col, Modal, Space } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
-import { useNavigate } from "react-router-dom";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { renderOneLineWithTooltip, useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProdDhf";
 import * as ApiProduct from "@/api/ApiProduct";
+import ProdDhfDetail from "./ProdDhfDetail";
 import "./ProdDhfs.less";
+import "../risk_mgmt/RiskMgmtParticipants.less";
 
 const pageSizeOptions = [20, 50, 100];
 
@@ -42,7 +43,6 @@ const loadProducts = (data: any, dispatch: any) => {
 
 export default () => {
     const { t: ts } = useTranslation();
-    const navigate = useNavigate();
     const [queryForm] = Form.useForm();
     const [addForm] = Form.useForm();
     const [data, dispatch] = useData({
@@ -61,6 +61,8 @@ export default () => {
         copyModalOpen: false,
         copyLoading: false,
         dlgType: null as string | null,
+        expandedKeys: [] as number[],
+        expandReadOnly: false,
     });
 
     const loadDhfCounts = () => {
@@ -112,6 +114,22 @@ export default () => {
         });
     };
 
+    const refreshAfterChange = () => {
+        loadDhfCounts().then((map) => {
+            doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, data.pageIndex, data.pageSize, map);
+        });
+    };
+
+    const toggleExpand = (prodId: number, readOnly: boolean) => {
+        if (!prodId) return;
+        const keys = data.expandedKeys || [];
+        const same = keys.includes(prodId) && data.expandReadOnly === readOnly;
+        dispatch({
+            expandedKeys: same ? [] : [prodId],
+            expandReadOnly: same ? false : readOnly,
+        });
+    };
+
     const loadProductsForModal = () => loadProducts(data, dispatch);
 
     const openAddModal = () => {
@@ -127,8 +145,12 @@ export default () => {
                 message.warning(sprintf(ts("msg_select"), { label: ts("product.product") }));
                 return;
             }
-            dispatch({ dlgType: null });
-            navigate(`/prod_dhfs/edit/${prodId}`);
+            dispatch({ dlgType: null, expandedKeys: [prodId], expandReadOnly: false });
+            loadDhfCounts().then((map) => {
+                const next = new Map(map);
+                if (!next.has(prodId)) next.set(prodId, 0);
+                doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, 1, data.pageSize, next);
+            });
         });
     };
 
@@ -266,13 +288,14 @@ export default () => {
             onCell: () => ({ className: "prod-dhfs-list-action-col" }),
             render: (_: any, row: any) => {
                 const dhfCount = data.dhfCountMap.get(row.id) || 0;
+                const expanded = (data.expandedKeys || []).includes(row.id);
                 return (
                 <Space size={4}>
-                    <Button type="link" size="small" onClick={() => navigate(`/prod_dhfs/view/${row.id}`)}>
-                        {ts("view")}
+                    <Button type="link" size="small" onClick={() => toggleExpand(row.id, true)}>
+                        {expanded && data.expandReadOnly ? "收起" : ts("view")}
                     </Button>
-                    <Button type="link" size="small" onClick={() => navigate(`/prod_dhfs/edit/${row.id}`)}>
-                        {ts("edit")}
+                    <Button type="link" size="small" onClick={() => toggleExpand(row.id, false)}>
+                        {expanded && !data.expandReadOnly ? "收起" : ts("edit")}
                     </Button>
                     <Button
                         type="link"
@@ -337,12 +360,14 @@ export default () => {
                 </Button>
             </div>
             <Table
-                className="expand prod-dhfs-list-table"
+                className="expand prod-dhfs-list-table risk-part-list-table"
                 columns={columns}
                 rowKey={(item: any) => item.id}
-                dataSource={data.rows}
+                dataSource={(data.expandedKeys || []).length
+                    ? data.rows.filter((row: any) => (data.expandedKeys || []).includes(row.id))
+                    : data.rows}
                 loading={data.loading}
-                pagination={{
+                pagination={(data.expandedKeys || []).length ? false : {
                     total: data.total,
                     current: data.pageIndex,
                     showSizeChanger: true,
@@ -356,6 +381,13 @@ export default () => {
                 }}
                 onChange={(pager) => {
                     doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, pager.current, pager.pageSize);
+                }}
+                expandable={{
+                    expandedRowKeys: data.expandedKeys || [],
+                    showExpandColumn: false,
+                    expandedRowRender: (row) => (
+                        <ProdDhfDetail prodId={row.id} readOnly={data.expandReadOnly} embedded onChanged={refreshAfterChange} />
+                    ),
                 }}
             />
             <Modal
@@ -382,7 +414,7 @@ export default () => {
                             }}
                         />
                     </Form.Item>
-                    <div style={{ color: "#888" }}>选择产品后进入该产品的 DHF 维护页，可新增、导入清单条目。</div>
+                    <div style={{ color: "#888" }}>选择产品后在本页展开该产品的 DHF 维护表，可新增、导入清单条目。</div>
                 </Form>
             </Modal>
             <Modal

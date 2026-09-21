@@ -6,6 +6,7 @@ import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
+import ProdPrevNext from "./ProdPrevNext";
 import * as Api from "@/api/ApiProdDhf";
 import * as ApiProduct from "@/api/ApiProduct";
 import "./ProdDhfDetail.less";
@@ -87,13 +88,18 @@ const AddDlg = ({ prodId, data, dispatch, onSaved }: any) => {
     );
 };
 
-export default () => {
+export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChanged }: {
+    prodId?: number;
+    readOnly?: boolean;
+    embedded?: boolean;
+    onChanged?: () => void;
+} = {}) => {
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
     const location = useLocation();
     const { prodId: prodIdParam } = useParams();
-    const prodId = Number(prodIdParam);
-    const readOnly = location.pathname.includes("/view/");
+    const prodId = Number(prodIdProp ?? prodIdParam);
+    const readOnly = readOnlyProp ?? location.pathname.includes("/view/");
 
     const [importForm] = Form.useForm();
     const [data, dispatch] = useData({
@@ -255,6 +261,7 @@ export default () => {
                 dispatch({ loading: false });
                 message.success(res.msg);
                 doSearch(data.pageIndex, data.pageSize);
+                onChanged?.();
             } else {
                 dispatch({ loading: false });
                 message.error(res.msg);
@@ -274,6 +281,7 @@ export default () => {
                 dispatch({ loading: false, selectedRowKeys: [] });
                 message.success(res.msg);
                 doSearch(data.pageIndex, data.pageSize);
+                onChanged?.();
             } else {
                 dispatch({ loading: false });
                 message.error(res.msg);
@@ -295,6 +303,7 @@ export default () => {
                 dispatch({ dlgType: null, importFiles: [] });
                 importForm.resetFields();
                 doSearch(1, data.pageSize);
+                onChanged?.();
             } else {
                 message.error(res.msg);
             }
@@ -303,11 +312,13 @@ export default () => {
 
     useEffect(() => {
         if (!prodId) {
-            message.error("无效的产品 ID");
-            navigate("/prod_dhfs");
+            if (!embedded) {
+                message.error("无效的产品 ID");
+                navigate("/prod_dhfs");
+            }
             return;
         }
-        loadProducts(prodId);
+        if (!embedded) loadProducts(prodId);
         dispatch({
             selectedRowKeys: [],
             editingCell: null,
@@ -315,7 +326,7 @@ export default () => {
             pageIndex: 1,
         });
         doSearch(1, data.pageSize);
-    }, [prodId, location.pathname]);
+    }, [prodId, location.pathname, embedded]);
 
     const renderRowActions = (_row: any) => (
         <Space size={0} className="prod-dhf-row-actions">
@@ -366,8 +377,9 @@ export default () => {
     ];
 
     return (
-        <div className="page div-v prod-dhf-detail-page">
+        <div className={embedded ? "risk-part-nested prod-risk-nested-wide prod-dhf-detail-page" : "page div-v prod-dhf-detail-page"}>
             <div className="div-h searchbar list-searchbar-align prod-dhf-detail-toolbar">
+                {!embedded && (
                 <Space align="center" className="prod-dhf-detail-header-left">
                     <div className="prod-dhf-product-select">
                         <ProductVersionSelect
@@ -381,11 +393,13 @@ export default () => {
                             onChange={handleProductChange}
                         />
                     </div>
+                    <ProdPrevNext products={data.products} prodId={prodId} onChange={handleProductChange} />
                     <span className="prod-dhf-detail-title">{readOnly ? "查看" : "编辑"}产品 DHF</span>
                     <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/prod_dhfs")}>
                         返回列表
                     </Button>
                 </Space>
+                )}
                 <div className="div-h hspace">
                     {!readOnly && (
                         <>
@@ -425,6 +439,7 @@ export default () => {
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}
                 loading={data.loading}
+                scroll={embedded ? { x: 960, y: "68vh" } : undefined}
                 pagination={{
                     total: data.total,
                     current: data.pageIndex,
@@ -474,7 +489,10 @@ export default () => {
                 prodId={prodId}
                 data={data}
                 dispatch={dispatch}
-                onSaved={() => doSearch(data.pageIndex, data.pageSize)}
+                onSaved={() => {
+                    doSearch(data.pageIndex, data.pageSize);
+                    onChanged?.();
+                }}
             />
         </div>
     );

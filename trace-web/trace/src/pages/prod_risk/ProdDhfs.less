@@ -9,11 +9,70 @@
         overflow: visible !important;
         text-overflow: clip !important;
     }
+
+    .ant-table-expanded-row > td {
+        background: #f8fafc;
+        padding: 8px 16px 12px 24px !important;
+        overflow: hidden !important;
+        height: auto !important;
+        max-width: 0;
+    }
+}
+
+.prod-dhfs-list-table.risk-part-list-table .ant-table-expanded-row > td {
+    overflow: hidden !important;
+    max-width: 0;
 }
 
 .prod-risk-add-modal {
     .prod-risk-master-picker {
         height: 56vh !important;
         max-height: 56vh !important;
+    }
+}
+
+.risk-part-nested.prod-risk-nested-wide {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+
+    .prod-dhf-detail-toolbar {
+        justify-content: flex-end !important;
+        flex-direction: row !important;
+        align-items: center !important;
+        width: 100%;
+    }
+
+    .prod-dhf-detail-toolbar .hspace {
+        margin-left: auto;
+        width: auto !important;
+        justify-content: flex-end;
+    }
+
+    .ant-table-wrapper,
+    .ant-spin-nested-loading,
+    .ant-spin-container,
+    .ant-table,
+    .ant-table-container {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        height: auto !important;
+        max-height: none !important;
+        overflow: hidden !important;
+    }
+
+    .ant-table-content,
+    .ant-table-body {
+        overflow: auto !important;
+        max-height: 68vh !important;
+        height: auto !important;
+    }
+
+    .tl-table-wrap {
+        width: 100% !important;
+        max-width: 100% !important;
+        overflow: auto !important;
     }
 }

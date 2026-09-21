@@ -6,17 +6,23 @@ import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
+import ProdPrevNext from "@/pages/prod_risk/ProdPrevNext";
 import * as Api from "@/api/ApiProjectTimeline";
 import * as ApiProduct from "@/api/ApiProduct";
 import "./ProjectTimeline.less";
 import "../prod_risk/ProdDhfDetail.less";
 
-export default () => {
+export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChanged }: {
+    prodId?: number;
+    readOnly?: boolean;
+    embedded?: boolean;
+    onChanged?: () => void;
+} = {}) => {
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
     const location = useLocation();
-    const prodId = Number(useParams().prodId);
-    const readOnly = location.pathname.includes("/view/");
+    const prodId = Number(prodIdProp ?? useParams().prodId);
+    const readOnly = readOnlyProp ?? location.pathname.includes("/view/");
     const [data, dispatch] = useData({
         depts: [],
         rows: [],
@@ -52,6 +58,7 @@ export default () => {
             if (res.code === Api.C_OK) {
                 message.success("已新增一行");
                 loadTimeline(prodId);
+                onChanged?.();
             } else message.error(res.msg);
         });
     };
@@ -72,6 +79,7 @@ export default () => {
             if (res.code === Api.C_OK) {
                 message.success("已插入一行");
                 loadTimeline(prodId);
+                onChanged?.();
             } else message.error(res.msg);
         });
     };
@@ -99,6 +107,7 @@ export default () => {
                     if (res.code === Api.C_OK) {
                         message.success("已删除");
                         loadTimeline(prodId);
+                        onChanged?.();
                     } else {
                         message.error(res.msg);
                     }
@@ -129,6 +138,7 @@ export default () => {
                     if (res.code === Api.C_OK) {
                         message.success(ts("msg_ok"));
                         loadTimeline(prodId);
+                        onChanged?.();
                     } else {
                         message.error(res.msg);
                     }
@@ -294,6 +304,7 @@ export default () => {
                         if (res.code === Api.C_OK) {
                             message.success(`导入成功，共 ${res.data?.imported ?? 0} 行`);
                             loadTimeline(prodId);
+                            onChanged?.();
                         } else {
                             message.error(res.msg);
                         }
@@ -306,14 +317,18 @@ export default () => {
 
     useEffect(() => {
         if (!prodId) {
-            message.error("无效的产品 ID");
-            navigate("/project_timeline");
+            if (!embedded) {
+                message.error("无效的产品 ID");
+                navigate("/project_timeline");
+            }
             return;
         }
-        ApiProduct.list_product({ page_index: 0, page_size: 10000 }).then((res: any) => {
-            const products = res.code === ApiProduct.C_OK ? (res.data.rows || []) : [];
-            dispatch({ products });
-        });
+        if (!embedded) {
+            ApiProduct.list_product({ page_index: 0, page_size: 10000 }).then((res: any) => {
+                const products = res.code === ApiProduct.C_OK ? (res.data.rows || []) : [];
+                dispatch({ products });
+            });
+        }
         loadTimeline(prodId);
     }, [prodId]);
 
@@ -364,8 +379,9 @@ export default () => {
     const mode = readOnly ? "view" : "edit";
 
     return (
-        <div className="page div-v project-timeline prod-dhf-detail-page">
+        <div className={embedded ? "risk-part-nested prod-risk-nested-wide project-timeline prod-dhf-detail-page" : "page div-v project-timeline prod-dhf-detail-page"}>
             <div className="div-h searchbar list-searchbar-align prod-dhf-detail-toolbar">
+                {!embedded && (
                 <Space align="center" className="prod-dhf-detail-header-left">
                     <div className="prod-dhf-product-select">
                         <ProductVersionSelect
@@ -381,11 +397,17 @@ export default () => {
                             }}
                         />
                     </div>
+                    <ProdPrevNext
+                        products={data.products}
+                        prodId={prodId}
+                        onChange={(v: any) => navigate(`/project_timeline/${mode}/${v}`)}
+                    />
                     <span className="prod-dhf-detail-title">{readOnly ? "查看" : "编辑"}项目时间逻辑线</span>
                     <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/project_timeline")}>
                         返回列表
                     </Button>
                 </Space>
+                )}
                 <div className="div-h hspace">
                     {!readOnly && (
                         <>

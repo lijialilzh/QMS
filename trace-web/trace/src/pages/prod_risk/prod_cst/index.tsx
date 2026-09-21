@@ -1,6 +1,7 @@
 import * as Api from "@/api/ApiProdCst";
 import ProdRiskProductList from "../ProdRiskProductList";
 import EditDlg from "./EditDlg";
+import ProdCstDetail from "./ProdCstDetail";
 
 export default () => (
     <ProdRiskProductList
@@ -10,6 +11,7 @@ export default () => (
         idsParam="cst_ids"
         selectEmptyMsg="请选择HAZ!"
         MasterPicker={EditDlg}
+        Detail={ProdCstDetail}
         basePath="/prod_csts"
         addTitle="新增产品THREAT"
         hint="选择产品及完整版本后，在下方主数据中全选或勾选 THREAT，确定即添加到该产品。"

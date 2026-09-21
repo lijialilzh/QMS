@@ -6,6 +6,7 @@ import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { useData, renderOneLineWithTooltip } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
+import ProdPrevNext from "@/pages/prod_risk/ProdPrevNext";
 import { HAZ_RATES, HAZ_DEGREES, HAZ_LEVELS, HAZDICT_RATES, HAZDICT_DEGREES, HAZDICT_LEVELS } from "@/pages/basedata/Hazs";
 import * as Api from "@/api/ApiProdHaz";
 import * as ApiProduct from "@/api/ApiProduct";
@@ -22,13 +23,18 @@ enum DlgTypes {
     delete = "delete",
 }
 
-export default () => {
+export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChanged }: {
+    prodId?: number;
+    readOnly?: boolean;
+    embedded?: boolean;
+    onChanged?: () => void;
+} = {}) => {
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
     const location = useLocation();
     const { prodId: prodIdParam } = useParams();
-    const prodId = Number(prodIdParam);
-    const readOnly = location.pathname.includes("/view/");
+    const prodId = Number(prodIdProp ?? prodIdParam);
+    const readOnly = readOnlyProp ?? location.pathname.includes("/view/");
     const [data, dispatch] = useData({
         total: 0,
         pageIndex: 1,
@@ -96,6 +102,7 @@ export default () => {
                 dispatch({ loading: false, dlgType: null, selectedRowKeys: [] });
                 message.success(res.msg);
                 doSearch(data.pageIndex, data.pageSize);
+                onChanged?.();
             } else {
                 dispatch({ loading: false });
                 message.error(res.msg);
@@ -557,15 +564,18 @@ export default () => {
     ];
 
     useEffect(() => {
-        ApiProduct.list_product({ page_size: 10000 }).then((res: any) => {
-            if (res.code === ApiProduct.C_OK) dispatch({ products: res.data.rows || [] });
-        });
+        if (!embedded) {
+            ApiProduct.list_product({ page_size: 10000 }).then((res: any) => {
+                if (res.code === ApiProduct.C_OK) dispatch({ products: res.data.rows || [] });
+            });
+        }
         doSearch(data.pageIndex, data.pageSize);
     }, [prodId]);
 
     return (
-        <div className="page div-v prod_haz prod-dhf-detail-page">
+        <div className={embedded ? "risk-part-nested prod-risk-nested-wide prod_haz prod-dhf-detail-page" : "page div-v prod_haz prod-dhf-detail-page"}>
             <div className="div-h searchbar list-searchbar-align prod-dhf-detail-toolbar">
+                {!embedded && (
                 <Space align="center" className="prod-dhf-detail-header-left">
                     <div className="prod-dhf-product-select">
                         <ProductVersionSelect
@@ -581,11 +591,17 @@ export default () => {
                             }}
                         />
                     </div>
+                    <ProdPrevNext
+                        products={data.products}
+                        prodId={prodId}
+                        onChange={(value) => navigate(`/prod_hazs/${readOnly ? "view" : "edit"}/${value}`)}
+                    />
                     <span className="prod-dhf-detail-title">{readOnly ? "查看" : "编辑"}产品 HAZ</span>
                     <Button icon={<ArrowLeftOutlined />} onClick={() => navigate("/prod_hazs")}>
                         返回列表
                     </Button>
                 </Space>
+                )}
                 {!readOnly && (
                     <div className="div-h hspace">
                         <Button
@@ -621,7 +637,7 @@ export default () => {
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}
                 loading={data.loading}
-                sticky
+                sticky={!embedded}
                 scroll={{ x: 1800, y: "68vh" }}
                 pagination={{
                     total: data.total,
@@ -657,6 +673,7 @@ export default () => {
                     dispatch({ dlgType: null });
                     if (saved) {
                         doSearch(data.pageIndex, data.pageSize);
+                        onChanged?.();
                     }
                 }}
                 prod_id={prodId}
