@@ -7,6 +7,7 @@ import { sprintf } from "sprintf-js";
 import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import ReviewTable from "@/common/ReviewTable";
+import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 import * as Api from "@/api/ApiRiskMgmtDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiProdRcm from "@/api/ApiProdRcm";
@@ -386,20 +387,8 @@ const fillProductTextSections = (content: any, product: any) => {
 };
 
 const syncFileVersionInCover = (content: any, version: any) => {
-    const ver = String(version ?? "");
     const nextContent = JSON.parse(JSON.stringify(content || emptyContent));
-    (nextContent.sections || []).forEach((section: any) => {
-        if (!isCoverSection(section)) return;
-        (section.tables || []).forEach((table: any[]) => {
-            (table || []).forEach((row: any[]) => {
-                for (let i = 0; i + 1 < (row || []).length; i += 1) {
-                    if (normalizeTitleText(row[i]) === "文件版本") {
-                        row[i + 1] = ver;
-                    }
-                }
-            });
-        });
-    });
+    nextContent.sections = syncDocVersionFields(nextContent.sections, version);
     return nextContent;
 };
 

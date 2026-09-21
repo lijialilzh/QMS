@@ -12,6 +12,7 @@ import * as ApiDocFile from "@/api/ApiDocFile";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
 import { isRuntimeLockedBody, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
+import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 const IMG_CATEGORY_LABEL: Record<string, string> = {
     img_struct: "体系结构图",
@@ -353,7 +354,7 @@ export default () => {
             const sections = ensureKeys((doc.content && doc.content.sections) || []);
             if (doc.product_id) loadDocImages(doc.product_id, sections);
             autofill(doc.product_id, sections).then((secs) => {
-                dispatch({ loading: false, doc, sections: secs, activeKey: findNode(secs, data.activeKey) ? data.activeKey : firstKey(secs) });
+                dispatch({ loading: false, doc, sections: syncDocVersionFields(secs, doc.version), activeKey: findNode(secs, data.activeKey) ? data.activeKey : firstKey(secs) });
             });
         });
     };
@@ -599,7 +600,13 @@ export default () => {
                                 size="small"
                                 style={{ width: 110 }}
                                 value={data.doc.version || ""}
-                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })}
+                                onChange={(e) => {
+                                    const version = e.target.value;
+                                    dispatch({
+                                        doc: { ...data.doc, version },
+                                        sections: syncDocVersionFields(data.sections, version),
+                                    });
+                                }}
                             />
                         </span>
                     )}

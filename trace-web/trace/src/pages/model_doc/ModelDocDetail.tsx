@@ -22,6 +22,7 @@ import {
     envCheckTitle, isEnvCheckGrid, parseEqAssets, prevEnvCheckRows,
 } from "./envMaintCheck";
 import "../pdp/PdpDocDetail.less";
+import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
@@ -727,7 +728,7 @@ export default () => {
                     if (!String(row[2] || "").trim()) row[2] = "首次发布";
                 } else {
                     setIf(0, info.fileDate);
-                    setIf(1, info.version);
+                    if (info.version) row[1] = info.version;
                     if (!String(row[2] || "").trim()) row[2] = "首次发布";
                     setIf(3, info.reviser);
                     setIf(4, info.approver);
@@ -884,7 +885,7 @@ export default () => {
                         docType: type,
                     });
                 }
-                resolve(out);
+                resolve(syncDocVersionFields(out, version));
             }).catch(() => resolve(secs));
         });
 
@@ -1094,7 +1095,13 @@ export default () => {
                                 size="small"
                                 style={{ width: 110 }}
                                 value={data.doc.version || ""}
-                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })}
+                                onChange={(e) => {
+                                    const version = e.target.value;
+                                    dispatch({
+                                        doc: { ...data.doc, version },
+                                        sections: syncDocVersionFields(data.sections, version),
+                                    });
+                                }}
                             />
                         </span>
                     )}

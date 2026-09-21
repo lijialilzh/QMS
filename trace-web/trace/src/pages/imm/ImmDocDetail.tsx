@@ -11,6 +11,7 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import ReviewTable from "@/common/ReviewTable";
 import "../pdp/PdpDocDetail.less";
 import { isRuntimeLockedBody, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
+import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 let _seq = 0;
 const genKey = () => `r${Date.now().toString(36)}_${(_seq++).toString(36)}`;
@@ -118,7 +119,7 @@ export default () => {
             dispatch({
                 loading: false,
                 doc,
-                sections,
+                sections: syncDocVersionFields(sections, doc.version),
                 activeKey: findNode(sections, data.activeKey) ? data.activeKey : firstKey(sections),
             });
         });
@@ -325,7 +326,13 @@ export default () => {
                                 size="small"
                                 style={{ width: 110 }}
                                 value={data.doc.version || ""}
-                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })}
+                                onChange={(e) => {
+                                    const version = e.target.value;
+                                    dispatch({
+                                        doc: { ...data.doc, version },
+                                        sections: syncDocVersionFields(data.sections, version),
+                                    });
+                                }}
                             />
                         </span>
                     )}

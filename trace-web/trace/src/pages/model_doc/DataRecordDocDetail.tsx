@@ -16,6 +16,7 @@ import { getDataDocMeta, DATA_STATS_IMPORT_TYPES, getDataDocListType } from "./D
 import { ANN_PID_TYPES, annotTableSig, applyPidsToSections, attachCaseRows, autoStatsExtra, buildAnnotMeta, buildStatsGrid, caseRowsFromContent, pidsFromCache, readLastStats, readStatsCache, STATS_TITLES, StatsKind } from "../data_stats/dataStatsLocal";
 import { computeGridSpans } from "./gridSpans";
 import "../pdp/PdpDocDetail.less";
+import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", marginBottom: 16, tableLayout: "auto" };
 const PATH_LABELS = new Set(["存储路径"]);
@@ -3146,7 +3147,13 @@ export default () => {
                                 size="small"
                                 style={{ width: 110 }}
                                 value={data.doc.version || ""}
-                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })}
+                                onChange={(e) => {
+                                    const version = e.target.value;
+                                    dispatch({
+                                        doc: { ...data.doc, version },
+                                        sections: syncDocVersionFields(data.sections, version),
+                                    });
+                                }}
                             />
                         </span>
                     )}

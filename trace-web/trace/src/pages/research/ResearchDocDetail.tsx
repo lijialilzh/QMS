@@ -10,6 +10,7 @@ import * as ApiDocFile from "@/api/ApiDocFile";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
 import { isRuntimeLockedBody, isRuntimeLockedNode, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
+import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 const emptyContent = { sections: [], productName: "" };
 
@@ -85,7 +86,7 @@ export default () => {
             dispatch({
                 loading: false,
                 doc,
-                sections,
+                sections: syncDocVersionFields(sections, doc.version),
                 imgVer: Date.now(),
                 activeKey: findNode(sections, data.activeKey) ? data.activeKey : firstSelectableKey(sections),
             });
@@ -549,7 +550,13 @@ export default () => {
                                 size="small"
                                 style={{ width: 110 }}
                                 value={data.doc.version || ""}
-                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })}
+                                onChange={(e) => {
+                                    const version = e.target.value;
+                                    dispatch({
+                                        doc: { ...data.doc, version },
+                                        sections: syncDocVersionFields(data.sections, version),
+                                    });
+                                }}
                             />
                         </span>
                     )}

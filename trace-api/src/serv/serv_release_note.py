@@ -52,16 +52,22 @@ ACCEPT_TEXT = (
 TRANSFER_NOTE = "注：其他DMR文档已作为通用技术文件受控和发放。"
 
 
-def _archive_text(name):
+def _archive_text(name, type_code="", full_version=""):
     name = str(name or "").strip()
-    return f"通过评审，{name}的全套设计开发历史文档（DHF）和全套器械主记录（DMR）已完成归档。"
+    type_code = str(type_code or "").strip()
+    full_version = str(full_version or "").strip()
+    return (
+        f"通过评审，{name}({type_code}) {full_version}版本"
+        "的全套设计开发历史文档（DHF）和全套器械主记录（DMR）已完成归档。"
+    )
 
 
-def _overview_text(name, release_version, full_version, func_desc):
-    """组装产品概述：产品名称/发布版本/完整版本(自动) + 交付形式/存储媒介(固定) + 产品功能概述(总体描述)。"""
+def _overview_text(name, type_code, release_version, full_version, func_desc):
+    """组装产品概述：名称/型号/发布版本/完整版本(自动) + 交付形式/存储媒介(固定) + 产品功能概述(总体描述)。"""
     func_desc = str(func_desc or "").strip()
     lines = [
         f"产品名称：{str(name or '').strip()}",
+        f"产品型号：{str(type_code or '').strip()}",
         f"发布版本：{str(release_version or '').strip()}",
         f"完整版本：{str(full_version or '').strip()}",
         "交付形式：物理交付",
@@ -100,7 +106,7 @@ DEFAULT_RELEASE_NOTE_CONTENT = {
         {
             "title": "产品概述", "ref_type": "rn_overview", "tables": [], "children": [],
             "body": _overview_text(
-                "肿瘤CT图像随访与评估软件", "2", "2.0.0.0",
+                "肿瘤CT图像随访与评估软件", "IR-CT-RECIST", "2", "2.0.0.0",
                 "肿瘤CT图像随访与评估软件主要包括登录、数据上传、系统管理、时间线、工作站和报告六个模块。",
             ),
         },
@@ -108,7 +114,7 @@ DEFAULT_RELEASE_NOTE_CONTENT = {
             "title": "发布活动", "body": "", "tables": [], "children": [
                 {"title": "发布时间", "ref_type": "rn_release_time", "body": "", "tables": [], "children": []},
                 {"title": "产品验收和交付", "body": ACCEPT_TEXT, "tables": [], "children": []},
-                {"title": "文档归档", "ref_type": "rn_archive", "body": _archive_text("肿瘤CT图像随访与评估软件"), "tables": [], "children": []},
+                {"title": "文档归档", "ref_type": "rn_archive", "body": _archive_text("肿瘤CT图像随访与评估软件", "IR-CT-RECIST", "2.0.0.0"), "tables": [], "children": []},
                 {
                     "title": "产品和文档移交记录", "body": "", "tables": [], "children": [
                         {
@@ -176,6 +182,7 @@ class Server(object):
     # ---------------- 自动获取 ----------------
     def __collect_autofill(self, prod_id, product, doc_version):
         name = (getattr(product, "name", "") or "").strip()
+        type_code = (getattr(product, "type_code", "") or "").strip()
         overall_desc = (getattr(product, "overall_desc", "") or "").strip()
         release_version = (getattr(product, "release_version", "") or "").strip()
         full_version = (getattr(product, "full_version", "") or "").strip()
@@ -230,8 +237,8 @@ class Server(object):
         return {
             "name": name,
             "release_date": release_date,
-            "overview": _overview_text(name, release_version, full_version, overall_desc),
-            "archive": _archive_text(name),
+            "overview": _overview_text(name, type_code, release_version, full_version, overall_desc),
+            "archive": _archive_text(name, type_code, full_version),
             "version": doc_version,
             "pm": pm,
             "approver": approver,
@@ -278,15 +285,13 @@ class Server(object):
     def __fill_node(self, node, info):
         ref = node.get("ref_type")
         title = self.__strip_num(node.get("title"))
-        def blank(v):
-            return not str(v or "").strip()
         if ref == "rn_overview" or title == "产品概述":
-            if blank(node.get("body")) and info.get("overview"):
+            if info.get("overview"):
                 node["body"] = info["overview"]
         elif ref == "rn_release_time" or title == "发布时间":
             node["body"] = info.get("release_date") or ""
         elif ref == "rn_archive" or title == "文档归档":
-            if blank(node.get("body")) and info.get("archive"):
+            if info.get("archive"):
                 node["body"] = info["archive"]
         if ref == "rn_transfer_files" or title == "文件移交记录":
             for tbl in (node.get("tables") or []):

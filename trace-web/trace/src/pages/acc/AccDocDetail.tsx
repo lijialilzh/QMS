@@ -8,6 +8,7 @@ import * as Api from "@/api/ApiAccDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
+import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 const emptyContent = { sections: [], productName: "" };
 
@@ -44,7 +45,7 @@ export default () => {
             }
             const doc = res.data || {};
             const content = doc.content || emptyContent;
-            dispatch({ loading: false, doc, sections: content.sections || [] });
+            dispatch({ loading: false, doc, sections: syncDocVersionFields(content.sections || [], doc.version) });
         });
     };
 
@@ -211,7 +212,13 @@ export default () => {
                                 size="small"
                                 style={{ width: 110 }}
                                 value={data.doc.version || ""}
-                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })}
+                                onChange={(e) => {
+                                    const version = e.target.value;
+                                    dispatch({
+                                        doc: { ...data.doc, version },
+                                        sections: syncDocVersionFields(data.sections, version),
+                                    });
+                                }}
                             />
                         </span>
                     )}

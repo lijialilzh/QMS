@@ -10,6 +10,7 @@ import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
+import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
@@ -204,7 +205,7 @@ export default () => {
                 const row = t[1];
                 const setIf = (i: number, val: any) => { if (val && !String(row[i] || "").trim()) row[i] = val; };
                 setIf(0, info.fileDate);
-                setIf(1, info.version);
+                if (info.version) row[1] = info.version;
                 if (!String(row[2] || "").trim()) row[2] = "首次发布";
                 setIf(3, info.pm);
                 setIf(4, info.approver);
@@ -246,7 +247,7 @@ export default () => {
                     pm: findRole((r) => r.includes("产品经理")),
                     approver: findRole((r) => r.includes("负责人") && r.includes("产品")),
                 });
-                resolve(out);
+                resolve(syncDocVersionFields(out, version));
             }).catch(() => resolve(secs));
         });
 
@@ -415,7 +416,13 @@ export default () => {
                                 size="small"
                                 style={{ width: 110 }}
                                 value={data.doc.version || ""}
-                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })}
+                                onChange={(e) => {
+                                    const version = e.target.value;
+                                    dispatch({
+                                        doc: { ...data.doc, version },
+                                        sections: syncDocVersionFields(data.sections, version),
+                                    });
+                                }}
                             />
                         </span>
                     )}

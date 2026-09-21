@@ -16,6 +16,7 @@ import {
     envCheckTitle, isEnvCheckGrid, parseEqAssets, prevEnvCheckRows,
 } from "./envMaintCheck";
 import "../pdp/PdpDocDetail.less";
+import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", marginBottom: 8, tableLayout: "auto" };
 const tdBase: CSSProperties = { border: "1px solid #d9d9d9", padding: "4px 6px", fontSize: 12, verticalAlign: "middle" };
@@ -245,7 +246,7 @@ export default () => {
             const doc = res.data || {};
             const secs = (doc.content && doc.content.sections) || [];
             applyEnv(doc.product_id, secs).then((next) => {
-                dispatch({ loading: false, doc, sections: next });
+                dispatch({ loading: false, doc, sections: syncDocVersionFields(next, doc.version) });
             });
         });
     };
@@ -351,7 +352,13 @@ export default () => {
                                 size="small"
                                 style={{ width: 110 }}
                                 value={data.doc.version || ""}
-                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })}
+                                onChange={(e) => {
+                                    const version = e.target.value;
+                                    dispatch({
+                                        doc: { ...data.doc, version },
+                                        sections: syncDocVersionFields(data.sections, version),
+                                    });
+                                }}
                             />
                         </span>
                     )}

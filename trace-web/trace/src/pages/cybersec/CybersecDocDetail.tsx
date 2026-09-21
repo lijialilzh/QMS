@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { sprintf } from "sprintf-js";
 import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
+import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 import * as Api from "@/api/ApiCybersecDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiProdCst from "@/api/ApiProdCst";
@@ -381,20 +382,8 @@ const syncProductNameInContent = (content: any, productName?: string) => {
 };
 
 const syncFileVersionInCover = (content: any, version: any) => {
-    const ver = String(version ?? "");
     const nextContent = JSON.parse(JSON.stringify(content || emptyContent));
-    (nextContent.sections || []).forEach((section: any) => {
-        if (!isCoverSection(section)) return;
-        (section.tables || []).forEach((table: any[]) => {
-            (table || []).forEach((row: any[]) => {
-                for (let i = 0; i + 1 < (row || []).length; i += 1) {
-                    if (normalizeTitleText(row[i]) === "文件版本") {
-                        row[i + 1] = ver;
-                    }
-                }
-            });
-        });
-    });
+    nextContent.sections = syncDocVersionFields(nextContent.sections, version);
     return nextContent;
 };
 

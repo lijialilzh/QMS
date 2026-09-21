@@ -13,6 +13,7 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import ReviewTable from "@/common/ReviewTable";
 import * as echarts from "echarts";
 import "../pdp/PdpDocDetail.less";
+import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 // 兼容性表首列「测试模块」连续相同项合并：返回 {行号: 跨行数(0=被合并跳过)}，非兼容性表返回 null
 const compatMerge = (tb: any[]): Record<number, number> | null => {
@@ -299,7 +300,7 @@ export default () => {
                 const row = t[1];
                 const setIf = (i: number, val: any) => { if (val && !String(row[i] || "").trim()) row[i] = val; };
                 setIf(0, info.fileDate);
-                setIf(1, info.version);
+                if (info.version) row[1] = info.version;
                 if (!String(row[2] || "").trim()) row[2] = "首次发布";
                 setIf(3, info.pm);
                 setIf(4, info.approver);
@@ -420,7 +421,7 @@ export default () => {
                     moduleMap,
                     phases: computeDevPhases(tlRows),
                 });
-                resolve(out);
+                resolve(syncDocVersionFields(out, version));
             }).catch(() => resolve(secs));
         });
 
@@ -734,7 +735,13 @@ export default () => {
                                 size="small"
                                 style={{ width: 110 }}
                                 value={data.doc.version || ""}
-                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })}
+                                onChange={(e) => {
+                                    const version = e.target.value;
+                                    dispatch({
+                                        doc: { ...data.doc, version },
+                                        sections: syncDocVersionFields(data.sections, version),
+                                    });
+                                }}
                             />
                         </span>
                     )}

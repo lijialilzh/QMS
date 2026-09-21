@@ -11,6 +11,7 @@ import * as ApiProdHaz from "@/api/ApiProdHaz";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import ReviewTable from "@/common/ReviewTable";
 import "../pdp/PdpDocDetail.less";
+import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
@@ -256,7 +257,7 @@ export default () => {
             const doc = res.data || {};
             const sections = ensureKeys((doc.content && doc.content.sections) || []);
             autofill(doc.product_id, sections, doc.version, doc.product_name).then(({ sections: secs }) => {
-                dispatch({ loading: false, doc, sections: secs, activeKey: findNode(secs, data.activeKey) ? data.activeKey : firstKey(secs) });
+                dispatch({ loading: false, doc, sections: syncDocVersionFields(secs, doc.version), activeKey: findNode(secs, data.activeKey) ? data.activeKey : firstKey(secs) });
             });
         });
     };
@@ -415,7 +416,13 @@ export default () => {
                                 size="small"
                                 style={{ width: 110 }}
                                 value={data.doc.version || ""}
-                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })}
+                                onChange={(e) => {
+                                    const version = e.target.value;
+                                    dispatch({
+                                        doc: { ...data.doc, version },
+                                        sections: syncDocVersionFields(data.sections, version),
+                                    });
+                                }}
                             />
                         </span>
                     )}

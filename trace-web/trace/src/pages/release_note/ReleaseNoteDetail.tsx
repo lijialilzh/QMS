@@ -60,12 +60,13 @@ const computeReleaseDate = (rows: any[], keyword = "发布说明"): string => {
     return `${best.y}年${best.m}月${isNaN(best.d) ? 1 : best.d}日`;
 };
 
-const archiveText = (name: string) =>
-    `通过评审，${String(name || "").trim()}的全套设计开发历史文档（DHF）和全套器械主记录（DMR）已完成归档。`;
+const archiveText = (name: string, typeCode: string, full: string) =>
+    `通过评审，${String(name || "").trim()}(${String(typeCode || "").trim()}) ${String(full || "").trim()}版本的全套设计开发历史文档（DHF）和全套器械主记录（DMR）已完成归档。`;
 
-const overviewText = (name: string, release: string, full: string, funcDesc: string) => {
+const overviewText = (name: string, typeCode: string, release: string, full: string, funcDesc: string) => {
     const lines = [
         `产品名称：${String(name || "").trim()}`,
+        `产品型号：${String(typeCode || "").trim()}`,
         `发布版本：${String(release || "").trim()}`,
         `完整版本：${String(full || "").trim()}`,
         "交付形式：物理交付",
@@ -160,20 +161,17 @@ export default () => {
         products: [] as any[],
     });
 
-    // 全文自动获取：产品概述/归档仅填空；发布时间始终覆盖。切换产品 overwrite=true 时概述也覆盖
+    // 全文自动获取：产品概述/文档归档/发布时间始终覆盖
     const fillAuto = (nodes: any[], info: { overview?: string; releaseDate?: string; archive?: string }, overwrite = false): any[] => {
-        const isBlank = (s: any) => !String(s || "").trim();
         const fix = (n: any): any => {
             let body = n.body;
             const t = stripNum(n.title);
             if (n.ref_type === "rn_overview" || t === "产品概述") {
-                if (overwrite || isBlank(body)) {
-                    if (overwrite || info.overview) body = info.overview;
-                }
+                if (info.overview) body = info.overview;
             } else if (n.ref_type === "rn_release_time" || t === "发布时间") {
                 body = info.releaseDate || "";
             } else if (n.ref_type === "rn_archive" || t === "文档归档") {
-                if (info.archive && (overwrite || isBlank(body))) body = info.archive;
+                if (info.archive) body = info.archive;
             }
             return { ...n, body, children: (n.children || []).map(fix) };
         };
@@ -323,9 +321,9 @@ export default () => {
                 const acceptanceDate = computeReleaseDate(tlRows, "产品验收记录");
                 let out = fillCoverVersion(secs, version);
                 out = fillAuto(out, {
-                    overview: overviewText(prod.name, prod.release_version, prod.full_version, prod.overall_desc),
+                    overview: overviewText(prod.name, prod.type_code, prod.release_version, prod.full_version, prod.overall_desc),
                     releaseDate,
-                    archive: archiveText(prod.name),
+                    archive: archiveText(prod.name, prod.type_code, prod.full_version),
                 }, overwrite);
                 out = fillRevision(out, {
                     fileDate: releaseDate,

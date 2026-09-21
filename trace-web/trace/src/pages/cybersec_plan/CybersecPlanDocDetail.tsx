@@ -10,6 +10,7 @@ import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiDocFile from "@/api/ApiDocFile";
 import "../pdp/PdpDocDetail.less";
 import { isRuntimeLockedBody, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
+import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 const emptyContent = { sections: [], productName: "" };
 
@@ -356,7 +357,16 @@ export default () => {
                             </span>
                             <span style={{ whiteSpace: "nowrap" }}>文档版本：</span>
                             <Input size="small" style={{ width: 110 }} value={data.detail.version || ""}
-                                onChange={(e) => dispatch({ detail: { ...data.detail, version: e.target.value } })} />
+                                onChange={(e) => {
+                                    const version = e.target.value;
+                                    dispatch({
+                                        detail: { ...data.detail, version },
+                                        content: {
+                                            ...data.content,
+                                            sections: syncDocVersionFields(data.content?.sections, version),
+                                        },
+                                    });
+                                }} />
                         </span>
                     )}
                 </div>

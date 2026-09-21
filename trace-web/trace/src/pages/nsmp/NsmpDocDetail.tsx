@@ -8,6 +8,7 @@ import * as Api from "@/api/ApiNsmpDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
+import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
@@ -100,7 +101,7 @@ export default () => {
             }
             const doc = res.data || {};
             const sections = ensureKeys((doc.content && doc.content.sections) || []);
-            dispatch({ loading: false, doc, sections, activeKey: findNode(sections, data.activeKey) ? data.activeKey : firstKey(sections) });
+            dispatch({ loading: false, doc, sections: syncDocVersionFields(sections, doc.version), activeKey: findNode(sections, data.activeKey) ? data.activeKey : firstKey(sections) });
         });
     };
 
@@ -263,7 +264,13 @@ export default () => {
                                 size="small"
                                 style={{ width: 110 }}
                                 value={data.doc.version || ""}
-                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })}
+                                onChange={(e) => {
+                                    const version = e.target.value;
+                                    dispatch({
+                                        doc: { ...data.doc, version },
+                                        sections: syncDocVersionFields(data.sections, version),
+                                    });
+                                }}
                             />
                         </span>
                     )}

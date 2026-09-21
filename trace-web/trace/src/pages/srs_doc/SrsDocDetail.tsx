@@ -274,7 +274,10 @@ const applyCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAutofi
             while (rows.length < 1) rows.push({});
             const row = rows[0] || {};
             setIf(row, "change_date", info.coverDate);
-            if (info.version) setIf(row, "version_no", info.version);
+            if (info.version && String(row.version_no ?? "").trim() !== info.version) {
+                row.version_no = info.version;
+                changed = true;
+            }
             if (!String(row.change_desc ?? "").trim()) {
                 row.change_desc = "首次发布";
                 changed = true;
