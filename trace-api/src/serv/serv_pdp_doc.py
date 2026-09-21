@@ -205,6 +205,7 @@ class Server(object):
         # 产品信息
         product = db.session.execute(select(Product).where(Product.id == prod_id)).scalars().first()
         prod_name = (getattr(product, "name", "") or "").strip()
+        type_code = (getattr(product, "type_code", "") or "").strip()
         overall_desc = (getattr(product, "overall_desc", "") or "").strip()
         # 时间线
         tl_rows = db.session.execute(
@@ -263,9 +264,22 @@ class Server(object):
             is_overview = ref == "prod_overview" or (title == "产品概况" and not children)
             is_cycle = ref == "prod_cycle" or (title == "产品开发周期" and not children)
             cur = str(node.get("body") or "").strip()
-            if (ref == "prod_name" or title == "产品简介") and prod_name:
-                if not cur or cur == "产品名称：":
-                    node["body"] = f"产品名称：{prod_name}"
+            if ref == "prod_name" or title == "产品简介":
+                labels = ["产品名称", "产品型号", "产品经理"]
+                vals = {"产品名称": prod_name, "产品型号": type_code, "产品经理": pm}
+                found = {}
+                other = []
+                for line in str(node.get("body") or "").split("\n"):
+                    hit = next((lb for lb in labels if line.startswith(lb + "：") or line.startswith(lb + ":")), None)
+                    if hit:
+                        found[hit] = line.split("：", 1)[-1].strip() if "：" in line else line.split(":", 1)[-1].strip()
+                    elif line.strip():
+                        other.append(line)
+                auto = []
+                for lb in labels:
+                    v = found[lb] if found.get(lb) else vals.get(lb, "")
+                    auto.append(f"{lb}：{v}")
+                node["body"] = "\n".join(auto + other)
             elif is_overview and overall_desc:
                 if not cur:
                     node["body"] = overall_desc

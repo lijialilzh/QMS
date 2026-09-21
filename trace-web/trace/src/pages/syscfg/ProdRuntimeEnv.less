@@ -20,13 +20,14 @@
     }
 
     .env-body {
-        max-width: 940px;
+        max-width: 1280px;
+        width: 100%;
         margin: 0 auto;
         background: #fff;
         border: 1px solid #eef0f3;
         border-radius: 12px;
         box-shadow: 0 6px 24px rgba(0, 0, 0, 0.05);
-        padding: 28px 34px 34px;
+        padding: 28px 40px 36px;
     }
 
     .env-title {
@@ -102,7 +103,8 @@
             padding: 0;
             vertical-align: top;
             text-align: left;
-            word-break: break-word;
+            word-break: normal;
+            overflow-wrap: break-word;
         }
 
         th:last-child,
@@ -130,20 +132,30 @@
             color: #2b3a4b;
             text-align: center;
             vertical-align: middle;
-            padding: 0;
+            padding: 8px 12px;
+            white-space: nowrap;
         }
 
+        th:first-child,
         td:first-child:not(.env-row-op) {
-            width: 1%;
+            width: 9em;
+            min-width: 9em;
+            white-space: nowrap;
+            word-break: normal;
 
             .env-input {
                 field-sizing: content;
                 width: auto !important;
-                min-width: 2em !important;
-                max-width: 10em;
-                white-space: nowrap;
-                overflow: hidden;
+                min-width: 4em !important;
+                white-space: normal;
+                word-break: normal;
+                overflow-wrap: break-word;
             }
+        }
+
+        th:nth-child(2),
+        td:nth-child(2):not(.env-row-op) {
+            min-width: 22em;
         }
 
         td:not(:first-child):not(.env-row-op) .env-input {

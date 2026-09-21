@@ -266,12 +266,16 @@ class Server(object):
     def __fill_node(self, node, info):
         ref = node.get("ref_type")
         title = self.__strip_num(node.get("title"))
+        def blank(v):
+            return not str(v or "").strip()
         if ref == "rn_overview" or title == "产品概述":
-            node["body"] = info["overview"]
+            if blank(node.get("body")) and info.get("overview"):
+                node["body"] = info["overview"]
         elif ref == "rn_release_time" or title == "发布时间":
-            node["body"] = info["release_date"] or ""
+            if blank(node.get("body")) and info.get("release_date"):
+                node["body"] = info["release_date"]
         elif ref == "rn_archive" or title == "文档归档":
-            if info["name"]:
+            if blank(node.get("body")) and info.get("archive"):
                 node["body"] = info["archive"]
         if ref == "rn_transfer_files" or title == "文件移交记录":
             for tbl in (node.get("tables") or []):
@@ -309,14 +313,15 @@ class Server(object):
                 row = t[1]
                 while len(row) < 5:
                     row.append("")
-
-                row[0] = info["release_date"] or ""
-                if info["version"]:
+                if not str(row[0] or "").strip() and info.get("release_date"):
+                    row[0] = info["release_date"]
+                if not str(row[1] or "").strip() and info.get("version"):
                     row[1] = info["version"]
                 if not str(row[2] or "").strip():
                     row[2] = "首次发布"
-                row[3] = info["pm"] or ""
-                if info["approver"]:
+                if not str(row[3] or "").strip() and info.get("pm"):
+                    row[3] = info["pm"]
+                if not str(row[4] or "").strip() and info.get("approver"):
                     row[4] = info["approver"]
         for child in (node.get("children") or []):
             self.__fill_node(child, info)
@@ -333,6 +338,26 @@ class Server(object):
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(obj.product_id, "release_note"))
         return content
 
+    def __sync_cover_version(self, content, version):
+        ver = str(version or "").strip()
+        if not ver or not isinstance(content, dict):
+            return content
+        for section in content.get("sections") or []:
+            if not isinstance(section, dict):
+                continue
+            if section.get("ref_type") != "cover" and self.__strip_num(section.get("title")) != DOC_NAME:
+                continue
+            for table in section.get("tables") or []:
+                if not isinstance(table, list):
+                    continue
+                for row in table:
+                    if not isinstance(row, list):
+                        continue
+                    for i in range(len(row) - 1):
+                        if str(row[i] or "").strip() == "文件版本":
+                            row[i + 1] = ver
+        return content
+
     def __dhf_file_no(self, prod_id):
         row = db.session.execute(
             select(ProdDhf).where(ProdDhf.prod_id == prod_id, ProdDhf.name.like(f"%{DOC_NAME}%"))
@@ -342,6 +367,7 @@ class Server(object):
     def __to_obj(self, row: ReleaseNote, product: Product = None):
         obj = ReleaseNoteObj(**row.dict())
         obj.content = self.__normalize_content(obj.content)
+        self.__sync_cover_version(obj.content, obj.version)
         serv_review_util.fill_cover_dates(
             obj.content, serv_review_util.cover_date(row.product_id, "release_note") if row.product_id else ""
         )
@@ -396,15 +422,18 @@ class Server(object):
                     m = re.search(r"(\d+)(?!.*\d)", v or "")
                     return int(m.group(1)) if m else -1
                 valid = [v for v in all_versions if v]
-                version = new_version(max(valid, key=_seq)) if valid else fromdoc.version
+                version = new_version(max(valid, key=_seq)) if valid else "A0"
             while version in existing_set:
                 version = new_version(version)
+            target_file_no = self.__dhf_file_no(target_pid) if target_pid != fromdoc.product_id else (fromdoc.file_no or "").strip()
+            content = copy.deepcopy(self.__normalize_content(fromdoc.content))
+            self.__sync_cover_version(content, version)
             newdoc = ReleaseNote(
                 product_id=target_pid,
                 version=version,
-                file_no=sync_file_no_version((fromdoc.file_no or "").strip() or self.__dhf_file_no(target_pid), version) or None,
+                file_no=sync_file_no_version(target_file_no or (fromdoc.file_no or "").strip() or self.__dhf_file_no(target_pid), version) or None,
                 change_log=fromdoc.change_log,
-                content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
+                content=content,
             )
             db.session.add(newdoc)
             db.session.commit()
@@ -475,6 +504,7 @@ class Server(object):
             output.seek(0)
             return
         c = self.__autofill_for_export(self.__normalize_content(obj.content), obj)
+        self.__sync_cover_version(c, obj.version)
         sections = c.get("sections") or []
         document = Document()
         section = document.sections[0]

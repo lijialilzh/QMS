@@ -130,24 +130,52 @@ export default () => {
         products: [] as any[],
     });
 
-    // 全文自动获取：产品概述(产品名/版本/总体描述)、发布时间、文档归档(产品名)
-    const fillAuto = (nodes: any[], info: { overview?: string; releaseDate?: string; archive?: string }): any[] => {
+    // 全文自动获取：产品概述、发布时间、文档归档。默认仅填空；切换产品 overwrite=true
+    const fillAuto = (nodes: any[], info: { overview?: string; releaseDate?: string; archive?: string }, overwrite = false): any[] => {
+        const isBlank = (s: any) => !String(s || "").trim();
         const fix = (n: any): any => {
             let body = n.body;
             const t = stripNum(n.title);
             if (n.ref_type === "rn_overview" || t === "产品概述") {
-                body = info.overview;
+                if (overwrite || isBlank(body)) {
+                    if (overwrite || info.overview) body = info.overview;
+                }
             } else if (n.ref_type === "rn_release_time" || t === "发布时间") {
-                body = info.releaseDate || "";
+                if (overwrite || isBlank(body)) body = info.releaseDate || "";
             } else if (n.ref_type === "rn_archive" || t === "文档归档") {
-                if (info.archive) body = info.archive;
+                if (info.archive && (overwrite || isBlank(body))) body = info.archive;
             }
             return { ...n, body, children: (n.children || []).map(fix) };
         };
         return (nodes || []).map(fix);
     };
 
-    // 文件修订记录首行（仅填空、不覆盖已填）
+    // 封面「文件版本」与文档 version 同步
+    const fillCoverVersion = (nodes: any[], version: string): any[] => {
+        const ver = String(version || "").trim();
+        if (!ver) return nodes;
+        const fix = (n: any): any => {
+            const isCover = n.ref_type === "cover" || stripNum(n.title) === "产品发布说明";
+            let tables = n.tables;
+            if (isCover && Array.isArray(n.tables)) {
+                tables = n.tables.map((tb: any[]) => {
+                    if (!Array.isArray(tb)) return tb;
+                    return tb.map((row: any[]) => {
+                        if (!Array.isArray(row)) return row;
+                        const next = [...row];
+                        for (let i = 0; i < next.length - 1; i++) {
+                            if (String(next[i] || "").trim() === "文件版本") next[i + 1] = ver;
+                        }
+                        return next;
+                    });
+                });
+            }
+            return { ...n, tables, children: (n.children || []).map(fix) };
+        };
+        return (nodes || []).map(fix);
+    };
+
+    // 文件修订记录首行：仅填空、不覆盖已填（升版后首条版本保持 A0）
     const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; pm?: string; approver?: string }): any[] => {
         const fix = (n: any): any => {
             const isRev = n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
@@ -158,11 +186,12 @@ export default () => {
                 while (tb.length < 6) tb.push(new Array(cols).fill(""));
                 const row = tb[1];
                 while (row.length < 5) row.push("");
-                row[0] = info.fileDate || "";
-                if (info.version) row[1] = info.version;
+                const setIf = (i: number, val: any) => { if (val && !String(row[i] || "").trim()) row[i] = val; };
+                setIf(0, info.fileDate);
+                setIf(1, info.version);
                 if (!String(row[2] || "").trim()) row[2] = "首次发布";
-                row[3] = info.pm || "";
-                if (info.approver) row[4] = info.approver;
+                setIf(3, info.pm);
+                setIf(4, info.approver);
                 tables = [tb, ...n.tables.slice(1)];
             }
             return { ...n, tables, children: (n.children || []).map(fix) };
@@ -233,7 +262,7 @@ export default () => {
         return (nodes || []).map(fix);
     };
 
-    const autofill = (productId: number, secs: any[], version: string): Promise<any[]> =>
+    const autofill = (productId: number, secs: any[], version: string, overwrite = false): Promise<any[]> =>
         new Promise((resolve) => {
             if (!productId) { resolve(secs); return; }
             Promise.all([
@@ -257,11 +286,12 @@ export default () => {
                 };
                 const releaseDate = computeReleaseDate(tlRows);
                 const acceptanceDate = computeReleaseDate(tlRows, "产品验收记录");
-                let out = fillAuto(secs, {
+                let out = fillCoverVersion(secs, version);
+                out = fillAuto(out, {
                     overview: overviewText(prod.name, prod.release_version, prod.full_version, prod.overall_desc),
                     releaseDate,
                     archive: archiveText(prod.name),
-                });
+                }, overwrite);
                 out = fillRevision(out, {
                     fileDate: releaseDate,
                     version,
@@ -284,7 +314,7 @@ export default () => {
             }
             const doc = res.data || {};
             const sections = ensureKeys((doc.content && doc.content.sections) || []);
-            autofill(doc.product_id, sections, doc.version).then((secs) => {
+            autofill(doc.product_id, sections, doc.version, false).then((secs) => {
                 dispatch({ loading: false, doc, sections: secs, activeKey: findNode(secs, data.activeKey) ? data.activeKey : firstKey(secs) });
             });
         });
@@ -293,7 +323,7 @@ export default () => {
     const rebindProduct = (newId: number) => {
         const product = (data.products || []).find((p: any) => p.id === newId) || {};
         dispatch({ loading: true, doc: { ...data.doc, product_id: newId, product_name: product.name, product_full_version: product.full_version } });
-        autofill(newId, data.sections, data.doc.version).then((secs) => {
+        autofill(newId, data.sections, data.doc.version, true).then((secs) => {
             dispatch({ loading: false, sections: secs });
             const rt = findReleaseNode(secs);
             if (!rt || !String(rt.body || "").trim()) {
@@ -443,7 +473,13 @@ export default () => {
                                 size="small"
                                 style={{ width: 110 }}
                                 value={data.doc.version || ""}
-                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })}
+                                onChange={(e) => {
+                                    const version = e.target.value;
+                                    dispatch({
+                                        doc: { ...data.doc, version },
+                                        sections: fillCoverVersion(data.sections, version),
+                                    });
+                                }}
                             />
                         </span>
                     )}

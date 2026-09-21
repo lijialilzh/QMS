@@ -5,8 +5,39 @@ import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProdDeviceRes";
 import * as ApiProduct from "@/api/ApiProduct";
+import * as ApiMember from "@/api/ApiProjectMember";
 import SelectProductEmpty from "@/views/SelectProductEmpty";
 import "./ProdRuntimeEnv.less";
+
+// 软件/工具类：数量 = 设备名称按顿号/逗号拆出的项数
+const NAME_QTY_USES = new Set(["操作系统", "开发语言", "数据库", "开发工具", "测试工具", "配置管理工具"]);
+// 设备类：数量 = 参与人员中职能含对应关键字且有姓名的人数
+const STAFF_QTY_USES: Record<string, string[]> = {
+    "开发设备": ["开发"],
+    "测试设备": ["测试"],
+    "生产设备": ["生产"],
+    "检验设备": ["检验", "QA"],
+};
+const countNames = (name: any) =>
+    String(name ?? "").split(/[,，、]+/).map((s) => s.trim()).filter(Boolean).length;
+const countStaff = (members: any[], kws: string[]) =>
+    (members || []).filter((m: any) => {
+        if (!String(m.name || "").trim()) return false;
+        const role = String(m.role || "");
+        return kws.some((kw) => role.toLowerCase().includes(kw.toLowerCase()));
+    }).length;
+const withAutoQty = (items: any[], members: any[]) =>
+    (items || []).map((it: any) => {
+        const use = String(it?.use || "").trim();
+        let qty = it.qty;
+        if (NAME_QTY_USES.has(use)) {
+            const n = countNames(it.name);
+            qty = n ? String(n) : "";
+        } else if (STAFF_QTY_USES[use]) {
+            qty = String(countStaff(members, STAFF_QTY_USES[use]));
+        }
+        return String(it.qty ?? "") === String(qty) ? it : { ...it, qty };
+    });
 
 export default () => {
     const { t: ts } = useTranslation();
@@ -31,10 +62,21 @@ export default () => {
             return;
         }
         dispatch({ loading: true });
-        Api.get_prod_device_res({ prod_id: prodId }).then((res: any) => {
+        Promise.all([
+            Api.get_prod_device_res({ prod_id: prodId }),
+            ApiMember.list_project_member({ prod_id: prodId, page_index: 0, page_size: 1000 }).catch(() => null),
+        ]).then(([res, mb]: any[]) => {
             if (res.code === Api.C_OK) {
-                const items = (res.data && res.data.items) || [];
-                dispatch({ loading: false, items, snapshot: JSON.stringify(items) });
+                const raw = (res.data && res.data.items) || [];
+                const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
+                const items = withAutoQty(raw, members);
+                const snapshot = JSON.stringify(raw);
+                dispatch({ loading: false, items, snapshot });
+                if (JSON.stringify(items) !== snapshot) {
+                    Api.save_prod_device_res({ prod_id: prodId, items }).then((sv: any) => {
+                        if (sv.code === Api.C_OK) dispatch({ snapshot: JSON.stringify(items) });
+                    });
+                }
             } else {
                 dispatch({ loading: false, items: [], snapshot: "" });
                 message.error(res.msg);
@@ -43,9 +85,15 @@ export default () => {
     };
 
     const onChange = (idx: number, field: string, value: string) => {
-        const items = data.items.map((it: any, i: number) =>
-            i === idx ? { ...it, [field]: value } : it
-        );
+        const items = data.items.map((it: any, i: number) => {
+            if (i !== idx) return it;
+            const next = { ...it, [field]: value };
+            if (field === "name" && NAME_QTY_USES.has(String(it.use || "").trim())) {
+                const n = countNames(value);
+                next.qty = n ? String(n) : "";
+            }
+            return next;
+        });
         dispatch({ items });
     };
 
@@ -69,18 +117,22 @@ export default () => {
         loadProducts();
     }, []);
 
-    const cell = (idx: number, field: string, single?: boolean) => (
+    const cell = (idx: number, field: string, single?: boolean) => {
+        const use = String(data.items[idx]?.use || "").trim();
+        const autoQty = field === "qty" && (NAME_QTY_USES.has(use) || !!STAFF_QTY_USES[use]);
+        return (
         <Input.TextArea
             className="env-input"
             autoSize={{ minRows: 1, maxRows: 6 }}
             value={data.items[idx]?.[field] ?? ""}
-            disabled={!data.prodId}
+            disabled={!data.prodId || autoQty}
             style={single ? { textAlign: "center" } : undefined}
             onChange={(e) => onChange(idx, field, e.target.value)}
             onBlur={saveAll}
             placeholder={data.prodId ? "" : "请先选择产品"}
         />
-    );
+        );
+    };
 
     return (
         <div className="page div-v prod-runtime-env">
@@ -110,9 +162,9 @@ export default () => {
                     <h2 className="env-title">设备资源</h2>
                     <table className="env-table">
                         <colgroup>
-                            <col style={{ width: 180 }} />
+                            <col style={{ width: 160 }} />
                             <col />
-                            <col style={{ width: 90 }} />
+                            <col style={{ width: 100 }} />
                         </colgroup>
                         <thead>
                             <tr><th>设备及用途</th><th>设备名称</th><th>数量</th></tr>

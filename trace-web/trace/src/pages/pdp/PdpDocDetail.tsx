@@ -9,6 +9,7 @@ import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
+import * as ApiDeviceRes from "@/api/ApiProdDeviceRes";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import ReviewTable from "@/common/ReviewTable";
 import "./PdpDocDetail.less";
@@ -169,17 +170,36 @@ export default () => {
         loading: false,
         saving: false,
         exporting: false,
-        pulling: false,
         doc: {} as any,
         sections: [] as any[],
         activeKey: "",
         products: [] as any[],
     });
 
-    // 加载时按产品自动填充：产品简介=「产品名称：xxx」，产品概况=总体描述，产品开发周期=时间逻辑线最早~最晚
+    // 加载时按产品自动填充：产品简介=名称/型号/产品经理，产品概况=总体描述，产品开发周期=时间逻辑线最早~最晚
     // 默认仅填空、不覆盖已填（文档 52/53）；切换产品时 overwrite=true 覆盖产品相关字段
-    const autoFillProduct = (nodes: any[], info: { name?: string; desc?: string; cycle?: string }, overwrite = false): any[] => {
+    const INTRO_LABELS = ["产品名称", "产品型号", "产品经理"] as const;
+    const applyIntro = (body: string, vals: Record<string, string>, overwrite: boolean) => {
+        const lines = String(body || "").split("\n");
+        const found: Record<string, string> = {};
+        const other: string[] = [];
+        lines.forEach((line) => {
+            const hit = INTRO_LABELS.find((lb) => line.startsWith(`${lb}：`) || line.startsWith(`${lb}:`));
+            if (hit) found[hit] = line.replace(/^[^：:]*[：:]/, "").trim();
+            else if (line.trim()) other.push(line);
+        });
+        const pick = (lb: string, val: string) => {
+            if (overwrite && val) return val;
+            if (found[lb]) return found[lb];
+            return val || "";
+        };
+        const auto = INTRO_LABELS.map((lb) => `${lb}：${pick(lb, vals[lb] || "")}`);
+        return [...auto, ...other].join("\n");
+    };
+    const autoFillProduct = (nodes: any[], info: { name?: string; typeCode?: string; pm?: string; desc?: string; cycle?: string }, overwrite = false): any[] => {
         const name = String(info.name || "").trim();
+        const typeCode = String(info.typeCode || "").trim();
+        const pm = String(info.pm || "").trim();
         const desc = String(info.desc || "").trim();
         const cycle = String(info.cycle || "").trim();
         const isBlank = (s: any) => !String(s || "").trim();
@@ -193,8 +213,12 @@ export default () => {
                 || (stripNum(n.title) === "产品概况" && (n.children || []).length === 0);
             const isCycle = n.ref_type === "prod_cycle"
                 || (stripNum(n.title) === "产品开发周期" && (n.children || []).length === 0);
-            if ((n.ref_type === "prod_name" || stripNum(n.title) === "产品简介") && name) {
-                if (overwrite || isNamePlaceholder(body)) body = `产品名称：${name}`;
+            if (n.ref_type === "prod_name" || stripNum(n.title) === "产品简介") {
+                body = applyIntro(String(body || ""), {
+                    "产品名称": name,
+                    "产品型号": typeCode,
+                    "产品经理": pm,
+                }, overwrite || isNamePlaceholder(body));
             } else if (isOverview) {
                 if (overwrite || isBlank(body)) {
                     if (overwrite || desc) body = desc;
@@ -255,7 +279,90 @@ export default () => {
         return (nodes || []).map(fix);
     };
 
-    // 按产品重新获取并填充所有自动获取内容（产品简介/概况/开发周期 + 文件修订记录 + 封面签名）
+    // 「设备资源」章：按设备及用途从产品设备资源写入名称/数量（覆盖这两列；设备说明等不改）
+    const fillDevice = (nodes: any[], items: any[]): any[] => {
+        const list = (items || []).filter((it: any) => String(it?.use || "").trim());
+        if (!list.length) return nodes;
+        const byUse = new Map<string, { name: string; qty: string }>();
+        list.forEach((it: any) => {
+            byUse.set(String(it.use).trim(), { name: String(it.name ?? ""), qty: String(it.qty ?? "") });
+        });
+        const fix = (n: any): any => {
+            const isDev = n.ref_type === "device" || stripNum(n.title) === "设备资源";
+            let tables = n.tables;
+            if (isDev && Array.isArray(n.tables) && Array.isArray(n.tables[0])) {
+                const t = n.tables[0].map((r: any[]) => (Array.isArray(r) ? [...r] : r));
+                const header = Array.isArray(t[0]) ? t[0] : ["设备及用途", "设备名称", "数量", "设备说明"];
+                const findCol = (keys: string[], fallback: number) => {
+                    const i = header.findIndex((h: any) => keys.some((k) => String(h || "").trim() === k));
+                    return i >= 0 ? i : fallback;
+                };
+                const idxUse = findCol(["设备及用途"], 0);
+                const idxName = findCol(["设备名称"], 1);
+                const idxQty = findCol(["数量"], 2);
+                const seen = new Set<string>();
+                for (let i = 1; i < t.length; i++) {
+                    const use = String(t[i][idxUse] || "").trim();
+                    const src = byUse.get(use);
+                    if (!src) continue;
+                    seen.add(use);
+                    t[i][idxName] = src.name;
+                    t[i][idxQty] = src.qty;
+                }
+                byUse.forEach((src, use) => {
+                    if (seen.has(use)) return;
+                    const row = new Array(header.length).fill("");
+                    row[idxUse] = use;
+                    row[idxName] = src.name;
+                    row[idxQty] = src.qty;
+                    t.push(row);
+                });
+                tables = [t, ...n.tables.slice(1)];
+            }
+            return { ...n, tables, children: (n.children || []).map(fix) };
+        };
+        return (nodes || []).map(fix);
+    };
+
+    // 「人员资源」：按表中已有角色从参与人员写入姓名/人数，保留部门与职责
+    const fillPersonnel = (nodes: any[], members: any[]): any[] => {
+        const rows = (members || []).filter((m: any) => String(m?.name || "").trim());
+        if (!rows.length) return nodes;
+        const DEFAULT_HEADER = ["人数", "所属部门", "人员编制", "角色/岗位", "职责"];
+        const norm = (s: any) => String(s || "").trim();
+        const roleMatch = (a: string, b: string) => !!a && !!b && (a === b || a.includes(b) || b.includes(a));
+        const applyTable = (cur: any[]) => {
+            const header = Array.isArray(cur[0]) && cur[0].length === 5 ? cur[0] : DEFAULT_HEADER;
+            const bodyRows = cur.slice(1).map((r: any[]) => (Array.isArray(r) ? [...r] : r));
+            const used = new Array(rows.length).fill(false);
+            bodyRows.forEach((row: any[]) => {
+                const rowRole = norm(row[3]);
+                if (!rowRole) return;
+                const matched = rows.filter((m: any, i: number) => {
+                    if (used[i]) return false;
+                    const ok = roleMatch(resolveRole(m.role), rowRole);
+                    if (ok) used[i] = true;
+                    return ok;
+                });
+                if (matched.length) {
+                    row[2] = matched.map((m: any) => norm(m.name)).filter(Boolean).join("、");
+                    row[0] = String(matched.length);
+                }
+            });
+            return [header, ...bodyRows];
+        };
+        const fix = (n: any): any => {
+            const isP = n.ref_type === "personnel" || stripNum(n.title) === "人员资源";
+            let tables = n.tables;
+            if (isP && Array.isArray(n.tables) && Array.isArray(n.tables[0])) {
+                tables = [applyTable(n.tables[0]), ...n.tables.slice(1)];
+            }
+            return { ...n, tables, children: (n.children || []).map(fix) };
+        };
+        return (nodes || []).map(fix);
+    };
+
+    // 按产品重新获取并填充所有自动获取内容（产品简介/概况/开发周期 + 文件修订记录 + 封面签名 + 设备资源 + 人员资源）
     const autofill = (productId: number, secs: any[], version: string, overwrite = false): Promise<any[]> =>
         new Promise((resolve) => {
             if (!productId) { resolve(secs); return; }
@@ -264,7 +371,8 @@ export default () => {
                 ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
                 ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
                 ApiPersonSign.list_person_sign({ page_index: 0, page_size: 1000 }).catch(() => null),
-            ]).then(([pr, tl, mb, ps]: any[]) => {
+                ApiDeviceRes.get_prod_device_res({ prod_id: productId }).catch(() => null),
+            ]).then(([pr, tl, mb, ps, dr]: any[]) => {
                 const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
                 const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
                 const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
@@ -278,6 +386,8 @@ export default () => {
                 const pm = findRole((r) => r.includes("产品经理"));
                 let out = autoFillProduct(secs, {
                     name: prod.name,
+                    typeCode: prod.type_code,
+                    pm,
                     desc: prod.overall_desc,
                     cycle: computeCycle(tlRows),
                 }, overwrite);
@@ -288,6 +398,9 @@ export default () => {
                     approver: findRole((r) => r.includes("负责人") && r.includes("产品")),
                 });
                 out = fillCoverSigners(out, pm, signMap, overwrite);
+                const deviceItems = dr && dr.code === Api.C_OK ? ((dr.data && dr.data.items) || []) : [];
+                out = fillDevice(out, deviceItems);
+                out = fillPersonnel(out, members);
                 resolve(out);
             }).catch(() => resolve(secs));
         });
@@ -381,63 +494,6 @@ export default () => {
     };
     const addTable = () => updateTables([...(active.tables || []), [["", ""], ["", ""]]]);
     const delTable = (ti: number) => updateTables((active.tables || []).filter((_: any, i: number) => i !== ti));
-
-    // 从「产品参与人员」按当前产品拉取：默认标准表保持不变，只追加表中尚无对应角色（职责）的人
-    const pullPersonnel = () => {
-        const prodId = data.doc.product_id;
-        if (!prodId) {
-            message.warning("缺少产品信息，无法获取");
-            return;
-        }
-        dispatch({ pulling: true });
-        ApiMember.list_project_member({ prod_id: prodId, page_index: 0, page_size: 1000 }).then((res: any) => {
-            dispatch({ pulling: false });
-            if (res.code !== Api.C_OK) {
-                message.error(res.msg || "获取失败");
-                return;
-            }
-            const rows = (res.data && res.data.rows) || [];
-            if (!rows.length) {
-                message.info("该产品在「产品参与人员」中暂无数据");
-                return;
-            }
-            const DEFAULT_HEADER = ["人数", "所属部门", "人员编制", "角色/岗位", "职责"];
-            const cur = Array.isArray(active.tables?.[0]) ? active.tables[0] : [DEFAULT_HEADER];
-            const header = Array.isArray(cur[0]) && cur[0].length === 5 ? cur[0] : DEFAULT_HEADER;
-            const bodyRows = cur.slice(1).map((r: any[]) => Array.isArray(r) ? [...r] : r);
-            const norm = (s: any) => String(s || "").trim();
-            const roleMatch = (a: string, b: string) => !!a && !!b && (a === b || a.includes(b) || b.includes(a));
-
-            const used = new Array(rows.length).fill(false);
-            let hit = 0;
-            // 只同步表里已有角色：姓名+人数按参与人员实际更新，保留模板职责/部门；其余角色不获取
-            bodyRows.forEach((row: any[]) => {
-                const rowRole = norm(row[3]);
-                if (!rowRole) return;
-                const matched = rows.filter((m: any, i: number) => {
-                    if (used[i]) return false;
-                    const ok = roleMatch(resolveRole(m.role), rowRole);
-                    if (ok) used[i] = true;
-                    return ok;
-                });
-                if (matched.length) {
-                    row[2] = matched.map((m: any) => norm(m.name)).filter(Boolean).join("、");
-                    row[0] = String(matched.length);
-                    hit += matched.length;
-                }
-            });
-
-            if (!hit) {
-                message.info("产品参与人员中没有与本表已有角色匹配的人");
-                return;
-            }
-            updateTables([[header, ...bodyRows]]);
-            message.success(`已按已有角色同步 ${hit} 人`);
-        }).catch(() => {
-            dispatch({ pulling: false });
-            message.error("获取失败");
-        });
-    };
 
     const doSave = () => {
         if (!id) return;
@@ -572,17 +628,6 @@ export default () => {
                                         onChange={(e) => patchNode(active._key, { body: e.target.value })}
                                     />
                                 </div>
-
-                                {(active.ref_type === "personnel" || stripNum(active.title) === "人员资源") && !readonly && (
-                                    <div className="pdp-pull-bar">
-                                        <Button type="primary" ghost loading={data.pulling} onClick={pullPersonnel}>
-                                            从产品参与人员获取
-                                        </Button>
-                                        <span className="pdp-pull-hint">
-                                            按当前产品{data.doc.product_full_version ? `（${data.doc.product_full_version}）` : ""}从「产品参与人员」同步：仅更新本表已有角色的姓名/人数（保留职责），表中没有的角色不获取
-                                        </span>
-                                    </div>
-                                )}
 
                                 {active.ref_type === "review"
                                     ? (active.tables || []).map((tb: any[], ti: number) => (

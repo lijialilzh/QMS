@@ -177,6 +177,7 @@
         margin-bottom: 18px;
         border-top: 1px dashed #eef0f3;
         padding-top: 12px;
+        width: 100%;
     }
 
     .pdp-table-bar {
@@ -196,37 +197,18 @@
             padding: 0;
             vertical-align: top;
             position: relative;
-            word-break: break-word;
+            // 按内容定宽；空间不够再换行，避免 word-break 把列挤成一字宽
+            word-break: normal;
+            overflow-wrap: break-word;
+            white-space: normal;
 
             &.head {
                 background: #f5f8fc;
             }
         }
 
-        // 首列按格子里的文字收窄（编号、人员、配置等），其余列吃剩余宽度并换行
-        td:first-child:not(.pdp-row-op) {
-            width: 1%;
-            vertical-align: middle;
-
-            .pdp-cell,
-            textarea.pdp-cell,
-            textarea.ant-input {
-                field-sizing: content;
-                width: auto !important;
-                min-width: 2em !important;
-                max-width: 10em;
-                white-space: nowrap;
-                overflow: hidden;
-            }
-        }
-
-        td:not(:first-child):not(.pdp-row-op) {
-            .pdp-cell,
-            textarea.pdp-cell,
-            textarea.ant-input {
-                min-width: 0 !important;
-                width: 100% !important;
-            }
+        td:not(.pdp-row-op) {
+            min-width: 5em;
         }
 
         td.pdp-row-op {
@@ -283,6 +265,9 @@
             width: 100%;
             min-width: 0 !important;
             box-sizing: border-box;
+            white-space: normal;
+            word-break: normal;
+            overflow-wrap: break-word;
 
             &:hover,
             &:focus {
@@ -351,12 +336,9 @@
         table-layout: auto;
 
         td:first-child textarea.ant-input {
-            field-sizing: content;
-            width: auto !important;
-            min-width: 2em !important;
-            max-width: 10em;
-            white-space: nowrap;
-            overflow: hidden;
+            white-space: normal;
+            word-break: normal;
+            overflow-wrap: break-word;
         }
     }
 
@@ -368,6 +350,11 @@
     .pdp-grid.pdp-record-grid {
         width: 100%;
         table-layout: fixed;
+    }
+
+    .pdp-grid.review-grid {
+        table-layout: auto;
+        width: 100%;
     }
 
     .pdp-add-table {
