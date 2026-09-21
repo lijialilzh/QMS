@@ -120,6 +120,7 @@ class Server(object):
 
     def __collect_autofill(self, prod_id, product, doc_version):
         prod_name = (getattr(product, "name", "") or "").strip()
+        type_code = (getattr(product, "type_code", "") or "").strip()
         full_version = (getattr(product, "full_version", "") or "").strip()
         release_version = (getattr(product, "release_version", "") or "").strip()
         overview = (getattr(product, "overall_desc", "") or "").strip()
@@ -130,7 +131,7 @@ class Server(object):
 
         runtime = get_runtime_payload(prod_id)
         return {
-            "prod_name": prod_name, "full_version": full_version, "release_version": release_version,
+            "prod_name": prod_name, "type_code": type_code, "full_version": full_version, "release_version": release_version,
             "naming_body": naming_body, "runtime": runtime, "version": doc_version, "overview": overview,
         }
 
@@ -176,8 +177,12 @@ class Server(object):
             if info["prod_name"]:
                 node["body"] = info["prod_name"]
         elif ref == "prod_version" or title == "产品版本":
-            if info["full_version"] or info["release_version"]:
-                node["body"] = f"软件完整版本：{info['full_version']}\n软件发布版本：{info['release_version']}"
+            if info.get("type_code") or info["full_version"] or info["release_version"]:
+                node["body"] = (
+                    f"产品型号：{info.get('type_code', '')}\n"
+                    f"软件完整版本：{info['full_version']}\n"
+                    f"软件发布版本：{info['release_version']}"
+                )
         elif ref == "naming_rule" or title == "版本命名规则":
             if info.get("naming_body"):
                 node["body"] = info["naming_body"]

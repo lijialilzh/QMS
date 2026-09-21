@@ -223,9 +223,10 @@ export default () => {
         products: [] as any[],
     });
 
-    // 封面=产品名称；产品版本=完整/发布版本；版本命名规则=全局配置（均始终取最新覆盖）
-    const fillAuto = (nodes: any[], info: { name?: string; full?: string; release?: string; namingBody?: string; env?: any; overview?: string }): any[] => {
+    // 封面=产品名称；产品版本=型号/完整/发布版本；版本命名规则=全局配置（均始终取最新覆盖）
+    const fillAuto = (nodes: any[], info: { name?: string; typeCode?: string; full?: string; release?: string; namingBody?: string; env?: any; overview?: string }): any[] => {
         const name = String(info.name || "").trim();
+        const typeCode = String(info.typeCode || "").trim();
         const full = String(info.full || "").trim();
         const release = String(info.release || "").trim();
         const overview = String(info.overview || "").trim();
@@ -265,7 +266,7 @@ export default () => {
             if (ref === "cover") {
                 if (name) body = name;
             } else if (ref === "prod_version" || t === "产品版本") {
-                if (full || release) body = `软件完整版本：${full}\n软件发布版本：${release}`;
+                if (typeCode || full || release) body = `产品型号：${typeCode}\n软件完整版本：${full}\n软件发布版本：${release}`;
             } else if ((ref === "naming_rule" || t === "版本命名规则") && info.namingBody) {
                 body = info.namingBody;
             } else if (ref === "ui_relation" || t.includes("用户界面关系图")) {
@@ -331,6 +332,7 @@ export default () => {
                 const env = rt && rt.code === Api.C_OK ? (rt.data || null) : null;
                 const out = fillAuto(secs, {
                     name: prod.name,
+                    typeCode: prod.type_code,
                     full: prod.full_version,
                     release: prod.release_version,
                     namingBody: vrContent ? buildNamingBody(vrContent) : "",

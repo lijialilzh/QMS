@@ -161,6 +161,7 @@ class Server(object):
 
     def __collect_autofill(self, prod_id, product, doc_version):
         prod_name = (getattr(product, "name", "") or "").strip()
+        type_code = (getattr(product, "type_code", "") or "").strip()
         full_version = (getattr(product, "full_version", "") or "").strip()
         release_version = (getattr(product, "release_version", "") or "").strip()
 
@@ -209,7 +210,7 @@ class Server(object):
         naming_body = self.__build_naming_body(vr_content)
 
         return {
-            "prod_name": prod_name, "full_version": full_version, "release_version": release_version,
+            "prod_name": prod_name, "type_code": type_code, "full_version": full_version, "release_version": release_version,
             "file_date": file_date, "release_date": release_date, "version": doc_version,
             "pm": pm, "approver": approver, "naming_body": naming_body,
         }
@@ -245,12 +246,13 @@ class Server(object):
     def __fill_node(self, node, info):
         ref = node.get("ref_type")
         title = self.__strip_num(node.get("title"))
-        # 版本信息：自动获取产品名/发布版本/完整版本（始终取最新）
+        # 版本信息：自动获取产品名/型号/发布版本/完整版本（始终取最新）
         if ref == "version_info" or title == "版本信息":
-            if info["full_version"] or info["release_version"] or info["prod_name"]:
+            if info["full_version"] or info["release_version"] or info["prod_name"] or info.get("type_code"):
                 node["body"] = (
                     f"本次软件为首次注册，软件完整版本为{info['full_version']}，发布版本为{info['release_version']}。\n"
                     f"产品名称：{info['prod_name']}\n"
+                    f"产品型号：{info.get('type_code', '')}\n"
                     f"发布版本：{info['release_version']}\n"
                     f"完整版本：{info['full_version']}"
                 )

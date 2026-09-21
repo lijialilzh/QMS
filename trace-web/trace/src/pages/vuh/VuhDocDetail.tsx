@@ -168,17 +168,18 @@ export default () => {
         products: [] as any[],
     });
 
-    // 版本信息：自动获取产品名/发布版本/完整版本（始终取最新覆盖，源为空时保留原值）
-    const fillVersionInfo = (nodes: any[], info: { name?: string; releaseVersion?: string; fullVersion?: string }): any[] => {
+    // 版本信息：自动获取产品名/型号/发布版本/完整版本（始终取最新覆盖，源为空时保留原值）
+    const fillVersionInfo = (nodes: any[], info: { name?: string; typeCode?: string; releaseVersion?: string; fullVersion?: string }): any[] => {
         const name = String(info.name || "").trim();
+        const typeCode = String(info.typeCode || "").trim();
         const rel = String(info.releaseVersion || "").trim();
         const full = String(info.fullVersion || "").trim();
         const fix = (n: any): any => {
             let body = n.body;
             const t = stripNum(n.title);
             if (n.ref_type === "version_info" || t === "版本信息") {
-                if (name || rel || full) {
-                    body = `本次软件为首次注册，软件完整版本为${full}，发布版本为${rel}。\n产品名称：${name}\n发布版本：${rel}\n完整版本：${full}`;
+                if (name || typeCode || rel || full) {
+                    body = `本次软件为首次注册，软件完整版本为${full}，发布版本为${rel}。\n产品名称：${name}\n产品型号：${typeCode}\n发布版本：${rel}\n完整版本：${full}`;
                 }
             }
             return { ...n, body, children: (n.children || []).map(fix) };
@@ -260,6 +261,7 @@ export default () => {
                 };
                 let out = fillVersionInfo(secs, {
                     name: prod.name,
+                    typeCode: prod.type_code,
                     releaseVersion: prod.release_version,
                     fullVersion: prod.full_version,
                 });
