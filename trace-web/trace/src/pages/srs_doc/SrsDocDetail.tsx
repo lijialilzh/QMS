@@ -5341,13 +5341,13 @@ export default () => {
                     </Form.Item>
                     {isReadOnly ? (
                         <span className="srs-toolbar-meta">
-                            <span className="form-display-label">{ts("srs_doc.current_product")}：</span>
+                            <span className="form-display-label">{ts("srs_doc.select_product")}：</span>
                             <span className="form-display-value">{productLabel || "-"}</span>
                         </span>
                     ) : (
                         <Form.Item
                             className="srs-toolbar-item"
-                            label={data.isEdit ? ts("srs_doc.current_product") : ts("srs_doc.product")}
+                            label={ts("srs_doc.select_product")}
                             name="product_id"
                             rules={[{ required: true, message: "" }]}>
                             <ProductVersionSelect

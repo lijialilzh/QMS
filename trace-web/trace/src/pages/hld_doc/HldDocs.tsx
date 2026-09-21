@@ -372,7 +372,7 @@ export default () => {
                 }}>
                 <Form form={addForm} layout="vertical">
                     <Form.Item
-                        label={ts("product.product")}
+                        label={ts("srs_doc.select_product")}
                         name="product_id"
                         rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
                         <ProductVersionSelect
@@ -409,7 +409,7 @@ export default () => {
                 onOk={doImportWord}
                 onCancel={() => { dispatch({ dlgType: null, importFiles: [] }); importForm.resetFields(); }}>
                 <Form form={importForm} layout="vertical">
-                    <Form.Item label={ts("product.product")} name="product_id" rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
+                    <Form.Item label={ts("srs_doc.select_product")} name="product_id" rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
                         <ProductVersionSelect
                             products={data.products}
                             allowClear

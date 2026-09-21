@@ -392,7 +392,7 @@ export default () => {
         <div className="div-v page pdp-detail">
             <div className="div-h pdp-toolbar">
                 <div className="pdp-toolbar-title">
-                    初步危害分析清单
+                    选择产品
                     {readonly ? (
                         <span className="pdp-meta">
                             {data.doc.product_name ? `　${data.doc.product_name}` : ""}

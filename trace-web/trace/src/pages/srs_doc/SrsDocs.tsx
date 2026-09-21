@@ -464,7 +464,7 @@ export default () => {
                 }}>
                 <Form form={addForm} layout="vertical">
                     <Form.Item
-                        label={ts("product.product")}
+                        label={ts("srs_doc.select_product")}
                         name="product_id"
                         rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
                         <ProductVersionSelect
@@ -518,7 +518,7 @@ export default () => {
                 }}>
                 <Form form={importForm} layout="vertical">
                     <Form.Item
-                        label={ts("product.product")}
+                        label={ts("srs_doc.select_product")}
                         name="product_id"
                         rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
                         <ProductVersionSelect

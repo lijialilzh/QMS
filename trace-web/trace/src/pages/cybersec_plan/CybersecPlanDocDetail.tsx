@@ -336,7 +336,7 @@ export default () => {
         <div className="div-v page pdp-detail">
             <div className="div-h pdp-toolbar">
                 <div className="pdp-toolbar-title">
-                    {DOC_TITLE}
+                    选择产品
                     {isView ? (
                         <span className="pdp-meta">
                             {data.detail.product_name ? `　${data.detail.product_name}` : ""}

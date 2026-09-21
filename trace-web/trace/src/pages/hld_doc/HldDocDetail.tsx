@@ -1432,11 +1432,11 @@ export default () => {
                                 <>
                                     {isReadOnly ? (
                                         <span className="hld-toolbar-meta">
-                                            <span className="form-display-label">{ts("hld_doc.current_product")}：</span>
+                                            <span className="form-display-label">{ts("srs_doc.select_product")}：</span>
                                             <span className="form-display-value">{productLabel || "-"}</span>
                                         </span>
                                     ) : (
-                                        <Form.Item className="hld-toolbar-item" label={ts("hld_doc.current_product")} name="product_id" rules={[{ required: true, message: ts("hld_doc.please_select_product_required") }]}>
+                                        <Form.Item className="hld-toolbar-item" label={ts("srs_doc.select_product")} name="product_id" rules={[{ required: true, message: ts("hld_doc.please_select_product_required") }]}>
                                             {renderProductVersionSelect()}
                                         </Form.Item>
                                     )}
@@ -1450,7 +1450,7 @@ export default () => {
                                 </>
                             ) : (
                                 <>
-                                    <Form.Item className="hld-toolbar-item" label={ts("hld_doc.product")} name="product_id" rules={[{ required: true, message: ts("hld_doc.please_select_product_required") }]}>
+                                    <Form.Item className="hld-toolbar-item" label={ts("srs_doc.select_product")} name="product_id" rules={[{ required: true, message: ts("hld_doc.please_select_product_required") }]}>
                                         {renderProductVersionSelect()}
                                     </Form.Item>
                                     <Form.Item className="hld-toolbar-item" label={ts("hld_doc.version_label")} name="version" rules={[{ required: true, message: ts("hld_doc.version_required") }]}>

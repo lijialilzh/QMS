@@ -209,7 +209,7 @@ export default () => {
                 open={data.dlgType === DlgTypes.add || data.dlgType === DlgTypes.edit} confirmLoading={data.adding} onOk={doSave} maskClosable={false}
                 onCancel={() => { dispatch({ dlgType: null, uploadFile: null }); addForm.resetFields(); }}>
                 <Form form={addForm} layout="vertical">
-                    <Form.Item label={ts("product.product")} name="product_id" rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
+                    <Form.Item label={ts("srs_doc.select_product")} name="product_id" rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
                         <ProductVersionSelect products={data.products} namePlaceholder={ts("product.name")} versionPlaceholder={ts("product.full_version")} onChange={(v) => addForm.setFieldValue("product_id", v)} />
                     </Form.Item>
                     <Form.Item label="文档版本" name="version" rules={[{ required: true, message: sprintf(ts("msg_input"), { label: "文档版本" }) }]}>

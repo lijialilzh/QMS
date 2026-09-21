@@ -286,7 +286,7 @@ export default () => {
                 confirmLoading={data.adding} onOk={doAdd} maskClosable={false}
                 onCancel={() => { dispatch({ dlgType: null }); addForm.resetFields(); }}>
                 <Form form={addForm} layout="vertical">
-                    <Form.Item label={ts("product.product")} name="product_id"
+                    <Form.Item label={ts("srs_doc.select_product")} name="product_id"
                         rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
                         <ProductVersionSelect products={data.products} namePlaceholder={ts("product.name")} versionPlaceholder={ts("product.full_version")}
                             onChange={(value) => addForm.setFieldValue("product_id", value)}

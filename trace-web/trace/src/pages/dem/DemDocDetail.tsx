@@ -177,7 +177,7 @@ export default () => {
         <div className="div-v page pdp-detail">
             <div className="div-h pdp-toolbar">
                 <div className="pdp-toolbar-title">
-                    开发环境维护说明
+                    选择产品
                     {readonly ? (
                         <span className="pdp-meta">
                             {data.doc.product_name ? `　${data.doc.product_name}` : ""}

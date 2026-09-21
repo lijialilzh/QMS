@@ -2,13 +2,20 @@
     .pdp-toolbar {
         align-items: center;
         justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 8px;
         padding: 8px 4px 12px;
     }
 
     .pdp-toolbar-title {
-        font-size: 18px;
-        font-weight: 700;
-        color: #1f2d3d;
+        display: flex;
+        align-items: center;
+        flex: 1 0 auto;
+        white-space: nowrap;
+        font-size: 13px;
+        font-weight: 400;
+        color: rgba(0, 0, 0, 0.88);
+        line-height: 32px;
     }
 
     .pdp-meta {

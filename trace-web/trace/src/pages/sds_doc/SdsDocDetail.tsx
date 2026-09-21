@@ -3616,13 +3616,13 @@ export default () => {
                         <>
                             {isReadOnly ? (
                                 <span className="sds-toolbar-meta">
-                                    <span className="form-display-label">{ts("sds_doc.current_product")}：</span>
+                                    <span className="form-display-label">{ts("srs_doc.select_product")}：</span>
                                     <span className="form-display-value">{productLabel || "-"}</span>
                                 </span>
                             ) : (
                                 <Form.Item
                                     className="sds-toolbar-item"
-                                    label={ts("sds_doc.current_product")}
+                                    label={ts("srs_doc.select_product")}
                                     name="product_id"
                                     rules={[{ required: true, message: "" }]}>
                                     <ProductVersionSelect
@@ -3676,7 +3676,7 @@ export default () => {
                         <>
                             <Form.Item
                                 className="sds-toolbar-item"
-                                label={ts("sds_doc.product")}
+                                label={ts("srs_doc.select_product")}
                                 name="product_id"
                                 rules={[{ required: true, message: "" }]}>
                                 <ProductVersionSelect

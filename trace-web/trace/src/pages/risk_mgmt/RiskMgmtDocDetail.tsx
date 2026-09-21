@@ -1597,7 +1597,7 @@ export default () => {
             <div className="div-v page pdp-detail risk-mgmt-detail">
                 <div className="div-h pdp-toolbar">
                     <div className="pdp-toolbar-title">
-                        风险管理报告
+                        选择产品
                         <span className="pdp-meta" style={{ display: "inline-flex", alignItems: "center", gap: 8, marginLeft: 12 }}>
                             {!isView ? (
                                 <span style={{ width: 320, display: "inline-block" }}>
