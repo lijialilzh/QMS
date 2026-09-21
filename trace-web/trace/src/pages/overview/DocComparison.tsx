@@ -121,7 +121,7 @@ export default () => {
                                     <Form.Item label="" name="prod_a_id">
                                         <ProductVersionSelect
                                             products={data.products}
-                                            allowClear
+                                            allowClear includeAll
                                             disabled={!data.docTypeSelected}
                                             namePlaceholder="选择产品名称"
                                             versionPlaceholder="选择完整版本"
@@ -152,7 +152,7 @@ export default () => {
                                     <Form.Item label="" name="prod_b_id">
                                         <ProductVersionSelect
                                             products={data.products}
-                                            allowClear
+                                            allowClear includeAll
                                             disabled={!data.docTypeSelected}
                                             namePlaceholder="选择产品名称"
                                             versionPlaceholder="选择完整版本"

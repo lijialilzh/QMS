@@ -56,14 +56,13 @@ class Server(object):
     async def list_prod_algo_module(self, prod_id: int = None, page_index: int = 0, page_size: int = 100):
         page_index = page_index if page_index >= 0 else 0
         page_size = page_size if page_size > 0 else 100
-        if not prod_id:
-            return Resp.resp_ok(data=Page(total=0, page_size=page_size, rows=[], page_index=page_index))
-
-        sql = select(ProdAlgoModule).where(ProdAlgoModule.prod_id == prod_id)
+        sql = select(ProdAlgoModule)
+        if prod_id:
+            sql = sql.where(ProdAlgoModule.prod_id == prod_id)
         sql_count = select(func.count()).select_from(sql)
         total = db.session.execute(sql_count).scalars().first()
 
-        sql = sql.order_by(asc(ProdAlgoModule.sort_order), asc(ProdAlgoModule.id))
+        sql = sql.order_by(asc(ProdAlgoModule.prod_id), asc(ProdAlgoModule.sort_order), asc(ProdAlgoModule.id))
         sql = sql.offset(page_size * page_index).limit(page_size)
         rows: list[ProdAlgoModule] = db.session.execute(sql).scalars().all()
         objs = [ProdAlgoModuleObj(**row.dict()) for row in rows]

@@ -1,4 +1,4 @@
-import { Button, message, Space, Input, Spin } from "antd";
+import { Button, message, Space, Input, Spin, Table } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
@@ -6,7 +6,6 @@ import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProdRuntimeEnv";
 import * as ApiProduct from "@/api/ApiProduct";
-import SelectProductEmpty from "@/views/SelectProductEmpty";
 import "./ProdRuntimeEnv.less";
 
 const FIELDS = [
@@ -26,22 +25,25 @@ export default () => {
         prodId: null,
         form: {} as any,
         snapshot: {} as any,
+        allRows: [] as any[],
         loading: false,
         saving: false,
     });
 
-    const loadProducts = () => {
-        ApiProduct.list_product({ page_index: 0, page_size: 1000 }).then((res: any) => {
-            if (res.code === ApiProduct.C_OK) dispatch({ products: res.data.rows || [] });
-        });
-    };
-
-    const loadEnv = (prodId: any) => {
+    const loadEnv = (prodId: any, products = data.products) => {
         if (!prodId) {
-            dispatch({ form: {}, snapshot: {} });
+            dispatch({ loading: true, form: {}, snapshot: {} });
+            Promise.all((products || []).map((p: any) =>
+                Api.get_prod_runtime_env({ prod_id: p.id }).then((res: any) => ({
+                    id: p.id,
+                    name: p.name,
+                    full_version: p.full_version,
+                    arch: res && res.code === Api.C_OK ? (res.data?.arch || "") : "",
+                })).catch(() => ({ id: p.id, name: p.name, full_version: p.full_version, arch: "" }))
+            )).then((allRows) => dispatch({ loading: false, allRows }));
             return;
         }
-        dispatch({ loading: true });
+        dispatch({ loading: true, allRows: [] });
         Api.get_prod_runtime_env({ prod_id: prodId }).then((res: any) => {
             if (res.code === Api.C_OK) {
                 const f = res.data || {};
@@ -125,7 +127,13 @@ export default () => {
     };
 
     useEffect(() => {
-        loadProducts();
+        ApiProduct.list_product({ page_index: 0, page_size: 1000 }).then((res: any) => {
+            if (res.code === ApiProduct.C_OK) {
+                const products = res.data.rows || [];
+                dispatch({ products });
+                loadEnv(null, products);
+            }
+        });
     }, []);
 
     const tables: any[] = data.form.tables || [];
@@ -139,6 +147,7 @@ export default () => {
                         <ProductVersionSelect
                             products={data.products}
                             allowClear
+                            includeAll
                             value={data.prodId}
                             namePlaceholder={ts("product.name")}
                             versionPlaceholder={ts("product.version")}
@@ -218,7 +227,19 @@ export default () => {
                 </div>
             </Spin>
             ) : (
-                <SelectProductEmpty />
+                <Spin spinning={data.loading}>
+                    <Table
+                        className="expand"
+                        rowKey="id"
+                        pagination={false}
+                        dataSource={data.allRows}
+                        columns={[
+                            { title: "产品名称", dataIndex: "name", width: 220 },
+                            { title: "完整版本", dataIndex: "full_version", width: 120 },
+                            { title: "架构说明", dataIndex: "arch", ellipsis: true },
+                        ]}
+                    />
+                </Spin>
             )}
         </div>
     );

@@ -248,6 +248,7 @@ export default () => {
                                     value={data.filterProductId}
                                     initialName={data.filterProductName}
                                     allowClear
+                                    includeAll
                                     deferChangeUntilVersionSelect
                                     namePlaceholder={ts("product.name")}
                                     versionPlaceholder={ts("product.full_version")}

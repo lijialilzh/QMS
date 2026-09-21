@@ -1,4 +1,4 @@
-import { message, Space, Input, Spin } from "antd";
+import { message, Space, Input, Spin, Table } from "antd";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
@@ -6,7 +6,6 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProdDeviceRes";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiMember from "@/api/ApiProjectMember";
-import SelectProductEmpty from "@/views/SelectProductEmpty";
 import "./ProdRuntimeEnv.less";
 
 // 软件/工具类：数量 = 设备名称按顿号/逗号拆出的项数
@@ -45,23 +44,31 @@ export default () => {
         products: [],
         prodId: null,
         items: [] as any[],
+        allRows: [] as any[],
         snapshot: "" as string,
         loading: false,
         saving: false,
     });
 
-    const loadProducts = () => {
-        ApiProduct.list_product({ page_index: 0, page_size: 1000 }).then((res: any) => {
-            if (res.code === ApiProduct.C_OK) dispatch({ products: res.data.rows || [] });
-        });
-    };
-
-    const loadData = (prodId: any) => {
+    const loadData = (prodId: any, products = data.products) => {
         if (!prodId) {
-            dispatch({ items: [], snapshot: "" });
+            dispatch({ loading: true, items: [], snapshot: "" });
+            Promise.all((products || []).map((p: any) =>
+                Api.get_prod_device_res({ prod_id: p.id }).then((res: any) => {
+                    const items = (res && res.code === Api.C_OK && res.data && res.data.items) || [];
+                    return items.map((it: any, idx: number) => ({
+                        key: `${p.id}-${idx}`,
+                        product_name: p.name,
+                        full_version: p.full_version,
+                        use: it.use,
+                        device_name: it.name,
+                        qty: it.qty,
+                    }));
+                }).catch(() => [])
+            )).then((groups) => dispatch({ loading: false, allRows: groups.flat() }));
             return;
         }
-        dispatch({ loading: true });
+        dispatch({ loading: true, allRows: [] });
         Promise.all([
             Api.get_prod_device_res({ prod_id: prodId }),
             ApiMember.list_project_member({ prod_id: prodId, page_index: 0, page_size: 1000 }).catch(() => null),
@@ -114,7 +121,13 @@ export default () => {
     };
 
     useEffect(() => {
-        loadProducts();
+        ApiProduct.list_product({ page_index: 0, page_size: 1000 }).then((res: any) => {
+            if (res.code === ApiProduct.C_OK) {
+                const products = res.data.rows || [];
+                dispatch({ products });
+                loadData(null, products);
+            }
+        });
     }, []);
 
     const cell = (idx: number, field: string, single?: boolean) => {
@@ -143,6 +156,7 @@ export default () => {
                         <ProductVersionSelect
                             products={data.products}
                             allowClear
+                            includeAll
                             value={data.prodId}
                             namePlaceholder={ts("product.name")}
                             versionPlaceholder={ts("product.version")}
@@ -182,7 +196,21 @@ export default () => {
                 </div>
             </Spin>
             ) : (
-                <SelectProductEmpty />
+                <Spin spinning={data.loading}>
+                    <Table
+                        className="expand"
+                        rowKey="key"
+                        pagination={false}
+                        dataSource={data.allRows}
+                        columns={[
+                            { title: "产品名称", dataIndex: "product_name", width: 200 },
+                            { title: "完整版本", dataIndex: "full_version", width: 120 },
+                            { title: "设备及用途", dataIndex: "use", width: 160 },
+                            { title: "设备名称", dataIndex: "device_name" },
+                            { title: "数量", dataIndex: "qty", width: 80 },
+                        ]}
+                    />
+                </Spin>
             )}
         </div>
     );

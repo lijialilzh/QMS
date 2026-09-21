@@ -1,6 +1,8 @@
 import { Select } from "antd";
 import { useEffect, useMemo, useState } from "react";
 
+const ALL_VALUE = "__ALL__";
+
 type ProductItem = {
     id: number;
     name: string;
@@ -24,6 +26,8 @@ type Props = {
     excludeProductId?: number;
     /** 版本下拉中排除的多个产品 ID（如已有 DHF 的产品） */
     excludeProductIds?: number[];
+    /** 筛选栏：名称/版本增加「全部」，空值时默认全部产品 */
+    includeAll?: boolean;
 };
 
 export default function ProductVersionSelect({
@@ -39,6 +43,7 @@ export default function ProductVersionSelect({
     initialName,
     excludeProductId,
     excludeProductIds,
+    includeAll = false,
 }: Props) {
     const blockedProductIds = useMemo(() => {
         const ids = new Set<number>();
@@ -56,16 +61,28 @@ export default function ProductVersionSelect({
             setSelectedName(hit?.name);
             return;
         }
-        setSelectedName(initialName);
-    }, [value, products, initialName]);
+        if (initialName) {
+            setSelectedName(initialName);
+            return;
+        }
+        if (includeAll) {
+            setSelectedName((prev) => (prev && prev !== ALL_VALUE ? prev : ALL_VALUE));
+            return;
+        }
+        setSelectedName(undefined);
+    }, [value, products, initialName, includeAll]);
+
+    const isAll = includeAll && (!selectedName || selectedName === ALL_VALUE);
 
     const nameOptions = useMemo(() => {
         const dedup = new Set<string>();
         products.forEach((p) => dedup.add(p.name));
-        return Array.from(dedup).map((name) => ({ label: name, value: name }));
-    }, [products]);
+        const opts = Array.from(dedup).map((name) => ({ label: name, value: name }));
+        return includeAll ? [{ label: "全部", value: ALL_VALUE }, ...opts] : opts;
+    }, [products, includeAll]);
 
     const versionOptions = useMemo(() => {
+        if (isAll) return [{ label: "全部", value: ALL_VALUE }];
         if (!selectedName) return [];
         return products
             .filter((p) => p.name === selectedName && !blockedProductIds.has(p.id))
@@ -73,26 +90,32 @@ export default function ProductVersionSelect({
                 label: p.full_version,
                 value: p.id,
             }));
-    }, [selectedName, products, blockedProductIds]);
-    const displayVersionValue = versionOptions.some((option) => option.value === value) ? value : undefined;
+    }, [selectedName, products, blockedProductIds, isAll]);
+    const displayVersionValue = isAll
+        ? ALL_VALUE
+        : versionOptions.some((option) => option.value === value) ? value : undefined;
 
     return (
         <div className="product-version-select" style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
             <Select
                 style={{ flex: 1, minWidth: 0 }}
-                allowClear={allowClear}
+                allowClear={allowClear && !includeAll}
                 showSearch
                 optionFilterProp="label"
                 placeholder={namePlaceholder}
                 disabled={disabled}
-                value={selectedName}
+                value={isAll ? ALL_VALUE : selectedName}
                 options={nameOptions}
                 onChange={(name) => {
+                    if (!name || name === ALL_VALUE) {
+                        setSelectedName(includeAll ? ALL_VALUE : undefined);
+                        onNameChange?.(undefined);
+                        onChange?.(undefined);
+                        return;
+                    }
                     setSelectedName(name);
                     onNameChange?.(name);
-                    if (!name) {
-                        onChange?.(undefined);
-                    } else if (!deferChangeUntilVersionSelect) {
+                    if (!deferChangeUntilVersionSelect) {
                         const first = products.find((p) => p.name === name);
                         onChange?.(first?.id);
                     }
@@ -100,14 +123,17 @@ export default function ProductVersionSelect({
             />
             <Select
                 style={{ flex: 1, minWidth: 0 }}
-                allowClear={allowClear}
+                allowClear={allowClear && !isAll}
                 showSearch
                 optionFilterProp="label"
                 placeholder={versionPlaceholder}
-                disabled={disabled || !selectedName}
+                disabled={disabled || isAll || !selectedName}
                 value={displayVersionValue}
                 options={versionOptions}
-                onChange={(v) => onChange?.(v)}
+                onChange={(v) => {
+                    if (v === ALL_VALUE || v == null) onChange?.(undefined);
+                    else onChange?.(v as number);
+                }}
             />
         </div>
     );

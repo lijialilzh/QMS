@@ -496,7 +496,7 @@ export default () => {
                             <Form.Item label={ts("srs_doc.select_product")} name="prod_id">
                                 <ProductVersionSelect
                                     products={data.products}
-                                    allowClear
+                                    allowClear includeAll
                                     namePlaceholder={ts("product.name")}
                                     versionPlaceholder={ts("product.full_version")}
                                     onChange={(value) => {

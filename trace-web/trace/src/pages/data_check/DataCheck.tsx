@@ -3,7 +3,6 @@ import { Alert, Button, InputNumber, Space, Spin, Table, message } from "antd";
 import { useEffect } from "react";
 import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
-import SelectProductEmpty from "@/views/SelectProductEmpty";
 import * as Api from "@/api/ApiDataDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import {
@@ -599,6 +598,8 @@ export default () => {
                     <ProductVersionSelect
                         products={data.products}
                         value={data.productId || undefined}
+                        includeAll
+                        allowClear
                         namePlaceholder="产品名称"
                         versionPlaceholder="完整版本"
                         onChange={(v) => dispatch({ productId: v || 0, items: [], fails: [] })}
@@ -615,7 +616,6 @@ export default () => {
             <div className="data-stats-hint">
                 共 12 项：亚组、回传总数、基础库总量、三库例数、回传与实际接收、回传/整理医院、整理数据量、上传记录与统计表、查重与标注上传、病例标识、TXID 与回传医院、关键字段完整。不改任何数据文件。
             </div>
-            {data.productId ? (
             <Spin spinning={data.loading}>
                 <Space className="data-check-items" direction="vertical" size={4}>
                     {(data.items || []).map((it: CheckItem, idx: number) => (
@@ -636,9 +636,6 @@ export default () => {
                     )}
                 </Space>
             </Spin>
-            ) : (
-                <SelectProductEmpty />
-            )}
         </div>
     );
 };

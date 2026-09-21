@@ -28,13 +28,14 @@ TIMELINE_DEPTS = [
 
 class Server(object):
 
-    async def list_timeline(self, prod_id: int):
-        if not prod_id:
-            return Resp.resp_ok(data={"depts": TIMELINE_DEPTS, "rows": []})
-        sql = (
-            select(ProjectTimelineRow)
-            .where(ProjectTimelineRow.prod_id == prod_id)
-            .order_by(asc(ProjectTimelineRow.sort_order), asc(ProjectTimelineRow.id))
+    async def list_timeline(self, prod_id: int = None):
+        sql = select(ProjectTimelineRow)
+        if prod_id:
+            sql = sql.where(ProjectTimelineRow.prod_id == prod_id)
+        sql = sql.order_by(
+            asc(ProjectTimelineRow.prod_id),
+            asc(ProjectTimelineRow.sort_order),
+            asc(ProjectTimelineRow.id),
         )
         rows: list[ProjectTimelineRow] = db.session.execute(sql).scalars().all()
         row_ids = [r.id for r in rows]

@@ -47,6 +47,7 @@ export default () => {
             if (res.code === ApiProduct.C_OK) {
                 const rows = res.data?.rows || [];
                 setProducts(rows);
+                loadAllDocs(rows);
             }
         });
     }, []);
@@ -59,6 +60,35 @@ export default () => {
             setLoading(false);
             if (res.code === ApiIntegrate.C_OK) setData(res.data);
             else { setData(null); message.error(res.msg); }
+        });
+    };
+
+    const loadAllDocs = (prods: any[]) => {
+        setProductId(undefined);
+        setLoading(true);
+        setSelectedRowKeys([]);
+        Promise.all((prods || []).map((p: any) =>
+            ApiIntegrate.list_integrate_docs({ product_id: p.id }).then((res: any) => ({
+                p,
+                data: res && res.code === ApiIntegrate.C_OK ? res.data : null,
+            })).catch(() => ({ p, data: null }))
+        )).then((rows) => {
+            const groups: any = {};
+            rows.forEach(({ p, data }) => {
+                if (!data?.groups) return;
+                Object.keys(data.groups).forEach((gkey) => {
+                    groups[gkey] = groups[gkey] || [];
+                    (data.groups[gkey] || []).forEach((m: any) => {
+                        groups[gkey].push({
+                            ...m,
+                            module_key: `${p.id}::${m.module_key}`,
+                            module_name: `${p.name || ""} ${p.full_version || ""} / ${m.module_name || ""}`.trim(),
+                        });
+                    });
+                });
+            });
+            setLoading(false);
+            setData({ groups });
         });
     };
 
@@ -222,10 +252,14 @@ export default () => {
                         <ProductVersionSelect
                             products={products}
                             value={productId}
-                            allowClear={false}
+                            allowClear
+                            includeAll
                             namePlaceholder={ts("product.name")}
                             versionPlaceholder={ts("product.full_version")}
-                            onChange={(v) => v && loadDocs(v)}
+                            onChange={(v) => {
+                                if (v) loadDocs(v);
+                                else loadAllDocs(products);
+                            }}
                         />
                     </span>
                     {data?.product_name && (
@@ -250,10 +284,8 @@ export default () => {
 
             <Spin spinning={loading}>
                 <div className="doc-integrate-body">
-                    {!productId && !loading ? (
-                        <Empty description="请选择对应产品导出操作" image={Empty.PRESENTED_IMAGE_SIMPLE} style={{ marginTop: 80 }} />
-                    ) : totalCount === 0 && !loading ? (
-                        <Empty description="该产品暂无文档" />
+                    {totalCount === 0 && !loading ? (
+                        <Empty description={productId ? "该产品暂无文档" : "暂无文档"} />
                     ) : (
                         <Collapse
                             activeKey={activeGroups}

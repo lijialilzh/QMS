@@ -7,7 +7,6 @@ import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProjectTimeline";
 import * as ApiProduct from "@/api/ApiProduct";
-import SelectProductEmpty from "@/views/SelectProductEmpty";
 import "./ProjectTimeline.less";
 
 export default () => {
@@ -31,13 +30,14 @@ export default () => {
         });
     };
 
+    const prodName = (prodId: any) => {
+        const p = (data.products || []).find((x: any) => x.id === prodId);
+        return p ? `${p.name || ""} ${p.full_version || ""}`.trim() : "";
+    };
+
     const loadTimeline = (prodId: any) => {
-        if (!prodId) {
-            dispatch({ rows: [] });
-            return;
-        }
         dispatch({ loading: true });
-        Api.list_timeline({ prod_id: prodId }).then((res: any) => {
+        Api.list_timeline(prodId ? { prod_id: prodId } : {}).then((res: any) => {
             if (res.code === Api.C_OK) {
                 dispatch({ loading: false, depts: res.data.depts || [], rows: res.data.rows || [], selectedIds: [] });
             } else {
@@ -66,7 +66,7 @@ export default () => {
             return;
         }
         Api.add_timeline_row({
-            prod_id: data.targetProdId,
+            prod_id: row.prod_id || data.targetProdId,
             row_type: "date",
             sort_order: Number(row.sort_order || 0) + 1,
             year: row.year || "",
@@ -303,10 +303,12 @@ export default () => {
 
     useEffect(() => {
         loadProducts();
+        loadTimeline(null);
     }, []);
 
     const depts: string[] = data.depts || [];
-    const totalCols = 1 + 3 + depts.length + 1;
+    const showProd = !data.targetProdId;
+    const totalCols = 1 + (showProd ? 1 : 0) + 3 + depts.length + 1;
     const selectedIds: any[] = data.selectedIds || [];
     const allChecked = (data.rows || []).length > 0 && selectedIds.length === (data.rows || []).length;
     const indeterminate = selectedIds.length > 0 && !allChecked;
@@ -357,6 +359,7 @@ export default () => {
                         <ProductVersionSelect
                             products={data.products}
                             allowClear
+                            includeAll
                             value={data.targetProdId}
                             namePlaceholder={ts("product.name")}
                             versionPlaceholder={ts("product.version")}
@@ -384,12 +387,12 @@ export default () => {
                 </div>
             </div>
 
-            {data.targetProdId ? (
             <Spin spinning={data.loading}>
                 <div className="tl-table-wrap">
                     <table className="tl-table">
                         <colgroup>
                             <col style={{ width: 40 }} />
+                            {showProd ? <col style={{ width: 180 }} /> : null}
                             <col style={{ width: 70 }} />
                             <col style={{ width: 64 }} />
                             <col style={{ width: 56 }} />
@@ -408,6 +411,7 @@ export default () => {
                                         onChange={(e) => toggleSelectAll(e.target.checked)}
                                     />
                                 </th>
+                                {showProd ? <th>产品</th> : null}
                                 <th>年</th>
                                 <th>月</th>
                                 <th>日</th>
@@ -438,6 +442,7 @@ export default () => {
                                                     onChange={(e) => toggleSelect(row.id, e.target.checked)}
                                                 />
                                             </td>
+                                            {showProd ? <td>{prodName(row.prod_id)}</td> : null}
                                             <td colSpan={3 + depts.length}>{editCell(row.id, "milestone", row.milestone_text, false)}</td>
                                             {rowOps(row)}
                                         </tr>
@@ -449,8 +454,9 @@ export default () => {
                                             <Checkbox
                                                 checked={selectedIds.includes(row.id)}
                                                 onChange={(e) => toggleSelect(row.id, e.target.checked)}
-                                            />
-                                        </td>
+                                                />
+                                            </td>
+                                        {showProd ? <td>{prodName(row.prod_id)}</td> : null}
                                         <td className="tl-date-cell" onClick={() => startEdit(row.id, "date", null)}>
                                             {row.year ? String(row.year) : <span style={{ color: "#d9d9d9" }}>—</span>}
                                         </td>
@@ -496,9 +502,6 @@ export default () => {
                     </table>
                 </div>
             </Spin>
-            ) : (
-                <SelectProductEmpty />
-            )}
         </div>
     );
 };

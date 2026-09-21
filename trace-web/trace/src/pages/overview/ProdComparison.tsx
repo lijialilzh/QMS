@@ -134,7 +134,7 @@ export default () => {
                                     <Form.Item label={ts("prod_comparison.prodA")} name="prod_a_id">
                                         <ProductVersionSelect
                                             products={data.products}
-                                            allowClear
+                                            allowClear includeAll
                                             namePlaceholder={ts("product.name")}
                                             versionPlaceholder={ts("product.full_version")}
                                             onChange={(value) => {
@@ -162,7 +162,7 @@ export default () => {
                                     <Form.Item label={ts("prod_comparison.prodB")} name="prod_b_id">
                                         <ProductVersionSelect
                                             products={data.products}
-                                            allowClear
+                                            allowClear includeAll
                                             namePlaceholder={ts("product.name")}
                                             versionPlaceholder={ts("product.full_version")}
                                             onChange={(value) => {

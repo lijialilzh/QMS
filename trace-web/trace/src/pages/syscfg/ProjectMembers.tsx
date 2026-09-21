@@ -6,7 +6,6 @@ import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProjectMember";
 import * as ApiProduct from "@/api/ApiProduct";
-import SelectProductEmpty from "@/views/SelectProductEmpty";
 
 const ROLES = [
     "管理者代表",
@@ -89,20 +88,25 @@ export default () => {
         });
     };
 
+    const prodName = (prodId: any) => {
+        const p = (data.products || []).find((x: any) => x.id === prodId);
+        return p ? (p.name || "") : "";
+    };
+    const prodVer = (prodId: any) => {
+        const p = (data.products || []).find((x: any) => x.id === prodId);
+        return p ? (p.full_version || "") : "";
+    };
+
     const loadMembers = (prodId: any, allowSeed = true) => {
-        if (!prodId) {
-            dispatch({ rows: [] });
-            return;
-        }
         dispatch({ loading: true });
-        Api.list_project_member({ prod_id: prodId, page_index: 0, page_size: 1000 }).then((res: any) => {
+        Api.list_project_member({ prod_id: prodId || undefined, page_index: 0, page_size: 10000 }).then((res: any) => {
             if (res.code !== Api.C_OK) {
                 dispatch({ loading: false, rows: [] });
                 message.error(res.msg);
                 return;
             }
             const rows = res.data.rows || [];
-            if (allowSeed) {
+            if (prodId && allowSeed) {
                 const adds: { role: string; name: string; sort_order: number }[] = [];
                 const updates: any[] = [];
                 let sort = rows.reduce((m: number, r: any) => Math.max(m, r.sort_order || 0), 0);
@@ -267,6 +271,10 @@ export default () => {
     );
 
     const columns = [
+        ...(!data.targetProdId ? [
+            { title: "产品名称", width: "18%", render: (_: any, row: any) => prodName(row.prod_id) },
+            { title: "完整版本", width: "12%", render: (_: any, row: any) => prodVer(row.prod_id) },
+        ] : []),
         {
             title: "职能",
             dataIndex: "role",
@@ -340,6 +348,7 @@ export default () => {
 
     useEffect(() => {
         loadProducts();
+        loadMembers(null, false);
     }, []);
 
     return (
@@ -353,6 +362,7 @@ export default () => {
                                 <ProductVersionSelect
                                     products={data.products}
                                     allowClear
+                                    includeAll
                                     value={data.targetProdId}
                                     namePlaceholder={ts("product.name")}
                                     versionPlaceholder={ts("product.version")}
@@ -376,7 +386,6 @@ export default () => {
                     </Button>
                 </div>
             </div>
-            {data.targetProdId ? (
             <Table
                 className="expand"
                 columns={columns}
@@ -386,9 +395,6 @@ export default () => {
                 pagination={false}
                 footer={() => sprintf(ts("total_items"), { total: (data.rows || []).length })}
             />
-            ) : (
-                <SelectProductEmpty />
-            )}
         </div>
     );
 };

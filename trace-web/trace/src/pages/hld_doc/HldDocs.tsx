@@ -314,7 +314,7 @@ export default () => {
                             <Form.Item label={ts("srs_doc.select_product")} name="product_id">
                                 <ProductVersionSelect
                                     products={data.products}
-                                    allowClear
+                                    allowClear includeAll
                                     namePlaceholder={ts("product.name")}
                                     versionPlaceholder={ts("product.full_version")}
                                     onChange={(value) => queryForm.setFieldValue("product_id", value)}

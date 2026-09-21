@@ -193,7 +193,7 @@ export default ({ kind }: Props) => {
                             <Form.Item name="product_id">
                                 <ProductVersionSelect
                                     products={data.products}
-                                    allowClear
+                                    allowClear includeAll
                                     namePlaceholder={ts("product.name")}
                                     versionPlaceholder={ts("product.full_version")}
                                     onChange={(value) => {

@@ -33,6 +33,9 @@ export default () => {
         ApiProduct.list_product({ page_index: 0, page_size: 1000, for_srs: 1 }).then((res: any) => {
             if (res.code === ApiProduct.C_OK) {
                 dispatch({ products: res.data.rows });
+                Api.list_srs_doc({ page_index: 0, page_size: 1000 }).then((r: any) => {
+                    if (r.code === Api.C_OK) dispatch({ srsDocs: r.data.rows || [] });
+                });
             }
         });
     }, []);
@@ -66,24 +69,16 @@ export default () => {
 
     // 当产品ID变化时，加载该产品下的SRS文档列表和RCM数据
 const handleProductChange = (productId?: number) => {
-  // 产品变化时，清空当前版本和已加载的数据
   editForm.setFieldValue("doc_id", undefined);
         dispatch({ srsDocs: [], tableData: [], currentProductId: productId });
 
-  if (!productId) {
-            dispatch({ rcmOptions: [] });
-      return;
-  }
-
-        // 加载SRS文档列表
-  Api.list_srs_doc({ product_id: productId, page_index: 0, page_size: 1000 }).then((res: any) => {
+        Api.list_srs_doc({ product_id: productId || 0, page_index: 0, page_size: 1000 }).then((res: any) => {
       if (res.code === Api.C_OK) {
           dispatch({ srsDocs: res.data.rows || [] });
       }
   });
-
-        // 加载产品相关的RCM数据
-        loadProductRcm(productId);
+        if (productId) loadProductRcm(productId);
+        else dispatch({ rcmOptions: [] });
     };
 
     // 当文档ID变化时，加载该文档的需求数据
@@ -401,6 +396,7 @@ const handleProductChange = (productId?: number) => {
                           <ProductVersionSelect
                               products={data.products}
                               allowClear
+                              includeAll
                               namePlaceholder={ts("product.name")}
                               versionPlaceholder={ts("product.full_version")}
                               onChange={(value) => {
@@ -417,9 +413,9 @@ const handleProductChange = (productId?: number) => {
                                   showSearch
                                   allowClear
                                   optionFilterProp="label"
-                                  disabled={!editForm.getFieldValue("product_id")}
+                                  disabled={false}
                                   options={data.srsDocs.map((item: any) => ({
-                                      label: item.version || "",
+                                      label: data.currentProductId ? (item.version || "") : `${item.product_name || ""} ${item.version || ""}`.trim(),
                                       value: item.id
                                   }))}
                               />

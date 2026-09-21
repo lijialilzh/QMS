@@ -7,7 +7,6 @@ import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProdAlgoChapter";
 import * as ApiProduct from "@/api/ApiProduct";
-import SelectProductEmpty from "@/views/SelectProductEmpty";
 
 const DEFAULT_MODULES = ["肺栓塞分诊", "肺叶分割"];
 
@@ -31,20 +30,25 @@ export default () => {
         });
     };
 
+    const prodName = (prodId: any) => {
+        const p = (data.products || []).find((x: any) => x.id === prodId);
+        return p ? (p.name || "") : "";
+    };
+    const prodVer = (prodId: any) => {
+        const p = (data.products || []).find((x: any) => x.id === prodId);
+        return p ? (p.full_version || "") : "";
+    };
+
     const loadModules = (prodId: any, allowSeed = true) => {
-        if (!prodId) {
-            dispatch({ rows: [] });
-            return;
-        }
         dispatch({ loading: true });
-        Api.list_prod_algo_chapter({ prod_id: prodId, page_index: 0, page_size: 1000 }).then((res: any) => {
+        Api.list_prod_algo_chapter({ prod_id: prodId || undefined, page_index: 0, page_size: 10000 }).then((res: any) => {
             if (res.code !== Api.C_OK) {
                 dispatch({ loading: false, rows: [] });
                 message.error(res.msg);
                 return;
             }
             const rows = res.data.rows || [];
-            if (allowSeed && !rows.length && DEFAULT_MODULES.length) {
+            if (prodId && allowSeed && !rows.length && DEFAULT_MODULES.length) {
                 const jobs = DEFAULT_MODULES.map((name, i) =>
                     Api.add_prod_algo_chapter({ prod_id: prodId, name, sort_order: i + 1 })
                 );
@@ -153,6 +157,10 @@ export default () => {
     );
 
     const columns = [
+        ...(!data.targetProdId ? [
+            { title: "产品名称", width: 180, render: (_: any, row: any) => prodName(row.prod_id) },
+            { title: "完整版本", width: 120, render: (_: any, row: any) => prodVer(row.prod_id) },
+        ] : []),
         {
             title: "序号",
             dataIndex: "sort_order",
@@ -200,6 +208,7 @@ export default () => {
 
     useEffect(() => {
         loadProducts();
+        loadModules(null, false);
     }, []);
 
     return (
@@ -213,6 +222,7 @@ export default () => {
                                 <ProductVersionSelect
                                     products={data.products}
                                     allowClear
+                                    includeAll
                                     value={data.targetProdId}
                                     namePlaceholder={ts("product.name")}
                                     versionPlaceholder={ts("product.version")}
@@ -231,7 +241,6 @@ export default () => {
                     </Button>
                 </div>
             </div>
-            {data.targetProdId ? (
             <Table
                 className="expand"
                 columns={columns}
@@ -241,9 +250,6 @@ export default () => {
                 pagination={false}
                 footer={() => sprintf(ts("total_items"), { total: (data.rows || []).length })}
             />
-            ) : (
-                <SelectProductEmpty />
-            )}
         </div>
     );
 };
