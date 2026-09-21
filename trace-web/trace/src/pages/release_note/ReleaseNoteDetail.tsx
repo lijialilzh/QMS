@@ -17,17 +17,47 @@ const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
 
 const stripNum = (title: string): string => String(title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();
 
-// 时间线里找含「发布说明」输出的最早日期行，作为发布时间，格式「YYYY年M月D日」
+const cellText = (v: any) => {
+    if (v == null) return "";
+    if (typeof v === "object") return String(v.output_result ?? v.value ?? "");
+    return String(v);
+};
+const timelineNum = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
+
+const datedTimelineRows = (rows: any[]) => {
+    const sorted = [...(rows || [])].sort((a: any, b: any) =>
+        (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0) || (Number(a.id) || 0) - (Number(b.id) || 0)
+    );
+    let lastYear: number | undefined;
+    const out: { row: any; y: number; m: number; d: number }[] = [];
+    sorted.forEach((r: any) => {
+        const rtype = r.row_type || "date";
+        if (rtype === "year") {
+            const y = timelineNum(r.milestone_text || r.year);
+            if (!isNaN(y)) lastYear = y;
+            return;
+        }
+        if (rtype !== "date") return;
+        const explicit = timelineNum(r.year);
+        if (!isNaN(explicit)) lastYear = explicit;
+        const y = !isNaN(explicit) ? explicit : lastYear;
+        const m = timelineNum(r.month);
+        if (y == null || isNaN(y) || isNaN(m)) return;
+        out.push({ row: r, y, m, d: timelineNum(r.day) });
+    });
+    return out;
+};
+
+// 时间线输出含关键字的最晚日期，格式「YYYY年M月D日」
 const computeReleaseDate = (rows: any[], keyword = "发布说明"): string => {
-    const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
-    const matches = (rows || []).filter((r: any) =>
-        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => String(v || "").includes(keyword))
+    const matches = datedTimelineRows(rows).filter((x) =>
+        Object.values(x.row.cells || {}).some((v: any) => cellText(v).includes(keyword))
     );
     if (!matches.length) return "";
-    const key = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
+    const key = (x: any) => x.y * 10000 + x.m * 100 + (isNaN(x.d) ? 0 : x.d);
     let best = matches[0];
-    matches.forEach((r: any) => { if (key(r) > key(best)) best = r; });
-    return `${num(best.year)}年${num(best.month)}月${num(best.day)}日`;
+    matches.forEach((x: any) => { if (key(x) > key(best)) best = x; });
+    return `${best.y}年${best.m}月${isNaN(best.d) ? 1 : best.d}日`;
 };
 
 const archiveText = (name: string) =>
@@ -130,7 +160,7 @@ export default () => {
         products: [] as any[],
     });
 
-    // 全文自动获取：产品概述、发布时间、文档归档。默认仅填空；切换产品 overwrite=true
+    // 全文自动获取：产品概述/归档仅填空；发布时间始终覆盖。切换产品 overwrite=true 时概述也覆盖
     const fillAuto = (nodes: any[], info: { overview?: string; releaseDate?: string; archive?: string }, overwrite = false): any[] => {
         const isBlank = (s: any) => !String(s || "").trim();
         const fix = (n: any): any => {
@@ -141,7 +171,7 @@ export default () => {
                     if (overwrite || info.overview) body = info.overview;
                 }
             } else if (n.ref_type === "rn_release_time" || t === "发布时间") {
-                if (overwrite || isBlank(body)) body = info.releaseDate || "";
+                body = info.releaseDate || "";
             } else if (n.ref_type === "rn_archive" || t === "文档归档") {
                 if (info.archive && (overwrite || isBlank(body))) body = info.archive;
             }
@@ -175,7 +205,7 @@ export default () => {
         return (nodes || []).map(fix);
     };
 
-    // 文件修订记录首行：仅填空、不覆盖已填（升版后首条版本保持 A0）
+    // 文件修订记录首行：日期/修订说明/人仅填空；版本号始终等于当前文档 version
     const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; pm?: string; approver?: string }): any[] => {
         const fix = (n: any): any => {
             const isRev = n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
@@ -188,7 +218,7 @@ export default () => {
                 while (row.length < 5) row.push("");
                 const setIf = (i: number, val: any) => { if (val && !String(row[i] || "").trim()) row[i] = val; };
                 setIf(0, info.fileDate);
-                setIf(1, info.version);
+                if (info.version) row[1] = info.version;
                 if (!String(row[2] || "").trim()) row[2] = "首次发布";
                 setIf(3, info.pm);
                 setIf(4, info.approver);
@@ -203,11 +233,15 @@ export default () => {
     // - 文件移交记录(3.4.2)：表头含「文件编号/文件名称」，按名称列填编号列
     // - 产品移交记录(3.4.1)：单格形如「编号 文档名」或纯「文档名」，按文档名取 DHF 最新编号重建
     const fillTransferFiles = (nodes: any[], dhfMap: Record<string, string>, acceptanceDate: string): any[] => {
+        const normName = (s: string) => String(s || "").replace(/[《》\s]/g, "").trim();
         const codeOf = (name: string): string => {
-            const k = String(name || "").trim();
+            const k = normName(name);
             if (!k) return "";
-            if (dhfMap[k]) return dhfMap[k];
-            const hit = Object.keys(dhfMap).find((n) => n.includes(k) || k.includes(n));
+            if (dhfMap[name.trim()]) return dhfMap[name.trim()];
+            const keys = Object.keys(dhfMap);
+            const hit = keys.find((n) => n === name.trim())
+                || keys.find((n) => normName(n) === k)
+                || keys.find((n) => normName(n).includes(k) || k.includes(normName(n)));
             return hit ? dhfMap[hit] : "";
         };
         // 把「编号 文档名」/「文档名」单元格按 DHF 重建为「最新编号 文档名」（保留原文档名文案）
@@ -220,7 +254,8 @@ export default () => {
                 const code = codeOf(name);
                 return code ? `${code} ${name}` : val;
             }
-            if (dhfMap[s]) return `${dhfMap[s]} ${s}`;
+            const named = codeOf(s);
+            if (named) return `${named} ${s}`;
             return val;
         };
         const fix = (n: any): any => {
@@ -477,7 +512,7 @@ export default () => {
                                     const version = e.target.value;
                                     dispatch({
                                         doc: { ...data.doc, version },
-                                        sections: fillCoverVersion(data.sections, version),
+                                        sections: fillRevision(fillCoverVersion(data.sections, version), { version }),
                                     });
                                 }}
                             />

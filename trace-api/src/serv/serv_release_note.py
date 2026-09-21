@@ -193,17 +193,20 @@ class Server(object):
                 select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_([r.id for r in tl_rows]))
             ).scalars().all():
                 cell_map.setdefault(c.row_id, []).append(c.output_result or "")
-        date_rows = [r for r in tl_rows if (r.row_type or "date") == "date" and to_int(r.year) and to_int(r.month)]
+        date_rows = [
+            (r, y) for r, y in serv_review_util._timeline_date_rows_with_year(tl_rows) if to_int(r.month)
+        ]
 
-        def date_key(r):
-            return to_int(r.year) * 10000 + to_int(r.month) * 100 + (to_int(r.day) or 0)
+        def date_key(item):
+            r, y = item
+            return y * 10000 + to_int(r.month) * 100 + (to_int(r.day) or 0)
 
         def latest_date(keyword):
-            rows = [r for r in date_rows if any(keyword in str(v or "") for v in cell_map.get(r.id, []))]
+            rows = [(r, y) for r, y in date_rows if any(keyword in str(v or "") for v in cell_map.get(r.id, []))]
             if not rows:
                 return ""
-            r = max(rows, key=date_key)
-            return f"{to_int(r.year)}年{to_int(r.month)}月{to_int(r.day)}日"
+            r, y = max(rows, key=date_key)
+            return f"{y}年{to_int(r.month)}月{to_int(r.day) or 1}日"
 
         release_date = latest_date("发布说明")
         acceptance_date = latest_date("产品验收记录")
@@ -237,14 +240,22 @@ class Server(object):
         }
 
     @staticmethod
+    def __norm_name(s):
+        return re.sub(r"[《》\s]", "", str(s or "")).strip()
+
+    @staticmethod
     def __dhf_code_of(dhf_map, name):
         k = str(name or "").strip()
         if not k:
             return ""
         if k in dhf_map:
             return dhf_map[k]
+        nk = Server.__norm_name(k)
+        if not nk:
+            return ""
         for nm, code in dhf_map.items():
-            if nm and (nm in k or k in nm):
+            nn = Server.__norm_name(nm)
+            if nn and (nn == nk or nn in nk or nk in nn):
                 return code
         return ""
 
@@ -259,8 +270,9 @@ class Server(object):
             name = m.group(2).strip()
             code = Server.__dhf_code_of(dhf_map, name)
             return f"{code} {name}" if code else val
-        if s in dhf_map:
-            return f"{dhf_map[s]} {s}"
+        code = Server.__dhf_code_of(dhf_map, s)
+        if code:
+            return f"{code} {s}"
         return val
 
     def __fill_node(self, node, info):
@@ -272,8 +284,7 @@ class Server(object):
             if blank(node.get("body")) and info.get("overview"):
                 node["body"] = info["overview"]
         elif ref == "rn_release_time" or title == "发布时间":
-            if blank(node.get("body")) and info.get("release_date"):
-                node["body"] = info["release_date"]
+            node["body"] = info.get("release_date") or ""
         elif ref == "rn_archive" or title == "文档归档":
             if blank(node.get("body")) and info.get("archive"):
                 node["body"] = info["archive"]
@@ -315,7 +326,7 @@ class Server(object):
                     row.append("")
                 if not str(row[0] or "").strip() and info.get("release_date"):
                     row[0] = info["release_date"]
-                if not str(row[1] or "").strip() and info.get("version"):
+                if info.get("version"):
                     row[1] = info["version"]
                 if not str(row[2] or "").strip():
                     row[2] = "首次发布"
