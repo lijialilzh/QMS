@@ -168,18 +168,20 @@ export default () => {
         products: [] as any[],
     });
 
-    // 版本信息：自动获取产品名/型号/发布版本/完整版本（始终取最新覆盖，源为空时保留原值）
-    const fillVersionInfo = (nodes: any[], info: { name?: string; typeCode?: string; releaseVersion?: string; fullVersion?: string }): any[] => {
+    // 版本信息：打开/刷新仅填空不覆盖已保存；切换产品 overwrite=true 覆盖
+    const fillVersionInfo = (nodes: any[], info: { name?: string; typeCode?: string; releaseVersion?: string; fullVersion?: string }, overwrite = false): any[] => {
         const name = String(info.name || "").trim();
         const typeCode = String(info.typeCode || "").trim();
         const rel = String(info.releaseVersion || "").trim();
         const full = String(info.fullVersion || "").trim();
+        const isBlank = (s: any) => !String(s || "").trim();
+        const built = `本次软件为首次注册，软件完整版本为${full}，发布版本为${rel}。\n产品名称：${name}\n产品型号：${typeCode}\n发布版本：${rel}\n完整版本：${full}`;
         const fix = (n: any): any => {
             let body = n.body;
             const t = stripNum(n.title);
             if (n.ref_type === "version_info" || t === "版本信息") {
-                if (name || typeCode || rel || full) {
-                    body = `本次软件为首次注册，软件完整版本为${full}，发布版本为${rel}。\n产品名称：${name}\n产品型号：${typeCode}\n发布版本：${rel}\n完整版本：${full}`;
+                if ((overwrite || isBlank(body)) && (name || typeCode || rel || full)) {
+                    body = built;
                 }
             }
             return { ...n, body, children: (n.children || []).map(fix) };
@@ -187,12 +189,13 @@ export default () => {
         return (nodes || []).map(fix);
     };
 
-    // 软件版本命名规则：从全局「版本命名规则」配置始终取最新覆盖
+    // 软件版本命名规则：仅填空、不覆盖已保存
     const fillNamingRule = (nodes: any[], body: string): any[] => {
         if (!body) return nodes;
+        const isBlank = (s: any) => !String(s || "").trim();
         const fix = (n: any): any => {
-            const b = stripNum(n.title) === "软件版本命名规则" ? body : n.body;
-            return { ...n, body: b, children: (n.children || []).map(fix) };
+            const use = stripNum(n.title) === "软件版本命名规则" && isBlank(n.body) ? body : n.body;
+            return { ...n, body: use, children: (n.children || []).map(fix) };
         };
         return (nodes || []).map(fix);
     };
@@ -230,7 +233,7 @@ export default () => {
                 const row = t[1];
                 const setIf = (i: number, val: any) => { if (val && !String(row[i] || "").trim()) row[i] = val; };
                 setIf(0, info.fileDate);
-                if (info.version) row[1] = info.version;
+                setIf(1, info.version);
                 if (!String(row[2] || "").trim()) row[2] = "首次发布";
                 setIf(3, info.pm);
                 setIf(4, info.approver);
@@ -242,7 +245,7 @@ export default () => {
     };
 
     // 按产品重新获取并填充所有自动获取内容（版本信息/命名规则/更新历史/文件修订记录）
-    const autofill = (productId: number, secs: any[], version: string): Promise<any[]> =>
+    const autofill = (productId: number, secs: any[], version: string, overwrite = false): Promise<any[]> =>
         new Promise((resolve) => {
             if (!productId) { resolve(secs); return; }
             Promise.all([
@@ -264,7 +267,7 @@ export default () => {
                     typeCode: prod.type_code,
                     releaseVersion: prod.release_version,
                     fullVersion: prod.full_version,
-                });
+                }, overwrite);
                 if (vrContent) out = fillNamingRule(out, buildNamingBody(vrContent));
                 out = fillUpdateHistory(out, {
                     fullVersion: prod.full_version,
@@ -302,7 +305,7 @@ export default () => {
     const rebindProduct = (newId: number) => {
         const product = (data.products || []).find((p: any) => p.id === newId) || {};
         dispatch({ loading: true, doc: { ...data.doc, product_id: newId, product_name: product.name, product_full_version: product.full_version } });
-        autofill(newId, data.sections, data.doc.version).then((secs) => dispatch({ loading: false, sections: secs }));
+        autofill(newId, data.sections, data.doc.version, true).then((secs) => dispatch({ loading: false, sections: secs }));
     };
 
     useEffect(() => {

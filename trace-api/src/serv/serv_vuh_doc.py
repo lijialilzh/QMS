@@ -246,9 +246,11 @@ class Server(object):
     def __fill_node(self, node, info):
         ref = node.get("ref_type")
         title = self.__strip_num(node.get("title"))
-        # 版本信息：自动获取产品名/型号/发布版本/完整版本（始终取最新）
+        # 版本信息 / 命名规则：仅填空，不覆盖已保存正文
         if ref == "version_info" or title == "版本信息":
-            if info["full_version"] or info["release_version"] or info["prod_name"] or info.get("type_code"):
+            if (not str(node.get("body") or "").strip()) and (
+                info["full_version"] or info["release_version"] or info["prod_name"] or info.get("type_code")
+            ):
                 node["body"] = (
                     f"本次软件为首次注册，软件完整版本为{info['full_version']}，发布版本为{info['release_version']}。\n"
                     f"产品名称：{info['prod_name']}\n"
@@ -257,8 +259,7 @@ class Server(object):
                     f"完整版本：{info['full_version']}"
                 )
         elif title == "软件版本命名规则":
-            # 从全局「版本命名规则」配置始终取最新覆盖
-            if info.get("naming_body"):
+            if info.get("naming_body") and not str(node.get("body") or "").strip():
                 node["body"] = info["naming_body"]
         # 修订记录首行
         if ref == "revision" or title == "文件修订记录":
