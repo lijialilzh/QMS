@@ -176,17 +176,19 @@ export default () => {
         products: [] as any[],
     });
 
-    // 加载时按产品自动填充：产品简介=名称/型号/产品经理，产品概况=总体描述，产品开发周期=时间逻辑线最早~最晚
+    // 加载时按产品自动填充：产品简介=名称/型号，产品概况=总体描述，产品开发周期=时间逻辑线最早~最晚
     // 默认仅填空、不覆盖已填（文档 52/53）；切换产品时 overwrite=true 覆盖产品相关字段
-    const INTRO_LABELS = ["产品名称", "产品型号", "产品经理"] as const;
+    const INTRO_LABELS = ["产品名称", "产品型号"] as const;
     const applyIntro = (body: string, vals: Record<string, string>, overwrite: boolean) => {
         const lines = String(body || "").split("\n");
         const found: Record<string, string> = {};
         const other: string[] = [];
         lines.forEach((line) => {
+            const t = line.trim();
+            if (t.startsWith("产品经理：") || t.startsWith("产品经理:")) return;
             const hit = INTRO_LABELS.find((lb) => line.startsWith(`${lb}：`) || line.startsWith(`${lb}:`));
             if (hit) found[hit] = line.replace(/^[^：:]*[：:]/, "").trim();
-            else if (line.trim()) other.push(line);
+            else if (t) other.push(line);
         });
         const pick = (lb: string, val: string) => {
             if (overwrite && val) return val;
@@ -217,7 +219,6 @@ export default () => {
                 body = applyIntro(String(body || ""), {
                     "产品名称": name,
                     "产品型号": typeCode,
-                    "产品经理": pm,
                 }, overwrite || isNamePlaceholder(body));
             } else if (isOverview) {
                 if (overwrite || isBlank(body)) {

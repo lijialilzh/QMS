@@ -265,11 +265,14 @@ class Server(object):
             is_cycle = ref == "prod_cycle" or (title == "产品开发周期" and not children)
             cur = str(node.get("body") or "").strip()
             if ref == "prod_name" or title == "产品简介":
-                labels = ["产品名称", "产品型号", "产品经理"]
-                vals = {"产品名称": prod_name, "产品型号": type_code, "产品经理": pm}
+                labels = ["产品名称", "产品型号"]
+                vals = {"产品名称": prod_name, "产品型号": type_code}
                 found = {}
                 other = []
                 for line in str(node.get("body") or "").split("\n"):
+                    t = line.strip()
+                    if t.startswith("产品经理：") or t.startswith("产品经理:"):
+                        continue
                     hit = next((lb for lb in labels if line.startswith(lb + "：") or line.startswith(lb + ":")), None)
                     if hit:
                         found[hit] = line.split("：", 1)[-1].strip() if "：" in line else line.split(":", 1)[-1].strip()
