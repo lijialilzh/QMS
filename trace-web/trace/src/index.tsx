@@ -22,6 +22,7 @@ import SrsViewers from "./pages/syscfg/SrsViewers";
 import Projects from "./pages/syscfg/Projects";
 import ProjectMembers from "./pages/syscfg/ProjectMembers";
 import ProjectTimeline from "./pages/syscfg/ProjectTimeline";
+import ProjectTimelineDetail from "./pages/syscfg/ProjectTimelineDetail";
 import ProdRuntimeEnv from "./pages/syscfg/ProdRuntimeEnv";
 import PrintServiceCfg from "./pages/syscfg/PrintServiceCfg";
 import ProdDeviceRes from "./pages/syscfg/ProdDeviceRes";
@@ -41,8 +42,11 @@ import HldDocDetail from "./pages/hld_doc/HldDocDetail";
 import TestSets from "./pages/test_set/TestSets";
 import DocFiles from "./pages/doc_file/DocFiles";
 import ProdHazs from "./pages/prod_risk/prod_haz";
+import ProdHazDetail from "./pages/prod_risk/prod_haz/ProdHazDetail";
 import ProdRcms from "./pages/prod_risk/prod_rcm";
+import ProdRcmDetail from "./pages/prod_risk/prod_rcm/ProdRcmDetail";
 import ProdCsts from "./pages/prod_risk/prod_cst";
+import ProdCstDetail from "./pages/prod_risk/prod_cst/ProdCstDetail";
 import ProdDhfs from "./pages/prod_risk/ProdDhfs";
 import ProdDhfDetail from "./pages/prod_risk/ProdDhfDetail";
 import SrsDocTrace from "./pages/prod_risk/SrsDocTrace";
@@ -159,6 +163,8 @@ const router = createRouter([
             { path: "/projects", element: <Projects /> },
             { path: "/project_members", element: <ProjectMembers /> },
             { path: "/project_timeline", element: <ProjectTimeline /> },
+            { path: "/project_timeline/view/:prodId", element: <ProjectTimelineDetail /> },
+            { path: "/project_timeline/edit/:prodId", element: <ProjectTimelineDetail /> },
             { path: "/prod_runtime_env", element: <ProdRuntimeEnv /> },
             { path: "/print_service_cfg", element: <PrintServiceCfg /> },
             { path: "/prod_device_res", element: <ProdDeviceRes /> },
@@ -202,8 +208,14 @@ const router = createRouter([
             { path: "/doc_files_home", element: <DocFiles fileType="img_home" /> },
 
             { path: "/prod_hazs", element: <ProdHazs /> },
+            { path: "/prod_hazs/view/:prodId", element: <ProdHazDetail /> },
+            { path: "/prod_hazs/edit/:prodId", element: <ProdHazDetail /> },
             { path: "/prod_rcms", element: <ProdRcms /> },
+            { path: "/prod_rcms/view/:prodId", element: <ProdRcmDetail /> },
+            { path: "/prod_rcms/edit/:prodId", element: <ProdRcmDetail /> },
             { path: "/prod_csts", element: <ProdCsts /> },
+            { path: "/prod_csts/view/:prodId", element: <ProdCstDetail /> },
+            { path: "/prod_csts/edit/:prodId", element: <ProdCstDetail /> },
             { path: "/srs_doc_trace", element: <SrsDocTrace /> },
 
             { path: "/risk_mgmt_docs", element: <RiskMgmtDocs /> },

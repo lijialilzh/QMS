@@ -219,7 +219,7 @@ export default () => {
             render: (_: any, row: any) => (
                 <Space size={4} className="risk-part-list-row-actions" onClick={(e) => e.stopPropagation()}>
                     <Button type="link" size="small" onClick={() => toggleExpand(row.id)}>
-                        {ts("edit")}
+                        {(data.expandedKeys || []).includes(row.id) ? "收起" : ts("edit")}
                     </Button>
                     <Button
                         type="link"

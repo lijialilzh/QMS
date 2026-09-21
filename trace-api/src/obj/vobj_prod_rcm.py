@@ -9,6 +9,7 @@ from .tobj_prod_rcm import ProdRcmForm
 
 
 class ProdRcmObj(ProdRcmForm):
+    prod_id: Optional[int] = Field(title="产品ID")
     create_time: Optional[datetime] = Field(title="创建时间")
     srs_codes: Optional[List[str]] = Field(title="需求编号列表")
     srs_flag: Optional[int] = Field(title="需求状态")

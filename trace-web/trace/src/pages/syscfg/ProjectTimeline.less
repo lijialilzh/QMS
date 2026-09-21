@@ -2,8 +2,24 @@
     > .searchbar {
         justify-content: space-between;
         align-items: center;
-        gap: 24px;
+        flex-wrap: wrap;
+        gap: 8px;
         width: 100%;
+    }
+
+    &.prod-dhf-detail-page > .searchbar {
+        flex-direction: column;
+        align-items: stretch;
+
+        .prod-dhf-detail-header-left {
+            width: 100%;
+            flex-wrap: wrap;
+        }
+
+        > .hspace {
+            width: 100%;
+            justify-content: flex-end;
+        }
     }
 
     .tl-table-wrap {
@@ -29,6 +45,16 @@
             line-height: 1.35;
             word-break: break-word;
             white-space: normal;
+        }
+
+        td.tl-prod-cell {
+            word-break: keep-all;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            vertical-align: top;
+            background: #fafafa;
+            font-weight: 500;
         }
 
         th:first-child,

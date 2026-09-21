@@ -3,12 +3,13 @@ import json
 import os
 import re
 from typing import List
-from sqlalchemy import select, delete, func
+from sqlalchemy import select, delete, func, or_
 from sqlalchemy.sql import desc
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment
 from ..obj.vobj_user import UserObj
+from ..obj.tobj_role import Roles
 from ..model.test_set import TestSet
 from ..model.srs_doc import SrsDoc, SrsNode
 from ..model.srs_req import ReqRcm
@@ -633,9 +634,9 @@ class Server(object):
         sql = select(ProdRcm, Product, Rcm).join(Product, ProdRcm.prod_id == Product.id).outerjoin(Rcm, ProdRcm.rcm_id == Rcm.id)
         if prod_id:
             sql = sql.where(ProdRcm.prod_id == prod_id)
-        if not prod_id and op_user and op_user.id != 1:
+        elif op_user and op_user.id != 1 and getattr(op_user, "role_code", None) == Roles.product_manager.value.code:
             subquery = select(UserProd.product_id).where(UserProd.user_id == op_user.id).scalar_subquery()
-            sql = sql.where(Product.id.in_(subquery))
+            sql = sql.where(or_(Product.id.in_(subquery), Product.create_user_id == op_user.id))
         total = 0
         if not export:
             sql_count = select(func.count()).select_from(sql)
@@ -649,6 +650,7 @@ class Server(object):
         for row, row_prd, row_rcm in rows:
             obj = ProdRcmObj(**row_rcm.dict()) if row_rcm else ProdRcmObj()
             obj.id = row.id
+            obj.prod_id = row.prod_id
             obj.rcm_id = row.rcm_id
             obj.create_time = row.create_time
             reqs = reqs_dict.get((row_prd.id, row.rcm_id)) or []

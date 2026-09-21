@@ -1,0 +1,390 @@
+import { Button, Table, message, Space, Input, AutoComplete, Modal, Upload, Popconfirm, Tooltip } from "antd";
+import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
+import { useEffect } from "react";
+import { sprintf } from "sprintf-js";
+import { useTranslation } from "react-i18next";
+import { useData } from "@/common";
+import * as Api from "@/api/ApiProjectMember";
+import "../risk_mgmt/RiskMgmtParticipants.less";
+
+const ROLES = [
+    "管理者代表",
+    "研发负责人",
+    "产品负责人",
+    "RA",
+    "QA",
+    "TPM",
+    "产品经理",
+    "开发人员",
+    "测试人员",
+    "生产",
+    "临床",
+    "模型部负责人",
+    "高级算法工程师",
+    "算法工程师",
+    "项目专员",
+    "标注人员",
+    "审核医生",
+    "仲裁医生",
+    "数据采集人员",
+    "脱敏+清洗人员",
+];
+
+const ANNOTATOR_ROLE = "标注人员";
+const DEFAULT_ANNOTATORS = [
+    "刘冰",
+    "周鑫仪",
+    "蒙明",
+    "余露",
+    "王丽",
+    "任小军",
+    "赵钰淇",
+    "龙菲",
+    "李良梦",
+    "徐飘飘",
+    "史江坤",
+    "马星宇",
+    "王莹莹",
+];
+
+const REVIEWER_ROLE = "审核医生";
+const DEFAULT_REVIEWERS = ["苏婷", "韦人"];
+const ARBITER_ROLE = "仲裁医生";
+const DEFAULT_ARBITERS = ["韦人"];
+const COLLECTOR_ROLE = "数据采集人员";
+const DEFAULT_COLLECTORS = ["周中亚", "李鹏飞", "耿景辉", "刘新阳", "王振宇", "王慧阳"];
+const CLEANER_ROLE = "脱敏+清洗人员";
+const DEFAULT_CLEANERS = ["谷雷涛"];
+
+const DEFAULT_MODEL_MEMBERS = [
+    { role: "模型部负责人", name: "王瑜" },
+    { role: "高级算法工程师", name: "张欢" },
+    { role: "算法工程师", name: "刘恩佑" },
+    { role: "算法工程师", name: "郝增号" },
+    { role: "项目专员", name: "肖薇" },
+];
+
+// 备注快捷标识：用于标注开发人员前后端及所属模块（仍可自由输入其它备注）
+const NOTE_OPTIONS = ["前端-NeoViewer", "后端-Repacs", "后端-Dlserver", "后端-DP"];
+
+export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void }) => {
+    const { t: ts } = useTranslation();
+    const [data, dispatch] = useData({
+        rows: [],
+        loading: false,
+        targetEdit: {},
+        editingField: null,
+        updating: false,
+        importing: false,
+    });
+
+    const loadMembers = (id: any, allowSeed = true) => {
+        dispatch({ loading: true });
+        Api.list_project_member({ prod_id: id || undefined, page_index: 0, page_size: 10000 }).then((res: any) => {
+            if (res.code !== Api.C_OK) {
+                dispatch({ loading: false, rows: [] });
+                message.error(res.msg);
+                return;
+            }
+            const rows = res.data.rows || [];
+            if (id && allowSeed) {
+                const adds: { role: string; name: string; sort_order: number }[] = [];
+                const updates: any[] = [];
+                let sort = rows.reduce((m: number, r: any) => Math.max(m, r.sort_order || 0), 0);
+                const hasAnnotator = rows.some((r: any) => (r.role || "").trim() === ANNOTATOR_ROLE);
+                if (!hasAnnotator && DEFAULT_ANNOTATORS.length) {
+                    DEFAULT_ANNOTATORS.forEach((name) => {
+                        sort += 1;
+                        adds.push({ role: ANNOTATOR_ROLE, name, sort_order: sort });
+                    });
+                }
+                const hasReviewer = rows.some((r: any) => (r.role || "").trim() === REVIEWER_ROLE);
+                if (!hasReviewer && DEFAULT_REVIEWERS.length) {
+                    DEFAULT_REVIEWERS.forEach((name) => {
+                        sort += 1;
+                        adds.push({ role: REVIEWER_ROLE, name, sort_order: sort });
+                    });
+                }
+                const hasArbiter = rows.some((r: any) => (r.role || "").trim() === ARBITER_ROLE);
+                if (!hasArbiter && DEFAULT_ARBITERS.length) {
+                    DEFAULT_ARBITERS.forEach((name) => {
+                        sort += 1;
+                        adds.push({ role: ARBITER_ROLE, name, sort_order: sort });
+                    });
+                }
+                const hasCollector = rows.some((r: any) => (r.role || "").trim() === COLLECTOR_ROLE);
+                if (!hasCollector && DEFAULT_COLLECTORS.length) {
+                    DEFAULT_COLLECTORS.forEach((name) => {
+                        sort += 1;
+                        adds.push({ role: COLLECTOR_ROLE, name, sort_order: sort });
+                    });
+                }
+                const hasCleaner = rows.some((r: any) => (r.role || "").trim() === CLEANER_ROLE);
+                if (!hasCleaner && DEFAULT_CLEANERS.length) {
+                    DEFAULT_CLEANERS.forEach((name) => {
+                        sort += 1;
+                        adds.push({ role: CLEANER_ROLE, name, sort_order: sort });
+                    });
+                }
+                const existingRoles = new Set(rows.map((r: any) => String(r.role || "").trim()));
+                const head = rows.find((r: any) => {
+                    const role = String(r.role || "").trim();
+                    return role === "模型部负责人" || role === "模型负责人";
+                });
+                if (head) {
+                    const name = String(head.name || "").trim();
+                    const needName = !name || name === "肖微" || name === "肖薇";
+                    const needRole = String(head.role || "").trim() !== "模型部负责人";
+                    if (needName || needRole) {
+                        updates.push({ ...head, role: "模型部负责人", name: needName ? "王瑜" : name });
+                    }
+                    existingRoles.add("模型部负责人");
+                    existingRoles.add("模型负责人");
+                }
+                DEFAULT_MODEL_MEMBERS.forEach((m) => {
+                    if (existingRoles.has(m.role)) return;
+                    sort += 1;
+                    adds.push({ role: m.role, name: m.name, sort_order: sort });
+                });
+                const jobs: Promise<any>[] = [
+                    ...updates.map((u) => Api.update_project_member({ ...u })),
+                    ...adds.map((a) => Api.add_project_member({ prod_id: id, ...a })),
+                ];
+                if (jobs.length) {
+                    Promise.all(jobs).then(() => {
+                        loadMembers(id, false);
+                        onChanged?.();
+                    }).catch(() => {
+                        dispatch({ loading: false, rows });
+                    });
+                    return;
+                }
+            }
+            dispatch({ loading: false, rows });
+        });
+    };
+
+    const doAdd = (afterRow?: any) => {
+        if (!prodId) {
+            message.warning("请先选择产品");
+            return;
+        }
+        const rows = data.rows || [];
+        const idx = afterRow ? rows.findIndex((r: any) => r.id === afterRow.id) : rows.length - 1;
+        const insertAt = idx + 1;
+        const shiftJobs = rows.map((r: any, i: number) => {
+            const desired = i < insertAt ? i + 1 : i + 2;
+            return Api.update_project_member({ ...r, sort_order: desired });
+        });
+        Promise.all(shiftJobs).then(() => {
+            Api.add_project_member({
+                prod_id: prodId,
+                role: ROLES[0],
+                name: "",
+                sort_order: insertAt + 1,
+            }).then((res: any) => {
+                if (res.code === Api.C_OK) {
+                    message.success(res.msg || ts("msg_ok"));
+                    loadMembers(prodId, false);
+                    onChanged?.();
+                } else {
+                    message.error(res.msg);
+                }
+            });
+        }).catch(() => {
+            message.error("新增失败");
+        });
+    };
+
+    const doDelete = (row: any) => {
+        Api.delete_project_members({ id: row.id }).then((res: any) => {
+            if (res.code === Api.C_OK) {
+                message.success(res.msg);
+                loadMembers(prodId, false);
+                onChanged?.();
+            } else {
+                message.error(res.msg);
+            }
+        });
+    };
+
+    const doImport = (file: any) => {
+        if (!prodId) {
+            message.warning("请先选择产品");
+            return false;
+        }
+        Modal.confirm({
+            title: "导入项目人员清单",
+            content: "导入将覆盖当前产品已有的人员，确认导入？",
+            onOk: () => {
+                dispatch({ importing: true });
+                Api.import_project_members({ prod_id: prodId, replace: true, file: { fileList: [file] } }).then(
+                    (res: any) => {
+                        dispatch({ importing: false });
+                        if (res.code === Api.C_OK) {
+                            message.success(`导入成功，共 ${res.data?.imported ?? 0} 人`);
+                            loadMembers(prodId, false);
+                            onChanged?.();
+                        } else {
+                            message.error(res.msg);
+                        }
+                    }
+                );
+            },
+        });
+        return false;
+    };
+
+    const startEdit = (row: any, field: string) => {
+        if (data.targetEdit.id === row.id && data.editingField === field) return;
+        dispatch({ targetEdit: { ...row }, editingField: field });
+    };
+
+    const saveCell = (override?: any) => {
+        const edit = { ...data.targetEdit, ...(override || {}) };
+        if (!edit?.id || data.updating) return;
+        dispatch({ updating: true });
+        Api.update_project_member({ ...edit }).then((res: any) => {
+            if (res.code === Api.C_OK) {
+                const rows = (data.rows || []).map((r: any) => (r.id === edit.id ? { ...r, ...edit } : r));
+                dispatch({ updating: false, targetEdit: {}, editingField: null, rows });
+                message.success(res.msg || ts("msg_ok"));
+            } else {
+                dispatch({ updating: false });
+                message.error(res.msg);
+            }
+        });
+    };
+
+    const isEditing = (row: any, field: string) => data.targetEdit.id === row.id && data.editingField === field;
+
+    const clickToEdit = (row: any, field: string, value: any) => (
+        <div style={{ cursor: "pointer", minHeight: 22 }} title="点击编辑" onClick={() => startEdit(row, field)}>
+            {value !== null && value !== undefined && String(value) !== "" ? value : <span style={{ color: "#d9d9d9" }}>—</span>}
+        </div>
+    );
+
+    const columns = [
+        {
+            title: "职能",
+            dataIndex: "role",
+            width: "30%",
+            render: (value: any, row: any) => {
+                if (!isEditing(row, "role")) return clickToEdit(row, "role", value);
+                return (
+                    <AutoComplete
+                        autoFocus
+                        defaultOpen
+                        style={{ width: "100%" }}
+                        value={data.targetEdit.role}
+                        options={ROLES.map((r) => ({ label: r, value: r }))}
+                        filterOption={false}
+                        onChange={(v: any) => dispatch({ targetEdit: { ...data.targetEdit, role: v } })}
+                        onBlur={() => saveCell()}
+                    />
+                );
+            },
+        },
+        {
+            title: "姓名",
+            dataIndex: "name",
+            width: "30%",
+            render: (value: any, row: any) => {
+                if (!isEditing(row, "name")) return clickToEdit(row, "name", value);
+                return (
+                    <Input
+                        autoFocus
+                        value={data.targetEdit.name}
+                        onChange={(e: any) => dispatch({ targetEdit: { ...data.targetEdit, name: e.target.value } })}
+                        onBlur={() => saveCell()}
+                        onPressEnter={() => saveCell()}
+                    />
+                );
+            },
+        },
+        {
+            title: ts("project.note"),
+            dataIndex: "note",
+            render: (value: any, row: any) => {
+                if (!isEditing(row, "note")) return clickToEdit(row, "note", value);
+                return (
+                    <AutoComplete
+                        autoFocus
+                        defaultOpen
+                        style={{ width: "100%" }}
+                        value={data.targetEdit.note}
+                        options={NOTE_OPTIONS.map((r) => ({ label: r, value: r }))}
+                        filterOption={false}
+                        onChange={(v: any) => dispatch({ targetEdit: { ...data.targetEdit, note: v } })}
+                        onBlur={() => saveCell()}
+                    />
+                );
+            },
+        },
+        {
+            title: ts("action"),
+            width: 96,
+            align: "center" as const,
+            className: "risk-part-action-col",
+            onCell: () => ({ className: "risk-part-action-col" }),
+            render: (_value: any, row: any) => (
+                <Space size={0} className="risk-part-row-actions">
+                    <Tooltip title="在下方插入行">
+                        <Button
+                            type="text"
+                            size="small"
+                            className="risk-part-action-btn"
+                            icon={<PlusOutlined />}
+                            onClick={() => doAdd(row)}
+                        />
+                    </Tooltip>
+                    <Popconfirm title={ts("confirm_delete")} onConfirm={() => doDelete(row)}>
+                        <Button
+                            type="text"
+                            size="small"
+                            danger
+                            className="risk-part-action-btn"
+                            icon={<DeleteOutlined />}
+                            title={ts("delete")}
+                        />
+                    </Popconfirm>
+                </Space>
+            ),
+        },
+    ];
+
+    useEffect(() => {
+        if (prodId) loadMembers(prodId, true);
+    }, [prodId]);
+
+    return (
+        <div className="risk-part-nested">
+            <div className="div-h searchbar list-searchbar-align">
+                <div className="div-h hspace">
+                    <Upload showUploadList={false} accept=".xlsx" beforeUpload={doImport}>
+                        <Button type="primary" loading={data.importing}>导入清单</Button>
+                    </Upload>
+                </div>
+            </div>
+            <Table
+                className="risk-part-detail-table"
+                tableLayout="fixed"
+                size="small"
+                columns={columns}
+                rowKey={(item: any) => item.id}
+                dataSource={data.rows}
+                loading={data.loading}
+                pagination={false}
+                locale={{
+                    emptyText: (
+                        <div>
+                            <div style={{ marginBottom: 8 }}>暂无数据</div>
+                            <Button type="link" icon={<PlusOutlined />} onClick={() => doAdd()}>添加一行</Button>
+                        </div>
+                    ),
+                }}
+                footer={() => sprintf(ts("total_items"), { total: (data.rows || []).length })}
+            />
+        </div>
+    );
+};

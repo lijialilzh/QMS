@@ -26,3 +26,9 @@ async def get_prod_device_res(prod_id: int = None):
 @try_log(perm=Perms.prod_device_edit)
 async def save_prod_device_res(form: ProdDeviceResForm):
     return await server.save_prod_device_res(form)
+
+
+@router.delete("/delete_prod_device_res", summary="删除产品设备资源", response_model=Resp[Any])
+@try_log(perm=Perms.prod_device_edit)
+async def delete_prod_device_res(prod_id: int):
+    return await server.delete_prod_device_res(prod_id)

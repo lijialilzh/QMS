@@ -5,6 +5,14 @@
         font-size: 12px;
     }
 
+    &.risk-part-nested .env-scroll {
+        flex: none;
+        min-height: auto;
+        overflow: visible;
+        max-height: none;
+        padding: 12px;
+    }
+
     // 文档卡片容器
     .env-scroll {
         flex: 1;
@@ -101,7 +109,7 @@
             border-bottom: 1px solid #eef1f5;
             border-right: 1px solid #eef1f5;
             padding: 0;
-            vertical-align: top;
+            vertical-align: middle;
             text-align: left;
             word-break: normal;
             overflow-wrap: break-word;
@@ -132,7 +140,7 @@
             color: #2b3a4b;
             text-align: center;
             vertical-align: middle;
-            padding: 8px 12px;
+            padding: 0;
             white-space: nowrap;
         }
 
@@ -184,6 +192,14 @@
                 cursor: pointer;
                 margin-right: 8px;
                 font-size: 14px;
+                vertical-align: middle;
+            }
+
+            .ant-btn {
+                vertical-align: middle;
+                padding: 0 4px;
+                height: auto;
+                line-height: 22px;
             }
         }
 
@@ -200,6 +216,22 @@
                 box-shadow: inset 0 0 0 2px #91caff;
             }
         }
+
+        &.env-table-device {
+            table-layout: auto;
+
+            th:nth-child(2),
+            td:nth-child(2):not(.env-row-op) {
+                min-width: 12em;
+            }
+
+            th:nth-child(3),
+            td:nth-child(3):not(.env-row-op) {
+                width: 88px;
+                min-width: 88px;
+                text-align: center;
+            }
+        }
     }
 
     .env-input {
@@ -210,6 +242,7 @@
         resize: none;
         color: #1f2d3d;
         line-height: 1.6;
+        vertical-align: middle;
 
         &:hover,
         &:focus {

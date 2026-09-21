@@ -1,11 +1,12 @@
 import logging
 import os
 from typing import List
-from sqlalchemy import select, delete, func
+from sqlalchemy import select, delete, func, or_
 from sqlalchemy.sql import desc
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from openpyxl import load_workbook
 from ..obj.vobj_user import UserObj
+from ..obj.tobj_role import Roles
 from ..model.product import Product, UserProd
 from ..model.cst import Cst
 from ..model.cst_rcm import CstRcm
@@ -81,9 +82,9 @@ class Server(object):
         sql = select(ProdCst, Product, Cst).outerjoin(Product, ProdCst.prod_id == Product.id).outerjoin(Cst, ProdCst.cst_id == Cst.id)
         if prod_id:
             sql = sql.where(ProdCst.prod_id == prod_id)
-        if not prod_id and op_user and op_user.id != 1:
+        elif op_user and op_user.id != 1 and getattr(op_user, "role_code", None) == Roles.product_manager.value.code:
             subquery = select(UserProd.product_id).where(UserProd.user_id == op_user.id).scalar_subquery()
-            sql = sql.where(Product.id.in_(subquery))
+            sql = sql.where(or_(Product.id.in_(subquery), Product.create_user_id == op_user.id))
         total = 0
         if not export:
             sql_count = select(func.count()).select_from(sql)

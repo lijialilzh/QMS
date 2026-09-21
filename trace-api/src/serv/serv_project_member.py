@@ -67,7 +67,7 @@ class Server(object):
         sql_count = select(func.count()).select_from(sql)
         total = db.session.execute(sql_count).scalars().first()
 
-        sql = sql.order_by(asc(ProjectMember.sort_order), asc(ProjectMember.id))
+        sql = sql.order_by(asc(ProjectMember.prod_id), asc(ProjectMember.sort_order), asc(ProjectMember.id))
         sql = sql.offset(page_size * page_index).limit(page_size)
         rows: list[ProjectMember] = db.session.execute(sql).scalars().all()
         objs = [ProjectMemberObj(**row.dict()) for row in rows]

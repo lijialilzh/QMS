@@ -11,7 +11,7 @@ import * as ApiProdHaz from "@/api/ApiProdHaz";
 
 const pageSizeOptions = [1000, 2000, 5000];
 
-export default ({ prod_id, isOpen, onClose }: any) => {
+export default ({ prod_id, isOpen, onClose, embedded, onIdsChange }: any) => {
     const { t: ts } = useTranslation();
     const [queryForm] = Form.useForm();
     const [data, dispatch] = useData({
@@ -25,6 +25,11 @@ export default ({ prod_id, isOpen, onClose }: any) => {
         loadingAdd: false,
         targetIds: new Set(),
     });
+
+    const setTargetIds = (ids: Set<any>) => {
+        dispatch({ targetIds: ids });
+        onIdsChange?.(Array.from(ids));
+    };
 
     const doSearch = (params: any, pageIndex: any, pageSize: any) => {
         dispatch({ loading: true });
@@ -44,6 +49,7 @@ export default ({ prod_id, isOpen, onClose }: any) => {
             message.error("请选择HAZ!");
             return;
         }
+        if (embedded) return;
         dispatch({ loadingAdd: true });
         ApiProdHaz.add_prod_hazs({ prod_id, haz_ids }).then((res: any) => {
             dispatch({ loadingAdd: false });
@@ -61,20 +67,13 @@ export default ({ prod_id, isOpen, onClose }: any) => {
 
     useEffect(() => {
         if (isOpen) {
+            setTargetIds(new Set());
             const form = queryForm.getFieldsValue();
-            doSearch(form, data.pageIndex, data.pageSize);
+            doSearch(form, 1, data.pageSize);
         }
     }, [isOpen]);
 
-    return (
-        <Modal
-            width="95%"
-            title={ts("add")}
-            open={isOpen}
-            maskClosable={false}
-            onCancel={onClose}
-            onOk={doAddProdHazs}
-            confirmLoading={data.loadingAdd}>
+    const pickerBody = (
             <div className="div-v prod-risk-master-picker">
                 <div className="div-h searchbar">
                     <Form
@@ -91,6 +90,14 @@ export default ({ prod_id, isOpen, onClose }: any) => {
                             </Col>
                             <Col>
                                 <Button shape="circle" icon={<SearchOutlined />} htmlType="submit" />
+                            </Col>
+                            <Col>
+                                <Button onClick={() => setTargetIds(new Set((data.rows || []).map((r: any) => r.id)))}>
+                                    全选
+                                </Button>
+                            </Col>
+                            <Col>
+                                <Button onClick={() => setTargetIds(new Set())}>取消全选</Button>
                             </Col>
                         </Row>
                     </Form>
@@ -124,12 +131,28 @@ export default ({ prod_id, isOpen, onClose }: any) => {
                             type: "checkbox",
                             selectedRowKeys: [...data.targetIds],
                             onChange: (selectedRowKeys) => {
-                                dispatch({ targetIds: new Set(selectedRowKeys) });
+                                setTargetIds(new Set(selectedRowKeys));
                             },
                         }}
                     />
                 )}
             </div>
+    );
+
+    if (embedded) {
+        return isOpen ? pickerBody : null;
+    }
+
+    return (
+        <Modal
+            width="95%"
+            title={ts("add")}
+            open={isOpen}
+            maskClosable={false}
+            onCancel={onClose}
+            onOk={doAddProdHazs}
+            confirmLoading={data.loadingAdd}>
+            {pickerBody}
         </Modal>
     );
 };

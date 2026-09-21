@@ -1,14 +1,14 @@
 import { Form, Button, Table, message, Row, Col, Modal, Space } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { renderOneLineWithTooltip, useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
-import * as Api from "@/api/ApiProdRuntimeEnv";
 import * as ApiProduct from "@/api/ApiProduct";
-import ProdRuntimeEnvDetail from "./ProdRuntimeEnvDetail";
-import "../risk_mgmt/RiskMgmtParticipants.less";
+import { C_OK } from "@/api/http";
+import "./ProdDhfs.less";
 
 const pageSizeOptions = [20, 50, 100];
 
@@ -17,8 +17,43 @@ enum DlgTypes {
     delete = "delete",
 }
 
-export default () => {
+const buildCountMap = (rows: any[] = []) => {
+    const map = new Map<number, number>();
+    rows.forEach((row) => {
+        const pid = Number(row.prod_id || row.product_id);
+        if (!pid) return;
+        map.set(pid, (map.get(pid) || 0) + 1);
+    });
+    return map;
+};
+
+export default ({
+    listApi,
+    deleteApi,
+    basePath,
+    addTitle,
+    hint,
+    countLabel,
+    itemLabel,
+    MasterPicker,
+    addItemsApi,
+    idsParam,
+    selectEmptyMsg,
+}: {
+    listApi: (params: any) => Promise<any>;
+    deleteApi: (params: any) => Promise<any>;
+    basePath: string;
+    addTitle: string;
+    hint: string;
+    countLabel: string;
+    itemLabel: string;
+    MasterPicker: any;
+    addItemsApi: (params: any) => Promise<any>;
+    idsParam: string;
+    selectEmptyMsg: string;
+}) => {
     const { t: ts } = useTranslation();
+    const navigate = useNavigate();
     const [queryForm] = Form.useForm();
     const [addForm] = Form.useForm();
     const [data, dispatch] = useData({
@@ -28,90 +63,97 @@ export default () => {
         rows: [],
         loading: false,
         products: [],
-        extraMap: new Map<number, any>(),
+        countMap: new Map<number, number>(),
         addProductId: undefined as number | undefined,
+        addItemIds: [] as any[],
+        adding: false,
         filterProductId: undefined as number | undefined,
         filterProductName: undefined as string | undefined,
         targetRow: {} as any,
         dlgType: null as string | null,
-        expandedKeys: [] as number[],
     });
 
-    const loadSaved = (products: any[]) => {
-        return Promise.all((products || []).map((p: any) =>
-            Api.get_prod_runtime_env({ prod_id: p.id }).then((res: any) => {
-                if (res && res.code === Api.C_OK && res.data && res.data.id) {
-                    return { id: p.id, arch: res.data.arch || "" };
-                }
-                return null;
-            }).catch(() => null)
-        )).then((items) => {
-            const extraMap = new Map<number, any>();
-            items.filter(Boolean).forEach((it: any) => extraMap.set(it.id, it));
-            dispatch({ extraMap });
-            return extraMap;
-        });
-    };
-
-    const doSearch = (params: any, pageIndex: any, pageSize: any, extraMap?: Map<number, any>) => {
-        dispatch({ loading: true });
-        ApiProduct.list_product({ page_index: 0, page_size: 10000 }).then((res: any) => {
-            if (res.code !== ApiProduct.C_OK) {
-                dispatch({ loading: false, pageIndex, pageSize, total: 0, rows: [] });
-                message.error(res.msg);
-                return;
+    const loadCounts = () => {
+        return listApi({ page_index: 0, page_size: 100000 }).then((res: any) => {
+            if (res.code === C_OK) {
+                const map = buildCountMap(res.data?.rows || []);
+                dispatch({ countMap: map });
+                return map;
             }
-            const productRows = res.data.rows || [];
-            const mapPromise = extraMap ? Promise.resolve(extraMap) : loadSaved(productRows);
-            mapPromise.then((map) => {
-                let allRows = productRows.filter((row: any) => map.has(row.id));
-                const productId = params?.product_id;
-                const productName = params?.product_name;
-                if (productId) {
-                    allRows = allRows.filter((row: any) => Number(row.id) === Number(productId));
-                } else if (productName) {
-                    allRows = allRows.filter((row: any) => row.name === productName);
+            if (res?.msg) message.error(res.msg);
+            return data.countMap || new Map<number, number>();
+        }).catch(() => data.countMap || new Map<number, number>());
+    };
+
+    const doSearch = (params: any, pageIndex: any, pageSize: any, countMap?: Map<number, number>) => {
+        dispatch({ loading: true });
+        const mapPromise = countMap ? Promise.resolve(countMap) : loadCounts();
+        mapPromise.then((map) => {
+            ApiProduct.list_product({ page_index: 0, page_size: 10000 }).then((res: any) => {
+                if (res.code === ApiProduct.C_OK) {
+                    const productRows = res.data.rows || [];
+                    let allRows = productRows.filter((row: any) => (map.get(row.id) || 0) > 0);
+                    const productId = params?.product_id;
+                    const productName = params?.product_name;
+                    if (productId) {
+                        allRows = allRows.filter((row: any) => Number(row.id) === Number(productId));
+                    } else if (productName) {
+                        allRows = allRows.filter((row: any) => row.name === productName);
+                    }
+                    const total = allRows.length;
+                    const start = (pageIndex - 1) * pageSize;
+                    const rows = allRows.slice(start, start + pageSize);
+                    dispatch({
+                        loading: false,
+                        pageIndex,
+                        pageSize,
+                        total,
+                        rows,
+                        products: productRows,
+                        countMap: map,
+                    });
+                } else {
+                    dispatch({ loading: false, pageIndex, pageSize, total: 0, rows: [] });
+                    message.error(res.msg);
                 }
-                const total = allRows.length;
-                const start = (pageIndex - 1) * pageSize;
-                dispatch({
-                    loading: false,
-                    pageIndex,
-                    pageSize,
-                    total,
-                    rows: allRows.slice(start, start + pageSize),
-                    products: productRows,
-                    extraMap: map,
-                });
+            }).catch(() => {
+                dispatch({ loading: false });
+                message.error("加载产品列表失败");
             });
-        }).catch(() => {
-            dispatch({ loading: false });
-            message.error("加载产品列表失败");
         });
     };
 
-    const toggleExpand = (prodId: number) => {
-        if (!prodId) return;
-        const keys = data.expandedKeys || [];
-        dispatch({ expandedKeys: keys.includes(prodId) ? [] : [prodId] });
+    const openAddModal = () => {
+        addForm.resetFields();
+        dispatch({ dlgType: DlgTypes.add, addProductId: undefined, addItemIds: [], adding: false });
     };
 
-    const refreshAfterChange = () => {
-        doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, data.pageIndex, data.pageSize);
-    };
-
-    const doAddNavigate = () => {
+    const doAddItems = () => {
         addForm.validateFields().then((values) => {
             const prodId = values.prod_id;
             if (!prodId) {
                 message.warning(sprintf(ts("msg_select"), { label: ts("product.product") }));
                 return;
             }
-            const extraMap = new Map(data.extraMap || []);
-            if (!extraMap.has(prodId)) extraMap.set(prodId, { id: prodId, arch: "" });
-            dispatch({ dlgType: null, expandedKeys: [prodId], extraMap });
-            message.success("新增成功");
-            doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, 1, data.pageSize, extraMap);
+            const ids = data.addItemIds || [];
+            if (!ids.length) {
+                message.error(selectEmptyMsg);
+                return;
+            }
+            dispatch({ adding: true });
+            addItemsApi({ prod_id: prodId, [idsParam]: ids }).then((res: any) => {
+                dispatch({ adding: false });
+                if (res.code === C_OK) {
+                    dispatch({ dlgType: null, addItemIds: [] });
+                    message.success(res.msg || "新增成功");
+                    navigate(`${basePath}/edit/${prodId}`);
+                } else {
+                    message.error(res.msg);
+                }
+            }).catch(() => {
+                dispatch({ adding: false });
+                message.error("新增失败");
+            });
         });
     };
 
@@ -119,18 +161,23 @@ export default () => {
         const row = data.targetRow || {};
         if (!row.id) return;
         dispatch({ loading: true });
-        Api.delete_prod_runtime_env({ prod_id: row.id }).then((res: any) => {
-            dispatch({ loading: false });
-            if (res.code === Api.C_OK) {
-                dispatch({
-                    dlgType: null,
-                    expandedKeys: (data.expandedKeys || []).filter((id: number) => id !== row.id),
-                });
-                message.success("删除成功");
+        listApi({ prod_id: row.id, page_index: 0, page_size: 100000 }).then((res: any) => {
+            const ids = ((res && res.data && res.data.rows) || []).map((r: any) => r.id).filter(Boolean);
+            if (!ids.length) {
+                dispatch({ loading: false, dlgType: null });
                 doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, data.pageIndex, data.pageSize);
-            } else {
-                message.error(res.msg);
+                return;
             }
+            return deleteApi({ id: ids.join(",") }).then((del: any) => {
+                dispatch({ loading: false });
+                if (del.code === C_OK) {
+                    dispatch({ dlgType: null });
+                    message.success("删除成功");
+                    doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, data.pageIndex, data.pageSize);
+                } else {
+                    message.error(del.msg);
+                }
+            });
         }).catch(() => {
             dispatch({ loading: false });
             message.error("删除失败");
@@ -139,6 +186,7 @@ export default () => {
 
     useEffect(() => {
         doSearch({}, data.pageIndex, data.pageSize);
+        loadCounts();
     }, []);
 
     const columns = [
@@ -171,20 +219,23 @@ export default () => {
             render: (value: any) => renderOneLineWithTooltip(value),
         },
         {
-            title: "架构说明",
+            title: countLabel,
             dataIndex: "id",
-            ellipsis: true,
-            render: (_: any, row: any) => renderOneLineWithTooltip(data.extraMap.get(row.id)?.arch || "—"),
+            width: "10%",
+            render: (_: any, row: any) => data.countMap.get(row.id) || 0,
         },
         {
             title: ts("action"),
-            width: 140,
-            className: "risk-part-list-action-col",
-            onCell: () => ({ className: "risk-part-list-action-col" }),
+            width: "28%",
+            className: "prod-dhfs-list-action-col",
+            onCell: () => ({ className: "prod-dhfs-list-action-col" }),
             render: (_: any, row: any) => (
-                <Space size={4} className="risk-part-list-row-actions" onClick={(e) => e.stopPropagation()}>
-                    <Button type="link" size="small" onClick={() => toggleExpand(row.id)}>
-                        {(data.expandedKeys || []).includes(row.id) ? "收起" : ts("edit")}
+                <Space size={4}>
+                    <Button type="link" size="small" onClick={() => navigate(`${basePath}/view/${row.id}`)}>
+                        {ts("view")}
+                    </Button>
+                    <Button type="link" size="small" onClick={() => navigate(`${basePath}/edit/${row.id}`)}>
+                        {ts("edit")}
                     </Button>
                     <Button
                         type="link"
@@ -204,7 +255,7 @@ export default () => {
                 <Form
                     form={queryForm}
                     className="expand"
-                    onFinish={() => doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, 1, data.pageSize, data.extraMap)}>
+                    onFinish={() => doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, 1, data.pageSize)}>
                     <Row gutter={20}>
                         <Col>
                             <Form.Item label={ts("srs_doc.select_product")}>
@@ -219,11 +270,11 @@ export default () => {
                                     versionPlaceholder={ts("product.full_version")}
                                     onNameChange={(name) => {
                                         dispatch({ filterProductName: name, filterProductId: undefined });
-                                        doSearch({ product_id: undefined, product_name: name }, 1, data.pageSize, data.extraMap);
+                                        doSearch({ product_id: undefined, product_name: name }, 1, data.pageSize);
                                     }}
                                     onChange={(value) => {
                                         dispatch({ filterProductId: value });
-                                        doSearch({ product_id: value, product_name: data.filterProductName }, 1, data.pageSize, data.extraMap);
+                                        doSearch({ product_id: value, product_name: data.filterProductName }, 1, data.pageSize);
                                     }}
                                 />
                             </Form.Item>
@@ -233,12 +284,12 @@ export default () => {
                         </Col>
                     </Row>
                 </Form>
-                <Button type="primary" onClick={() => { addForm.resetFields(); dispatch({ dlgType: DlgTypes.add, addProductId: undefined }); }}>
+                <Button type="primary" onClick={openAddModal}>
                     {ts("add")}
                 </Button>
             </div>
             <Table
-                className="expand risk-part-list-table"
+                className="expand prod-dhfs-list-table"
                 columns={columns}
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}
@@ -250,29 +301,26 @@ export default () => {
                     defaultPageSize: pageSizeOptions[0],
                     pageSizeOptions,
                     hideOnSinglePage: false,
-                    onShowSizeChange: (page, pageSize) => dispatch({ pageIndex: page, pageSize }),
+                    onShowSizeChange: (page, pageSize) => {
+                        dispatch({ pageIndex: page, pageSize });
+                    },
                     showTotal: (total: number) => sprintf(ts("total_items"), { total }),
                 }}
                 onChange={(pager) => {
-                    doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, pager.current, pager.pageSize, data.extraMap);
-                }}
-                expandable={{
-                    expandedRowKeys: data.expandedKeys || [],
-                    showExpandColumn: false,
-                    expandedRowRender: (row) => (
-                        <ProdRuntimeEnvDetail prodId={row.id} onChanged={refreshAfterChange} />
-                    ),
+                    doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, pager.current, pager.pageSize);
                 }}
             />
             <Modal
                 centered
-                width={520}
-                title="新增运行环境"
+                width="95%"
+                wrapClassName="prod-risk-add-modal"
+                title={addTitle}
                 open={data.dlgType === DlgTypes.add}
                 maskClosable={false}
-                onOk={doAddNavigate}
-                onCancel={() => dispatch({ dlgType: null })}>
-                <Form form={addForm} layout="vertical">
+                confirmLoading={data.adding}
+                onOk={doAddItems}
+                onCancel={() => dispatch({ dlgType: null, addItemIds: [], adding: false })}>
+                <Form form={addForm} layout="vertical" style={{ marginBottom: 8 }}>
                     <Form.Item
                         label={ts("product.product")}
                         name="prod_id"
@@ -288,8 +336,15 @@ export default () => {
                             }}
                         />
                     </Form.Item>
-                    <div style={{ color: "#888" }}>选择产品后在本页展开该产品运行环境；若尚未保存，将预填模板默认值，首次编辑保存后落库。</div>
+                    <div style={{ color: "#888", marginBottom: 8 }}>{hint}</div>
                 </Form>
+                <MasterPicker
+                    embedded
+                    isOpen={data.dlgType === DlgTypes.add}
+                    prod_id={data.addProductId}
+                    onIdsChange={(ids: any[]) => dispatch({ addItemIds: ids })}
+                    onClose={() => {}}
+                />
             </Modal>
             <Modal
                 centered
@@ -302,7 +357,7 @@ export default () => {
                 <div>
                     确定删除产品「{data.targetRow?.name || "-"}」
                     {data.targetRow?.full_version ? `（${data.targetRow.full_version}）` : ""}
-                    的运行环境吗？删除后该产品将回到模板默认值，需重新保存才会落库。
+                    的全部{itemLabel}（共 {data.countMap.get(data.targetRow?.id) || 0} 条）吗？
                 </div>
             </Modal>
         </div>

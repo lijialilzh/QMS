@@ -1,204 +1,211 @@
-import { Button, Table, message, Row, Col, Space, Input, Modal, Tooltip } from "antd";
-import { ArrowUpOutlined, ArrowDownOutlined } from "@ant-design/icons";
+import { Form, Button, Table, message, Row, Col, Modal, Space } from "antd";
+import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
-import { useData } from "@/common";
+import { renderOneLineWithTooltip, useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProdAlgoModule";
 import * as ApiProduct from "@/api/ApiProduct";
+import ProdAlgoModuleDetail from "./ProdAlgoModuleDetail";
+import "../risk_mgmt/RiskMgmtParticipants.less";
 
-const DEFAULT_MODULES = ["肺栓塞分割", "肺叶分割"];
+const pageSizeOptions = [20, 50, 100];
+
+enum DlgTypes {
+    add = "add",
+    delete = "delete",
+}
+
+const buildCountMap = (rows: any[] = []) => {
+    const map = new Map<number, number>();
+    rows.forEach((row) => {
+        const pid = Number(row.prod_id);
+        if (!pid) return;
+        map.set(pid, (map.get(pid) || 0) + 1);
+    });
+    return map;
+};
 
 export default () => {
     const { t: ts } = useTranslation();
+    const [queryForm] = Form.useForm();
+    const [addForm] = Form.useForm();
     const [data, dispatch] = useData({
+        total: 0,
+        pageIndex: 1,
+        pageSize: pageSizeOptions[0],
         rows: [],
         loading: false,
         products: [],
-        targetProdId: null,
-        targetEdit: {},
-        editingField: null,
-        updating: false,
+        countMap: new Map<number, number>(),
+        addProductId: undefined as number | undefined,
+        filterProductId: undefined as number | undefined,
+        filterProductName: undefined as string | undefined,
+        targetRow: {} as any,
+        dlgType: null as string | null,
+        expandedKeys: [] as number[],
     });
 
-    const loadProducts = () => {
-        ApiProduct.list_product({ page_index: 0, page_size: 1000 }).then((res: any) => {
-            if (res.code === ApiProduct.C_OK) {
-                dispatch({ products: res.data.rows || [] });
+    const loadCounts = () => {
+        return Api.list_prod_algo_module({ page_index: 0, page_size: 100000 }).then((res: any) => {
+            if (res.code === Api.C_OK) {
+                const map = buildCountMap(res.data?.rows || []);
+                dispatch({ countMap: map });
+                return map;
             }
-        });
+            return data.countMap || new Map<number, number>();
+        }).catch(() => data.countMap || new Map<number, number>());
     };
 
-    const prodName = (prodId: any) => {
-        const p = (data.products || []).find((x: any) => x.id === prodId);
-        return p ? (p.name || "") : "";
-    };
-    const prodVer = (prodId: any) => {
-        const p = (data.products || []).find((x: any) => x.id === prodId);
-        return p ? (p.full_version || "") : "";
-    };
-
-    const loadModules = (prodId: any, allowSeed = true) => {
+    const doSearch = (params: any, pageIndex: any, pageSize: any, countMap?: Map<number, number>) => {
         dispatch({ loading: true });
-        Api.list_prod_algo_module({ prod_id: prodId || undefined, page_index: 0, page_size: 10000 }).then((res: any) => {
-            if (res.code !== Api.C_OK) {
-                dispatch({ loading: false, rows: [] });
-                message.error(res.msg);
-                return;
-            }
-            const rows = res.data.rows || [];
-            if (prodId && allowSeed && !rows.length && DEFAULT_MODULES.length) {
-                const jobs = DEFAULT_MODULES.map((name, i) =>
-                    Api.add_prod_algo_module({ prod_id: prodId, name, sort_order: i + 1 })
-                );
-                Promise.all(jobs).then(() => loadModules(prodId, false)).catch(() => {
-                    dispatch({ loading: false, rows });
-                });
-                return;
-            }
-            dispatch({ loading: false, rows });
-        });
-    };
-
-    const doAdd = () => {
-        if (!data.targetProdId) {
-            message.warning("请先选择产品");
-            return;
-        }
-        const maxSort = (data.rows || []).reduce((m: number, r: any) => Math.max(m, r.sort_order || 0), 0);
-        Api.add_prod_algo_module({
-            prod_id: data.targetProdId,
-            name: "",
-            sort_order: maxSort + 1,
-        }).then((res: any) => {
-            if (res.code === Api.C_OK) {
-                message.success(res.msg || ts("msg_ok"));
-                loadModules(data.targetProdId, false);
-            } else {
-                message.error(res.msg);
-            }
-        });
-    };
-
-    const doDelete = (row: any) => {
-        Modal.confirm({
-            title: ts("action"),
-            content: ts("confirm_delete"),
-            onOk: () => {
-                Api.delete_prod_algo_modules({ id: row.id }).then((res: any) => {
-                    if (res.code === Api.C_OK) {
-                        message.success(res.msg);
-                        loadModules(data.targetProdId, false);
-                    } else {
-                        message.error(res.msg);
+        const mapPromise = countMap ? Promise.resolve(countMap) : loadCounts();
+        mapPromise.then((map) => {
+            ApiProduct.list_product({ page_index: 0, page_size: 10000 }).then((res: any) => {
+                if (res.code === ApiProduct.C_OK) {
+                    const productRows = res.data.rows || [];
+                    let allRows = productRows.filter((row: any) => map.has(row.id));
+                    const productId = params?.product_id;
+                    const productName = params?.product_name;
+                    if (productId) {
+                        allRows = allRows.filter((row: any) => Number(row.id) === Number(productId));
+                    } else if (productName) {
+                        allRows = allRows.filter((row: any) => row.name === productName);
                     }
-                });
-            },
+                    const total = allRows.length;
+                    const start = (pageIndex - 1) * pageSize;
+                    dispatch({
+                        loading: false,
+                        pageIndex,
+                        pageSize,
+                        total,
+                        rows: allRows.slice(start, start + pageSize),
+                        products: productRows,
+                        countMap: map,
+                    });
+                } else {
+                    dispatch({ loading: false, pageIndex, pageSize, total: 0, rows: [] });
+                    message.error(res.msg);
+                }
+            }).catch(() => {
+                dispatch({ loading: false });
+                message.error("加载产品列表失败");
+            });
         });
     };
 
-    const startEdit = (row: any, field: string) => {
-        if (data.targetEdit.id === row.id && data.editingField === field) return;
-        dispatch({ targetEdit: { ...row }, editingField: field });
+    const toggleExpand = (prodId: number) => {
+        if (!prodId) return;
+        const keys = data.expandedKeys || [];
+        dispatch({ expandedKeys: keys.includes(prodId) ? [] : [prodId] });
     };
 
-    const moveRow = (row: any, dir: "up" | "down") => {
-        const rows = data.rows || [];
-        const idx = rows.findIndex((r: any) => r.id === row.id);
-        if (idx < 0) return;
-        const swapIdx = dir === "up" ? idx - 1 : idx + 1;
-        if (swapIdx < 0 || swapIdx >= rows.length) return;
-        const cur = rows[idx];
-        const target = rows[swapIdx];
-        const curSort = cur.sort_order || idx + 1;
-        const targetSort = target.sort_order || swapIdx + 1;
-        dispatch({ updating: true });
-        Promise.all([
-            Api.update_prod_algo_module({ id: cur.id, prod_id: cur.prod_id, name: cur.name, sort_order: targetSort }),
-            Api.update_prod_algo_module({ id: target.id, prod_id: target.prod_id, name: target.name, sort_order: curSort }),
-        ]).then((results: any[]) => {
-            if (results.every((r: any) => r.code === Api.C_OK)) {
-                dispatch({ updating: false });
+    const refreshAfterChange = () => {
+        loadCounts().then((map) => {
+            doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, data.pageIndex, data.pageSize, map);
+        });
+    };
+
+    const doAddNavigate = () => {
+        addForm.validateFields().then((values) => {
+            const prodId = values.prod_id;
+            if (!prodId) {
+                message.warning(sprintf(ts("msg_select"), { label: ts("product.product") }));
+                return;
+            }
+            dispatch({ dlgType: null, expandedKeys: [prodId] });
+            loadCounts().then((map) => {
+                const next = new Map(map);
+                if (!next.has(prodId)) next.set(prodId, 0);
+                doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, 1, data.pageSize, next);
+            });
+        });
+    };
+
+    const doDelete = () => {
+        const row = data.targetRow || {};
+        if (!row.id) return;
+        dispatch({ loading: true });
+        Api.list_prod_algo_module({ prod_id: row.id, page_index: 0, page_size: 10000 }).then((res: any) => {
+            const ids = ((res && res.data && res.data.rows) || []).map((r: any) => r.id).filter(Boolean);
+            const finish = () => {
+                dispatch({ loading: false, dlgType: null, expandedKeys: (data.expandedKeys || []).filter((id: number) => id !== row.id) });
                 message.success(ts("save_success"));
-                loadModules(data.targetProdId, false);
-            } else {
-                dispatch({ updating: false });
-                message.error("移动失败");
+                doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, data.pageIndex, data.pageSize);
+            };
+            if (!ids.length) {
+                finish();
+                return;
             }
+            Api.delete_prod_algo_modules({ id: ids.join(",") }).then((del: any) => {
+                if (del.code === Api.C_OK) finish();
+                else {
+                    dispatch({ loading: false });
+                    message.error(del.msg);
+                }
+            });
         }).catch(() => {
-            dispatch({ updating: false });
-            message.error("移动失败");
+            dispatch({ loading: false });
+            message.error("删除失败");
         });
     };
 
-    const saveCell = () => {
-        const edit = { ...data.targetEdit };
-        if (!edit?.id || data.updating) return;
-        dispatch({ updating: true });
-        Api.update_prod_algo_module({ ...edit }).then((res: any) => {
-            if (res.code === Api.C_OK) {
-                const rows = (data.rows || []).map((r: any) => (r.id === edit.id ? { ...r, ...edit } : r));
-                dispatch({ updating: false, targetEdit: {}, editingField: null, rows });
-                message.success(res.msg || ts("msg_ok"));
-            } else {
-                dispatch({ updating: false });
-                message.error(res.msg);
-            }
-        });
-    };
-
-    const isEditing = (row: any, field: string) => data.targetEdit.id === row.id && data.editingField === field;
-
-    const clickToEdit = (row: any, field: string, value: any) => (
-        <div style={{ cursor: "pointer", minHeight: 22 }} title="点击编辑" onClick={() => startEdit(row, field)}>
-            {value !== null && value !== undefined && String(value) !== "" ? value : <span style={{ color: "#d9d9d9" }}>—</span>}
-        </div>
-    );
+    useEffect(() => {
+        doSearch({}, data.pageIndex, data.pageSize);
+        loadCounts();
+    }, []);
 
     const columns = [
-        ...(!data.targetProdId ? [
-            { title: "产品名称", width: 180, render: (_: any, row: any) => prodName(row.prod_id) },
-            { title: "完整版本", width: 120, render: (_: any, row: any) => prodVer(row.prod_id) },
-        ] : []),
         {
-            title: "序号",
-            dataIndex: "sort_order",
-            width: 80,
-            render: (_value: any, _row: any, index: number) => index + 1,
+            title: ts("product.name"),
+            dataIndex: "name",
+            width: "22%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
         },
         {
-            title: "模块",
-            dataIndex: "name",
-            render: (value: any, row: any) => {
-                if (!isEditing(row, "name")) return clickToEdit(row, "name", value);
-                return (
-                    <Input
-                        autoFocus
-                        value={data.targetEdit.name}
-                        onChange={(e: any) => dispatch({ targetEdit: { ...data.targetEdit, name: e.target.value } })}
-                        onBlur={() => saveCell()}
-                        onPressEnter={() => saveCell()}
-                    />
-                );
-            },
+            title: ts("product.full_version"),
+            dataIndex: "full_version",
+            width: "14%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: ts("product.release_version"),
+            dataIndex: "release_version",
+            width: "12%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: ts("product.type_code"),
+            dataIndex: "type_code",
+            width: "14%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: "模块数",
+            dataIndex: "id",
+            width: "10%",
+            render: (_: any, row: any) => data.countMap.get(row.id) || 0,
         },
         {
             title: ts("action"),
-            width: 160,
-            render: (_value: any, row: any, index: number) => (
-                <Space>
-                    <Tooltip title="上移">
-                        <Button type="link" size="small" disabled={index === 0 || data.updating} onClick={() => moveRow(row, "up")}>
-                            <ArrowUpOutlined />
-                        </Button>
-                    </Tooltip>
-                    <Tooltip title="下移">
-                        <Button type="link" size="small" disabled={index === (data.rows || []).length - 1 || data.updating} onClick={() => moveRow(row, "down")}>
-                            <ArrowDownOutlined />
-                        </Button>
-                    </Tooltip>
-                    <Button type="link" danger onClick={() => doDelete(row)}>
+            width: 140,
+            className: "risk-part-list-action-col",
+            onCell: () => ({ className: "risk-part-list-action-col" }),
+            render: (_: any, row: any) => (
+                <Space size={4} className="risk-part-list-row-actions" onClick={(e) => e.stopPropagation()}>
+                    <Button type="link" size="small" onClick={() => toggleExpand(row.id)}>
+                        {(data.expandedKeys || []).includes(row.id) ? "收起" : ts("edit")}
+                    </Button>
+                    <Button
+                        type="link"
+                        size="small"
+                        danger
+                        onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
                         {ts("delete")}
                     </Button>
                 </Space>
@@ -206,50 +213,113 @@ export default () => {
         },
     ];
 
-    useEffect(() => {
-        loadProducts();
-        loadModules(null, false);
-    }, []);
-
     return (
         <div className="page div-v">
             <div className="div-h searchbar list-searchbar-align">
-                <Row gutter={10} className="expand">
-                    <Col>
-                        <Space>
-                            <span>{ts("srs_doc.select_product")}：</span>
-                            <div style={{ minWidth: 360 }}>
+                <Form
+                    form={queryForm}
+                    className="expand"
+                    onFinish={() => doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, 1, data.pageSize)}>
+                    <Row gutter={20}>
+                        <Col>
+                            <Form.Item label={ts("srs_doc.select_product")}>
                                 <ProductVersionSelect
                                     products={data.products}
+                                    value={data.filterProductId}
+                                    initialName={data.filterProductName}
                                     allowClear
                                     includeAll
-                                    value={data.targetProdId}
+                                    deferChangeUntilVersionSelect
                                     namePlaceholder={ts("product.name")}
-                                    versionPlaceholder={ts("product.version")}
-                                    onChange={(v: any) => {
-                                        dispatch({ targetProdId: v ?? null, targetEdit: {}, editingField: null });
-                                        loadModules(v ?? null, true);
+                                    versionPlaceholder={ts("product.full_version")}
+                                    onNameChange={(name) => {
+                                        dispatch({ filterProductName: name, filterProductId: undefined });
+                                        doSearch({ product_id: undefined, product_name: name }, 1, data.pageSize);
+                                    }}
+                                    onChange={(value) => {
+                                        dispatch({ filterProductId: value });
+                                        doSearch({ product_id: value, product_name: data.filterProductName }, 1, data.pageSize);
                                     }}
                                 />
-                            </div>
-                        </Space>
-                    </Col>
-                </Row>
-                <div className="div-h hspace">
-                    <Button disabled={!data.targetProdId} onClick={doAdd}>
-                        {ts("add")}
-                    </Button>
-                </div>
+                            </Form.Item>
+                        </Col>
+                        <Col>
+                            <Button shape="circle" icon={<SearchOutlined />} htmlType="submit" />
+                        </Col>
+                    </Row>
+                </Form>
+                <Button type="primary" onClick={() => { addForm.resetFields(); dispatch({ dlgType: DlgTypes.add, addProductId: undefined }); }}>
+                    {ts("add")}
+                </Button>
             </div>
             <Table
-                className="expand"
+                className="expand risk-part-list-table"
                 columns={columns}
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}
                 loading={data.loading}
-                pagination={false}
-                footer={() => sprintf(ts("total_items"), { total: (data.rows || []).length })}
+                pagination={{
+                    total: data.total,
+                    current: data.pageIndex,
+                    showSizeChanger: true,
+                    defaultPageSize: pageSizeOptions[0],
+                    pageSizeOptions,
+                    hideOnSinglePage: false,
+                    onShowSizeChange: (page, pageSize) => dispatch({ pageIndex: page, pageSize }),
+                    showTotal: (total: number) => sprintf(ts("total_items"), { total }),
+                }}
+                onChange={(pager) => {
+                    doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, pager.current, pager.pageSize);
+                }}
+                expandable={{
+                    expandedRowKeys: data.expandedKeys || [],
+                    showExpandColumn: false,
+                    expandedRowRender: (row) => (
+                        <ProdAlgoModuleDetail prodId={row.id} onChanged={refreshAfterChange} />
+                    ),
+                }}
             />
+            <Modal
+                centered
+                width={520}
+                title="新增算法模块"
+                open={data.dlgType === DlgTypes.add}
+                maskClosable={false}
+                onOk={doAddNavigate}
+                onCancel={() => dispatch({ dlgType: null })}>
+                <Form form={addForm} layout="vertical">
+                    <Form.Item
+                        label={ts("product.product")}
+                        name="prod_id"
+                        rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
+                        <ProductVersionSelect
+                            products={data.products}
+                            value={data.addProductId}
+                            namePlaceholder={ts("product.name")}
+                            versionPlaceholder={ts("product.full_version")}
+                            onChange={(value: any) => {
+                                addForm.setFieldValue("prod_id", value);
+                                dispatch({ addProductId: value });
+                            }}
+                        />
+                    </Form.Item>
+                    <div style={{ color: "#888" }}>选择产品后在本页展开该产品模块；若该产品还没有模块，将写入默认模块。</div>
+                </Form>
+            </Modal>
+            <Modal
+                centered
+                title={ts("action")}
+                open={data.dlgType === DlgTypes.delete}
+                maskClosable={false}
+                confirmLoading={data.loading}
+                onOk={doDelete}
+                onCancel={() => dispatch({ dlgType: null })}>
+                <div>
+                    确定删除产品「{data.targetRow?.name || "-"}」
+                    {data.targetRow?.full_version ? `（${data.targetRow.full_version}）` : ""}
+                    的全部算法模块（共 {data.countMap.get(data.targetRow?.id) || 0} 条）吗？
+                </div>
+            </Modal>
         </div>
     );
 };

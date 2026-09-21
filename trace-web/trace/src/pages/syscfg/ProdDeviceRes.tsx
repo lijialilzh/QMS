@@ -1,217 +1,310 @@
-import { message, Space, Input, Spin, Table } from "antd";
+import { Form, Button, Table, message, Row, Col, Modal, Space } from "antd";
+import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
+import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
-import { useData } from "@/common";
+import { renderOneLineWithTooltip, useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProdDeviceRes";
 import * as ApiProduct from "@/api/ApiProduct";
-import * as ApiMember from "@/api/ApiProjectMember";
-import "./ProdRuntimeEnv.less";
+import ProdDeviceResDetail from "./ProdDeviceResDetail";
+import "../risk_mgmt/RiskMgmtParticipants.less";
 
-// 软件/工具类：数量 = 设备名称按顿号/逗号拆出的项数
-const NAME_QTY_USES = new Set(["操作系统", "开发语言", "数据库", "开发工具", "测试工具", "配置管理工具"]);
-// 设备类：数量 = 参与人员中职能含对应关键字且有姓名的人数
-const STAFF_QTY_USES: Record<string, string[]> = {
-    "开发设备": ["开发"],
-    "测试设备": ["测试"],
-    "生产设备": ["生产"],
-    "检验设备": ["检验", "QA"],
-};
-const countNames = (name: any) =>
-    String(name ?? "").split(/[,，、]+/).map((s) => s.trim()).filter(Boolean).length;
-const countStaff = (members: any[], kws: string[]) =>
-    (members || []).filter((m: any) => {
-        if (!String(m.name || "").trim()) return false;
-        const role = String(m.role || "");
-        return kws.some((kw) => role.toLowerCase().includes(kw.toLowerCase()));
-    }).length;
-const withAutoQty = (items: any[], members: any[]) =>
-    (items || []).map((it: any) => {
-        const use = String(it?.use || "").trim();
-        let qty = it.qty;
-        if (NAME_QTY_USES.has(use)) {
-            const n = countNames(it.name);
-            qty = n ? String(n) : "";
-        } else if (STAFF_QTY_USES[use]) {
-            qty = String(countStaff(members, STAFF_QTY_USES[use]));
-        }
-        return String(it.qty ?? "") === String(qty) ? it : { ...it, qty };
-    });
+const pageSizeOptions = [20, 50, 100];
+
+enum DlgTypes {
+    add = "add",
+    delete = "delete",
+}
 
 export default () => {
     const { t: ts } = useTranslation();
+    const [queryForm] = Form.useForm();
+    const [addForm] = Form.useForm();
     const [data, dispatch] = useData({
-        products: [],
-        prodId: null,
-        items: [] as any[],
-        allRows: [] as any[],
-        snapshot: "" as string,
+        total: 0,
+        pageIndex: 1,
+        pageSize: pageSizeOptions[0],
+        rows: [],
         loading: false,
-        saving: false,
+        products: [],
+        extraMap: new Map<number, any>(),
+        addProductId: undefined as number | undefined,
+        filterProductId: undefined as number | undefined,
+        filterProductName: undefined as string | undefined,
+        targetRow: {} as any,
+        dlgType: null as string | null,
+        expandedKeys: [] as number[],
     });
 
-    const loadData = (prodId: any, products = data.products) => {
-        if (!prodId) {
-            dispatch({ loading: true, items: [], snapshot: "" });
-            Promise.all((products || []).map((p: any) =>
-                Api.get_prod_device_res({ prod_id: p.id }).then((res: any) => {
-                    const items = (res && res.code === Api.C_OK && res.data && res.data.items) || [];
-                    return items.map((it: any, idx: number) => ({
-                        key: `${p.id}-${idx}`,
-                        product_name: p.name,
-                        full_version: p.full_version,
-                        use: it.use,
-                        device_name: it.name,
-                        qty: it.qty,
-                    }));
-                }).catch(() => [])
-            )).then((groups) => dispatch({ loading: false, allRows: groups.flat() }));
-            return;
-        }
-        dispatch({ loading: true, allRows: [] });
-        Promise.all([
-            Api.get_prod_device_res({ prod_id: prodId }),
-            ApiMember.list_project_member({ prod_id: prodId, page_index: 0, page_size: 1000 }).catch(() => null),
-        ]).then(([res, mb]: any[]) => {
-            if (res.code === Api.C_OK) {
-                const raw = (res.data && res.data.items) || [];
-                const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
-                const items = withAutoQty(raw, members);
-                const snapshot = JSON.stringify(raw);
-                dispatch({ loading: false, items, snapshot });
-                if (JSON.stringify(items) !== snapshot) {
-                    Api.save_prod_device_res({ prod_id: prodId, items }).then((sv: any) => {
-                        if (sv.code === Api.C_OK) dispatch({ snapshot: JSON.stringify(items) });
-                    });
+    const loadSaved = (products: any[]) => {
+        return Promise.all((products || []).map((p: any) =>
+            Api.get_prod_device_res({ prod_id: p.id }).then((res: any) => {
+                if (res && res.code === Api.C_OK && res.data && res.data.id) {
+                    return { id: p.id, count: ((res.data.items || []).length) };
                 }
-            } else {
-                dispatch({ loading: false, items: [], snapshot: "" });
+                return null;
+            }).catch(() => null)
+        )).then((items) => {
+            const extraMap = new Map<number, any>();
+            items.filter(Boolean).forEach((it: any) => extraMap.set(it.id, it));
+            dispatch({ extraMap });
+            return extraMap;
+        });
+    };
+
+    const doSearch = (params: any, pageIndex: any, pageSize: any, extraMap?: Map<number, any>) => {
+        dispatch({ loading: true });
+        ApiProduct.list_product({ page_index: 0, page_size: 10000 }).then((res: any) => {
+            if (res.code !== ApiProduct.C_OK) {
+                dispatch({ loading: false, pageIndex, pageSize, total: 0, rows: [] });
                 message.error(res.msg);
+                return;
             }
+            const productRows = res.data.rows || [];
+            const mapPromise = extraMap ? Promise.resolve(extraMap) : loadSaved(productRows);
+            mapPromise.then((map) => {
+                let allRows = productRows.filter((row: any) => map.has(row.id));
+                const productId = params?.product_id;
+                const productName = params?.product_name;
+                if (productId) {
+                    allRows = allRows.filter((row: any) => Number(row.id) === Number(productId));
+                } else if (productName) {
+                    allRows = allRows.filter((row: any) => row.name === productName);
+                }
+                const total = allRows.length;
+                const start = (pageIndex - 1) * pageSize;
+                dispatch({
+                    loading: false,
+                    pageIndex,
+                    pageSize,
+                    total,
+                    rows: allRows.slice(start, start + pageSize),
+                    products: productRows,
+                    extraMap: map,
+                });
+            });
+        }).catch(() => {
+            dispatch({ loading: false });
+            message.error("加载产品列表失败");
         });
     };
 
-    const onChange = (idx: number, field: string, value: string) => {
-        const items = data.items.map((it: any, i: number) => {
-            if (i !== idx) return it;
-            const next = { ...it, [field]: value };
-            if (field === "name" && NAME_QTY_USES.has(String(it.use || "").trim())) {
-                const n = countNames(value);
-                next.qty = n ? String(n) : "";
-            }
-            return next;
-        });
-        dispatch({ items });
+    const toggleExpand = (prodId: number) => {
+        if (!prodId) return;
+        const keys = data.expandedKeys || [];
+        dispatch({ expandedKeys: keys.includes(prodId) ? [] : [prodId] });
     };
 
-    const saveAll = () => {
-        if (!data.prodId) return;
-        const cur = JSON.stringify(data.items);
-        if (cur === data.snapshot) return;
-        dispatch({ saving: true });
-        Api.save_prod_device_res({ prod_id: data.prodId, items: data.items }).then((res: any) => {
-            dispatch({ saving: false });
+    const refreshAfterChange = () => {
+        doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, data.pageIndex, data.pageSize);
+    };
+
+    const doAddNavigate = () => {
+        addForm.validateFields().then((values) => {
+            const prodId = values.prod_id;
+            if (!prodId) {
+                message.warning(sprintf(ts("msg_select"), { label: ts("product.product") }));
+                return;
+            }
+            const extraMap = new Map(data.extraMap || []);
+            if (!extraMap.has(prodId)) extraMap.set(prodId, { id: prodId, count: 0 });
+            dispatch({ dlgType: null, expandedKeys: [prodId], extraMap });
+            message.success("新增成功");
+            doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, 1, data.pageSize, extraMap);
+        });
+    };
+
+    const doDelete = () => {
+        const row = data.targetRow || {};
+        if (!row.id) return;
+        dispatch({ loading: true });
+        Api.delete_prod_device_res({ prod_id: row.id }).then((res: any) => {
+            dispatch({ loading: false });
             if (res.code === Api.C_OK) {
-                dispatch({ snapshot: cur });
-                message.success(ts("msg_ok"));
+                dispatch({
+                    dlgType: null,
+                    expandedKeys: (data.expandedKeys || []).filter((id: number) => id !== row.id),
+                });
+                message.success("删除成功");
+                doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, data.pageIndex, data.pageSize);
             } else {
                 message.error(res.msg);
             }
+        }).catch(() => {
+            dispatch({ loading: false });
+            message.error("删除失败");
         });
     };
 
     useEffect(() => {
-        ApiProduct.list_product({ page_index: 0, page_size: 1000 }).then((res: any) => {
-            if (res.code === ApiProduct.C_OK) {
-                const products = res.data.rows || [];
-                dispatch({ products });
-                loadData(null, products);
-            }
-        });
+        doSearch({}, data.pageIndex, data.pageSize);
     }, []);
 
-    const cell = (idx: number, field: string, single?: boolean) => {
-        const use = String(data.items[idx]?.use || "").trim();
-        const autoQty = field === "qty" && (NAME_QTY_USES.has(use) || !!STAFF_QTY_USES[use]);
-        return (
-        <Input.TextArea
-            className="env-input"
-            autoSize={{ minRows: 1, maxRows: 6 }}
-            value={data.items[idx]?.[field] ?? ""}
-            disabled={!data.prodId || autoQty}
-            style={single ? { textAlign: "center" } : undefined}
-            onChange={(e) => onChange(idx, field, e.target.value)}
-            onBlur={saveAll}
-            placeholder={data.prodId ? "" : "请先选择产品"}
-        />
-        );
-    };
+    const columns = [
+        {
+            title: ts("product.name"),
+            dataIndex: "name",
+            width: "22%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: ts("product.full_version"),
+            dataIndex: "full_version",
+            width: "14%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: ts("product.release_version"),
+            dataIndex: "release_version",
+            width: "12%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: ts("product.type_code"),
+            dataIndex: "type_code",
+            width: "14%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: "条目数",
+            dataIndex: "id",
+            width: "10%",
+            render: (_: any, row: any) => data.extraMap.get(row.id)?.count || 0,
+        },
+        {
+            title: ts("action"),
+            width: 140,
+            className: "risk-part-list-action-col",
+            onCell: () => ({ className: "risk-part-list-action-col" }),
+            render: (_: any, row: any) => (
+                <Space size={4} className="risk-part-list-row-actions" onClick={(e) => e.stopPropagation()}>
+                    <Button type="link" size="small" onClick={() => toggleExpand(row.id)}>
+                        {(data.expandedKeys || []).includes(row.id) ? "收起" : ts("edit")}
+                    </Button>
+                    <Button
+                        type="link"
+                        size="small"
+                        danger
+                        onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
+                        {ts("delete")}
+                    </Button>
+                </Space>
+            ),
+        },
+    ];
 
     return (
-        <div className="page div-v prod-runtime-env">
+        <div className="page div-v">
             <div className="div-h searchbar list-searchbar-align">
-                <Space>
-                    <span>{ts("srs_doc.select_product")}：</span>
-                    <div style={{ minWidth: 360 }}>
+                <Form
+                    form={queryForm}
+                    className="expand"
+                    onFinish={() => doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, 1, data.pageSize, data.extraMap)}>
+                    <Row gutter={20}>
+                        <Col>
+                            <Form.Item label={ts("srs_doc.select_product")}>
+                                <ProductVersionSelect
+                                    products={data.products}
+                                    value={data.filterProductId}
+                                    initialName={data.filterProductName}
+                                    allowClear
+                                    includeAll
+                                    deferChangeUntilVersionSelect
+                                    namePlaceholder={ts("product.name")}
+                                    versionPlaceholder={ts("product.full_version")}
+                                    onNameChange={(name) => {
+                                        dispatch({ filterProductName: name, filterProductId: undefined });
+                                        doSearch({ product_id: undefined, product_name: name }, 1, data.pageSize, data.extraMap);
+                                    }}
+                                    onChange={(value) => {
+                                        dispatch({ filterProductId: value });
+                                        doSearch({ product_id: value, product_name: data.filterProductName }, 1, data.pageSize, data.extraMap);
+                                    }}
+                                />
+                            </Form.Item>
+                        </Col>
+                        <Col>
+                            <Button shape="circle" icon={<SearchOutlined />} htmlType="submit" />
+                        </Col>
+                    </Row>
+                </Form>
+                <Button type="primary" onClick={() => { addForm.resetFields(); dispatch({ dlgType: DlgTypes.add, addProductId: undefined }); }}>
+                    {ts("add")}
+                </Button>
+            </div>
+            <Table
+                className="expand risk-part-list-table"
+                columns={columns}
+                rowKey={(item: any) => item.id}
+                dataSource={data.rows}
+                loading={data.loading}
+                pagination={{
+                    total: data.total,
+                    current: data.pageIndex,
+                    showSizeChanger: true,
+                    defaultPageSize: pageSizeOptions[0],
+                    pageSizeOptions,
+                    hideOnSinglePage: false,
+                    onShowSizeChange: (page, pageSize) => dispatch({ pageIndex: page, pageSize }),
+                    showTotal: (total: number) => sprintf(ts("total_items"), { total }),
+                }}
+                onChange={(pager) => {
+                    doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, pager.current, pager.pageSize, data.extraMap);
+                }}
+                expandable={{
+                    expandedRowKeys: data.expandedKeys || [],
+                    showExpandColumn: false,
+                    expandedRowRender: (row) => (
+                        <ProdDeviceResDetail prodId={row.id} onChanged={refreshAfterChange} />
+                    ),
+                }}
+            />
+            <Modal
+                centered
+                width={520}
+                title="新增设备资源"
+                open={data.dlgType === DlgTypes.add}
+                maskClosable={false}
+                onOk={doAddNavigate}
+                onCancel={() => dispatch({ dlgType: null })}>
+                <Form form={addForm} layout="vertical">
+                    <Form.Item
+                        label={ts("product.product")}
+                        name="prod_id"
+                        rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
                         <ProductVersionSelect
                             products={data.products}
-                            allowClear
-                            includeAll
-                            value={data.prodId}
+                            value={data.addProductId}
                             namePlaceholder={ts("product.name")}
-                            versionPlaceholder={ts("product.version")}
-                            onChange={(v: any) => {
-                                dispatch({ prodId: v ?? null });
-                                loadData(v ?? null);
+                            versionPlaceholder={ts("product.full_version")}
+                            onChange={(value: any) => {
+                                addForm.setFieldValue("prod_id", value);
+                                dispatch({ addProductId: value });
                             }}
                         />
-                    </div>
-                </Space>
-                {data.saving ? <span className="env-saving">保存中…</span> : null}
-            </div>
-
-            {data.prodId ? (
-            <Spin spinning={data.loading} wrapperClassName="env-scroll">
-                <div className="env-body">
-                    <h2 className="env-title">设备资源</h2>
-                    <table className="env-table">
-                        <colgroup>
-                            <col style={{ width: 160 }} />
-                            <col />
-                            <col style={{ width: 100 }} />
-                        </colgroup>
-                        <thead>
-                            <tr><th>设备及用途</th><th>设备名称</th><th>数量</th></tr>
-                        </thead>
-                        <tbody>
-                            {data.items.map((it: any, idx: number) => (
-                                <tr key={idx}>
-                                    <td className="lbl">{it.use}</td>
-                                    <td>{cell(idx, "name")}</td>
-                                    <td>{cell(idx, "qty", true)}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                    </Form.Item>
+                    <div style={{ color: "#888" }}>选择产品后在本页展开该产品设备资源；若尚未保存，将预填模板默认值。</div>
+                </Form>
+            </Modal>
+            <Modal
+                centered
+                title={ts("action")}
+                open={data.dlgType === DlgTypes.delete}
+                maskClosable={false}
+                confirmLoading={data.loading}
+                onOk={doDelete}
+                onCancel={() => dispatch({ dlgType: null })}>
+                <div>
+                    确定删除产品「{data.targetRow?.name || "-"}」
+                    {data.targetRow?.full_version ? `（${data.targetRow.full_version}）` : ""}
+                    的设备资源吗？删除后该产品将回到模板默认值，需重新保存才会落库。
                 </div>
-            </Spin>
-            ) : (
-                <Spin spinning={data.loading}>
-                    <Table
-                        className="expand"
-                        rowKey="key"
-                        pagination={false}
-                        dataSource={data.allRows}
-                        columns={[
-                            { title: "产品名称", dataIndex: "product_name", width: 200 },
-                            { title: "完整版本", dataIndex: "full_version", width: 120 },
-                            { title: "设备及用途", dataIndex: "use", width: 160 },
-                            { title: "设备名称", dataIndex: "device_name" },
-                            { title: "数量", dataIndex: "qty", width: 80 },
-                        ]}
-                    />
-                </Spin>
-            )}
+            </Modal>
         </div>
     );
 };

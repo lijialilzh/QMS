@@ -559,3 +559,19 @@ class Server(object):
             logger.exception("")
             db.session.rollback()
         return Resp.resp_err(msg=ts(msg_err_db))
+
+    async def delete_prod_runtime_env(self, prod_id: int):
+        try:
+            if not prod_id:
+                return Resp.resp_err(msg=ts("msg_err_param"))
+            row: ProdRuntimeEnv = db.session.execute(
+                select(ProdRuntimeEnv).where(ProdRuntimeEnv.prod_id == prod_id)
+            ).scalars().first()
+            if row:
+                db.session.delete(row)
+                db.session.commit()
+            return Resp.resp_ok()
+        except Exception:
+            logger.exception("")
+            db.session.rollback()
+        return Resp.resp_err(msg=ts(msg_err_db))

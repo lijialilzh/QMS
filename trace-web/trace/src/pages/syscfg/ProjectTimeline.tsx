@@ -1,507 +1,312 @@
-import { PlusOutlined } from "@ant-design/icons";
-import { Button, message, Space, Input, Upload, Modal, Spin, DatePicker, Checkbox } from "antd";
-import dayjs from "dayjs";
+import { Form, Button, Table, message, Row, Col, Modal, Space } from "antd";
+import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
-import { useData } from "@/common";
+import { renderOneLineWithTooltip, useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProjectTimeline";
 import * as ApiProduct from "@/api/ApiProduct";
 import "./ProjectTimeline.less";
 
+const pageSizeOptions = [20, 50, 100];
+
+enum DlgTypes {
+    add = "add",
+    delete = "delete",
+}
+
+const buildCountMap = (rows: any[] = []) => {
+    const map = new Map<number, number>();
+    rows.forEach((row) => {
+        const pid = Number(row.prod_id);
+        if (!pid) return;
+        map.set(pid, (map.get(pid) || 0) + 1);
+    });
+    return map;
+};
+
 export default () => {
     const { t: ts } = useTranslation();
+    const navigate = useNavigate();
+    const [queryForm] = Form.useForm();
+    const [addForm] = Form.useForm();
     const [data, dispatch] = useData({
-        depts: [],
+        total: 0,
+        pageIndex: 1,
+        pageSize: pageSizeOptions[0],
         rows: [],
         loading: false,
         products: [],
-        targetProdId: null,
-        edit: null as any, // { rowId, field } field: year/month/day/milestone/dept:<dept>
-        editVal: "",
-        saving: false,
-        importing: false,
-        selectedIds: [] as any[],
+        countMap: new Map<number, number>(),
+        addProductId: undefined as number | undefined,
+        filterProductId: undefined as number | undefined,
+        filterProductName: undefined as string | undefined,
+        targetRow: {} as any,
+        dlgType: null as string | null,
     });
 
-    const loadProducts = () => {
-        ApiProduct.list_product({ page_index: 0, page_size: 1000 }).then((res: any) => {
-            if (res.code === ApiProduct.C_OK) dispatch({ products: res.data.rows || [] });
-        });
+    const loadCounts = () => {
+        return Api.list_timeline({}).then((res: any) => {
+            if (res.code === Api.C_OK) {
+                const map = buildCountMap(res.data?.rows || []);
+                dispatch({ countMap: map });
+                return map;
+            }
+            return data.countMap || new Map<number, number>();
+        }).catch(() => data.countMap || new Map<number, number>());
     };
 
-    const prodName = (prodId: any) => {
-        const p = (data.products || []).find((x: any) => x.id === prodId);
-        return p ? `${p.name || ""} ${p.full_version || ""}`.trim() : "";
-    };
-
-    const loadTimeline = (prodId: any) => {
+    const doSearch = (params: any, pageIndex: any, pageSize: any, countMap?: Map<number, number>) => {
         dispatch({ loading: true });
-        Api.list_timeline(prodId ? { prod_id: prodId } : {}).then((res: any) => {
-            if (res.code === Api.C_OK) {
-                dispatch({ loading: false, depts: res.data.depts || [], rows: res.data.rows || [], selectedIds: [] });
-            } else {
-                dispatch({ loading: false, rows: [] });
-                message.error(res.msg);
-            }
-        });
-    };
-
-    const addRow = (row_type: string) => {
-        if (!data.targetProdId) {
-            message.warning("请先选择产品");
-            return;
-        }
-        Api.add_timeline_row({ prod_id: data.targetProdId, row_type }).then((res: any) => {
-            if (res.code === Api.C_OK) {
-                message.success("已新增一行");
-                loadTimeline(data.targetProdId);
-            } else message.error(res.msg);
-        });
-    };
-
-    const insertRowAfter = (row: any) => {
-        if (!data.targetProdId) {
-            message.warning("请先选择产品");
-            return;
-        }
-        Api.add_timeline_row({
-            prod_id: row.prod_id || data.targetProdId,
-            row_type: "date",
-            sort_order: Number(row.sort_order || 0) + 1,
-            year: row.year || "",
-            month: row.month || "",
-        }).then((res: any) => {
-            if (res.code === Api.C_OK) {
-                message.success("已插入一行");
-                loadTimeline(data.targetProdId);
-            } else message.error(res.msg);
-        });
-    };
-
-    const rowOps = (row: any) => (
-        <td className="tl-ops">
-            <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(row)} />
-            <Button type="link" danger size="small" onClick={() => deleteRow(row)}>
-                {ts("delete")}
-            </Button>
-        </td>
-    );
-
-    const deleteRow = (row: any) => {
-        Modal.confirm({
-            title: "确认删除",
-            content: ts("confirm_delete"),
-            okText: "删除",
-            okButtonProps: { danger: true },
-            cancelText: "取消",
-            onOk: () => {
-                return Api.delete_timeline_row({ id: row.id }).then((res: any) => {
-                    if (res.code === Api.C_OK) {
-                        message.success("已删除");
-                        loadTimeline(data.targetProdId);
-                    } else {
-                        message.error(res.msg);
+        const mapPromise = countMap ? Promise.resolve(countMap) : loadCounts();
+        mapPromise.then((map) => {
+            ApiProduct.list_product({ page_index: 0, page_size: 10000 }).then((res: any) => {
+                if (res.code === ApiProduct.C_OK) {
+                    const productRows = res.data.rows || [];
+                    let allRows = productRows.filter((row: any) => (map.get(row.id) || 0) > 0);
+                    const productId = params?.product_id;
+                    const productName = params?.product_name;
+                    if (productId) {
+                        allRows = allRows.filter((row: any) => Number(row.id) === Number(productId));
+                    } else if (productName) {
+                        allRows = allRows.filter((row: any) => row.name === productName);
                     }
-                });
-            },
-        });
-    };
-
-    const toggleSelect = (id: any, checked: boolean) => {
-        const set = new Set(data.selectedIds || []);
-        if (checked) set.add(id);
-        else set.delete(id);
-        dispatch({ selectedIds: Array.from(set) });
-    };
-
-    const toggleSelectAll = (checked: boolean) => {
-        dispatch({ selectedIds: checked ? (data.rows || []).map((r: any) => r.id) : [] });
-    };
-
-    const batchDelete = () => {
-        const ids = data.selectedIds || [];
-        if (ids.length === 0) return;
-        Modal.confirm({
-            title: ts("action"),
-            content: `确认删除选中的 ${ids.length} 行？`,
-            onOk: () => {
-                Api.delete_timeline_row({ id: ids.join(",") }).then((res: any) => {
-                    if (res.code === Api.C_OK) {
-                        message.success(ts("msg_ok"));
-                        loadTimeline(data.targetProdId);
-                    } else {
-                        message.error(res.msg);
-                    }
-                });
-            },
-        });
-    };
-
-    const isEditing = (rowId: any, field: string) => data.edit && data.edit.rowId === rowId && data.edit.field === field;
-
-    const startEdit = (rowId: any, field: string, value: any) => {
-        dispatch({ edit: { rowId, field }, editVal: value ?? "" });
-    };
-
-    const commit = () => {
-        const edit = data.edit;
-        if (!edit || data.saving) return;
-        const row = (data.rows || []).find((r: any) => r.id === edit.rowId);
-        if (!row) {
-            dispatch({ edit: null });
-            return;
-        }
-        const val = data.editVal;
-        dispatch({ saving: true });
-
-        const onDone = (res: any, patch: any) => {
-            if (res.code === Api.C_OK) {
-                const rows = (data.rows || []).map((r: any) => (r.id === edit.rowId ? { ...r, ...patch } : r));
-                dispatch({ saving: false, edit: null, editVal: "", rows });
-                message.success("保存成功");
-            } else {
-                dispatch({ saving: false });
-                message.error(res.msg);
-            }
-        };
-
-        if (edit.field.startsWith("dept:")) {
-            const dept = edit.field.slice(5);
-            const ids: any[] = edit.groupIds && edit.groupIds.length ? edit.groupIds : [row.id];
-            Promise.all(ids.map((id: any) => Api.update_timeline_cell({ row_id: id, dept, output_result: val }))).then(
-                (results: any[]) => {
-                    if (results.every((r: any) => r.code === Api.C_OK)) {
-                        const rows = (data.rows || []).map((r: any) =>
-                            ids.includes(r.id) ? { ...r, cells: { ...(r.cells || {}), [dept]: val } } : r
-                        );
-                        dispatch({ saving: false, edit: null, editVal: "", rows });
-                        message.success("保存成功");
-                    } else {
-                        dispatch({ saving: false });
-                        message.error((results.find((r: any) => r.code !== Api.C_OK) || {}).msg);
-                    }
+                    const total = allRows.length;
+                    const start = (pageIndex - 1) * pageSize;
+                    const rows = allRows.slice(start, start + pageSize);
+                    dispatch({
+                        loading: false,
+                        pageIndex,
+                        pageSize,
+                        total,
+                        rows,
+                        products: productRows,
+                        countMap: map,
+                    });
+                } else {
+                    dispatch({ loading: false, pageIndex, pageSize, total: 0, rows: [] });
+                    message.error(res.msg);
                 }
-            );
-        } else {
-            const patch: any = { [edit.field === "milestone" ? "milestone_text" : edit.field]: val };
-            Api.update_timeline_row({ id: row.id, ...patch }).then((res: any) => onDone(res, patch));
-        }
+            }).catch(() => {
+                dispatch({ loading: false });
+                message.error("加载产品列表失败");
+            });
+        });
     };
 
-    const onlyDigits = (v: any) => String(v ?? "").replace(/\D/g, "");
-
-    const rowToDayjs = (row: any) => {
-        const y = onlyDigits(row.year);
-        const m = onlyDigits(row.month);
-        const d = onlyDigits(row.day);
-        if (!y) return null;
-        const pad = (s: string, fallback: string) => (s ? s.padStart(2, "0") : fallback);
-        const dt = dayjs(`${y.padStart(4, "0")}-${pad(m, "01")}-${pad(d, "01")}`);
-        return dt.isValid() ? dt : null;
+    const openAddModal = () => {
+        addForm.resetFields();
+        dispatch({ dlgType: DlgTypes.add, addProductId: undefined });
     };
 
-    const saveDate = (row: any, d: any) => {
-        const patch = d
-            ? { year: String(d.year()), month: String(d.month() + 1), day: String(d.date()) }
-            : { year: "", month: "", day: "" };
-        dispatch({ saving: true });
-        Api.update_timeline_row({ id: row.id, ...patch }).then((res: any) => {
-            if (res.code === Api.C_OK) {
-                const rows = (data.rows || []).map((r: any) => (r.id === row.id ? { ...r, ...patch } : r));
-                dispatch({ saving: false, edit: null, rows });
-                message.success("保存成功");
-            } else {
-                dispatch({ saving: false });
-                message.error(res.msg);
+    const doAddNavigate = () => {
+        addForm.validateFields().then((values) => {
+            const prodId = values.prod_id;
+            if (!prodId) {
+                message.warning(sprintf(ts("msg_select"), { label: ts("product.product") }));
+                return;
             }
+            dispatch({ dlgType: null });
+            navigate(`/project_timeline/edit/${prodId}`);
         });
     };
 
-    const editCell = (rowId: any, field: string, current: any, textarea: boolean) => {
-        if (!isEditing(rowId, field)) {
-            return (
-                <div className="tl-cell" title="点击编辑" onClick={() => startEdit(rowId, field, current)}>
-                    {current !== null && current !== undefined && String(current) !== "" ? (
-                        String(current)
-                            .split("\n")
-                            .map((line: string, i: number) => <div key={i}>{line}</div>)
-                    ) : (
-                        <span style={{ color: "#d9d9d9" }}>—</span>
-                    )}
-                </div>
-            );
-        }
-        const common = {
-            autoFocus: true,
-            value: data.editVal,
-            onChange: (e: any) => dispatch({ editVal: e.target.value }),
-            onBlur: commit,
-        };
-        return textarea ? (
-            <Input.TextArea {...common} autoSize={{ minRows: 1, maxRows: 8 }} onPressEnter={undefined} />
-        ) : (
-            <Input {...common} onPressEnter={commit} />
-        );
-    };
-
-    // 部门「输出结果」单元格：合并组内编辑会写回整组（保持合并）
-    const deptCell = (rowId: any, dept: string, current: any, groupIds: any[]) => {
-        const field = `dept:${dept}`;
-        if (!isEditing(rowId, field)) {
-            return (
-                <div
-                    className="tl-cell"
-                    title="点击编辑"
-                    onClick={() => dispatch({ edit: { rowId, field, groupIds }, editVal: current ?? "" })}>
-                    {current !== null && current !== undefined && String(current) !== "" ? (
-                        String(current)
-                            .split("\n")
-                            .map((line: string, i: number) => <div key={i}>{line}</div>)
-                    ) : (
-                        <span style={{ color: "#d9d9d9" }}>—</span>
-                    )}
-                </div>
-            );
-        }
-        return (
-            <Input.TextArea
-                autoFocus
-                value={data.editVal}
-                onChange={(e: any) => dispatch({ editVal: e.target.value })}
-                onBlur={commit}
-                autoSize={{ minRows: 1, maxRows: 8 }}
-            />
-        );
-    };
-
-    const doImport = (file: any) => {
-        if (!data.targetProdId) {
-            message.warning("请先选择产品");
-            return false;
-        }
-        Modal.confirm({
-            title: "导入时间线",
-            content: "导入将覆盖当前产品已有的时间线数据，确认导入？",
-            onOk: () => {
-                dispatch({ importing: true });
-                Api.import_timeline({ prod_id: data.targetProdId, replace: true, file: { fileList: [file] } }).then(
-                    (res: any) => {
-                        dispatch({ importing: false });
-                        if (res.code === Api.C_OK) {
-                            message.success(`导入成功，共 ${res.data?.imported ?? 0} 行`);
-                            loadTimeline(data.targetProdId);
-                        } else {
-                            message.error(res.msg);
-                        }
-                    }
-                );
-            },
+    const doDelete = () => {
+        const row = data.targetRow || {};
+        if (!row.id) return;
+        dispatch({ loading: true });
+        Api.list_timeline({ prod_id: row.id }).then((res: any) => {
+            const ids = ((res && res.data && res.data.rows) || []).map((r: any) => r.id).filter(Boolean);
+            if (!ids.length) {
+                dispatch({ loading: false, dlgType: null });
+                doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, data.pageIndex, data.pageSize);
+                return;
+            }
+            return Api.delete_timeline_row({ id: ids.join(",") }).then((del: any) => {
+                dispatch({ loading: false });
+                if (del.code === Api.C_OK) {
+                    dispatch({ dlgType: null });
+                    message.success(del.msg || ts("save_success"));
+                    doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, data.pageIndex, data.pageSize);
+                } else {
+                    message.error(del.msg);
+                }
+            });
+        }).catch(() => {
+            dispatch({ loading: false });
+            message.error("删除失败");
         });
-        return false;
     };
 
     useEffect(() => {
-        loadProducts();
-        loadTimeline(null);
+        doSearch({}, data.pageIndex, data.pageSize);
+        loadCounts();
     }, []);
 
-    const depts: string[] = data.depts || [];
-    const showProd = !data.targetProdId;
-    const totalCols = 1 + (showProd ? 1 : 0) + 3 + depts.length + 1;
-    const selectedIds: any[] = data.selectedIds || [];
-    const allChecked = (data.rows || []).length > 0 && selectedIds.length === (data.rows || []).length;
-    const indeterminate = selectedIds.length > 0 && !allChecked;
-
-    const isDateRow = (a: any) => a && a.row_type !== "year" && a.row_type !== "milestone";
-    const rowsArr: any[] = data.rows || [];
-
-    // 各部门「输出结果」连续相同且非空的纵向合并（空值不合并、可单独编辑）
-    const deptMeta: Record<string, Record<number, { show: boolean; span: number; groupIds: any[] }>> = {};
-    depts.forEach((dept) => {
-        const map: Record<number, { show: boolean; span: number; groupIds: any[] }> = {};
-        let i = 0;
-        while (i < rowsArr.length) {
-            const r = rowsArr[i];
-            if (!isDateRow(r)) {
-                i += 1;
-                continue;
-            }
-            const val = (r.cells || {})[dept] || "";
-            if (!val) {
-                map[r.id] = { show: true, span: 1, groupIds: [r.id] };
-                i += 1;
-                continue;
-            }
-            const ids = [r.id];
-            let j = i;
-            while (
-                j + 1 < rowsArr.length &&
-                isDateRow(rowsArr[j + 1]) &&
-                ((rowsArr[j + 1].cells || {})[dept] || "") === val
-            ) {
-                j += 1;
-                ids.push(rowsArr[j].id);
-            }
-            map[r.id] = { show: true, span: ids.length, groupIds: ids };
-            for (let k = i + 1; k <= j; k++) map[rowsArr[k].id] = { show: false, span: 0, groupIds: ids };
-            i = j + 1;
-        }
-        deptMeta[dept] = map;
-    });
+    const columns = [
+        {
+            title: ts("product.name"),
+            dataIndex: "name",
+            width: "22%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: ts("product.full_version"),
+            dataIndex: "full_version",
+            width: "14%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: ts("product.release_version"),
+            dataIndex: "release_version",
+            width: "12%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: ts("product.type_code"),
+            dataIndex: "type_code",
+            width: "14%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: "行数",
+            dataIndex: "id",
+            width: "10%",
+            render: (_: any, row: any) => data.countMap.get(row.id) || 0,
+        },
+        {
+            title: ts("action"),
+            width: "28%",
+            className: "prod-dhfs-list-action-col",
+            onCell: () => ({ className: "prod-dhfs-list-action-col" }),
+            render: (_: any, row: any) => (
+                <Space size={4}>
+                    <Button type="link" size="small" onClick={() => navigate(`/project_timeline/view/${row.id}`)}>
+                        {ts("view")}
+                    </Button>
+                    <Button type="link" size="small" onClick={() => navigate(`/project_timeline/edit/${row.id}`)}>
+                        {ts("edit")}
+                    </Button>
+                    <Button
+                        type="link"
+                        size="small"
+                        danger
+                        onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
+                        {ts("delete")}
+                    </Button>
+                </Space>
+            ),
+        },
+    ];
 
     return (
-        <div className="page div-v project-timeline">
+        <div className="page div-v">
             <div className="div-h searchbar list-searchbar-align">
-                <Space>
-                    <span>{ts("srs_doc.select_product")}：</span>
-                    <div style={{ minWidth: 360 }}>
+                <Form
+                    form={queryForm}
+                    className="expand"
+                    onFinish={() => doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, 1, data.pageSize)}>
+                    <Row gutter={20}>
+                        <Col>
+                            <Form.Item label={ts("srs_doc.select_product")}>
+                                <ProductVersionSelect
+                                    products={data.products}
+                                    value={data.filterProductId}
+                                    initialName={data.filterProductName}
+                                    allowClear
+                                    includeAll
+                                    deferChangeUntilVersionSelect
+                                    namePlaceholder={ts("product.name")}
+                                    versionPlaceholder={ts("product.full_version")}
+                                    onNameChange={(name) => {
+                                        dispatch({ filterProductName: name, filterProductId: undefined });
+                                        doSearch({ product_id: undefined, product_name: name }, 1, data.pageSize);
+                                    }}
+                                    onChange={(value) => {
+                                        dispatch({ filterProductId: value });
+                                        doSearch({ product_id: value, product_name: data.filterProductName }, 1, data.pageSize);
+                                    }}
+                                />
+                            </Form.Item>
+                        </Col>
+                        <Col>
+                            <Button shape="circle" icon={<SearchOutlined />} htmlType="submit" />
+                        </Col>
+                    </Row>
+                </Form>
+                <Button type="primary" onClick={openAddModal}>
+                    {ts("add")}
+                </Button>
+            </div>
+            <Table
+                className="expand prod-dhfs-list-table"
+                columns={columns}
+                rowKey={(item: any) => item.id}
+                dataSource={data.rows}
+                loading={data.loading}
+                pagination={{
+                    total: data.total,
+                    current: data.pageIndex,
+                    showSizeChanger: true,
+                    defaultPageSize: pageSizeOptions[0],
+                    pageSizeOptions,
+                    hideOnSinglePage: false,
+                    onShowSizeChange: (page, pageSize) => {
+                        dispatch({ pageIndex: page, pageSize });
+                    },
+                    showTotal: (total: number) => sprintf(ts("total_items"), { total }),
+                }}
+                onChange={(pager) => {
+                    doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, pager.current, pager.pageSize);
+                }}
+            />
+            <Modal
+                centered
+                width={520}
+                title="新增项目时间逻辑线"
+                open={data.dlgType === DlgTypes.add}
+                maskClosable={false}
+                onOk={doAddNavigate}
+                onCancel={() => dispatch({ dlgType: null })}>
+                <Form form={addForm} layout="vertical">
+                    <Form.Item
+                        label={ts("product.product")}
+                        name="prod_id"
+                        rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
                         <ProductVersionSelect
                             products={data.products}
-                            allowClear
-                            includeAll
-                            value={data.targetProdId}
+                            value={data.addProductId}
                             namePlaceholder={ts("product.name")}
-                            versionPlaceholder={ts("product.version")}
-                            onChange={(v: any) => {
-                                dispatch({ targetProdId: v ?? null, edit: null });
-                                loadTimeline(v ?? null);
+                            versionPlaceholder={ts("product.full_version")}
+                            onChange={(value: any) => {
+                                addForm.setFieldValue("prod_id", value);
+                                dispatch({ addProductId: value });
                             }}
                         />
-                    </div>
-                </Space>
-                <div className="div-h hspace">
-                    <Upload showUploadList={false} accept=".xlsx" beforeUpload={doImport}>
-                        <Button type="primary" disabled={!data.targetProdId} loading={data.importing}>
-                            导入模板
-                        </Button>
-                    </Upload>
-                    <Button
-                        disabled={!data.targetProdId}
-                        onClick={() => Api.export_timeline({ prod_id: data.targetProdId })}>
-                        {ts("export")}
-                    </Button>
-                    <Button danger disabled={selectedIds.length === 0} onClick={batchDelete}>
-                        批量删除{selectedIds.length > 0 ? `（${selectedIds.length}）` : ""}
-                    </Button>
+                    </Form.Item>
+                    <div style={{ color: "#888" }}>选择产品后进入该产品的时间逻辑线维护页。</div>
+                </Form>
+            </Modal>
+            <Modal
+                centered
+                title={ts("action")}
+                open={data.dlgType === DlgTypes.delete}
+                maskClosable={false}
+                confirmLoading={data.loading}
+                onOk={doDelete}
+                onCancel={() => dispatch({ dlgType: null })}>
+                <div>
+                    确定删除产品「{data.targetRow?.name || "-"}」
+                    {data.targetRow?.full_version ? `（${data.targetRow.full_version}）` : ""}
+                    的全部时间逻辑线（共 {data.countMap.get(data.targetRow?.id) || 0} 行）吗？
                 </div>
-            </div>
-
-            <Spin spinning={data.loading}>
-                <div className="tl-table-wrap">
-                    <table className="tl-table">
-                        <colgroup>
-                            <col style={{ width: 40 }} />
-                            {showProd ? <col style={{ width: 180 }} /> : null}
-                            <col style={{ width: 70 }} />
-                            <col style={{ width: 64 }} />
-                            <col style={{ width: 56 }} />
-                            {depts.map((d) => (
-                                <col key={d} style={{ width: 150 }} />
-                            ))}
-                            <col style={{ width: 92 }} />
-                        </colgroup>
-                        <thead>
-                            <tr>
-                                <th style={{ width: 42 }}>
-                                    <Checkbox
-                                        checked={allChecked}
-                                        indeterminate={indeterminate}
-                                        disabled={(data.rows || []).length === 0}
-                                        onChange={(e) => toggleSelectAll(e.target.checked)}
-                                    />
-                                </th>
-                                {showProd ? <th>产品</th> : null}
-                                <th>年</th>
-                                <th>月</th>
-                                <th>日</th>
-                                {depts.map((d) => (
-                                    <th key={d}>{d}</th>
-                                ))}
-                                <th style={{ width: 92 }}>{ts("action")}</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {(data.rows || []).length === 0 && (
-                                <tr>
-                                    <td colSpan={totalCols - 1} style={{ textAlign: "center", color: "#999" }}>
-                                        暂无数据
-                                    </td>
-                                    <td className="tl-ops">
-                                        <PlusOutlined title="新增行" onClick={() => addRow("date")} />
-                                    </td>
-                                </tr>
-                            )}
-                            {(data.rows || []).map((row: any) => {
-                                if (row.row_type === "year" || row.row_type === "milestone") {
-                                    return (
-                                        <tr key={row.id} className={`tl-row-${row.row_type}`}>
-                                            <td className="tl-check">
-                                                <Checkbox
-                                                    checked={selectedIds.includes(row.id)}
-                                                    onChange={(e) => toggleSelect(row.id, e.target.checked)}
-                                                />
-                                            </td>
-                                            {showProd ? <td>{prodName(row.prod_id)}</td> : null}
-                                            <td colSpan={3 + depts.length}>{editCell(row.id, "milestone", row.milestone_text, false)}</td>
-                                            {rowOps(row)}
-                                        </tr>
-                                    );
-                                }
-                                return (
-                                    <tr key={row.id}>
-                                        <td className="tl-check">
-                                            <Checkbox
-                                                checked={selectedIds.includes(row.id)}
-                                                onChange={(e) => toggleSelect(row.id, e.target.checked)}
-                                                />
-                                            </td>
-                                        {showProd ? <td>{prodName(row.prod_id)}</td> : null}
-                                        <td className="tl-date-cell" onClick={() => startEdit(row.id, "date", null)}>
-                                            {row.year ? String(row.year) : <span style={{ color: "#d9d9d9" }}>—</span>}
-                                        </td>
-                                        <td className="tl-date-cell" onClick={() => startEdit(row.id, "date", null)}>
-                                            {row.month ? String(row.month) : <span style={{ color: "#d9d9d9" }}>—</span>}
-                                        </td>
-                                        {isEditing(row.id, "date") ? (
-                                            <td className="tl-date-edit">
-                                                <div className="tl-date-pop">
-                                                    <DatePicker
-                                                        autoFocus
-                                                        open
-                                                        allowClear
-                                                        style={{ width: "100%" }}
-                                                        placeholder="选择日期"
-                                                        value={rowToDayjs(row)}
-                                                        onChange={(d: any) => saveDate(row, d)}
-                                                        onOpenChange={(o: boolean) => {
-                                                            if (!o) dispatch({ edit: null });
-                                                        }}
-                                                    />
-                                                </div>
-                                            </td>
-                                        ) : (
-                                            <td className="tl-date-cell" onClick={() => startEdit(row.id, "date", null)}>
-                                                {row.day ? String(row.day) : <span style={{ color: "#d9d9d9" }}>—</span>}
-                                            </td>
-                                        )}
-                                        {depts.map((d) => {
-                                            const dm = deptMeta[d]?.[row.id];
-                                            if (dm && !dm.show) return null;
-                                            return (
-                                                <td key={d} rowSpan={dm?.span || 1} className={dm && dm.span > 1 ? "tl-dept-merge" : ""}>
-                                                    {deptCell(row.id, d, (row.cells || {})[d], dm?.groupIds || [row.id])}
-                                                </td>
-                                            );
-                                        })}
-                                        {rowOps(row)}
-                                    </tr>
-                                );
-                            })}
-                        </tbody>
-                    </table>
-                </div>
-            </Spin>
+            </Modal>
         </div>
     );
 };

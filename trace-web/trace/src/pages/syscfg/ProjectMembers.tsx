@@ -1,400 +1,325 @@
-import { Button, Table, message, Row, Col, Space, Input, AutoComplete, Modal, Upload } from "antd";
+import { Form, Button, Table, message, Row, Col, Modal, Space } from "antd";
+import { SearchOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
-import { useData } from "@/common";
+import { renderOneLineWithTooltip, useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProjectMember";
 import * as ApiProduct from "@/api/ApiProduct";
+import ProjectMemberDetail from "./ProjectMemberDetail";
+import "../risk_mgmt/RiskMgmtParticipants.less";
 
-const ROLES = [
-    "管理者代表",
-    "研发负责人",
-    "产品负责人",
-    "RA",
-    "QA",
-    "TPM",
-    "产品经理",
-    "开发人员",
-    "测试人员",
-    "生产",
-    "临床",
-    "模型部负责人",
-    "高级算法工程师",
-    "算法工程师",
-    "项目专员",
-    "标注人员",
-    "审核医生",
-    "仲裁医生",
-    "数据采集人员",
-    "脱敏+清洗人员",
-];
+const pageSizeOptions = [20, 50, 100];
 
-const ANNOTATOR_ROLE = "标注人员";
-const DEFAULT_ANNOTATORS = [
-    "刘冰",
-    "周鑫仪",
-    "蒙明",
-    "余露",
-    "王丽",
-    "任小军",
-    "赵钰淇",
-    "龙菲",
-    "李良梦",
-    "徐飘飘",
-    "史江坤",
-    "马星宇",
-    "王莹莹",
-];
+enum DlgTypes {
+    add = "add",
+    delete = "delete",
+}
 
-const REVIEWER_ROLE = "审核医生";
-const DEFAULT_REVIEWERS = ["苏婷", "韦人"];
-const ARBITER_ROLE = "仲裁医生";
-const DEFAULT_ARBITERS = ["韦人"];
-const COLLECTOR_ROLE = "数据采集人员";
-const DEFAULT_COLLECTORS = ["周中亚", "李鹏飞", "耿景辉", "刘新阳", "王振宇", "王慧阳"];
-const CLEANER_ROLE = "脱敏+清洗人员";
-const DEFAULT_CLEANERS = ["谷雷涛"];
-
-const DEFAULT_MODEL_MEMBERS = [
-    { role: "模型部负责人", name: "王瑜" },
-    { role: "高级算法工程师", name: "张欢" },
-    { role: "算法工程师", name: "刘恩佑" },
-    { role: "算法工程师", name: "郝增号" },
-    { role: "项目专员", name: "肖薇" },
-];
-
-// 备注快捷标识：用于标注开发人员前后端及所属模块（仍可自由输入其它备注）
-const NOTE_OPTIONS = ["前端-NeoViewer", "后端-Repacs", "后端-Dlserver", "后端-DP"];
+const buildCountMap = (rows: any[] = []) => {
+    const map = new Map<number, number>();
+    rows.forEach((row) => {
+        const pid = Number(row.prod_id);
+        if (!pid) return;
+        map.set(pid, (map.get(pid) || 0) + 1);
+    });
+    return map;
+};
 
 export default () => {
     const { t: ts } = useTranslation();
+    const [queryForm] = Form.useForm();
+    const [addForm] = Form.useForm();
     const [data, dispatch] = useData({
+        total: 0,
+        pageIndex: 1,
+        pageSize: pageSizeOptions[0],
         rows: [],
         loading: false,
         products: [],
-        targetProdId: null,
-        targetEdit: {},
-        editingField: null,
-        updating: false,
-        importing: false,
+        countMap: new Map<number, number>(),
+        addProductId: undefined as number | undefined,
+        filterProductId: undefined as number | undefined,
+        filterProductName: undefined as string | undefined,
+        targetRow: {} as any,
+        dlgType: null as string | null,
+        expandedKeys: [] as number[],
     });
 
-    const loadProducts = () => {
-        ApiProduct.list_product({ page_index: 0, page_size: 1000 }).then((res: any) => {
-            if (res.code === ApiProduct.C_OK) {
-                dispatch({ products: res.data.rows || [] });
+    const loadCounts = () => {
+        return Api.list_project_member({ page_index: 0, page_size: 100000 }).then((res: any) => {
+            if (res.code === Api.C_OK) {
+                const map = buildCountMap(res.data?.rows || []);
+                dispatch({ countMap: map });
+                return map;
             }
-        });
+            return data.countMap || new Map<number, number>();
+        }).catch(() => data.countMap || new Map<number, number>());
     };
 
-    const prodName = (prodId: any) => {
-        const p = (data.products || []).find((x: any) => x.id === prodId);
-        return p ? (p.name || "") : "";
-    };
-    const prodVer = (prodId: any) => {
-        const p = (data.products || []).find((x: any) => x.id === prodId);
-        return p ? (p.full_version || "") : "";
-    };
-
-    const loadMembers = (prodId: any, allowSeed = true) => {
+    const doSearch = (params: any, pageIndex: any, pageSize: any, countMap?: Map<number, number>) => {
         dispatch({ loading: true });
-        Api.list_project_member({ prod_id: prodId || undefined, page_index: 0, page_size: 10000 }).then((res: any) => {
-            if (res.code !== Api.C_OK) {
-                dispatch({ loading: false, rows: [] });
-                message.error(res.msg);
-                return;
-            }
-            const rows = res.data.rows || [];
-            if (prodId && allowSeed) {
-                const adds: { role: string; name: string; sort_order: number }[] = [];
-                const updates: any[] = [];
-                let sort = rows.reduce((m: number, r: any) => Math.max(m, r.sort_order || 0), 0);
-                const hasAnnotator = rows.some((r: any) => (r.role || "").trim() === ANNOTATOR_ROLE);
-                if (!hasAnnotator && DEFAULT_ANNOTATORS.length) {
-                    DEFAULT_ANNOTATORS.forEach((name) => {
-                        sort += 1;
-                        adds.push({ role: ANNOTATOR_ROLE, name, sort_order: sort });
-                    });
-                }
-                const hasReviewer = rows.some((r: any) => (r.role || "").trim() === REVIEWER_ROLE);
-                if (!hasReviewer && DEFAULT_REVIEWERS.length) {
-                    DEFAULT_REVIEWERS.forEach((name) => {
-                        sort += 1;
-                        adds.push({ role: REVIEWER_ROLE, name, sort_order: sort });
-                    });
-                }
-                const hasArbiter = rows.some((r: any) => (r.role || "").trim() === ARBITER_ROLE);
-                if (!hasArbiter && DEFAULT_ARBITERS.length) {
-                    DEFAULT_ARBITERS.forEach((name) => {
-                        sort += 1;
-                        adds.push({ role: ARBITER_ROLE, name, sort_order: sort });
-                    });
-                }
-                const hasCollector = rows.some((r: any) => (r.role || "").trim() === COLLECTOR_ROLE);
-                if (!hasCollector && DEFAULT_COLLECTORS.length) {
-                    DEFAULT_COLLECTORS.forEach((name) => {
-                        sort += 1;
-                        adds.push({ role: COLLECTOR_ROLE, name, sort_order: sort });
-                    });
-                }
-                const hasCleaner = rows.some((r: any) => (r.role || "").trim() === CLEANER_ROLE);
-                if (!hasCleaner && DEFAULT_CLEANERS.length) {
-                    DEFAULT_CLEANERS.forEach((name) => {
-                        sort += 1;
-                        adds.push({ role: CLEANER_ROLE, name, sort_order: sort });
-                    });
-                }
-                const existingRoles = new Set(rows.map((r: any) => String(r.role || "").trim()));
-                const head = rows.find((r: any) => {
-                    const role = String(r.role || "").trim();
-                    return role === "模型部负责人" || role === "模型负责人";
-                });
-                if (head) {
-                    const name = String(head.name || "").trim();
-                    const needName = !name || name === "肖微" || name === "肖薇";
-                    const needRole = String(head.role || "").trim() !== "模型部负责人";
-                    if (needName || needRole) {
-                        updates.push({ ...head, role: "模型部负责人", name: needName ? "王瑜" : name });
+        const mapPromise = countMap ? Promise.resolve(countMap) : loadCounts();
+        mapPromise.then((map) => {
+            ApiProduct.list_product({ page_index: 0, page_size: 10000 }).then((res: any) => {
+                if (res.code === ApiProduct.C_OK) {
+                    const productRows = res.data.rows || [];
+                    let allRows = productRows.filter((row: any) => map.has(row.id));
+                    const productId = params?.product_id;
+                    const productName = params?.product_name;
+                    if (productId) {
+                        allRows = allRows.filter((row: any) => Number(row.id) === Number(productId));
+                    } else if (productName) {
+                        allRows = allRows.filter((row: any) => row.name === productName);
                     }
-                    existingRoles.add("模型部负责人");
-                    existingRoles.add("模型负责人");
-                }
-                DEFAULT_MODEL_MEMBERS.forEach((m) => {
-                    if (existingRoles.has(m.role)) return;
-                    sort += 1;
-                    adds.push({ role: m.role, name: m.name, sort_order: sort });
-                });
-                const jobs: Promise<any>[] = [
-                    ...updates.map((u) => Api.update_project_member({ ...u })),
-                    ...adds.map((a) => Api.add_project_member({ prod_id: prodId, ...a })),
-                ];
-                if (jobs.length) {
-                    Promise.all(jobs).then(() => loadMembers(prodId, false)).catch(() => {
-                        dispatch({ loading: false, rows });
+                    const total = allRows.length;
+                    const start = (pageIndex - 1) * pageSize;
+                    dispatch({
+                        loading: false,
+                        pageIndex,
+                        pageSize,
+                        total,
+                        rows: allRows.slice(start, start + pageSize),
+                        products: productRows,
+                        countMap: map,
                     });
-                    return;
-                }
-            }
-            dispatch({ loading: false, rows });
-        });
-    };
-
-    const doAdd = () => {
-        if (!data.targetProdId) {
-            message.warning("请先选择产品");
-            return;
-        }
-        const maxSort = (data.rows || []).reduce((m: number, r: any) => Math.max(m, r.sort_order || 0), 0);
-        Api.add_project_member({ prod_id: data.targetProdId, role: ROLES[0], name: "", sort_order: maxSort + 1 }).then(
-            (res: any) => {
-                if (res.code === Api.C_OK) {
-                    message.success(res.msg || ts("msg_ok"));
-                    loadMembers(data.targetProdId);
                 } else {
+                    dispatch({ loading: false, pageIndex, pageSize, total: 0, rows: [] });
                     message.error(res.msg);
                 }
+            }).catch(() => {
+                dispatch({ loading: false });
+                message.error("加载产品列表失败");
+            });
+        });
+    };
+
+    const toggleExpand = (prodId: number) => {
+        if (!prodId) return;
+        const keys = data.expandedKeys || [];
+        dispatch({ expandedKeys: keys.includes(prodId) ? [] : [prodId] });
+    };
+
+    const refreshAfterChange = () => {
+        loadCounts().then((map) => {
+            doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, data.pageIndex, data.pageSize, map);
+        });
+    };
+
+    const doAddNavigate = () => {
+        addForm.validateFields().then((values) => {
+            const prodId = values.prod_id;
+            if (!prodId) {
+                message.warning(sprintf(ts("msg_select"), { label: ts("product.product") }));
+                return;
             }
-        );
-    };
-
-    const doDelete = (row: any) => {
-        Modal.confirm({
-            title: ts("action"),
-            content: ts("confirm_delete"),
-            onOk: () => {
-                Api.delete_project_members({ id: row.id }).then((res: any) => {
-                    if (res.code === Api.C_OK) {
-                        message.success(res.msg);
-                        loadMembers(data.targetProdId);
-                    } else {
-                        message.error(res.msg);
-                    }
-                });
-            },
+            dispatch({ dlgType: null, expandedKeys: [prodId] });
+            loadCounts().then((map) => {
+                const next = new Map(map);
+                if (!next.has(prodId)) next.set(prodId, 0);
+                doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, 1, data.pageSize, next);
+            });
         });
     };
 
-    const doImport = (file: any) => {
-        if (!data.targetProdId) {
-            message.warning("请先选择产品");
-            return false;
-        }
-        Modal.confirm({
-            title: "导入项目人员清单",
-            content: "导入将覆盖当前产品已有的人员，确认导入？",
-            onOk: () => {
-                dispatch({ importing: true });
-                Api.import_project_members({ prod_id: data.targetProdId, replace: true, file: { fileList: [file] } }).then(
-                    (res: any) => {
-                        dispatch({ importing: false });
-                        if (res.code === Api.C_OK) {
-                            message.success(`导入成功，共 ${res.data?.imported ?? 0} 人`);
-                            loadMembers(data.targetProdId);
-                        } else {
-                            message.error(res.msg);
-                        }
-                    }
-                );
-            },
-        });
-        return false;
-    };
-
-    const startEdit = (row: any, field: string) => {
-        if (data.targetEdit.id === row.id && data.editingField === field) return;
-        dispatch({ targetEdit: { ...row }, editingField: field });
-    };
-
-    const saveCell = (override?: any) => {
-        const edit = { ...data.targetEdit, ...(override || {}) };
-        if (!edit?.id || data.updating) return;
-        dispatch({ updating: true });
-        Api.update_project_member({ ...edit }).then((res: any) => {
-            if (res.code === Api.C_OK) {
-                const rows = (data.rows || []).map((r: any) => (r.id === edit.id ? { ...r, ...edit } : r));
-                dispatch({ updating: false, targetEdit: {}, editingField: null, rows });
-                message.success(res.msg || ts("msg_ok"));
-            } else {
-                dispatch({ updating: false });
-                message.error(res.msg);
+    const doDelete = () => {
+        const row = data.targetRow || {};
+        if (!row.id) return;
+        dispatch({ loading: true });
+        Api.list_project_member({ prod_id: row.id, page_index: 0, page_size: 10000 }).then((res: any) => {
+            const ids = ((res && res.data && res.data.rows) || []).map((r: any) => r.id).filter(Boolean);
+            const finish = () => {
+                dispatch({ loading: false, dlgType: null, expandedKeys: (data.expandedKeys || []).filter((id: number) => id !== row.id) });
+                message.success(ts("save_success"));
+                doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, data.pageIndex, data.pageSize);
+            };
+            if (!ids.length) {
+                finish();
+                return;
             }
+            Api.delete_project_members({ id: ids.join(",") }).then((del: any) => {
+                if (del.code === Api.C_OK) finish();
+                else {
+                    dispatch({ loading: false });
+                    message.error(del.msg);
+                }
+            });
+        }).catch(() => {
+            dispatch({ loading: false });
+            message.error("删除失败");
         });
     };
-
-    const isEditing = (row: any, field: string) => data.targetEdit.id === row.id && data.editingField === field;
-
-    const clickToEdit = (row: any, field: string, value: any) => (
-        <div style={{ cursor: "pointer", minHeight: 22 }} title="点击编辑" onClick={() => startEdit(row, field)}>
-            {value !== null && value !== undefined && String(value) !== "" ? value : <span style={{ color: "#d9d9d9" }}>—</span>}
-        </div>
-    );
-
-    const columns = [
-        ...(!data.targetProdId ? [
-            { title: "产品名称", width: "18%", render: (_: any, row: any) => prodName(row.prod_id) },
-            { title: "完整版本", width: "12%", render: (_: any, row: any) => prodVer(row.prod_id) },
-        ] : []),
-        {
-            title: "职能",
-            dataIndex: "role",
-            width: "30%",
-            render: (value: any, row: any) => {
-                if (!isEditing(row, "role")) return clickToEdit(row, "role", value);
-                return (
-                    <AutoComplete
-                        autoFocus
-                        defaultOpen
-                        style={{ width: "100%" }}
-                        value={data.targetEdit.role}
-                        options={ROLES.map((r) => ({ label: r, value: r }))}
-                        filterOption={false}
-                        onChange={(v: any) => dispatch({ targetEdit: { ...data.targetEdit, role: v } })}
-                        onBlur={() => saveCell()}
-                    />
-                );
-            },
-        },
-        {
-            title: "姓名",
-            dataIndex: "name",
-            width: "30%",
-            render: (value: any, row: any) => {
-                if (!isEditing(row, "name")) return clickToEdit(row, "name", value);
-                return (
-                    <Input
-                        autoFocus
-                        value={data.targetEdit.name}
-                        onChange={(e: any) => dispatch({ targetEdit: { ...data.targetEdit, name: e.target.value } })}
-                        onBlur={() => saveCell()}
-                        onPressEnter={() => saveCell()}
-                    />
-                );
-            },
-        },
-        {
-            title: ts("project.note"),
-            dataIndex: "note",
-            render: (value: any, row: any) => {
-                if (!isEditing(row, "note")) return clickToEdit(row, "note", value);
-                return (
-                    <AutoComplete
-                        autoFocus
-                        defaultOpen
-                        style={{ width: "100%" }}
-                        value={data.targetEdit.note}
-                        options={NOTE_OPTIONS.map((r) => ({ label: r, value: r }))}
-                        filterOption={false}
-                        onChange={(v: any) => dispatch({ targetEdit: { ...data.targetEdit, note: v } })}
-                        onBlur={() => saveCell()}
-                    />
-                );
-            },
-        },
-        {
-            title: ts("action"),
-            width: 90,
-            render: (_value: any, row: any) => {
-                return (
-                    <Space>
-                        <Button type="link" danger onClick={() => doDelete(row)}>
-                            {ts("delete")}
-                        </Button>
-                    </Space>
-                );
-            },
-        },
-    ];
 
     useEffect(() => {
-        loadProducts();
-        loadMembers(null, false);
+        doSearch({}, data.pageIndex, data.pageSize);
+        loadCounts();
     }, []);
+
+    const columns = [
+        {
+            title: ts("product.name"),
+            dataIndex: "name",
+            width: "22%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: ts("product.full_version"),
+            dataIndex: "full_version",
+            width: "14%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: ts("product.release_version"),
+            dataIndex: "release_version",
+            width: "12%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: ts("product.type_code"),
+            dataIndex: "type_code",
+            width: "14%",
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: "人数",
+            dataIndex: "id",
+            width: "10%",
+            render: (_: any, row: any) => data.countMap.get(row.id) || 0,
+        },
+        {
+            title: ts("action"),
+            width: 140,
+            className: "risk-part-list-action-col",
+            onCell: () => ({ className: "risk-part-list-action-col" }),
+            render: (_: any, row: any) => (
+                <Space size={4} className="risk-part-list-row-actions" onClick={(e) => e.stopPropagation()}>
+                    <Button type="link" size="small" onClick={() => toggleExpand(row.id)}>
+                        {(data.expandedKeys || []).includes(row.id) ? "收起" : ts("edit")}
+                    </Button>
+                    <Button
+                        type="link"
+                        size="small"
+                        danger
+                        onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
+                        {ts("delete")}
+                    </Button>
+                </Space>
+            ),
+        },
+    ];
 
     return (
         <div className="page div-v">
             <div className="div-h searchbar list-searchbar-align">
-                <Row gutter={10} className="expand">
-                    <Col>
-                        <Space>
-                            <span>{ts("srs_doc.select_product")}：</span>
-                            <div style={{ minWidth: 360 }}>
+                <Form
+                    form={queryForm}
+                    className="expand"
+                    onFinish={() => doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, 1, data.pageSize)}>
+                    <Row gutter={20}>
+                        <Col>
+                            <Form.Item label={ts("srs_doc.select_product")}>
                                 <ProductVersionSelect
                                     products={data.products}
+                                    value={data.filterProductId}
+                                    initialName={data.filterProductName}
                                     allowClear
                                     includeAll
-                                    value={data.targetProdId}
+                                    deferChangeUntilVersionSelect
                                     namePlaceholder={ts("product.name")}
-                                    versionPlaceholder={ts("product.version")}
-                                    onChange={(v: any) => {
-                                        dispatch({ targetProdId: v ?? null, targetEdit: {}, editingField: null });
-                                        loadMembers(v ?? null);
+                                    versionPlaceholder={ts("product.full_version")}
+                                    onNameChange={(name) => {
+                                        dispatch({ filterProductName: name, filterProductId: undefined });
+                                        doSearch({ product_id: undefined, product_name: name }, 1, data.pageSize);
+                                    }}
+                                    onChange={(value) => {
+                                        dispatch({ filterProductId: value });
+                                        doSearch({ product_id: value, product_name: data.filterProductName }, 1, data.pageSize);
                                     }}
                                 />
-                            </div>
-                        </Space>
-                    </Col>
-                </Row>
-                <div className="div-h hspace">
-                    <Upload showUploadList={false} accept=".xlsx" beforeUpload={doImport}>
-                        <Button type="primary" disabled={!data.targetProdId} loading={data.importing}>
-                            导入清单
-                        </Button>
-                    </Upload>
-                    <Button disabled={!data.targetProdId} onClick={doAdd}>
-                        {ts("add")}
-                    </Button>
-                </div>
+                            </Form.Item>
+                        </Col>
+                        <Col>
+                            <Button shape="circle" icon={<SearchOutlined />} htmlType="submit" />
+                        </Col>
+                    </Row>
+                </Form>
+                <Button type="primary" onClick={() => { addForm.resetFields(); dispatch({ dlgType: DlgTypes.add, addProductId: undefined }); }}>
+                    {ts("add")}
+                </Button>
             </div>
             <Table
-                className="expand"
+                className="expand risk-part-list-table"
                 columns={columns}
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}
                 loading={data.loading}
-                pagination={false}
-                footer={() => sprintf(ts("total_items"), { total: (data.rows || []).length })}
+                pagination={{
+                    total: data.total,
+                    current: data.pageIndex,
+                    showSizeChanger: true,
+                    defaultPageSize: pageSizeOptions[0],
+                    pageSizeOptions,
+                    hideOnSinglePage: false,
+                    onShowSizeChange: (page, pageSize) => dispatch({ pageIndex: page, pageSize }),
+                    showTotal: (total: number) => sprintf(ts("total_items"), { total }),
+                }}
+                onChange={(pager) => {
+                    doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, pager.current, pager.pageSize);
+                }}
+                expandable={{
+                    expandedRowKeys: data.expandedKeys || [],
+                    showExpandColumn: false,
+                    expandedRowRender: (row) => (
+                        <ProjectMemberDetail prodId={row.id} onChanged={refreshAfterChange} />
+                    ),
+                }}
             />
+            <Modal
+                centered
+                width={520}
+                title="新增项目人员"
+                open={data.dlgType === DlgTypes.add}
+                maskClosable={false}
+                onOk={doAddNavigate}
+                onCancel={() => dispatch({ dlgType: null })}>
+                <Form form={addForm} layout="vertical">
+                    <Form.Item
+                        label={ts("product.product")}
+                        name="prod_id"
+                        rules={[{ required: true, message: sprintf(ts("msg_select"), { label: ts("product.product") }) }]}>
+                        <ProductVersionSelect
+                            products={data.products}
+                            value={data.addProductId}
+                            namePlaceholder={ts("product.name")}
+                            versionPlaceholder={ts("product.full_version")}
+                            onChange={(value: any) => {
+                                addForm.setFieldValue("prod_id", value);
+                                dispatch({ addProductId: value });
+                            }}
+                        />
+                    </Form.Item>
+                    <div style={{ color: "#888" }}>选择产品后在本页展开该产品人员；若该产品还没有人，将写入默认人员。</div>
+                </Form>
+            </Modal>
+            <Modal
+                centered
+                title={ts("action")}
+                open={data.dlgType === DlgTypes.delete}
+                maskClosable={false}
+                confirmLoading={data.loading}
+                onOk={doDelete}
+                onCancel={() => dispatch({ dlgType: null })}>
+                <div>
+                    确定删除产品「{data.targetRow?.name || "-"}」
+                    {data.targetRow?.full_version ? `（${data.targetRow.full_version}）` : ""}
+                    的全部项目人员（共 {data.countMap.get(data.targetRow?.id) || 0} 条）吗？
+                </div>
+            </Modal>
         </div>
     );
 };
