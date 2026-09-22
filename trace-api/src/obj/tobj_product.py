@@ -12,6 +12,7 @@ class ProductForm(BaseModel):
     udi: Optional[str] = Field(title="UDI")
     product_code: Optional[str] = Field(title="产品代码")
     registrant: Optional[str] = Field(title="注册人")
+    design_address: Optional[str] = Field(title="设计开发地址")
     scope: Optional[str] = Field(title="试用范围")
     component: Optional[str] = Field(title="产品组成")
     overall_desc: Optional[str] = Field(title="总体描述")

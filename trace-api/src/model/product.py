@@ -18,6 +18,7 @@ class Product(Model):
     udi = Column(String(256), comment="UDI")
     product_code = Column(String(256), comment="产品代码")
     registrant = Column(String(256), comment="注册人")
+    design_address = Column(String(512), comment="设计开发地址")
     scope = Column(TEXT, comment="试用范围")
     component = Column(TEXT, comment="产品组成")
     overall_desc = Column(TEXT, comment="总体描述")

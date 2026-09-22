@@ -361,7 +361,7 @@ class Server(object):
                 select(CompanyInfo).where(CompanyInfo.registrant == product.registrant)
             ).scalars().first()
         company_name = (product.registrant or (company.registrant if company else "") or "").strip()
-        address = (company.address if company else "") or ""
+        address = (getattr(product, "design_address", None) or "").strip() or ((company.address if company else "") or "").strip()
         env = self.__runtime_env(product_id)
         release_date = self.__release_date(product_id)
 
@@ -585,6 +585,58 @@ class Server(object):
         ).scalars().first()
         return (row.code or "").strip() if row and row.code else ""
 
+    def __fill_revision(self, content, prod_id, version):
+        """文件修订记录首行：修改日期取时间线；修订人=产品经理，批准人=产品部负责人。
+        修改日期有时间线命中则覆盖模板占位日期；人员仅填空。"""
+        rev_date = serv_review_util.cover_date(prod_id, "research") if prod_id else ""
+        members = []
+        if prod_id:
+            members = db.session.execute(
+                select(ProjectMember).where(ProjectMember.prod_id == prod_id)
+            ).scalars().all()
+
+        def find_role(pred):
+            for m in members:
+                if pred(str(m.role or "")):
+                    return (m.name or "").strip()
+            return ""
+
+        pm = find_role(lambda r: "产品经理" in r)
+        approver = find_role(lambda r: "负责人" in r and "产品" in r)
+
+        def walk(nodes):
+            for node in nodes or []:
+                if not isinstance(node, dict):
+                    continue
+                title = self.__strip_name(node.get("title"))
+                if node.get("ref_type") == "revision" or title == "文件修订记录":
+                    tables = node.get("tables") or []
+                    if tables and isinstance(tables[0], list):
+                        t = tables[0]
+                        cols = len(t[0]) if t and t[0] else 5
+                        while len(t) < 6:
+                            t.append([""] * cols)
+                        row = t[1]
+                        while len(row) < 5:
+                            row.append("")
+                        cur_date = str(row[0] or "").strip()
+                        placeholder = cur_date in ("2025.10.21", "2025年10月21日")
+                        if rev_date and (not cur_date or placeholder):
+                            row[0] = rev_date
+                        elif placeholder:
+                            row[0] = ""
+                        if version:
+                            row[1] = version
+                        if not str(row[2] or "").strip():
+                            row[2] = "首次发布"
+                        if pm and not str(row[3] or "").strip():
+                            row[3] = pm
+                        if approver and not str(row[4] or "").strip():
+                            row[4] = approver
+                walk(node.get("children"))
+
+        walk((content or {}).get("sections"))
+
     def __to_obj(self, row: ResearchDoc, product: Product = None, with_autofill=True):
         obj = ResearchDocObj(**row.dict())
         content = self.__normalize_content(obj.content)
@@ -593,7 +645,8 @@ class Server(object):
             content = self.__apply_autofill(content, auto)
             if row.product_id:
                 serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(row.product_id, "research"))
-                serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(row.product_id, "research"))
+                serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(row.product_id, "research"), force=True)
+                self.__fill_revision(content, row.product_id, row.version)
         if product:
             content["productName"] = product.name or ""
         obj.content = content
@@ -713,7 +766,8 @@ class Server(object):
         auto = self.__collect_autofill(product_id)
         content = self.__apply_autofill(content, auto)
         serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(product_id, "research"))
-        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(product_id, "research"))
+        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(product_id, "research"), force=True)
+        self.__fill_revision(content, product_id, "A0")
         product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
         if product:
             content["productName"] = product.name or ""

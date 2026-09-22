@@ -407,11 +407,11 @@ DEFAULT_DEPT = "product"
 DOC_DEPT = {
     # 产品线文件：编制人=产品经理，审核/批准=产品总监(夏晨)
     "pdp": "product", "pir": "product", "label": "product",
-    "release_note": "product", "vuh": "product",
+    "release_note": "product", "vuh": "product", "research": "product",
     "risk": "product", "rmp": "product", "pha": "product",
     # 开发文件：编制人=TPM，审核/批准=研发负责人
     "sd": "dev", "srs": "dev", "sds": "dev", "cybersec": "dev",
-    "nsmp": "dev", "nsr": "dev", "research": "dev", "crr": "dev",
+    "nsmp": "dev", "nsr": "dev", "crr": "dev",
     "scm": "dev", "scs": "dev",
     # 测试文件：编制人=测试人员，审核/批准=研发负责人
     "stp": "test", "utp": "test", "utr": "test", "str": "test", "bug": "test", "imm": "test",

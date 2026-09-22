@@ -128,7 +128,7 @@ const DetailDlg = ({ data, dispatch, onSaved }: any) => {
             onOk={doEdit}
             onCancel={() => dispatch({ dlgType: null })}>
             <div className="div-v">
-                <Form form={editForm} className="expand">
+                <Form form={editForm} className="expand" autoComplete="off">
                     <Form.Item hidden name="id">
                         <Input allowClear value={data.targetRow.id} />
                     </Form.Item>
@@ -216,6 +216,11 @@ const DetailDlg = ({ data, dispatch, onSaved }: any) => {
                                         new Set((data.companies || []).map((c: any) => c.registrant).filter(Boolean))
                                     ).map((registrant: any) => ({ label: registrant, value: registrant }))}
                                 />
+                            </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                            <Form.Item label="设计开发地址" name="design_address">
+                                <Input allowClear placeholder="请输入设计开发地址" autoComplete="off" />
                             </Form.Item>
                         </Col>
                     </Row>
@@ -532,6 +537,13 @@ export default () => {
             title: "注册人",
             dataIndex: "registrant",
             width: 80,
+            ellipsis: true,
+            render: (value: any) => renderOneLineWithTooltip(value),
+        },
+        {
+            title: "设计开发地址",
+            dataIndex: "design_address",
+            width: 140,
             ellipsis: true,
             render: (value: any) => renderOneLineWithTooltip(value),
         },

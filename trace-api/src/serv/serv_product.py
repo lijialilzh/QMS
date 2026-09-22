@@ -222,6 +222,7 @@ class Server(object):
                 udi=from_row.udi,
                 product_code=from_row.product_code,
                 registrant=from_row.registrant,
+                design_address=from_row.design_address,
                 scope=from_row.scope,
                 component=from_row.component,
                 overall_desc=from_row.overall_desc,

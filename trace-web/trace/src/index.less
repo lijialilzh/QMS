@@ -175,3 +175,17 @@ body,
     display: flex !important;
     align-items: center;
 }
+
+/* 隐藏 Chrome 通讯录/地址自动填充人像按钮，避免输入框右侧多出标识 */
+input::-webkit-contacts-auto-fill-button,
+input::-webkit-credentials-auto-fill-button {
+    visibility: hidden !important;
+    display: none !important;
+    pointer-events: none !important;
+    position: absolute;
+    right: 0;
+    width: 0;
+    height: 0;
+    margin: 0;
+    padding: 0;
+}
