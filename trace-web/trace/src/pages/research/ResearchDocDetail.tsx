@@ -15,8 +15,11 @@ import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 const emptyContent = { sections: [], productName: "" };
 
 // 自动获取（只读）章节的 ref_type 集合；cover/revision 属模板表格，可编辑。
-const AUTO_REFS = new Set(["sw_ident", "func_module", "arch_func", "update_history", "version_rule"]);
-const isAutoNode = (node: any) => AUTO_REFS.has(node?.ref_type) || !!node?.img_category;
+const AUTO_REFS = new Set(["sw_ident", "func_module", "arch_func", "update_history", "version_rule", "ots"]);
+const isAutoNode = (node: any) =>
+    AUTO_REFS.has(node?.ref_type)
+    || !!node?.img_category
+    || String(node?.title || "").replace(/^[0-9．.、\s]+/, "").trim() === "现成软件";
 
 const assignKeys = (nodes: any[], prefix = ""): any[] => {
     (nodes || []).forEach((n: any, i: number) => {

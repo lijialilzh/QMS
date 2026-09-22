@@ -5,7 +5,8 @@
 # 默认内容来自 src-res/research_default_content.json（章节树+表格+内置流程图）。
 # 自动获取章节通过节点 ref_type / img_category 标记，在 get/export/预览时注入产品数据；
 # 数据源：Product/CompanyInfo（软件标识）、Product.overall_desc（总体描述）、PtrDoc 2.1功能、
-#         SrsDoc 2.3章节、ProdRuntimeEnv（运行环境）、ProjectTimeline（发布日期）、DocFile（产品图）。
+#         SrsDoc 2.3章节、ProdRuntimeEnv（运行环境）、ProjectTimeline（发布日期）、DocFile（产品图）、
+#         ScmDoc 现成软件配置项清单（1.3.2.3，去掉操作系统与浏览器）。
 
 import base64
 import copy
@@ -35,6 +36,7 @@ from ..model.doc_file import DocFile
 from ..model.prod_dhf import ProdDhf
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..model.project_member import ProjectMember
+from ..model.scm_doc import ScmDoc
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
 from ..obj.vobj_user import UserObj
@@ -131,6 +133,112 @@ class Server(object):
 
     def __strip_name(self, title):
         return re.sub(r"^[0-9．.、\s]+", "", str(title or "")).strip()
+
+    _OTS_SKIP = (
+        "ubuntu", "windows", "centos", "debian", "linux", "macos", "mac os",
+        "redhat", "rhel", "fedora", "kylin", "uos", "ios", "android",
+        "chrome", "chromium", "firefox", "safari", "edge", "opera",
+    )
+
+    def __is_os_or_browser(self, name):
+        n = re.sub(r"\s+", " ", str(name or "").strip().lower())
+        if not n:
+            return True
+        compact = n.replace(" ", "")
+        if compact in ("操作系统", "浏览器"):
+            return True
+        tokens = [t for t in re.split(r"[^a-z0-9]+", n) if t]
+        for k in self._OTS_SKIP:
+            kk = k.replace(" ", "")
+            if compact == kk or compact.startswith(kk):
+                return True
+            if k in tokens or kk in tokens:
+                return True
+        return False
+
+    def __same_name_product_ids(self, product_id):
+        # 当前完整版本优先，其后同一产品名称的其它版本（参与人员/时间线/配置管理计划按名称共用）
+        if not product_id:
+            return []
+        ids = [product_id]
+        product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+        name = (product.name or "").strip() if product else ""
+        if not name:
+            return ids
+        others = db.session.execute(
+            select(Product.id).where(Product.name == name, Product.id != product_id).order_by(Product.id.desc())
+        ).scalars().all()
+        ids.extend(others)
+        return ids
+
+    def __latest_scm(self, product_id):
+        # 先取当前完整版本的配置管理计划；没有则回退同一产品名称下其它版本（如 2.0.0.2 读 2.0.0.0）
+        if not product_id:
+            return None
+        scm = self.__latest_doc(ScmDoc, product_id)
+        if scm:
+            return scm
+        product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+        name = (product.name or "").strip() if product else ""
+        if not name:
+            return None
+        return db.session.execute(
+            select(ScmDoc)
+            .join(Product, Product.id == ScmDoc.product_id)
+            .where(Product.name == name, ~ScmDoc.version.like("__deleted%"))
+            .order_by(ScmDoc.id.desc())
+        ).scalars().first()
+
+    def __scm_ots_table(self, product_id):
+        """从同产品最新《软件配置管理计划》取「现成软件配置项清单」，去掉操作系统与浏览器，只保留 SCI名字/制造商/版本号。"""
+        if not product_id:
+            return None
+        scm = self.__latest_scm(product_id)
+        if not scm or not isinstance(scm.content, dict):
+            return None
+        found = []
+
+        def take_tbl(tbl):
+            if not isinstance(tbl, list) or not tbl:
+                return
+            header = [str(c or "").strip() for c in (tbl[0] or [])]
+            if "SCI名字" not in header or "制造商/负责人" not in header or "版本号" not in header:
+                return
+            if "SCI类型" in header:
+                return
+            found.append(tbl)
+
+        def walk(nodes):
+            for n in nodes or []:
+                if not isinstance(n, dict):
+                    continue
+                for tbl in n.get("tables") or []:
+                    take_tbl(tbl)
+                for b in n.get("blocks") or []:
+                    if isinstance(b, dict) and b.get("type") == "table":
+                        take_tbl(b.get("table"))
+                walk(n.get("children"))
+
+        walk(scm.content.get("sections") or [])
+        src = found[0] if found else None
+        if not src:
+            return None
+        header = [str(c or "").strip() for c in (src[0] or [])]
+        i_name = header.index("SCI名字")
+        i_maker = header.index("制造商/负责人")
+        i_ver = header.index("版本号")
+        rows = [["SCI名字", "制造商/负责人", "版本号"]]
+        for row in src[1:]:
+            cells = list(row or [])
+            name = cells[i_name] if i_name < len(cells) else ""
+            if self.__is_os_or_browser(name):
+                continue
+            maker = cells[i_maker] if i_maker < len(cells) else ""
+            ver = cells[i_ver] if i_ver < len(cells) else ""
+            if not str(name or "").strip() and not str(maker or "").strip() and not str(ver or "").strip():
+                continue
+            rows.append([str(name or ""), str(maker or ""), str(ver or "")])
+        return rows
 
     @staticmethod
     def __level_number(depth, idx):
@@ -291,27 +399,20 @@ class Server(object):
         y, m, d, _ = max(hits, key=lambda x: x[0] * 10000 + x[1] * 100 + x[2])
         return f"{y}年{m}月{d}日"
 
-    def __dev_amount(self, product_id):
-        # 表5 开发量：
-        #   开发人员数量 = 参与人员中角色含「开发」的人数；
-        #   开发时间 = 时间线中标注「产品开发」阶段的日期行首末跨度（含首尾天数），不是整张时间线首末；
-        #   工作量 = 人数 × 天数。
-        members = db.session.execute(
-            select(ProjectMember).where(ProjectMember.prod_id == product_id)
-        ).scalars().all()
-        headcount = sum(1 for m in members if "开发" in str(m.role or ""))
-
+    def __dev_days(self, product_id):
+        # 开发时间：时间线中标注「产品开发」阶段的日期行首末跨度（含首尾天数）；未标注则回退全部日期行
         rows = db.session.execute(
             select(ProjectTimelineRow).where(
                 ProjectTimelineRow.prod_id == product_id,
                 ProjectTimelineRow.row_type == "date",
             )
         ).scalars().all()
+        if not rows:
+            return 0
         row_map = {r.id: r for r in rows}
         cells = db.session.execute(
             select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_(list(row_map.keys())))
-        ).scalars().all() if row_map else []
-        # 标注「产品开发」阶段的日期行（单元格中存在独立一行恰为「产品开发」，排除「产品开发计划」等）
+        ).scalars().all()
         dev_row_ids = set()
         for c in cells:
             for ln in str(c.output_result or "").split("\n"):
@@ -320,7 +421,6 @@ class Server(object):
                     break
 
         def to_int(v):
-            # 时间线字段可能带单位（如「5月」「25日」「2025年」），只取数字
             digits = re.sub(r"[^\d]", "", str(v or ""))
             return int(digits) if digits else None
 
@@ -333,17 +433,43 @@ class Server(object):
             except Exception:
                 return None
 
-        # 优先取「产品开发」阶段；若未标注则回退到全部日期行，保证有值
         target_rows = [row_map[i] for i in dev_row_ids] if dev_row_ids else rows
         dates = [d for d in (parse_date(r) for r in target_rows) if d]
         if len(dates) >= 2:
-            days = (max(dates) - min(dates)).days + 1
-        elif len(dates) == 1:
-            days = 1
-        else:
-            days = 0
-        workload = headcount * days
-        return {"headcount": headcount, "days": days, "workload": workload}
+            return (max(dates) - min(dates)).days + 1
+        if len(dates) == 1:
+            return 1
+        return 0
+
+    def __dev_headcount(self, product_id):
+        # 开发人员数量：参与人员中角色含「开发」且姓名非空的人数（按姓名去重）
+        members = db.session.execute(
+            select(ProjectMember).where(ProjectMember.prod_id == product_id)
+        ).scalars().all()
+        names = []
+        seen = set()
+        for m in members:
+            if "开发" not in str(m.role or ""):
+                continue
+            name = str(m.name or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            names.append(name)
+        return len(names)
+
+    def __dev_amount(self, product_id):
+        # 表5 开发量：人数、天数先取当前完整版本；没有则用同一产品名称下其它版本。工作量 = 人数 × 天数。
+        headcount = 0
+        days = 0
+        for pid in self.__same_name_product_ids(product_id):
+            if not headcount:
+                headcount = self.__dev_headcount(pid)
+            if not days:
+                days = self.__dev_days(pid)
+            if headcount and days:
+                break
+        return {"headcount": headcount, "days": days, "workload": headcount * days}
 
     def __doc_file_url(self, product_id, category):
         row = db.session.execute(
@@ -387,6 +513,7 @@ class Server(object):
             "update_text": update_text,
             "runtime": env,
             "dev_amount": self.__dev_amount(product_id),
+            "ots_table": self.__scm_ots_table(product_id),
             "images": {
                 "img_ui": self.__doc_file_url(product_id, "img_ui"),
                 "img_struct": self.__doc_file_url(product_id, "img_struct"),
@@ -463,9 +590,15 @@ class Server(object):
             for node in nodes or []:
                 rt = node.get("ref_type")
                 cat = node.get("img_category")
-                # 兼容旧文档：缺 ref_type 时按标题兜底识别版本命名规则章节
-                if not rt and self.__strip_name(node.get("title")) == "软件版本命名规则":
-                    rt = "version_rule"
+                tn = self.__strip_name(node.get("title"))
+                # 兼容旧文档：缺 ref_type 时按标题兜底识别自动获取章节
+                if not rt:
+                    if tn == "软件版本命名规则":
+                        rt = "version_rule"
+                    elif tn == "软件标识":
+                        rt = "sw_ident"
+                if tn == "现成软件":
+                    rt = "ots"
                 if rt == "sw_ident":
                     node["text"] = auto["sw_ident_text"]
                 elif rt == "func_module":
@@ -503,6 +636,11 @@ class Server(object):
                     node["tables"] = []
                     node["table_titles"] = []
                     node["blocks"] = blocks
+                elif rt == "ots":
+                    tbl = auto.get("ots_table")
+                    if tbl:
+                        node["tables"] = [tbl]
+                        node["ref_type"] = "ots"
                 elif rt == "update_history":
                     node["text"] = auto["update_text"]
                 elif rt == "version_rule":
