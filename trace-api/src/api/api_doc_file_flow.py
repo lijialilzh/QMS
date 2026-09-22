@@ -19,8 +19,8 @@ category = "img_flow"
 
 @router.post("/add_doc_file", summary="添加文档文件", response_model=Resp[Any])
 @try_log(perm=Perms.doc_file_flow_edit)
-async def add_doc_file(product_id: int = Form(...), file: UploadFile = File(default=None)):
-    form = DocFileForm(category=category, product_id=product_id)
+async def add_doc_file(product_id: int = Form(...), doc_version: str = Form(default=None), file: UploadFile = File(default=None)):
+    form = DocFileForm(category=category, product_id=product_id, doc_version=doc_version)
     return await server.add_doc_file(form, file) 
 
 
@@ -32,8 +32,8 @@ async def delete_doc_file(id: int):
 
 @router.post("/update_doc_file", summary="更新文档文件", response_model=Resp[Any])
 @try_log(perm=Perms.doc_file_flow_edit)
-async def update_doc_file(id: int = Form(...), product_id: int = Form(...), file: UploadFile = File(default=None)):
-    form = DocFileForm(id=id, product_id=product_id)
+async def update_doc_file(id: int = Form(...), product_id: int = Form(...), doc_version: str = Form(default=None), file: UploadFile = File(default=None)):
+    form = DocFileForm(id=id, product_id=product_id, doc_version=doc_version)
     return await server.update_doc_file(form, file) 
 
 

@@ -3715,11 +3715,9 @@ class Server(object):
         sign_mode = serv_review_util.sign_mode_enabled()
         reviser = approver = ""
         if prod_id:
-            members = db.session.execute(
-                select(ProjectMember).where(ProjectMember.prod_id == prod_id)
-            ).scalars().all()
-            reviser = next((m.name for m in members if "TPM" in str(m.role or "")), "") or ""
-            approver = next((m.name for m in members if "研发负责人" in str(m.role or "")), "") or ""
+            members = serv_review_util._cover_members(prod_id)
+            reviser = next((m.name for m in members if "产品经理" in str(m.role or "") and str(m.name or "").strip()), "") or ""
+            approver = next((m.name for m in members if "产品负责人" in str(m.role or "") and str(m.name or "").strip()), "") or ""
 
         def set_if(row, key, val):
             if force:
@@ -3835,7 +3833,7 @@ class Server(object):
         #         for node in nodes:
         #             node.rcm_codes = rcms
         if with_tree and tree and row.product_id:
-            tree = self.__autofill_tree_cover_revision(tree, row.product_id, row.version)
+            tree = self.__autofill_tree_cover_revision(tree, row.product_id, row.version, force=True)
             tree = apply_runtime_to_srs_tree(tree, get_runtime_payload(row.product_id))
         doc_data = row.dict()
         if not (doc_data.get("file_no") or "").strip():

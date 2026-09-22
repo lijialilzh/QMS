@@ -14,4 +14,5 @@ class DocFileForm(BaseModel):
     file_name: Optional[str] = Field(title="文件名")
     file_size: Optional[int] = Field(title="文件大小")
     file_url: Optional[str] = Field(title="文件URL")
+    doc_version: Optional[str] = Field(title="文档版本", default=None)
     

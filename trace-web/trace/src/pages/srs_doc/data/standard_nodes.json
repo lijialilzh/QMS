@@ -160,7 +160,36 @@
                 "p_id": 0,
                 "title": "1.3 术语、定义、首字母缩写和缩写",
                 "text": "",
-                "table": [],
+                "table": {
+                    "headers": [
+                        {
+                            "code": "term",
+                            "name": "术语/缩写"
+                        },
+                        {
+                            "code": "definition",
+                            "name": "定义"
+                        }
+                    ],
+                    "rows": [
+                        {
+                            "term": "DICOM3.0",
+                            "definition": "医学数字成像和通信（Digital Imaging and Communications in Medicine）,医学图像和相关信息的国际标准"
+                        },
+                        {
+                            "term": "CT",
+                            "definition": "计算机断层成像（Computed Tomography）"
+                        },
+                        {
+                            "term": "B/S",
+                            "definition": "浏览器/服务器（Browser/Server）结构"
+                        },
+                        {
+                            "term": "GPU",
+                            "definition": "图像处理器（Graphics Processing Units）"
+                        }
+                    ]
+                },
                 "children": []
             },
             {

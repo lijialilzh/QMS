@@ -32,6 +32,27 @@ import EditableTableGenerator, { TableDataWithHeaders } from "./components/Edita
 
 const SRS_COVER_DATE_KEYWORDS = ["需求规格说明", "需求规格"];
 
+const DEFAULT_SRS_OTHER_REQS = [
+    { code: "SRS-RCN300-001", module: "数据库要求", location: "2.5、2.6" },
+    { code: "SRS-RCN300-002", module: "性能要求", location: "2.7" },
+    { code: "SRS-RCN300-003", module: "基本要求", location: "3" },
+    { code: "SRS-RCN300-004", module: "图像接收", location: "4" },
+    { code: "SRS-RCN300-005", module: "图像存储", location: "5" },
+    { code: "SRS-RCN300-006", module: "图像处理", location: "6" },
+    { code: "SRS-RCN300-007", module: "图像显示", location: "7" },
+    { code: "SRS-RCN300-008", module: "文档需求", location: "9" },
+    { code: "SRS-RCN300-009", module: "法规符合需求", location: "1.4" },
+    { code: "SRS-RCN300-010", module: "外部连接", location: "8" },
+];
+
+const buildDefaultSrsOtherReqData = () => DEFAULT_SRS_OTHER_REQS.map((row, index) => ({
+    key: `other_default_${index}`,
+    srs_code: row.code,
+    module: row.module,
+    location: row.location,
+    type_code: "2",
+}));
+
 const SRS_APPROVAL_HEADERS = [
     { code: "label1", name: "" },
     { code: "value1", name: "" },
@@ -654,7 +675,8 @@ export default () => {
     };
 
     const buildStandardTreeForDoc = (product?: any): TreeNode[] => {
-        return ensureReviewAppendix(applyProductScopeToTree(buildStandardNodesWithIds(), product).nodes).nodes;
+        const scoped = applyProductScopeToTree(buildStandardNodesWithIds(), product).nodes;
+        return ensureReviewAppendix(applyProductOverallDescToTree(scoped, product).nodes).nodes;
     };
 
     const cloneTree = (nodes: TreeNode[]): TreeNode[] => JSON.parse(JSON.stringify(nodes || []));
@@ -672,9 +694,27 @@ export default () => {
         }));
         return addIds([JSON.parse(JSON.stringify(tplNode))])[0];
     };
+    const headingNoFromTitle = (title?: string) => String(title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
     const ensureStandardTemplateChildren = (nodes: TreeNode[]): { nodes: TreeNode[]; changed: boolean } => {
         const templateNodes = buildStandardNodesWithIds();
         let changed = false;
+
+        const dedupeChildrenByHeading = (children: TreeNode[]): TreeNode[] => {
+            const seen = new Set<string>();
+            const next: TreeNode[] = [];
+            children.forEach((child) => {
+                const headingNo = headingNoFromTitle(child.title);
+                if (headingNo) {
+                    if (seen.has(headingNo)) {
+                        changed = true;
+                        return;
+                    }
+                    seen.add(headingNo);
+                }
+                next.push(child);
+            });
+            return next;
+        };
 
         const mergeChildrenOrdered = (currentChildren: TreeNode[], templateChildren: TreeNode[], parentTpl?: TreeNode): TreeNode[] => {
             const lockToTemplate = isStructDiagramSection(parentTpl?.title);
@@ -684,12 +724,19 @@ export default () => {
 
             (templateChildren || []).forEach((tplChild) => {
                 const titleKey = normalizeTemplateTitle(tplChild.title);
+                const headingNo = headingNoFromTitle(tplChild.title);
                 let matchIdx = -1;
                 if (titleKey) {
                     matchIdx = current.findIndex((child, idx) => (
                         !consumed.has(idx) && normalizeTemplateTitle(child.title) === titleKey
                     ));
-                } else if (tplChild.ref_type) {
+                }
+                if (matchIdx < 0 && headingNo) {
+                    matchIdx = current.findIndex((child, idx) => (
+                        !consumed.has(idx) && headingNoFromTitle(child.title) === headingNo
+                    ));
+                }
+                if (matchIdx < 0 && tplChild.ref_type) {
                     matchIdx = current.findIndex((child, idx) => (
                         !consumed.has(idx) && child.ref_type === tplChild.ref_type
                     ));
@@ -721,13 +768,29 @@ export default () => {
                 }
                 output.push(child);
             });
-            return output;
+            return dedupeChildrenByHeading(output);
         };
 
-        const mergeNode = (current: TreeNode, template: TreeNode): TreeNode => ({
-            ...current,
-            children: mergeChildrenOrdered(current.children || [], template.children || [], template),
-        });
+        const isEmptyNodeTable = (table: any) => {
+            if (!table || (Array.isArray(table) && table.length === 0)) return true;
+            if (Array.isArray(table.cells) && table.cells.length > 0) return false;
+            if (!Array.isArray(table.headers) || table.headers.length === 0) return true;
+            if (!Array.isArray(table.rows) || table.rows.length === 0) return true;
+            return false;
+        };
+
+        const mergeNode = (current: TreeNode, template: TreeNode): TreeNode => {
+            const merged: TreeNode = {
+                ...current,
+                children: mergeChildrenOrdered(current.children || [], template.children || [], template),
+            };
+            const titleKey = normalizeTemplateTitle(current.title || template.title);
+            if (/术语/.test(titleKey) && isEmptyNodeTable(current.table) && !isEmptyNodeTable(template.table)) {
+                changed = true;
+                merged.table = JSON.parse(JSON.stringify(template.table));
+            }
+            return merged;
+        };
 
         const mergeRoots = (currentItems: TreeNode[], templateItems: TreeNode[]): TreeNode[] => (
             (currentItems || []).map((current) => {
@@ -818,6 +881,25 @@ export default () => {
             } else if ((title === "范围" || title === "适用范围") && !String(nextNode.text || "").trim() && scope) {
                 nextNode.text = scope;
                 changed = true;
+            }
+            return nextNode;
+        });
+        return { nodes: walk(nodes), changed };
+    };
+    const applyProductOverallDescToTree = (nodes: TreeNode[], product?: any): { nodes: TreeNode[]; changed: boolean } => {
+        if (!Array.isArray(nodes) || !product) return { nodes, changed: false };
+        const overallDesc = String(product.overall_desc ?? "").trim();
+        if (!overallDesc) return { nodes, changed: false };
+        let changed = false;
+        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+            const children = walk((node.children || []) as TreeNode[]);
+            const nextNode = { ...node, children };
+            const title = normalizeScopeTitle(node.title);
+            if (title === "软件总体描述" || title === "总体描述") {
+                if (String(nextNode.text || "") !== overallDesc) {
+                    nextNode.text = overallDesc;
+                    changed = true;
+                }
             }
             return nextNode;
         });
@@ -2823,11 +2905,12 @@ export default () => {
         const scopeResult = applyProductScopeToTree(data.treeStructure as TreeNode[], currentProduct);
         const basicResult = applyProductBasicInfoToTree(scopeResult.nodes as TreeNode[], currentProduct);
         const nameResult = applyProductNameAcrossTree(basicResult.nodes as TreeNode[], currentProduct);
-        if (scopeResult.changed || basicResult.changed || nameResult.changed) {
-            treeStructureRef.current = nameResult.nodes;
-            dispatch({ treeStructure: nameResult.nodes });
+        const overallResult = applyProductOverallDescToTree(nameResult.nodes as TreeNode[], currentProduct);
+        if (scopeResult.changed || basicResult.changed || nameResult.changed || overallResult.changed) {
+            treeStructureRef.current = overallResult.nodes;
+            dispatch({ treeStructure: overallResult.nodes });
         }
-    }, [displayProductId, currentProduct?.scope, currentProduct?.name, currentProduct?.type_code]);
+    }, [displayProductId, currentProduct?.scope, currentProduct?.name, currentProduct?.type_code, currentProduct?.overall_desc]);
 
     const applyVersionToCoverTable = (nodes: TreeNode[], version?: any): { nodes: TreeNode[]; changed: boolean } => {
         const ver = String(version ?? "");
@@ -3232,6 +3315,7 @@ export default () => {
     };
 
     const FIXED_TEMPLATE_SECTIONS: Record<string, string> = {
+        "1.4": "参考法规和标准",
         "2.1": "软件总体描述",
         "2.2": "物理拓扑图",
         "2.3": "系统结构图",
@@ -3305,7 +3389,7 @@ export default () => {
         if (id) {
             // 编辑模式
             dispatch({ loading: true, isEdit: true, treeStructure: [], srsTableLoading: true });
-            Promise.all([Api.get_srs_doc({ id }), fetchSrsTableStateWithRetry(parseInt(id))]).then(async ([res, srsTableState]: any[]) => {
+            Promise.all([Api.get_srs_doc({ id }), fetchSrsTableStateWithRetry(parseInt(id))]).then(async ([res, loadedTableState]: any[]) => {
                 if (res.code === Api.C_OK) {
                     const targetRow = res.data;
                     
@@ -3314,6 +3398,8 @@ export default () => {
                     let shouldPatchTemplate = false;
                     let shouldAppendReview = false;
                     let shouldRedistributeDocReq = false;
+                    let shouldSeedOtherReqs = false;
+                    let srsTableState = loadedTableState;
                     let ensuredContentRaw = parsedContentRaw;
                     if (!isReadOnly) {
                         if (needsStandardTemplate(parsedContentRaw)) {
@@ -3341,6 +3427,30 @@ export default () => {
                         targetRow.version,
                         loadProduct?.full_version || targetRow.product_version,
                     );
+                    if (!isReadOnly && !(srsTableState.srsOtherReqData || []).length) {
+                        const treeOtherCount = collectReqRowsFromTree(remappedContent).otherRows
+                            .filter((row: any) => row.srs_code).length;
+                        if (shouldInitStandard || treeOtherCount === 0) {
+                            const docId = targetRow.id || parseInt(String(id), 10);
+                            const seedRes: any = await ApiSrsReq.batch_save_srs_req({
+                                doc_id: docId,
+                                type_code: "2",
+                                upserts: DEFAULT_SRS_OTHER_REQS.map((row) => ({
+                                    doc_id: docId,
+                                    code: row.code,
+                                    module: row.module,
+                                    function: "",
+                                    sub_function: "",
+                                    location: row.location,
+                                    type_code: "2",
+                                })),
+                            });
+                            if (seedRes.code === ApiSrsReq.C_OK) {
+                                srsTableState = await fetchSrsTableState(docId);
+                                shouldSeedOtherReqs = true;
+                            }
+                        }
+                    }
                     const parsedContent = dedupeChangeTableNodesInTree(
                         syncTreeWithSrsTableStateForDisplay(remappedContent, srsTableState),
                     );
@@ -3367,14 +3477,14 @@ export default () => {
                         srsOtherReqData: srsTableState.srsOtherReqData,
                         srsChangeTables: srsTableState.srsChangeTables,
                         srsTableLoading: false,
-                        treeRefreshKey: (shouldInitStandard || shouldPatchTemplate || shouldAppendReview || shouldRedistributeDocReq) ? Date.now() : data.treeRefreshKey,
+                        treeRefreshKey: (shouldInitStandard || shouldPatchTemplate || shouldAppendReview || shouldRedistributeDocReq || shouldSeedOtherReqs) ? Date.now() : data.treeRefreshKey,
                     });
                     treeStructureRef.current = parsedContent;
                     initialEditTreeRef.current = cloneTree(parsedContent);
                     if (!(srsTableState.srsTableData || []).length && !isReadOnly) {
                         window.setTimeout(() => loadSrsTableData(true), 600);
                     }
-                    if ((shouldInitStandard || shouldPatchTemplate || shouldAppendReview || shouldRedistributeDocReq) && !isReadOnly) {
+                    if ((shouldInitStandard || shouldPatchTemplate || shouldAppendReview || shouldRedistributeDocReq || shouldSeedOtherReqs) && !isReadOnly) {
                         const docId = targetRow.id || parseInt(String(id), 10);
                         const cleanedContent = parsedContent.map((node: any) => cleanTreeNode(node, docId, 0));
                         Api.update_srs_doc({
@@ -3410,7 +3520,7 @@ export default () => {
             dispatch({
                 isEdit: false,
                 srsTableData: [],
-                srsOtherReqData: [],
+                srsOtherReqData: buildDefaultSrsOtherReqData(),
                 srsChangeTables: [],
                 treeStructure: initialTree,
             });
@@ -3597,7 +3707,10 @@ export default () => {
             return;
         }
 
-        const nodesWithIds = applyProductScopeToTree(buildStandardNodesWithIds(), currentProduct).nodes;
+        const nodesWithIds = applyProductOverallDescToTree(
+            applyProductScopeToTree(buildStandardNodesWithIds(), currentProduct).nodes,
+            currentProduct,
+        ).nodes;
         // dispatch({ treeStructure: [...data.treeStructure, ...nodesWithIds] });
         treeStructureRef.current = nodesWithIds;
         dispatch({ treeStructure: nodesWithIds });
@@ -4546,14 +4659,15 @@ export default () => {
         if (!codeCol || !moduleCol) {
             return;
         }
-        const normalizeReqCode = (value?: string) => String(value || "").replace(/\s+/g, "").toUpperCase();
+        const compactReqCode = (value?: string) => String(value || "").replace(/\s+/g, "");
+        const normalizeReqCode = (value?: string) => compactReqCode(value).toUpperCase();
         const parseOtherReqLocation = (location?: string) => {
             const raw = String(location || "").trim();
             return raw.match(/^(\d+(?:\.\d+)*)$/)?.[1] || raw.match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
         };
         const rows = (table?.rows || [])
             .map((row: any) => ({
-                code: normalizeReqCode(row?.[codeCol]),
+                code: compactReqCode(row?.[codeCol]),
                 module: normalizeReqText(row?.[moduleCol]),
                 location: normalizeReqText(row?.[locationCol]),
             }))
@@ -4586,13 +4700,13 @@ export default () => {
                 if (matchedOldRow?.id) {
                     usedOldIds.add(matchedOldRow.id);
                 }
-                assignments.push({ row, oldRow: matchedOldRow, code: rowCode });
+                assignments.push({ row, oldRow: matchedOldRow, code: row.code });
             });
 
             const isChangedAssignment = (assignment: { row: any; oldRow?: any; code: string }) => {
                 const { row, oldRow, code } = assignment;
                 if (!oldRow?.id) return true;
-                return normalizeReqCode(oldRow.srs_code || oldRow.code) !== code ||
+                return compactReqCode(oldRow.srs_code || oldRow.code) !== compactReqCode(code) ||
                     normalizeReqText(oldRow.module) !== row.module ||
                     normalizeReqText(oldRow.location) !== row.location;
             };
@@ -4621,7 +4735,7 @@ export default () => {
                     .map((assignment) => assignment.oldRow?.id)
                     .filter((id): id is number | string => !!id)
             );
-            const changedReqCodes = new Set(changedAssignments.map((assignment) => assignment.code));
+            const changedReqCodes = new Set(changedAssignments.map((assignment) => normalizeReqCode(assignment.code)));
             const buildSaveData = (item: any, code: string, id = 0) => ({
                 id,
                 doc_id: docId,
@@ -4646,7 +4760,7 @@ export default () => {
                 const oldRow = assignment.oldRow;
                 if (!oldRow?.id) continue;
                 const oldCode = normalizeReqCode(oldRow.srs_code || (oldRow as any).code);
-                if (oldCode === assignment.code) continue;
+                if (oldCode === normalizeReqCode(assignment.code)) continue;
                 const tempCode = `TMP-SRS-${docId}-${oldRow.id}-${Date.now()}`;
                 await updateReq(buildSaveData({
                     module: oldRow.module || "",
@@ -4687,16 +4801,34 @@ export default () => {
                 }
             }
             const srsTableState = await fetchSrsTableState(docId);
+            const fetchedOther = srsTableState.srsOtherReqData || [];
+            const fetchedOtherByCode = new Map<string, any>();
+            fetchedOther.forEach((item: any) => {
+                const code = normalizeReqCode(item?.srs_code || item?.code);
+                if (code && !fetchedOtherByCode.has(code)) fetchedOtherByCode.set(code, item);
+            });
+            const usedOtherIds = new Set<number | string>();
+            const orderedOther: any[] = [];
+            rows.forEach((row: any) => {
+                const item = fetchedOtherByCode.get(normalizeReqCode(row.code));
+                if (item?.id && !usedOtherIds.has(item.id)) {
+                    orderedOther.push(item);
+                    usedOtherIds.add(item.id);
+                }
+            });
+            fetchedOther.forEach((item: any) => {
+                if (item?.id && !usedOtherIds.has(item.id)) orderedOther.push(item);
+            });
             const syncedTree = dedupeChangeTableNodesInTree(
                 syncTreeWithSrsTableState(
                     ((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) as TreeNode[],
-                    srsTableState,
+                    { ...srsTableState, srsOtherReqData: orderedOther },
                 ),
             );
             treeStructureRef.current = syncedTree;
             dispatch({
                 srsTableData: srsTableState.srsTableData,
-                srsOtherReqData: srsTableState.srsOtherReqData,
+                srsOtherReqData: orderedOther,
                 srsChangeTables: srsTableState.srsChangeTables,
                 treeStructure: syncedTree,
                 srsTableLoading: false,

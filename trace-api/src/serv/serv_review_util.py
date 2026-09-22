@@ -22,6 +22,7 @@ from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..model.project_member import ProjectMember
 from ..model.person_sign import PersonSign
 from ..model.prod_dhf import ProdDhf
+from ..model.product import Product
 from ..utils.sql_ctx import db
 
 # 签名开关：导出时若设为 False，封面和评审记录的签名图将被清空（仅保留空单元格）。
@@ -371,14 +372,14 @@ REVIEW_DEFS = {
 #   ("member_role", 角色关键字)：从本产品参与人员中按角色关键字找到姓名，再取其签名；
 #   ("name", 姓名)：固定姓名（公司层面固定签署人）。
 #   规则来源（用户约定）：
-#     - 产品文件：编制人=产品经理；审核/批准=产品总监(夏晨)
+#     - 产品文件：编制人=产品经理；审核/批准=产品负责人
 #     - 开发文件：编制人=TPM；审核/批准=研发负责人
 #     - 测试文件：编制人=测试人员；审核/批准=研发负责人
 DEPT_SIGNERS = {
     "product": {
         "编制人": ("member_role", "产品经理"),
-        "审核人": ("name", "夏晨"),
-        "批准人": ("name", "夏晨"),
+        "审核人": ("member_role", "产品负责人"),
+        "批准人": ("member_role", "产品负责人"),
     },
     "dev": {
         "编制人": ("member_role", "TPM"),
@@ -405,12 +406,13 @@ DEFAULT_DEPT = "product"
 
 # 各文档模块所属部门（决定封面/评审签署人规则）。如需调整只改此表即可。
 DOC_DEPT = {
-    # 产品线文件：编制人=产品经理，审核/批准=产品总监(夏晨)
+    # 产品文件：编制人=产品经理，审核/批准=产品负责人
     "pdp": "product", "pir": "product", "label": "product",
     "release_note": "product", "vuh": "product", "research": "product",
+    "srs": "product", "ptr": "product", "acc": "product", "cyber_cap": "product",
     "risk": "product", "rmp": "product", "pha": "product",
     # 开发文件：编制人=TPM，审核/批准=研发负责人
-    "sd": "dev", "srs": "dev", "sds": "dev", "cybersec": "dev",
+    "sd": "dev", "sds": "dev", "cybersec": "dev",
     "nsmp": "dev", "nsr": "dev", "crr": "dev",
     "scm": "dev", "scs": "dev",
     # 测试文件：编制人=测试人员，审核/批准=研发负责人
@@ -868,6 +870,26 @@ def _signer_config(key):
     return DEPT_SIGNERS.get(DOC_DEPT.get(key, DEFAULT_DEPT), {})
 
 
+def _cover_members(prod_id):
+    """封面签署人用的参与人员：当前完整版本优先，没有对应职能时再用同一产品名称下其它版本。"""
+    if not prod_id:
+        return []
+    members = list(db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == prod_id)).scalars().all())
+    product = db.session.execute(select(Product).where(Product.id == prod_id)).scalars().first()
+    name = (product.name or "").strip() if product else ""
+    if not name:
+        return members
+    sibling_ids = db.session.execute(
+        select(Product.id).where(Product.name == name, Product.id != prod_id).order_by(Product.id.desc())
+    ).scalars().all()
+    if sibling_ids:
+        extra = db.session.execute(
+            select(ProjectMember).where(ProjectMember.prod_id.in_(list(sibling_ids)))
+        ).scalars().all()
+        members.extend(extra)
+    return members
+
+
 def _resolve_signer_name(spec, members, rev_date=""):
     """按签署人规则解析姓名。测试人员在 2025.09 之前统一取宋月。"""
     kind, arg = spec
@@ -892,9 +914,7 @@ def cover_signers(prod_id, key="pdp", rev_date=""):
         return signers
     if not rev_date:
         rev_date = cover_date(prod_id, key)
-    members = db.session.execute(
-        select(ProjectMember).where(ProjectMember.prod_id == prod_id)
-    ).scalars().all()
+    members = _cover_members(prod_id)
     for label, spec in cfg.items():
         name = (_resolve_signer_name(spec, members, rev_date) or "").strip()
         if not name:
@@ -913,9 +933,7 @@ def cover_signer_names(prod_id, key="pdp", rev_date=""):
         return out
     if not rev_date:
         rev_date = cover_date(prod_id, key)
-    members = db.session.execute(
-        select(ProjectMember).where(ProjectMember.prod_id == prod_id)
-    ).scalars().all()
+    members = _cover_members(prod_id)
     for label, spec in cfg.items():
         name = (_resolve_signer_name(spec, members, rev_date) or "").strip()
         if name:
@@ -924,7 +942,7 @@ def cover_signer_names(prod_id, key="pdp", rev_date=""):
 
 
 def review_approver(key, prod_id=None, rev_date=""):
-    """评审记录「批准人」姓名：按部门规则解析（产品=夏晨；开发/测试=研发负责人）。"""
+    """评审记录「批准人」姓名：按部门规则解析（产品=产品负责人；开发/测试=研发负责人）。"""
     spec = _signer_config(key).get("批准人")
     if not spec:
         return ""
@@ -932,9 +950,7 @@ def review_approver(key, prod_id=None, rev_date=""):
         return spec[1]
     if not prod_id:
         return ""
-    members = db.session.execute(
-        select(ProjectMember).where(ProjectMember.prod_id == prod_id)
-    ).scalars().all()
+    members = _cover_members(prod_id)
     return _resolve_signer_name(spec, members, rev_date) or ""
 
 

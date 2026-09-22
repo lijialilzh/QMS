@@ -875,7 +875,7 @@ function getHeadingNumberFromTitle(title?: string): string {
 }
 
 const FIXED_TEMPLATE_SECTION_HEADINGS = new Set([
-    "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7",
+    "1.4", "2.1", "2.2", "2.3", "2.4", "2.5", "2.6", "2.7",
 ]);
 
 function isFixedTemplateSectionChapter(node: TreeNode): boolean {
@@ -1209,9 +1209,9 @@ export function buildOtherReqChapterTitle(
     currentTitle?: string,
 ) {
     if (!headingNo) return currentTitle || "";
+    if (fallbackName) return `${headingNo} ${fallbackName}`;
     const moduleName = normalizeReqDisplayText(matchedRow?.module);
     if (moduleName) return `${headingNo} ${moduleName}`;
-    if (fallbackName) return `${headingNo} ${fallbackName}`;
     return currentTitle || "";
 }
 
@@ -1356,6 +1356,7 @@ export function syncOtherReqCodesToChaptersFromRows(
     },
 ): TreeNode[] {
     const fixedSections = options?.fixedTemplateSections || {
+        "1.4": "参考法规和标准",
         "2.1": "软件总体描述",
         "2.2": "物理拓扑图",
         "2.3": "系统结构图",
@@ -2748,7 +2749,8 @@ const TreeNodeItem = ({
                           )}
                       </div>
                   )}
-                  {!isSrsReqRefNode && !useImageSplitLayout && (
+                  {!isSrsReqRefNode && !useImageSplitLayout &&
+                    !(!String((canEditNodeContent ? editableNodeText : displayNodeText) || "").trim() && displayNormalTables.length > 0) && (
                       canEditNodeContent ? (
                           <Input.TextArea
                               className="node-content node-text-area"
@@ -3369,6 +3371,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
     const normalizeSrsCode = (value?: string) => String(value || "").replace(/\s+/g, "").toUpperCase();
     const normalizeTitleText = (value?: string) => normalizeReqDisplayText(value).replace(/\s+/g, "");
     const FIXED_TEMPLATE_SECTIONS: Record<string, string> = {
+        "1.4": "参考法规和标准",
         "2.1": "软件总体描述",
         "2.2": "物理拓扑图",
         "2.3": "系统结构图",
@@ -5259,7 +5262,11 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
     };
 
     const handleTableConfirm = async (tableData: TableDataWithHeaders) => {
-        if (currentNodeId === null) return;
+        const headerTexts = (tableData?.headers || []).map((header) => normalizeCellText(header?.name));
+        const isPreviewOtherReqTable = headerTexts.some((text) => isReqCodeHeaderText(text))
+            && headerTexts.some((text) => text.includes("章节"));
+        // 标准模板预览「其他需求列表」没有 srs_reqs_2 节点，currentNodeId 为空也要走保存。
+        if (currentNodeId === null && !isPreviewOtherReqTable) return;
 
         const rebuildMergedCells = () => {
             const cells = tableCellsBackup;
@@ -5827,7 +5834,9 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             });
         };
         ensureStableReqDetailKeys(allStandardDetailsForIdentitySync, tableFormat);
-        const newNodes = findNodeAndUpdate(syncBaseNodes, currentNodeId, (node) => {
+        const newNodes = currentNodeId == null
+            ? syncBaseNodes
+            : findNodeAndUpdate(syncBaseNodes, currentNodeId, (node) => {
             const isAddingTable = !initialTableData;
             const hasExistingTableInNode = hasRenderableTable(node.table);
             const hasExistingChildTables = (node.children || []).some((child) => hasRenderableTable(child.table));

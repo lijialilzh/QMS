@@ -1,4 +1,4 @@
-import { Form, Input, Button, Table, message, Row, Col, Modal, Upload, Space, Select } from "antd";
+import { Form, Input, Button, Table, message, Row, Col, Modal, Upload, Space, Select, AutoComplete } from "antd";
 import { SearchOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -18,17 +18,28 @@ enum DlgTypes {
     delete = "delete",
 }
 
-const DetailDlg = ({ fileType, data, dispatch, onSaved }: any) => {
+const DetailDlg = ({ fileType, data, dispatch, onSaved, fetchDocVersions, getDocVersionPlaceholder }: any) => {
     const { t: ts } = useTranslation();
     const [editForm] = Form.useForm();
+    const dlgProductId = Form.useWatch("product_id", editForm);
 
     const doEdit = () => {
         editForm.validateFields().then((values) => {
-            dispatch({ loading: true });
             const rawFile = (data.files || [])[0];
             const file = rawFile?.originFileObj || rawFile;
+            if (data.dlgType === DlgTypes.add && !file) {
+                message.error("请选择文件");
+                return;
+            }
+            dispatch({ loading: true });
             const fn_request = data.dlgType === DlgTypes.edit ? Api.update_doc_file : Api.add_doc_file;
-            fn_request(fileType, { ...values, file }).then((res: any) => {
+            const payload: Record<string, any> = {
+                id: values.id,
+                product_id: values.product_id,
+                doc_version: String(values.doc_version || "").trim(),
+            };
+            if (file) payload.file = file;
+            fn_request(fileType, payload).then((res: any) => {
                 if (res.code === Api.C_OK) {
                     onSaved();
                     dispatch({ loading: false, dlgType: null });
@@ -44,7 +55,7 @@ const DetailDlg = ({ fileType, data, dispatch, onSaved }: any) => {
     useEffect(() => {
         if (data.dlgType === DlgTypes.add || data.dlgType === DlgTypes.edit) {
             editForm.resetFields();
-            dispatch({ files: [] });
+            dispatch({ files: [], dlgDocVersionOptions: [] });
             doSearchProducts(data, dispatch);
             if (data.dlgType === DlgTypes.edit) {
                 dispatch({ loading: true });
@@ -61,6 +72,25 @@ const DetailDlg = ({ fileType, data, dispatch, onSaved }: any) => {
             }
         }
     }, [data.dlgType, data.targetRow.id]);
+
+    useEffect(() => {
+        if (data.dlgType !== DlgTypes.add && data.dlgType !== DlgTypes.edit) return;
+        const pid = Number(dlgProductId || 0);
+        if (!pid) {
+            dispatch({ dlgDocVersionOptions: [] });
+            return;
+        }
+        let cancelled = false;
+        fetchDocVersions(pid).then((versions: string[]) => {
+            if (cancelled) return;
+            dispatch({ dlgDocVersionOptions: versions.map((v: string) => ({ label: v, value: v })) });
+            const current = String(editForm.getFieldValue("doc_version") || "").trim();
+            if (!current && versions.length) {
+                editForm.setFieldValue("doc_version", versions[0]);
+            }
+        });
+        return () => { cancelled = true; };
+    }, [dlgProductId, data.dlgType, fileType]);
 
     return (
         <Modal
@@ -89,6 +119,21 @@ const DetailDlg = ({ fileType, data, dispatch, onSaved }: any) => {
                                     namePlaceholder={ts("product.name")}
                                     versionPlaceholder={ts("product.full_version")}
                                     onChange={(value) => editForm.setFieldValue("product_id", value)}
+                                />
+                            </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                            <Form.Item
+                                label="文档版本"
+                                name="doc_version"
+                                rules={[{ required: true, message: "请选择或输入文档版本" }]}>
+                                <AutoComplete
+                                    allowClear
+                                    options={data.dlgDocVersionOptions || []}
+                                    placeholder={getDocVersionPlaceholder()}
+                                    filterOption={(input, option) =>
+                                        String(option?.value || "").toLowerCase().includes(String(input || "").toLowerCase())
+                                    }
                                 />
                             </Form.Item>
                         </Col>
@@ -158,6 +203,7 @@ export default ({ fileType }: any) => {
         files: [],
         docs: [],
         docVersionOptions: [] as Array<{ label: string; value: string }>,
+        dlgDocVersionOptions: [] as Array<{ label: string; value: string }>,
         loadingDocVersions: false,
         selectedRowKeys: [],
         previewOpen: false,
@@ -194,6 +240,18 @@ export default ({ fileType }: any) => {
             }
         });
     };
+    const fetchDocVersions = (selectedProductId?: number): Promise<string[]> => {
+        const pid = Number(selectedProductId || 0);
+        if (!pid) return Promise.resolve([]);
+        const fnRequest = fileType === "img_flow" ? ApiSdsDoc.list_sds_doc : ApiSrsDoc.list_srs_doc;
+        return fnRequest({ product_id: pid, page_index: 0, page_size: 10000 }).then((res: any) => {
+            if (res.code !== Api.C_OK) return [];
+            const rows = res?.data?.rows || [];
+            return Array.from(
+                new Set(rows.map((row: any) => String(row?.version || "").trim()).filter(Boolean))
+            ) as string[];
+        }).catch(() => []);
+    };
     const loadDocVersions = (selectedProductId?: number) => {
         const pid = Number(selectedProductId || 0);
         if (!pid) {
@@ -201,22 +259,11 @@ export default ({ fileType }: any) => {
             return;
         }
         dispatch({ loadingDocVersions: true });
-        const fnRequest = fileType === "img_flow" ? ApiSdsDoc.list_sds_doc : ApiSrsDoc.list_srs_doc;
-        fnRequest({ product_id: pid, page_index: 0, page_size: 10000 }).then((res: any) => {
-            if (res.code === Api.C_OK) {
-                const rows = res?.data?.rows || [];
-                const versions = Array.from(
-                    new Set(rows.map((row: any) => String(row?.version || "").trim()).filter(Boolean))
-                );
-                dispatch({
-                    loadingDocVersions: false,
-                    docVersionOptions: versions.map((v) => ({ label: v, value: v })),
-                });
-            } else {
-                dispatch({ loadingDocVersions: false, docVersionOptions: [] });
-            }
-        }).catch(() => {
-            dispatch({ loadingDocVersions: false, docVersionOptions: [] });
+        fetchDocVersions(pid).then((versions) => {
+            dispatch({
+                loadingDocVersions: false,
+                docVersionOptions: versions.map((v) => ({ label: v, value: v })),
+            });
         });
     };
 
@@ -482,6 +529,8 @@ export default ({ fileType }: any) => {
                 fileType={fileType}
                 data={data}
                 dispatch={dispatch}
+                fetchDocVersions={fetchDocVersions}
+                getDocVersionPlaceholder={getDocVersionPlaceholder}
                 onSaved={() => {
                     if (data.dlgType === DlgTypes.add) {
                         queryForm.resetFields();

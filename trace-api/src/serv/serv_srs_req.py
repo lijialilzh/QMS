@@ -908,13 +908,13 @@ class Server(object):
         if type_code:
             sql = sql.where(SrsReq.type_code == type_code)
 
-        sql = sql.order_by(desc(SrsReq.doc_id), SrsReq.code)
+        sql = sql.order_by(desc(SrsReq.doc_id), SrsReq.id)
         rows: List[SrsReq] = db.session.execute(sql).scalars().all()
         order_map = self.__query_doc_req_order(list({row.doc_id for row in rows}))
         rows.sort(key=lambda row: (
             -int(row.doc_id or 0),
             order_map.get((row.doc_id, self.__normalize_req_code(row.code or "")), sys.maxsize),
-            row.code or "",
+            int(row.id or 0),
         ))
         total = len(rows)
         rows = rows[page_size * page_index: page_size * (page_index + 1)]

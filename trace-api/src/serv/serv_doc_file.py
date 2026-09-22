@@ -92,7 +92,7 @@ class Server(object):
         return str(value or "").strip()
 
     @staticmethod
-    def __extract_doc_version_from_file_name(file_name: str, category: str):
+    def __extract_doc_version_from_file_name(file_name: str, category: str, product_version: str = ""):
         name = str(file_name or "").strip()
         cat = str(category or "").strip()
         if not name or not cat:
@@ -104,9 +104,15 @@ class Server(object):
         prefix = str(matched.group(1) or "").strip()
         if not prefix:
             return ""
+        product_token = sanitize_doc_image_token(product_version)
         parts = prefix.split("_")
         if len(parts) >= 2:
-            return parts[-1]
+            candidate = parts[-1]
+            if product_token and candidate == product_token:
+                return ""
+            return candidate
+        if product_token and prefix == product_token:
+            return ""
         return prefix
 
     @staticmethod
@@ -504,19 +510,34 @@ class Server(object):
         self.__sync_sds_nodes_from_doc_file(row, doc_version)
         self.__sync_srs_nodes_from_doc_file(row, doc_version)
 
+    @staticmethod
+    def __has_upload_file(file) -> bool:
+        return bool(file and getattr(file, "filename", None))
+
+    @staticmethod
+    def __row_kwargs_from_form(form: DocFileForm):
+        data = form.dict() if hasattr(form, "dict") else {}
+        keys = ("product_id", "category", "file_name", "file_size", "file_url")
+        return {key: data[key] for key in keys if key in data and data[key] is not None}
+
+    def __product_version_of(self, product_id: int) -> str:
+        if not product_id:
+            return ""
+        product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+        return getattr(product, "full_version", "") or getattr(product, "name", "") or ""
+
     def __build_preserved_doc_file_name(self, row: DocFile, category: str, ext: str, doc_version: str = None, uploaded_name: str = None):
+        product_version = self.__product_version_of(getattr(row, "product_id", None) or 0)
+        normalized_doc_version = self.__normalize_doc_version(doc_version or "")
+        if not normalized_doc_version:
+            normalized_doc_version = self.__extract_doc_version_from_file_name(
+                getattr(row, "file_name", "") or "", category, product_version
+            )
+        if normalized_doc_version:
+            return build_doc_image_file_name(product_version, normalized_doc_version, category, ext)
         uploaded_name = os.path.basename(str(uploaded_name or "").strip())
         if uploaded_name and category and f"_{category}" in uploaded_name:
             return uploaded_name
-        normalized_doc_version = self.__normalize_doc_version(
-            doc_version or self.__extract_doc_version_from_file_name(getattr(row, "file_name", "") or "", category)
-        )
-        product_version = ""
-        if getattr(row, "product_id", None):
-            product = db.session.execute(select(Product).where(Product.id == row.product_id)).scalars().first()
-            product_version = getattr(product, "full_version", "") or getattr(product, "name", "") or ""
-        if normalized_doc_version:
-            return build_doc_image_file_name(product_version, normalized_doc_version, category, ext)
         return getattr(row, "file_name", None) or build_doc_image_file_name(product_version, "", category, ext)
 
     def __fallback_doc_version_for_file(self, row: DocFile):
@@ -539,20 +560,23 @@ class Server(object):
 
     async def add_doc_file(self, form: DocFileForm, file):
         try:           
-            row = DocFile(**form.dict())
+            row = DocFile(**self.__row_kwargs_from_form(form))
             row.id = None
             db.session.add(row)
             db.session.flush()
+            explicit_doc_version = self.__normalize_doc_version(getattr(form, "doc_version", None) or "")
             file_size, file_url = await save_file(row.category, row.id, file, with_uid=False)
             if file_url:
                 row.file_size = file_size
                 ext = os.path.splitext(str(getattr(file, "filename", "") or ""))[1] or os.path.splitext(file_url)[1] or ".png"
                 row.file_name = self.__build_preserved_doc_file_name(
-                    row, row.category, ext, uploaded_name=str(getattr(file, "filename", "") or "")
+                    row, row.category, ext,
+                    doc_version=explicit_doc_version or None,
+                    uploaded_name=str(getattr(file, "filename", "") or ""),
                 )
                 row.file_url = file_url
                 row.update_time = datetime.now()
-            self.__sync_doc_nodes_from_doc_file(row)
+            self.__sync_doc_nodes_from_doc_file(row, explicit_doc_version or None)
             db.session.commit()
             return Resp.resp_ok()
         except Exception:
@@ -571,25 +595,32 @@ class Server(object):
             row:DocFile = db.session.execute(sql).scalars().first()
             if not row:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
+            skip_keys = {"id", "doc_version", "srsdoc_version", "product_name", "product_version", "product_type_code", "create_time"}
             for key, value in form.dict().items():
-                if key == "id" or value is None:
+                if key in skip_keys or value is None:
+                    continue
+                if not hasattr(row, key):
                     continue
                 setattr(row, key, value)
-            category = form.category or row.category 
-            old_doc_version = (
-                self.__extract_doc_version_from_file_name(row.file_name, category)
-                or self.__fallback_doc_version_for_file(row)
+            category = form.category or row.category
+            product_version = self.__product_version_of(row.product_id or 0)
+            old_doc_version = self.__extract_doc_version_from_file_name(row.file_name, category, product_version)
+            explicit_doc_version = self.__normalize_doc_version(getattr(form, "doc_version", None) or "")
+            next_doc_version = explicit_doc_version or old_doc_version
+            if self.__has_upload_file(file):
+                file_size, file_url = await save_file(category, row.id, file, with_uid=False)
+                if file_url:
+                    row.file_size = file_size
+                    ext = os.path.splitext(str(getattr(file, "filename", "") or ""))[1] or os.path.splitext(file_url)[1] or ".png"
+                    row.file_url = file_url
+                    row.update_time = datetime.now()
+            ext = os.path.splitext(str(row.file_name or row.file_url or "") or "")[1] or ".png"
+            row.file_name = self.__build_preserved_doc_file_name(
+                row, category, ext,
+                doc_version=next_doc_version or None,
+                uploaded_name=str(getattr(file, "filename", "") or "") if self.__has_upload_file(file) else "",
             )
-            file_size, file_url = await save_file(category, row.id, file, with_uid=False)  
-            if file_url:
-                row.file_size = file_size
-                ext = os.path.splitext(str(getattr(file, "filename", "") or ""))[1] or os.path.splitext(file_url)[1] or ".png"
-                row.file_name = self.__build_preserved_doc_file_name(
-                    row, category, ext, old_doc_version, str(getattr(file, "filename", "") or "")
-                )
-                row.file_url = file_url
-                row.update_time = datetime.now()
-            self.__sync_doc_nodes_from_doc_file(row, old_doc_version)
+            self.__sync_doc_nodes_from_doc_file(row, next_doc_version or None)
             db.session.commit()
             return Resp.resp_ok()
         except Exception:
@@ -598,11 +629,20 @@ class Server(object):
         return Resp.resp_err(msg=ts(msg_err_db))
    
     async def get_doc_file(self, id):
-        sql = select(DocFile).where(DocFile.id == id)
-        row = db.session.execute(sql).scalars().first()
-        if not row:
+        sql = select(DocFile, Product).outerjoin(Product, DocFile.product_id == Product.id).where(DocFile.id == id)
+        result = db.session.execute(sql).first()
+        if not result:
             return Resp.resp_err(msg=ts("msg_obj_null"))
+        row, row_prd = result
         obj = DocFileObj(**row.dict())
+        if row_prd:
+            obj.product_id = row_prd.id
+            obj.product_name = row_prd.name
+            obj.product_type_code = row_prd.type_code
+            obj.product_version = row_prd.full_version
+        obj.doc_version = self.__extract_doc_version_from_file_name(
+            obj.file_name, obj.category, getattr(row_prd, "full_version", "") if row_prd else ""
+        )
         return Resp.resp_ok(data=obj)
 
     async def list_doc_file(self, op_user: UserObj, category: str=None, product_id: int = 0, file_name: str = None, file_no: str = None, doc_version: str = None, product_name: str = None, product_version: str = None, page_index: int = 0, page_size: int = 10):
@@ -670,8 +710,8 @@ class Server(object):
                 obj.product_name = row_prd.name
                 obj.product_type_code = row_prd.type_code
                 obj.product_version = row_prd.full_version
-            obj.doc_version = self.__extract_doc_version_from_file_name(obj.file_name, obj.category)
-            if not obj.doc_version:
-                obj.doc_version = normalized_doc_version or self.__fallback_doc_version_for_file(row)
+            obj.doc_version = self.__extract_doc_version_from_file_name(
+                obj.file_name, obj.category, getattr(row_prd, "full_version", "") if row_prd else ""
+            )
             objs.append(obj)
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
