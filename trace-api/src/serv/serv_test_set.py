@@ -7,6 +7,7 @@ from sqlalchemy.sql import desc
 from sqlalchemy.exc import IntegrityError
 from ..obj.vobj_user import UserObj
 from ..model.product import Product, UserProd
+from ..obj.tobj_role import Roles
 from ..obj.vobj_test_set import TestSetObj
 from ..model.test_set import TestSet
 from ..model.test_case import TestCase
@@ -212,9 +213,8 @@ class Server(object):
             sql = sql.where(TestSet.product_id == product_id)
         if stage:
             sql = sql.where(TestSet.stage == stage)
-        if not product_id and op_user and op_user.id != 1:
-            subquery = select(UserProd.product_id).where(UserProd.user_id == op_user.id).scalar_subquery()
-            sql = sql.where(Product.id.in_(subquery))
+        if op_user and op_user.id != 1 and getattr(op_user, "role_code", None) == Roles.product_manager.value.code:
+            sql = sql.where(Product.create_user_id == op_user.id)
 
         sql_count = select(func.count()).select_from(sql)
         total = db.session.execute(sql_count).scalars().first()

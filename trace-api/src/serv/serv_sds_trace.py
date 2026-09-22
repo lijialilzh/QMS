@@ -8,6 +8,7 @@ from sqlalchemy import select, or_, and_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import desc
 from ..obj.vobj_user import UserObj
+from ..obj.tobj_role import Roles
 from ..obj.node import Node
 from ..obj.tobj_sds_doc import SdsNodeForm
 from ..model.srs_type import SrsType
@@ -1420,9 +1421,8 @@ class Server(object):
             sql = sql.where(SdsDoc.id == doc_id)
         if type_code:
             sql = sql.where(SrsReq.type_code == type_code)
-        if not prod_id and op_user and op_user.id != 1:
-            subquery = select(UserProd.product_id).where(UserProd.user_id == op_user.id).scalar_subquery()
-            sql = sql.where(Product.id.in_(subquery))
+        if op_user and op_user.id != 1 and getattr(op_user, "role_code", None) == Roles.product_manager.value.code:
+            sql = sql.where(Product.create_user_id == op_user.id)
 
         sql = sql.order_by(desc(Product.id), desc(SdsDoc.id), SrsReq.code)
         rows: List[Tuple[SdsTrace, SrsReq, SrsType, SdsDoc, SrsDoc, Product]] = db.session.execute(sql).all()

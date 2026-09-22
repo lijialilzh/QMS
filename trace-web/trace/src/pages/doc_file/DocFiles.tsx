@@ -9,6 +9,7 @@ import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiSrsDoc from "@/api/ApiSrsDoc";
 import * as ApiSdsDoc from "@/api/ApiSdsDoc";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
+import { sanitizeListQuery } from "../doc_shared/sanitizeListQuery";
 
 const pageSizeOptions = [20, 50, 100];
 
@@ -41,9 +42,9 @@ const DetailDlg = ({ fileType, data, dispatch, onSaved, fetchDocVersions, getDoc
             if (file) payload.file = file;
             fn_request(fileType, payload).then((res: any) => {
                 if (res.code === Api.C_OK) {
-                    onSaved();
                     dispatch({ loading: false, dlgType: null });
                     message.success(res.msg);
+                    onSaved();
                 } else {
                     dispatch({ loading: false });
                     message.error(res.msg);
@@ -211,12 +212,6 @@ export default ({ fileType }: any) => {
         previewName: "",
     });
     const productId = Form.useWatch("product_id", queryForm);
-    const normalizeQueryParams = (params: any) => {
-        const source = params || {};
-        return Object.fromEntries(
-            Object.entries(source).filter(([, value]) => value !== undefined && value !== null && value !== "")
-        );
-    };
     const formatDisplayFileName = (row: any) => {
         const productName = String(row?.product_name || "").trim();
         const fileName = String(row?.file_name || "").trim();
@@ -230,7 +225,7 @@ export default ({ fileType }: any) => {
 
     const doSearch = (params: any, pageIndex: any, pageSize: any) => {
         dispatch({ loading: true });
-        const query = normalizeQueryParams(params);
+        const query = sanitizeListQuery(params);
         Api.list_doc_file(fileType, { ...query, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
             if (res.code === Api.C_OK) {
                 dispatch({ loading: false, pageIndex, pageSize, total: res.data.total, rows: res.data.rows });
@@ -442,6 +437,7 @@ export default ({ fileType }: any) => {
                                     onChange={(value) => {
                                         queryForm.setFieldValue("product_id", value);
                                         queryForm.setFieldValue("doc_version", undefined);
+                                        doSearch({ ...queryForm.getFieldsValue(), product_id: value, doc_version: undefined }, 1, data.pageSize);
                                     }}
                                 />
                             </Form.Item>
@@ -532,10 +528,8 @@ export default ({ fileType }: any) => {
                 fetchDocVersions={fetchDocVersions}
                 getDocVersionPlaceholder={getDocVersionPlaceholder}
                 onSaved={() => {
-                    if (data.dlgType === DlgTypes.add) {
-                        queryForm.resetFields();
-                    }
-                    doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize);
+                    queryForm.resetFields();
+                    doSearch({}, 1, data.pageSize);
                 }}
             />
         </div>

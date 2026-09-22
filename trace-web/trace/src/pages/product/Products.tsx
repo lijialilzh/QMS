@@ -577,7 +577,9 @@ export default () => {
         },
         {
             title: ts("action"),
-            width: 150,
+            width: 200,
+            className: "product-action-col",
+            ellipsis: false,
             render: (_value: any, row: any) => {
                 if (!canEdit) {
                     return null;

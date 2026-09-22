@@ -11,6 +11,7 @@ import * as Api from "@/api/ApiDataDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiAlgo from "@/api/ApiProdAlgoModule";
 import { isDataDocGroup, getDataDocNavTitle, getDataDocGroupTypes } from "./DataDocTypes";
+import { sanitizeListQuery, isAllProductId } from "../doc_shared/sanitizeListQuery";
 import "../risk_mgmt/RiskMgmtDocs.less";
 
 const pageSizeOptions = [20, 50, 100];
@@ -69,13 +70,9 @@ export default () => {
     const productId = Form.useWatch("product_id", queryForm);
     const moduleFilter = Form.useWatch("module", queryForm);
     useEffect(() => {
-        if (!productId) {
-            queryForm.setFieldValue("version", undefined);
-            dispatch({ versionOptions: [], modules: [] });
-            return;
-        }
-        // 分组类型：拉取算法模块 + 该组所有版本
-        if (isGroup) {
+        if (isAllProductId(productId)) {
+            dispatch({ modules: [] });
+        } else if (isGroup) {
             ApiAlgo.list_prod_algo_module({ prod_id: productId, page_index: 0, page_size: 1000 }).then((res: any) => {
                 const modules = (res && res.code === ApiAlgo.C_OK && (res.data?.rows || []).length)
                     ? (res.data.rows as any[]).sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0)).map((r: any) => String(r.name || "").trim()).filter(Boolean)
@@ -84,7 +81,7 @@ export default () => {
             }).catch(() => dispatch({ modules: [] }));
         }
         Api.list_data_doc({
-            product_id: productId,
+            ...sanitizeListQuery({ product_id: productId }),
             ...(isGroup ? { doc_types: groupTypes.join(",") } : { doc_type: type }),
             page_index: 0,
             page_size: 10000,
@@ -99,26 +96,22 @@ export default () => {
     }, [productId, type]);
 
     const doSearch = (params: any = {}, pageIndex: any = data.pageIndex, pageSize: any = data.pageSize) => {
-        if (!params.product_id) {
-            dispatch({ loading: false, rows: [], total: 0, pageIndex, pageSize });
-            return;
-        }
         dispatch({ loading: true });
-        const moduleIdx = params.module !== undefined && params.module !== null ? Number(params.module) : -1;
+        const moduleIdx = params.module !== undefined && params.module !== null && params.module !== "" ? Number(params.module) : -1;
         const req: any = {
-            ...params,
-            doc_type: undefined,
-            doc_type_prefix: undefined,
-            doc_types: undefined,
+            ...sanitizeListQuery(params),
             page_index: pageIndex - 1,
             page_size: pageSize,
         };
+        delete req.module;
+        delete req.doc_type;
+        delete req.doc_type_prefix;
+        delete req.doc_types;
         if (isGroup) {
             req.doc_types = moduleIdx >= 0 ? (groupTypes[moduleIdx] || "") : groupTypes.join(",");
         } else {
             req.doc_type = type;
         }
-        delete req.module;
         Api.list_data_doc(req).then((res: any) => {
             if (res.code === Api.C_OK) {
                 dispatch({ loading: false, total: res.data.total, rows: res.data.rows || [], pageIndex, pageSize });
@@ -131,23 +124,17 @@ export default () => {
 
     useEffect(() => {
         loadProducts(data, dispatch);
-        // 切换文档类型：清空全部筛选条件（产品/模块/版本），清空列表
         queryForm.resetFields();
-        dispatch({ rows: [], total: 0 });
+        dispatch({ versionOptions: [], modules: [] });
     }, [type]);
 
     useEffect(() => {
-        if (productId) {
-            // 换产品：清掉模块筛选（各产品模块不同），再查询
-            queryForm.setFieldValue("module", undefined);
-            doSearch({ product_id: productId }, 1, data.pageSize);
-        }
-    }, [productId]);
+        queryForm.setFieldValue("module", undefined);
+        doSearch(queryForm.getFieldsValue(), 1, data.pageSize);
+    }, [productId, type]);
 
     useEffect(() => {
-        if (productId) {
-            doSearch(queryForm.getFieldsValue(), 1, data.pageSize);
-        }
+        doSearch(queryForm.getFieldsValue(), 1, data.pageSize);
     }, [moduleFilter]);
 
     const doAdd = () => {

@@ -6,6 +6,7 @@ from typing import List
 from sqlalchemy import select, delete, func, or_
 from sqlalchemy.sql import desc
 from ..obj.vobj_user import UserObj
+from ..obj.tobj_role import Roles
 from ..model.product import Product, UserProd
 from ..model.prod_dhf import ProdDhf
 from ..obj.tobj_prod_dhf import ProdDhfForm
@@ -275,10 +276,8 @@ class Server(object):
         if prod_id:
             sql = sql.where(ProdDhf.prod_id == prod_id)
 
-        if not prod_id and op_user and op_user.id != 1:
-            subquery = select(UserProd.product_id).where(UserProd.user_id == op_user.id).scalar_subquery()
-            # 兼容历史数据：若产品未建立 UserProd 关联，也允许创建人看到其DHF。
-            sql = sql.where(or_(Product.id.in_(subquery), Product.create_user_id == op_user.id))
+        if op_user and op_user.id != 1 and getattr(op_user, "role_code", None) == Roles.product_manager.value.code:
+            sql = sql.where(Product.create_user_id == op_user.id)
 
         total = 0
         if not export:

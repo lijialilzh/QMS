@@ -9,7 +9,6 @@ import * as Api from "@/api/ApiRiskMgmtDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import RiskMgmtParticipantDetail from "./RiskMgmtParticipantDetail";
 import "./RiskMgmtParticipants.less";
-
 const pageSizeOptions = [20, 50, 100];
 
 enum DlgTypes {

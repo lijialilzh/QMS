@@ -6,6 +6,7 @@ from sqlalchemy import select, delete, or_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import desc
 from ..obj.vobj_user import UserObj
+from ..obj.tobj_role import Roles
 from ..model.srs_type import SrsType
 from ..model.srs_reqd import SrsReqd
 from ..model.sds_doc import SdsDoc, SdsNode
@@ -774,9 +775,8 @@ class Server(object):
             sql = sql.where(Product.id == prod_id)
         if doc_id:
             sql = sql.where(SdsDoc.id == doc_id)
-        if not prod_id and op_user and op_user.id != 1:
-            subquery = select(UserProd.product_id).where(UserProd.user_id == op_user.id).scalar_subquery()
-            sql = sql.where(Product.id.in_(subquery))
+        if op_user and op_user.id != 1 and getattr(op_user, "role_code", None) == Roles.product_manager.value.code:
+            sql = sql.where(Product.create_user_id == op_user.id)
 
         sql = sql.order_by(desc(SdsDoc.id), SrsReq.code)
         rows: List[Tuple[SdsReqd, SrsReq, SrsReqd, SrsType, SdsDoc, SrsDoc, Product]] = db.session.execute(sql).all()

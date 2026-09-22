@@ -28,6 +28,7 @@ from ..obj.tobj_hld_doc import HldDocForm, HldNodeForm
 from ..obj.tobj_srs_doc import Table
 from ..obj.vobj_hld_doc import HldDocObj
 from ..obj.vobj_user import UserObj
+from ..obj.tobj_role import Roles
 from ..utils.i18n import ts
 from ..utils.sql_ctx import db
 from . import msg_err_db
@@ -503,9 +504,8 @@ class Server(object):
             sql = sql.where(HldDoc.product_id == product_id)
         if version:
             sql = sql.where(HldDoc.version.like(f"%{version}%"))
-        if not product_id and op_user.id != 1:
-            subquery = select(UserProd.product_id).where(UserProd.user_id == op_user.id).scalar_subquery()
-            sql = sql.where(Product.id.in_(subquery))
+        if op_user and op_user.id != 1 and getattr(op_user, "role_code", None) == Roles.product_manager.value.code:
+            sql = sql.where(Product.create_user_id == op_user.id)
         total = db.session.execute(select(func.count()).select_from(sql)).scalars().first()
         rows = db.session.execute(
             sql.offset(page_size * page_index).limit(page_size).order_by(desc(HldDoc.create_time))

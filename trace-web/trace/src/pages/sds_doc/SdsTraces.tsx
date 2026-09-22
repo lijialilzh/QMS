@@ -9,6 +9,7 @@ import * as Api from "@/api/ApiSdsTrace";
 import * as ApiDoc from "@/api/ApiSdsDoc";
 import * as ApiSdsReqd from "@/api/ApiSdsReqd";
 import { doSearchProducts } from "../prod_risk/util";
+import { sanitizeListQuery } from "../doc_shared/sanitizeListQuery";
 
 const pageSizeOptions = [100, 500, 1000];
 
@@ -370,15 +371,16 @@ export default () => {
     });
 
     const doSearch = (params: any, pageIndex: any, pageSize: any) => {
-        if (!params?.prod_id || !params?.doc_id) {
+        const query = sanitizeListQuery(params);
+        if (!query.prod_id || !query.doc_id) {
             dispatch({ loading: false, pageIndex, pageSize, total: 0, rows: [] });
             return;
         }
         dispatch({ loading: true });
         Promise.all([
-            Api.list_sds_trace({ ...params, page_index: pageIndex - 1, page_size: pageSize }),
-            ApiDoc.get_sds_doc({ id: params.doc_id }),
-            ApiSdsReqd.list_sds_reqd({ doc_id: params.doc_id, page_index: 0, page_size: 10000, _ts: Date.now() }),
+            Api.list_sds_trace({ ...query, page_index: pageIndex - 1, page_size: pageSize }),
+            ApiDoc.get_sds_doc({ id: query.doc_id }),
+            ApiSdsReqd.list_sds_reqd({ doc_id: query.doc_id, page_index: 0, page_size: 10000, _ts: Date.now() }),
         ]).then(([res, docRes, reqdRes]: any[]) => {
             if (res.code === Api.C_OK) {
                 const targetCodes = collectEmptyLocationSdsCodes(res.data.rows || []);

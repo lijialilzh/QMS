@@ -9,6 +9,7 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiBugDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import "../risk_mgmt/RiskMgmtDocs.less";
+import { sanitizeListQuery } from "../doc_shared/sanitizeListQuery";
 
 const pageSizeOptions = [20, 50, 100];
 
@@ -51,7 +52,7 @@ export default () => {
 
     const doSearch = (params: any = {}, pageIndex: any = data.pageIndex, pageSize: any = data.pageSize) => {
         dispatch({ loading: true });
-        Api.list_bug_doc({ ...params, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
+        Api.list_bug_doc({ ...sanitizeListQuery(params), page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
             if (res.code === Api.C_OK) dispatch({ loading: false, total: res.data.total, rows: res.data.rows || [], pageIndex, pageSize });
             else { dispatch({ loading: false, rows: [], total: 0 }); message.error(res.msg); }
         });
@@ -177,7 +178,7 @@ export default () => {
                     <Row gutter={20}>
                         <Col>
                             <Form.Item label={ts("srs_doc.select_product")} name="product_id">
-                                <ProductVersionSelect products={data.products} allowClear includeAll namePlaceholder={ts("product.name")} versionPlaceholder={ts("product.full_version")} onChange={(v) => queryForm.setFieldValue("product_id", v)} />
+                                <ProductVersionSelect products={data.products} allowClear includeAll namePlaceholder={ts("product.name")} versionPlaceholder={ts("product.full_version")} onChange={(v) => { queryForm.setFieldValue("product_id", v); doSearch({ ...queryForm.getFieldsValue(), product_id: v }, 1, data.pageSize); }} />
                             </Form.Item>
                         </Col>
                         <Col>

@@ -10,6 +10,7 @@ import { createDocBatchDelete, getDocTableRowSelection } from "../doc_shared/doc
 import * as Api from "@/api/ApiSrsDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
+import { sanitizeListQuery } from "../doc_shared/sanitizeListQuery";
 
 const pageSizeOptions = [20, 50, 100];
 
@@ -126,7 +127,7 @@ export default () => {
 
     const doSearch = (params: any, pageIndex: any, pageSize: any) => {
         dispatch({ loading: true });
-        Api.list_srs_doc({ ...params, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
+        Api.list_srs_doc({ ...sanitizeListQuery(params), page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
             if (res.code === Api.C_OK) {
                 dispatch({ loading: false, pageIndex, pageSize, total: res.data.total, rows: res.data.rows });
             } else {
@@ -385,7 +386,7 @@ export default () => {
                                     allowClear includeAll
                                     namePlaceholder={ts("product.name")}
                                     versionPlaceholder={ts("product.full_version")}
-                                    onChange={(value) => queryForm.setFieldValue("product_id", value)}
+                                    onChange={(value) => { queryForm.setFieldValue("product_id", value); doSearch({ ...queryForm.getFieldsValue(), product_id: value }, 1, data.pageSize); }}
                                 />
                             </Form.Item>
                         </Col>

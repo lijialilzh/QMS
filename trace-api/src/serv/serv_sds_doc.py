@@ -36,6 +36,7 @@ except Exception:
     qn = None
     RGBColor = None
 from ..obj.vobj_user import UserObj
+from ..obj.tobj_role import Roles
 from ..obj.vobj_sds_trace import SdsTraceObj
 from ..model.srs_type import SrsType
 from ..model.srs_reqd import SrsReqd
@@ -1693,9 +1694,8 @@ class Server(SdsSrsTraceSyncMixin, object):
             sql = sql.where(SdsDoc.product_id == product_id)
         if version:
             sql = sql.where(SdsDoc.version.like(f"%{version}%"))
-        if not product_id and op_user and op_user.id != 1:
-            subquery = select(UserProd.product_id).where(UserProd.user_id == op_user.id).scalar_subquery()
-            sql = sql.where(Product.id.in_(subquery))
+        if op_user and op_user.id != 1 and getattr(op_user, "role_code", None) == Roles.product_manager.value.code:
+            sql = sql.where(Product.create_user_id == op_user.id)
         
         sql_count = select(func.count()).select_from(sql)
         total = db.session.execute(sql_count).scalars().first()

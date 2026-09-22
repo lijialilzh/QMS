@@ -10,6 +10,7 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiSdsReqd";
 import * as ApiDoc from "@/api/ApiSdsDoc";
 import { doSearchProducts } from "../prod_risk/util";
+import { sanitizeListQuery } from "../doc_shared/sanitizeListQuery";
 
 const pageSizeOptions = [100, 500, 1000];
 const tableScrollX = 2020;
@@ -256,12 +257,13 @@ export default () => {
 
     const doSearch = (params: any, pageIndex: any, pageSize: any) => {
         resetTableBodyScroll();
-        if (!params?.prod_id || !params?.doc_id) {
+        const query = sanitizeListQuery(params);
+        if (!query.prod_id || !query.doc_id) {
             dispatch({ loading: false, pageIndex, pageSize, total: 0, rows: [] });
             return;
         }
         dispatch({ loading: true });
-        Api.list_sds_reqd({ ...params, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
+        Api.list_sds_reqd({ ...query, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
             if (res.code === Api.C_OK) {
                 dispatch({ loading: false, pageIndex, pageSize, total: res.data.total, rows: res.data.rows });
             } else {

@@ -7,6 +7,7 @@ import { renderOneLineWithTooltip, useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiRiskMgmtDoc";
 import * as ApiProduct from "@/api/ApiProduct";
+import { sanitizeListQuery } from "../doc_shared/sanitizeListQuery";
 
 const pageSizeOptions = [20, 50, 100];
 
@@ -39,11 +40,9 @@ const loadProducts = (data: any, dispatch: any) => {
 };
 
 const loadDocs = (productId: number | undefined, dispatch: any) => {
-    if (!productId) {
-        dispatch({ docs: [] });
-        return;
-    }
-    Api.list_risk_mgmt_doc({ product_id: productId, page_index: 0, page_size: 10000 }).then((res: any) => {
+    const req: any = { page_index: 0, page_size: 10000 };
+    if (productId) req.product_id = productId;
+    Api.list_risk_mgmt_doc(req).then((res: any) => {
         if (res.code === Api.C_OK) {
             dispatch({ docs: res.data.rows || [] });
         } else {
@@ -85,7 +84,7 @@ export default ({ kind }: Props) => {
 
     const doSearch = (params: any = queryForm.getFieldsValue(), pageIndex = data.pageIndex, pageSize = data.pageSize) => {
         dispatch({ loading: true });
-        apiList({ ...params, page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
+        apiList({ ...sanitizeListQuery(params), page_index: pageIndex - 1, page_size: pageSize }).then((res: any) => {
             if (res.code === Api.C_OK) {
                 dispatch({ loading: false, total: res.data.total, rows: res.data.rows || [], pageIndex, pageSize });
             } else {
@@ -200,6 +199,7 @@ export default ({ kind }: Props) => {
                                         queryForm.setFieldValue("product_id", value);
                                         queryForm.setFieldValue("doc_id", undefined);
                                         loadDocs(value, dispatch);
+                                        doSearch({ ...queryForm.getFieldsValue(), product_id: value, doc_id: undefined }, 1, data.pageSize);
                                     }}
                                 />
                             </Form.Item>
