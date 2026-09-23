@@ -51,7 +51,7 @@
 ### 6.1 标准需求保存（handleSaveSrsReqTableInCurrentPage）
 1. 解析表头列：需求编号/模块/功能/子功能。
 2. 合并单元格：同 SRS 前缀组内继承 module/function/sub_function。
-3. 校验：编号唯一、行内容、层级重复。
+3. 校验：编号格式（须为 `SRS-代号-序号`，如 `SRS-RCN3-001`，不符合则提示重写、不保存）、编号唯一、行内容、层级重复。变更需求保存用同一套编号格式校验。
 4. 与 DB 旧行 diff → `batch_save_srs_req`。
 5. 刷新树与 reqListData。
 
@@ -65,6 +65,11 @@
 ### 6.4 保存后回写
 - `__sync_req_to_node_tables` / `__sync_req_to_node_titles` 回写 `srs_node`。
 - 若已绑定 SDS：`add_srs_req` 自动插入 `sds_reqd`、`sds_trace`（`sds_code = code.replace("SRS","SDS")`）。
+
+### 6.4.1 顶栏保存不压缩重复字
+- `update_srs_doc` → `__sync_srs_reqs_from_doc_tables` 从树表抽标准/其他需求时，字段只去空白（`__keep_req_field`），**不**把 `666666666666` 压成 `6`。
+- 若表里已是压过的一位，且第 7 章自动生成节点标题仍是完整重复字，保存时按标题还原（`__restore_req_fields_from_auto_chapters`）。
+- `__clean_req_table_field` 只用于 Word 导入解合并格（如「系统管理系统管理」→「系统管理」），不用于编辑页保存。
 
 ### 6.5 排序与位置
 - `list_srs_req` 优先按文档树表行顺序（`__query_doc_req_order`），**非 code 字母序**，不因 code 重排。

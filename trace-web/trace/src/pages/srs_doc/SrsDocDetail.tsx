@@ -20,7 +20,6 @@ import TreeStructure, {
     TreeNode,
     syncTreeWithOtherReqState,
     remapProductBoundDocImages,
-    resolveProductBoundDocImageRefType,
     validateStandardSrsCodeUnique,
     validateStandardSrsRowContentRaw,
     validateStandardSrsDataRows,
@@ -754,7 +753,8 @@ export default () => {
                     } else {
                         output.push(merged);
                     }
-                } else if (titleKey || tplChild.ref_type) {
+                } else if (lockToTemplate && (titleKey || tplChild.ref_type)) {
+                    // 仅 2.3 系统结构图缺的模板子节自动补回；2.6 等其它章节删除后不因打开页恢复
                     changed = true;
                     output.push(cloneTemplateBranch(tplChild));
                 }
@@ -1369,7 +1369,7 @@ export default () => {
         const collectHierarchy = (items: TreeNode[], path: string[] = []) => {
             (items || []).forEach((node: any) => {
                 const titleName = normalizeReqText(stripHeadingNo(node.title));
-                const nextPath = titleName ? [...path, titleName] : path;
+                const nextPath = titleName && !isImportedTableCarrierTitle(titleName) ? [...path, titleName] : path;
                 const code = normalizeSrsCodeForSync(node.srs_code || extractSrsCodeFromTable(node.table));
                 const isReqDetailNode = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
                 if (code && isReqDetailNode && nextPath.length) {
@@ -1398,9 +1398,9 @@ export default () => {
         collectHierarchy(sourceTree || []);
         const toMainRows = (rows: any[] = []) => rows.map((row) => ({
             srs_code: row?.srs_code || row?.code || "",
-            module: row?.module || "",
-            function: row?.function || "",
-            sub_function: row?.sub_function || "",
+            module: isImportedTableCarrierTitle(row?.module) ? "" : (row?.module || ""),
+            function: isImportedTableCarrierTitle(row?.function) ? "" : (row?.function || ""),
+            sub_function: isImportedTableCarrierTitle(row?.sub_function) ? "" : (row?.sub_function || ""),
         })).map((row) => {
             const hierarchy = hierarchyByCode.get(normalizeSrsCodeForSync(row.srs_code)) || {};
             return {
@@ -3717,24 +3717,6 @@ export default () => {
         message.success(ts("srs_doc.load_standard_structure_success"));
     };
 
-    // 删除节点
-    const handleNodeDelete = async (docId: number, nodeId: number): Promise<boolean> => {
-        try {
-            const res = await Api.delete_srs_node({ doc_id: docId, n_id: nodeId });
-            if (res.code === Api.C_OK) {
-                message.success(ts("delete") + ts("save_success"));
-                return true;
-            } else {
-                message.error(res.msg || ts("delete") + ts("save_failed"));
-                return false;
-            }
-        } catch (error) {
-            message.error(ts("delete") + ts("save_failed"));
-            console.error("删除节点失败:", error);
-            return false;
-        }
-    };
-
     // 清理树节点数据，确保符合后端接口要求
     const cleanTreeNode = (node: any, docId: number = 0, parentId: number = 0): any => {
         // 处理 table 数据：
@@ -3764,7 +3746,6 @@ export default () => {
             }
         }
 
-        const isProductBoundImageNode = !!resolveProductBoundDocImageRefType(node);
         const cleaned: any = {
             doc_id: node.doc_id || docId || 0,
             n_id: (typeof node.id === 'string' || !node.n_id) ? 0 : node.n_id, // 新节点的n_id为0，让后端生成
@@ -3776,8 +3757,7 @@ export default () => {
             ...(node.rcm_codes !== undefined && { rcm_codes: node.rcm_codes }),
             text: node.text || "",
             ...(node.ref_type !== undefined && { ref_type: node.ref_type }),
-            // 物理拓扑图/系统结构图以图表文件库为准，不在节点上持久化 img_url
-            ...(node.img_url !== undefined && { img_url: isProductBoundImageNode ? "" : (node.img_url ?? "") }),
+            ...(node.img_url !== undefined && { img_url: node.img_url ?? "" }),
             // label 不展示，但需一并提交给后端
             ...(node.label !== undefined && { label: node.label ?? "" }),
             ...(node.req_detail_key !== undefined && { req_detail_key: node.req_detail_key ?? "" }),
@@ -3793,6 +3773,45 @@ export default () => {
         }
 
         return cleaned;
+    };
+
+    // 删除节点
+    const handleNodeDelete = async (docId: number, nodeId: number, nextTree?: TreeNode[]): Promise<boolean> => {
+        try {
+            if (nextTree !== undefined) {
+                const cleanedContent = (nextTree || []).map((node: any) => cleanTreeNode(node, docId, 0));
+                if (!cleanedContent.length) {
+                    message.error("保存失败：当前文档结构为空，请刷新后重试");
+                    return false;
+                }
+                const saveRes: any = await Api.update_srs_doc({
+                    id: docId,
+                    product_id: editForm.getFieldValue("product_id"),
+                    version: editForm.getFieldValue("version"),
+                    folder_name: editForm.getFieldValue("folder_name") || "",
+                    file_no: editForm.getFieldValue("file_no") || "",
+                    change_log: data.changeDescription || "",
+                    content: cleanedContent,
+                    n_id: data.docNId || 0,
+                });
+                if (saveRes.code !== Api.C_OK) {
+                    message.error(saveRes.msg || ts("delete") + ts("save_failed"));
+                    return false;
+                }
+            } else if (nodeId) {
+                const res = await Api.delete_srs_node({ doc_id: docId, n_id: nodeId });
+                if (res.code !== Api.C_OK) {
+                    message.error(res.msg || ts("delete") + ts("save_failed"));
+                    return false;
+                }
+            }
+            message.success(ts("delete") + ts("save_success"));
+            return true;
+        } catch (error) {
+            message.error(ts("delete") + ts("save_failed"));
+            console.error("删除节点失败:", error);
+            return false;
+        }
     };
 
     // 加载SRS表数据

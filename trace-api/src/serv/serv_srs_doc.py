@@ -929,6 +929,74 @@ class Server(object):
         # 不能像 __clean_req_table_field 那样压缩重复字符（会误伤 AAA、AAAA1 等合法内容）。
         return re.sub(r"\s+", "", self.__normalize_text(txt or ""))
 
+    def __is_imported_table_placeholder(self, value: str) -> bool:
+        """功能描述表没有表名时的占位标题，不是模块/功能/子功能。"""
+        return re.fullmatch(r"导入表格\d*", self.__keep_req_field(value or "")) is not None
+
+    def __restore_req_fields_from_auto_chapters(self, nodes: List[SrsNodeForm], req_rows: List[dict]):
+        """编辑页保存时，若表字段已被 __clean_req_table_field 压成一位，用第 7 章自动生成标题还原。"""
+        chapter_fields: Dict[str, dict] = {}
+
+        def blank_placeholder_fields(item: dict) -> dict:
+            next_item = dict(item or {})
+            for field in ["module", "function", "sub_function"]:
+                if self.__is_imported_table_placeholder(next_item.get(field) or ""):
+                    next_item[field] = None
+            return next_item
+
+        def walk(items: List[SrsNodeForm], parents: List[str]):
+            for node in items or []:
+                title = self.__keep_req_field(self.__clean_req_title(getattr(node, "title", "") or ""))
+                if self.__is_imported_table_placeholder(title):
+                    title = ""
+                path = parents + ([title] if title else [])
+                label = str(getattr(node, "label", "") or "")
+                code = self.__normalize_srs_code(str(getattr(node, "srs_code", "") or "")).upper()
+                if label == "__auto_req_detail" and code:
+                    # 去掉占位表名后：章+模块+功能 没有子功能；再多一级才是子功能。
+                    names = [part for part in path if part]
+                    if len(names) >= 4:
+                        module, function, sub_function = names[-3], names[-2], names[-1]
+                    elif len(names) == 3:
+                        module, function, sub_function = names[-2], names[-1], ""
+                    elif len(names) == 2:
+                        module, function, sub_function = names[-1], "", ""
+                    elif len(names) == 1:
+                        module, function, sub_function = names[-1], "", ""
+                    else:
+                        module = function = sub_function = ""
+                    chapter_fields[code] = {
+                        "module": module or None,
+                        "function": function or None,
+                        "sub_function": sub_function or None,
+                    }
+                walk(getattr(node, "children", None) or [], path)
+
+        req_rows = [blank_placeholder_fields(item) for item in (req_rows or [])]
+        walk(nodes or [], [])
+        if not chapter_fields:
+            return req_rows
+
+        restored = []
+        for item in req_rows:
+            code = self.__normalize_srs_code(str((item or {}).get("code") or "")).upper()
+            chapter = chapter_fields.get(code)
+            if not chapter:
+                restored.append(item)
+                continue
+            next_item = dict(item)
+            for field in ["module", "function", "sub_function"]:
+                table_val = self.__keep_req_field(next_item.get(field) or "")
+                chapter_val = self.__keep_req_field(chapter.get(field) or "")
+                if self.__is_imported_table_placeholder(chapter_val):
+                    chapter_val = ""
+                if chapter_val and table_val != chapter_val and (
+                    not table_val or self.__clean_req_table_field(chapter_val) == table_val
+                ):
+                    next_item[field] = chapter_val
+            restored.append(next_item)
+        return restored
+
     def __normalize_rcm_codes(self, codes):
         result = []
         for code in codes or []:
@@ -1494,7 +1562,7 @@ class Server(object):
             return "2", None
         return "1", None
 
-    def __extract_srs_reqs_from_nodes(self, nodes: List[SrsNodeForm], include_node_codes: bool = True):
+    def __extract_srs_reqs_from_nodes(self, nodes: List[SrsNodeForm], include_node_codes: bool = True, keep_user_text: bool = False):
         req_rows = []
         req_rcm_map: Dict[str, set] = {}
         # 放宽编号格式，兼容 SRS-XXX / CNXXX / 其他编码串
@@ -1527,6 +1595,7 @@ class Server(object):
                         )
                         col_codes = [getattr(h, "code", "") for h in headers]
                         last_values: Dict[str, str] = {}
+                        clean_field = self.__keep_req_field if keep_user_text else self.__clean_req_table_field
                         for row in rows or []:
                             values = [self.__normalize_text(str((row or {}).get(code, "") or "")) for code in col_codes]
                             code = values[col_idx["code"]] if col_idx["code"] < len(values) else ""
@@ -1544,10 +1613,10 @@ class Server(object):
                                     code=code_upper,
                                     type_code=type_code,
                                     type_name=type_name,
-                                    module=(self.__clean_req_table_field(values[col_idx["module"]]) if "module" in col_idx and col_idx["module"] < len(values) else None),
-                                    function=(self.__clean_req_table_field(values[col_idx["function"]]) if "function" in col_idx and col_idx["function"] < len(values) else None),
-                                    sub_function=(self.__clean_req_table_field(values[col_idx["sub_function"]]) if "sub_function" in col_idx and col_idx["sub_function"] < len(values) else None),
-                                    location=(self.__clean_req_table_field(values[col_idx["location"]]) if "location" in col_idx and col_idx["location"] < len(values) else None),
+                                    module=(clean_field(values[col_idx["module"]]) if "module" in col_idx and col_idx["module"] < len(values) else None),
+                                    function=(clean_field(values[col_idx["function"]]) if "function" in col_idx and col_idx["function"] < len(values) else None),
+                                    sub_function=(clean_field(values[col_idx["sub_function"]]) if "sub_function" in col_idx and col_idx["sub_function"] < len(values) else None),
+                                    location=(clean_field(values[col_idx["location"]]) if "location" in col_idx and col_idx["location"] < len(values) else None),
                                 )
                             )
                             if "rcm" in col_idx and col_idx["rcm"] < len(values):
@@ -2283,7 +2352,10 @@ class Server(object):
             )
 
     def __sync_srs_reqs_from_doc_tables(self, doc_id: int, nodes: List[SrsNodeForm]):
-        req_rows, req_rcm_map = self.__extract_srs_reqs_from_nodes(nodes or [], include_node_codes=False)
+        req_rows, req_rcm_map = self.__extract_srs_reqs_from_nodes(
+            nodes or [], include_node_codes=False, keep_user_text=True
+        )
+        req_rows = self.__restore_req_fields_from_auto_chapters(nodes or [], req_rows)
 
         def collect_managed_type_codes(items: List[SrsNodeForm]):
             type_codes = set()
@@ -4323,8 +4395,9 @@ class Server(object):
         NUMBERED_REQ_DETAIL_FIELDS = ("事件流", "工作流", "工作流程", "前置条件", "触发器", "后置条件", "异常情况", "约束")
 
         def __renumber_req_detail_lines(value):
-            # 与前端 normalizeReqDetailNumberedText 保持一致：把每行行首的数字序号重排为 1,2,3...
+            # 与前端 normalizeReqDetailNumberedText 保持一致：同一种分隔符重排为 1,2,3...，分隔符变化时重新从 1 开始。
             next_no = 1
+            prev_sep = ""
             pat = re.compile(r"^(\s*)(\d{1,4})([）)、．]|[.](?!\d))\s*(.*)$")
             out = []
             for line in str(value or "").split("\n"):
@@ -4335,6 +4408,9 @@ class Server(object):
                 prefix = m.group(1) or ""
                 sep = "." if m.group(3) == "．" else m.group(3)
                 rest = m.group(4) or ""
+                if prev_sep and sep != prev_sep:
+                    next_no = 1
+                prev_sep = sep
                 out.append(f"{prefix}{next_no}{sep} {rest}".rstrip())
                 next_no += 1
             return "\n".join(out)
@@ -5241,8 +5317,10 @@ class Server(object):
                         setattr(srs_doc, attr, value)
             product = db.session.execute(select(Product).where(Product.id == srs_doc.product_id)).scalars().first()
             product_version = getattr(product, "full_version", "") or getattr(product, "name", "") or ""
-            prod_imgs = self.__query_imgs(srs_doc.product_id, srs_doc.version, product_version)
-            self.__hydrate_tree_product_doc_images(srs_doc.content or [], prod_imgs)
+            # 编辑页 snapshot 以当前树为准，不再从图表库覆盖 2.2/2.3；列表导出才按当前 SRS 版本 hydrate
+            if snapshot is None:
+                prod_imgs = self.__query_imgs(srs_doc.product_id, srs_doc.version, product_version)
+                self.__hydrate_tree_product_doc_images(srs_doc.content or [], prod_imgs)
             docx = Document()
             docx_util.enable_update_fields_on_open(docx)
 

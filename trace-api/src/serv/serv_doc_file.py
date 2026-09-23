@@ -64,6 +64,9 @@ def pick_doc_image_file_row(
         ).scalars().first()
         if row:
             return row
+    # 指定了文档版本则只取该版本，不回退到产品下其它版本的图
+    if doc_token:
+        return None
     return db.session.execute(base_sql.order_by(desc(DocFile.id)).limit(1)).scalars().first()
 
 
@@ -205,8 +208,9 @@ class Server(object):
         img_url = str(img_url).strip()
         if img_url.startswith("data:"):
             return self.__extract_data_url_blob(img_url)
-        # 兼容已落盘图片路径（例如 SDS 导入后节点图片）
+        # 兼容已落盘图片路径（例如 SDS 导入后节点图片）；去掉前端缓存参数
         path = img_url[1:] if img_url.startswith("/") else img_url
+        path = path.split("?", 1)[0].split("#", 1)[0]
         if not os.path.exists(path):
             return None, None
         ext = os.path.splitext(path)[1] or ".png"
@@ -290,77 +294,76 @@ class Server(object):
         if not normalized_product_version:
             product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
             normalized_product_version = sanitize_doc_image_token(getattr(product, "full_version", "") or getattr(product, "name", "") or "")
-        row = pick_doc_image_file_row(
-            product_id,
-            category,
-            normalized_doc_version,
-            normalized_product_version,
-        )
 
         sql_doc = select(SrsDoc).where(SrsDoc.product_id == product_id)
         if normalized_doc_version:
             sql_doc = sql_doc.where(SrsDoc.version == normalized_doc_version)
-        latest_doc = db.session.execute(sql_doc.order_by(desc(SrsDoc.id)).limit(1)).scalars().first()
-        if not latest_doc:
-            return
-
-        nodes = db.session.execute(
-            select(SrsNode).where(SrsNode.doc_id == latest_doc.id).order_by(SrsNode.priority, SrsNode.n_id)
-        ).scalars().all()
-        if not nodes:
-            return
-        node_map = {row.n_id: row for row in nodes}
-        keywords = self.DOC_IMG_KEYWORDS.get(category) or []
+        docs = db.session.execute(sql_doc.order_by(desc(SrsDoc.id))).scalars().all()
         heading_category_map = {
             "2.2": "img_topo",
             "2.3": "img_struct",
         }
-        heading_match = None
-        for node in nodes:
-            img_url = getattr(node, "img_url", None)
-            if not img_url:
+        for latest_doc in docs:
+            latest_doc_version = self.__normalize_doc_version(getattr(latest_doc, "version", "") or "")
+            if not latest_doc_version or latest_doc_version.startswith("__deleted"):
                 continue
-            img_str = str(img_url).strip()
-            img_path = img_str[1:] if img_str.startswith("/") else img_str
-            if not img_str.startswith("data:") and not os.path.exists(img_path):
+            row = pick_doc_image_file_row(
+                product_id,
+                category,
+                latest_doc_version,
+                normalized_product_version,
+            )
+            # 已有同版本图表文件时不再用 SRS 节点图覆盖：手工编辑和需求文档改图都走 update_doc_file
+            if row and str(getattr(row, "file_url", "") or "").strip():
                 continue
-            title = self.__normalize_text(getattr(node, "title", "") or "")
-            if re.match(r"^导入图片\d*$", title):
-                continue
-            heading_no = re.match(r"^(\d+(?:\.\d+)*)", title)
-            heading_no = heading_no.group(1) if heading_no else ""
-            if heading_category_map.get(heading_no) == category or getattr(node, "ref_type", None) == category:
-                heading_match = img_url
-        # 章节节点无图时不覆盖 doc_file，避免手工上传后被空节点或导入图片子节点冲掉
-        if not heading_match:
-            return
-        # 已有图表文件时不再用 SRS 节点图覆盖：手工编辑和需求文档改图都走 update_doc_file
-        if row and str(getattr(row, "file_url", "") or "").strip():
-            return
-        matched_data_url = heading_match
 
-        blob, ext = self.__extract_image_blob_and_ext(matched_data_url)
-        if not blob:
-            return
+            nodes = db.session.execute(
+                select(SrsNode).where(SrsNode.doc_id == latest_doc.id).order_by(SrsNode.priority, SrsNode.n_id)
+            ).scalars().all()
+            if not nodes:
+                continue
+            heading_match = None
+            for node in nodes:
+                img_url = getattr(node, "img_url", None)
+                if not img_url:
+                    continue
+                img_str = str(img_url).strip()
+                img_path = img_str[1:] if img_str.startswith("/") else img_str
+                img_path = img_path.split("?", 1)[0].split("#", 1)[0]
+                if not img_str.startswith("data:") and not os.path.exists(img_path):
+                    continue
+                title = self.__normalize_text(getattr(node, "title", "") or "")
+                if re.match(r"^导入图片\d*$", title):
+                    continue
+                heading_no = re.match(r"^(\d+(?:\.\d+)*)", title)
+                heading_no = heading_no.group(1) if heading_no else ""
+                if heading_category_map.get(heading_no) == category or getattr(node, "ref_type", None) == category:
+                    heading_match = img_url
+            # 章节节点无图时不覆盖 doc_file，避免手工上传后被空节点或导入图片子节点冲掉
+            if not heading_match:
+                continue
 
-        if not row:
-            row = DocFile(product_id=product_id, category=category)
-            db.session.add(row)
-            db.session.flush()
-        path = os.path.join("data.trace", category, f"{row.id}{ext}")
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "wb") as fs:
-            fs.write(blob)
-        latest_doc_version = self.__normalize_doc_version(getattr(latest_doc, "version", "") or "")
-        row.file_name = build_doc_image_file_name(
-            normalized_product_version,
-            latest_doc_version,
-            category,
-            ext,
-        )
-        row.file_size = len(blob)
-        row.file_url = path
-        db.session.commit()
+            blob, ext = self.__extract_image_blob_and_ext(heading_match)
+            if not blob:
+                continue
+
+            if not row:
+                row = DocFile(product_id=product_id, category=category)
+                db.session.add(row)
+                db.session.flush()
+            path = os.path.join("data.trace", category, f"{row.id}{ext}")
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as fs:
+                fs.write(blob)
+            row.file_name = build_doc_image_file_name(
+                normalized_product_version,
+                latest_doc_version,
+                category,
+                ext,
+            )
+            row.file_size = len(blob)
+            row.file_url = path
+            db.session.commit()
 
     def __backfill_doc_file_from_sds(self, product_id: int, category: str, doc_version: str = None):
         if not product_id or category not in self.DOC_IMG_KEYWORDS:
