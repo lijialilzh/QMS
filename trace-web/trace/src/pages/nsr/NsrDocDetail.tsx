@@ -15,6 +15,14 @@ const emptyContent = { sections: [], productName: "" };
 // 自动获取（只读）章节的 ref_type 集合；cover/revision 属模板表格，可编辑。
 const AUTO_REFS = new Set(["sw_info", "cyber_haz", "cyber_trace", "risk_matrix"]);
 const isAutoNode = (node: any) => AUTO_REFS.has(node?.ref_type);
+const SW_INFO_AUTO_LABELS = ["产品名称", "产品型号", "软件发布版本", "软件完整版本"];
+const SW_INFO_MANUAL_LABELS = ["软件安全性级别", "网络安全性级别"];
+const parseSwInfoLine = (line: string) => {
+    const normalized = String(line || "").replace(/\t/g, "").trim();
+    const label = [...SW_INFO_AUTO_LABELS, ...SW_INFO_MANUAL_LABELS].find((item) => normalized.startsWith(item));
+    if (!label) return null;
+    return { label, value: normalized.slice(label.length).replace(/^[：:\s]+/, "") };
+};
 
 // 2.1 风险分布矩阵固定结构（严格按原 Word）
 const RISK_PROB_ROWS: [string, string][] = [["经常", "5"], ["有时", "4"], ["偶然", "3"], ["很少", "2"], ["非常少", "1"]];
@@ -444,6 +452,41 @@ export default () => {
         )).join("\n");
     });
 
+    const renderSwInfo = () => {
+        const lines = String(active?.text || "").split("\n");
+        return (
+            <div className="pdp-field" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {lines.map((line, index) => {
+                    const parsed = parseSwInfoLine(line);
+                    if (!parsed) {
+                        return line.trim()
+                            ? <div key={index} style={{ whiteSpace: "pre-wrap", color: "#46586b", fontSize: 13, lineHeight: 1.7 }}>{line}</div>
+                            : null;
+                    }
+                    const manual = !readonly && SW_INFO_MANUAL_LABELS.includes(parsed.label);
+                    if (!manual) {
+                        return <div key={index} style={{ color: "#46586b", fontSize: 13, lineHeight: 1.7 }}>{parsed.label}：{parsed.value}</div>;
+                    }
+                    return (
+                        <div key={index} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#46586b" }}>
+                            <span style={{ whiteSpace: "nowrap" }}>{parsed.label}：</span>
+                            <Input
+                                size="small"
+                                style={{ maxWidth: 240 }}
+                                value={parsed.value}
+                                onChange={(e) => updateNode(active._key, (n) => {
+                                    const next = String(n.text || "").split("\n");
+                                    next[index] = `${parsed.label}：${e.target.value}`;
+                                    n.text = next.join("\n");
+                                })}
+                            />
+                        </div>
+                    );
+                })}
+            </div>
+        );
+    };
+
     const renderActive = () => {
         if (!active) return <div className="pdp-empty">请选择左侧章节</div>;
         const auto = isAutoNode(active);
@@ -464,13 +507,13 @@ export default () => {
                         ) : (
                             <>
                                 {active.title}
-                                {auto && <Tag color="blue" style={{ marginLeft: 10, fontWeight: 400 }}>自动获取（只读）</Tag>}
+                                {auto && <Tag color="blue" style={{ marginLeft: 10, fontWeight: 400 }}>{active.ref_type === "sw_info" ? "产品信息自动获取" : "自动获取（只读）"}</Tag>}
                             </>
                         )}
                     </div>
                 </div>
 
-                {blocks.length > 0 ? (
+                {active.ref_type === "sw_info" ? renderSwInfo() : blocks.length > 0 ? (
                     blocks.map((b: any, bi: number) => {
                         if (b?.type === "image") {
                             return <div className="pdp-field" key={bi}>{renderImages([b.url])}</div>;
@@ -589,7 +632,7 @@ export default () => {
                     <div className="pdp-nav">
                         <div className="pdp-nav-head">目录</div>
                         {!readonly && (
-                            <div className="pdp-nav-hint">蓝色「自动获取」章节由系统按产品自动填充，不可编辑；其余章节可直接修改正文与表格。右侧 + 加子章节、🗑 删除。</div>
+                            <div className="pdp-nav-hint">蓝色「自动获取」章节由系统按产品自动填充，不可编辑；1.1 软件信息中的软件安全性级别、网络安全性级别可手改。其余章节可直接修改正文与表格。右侧 + 加子章节、🗑 删除。</div>
                         )}
                         {renderNav(data.sections, 0)}
                         {!readonly && (

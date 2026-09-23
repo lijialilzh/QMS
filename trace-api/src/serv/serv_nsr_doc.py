@@ -135,7 +135,7 @@ class Server(object):
 
     # ---------------- 自动获取数据源 ----------------
     async def __cyber_haz_rows(self, product_id):
-        # 附录A 网络安全风险分析列表：取产品HAZ管理中「分类=网络安全」的记录，
+        # 附录A 网络安全风险分析列表：取产品HAZ管理中分类含「网络安全」或「Cybersecurity」的记录，
         # 复用 ProdHaz 服务（已合并 haz 基础信息 + prod_rcm 措施/证据展开）。
         resp = await ProdHazServer().list_prod_haz(None, export=True, prod_id=product_id, page_index=0, page_size=100000)
         objs = getattr(getattr(resp, "data", None), "rows", None) or []
@@ -151,7 +151,7 @@ class Server(object):
         rows = []
         for o in objs:
             cat = s(getattr(o, "category", ""))
-            if "网络安全" not in cat:
+            if "网络安全" not in cat and "cybersecurity" not in cat.lower():
                 continue
             rows.append([
                 s(o.code), s(o.source), s(o.event), s(o.situation), s(o.damage),
@@ -209,11 +209,13 @@ class Server(object):
         # 再用这些 RCM 过滤「可追溯性分析记录」(list_doc_trace)，命中的需求按 RCM 逐行展开，
         # SDS / 单元 / 集成 / 系统 / 用户测试用例直接取自该追溯记录（与可追溯性分析页面一致）。
         # 1) 网络安全 HAZ → RCM 集合（建立 RCM → 关联网络安全 HAZ 编号 的映射）
+        # 分类含「网络安全」或英文「Cybersecurity」均纳入。
         haz_resp = await ProdHazServer().list_prod_haz(None, export=True, prod_id=product_id, page_index=0, page_size=100000)
         haz_objs = getattr(getattr(haz_resp, "data", None), "rows", None) or []
         rcm_to_hazs = {}
         for o in haz_objs:
-            if "网络安全" not in str(getattr(o, "category", "") or ""):
+            cat = str(getattr(o, "category", "") or "")
+            if "网络安全" not in cat and "cybersecurity" not in cat.lower():
                 continue
             haz_code = str(getattr(o, "code", "") or "").strip()
             for rcm in self.__split_rcm_codes(getattr(o, "rcms", "")):
@@ -288,7 +290,8 @@ class Server(object):
         # 初始风险矩阵(init_rate/init_degree) 与 采取措施后风险矩阵(cur_rate/cur_degree)
         resp = await ProdHazServer().list_prod_haz(None, export=True, prod_id=product_id, page_index=0, page_size=100000)
         objs = [o for o in (getattr(getattr(resp, "data", None), "rows", None) or [])
-                if "网络安全" in str(getattr(o, "category", "") or "")]
+                if "网络安全" in str(getattr(o, "category", "") or "")
+                or "cybersecurity" in str(getattr(o, "category", "") or "").lower()]
         return (self.__risk_matrix(objs, "init_rate", "init_degree"),
                 self.__risk_matrix(objs, "cur_rate", "cur_degree"))
 
@@ -297,6 +300,7 @@ class Server(object):
         if not product:
             return None
         risk_init, risk_cur = await self.__cyber_risk_matrix(product_id)
+        haz_resp = await ProdHazServer().list_prod_haz(None, export=True, prod_id=product_id, page_index=0, page_size=100000)
         return {
             "product_name": (product.name or "").strip(),
             "type_code": (product.type_code or "").strip(),
@@ -304,6 +308,7 @@ class Server(object):
             "full_version": (product.full_version or "").strip(),
             "cyber_haz_rows": await self.__cyber_haz_rows(product_id),
             "cyber_trace_rows": await self.__cyber_trace_rows(product_id),
+            "product_hazs": getattr(getattr(haz_resp, "data", None), "rows", None) or [],
             "risk_init": risk_init,
             "risk_cur": risk_cur,
         }
@@ -419,6 +424,63 @@ class Server(object):
                 out.append(ln)
         return "\n".join(out)
 
+    def __match_capability_haz_codes(self, basis_text, haz_objs):
+        # 判断依据按换行和逗号、句号拆句，句子出现在 HAZ 事件或情况中即命中。
+        parts = []
+        for raw in re.split(r"[\n\r，,。；;]+", str(basis_text or "")):
+            piece = re.sub(r"\s+", "", raw)
+            if len(piece) >= 4:
+                parts.append(piece)
+        if not parts:
+            return []
+        codes = []
+        for obj in haz_objs or []:
+            event = re.sub(r"\s+", "", str(getattr(obj, "event", "") or ""))
+            situation = re.sub(r"\s+", "", str(getattr(obj, "situation", "") or ""))
+            if not any((event and piece in event) or (situation and piece in situation) for piece in parts):
+                continue
+            code = str(getattr(obj, "code", "") or "").strip()
+            if code and code not in codes:
+                codes.append(code)
+
+        def num(code):
+            matched = re.search(r"(\d+)", code)
+            return int(matched.group(1)) if matched else 0
+
+        codes.sort(key=num)
+        return codes
+
+    def __fill_capability_haz_column(self, node, haz_objs):
+        tables = node.get("tables") or []
+        if not tables or not tables[0] or len(tables[0]) < 2:
+            return
+        rows = tables[0]
+
+        def col_index(keyword):
+            for index, cell in enumerate(rows[0] or []):
+                if keyword in re.sub(r"\s+", "", str(cell or "")):
+                    return index
+            return -1
+
+        basis_idx = col_index("判断依据")
+        haz_idx = col_index("进一步风险分析编号")
+        need_idx = col_index("是否需要进一步风险分析")
+        if basis_idx < 0 or haz_idx < 0:
+            return
+        width = max(basis_idx, haz_idx, need_idx if need_idx >= 0 else 0) + 1
+        for row in rows[1:]:
+            if not isinstance(row, list):
+                continue
+            while len(row) < width:
+                row.append("")
+            if str(row[haz_idx] or "").strip():
+                continue
+            codes = self.__match_capability_haz_codes(row[basis_idx], haz_objs)
+            if codes:
+                row[haz_idx] = "\n".join(codes)
+            elif need_idx >= 0 and str(row[need_idx] or "").strip().startswith("否"):
+                row[haz_idx] = "无"
+
     def __apply_autofill(self, content, auto):
         if not auto:
             return content
@@ -442,7 +504,7 @@ class Server(object):
                 if rt == "sw_info":
                     node["text"] = self.__sw_info_text(node.get("text"), auto)
                 elif rt == "cyber_haz":
-                    # 附录A：保留模板表头，数据行替换为产品HAZ管理中分类=网络安全的记录
+                    # 附录A：保留模板表头，数据行替换为产品HAZ管理中分类含「网络安全」或「Cybersecurity」的记录
                     tbls = node.get("tables") or []
                     if tbls and tbls[0]:
                         header = tbls[0][0]
@@ -473,6 +535,9 @@ class Server(object):
                         elif not has_r1 and "采取风险措施后" in s:
                             out.append("{{RISK:1}}"); has_r1 = True
                     node["text"] = "\n".join(out)
+                if self.__strip_name(title) == "网络安全能力":
+                    # 只填空白的「进一步风险分析编号」；已有编号视为手改，不再覆盖。
+                    self.__fill_capability_haz_column(node, auto.get("product_hazs") or [])
                 # 正文/表/图按原 Word 顺序还原为有序 blocks（cover/revision 走导出专用逻辑，不重排）
                 if rt not in ("cover", "revision"):
                     txt = str(node.get("text") or "")
