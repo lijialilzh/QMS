@@ -25,6 +25,7 @@ from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 
 from ..model.product import Product
 from ..model.nsr_doc import NsrDoc
+from ..model.rcm import Rcm
 from ..model.srs_doc import SrsDoc
 from ..model.prod_dhf import ProdDhf
 from ..obj import Page, Resp
@@ -38,6 +39,7 @@ from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version, docx_util
 from .serv_prod_haz import Server as ProdHazServer
+from .serv_prod_rcm import Server as ProdRcmServer
 from .serv_srs_doc import Server as SrsDocServer
 
 logger = logging.getLogger(__name__)
@@ -134,9 +136,58 @@ class Server(object):
         return re.sub(r"^[0-9．.、\s]+", "", str(title or "")).strip()
 
     # ---------------- 自动获取数据源 ----------------
+    async def __rcm_test_code_map(self, product_id, rcm_codes):
+        # 与产品 RCM 列表同一套用例结果：已关联的直接用其测试用例列；未写入 prod_rcm 的编号按同一匹配算出。
+        # 范围串（起始~结束）整段保留，不拆成起始编号。
+        codes = [self.__norm_code(c) for c in dict.fromkeys(rcm_codes or []) if self.__norm_code(c)]
+        if not product_id or not codes:
+            return {}
+        rcm_srv = ProdRcmServer()
+        listed = {}
+        resp = await rcm_srv.list_prod_rcm(None, export=True, prod_id=product_id, page_index=0, page_size=100000)
+        for row in getattr(getattr(resp, "data", None), "rows", None) or []:
+            code = self.__norm_code(getattr(row, "code", ""))
+            raw = getattr(row, "test_codes", None) or []
+            if isinstance(raw, str):
+                raw = [raw]
+            if code:
+                listed[code] = [str(item).strip() for item in raw if str(item or "").strip()]
+        missing = [c for c in codes if c not in listed]
+        if not missing:
+            return listed
+        rows = db.session.execute(select(Rcm).where(Rcm.code.in_(missing))).scalars().all()
+        by_id = {}
+        for row in rows:
+            code = self.__norm_code(row.code)
+            if code in missing:
+                by_id[row.id] = row
+        if not by_id:
+            return listed
+        _all_srs, reqs_dict = rcm_srv._Server__query_srs_reqs(list(by_id.keys()))
+        srs_for_product = []
+        srs_by_rcm = {}
+        for rcm_id in by_id:
+            reqs = reqs_dict.get((product_id, rcm_id)) or []
+            srs_codes = list(dict.fromkeys([
+                self.__norm_code(getattr(req, "code", "")) for req in reqs
+                if self.__norm_code(getattr(req, "code", ""))
+            ]))
+            srs_by_rcm[rcm_id] = srs_codes
+            srs_for_product.extend(srs_codes)
+        tests_dict = rcm_srv._Server__query_tests([product_id], srs_for_product)
+        for rcm_id, row in by_id.items():
+            code = self.__norm_code(row.code)
+            fixed = rcm_srv.NO_TEST_PROOF_MAP.get(code)
+            if fixed:
+                listed[code] = [fixed]
+                continue
+            raw = rcm_srv._Server__merge_tests(product_id, srs_by_rcm.get(rcm_id) or [], tests_dict, row) or []
+            listed[code] = [str(item).strip() for item in raw if str(item or "").strip()]
+        return listed
+
     async def __cyber_haz_rows(self, product_id):
-        # 附录A 网络安全风险分析列表：取产品HAZ管理中分类含「网络安全」或「Cybersecurity」的记录，
-        # 复用 ProdHaz 服务（已合并 haz 基础信息 + prod_rcm 措施/证据展开）。
+        # 附录A 网络安全风险分析列表：取产品HAZ管理中分类含「网络安全」或「Cybersecurity」的记录。
+        # 证据列用这些危害关联 RCM 的测试用例对应结果（与产品 RCM 测试用例列相同，范围整段保留）。
         resp = await ProdHazServer().list_prod_haz(None, export=True, prod_id=product_id, page_index=0, page_size=100000)
         objs = getattr(getattr(resp, "data", None), "rows", None) or []
 
@@ -148,15 +199,29 @@ class Server(object):
                 return ""
             return "Y" if s(v).strip() in ("1", "Y", "y", "是", "True", "true") else "N"
 
-        rows = []
+        cyber = []
+        rcm_codes = []
         for o in objs:
             cat = s(getattr(o, "category", ""))
             if "网络安全" not in cat and "cybersecurity" not in cat.lower():
                 continue
+            codes = self.__split_rcm_codes(getattr(o, "rcms", ""))
+            cyber.append((o, cat, codes))
+            rcm_codes.extend(codes)
+        test_map = await self.__rcm_test_code_map(product_id, rcm_codes)
+
+        rows = []
+        for o, cat, codes in cyber:
+            pieces = []
+            for rcm in codes:
+                for item in test_map.get(self.__norm_code(rcm)) or []:
+                    if item not in pieces:
+                        pieces.append(item)
+            evidence = "\n".join(pieces) if pieces else s(o.evidence)
             rows.append([
                 s(o.code), s(o.source), s(o.event), s(o.situation), s(o.damage),
                 s(o.init_rate), s(o.init_degree), s(o.init_level),
-                s(o.deal), "\n".join(self.__split_rcm_codes(getattr(o, "rcms", ""))), s(o.evidence),
+                s(o.deal), "\n".join(codes), evidence,
                 s(o.cur_rate), s(o.cur_degree), s(o.cur_level),
                 yn(getattr(o, "benefit_flag", None)), cat,
             ])
