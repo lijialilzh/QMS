@@ -427,10 +427,29 @@ export default () => {
                                         </td>
                                     );
                                 })}
-                                <td className="pdp-row-op">
-                                    <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, ri)} />
-                                    {(rows || []).length > 1 && (
-                                        <Button type="link" danger size="small" onClick={() => delRow(ti, ri)}>删除</Button>
+                                <td className="pdp-row-op" style={{ width: 72, minWidth: 72, maxWidth: 72, padding: "0 4px", border: "1px solid #9aa4b0", textAlign: "center", verticalAlign: "middle" }}>
+                                    {ri === 0 ? (
+                                        <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, ri)} />
+                                    ) : (
+                                        <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                                            <Button
+                                                type="text"
+                                                size="small"
+                                                title="在下方插入行"
+                                                icon={<PlusOutlined style={{ color: "#1677ff", marginRight: 0 }} />}
+                                                style={{ width: 24, minWidth: 24, height: 24, padding: 0 }}
+                                                onClick={() => insertRowAfter(ti, ri)}
+                                            />
+                                            <Button
+                                                type="text"
+                                                size="small"
+                                                danger
+                                                title="删除"
+                                                icon={<DeleteOutlined style={{ color: "#ff4d4f", marginRight: 0 }} />}
+                                                style={{ width: 24, minWidth: 24, height: 24, padding: 0 }}
+                                                onClick={() => delRow(ti, ri)}
+                                            />
+                                        </span>
                                     )}
                                 </td>
                             </tr>
