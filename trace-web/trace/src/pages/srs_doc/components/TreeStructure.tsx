@@ -6910,6 +6910,81 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                 });
             return walk(items);
         };
+        // 第 7 章固定层级：模块=二级、功能=三级、子功能=四级。
+        // 保存标准需求表后按需求表把带编号的章节归位，缺的层级补建，空壳章节清掉。
+        const normalizeReqChapterHierarchy = (items: TreeNode[]): TreeNode[] => {
+            if (!isSavingStandardSrsTable || !allStandardDetailsForIdentitySync.length) return items;
+            const cloned: TreeNode[] = JSON.parse(JSON.stringify(items || []));
+            const reqRoot = findReqDetailRoot(cloned);
+            if (!reqRoot) return cloned;
+            const rootPrefix = String(reqRoot.title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "7";
+            const readCode = (node: TreeNode) => normalizeSrsCode(
+                node.srs_code || (isFunctionalKvTable(node.table) ? extractSrsCodeFromTable(node.table) : "")
+            );
+            const isDetailNode = (node: TreeNode) => (
+                node.label === "__auto_req_detail" || isFunctionalKvTable(node.table) || !!readCode(node)
+            );
+            const detailByCode = new Map<string, TreeNode>();
+            // 先判断当前节点再递归：功能描述叶子下挂的「导入表格N」承载节点带同一编号，
+            // 必须随叶子一起带走，否则会被当成第二个叶子而重复。
+            const takeDetailNodes = (list: TreeNode[]): TreeNode[] => (list || []).filter((node) => {
+                const code = readCode(node);
+                if (code && isDetailNode(node)) {
+                    if (!detailByCode.has(code)) detailByCode.set(code, node);
+                    return false;
+                }
+                node.children = takeDetailNodes(node.children || []);
+                return true;
+            });
+            reqRoot.children = takeDetailNodes(reqRoot.children || []);
+            const findOrCreate = (parent: TreeNode, name: string): TreeNode => {
+                const prefix = String(parent.title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || rootPrefix;
+                parent.children = parent.children || [];
+                const existing = findChildByTitleText(parent.children, prefix, name);
+                if (existing) return existing;
+                const node = buildAutoNode(`${prefix}.${getNextChildNo(parent.children, prefix)} ${name}`, parent);
+                parent.children = [...parent.children, node];
+                return node;
+            };
+            const placeDetail = (parent: TreeNode, name: string, detailNode: TreeNode) => {
+                const prefix = String(parent.title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || rootPrefix;
+                parent.children = parent.children || [];
+                detailNode.title = `${prefix}.${getNextChildNo(parent.children, prefix)} ${name}`;
+                parent.children = [...parent.children, detailNode];
+            };
+            allStandardDetailsForIdentitySync.forEach((detail: any) => {
+                const code = normalizeSrsCode(detail?.code || detail?.srs_code);
+                const detailNode = code ? detailByCode.get(code) : undefined;
+                if (!code || !detailNode) return;
+                const moduleText = normalizeReqDisplayText(detail?.module);
+                const functionText = normalizeReqDisplayText(detail?.function);
+                const subText = normalizeReqDisplayText(detail?.sub_function);
+                if (!moduleText && !functionText && !subText) return;
+                if (!functionText && !subText) {
+                    placeDetail(reqRoot, moduleText, detailNode);
+                    return;
+                }
+                const moduleNode = moduleText ? findOrCreate(reqRoot, moduleText) : reqRoot;
+                if (!subText) {
+                    placeDetail(moduleNode, functionText, detailNode);
+                    return;
+                }
+                const functionNode = functionText ? findOrCreate(moduleNode, functionText) : moduleNode;
+                placeDetail(functionNode, subText, detailNode);
+            });
+            const pruneEmptyGroups = (list: TreeNode[]): TreeNode[] => (list || [])
+                .map((node) => ({ ...node, children: pruneEmptyGroups(node.children || []) }))
+                .filter((node) => (
+                    (node.children || []).length > 0 ||
+                    !!String(node.text || "").trim() ||
+                    hasRenderableTable(node.table) ||
+                    !!node.img_url ||
+                    !!readCode(node)
+                ));
+            reqRoot.children = pruneEmptyGroups(reqRoot.children || []);
+            sortTreeChildrenBySrsCode([reqRoot]);
+            return cloned;
+        };
         const syncChangedModuleTitles = (items: TreeNode[]): TreeNode[] => {
             if (!isSavingStandardSrsTable || !allStandardDetailsForIdentitySync.length) return items;
             const reqRootForRename = findReqDetailRoot(items);
@@ -6955,52 +7030,37 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                 }
                 return chain;
             };
-            allStandardDetailsForIdentitySync.forEach((detail: any) => {
-                const code = normalizeSrsCode(detail?.code || detail?.srs_code);
-                const nextFields = code ? nextFieldByCode.get(code) : undefined;
-                if (!code || !nextFields) return;
-                const path = findDeepestPath(reqRootForRename.children || [], code);
-                if (!path?.length) return;
-                const coded = path[path.length - 1];
-                const ancestors = path.slice(0, -1).filter((node) => getHeadingDepth(node.title) > 1);
-                const chain = [...ancestors, ...extendHeadingChain(coded)];
-                const ownsOnlyThisCode = (node: TreeNode) => {
-                    const codes = Array.from(collectCodes(node));
-                    return !codes.length || codes.every((itemCode) => itemCode === code);
-                };
-                const owned = chain.filter((node) => ownsOnlyThisCode(node));
-                const fields = ([
-                    { field: "module" as const, text: nextFields.module },
-                    { field: "function" as const, text: nextFields.function },
-                    { field: "sub" as const, text: nextFields.sub },
-                ]).filter((item) => !!item.text);
-                const assignedNodes = fields.length >= 3 && owned.length >= 3
-                    ? [owned[0], owned[1], owned[owned.length - 1]]
-                    : fields.length === 2 && owned.length >= 2
-                        ? [owned[0], owned[owned.length - 1]]
-                        : owned.slice(0, fields.length);
-                const chapterPrefixOf = (node: TreeNode) => {
-                    const raw = String(node.title || "").trim();
-                    return raw.match(/^(\d+(?:\.\d+)*)(?:\s+|(?=[\u4e00-\u9fffA-Za-z]))/)?.[1] || "";
-                };
-                assignedNodes.forEach((node, index) => {
-                    const text = fields[index]?.text;
-                    if (!text) return;
+            void findDeepestPath;
+            void extendHeadingChain;
+            const chapterPrefixOf = (node: TreeNode) => {
+                const raw = String(node.title || "").trim();
+                return raw.match(/^(\d+(?:\.\d+)*)(?:\s+|(?=[\u4e00-\u9fffA-Za-z]))/)?.[1] || "";
+            };
+            // 模块=二级、功能=三级、子功能=四级：按章节层级取名，不按字段顺序下标，
+            // 否则叶子章节会拿到模块名。父章节含多条需求时，该层级字段一致才改名。
+            const fieldByChapterDepth = (depth: number, fields: { module: string; function: string; sub: string }) => (
+                depth === 2 ? fields.module
+                    : depth === 3 ? fields.function
+                        : depth >= 4 ? fields.sub
+                            : ""
+            );
+            const collectRenames = (list: TreeNode[]) => {
+                (list || []).forEach((node) => {
+                    collectRenames(node.children || []);
                     const prefix = chapterPrefixOf(node);
-                    const currentName = prefix ? stripNavChapterPrefix(node.title, prefix) : String(node.title || "").trim();
+                    if (!prefix) return;
+                    const codes = Array.from(collectCodes(node)).filter((code) => nextFieldByCode.has(code));
+                    if (!codes.length) return;
+                    if (Array.from(collectCodes(node)).some((code) => !nextFieldByCode.has(code))) return;
+                    const texts = codes.map((code) => fieldByChapterDepth(prefix.split(".").length, nextFieldByCode.get(code)!));
+                    const text = texts[0];
+                    if (!text || texts.some((item) => normalizeTitleText(item) !== normalizeTitleText(text))) return;
+                    const currentName = stripNavChapterPrefix(node.title, prefix);
                     if (normalizeTitleText(currentName) === normalizeTitleText(text)) return;
                     renameById.set(node.id, text);
                 });
-                const sharedParent = chain.find((node) => !ownsOnlyThisCode(node) && owned.some((child) => (node.children || []).some((item) => item.id === child.id)));
-                const moduleAssigned = assignedNodes.length > 0 && fields[0]?.field === "module";
-                if (sharedParent && nextFields.module && !moduleAssigned) {
-                    const otherCodes = Array.from(collectCodes(sharedParent)).filter((itemCode) => itemCode !== code);
-                    const moduleAgreed = otherCodes.every((itemCode) => normalizeTitleText(nextFieldByCode.get(itemCode)?.module) === normalizeTitleText(nextFields.module));
-                    if (moduleAgreed && normalizeTitleText(stripHeadingNumber(sharedParent.title)) !== normalizeTitleText(nextFields.module)) {
-                        renameById.set(sharedParent.id, nextFields.module);
-                    }
-                }
-            });
+            };
+            collectRenames(reqRootForRename.children || []);
             if (!renameById.size) return items;
             const walk = (list: TreeNode[]): TreeNode[] => (list || []).map((node) => {
                 const nextTitle = renameById.get(node.id);
@@ -7016,7 +7076,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         void sortReqDetailSiblingsBySrsCode;
         void stripIgnoredReqDetailTables;
         const nextNodes = isSavingStandardSrsTable
-            ? syncChangedModuleTitles(
+            ? normalizeReqChapterHierarchy(syncChangedModuleTitles(
                 sortExistingReqDetailsBySrsCode(
                     pruneDeletedStandardReqDetails(
                         dedupeReqDetailsByKey(
@@ -7036,7 +7096,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                         )
                     )
                 )
-            )
+            ))
             : newNodes;
         updateNodes(nextNodes);
         setTableCellsBackup(undefined);

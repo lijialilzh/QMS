@@ -757,6 +757,10 @@ export default () => {
                     // 仅 2.3 系统结构图缺的模板子节自动补回；2.6 等其它章节删除后不因打开页恢复
                     changed = true;
                     output.push(cloneTemplateBranch(tplChild));
+                } else if (tplChild.ref_type === "srs_reqs") {
+                    // 需求区节点承载「新增变更表格」入口；Word 导入的文档没有它，缺失时补回。
+                    changed = true;
+                    output.push(cloneTemplateBranch(tplChild));
                 }
             });
 
@@ -2400,7 +2404,7 @@ export default () => {
             return normalizeReqText(row?.[rightCode]);
         };
         const getStandardLeafName = (detail: any) => (
-            normalizeReqText(detail?.sub_function || detail?.function || detail?.name || detail?.module || detail?.code)
+            normalizeReqText(detail?.sub_function || detail?.function)
         );
         const compareStandardReqCodes = (left?: string, right?: string) => {
             const leftText = normalizeSrsCodeForSync(left);
@@ -3369,11 +3373,46 @@ export default () => {
         const treeWithChangeTables = options?.appendMissingChangeTables
             ? appendMissingChangeTablesForExport(pruned, srsTableState)
             : pruned;
-        return syncTreeWithOtherReqState(
+        const syncedWithOther = syncTreeWithOtherReqState(
             treeWithChangeTables,
             srsTableState.srsOtherReqData || [],
             otherReqSyncOptions,
         );
+        const reqRows = (srsTableState.srsTableData || []).map((item: any) => ({
+            module: normalizeReqText(item?.module),
+            function: normalizeReqText(item?.function),
+            sub_function: normalizeReqText(item?.sub_function),
+        })).filter((item: any) => item.module);
+        const headingOf = (title?: string) => String(title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
+        const nameOf = (title?: string) => normalizeReqText(String(title || "").trim().replace(/^\d+(?:\.\d+)*\s*/, ""));
+        const isNumberedChapter = (title?: string) => /^\d+(?:\.\d+)/.test(String(title || "").trim());
+        const restoreLeafChapterTitles = (node: TreeNode, ancestors: TreeNode[] = []): TreeNode => {
+            const children = (node.children || []).map((child) => restoreLeafChapterTitles(child, [...ancestors, node]));
+            const heading = headingOf(node.title);
+            if (!heading.startsWith("7.") && heading !== "7") return { ...node, children };
+            const myName = nameOf(node.title);
+            const parentName = nameOf(ancestors[ancestors.length - 1]?.title);
+            const depth = heading === "7" ? 1 : heading.split(".").length;
+            let matched: Array<{ module: string; function: string; sub_function: string }> = [];
+            if (depth === 2) {
+                matched = reqRows.filter((row) => row.module === myName && !row.sub_function && row.function && row.function !== row.module);
+            } else if (depth >= 3) {
+                matched = reqRows.filter((row) => row.module === parentName && row.function === myName && !!row.sub_function);
+            }
+            if (!matched.length) return { ...node, children };
+            let index = 0;
+            const nextChildren = children.map((child) => {
+                const hasNumberedChild = (child.children || []).some((grand) => isNumberedChapter(grand.title));
+                if (!isNumberedChapter(child.title) || hasNumberedChild) return child;
+                const row = matched[index++];
+                const leafName = row?.sub_function || row?.function;
+                const prefix = headingOf(child.title);
+                if (!row || !leafName || !prefix || nameOf(child.title) !== row.module) return child;
+                return { ...child, title: `${prefix} ${leafName}` };
+            });
+            return { ...node, children: nextChildren };
+        };
+        return (syncedWithOther || []).map((node) => restoreLeafChapterTitles(node));
     };
     const syncTreeWithSrsTableStateForDisplay = (
         tree: TreeNode[],
