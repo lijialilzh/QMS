@@ -6925,11 +6925,17 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                 node.label === "__auto_req_detail" || isFunctionalKvTable(node.table) || !!readCode(node)
             );
             const detailByCode = new Map<string, TreeNode>();
+            // 只归位标准需求表里的编号；变更需求等其它编号的章节保持原位，否则会被摘走后无处放回而丢失。
+            const standardCodes = new Set(
+                allStandardDetailsForIdentitySync
+                    .map((detail: any) => normalizeSrsCode(detail?.code || detail?.srs_code))
+                    .filter(Boolean)
+            );
             // 先判断当前节点再递归：功能描述叶子下挂的「导入表格N」承载节点带同一编号，
             // 必须随叶子一起带走，否则会被当成第二个叶子而重复。
             const takeDetailNodes = (list: TreeNode[]): TreeNode[] => (list || []).filter((node) => {
                 const code = readCode(node);
-                if (code && isDetailNode(node)) {
+                if (code && standardCodes.has(code) && isDetailNode(node)) {
                     if (!detailByCode.has(code)) detailByCode.set(code, node);
                     return false;
                 }
@@ -6982,6 +6988,21 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                     !!readCode(node)
                 ));
             reqRoot.children = pruneEmptyGroups(reqRoot.children || []);
+            // 变更需求等未归位的功能描述章节可能没有标题（历史数据），按表里的需求名称补上，
+            // 否则左侧显示「(未命名)」、导出只剩空标题。先补名字再排序编号，补出来的标题才有章节号。
+            const fillMissingDetailTitles = (list: TreeNode[]) => {
+                (list || []).forEach((node) => {
+                    fillMissingDetailTitles(node.children || []);
+                    if (!isDetailNode(node)) return;
+                    const prefix = String(node.title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
+                    const name = stripNavChapterPrefix(node.title, prefix);
+                    if (name) return;
+                    const reqName = extractReqNameFromFunctionalTable(node.table);
+                    if (!reqName) return;
+                    node.title = prefix ? `${prefix} ${reqName}` : reqName;
+                });
+            };
+            fillMissingDetailTitles(reqRoot.children || []);
             sortTreeChildrenBySrsCode([reqRoot]);
             return cloned;
         };

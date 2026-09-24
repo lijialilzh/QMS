@@ -163,8 +163,12 @@ def save_tab2docx(tab: Table,  docx: Document):
         skip_empty_header = (not tab.show_header) or (header_names and not any(header_names))
         if skip_empty_header and export_cells:
             first_row = export_cells[0] or []
-            first_empty = all(not str(getattr(c, "value", "") or "").strip() for c in first_row)
-            if first_empty:
+            first_values = [str(getattr(c, "value", "") or "").strip() for c in first_row]
+            first_empty = not any(first_values)
+            # 不显示表头的表（如功能描述「字段/内容」KV 表）重建 cells 时首行写的是表头名，
+            # 导出要一并去掉，否则 Word 里多出一行「字段/内容」。
+            first_is_header = (not tab.show_header) and bool(header_names) and first_values == header_names
+            if first_empty or first_is_header:
                 export_cells = export_cells[1:]
         row_count = len(export_cells)
         col_count = max((len(row) for row in export_cells), default=0)

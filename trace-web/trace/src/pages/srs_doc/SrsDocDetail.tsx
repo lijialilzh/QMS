@@ -3356,6 +3356,150 @@ export default () => {
         isCodeCompatible: (code: string, headingNo: string) => isFixedSectionCompatibleCode(code, headingNo),
     };
 
+    // 第 7 章固定层级：模块=二级、功能=三级、子功能=四级。
+    // 与 TreeStructure 里保存需求表时的归位保持一致，否则顶栏保存会用这里的结果覆盖掉正确层级。
+    const normalizeReqChapterHierarchyByTable = (tree: TreeNode[], mainRows: any[] = []): TreeNode[] => {
+        const rows = (mainRows || [])
+            .map((row: any) => ({
+                code: normalizeSrsCodeForSync(row?.srs_code || row?.code),
+                module: normalizeReqText(row?.module),
+                function: normalizeReqText(row?.function),
+                sub_function: normalizeReqText(row?.sub_function),
+            }))
+            .filter((row: any) => row.code && (row.module || row.function || row.sub_function));
+        if (!rows.length) return tree || [];
+        const cloned: TreeNode[] = JSON.parse(JSON.stringify(tree || []));
+        const headingOf = (title?: string) => String(title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
+        const nameOf = (title?: string) => String(title || "").trim().replace(/^\d+(?:\.\d+)*\s*/, "").trim();
+        const reqRoot = (cloned || []).find((node) => headingOf(node.title) === "7");
+        if (!reqRoot) return cloned;
+        const readCode = (node: any) => normalizeSrsCodeForSync(
+            node?.srs_code || (isFunctionalKvTable(node?.table) ? extractSrsCodeFromTable(node?.table) : "")
+        );
+        const isDetail = (node: any) => (
+            node?.label === "__auto_req_detail" || isFunctionalKvTable(node?.table) || !!readCode(node)
+        );
+        const standardCodes = new Set(rows.map((row) => row.code));
+        const detailByCode = new Map<string, any>();
+        const takeDetails = (list: any[]): any[] => (list || []).filter((node: any) => {
+            const code = readCode(node);
+            if (code && standardCodes.has(code) && isDetail(node)) {
+                if (!detailByCode.has(code)) detailByCode.set(code, node);
+                return false;
+            }
+            node.children = takeDetails(node.children || []);
+            return true;
+        });
+        reqRoot.children = takeDetails(reqRoot.children || []);
+        const nextNo = (children: any[], prefix: string) => {
+            const escaped = prefix.replace(/\./g, "\\.");
+            return (children || []).reduce((max: number, child: any) => {
+                const matched = String(child.title || "").trim().match(new RegExp(`^${escaped}\\.(\\d+)`));
+                return matched ? Math.max(max, parseInt(matched[1], 10)) : max;
+            }, 0) + 1;
+        };
+        const findOrCreate = (parent: any, name: string) => {
+            const prefix = headingOf(parent.title) || "7";
+            parent.children = parent.children || [];
+            const existing = (parent.children || []).find((child: any) => (
+                String(child.title || "").trim().startsWith(`${prefix}.`) && nameOf(child.title) === name
+            ));
+            if (existing) return existing;
+            const node: any = {
+                id: Date.now() + Math.floor(Math.random() * 100000),
+                doc_id: params.id ? parseInt(params.id) : 0,
+                n_id: 0,
+                p_id: parent.n_id || 0,
+                title: `${prefix}.${nextNo(parent.children, prefix)} ${name}`,
+                text: "",
+                label: "__auto_req_group",
+                table: null,
+                children: [],
+            };
+            parent.children = [...parent.children, node];
+            return node;
+        };
+        const placeDetail = (parent: any, name: string, detailNode: any) => {
+            const prefix = headingOf(parent.title) || "7";
+            parent.children = parent.children || [];
+            detailNode.title = `${prefix}.${nextNo(parent.children, prefix)} ${name}`;
+            parent.children = [...parent.children, detailNode];
+        };
+        rows.forEach((row) => {
+            const detailNode = detailByCode.get(row.code);
+            if (!detailNode) return;
+            if (!row.function && !row.sub_function) {
+                placeDetail(reqRoot, row.module, detailNode);
+                return;
+            }
+            const moduleNode = row.module ? findOrCreate(reqRoot, row.module) : reqRoot;
+            if (!row.sub_function) {
+                placeDetail(moduleNode, row.function, detailNode);
+                return;
+            }
+            const functionNode = row.function ? findOrCreate(moduleNode, row.function) : moduleNode;
+            placeDetail(functionNode, row.sub_function, detailNode);
+        });
+        const hasTableContent = (table: any) => !!(
+            table && Array.isArray(table.headers) && table.headers.length > 0 &&
+            ((Array.isArray(table.rows) && table.rows.length > 0) || (Array.isArray(table.cells) && table.cells.length > 0))
+        );
+        const pruneEmpty = (list: any[]): any[] => (list || [])
+            .map((node: any) => ({ ...node, children: pruneEmpty(node.children || []) }))
+            .filter((node: any) => (
+                (node.children || []).length > 0 ||
+                !!String(node.text || "").trim() ||
+                hasTableContent(node.table) ||
+                !!node.img_url ||
+                !!readCode(node)
+            ));
+        reqRoot.children = pruneEmpty(reqRoot.children || []);
+        const minCode = (node: any): string => [
+            readCode(node),
+            ...(node.children || []).map((child: any) => minCode(child)),
+        ].filter(Boolean).sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))[0] || "";
+        const renumber = (node: any) => {
+            const prefix = headingOf(node.title);
+            const children = [...(node.children || [])];
+            if (!prefix || !children.length) {
+                children.forEach(renumber);
+                return;
+            }
+            children.sort((left, right) => {
+                const leftCode = minCode(left);
+                const rightCode = minCode(right);
+                if (!leftCode && !rightCode) return 0;
+                if (!leftCode) return -1;
+                if (!rightCode) return 1;
+                return leftCode.localeCompare(rightCode, undefined, { numeric: true });
+            });
+            node.children = children.map((child: any, index: number) => {
+                const name = nameOf(child.title);
+                const next = { ...child, title: name ? `${prefix}.${index + 1} ${name}` : child.title };
+                renumber(next);
+                return next;
+            });
+        };
+        const fillMissingTitles = (list: any[]) => {
+            (list || []).forEach((node: any) => {
+                fillMissingTitles(node.children || []);
+                if (!isDetail(node) || nameOf(node.title)) return;
+                const kv = isFunctionalKvTable(node.table) ? node.table : undefined;
+                const leftCode = kv?.headers?.[0]?.code;
+                const rightCode = kv?.headers?.[1]?.code;
+                const nameRow = (kv?.rows || []).find((item: any) => String(item?.[leftCode] || "").includes("需求名称"));
+                const reqName = normalizeReqText(nameRow?.[rightCode]);
+                if (!reqName) return;
+                const prefix = headingOf(node.title);
+                node.title = prefix ? `${prefix} ${reqName}` : reqName;
+            });
+        };
+        // 先补名字再重编号，否则补出来的标题没有章节号。
+        fillMissingTitles(reqRoot.children || []);
+        renumber(reqRoot);
+        return cloned;
+    };
+
     const syncTreeWithSrsTableState = (
         tree: TreeNode[],
         srsTableState: { srsTableData: any[]; srsOtherReqData: any[]; srsChangeTables: any[] },
@@ -3378,41 +3522,7 @@ export default () => {
             srsTableState.srsOtherReqData || [],
             otherReqSyncOptions,
         );
-        const reqRows = (srsTableState.srsTableData || []).map((item: any) => ({
-            module: normalizeReqText(item?.module),
-            function: normalizeReqText(item?.function),
-            sub_function: normalizeReqText(item?.sub_function),
-        })).filter((item: any) => item.module);
-        const headingOf = (title?: string) => String(title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
-        const nameOf = (title?: string) => normalizeReqText(String(title || "").trim().replace(/^\d+(?:\.\d+)*\s*/, ""));
-        const isNumberedChapter = (title?: string) => /^\d+(?:\.\d+)/.test(String(title || "").trim());
-        const restoreLeafChapterTitles = (node: TreeNode, ancestors: TreeNode[] = []): TreeNode => {
-            const children = (node.children || []).map((child) => restoreLeafChapterTitles(child, [...ancestors, node]));
-            const heading = headingOf(node.title);
-            if (!heading.startsWith("7.") && heading !== "7") return { ...node, children };
-            const myName = nameOf(node.title);
-            const parentName = nameOf(ancestors[ancestors.length - 1]?.title);
-            const depth = heading === "7" ? 1 : heading.split(".").length;
-            let matched: Array<{ module: string; function: string; sub_function: string }> = [];
-            if (depth === 2) {
-                matched = reqRows.filter((row) => row.module === myName && !row.sub_function && row.function && row.function !== row.module);
-            } else if (depth >= 3) {
-                matched = reqRows.filter((row) => row.module === parentName && row.function === myName && !!row.sub_function);
-            }
-            if (!matched.length) return { ...node, children };
-            let index = 0;
-            const nextChildren = children.map((child) => {
-                const hasNumberedChild = (child.children || []).some((grand) => isNumberedChapter(grand.title));
-                if (!isNumberedChapter(child.title) || hasNumberedChild) return child;
-                const row = matched[index++];
-                const leafName = row?.sub_function || row?.function;
-                const prefix = headingOf(child.title);
-                if (!row || !leafName || !prefix || nameOf(child.title) !== row.module) return child;
-                return { ...child, title: `${prefix} ${leafName}` };
-            });
-            return { ...node, children: nextChildren };
-        };
-        return (syncedWithOther || []).map((node) => restoreLeafChapterTitles(node));
+        return normalizeReqChapterHierarchyByTable(syncedWithOther, srsTableState.srsTableData || []);
     };
     const syncTreeWithSrsTableStateForDisplay = (
         tree: TreeNode[],

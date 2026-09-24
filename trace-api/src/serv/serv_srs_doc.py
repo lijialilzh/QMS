@@ -2963,6 +2963,9 @@ class Server(object):
             reqs_by_type.setdefault(row.type_code or "", []).append(row)
         changed = False
 
+        def norm_header_text(value):
+            return re.sub(r"\s+", "", str(value or "").replace("：", ":").rstrip(":").strip()).lower()
+
         def normalize_change_table_node_titles(items: List[SrsNodeForm]):
             nonlocal changed
             for item in items or []:
@@ -2970,8 +2973,17 @@ class Server(object):
                 node_title = str(getattr(item, "title", "") or "").strip()
                 table_name = getattr(table, "name", None) if table else None
                 resolved_title = table_name or node_title or getattr(item, "label", "") or ""
+                # 只清「变更需求表」节点的标题；第 7 章功能描述章节即使名字里带「变更」也要保留标题。
+                header_names = [
+                    norm_header_text(getattr(header, "name", "") or "")
+                    for header in (getattr(table, "headers", None) or [])
+                ] if table is not None else []
+                is_change_req_table = (
+                    any("需求编号" in name or name in ("srscode", "code") for name in header_names)
+                    and any("功能" in name for name in header_names)
+                )
                 if (
-                    table is not None
+                    is_change_req_table
                     and "变更" in str(resolved_title or "")
                     and node_title
                     and not re.match(r"^导入表格\d*$", node_title)
