@@ -5,8 +5,8 @@
 #   - 各文档模块在正文末尾追加一个「评审记录」章节（内容模板化）。
 #   - 评审时间从产品时间线按「文档名关键字 + 评审」自动获取，格式 yyyy.MM.dd。
 #   - 提供导出 Word 时评审内容表/参评人员表的合并渲染（类别列纵向合并、整行横向合并）。
-# 说明：内容取自各文档对应的《XXX 附：评审记录》模板；勾选统一用「■通过 □存在问题」。
-#      选中标记用实心方块 ■(U+25A0)，与空心 □(U+25A1) 同族且非 emoji，避免 Word 渲染成彩色 emoji。
+# 说明：内容取自各文档对应的《XXX 附：评审记录》模板；勾选统一用「☑ 通过    □ 存在问题」。
+#      选中用 ☑(框内对号) 加文本呈现选择符，未选空框 □，框与文字之间留空，两项之间再拉开。
 
 import re
 import base64
@@ -45,8 +45,40 @@ def sign_mode_enabled() -> bool:
     return _sign_mode_var.get()
 
 
-# 选中用 ☑(框内对号)，加文本呈现选择符(U+FE0E)避免渲染成彩色 emoji；未选空框 □。
-CHECK = "\u2611\ufe0e通过 □存在问题"
+# 选中用 Wingdings 方框对号，未选空框。不用 ☑ 字符，Word 会把它画成灰色表情。
+# 框与文字之间留一格，两项之间留四格。
+CHECK = "\u2611\ufe0e 通过    \u25a1 存在问题"
+_REVIEW_CHECK_LINE = re.compile(r"^[☑✓✔■]\ufe0e?\s*通过\s*[□☐]\ufe0e?\s*存在问题\s*$")
+
+
+def is_review_check_line(text: str) -> bool:
+    return bool(_REVIEW_CHECK_LINE.match(str(text or "").strip()))
+
+
+def write_review_check_paragraph(para):
+    """评审结论勾选写成「☑ 通过    □ 存在问题」：单色框，框与字之间一格，两项之间四格。"""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    def add(text, font_name, size=10.5):
+        run = para.add_run(text)
+        run.font.size = Pt(size)
+        run.font.bold = False
+        run.font.italic = False
+        run.font.name = font_name
+        rpr = run._element.get_or_add_rPr()
+        rfonts = rpr.find(qn("w:rFonts"))
+        if rfonts is None:
+            rfonts = OxmlElement("w:rFonts")
+            rpr.append(rfonts)
+        for attr in ("w:ascii", "w:hAnsi", "w:eastAsia", "w:cs"):
+            rfonts.set(qn(attr), font_name)
+
+    # Wingdings: 0xFE 方框对号，0xA8 空框。与正文同一字号，避免表情符号撑高行。
+    add("\u00fe", "Wingdings")
+    add(" 通过    ", "宋体")
+    add("\u00a8", "Wingdings")
+    add(" 存在问题", "宋体")
 
 # 各模块的评审记录模板：items 为 [类别, 评审项] 列表，persons 为参评人员 6 列行
 REVIEW_DEFS = {
@@ -1421,8 +1453,14 @@ def render_review_grid(document, grid, set_cell, header_rows=1, **_ignore):
             r = r2 + 1
         else:
             r += 1
-    # 加大行高，避免签名图/文字压到单元格边框
+    # 加大行高，避免签名图/文字压到单元格边框。行高固定至少 40 磅后，
+    # 各模块 set_cell 对左对齐格子用的是顶端对齐，单行文字会贴在上沿；这里统一改回上下居中。
     for _row in table.rows:
         _row.height = Pt(40)
         _row.height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST
+        for _cell in _row.cells:
+            _cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            for _para in _cell.paragraphs:
+                _para.paragraph_format.space_before = Pt(0)
+                _para.paragraph_format.space_after = Pt(0)
     document.add_paragraph()

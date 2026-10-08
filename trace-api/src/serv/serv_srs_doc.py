@@ -4047,17 +4047,79 @@ class Server(object):
         ]
         return Resp.resp_ok(data=results)
 
-    def __write_srs_review_appendix(self, docx, prod_id):
-        """导出末尾追加「附件一 评审结论」，表格样式与软件开发计划/详细设计评审记录一致。"""
+    def __is_saved_review_node(self, node):
+        title = re.sub(r"\s+", "", str(getattr(node, "title", "") or ""))
+        ref = str(getattr(node, "ref_type", "") or "")
+        return ref == "review" or title in ("评审记录", "附件一评审结论") or "评审记录" in title
+
+    def __grid_from_saved_review_table(self, table, with_header: bool):
+        headers = getattr(table, "headers", None) or []
+        codes = [getattr(header, "code", "") or "" for header in headers]
+        names = [str(getattr(header, "name", "") or "") for header in headers]
+        rows = getattr(table, "rows", None) or []
+        if not codes or not rows:
+            return None
+        grid = [names] if with_header else []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            grid.append(["" if row.get(code) is None else str(row.get(code)) for code in codes])
+        return grid or None
+
+    def __saved_review_grids(self, roots):
+        """已保存的「附件一 评审结论」按树内表格导出，不用模板覆盖用户改过的单元格。"""
+        found = None
+
+        def walk(nodes):
+            nonlocal found
+            for node in nodes or []:
+                if found is not None:
+                    return
+                if self.__is_saved_review_node(node) and getattr(node, "table", None):
+                    found = node
+                    return
+                walk(getattr(node, "children", None) or [])
+
+        walk(roots or [])
+        if found is None:
+            return None
+        table = found.table
+        header_text = "".join(str(getattr(header, "name", "") or "") for header in (table.headers or []))
+        content = self.__grid_from_saved_review_table(
+            table,
+            with_header=("评审内容" in header_text and "评审项" in header_text),
+        )
+        if not content:
+            return None
+        grids = [content]
+        for extra in getattr(table, "extra_tables", None) or []:
+            extra_table = getattr(extra, "table", None)
+            if not extra_table:
+                continue
+            extra_header = "".join(str(getattr(header, "name", "") or "") for header in (extra_table.headers or []))
+            is_person = "人员角色" in extra_header and "签字" in extra_header
+            extra_grid = self.__grid_from_saved_review_table(extra_table, with_header=not is_person)
+            if extra_grid:
+                grids.append(extra_grid)
+        return grids
+
+    def __write_srs_review_appendix(self, docx, prod_id, roots=None):
+        """导出末尾追加「附件一 评审结论」，表格样式与软件开发计划/详细设计评审记录一致。
+        树上已有保存过的评审表时用保存内容；没有才按模板生成。"""
         from docx.enum.text import WD_ALIGN_PARAGRAPH
         from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
         from .serv_utils import docx_util
 
-        keywords = (serv_review_util.REVIEW_DEFS.get("srs") or {}).get("name_keywords") or ["需求规格说明", "需求规格"]
-        rev_date = serv_review_util.review_date(prod_id, keywords) if prod_id else ""
-        sec = serv_review_util.build_review_section("srs", rev_date, prod_id)
-        if not sec:
-            return
+        saved_grids = self.__saved_review_grids(roots)
+        if saved_grids:
+            review_tables = saved_grids
+        else:
+            keywords = (serv_review_util.REVIEW_DEFS.get("srs") or {}).get("name_keywords") or ["需求规格说明", "需求规格"]
+            rev_date = serv_review_util.review_date(prod_id, keywords) if prod_id else ""
+            sec = serv_review_util.build_review_section("srs", rev_date, prod_id)
+            if not sec:
+                return
+            review_tables = sec.get("tables") or []
         docx.add_page_break()
         title = docx.add_paragraph()
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -4087,13 +4149,19 @@ class Server(object):
             for i, line in enumerate(lines):
                 para = cell.paragraphs[0] if i == 0 else cell.add_paragraph()
                 para.alignment = align
-                para.paragraph_format.line_spacing = 1.3
-                docx_util.fonted_txt(para, line, font_size=10.5, bold=bold)
+                para.paragraph_format.space_before = Pt(0)
+                para.paragraph_format.space_after = Pt(0)
+                if serv_review_util.is_review_check_line(line):
+                    para.paragraph_format.line_spacing = 1.0
+                    serv_review_util.write_review_check_paragraph(para)
+                else:
+                    para.paragraph_format.line_spacing = 1.3
+                    docx_util.fonted_txt(para, line, font_size=10.5, bold=bold)
             cell.vertical_alignment = (
                 WD_CELL_VERTICAL_ALIGNMENT.CENTER if align == WD_ALIGN_PARAGRAPH.CENTER else WD_CELL_VERTICAL_ALIGNMENT.TOP
             )
 
-        for t_idx, table in enumerate(sec.get("tables") or []):
+        for t_idx, table in enumerate(review_tables):
             serv_review_util.render_review_grid(docx, table, set_cell, merge_col0=(t_idx == 0), merge_full=True)
 
     async def export_srs_doc(self, output, doc_id, snapshot: SrsDocForm = None, *args, **kwargs):
@@ -5468,7 +5536,7 @@ class Server(object):
                     __add_blank_lines(docx, 5)
                 first_section = False
 
-            self.__write_srs_review_appendix(docx, srs_doc.product_id)
+            self.__write_srs_review_appendix(docx, srs_doc.product_id, srs_doc.content)
             docx_util.fill_toc_cache(docx)
             docx.save(output)
             output.seek(0)
