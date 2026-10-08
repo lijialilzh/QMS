@@ -4513,6 +4513,8 @@ class Server(object):
             return None
 
         async def __export_db_req_list_table(req_kind: str, docx, font_def, is_other: bool = False):
+            if req_kind == "main":
+                main_req_exported["value"] = True
             db_table = __find_req_table_in_export_sources(req_kind)
             if db_table:
                 prepared = __prepare_srs_table_for_word_export(db_table)
@@ -4531,6 +4533,8 @@ class Server(object):
         exported_req_labels = set()
         exported_req_tables = set()
         change_req_export_done = {"value": False}
+        # 产品需求列表是否已导出：导入的文档在 2.1 已有需求表时，补回的需求区节点不再重复输出
+        main_req_exported = {"value": False}
         other_req_title_written = {"value": False}
         written_table_caption_norms = set()
 
@@ -4874,7 +4878,21 @@ class Server(object):
             label = __child_label_text(child)
             return "其他需求列表" in label or label.strip() == "其他需求" or label.startswith("其他需求")
 
+        def __is_req_list_table(table):
+            # 需求列表表格：表头含「需求编号」和「功能」。功能描述 KV 表（字段/内容）不算，
+            # 否则名字里带「变更」的功能描述章节会被当成变更需求表，表就从章节里消失了。
+            names = [
+                re.sub(r"\s+", "", str(getattr(header, "name", "") or "")).lower()
+                for header in (getattr(table, "headers", None) or [])
+            ]
+            if not names:
+                return False
+            has_code = any("需求编号" in name or name in ("srscode", "code") for name in names)
+            return has_code and any("功能" in name for name in names)
+
         def __is_snapshot_change_req_child(child):
+            if not __is_req_list_table(getattr(child, "table", None)):
+                return False
             if "变更" in __child_label_text(child):
                 return True
             return "变更" in str(getattr(getattr(child, "table", None), "name", "") or "")
@@ -5036,6 +5054,17 @@ class Server(object):
             for node in nodes or []:
                 if __is_imported_catalog_root(node):
                     continue
+                # 需求区节点（ref_type=srs_reqs）只负责在没有需求表时从库里补出列表。
+                # 导入文档的 2.1 已经导出产品需求列表后，编辑页还会把变更表挂到这个节点上，
+                # 节点因此带表子节点。这时仍要整节点跳过，否则会多出 label「产品功能列表如下：」
+                # 和正文「变更需求」。变更表若还没写出，先按库补一次再跳过。
+                if (
+                    str(getattr(node, "ref_type", "") or "") == RefTypes.srs_reqs.value
+                    and main_req_exported["value"]
+                ):
+                    if not change_req_export_done["value"]:
+                        await __export_change_req_from_db(docx, font_def)
+                    continue
                 raw_node_title = getattr(node, "title", "") or ""
                 if __is_imported_catalog_title(raw_node_title):
                     continue
@@ -5085,9 +5114,11 @@ class Server(object):
                 if (
                     node.table and
                     node.table.headers and
-                    "变更" in str(getattr(node.table, "name", "") or "")
+                    "变更" in str(getattr(node.table, "name", "") or "") and
+                    __is_req_list_table(node.table)
                 ):
-                    # 变更需求表仅从数据库导出，跳过快照中的独立变更表节点
+                    # 变更需求表仅从数据库导出，跳过快照中的独立变更表节点。
+                    # 仅限需求列表表格：功能描述 KV 表的表名可能是带「变更需求」的章节名，不能跳过。
                     continue
                 node_text_for_export = __strip_imported_catalog_lines(node.text)
                 imported_table_children = [
@@ -5102,7 +5133,18 @@ class Server(object):
                     lines = (node_text_for_export or "").splitlines()
                     has_caption = any(__is_table_caption_line(line) for line in lines)
                     has_image_caption = any(__is_image_caption_line(line) for line in lines)
-                    has_change_req_marker = "变更需求" in node_text_for_export or "变更需求" in node_title_for_export
+                    # 只有确实带「需求列表」表格的节点才算变更需求表槽位；
+                    # 功能描述章节名里带「变更需求」时不能走该分支，否则它的 KV 表不会被导出。
+                    has_change_req_marker = (
+                        ("变更需求" in node_text_for_export or "变更需求" in node_title_for_export)
+                        and (
+                            __is_req_list_table(getattr(node, "table", None))
+                            or any(
+                                __is_req_list_table(getattr(child, "table", None))
+                                for child in (node.children or [])
+                            )
+                        )
+                    )
                     has_req_list_pair = __is_req_list_export_slot(
                         node_text_for_export,
                         getattr(node, "label", "") or "",

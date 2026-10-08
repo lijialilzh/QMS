@@ -168,7 +168,8 @@ def save_tab2docx(tab: Table,  docx: Document):
             # 不显示表头的表（如功能描述「字段/内容」KV 表）重建 cells 时首行写的是表头名，
             # 导出要一并去掉，否则 Word 里多出一行「字段/内容」。
             first_is_header = (not tab.show_header) and bool(header_names) and first_values == header_names
-            if first_empty or first_is_header:
+            # 只有还有数据行时才去掉首行，避免把整张表删空
+            if (first_empty or first_is_header) and len(export_cells) > 1:
                 export_cells = export_cells[1:]
         row_count = len(export_cells)
         col_count = max((len(row) for row in export_cells), default=0)
