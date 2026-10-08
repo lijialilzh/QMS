@@ -1108,13 +1108,17 @@ export async function remapProductBoundDocImages(
     const walk = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
         const boundType = resolveProductBoundDocImageRefType(node);
         const mappedUrl = boundType ? fileMaps.get(boundType) : undefined;
+        const importedUrl = boundType
+            ? String((node.children || []).find((child) => isImportedImageNode(child) && child.img_url)?.img_url || "").trim()
+            : "";
+        const ownUrl = String(node.img_url || "").trim() || importedUrl;
         const nextChildren = boundType
             ? (node.children || []).filter((child) => !isImportedImageNode(child))
             : (node.children || []);
         return {
             ...node,
             ...(boundType && !node.ref_type ? { ref_type: boundType } : {}),
-            img_url: boundType ? (mappedUrl || node.img_url || "") : (node.img_url || ""),
+            img_url: boundType ? (ownUrl || mappedUrl || "") : (node.img_url || ""),
             children: walk(nextChildren),
         };
     });

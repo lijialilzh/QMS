@@ -49,7 +49,7 @@ SRS 编辑页主体是文档树（`TreeStructure`）：展开/折叠章节、编
 ### 6.2 ref_type 渲染语义
 - `srs_reqs` / `srs_reqs_2`：预览嵌入标准/其他需求表（只读态 `shouldShowSrsReqPreviewTables`）。标准模板把该节点作为「2 软件整体架构要求」下、紧挨 2.1 的同级节点；**不进左目录**，点「2.1 软件总体描述」时内联展示。
 - `srs_reqds`：需求列表入口。
-- `img_topo`（2.2）/ `img_struct`（2.3）：产品图表库图片。编辑页上传带当前 SRS `doc_version`；打开/刷新按该版本匹配，匹配不到时保留节点已有 `img_url`。
+- `img_topo`（2.2）/ `img_struct`（2.3）：产品图表库图片。编辑页上传带当前 SRS `doc_version`。打开/刷新时，本章已有 `img_url`（含导入原图，或只挂在「导入图片」子节点上的图）就保留，不用图示旧图覆盖；本章没有图时，才按该版本匹配图示，匹配不到则留空。
 
 ### 6.3 删除节点的特殊路径（重要）
 - **删除变更表节点必须走 `onDeleteSrsChangeTable`**（不能只清 `node.table`），否则 DB 残留 srs_type/srs_req。详见 [25_变更需求表管理.md](./25_变更需求表管理.md)。

@@ -57,7 +57,7 @@ from ..obj.tobj_srs_doc import SrsDocForm, SrsNodeForm
 from ..utils.sql_ctx import db
 from ..utils.i18n import ts
 from ..utils import get_uuid
-from ..obj import Page, Resp
+from ..obj import Page, Resp, c_ok
 from .serv_srs_req import Server as ServSrsReq
 from .serv_srs_reqd import Server as ServSrsReqd
 from .serv_sds_trace import NAME_DICT
@@ -244,9 +244,9 @@ class Server(object):
                         if "media/" in target.replace("\\", "/"):
                             normalized = target.replace("\\", "/").lstrip("/")
                             rid_to_media[rid] = normalized if normalized.startswith("word/") else f"word/{normalized}"
-                text_only = re.sub(r"<[^>]+>", "", doc_xml)
-                pos_22_candidates = [p for p in (text_only.find("2.2"), text_only.find("物理拓扑")) if p >= 0]
-                pos_23_candidates = [p for p in (text_only.find("2.3"), text_only.find("系统结构")) if p >= 0]
+                # 图片位置取自 document.xml，章节位置必须在同一份 XML 上算，不能用去标签后的文本下标。
+                pos_22_candidates = [p for p in (doc_xml.find("2.2"), doc_xml.find("物理拓扑")) if p >= 0]
+                pos_23_candidates = [p for p in (doc_xml.find("2.3"), doc_xml.find("系统结构")) if p >= 0]
                 pos_22 = min(pos_22_candidates) if pos_22_candidates else -1
                 pos_23 = min(pos_23_candidates) if pos_23_candidates else -1
                 heading_category_map = {
@@ -522,16 +522,20 @@ class Server(object):
         docx_bytes: bytes = None,
         doc_id: int = None,
     ):
+        # 以导入文档里 2.2/2.3 已经挂上的原图为准，用它替换该版本图示里的旧图。
+        # zip 只补树和正文都没取到的章节，避免把文中其它图写进图示。
         picked = {}
-        if docx_bytes:
-            picked.update(self.__pick_doc_images_from_docx_zip(docx_bytes, docx))
+        for category, img_url in self.__pick_doc_images_from_tree(nodes).items():
+            if img_url:
+                picked[category] = img_url
         if docx is not None:
             for category, img_url in self.__pick_doc_images_from_docx(docx).items():
-                if img_url:
+                if category not in picked and img_url:
                     picked[category] = img_url
-        for category, img_url in self.__pick_doc_images_from_tree(nodes).items():
-            if category not in picked and img_url:
-                picked[category] = img_url
+        if docx_bytes:
+            for category, img_url in self.__pick_doc_images_from_docx_zip(docx_bytes, docx).items():
+                if category not in picked and img_url:
+                    picked[category] = img_url
         if doc_id:
             for category, img_url in self.__pick_doc_images_from_doc_nodes(doc_id).items():
                 if category not in picked and img_url:
@@ -2878,7 +2882,7 @@ class Server(object):
                     )
 
             resp = await self.add_srs_doc(form)
-            if resp.code == 200 and resp.data and resp.data.id:
+            if resp.code == c_ok and resp.data and resp.data.id:
                 self.__upsert_imported_srs_reqs(resp.data.id, srs_req_rows)
                 # 兜底：再次按"已入库的文档树节点"扫描一次变更需求表，确保 Word 自带的
                 # "X.X 变更需求"表行被入到 SrsType+SrsReq，不依赖前面解析路径是否漏识别。
@@ -3685,15 +3689,29 @@ class Server(object):
             return RefTypes.img_struct.value
         return None
 
+    def __first_imported_image_url(self, node: SrsNodeForm):
+        for child in getattr(node, "children", None) or []:
+            title = str(getattr(child, "title", "") or "").strip()
+            img_url = str(getattr(child, "img_url", "") or "").strip()
+            if img_url and re.match(r"^导入图片\d*$", title):
+                return img_url
+        return ""
+
     def __hydrate_tree_product_doc_images(self, nodes: List[SrsNodeForm], prod_imgs: dict):
-        if not nodes or not prod_imgs:
+        if not nodes:
             return
+        prod_imgs = prod_imgs or {}
         for node in nodes or []:
             bound_type = self.__resolve_product_bound_doc_image_ref_type(node)
             if bound_type:
                 if not getattr(node, "ref_type", None):
                     node.ref_type = bound_type
-                if prod_imgs.get(bound_type):
+                # 章节上已有导入原图时保留，不用图示里的旧图盖掉。
+                # 原图只挂在「导入图片」子节点上时，先提到本章再决定要不要用图示补空。
+                own_url = str(getattr(node, "img_url", "") or "").strip() or self.__first_imported_image_url(node)
+                if own_url:
+                    node.img_url = own_url
+                elif prod_imgs.get(bound_type):
                     node.img_url = prod_imgs[bound_type]
             if node.children:
                 self.__hydrate_tree_product_doc_images(node.children, prod_imgs)
