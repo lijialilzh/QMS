@@ -13,12 +13,21 @@ import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 let _seq = 0;
 const genKey = () => `r${Date.now().toString(36)}_${(_seq++).toString(36)}`;
 
+const SUP_DIGITS = "⁰¹²³⁴⁵⁶⁷⁸⁹";
+const showExponent = (text: any): string =>
+    String(text ?? "").replace(/10-(\d)(?!\d)/g, (_m, d) => `10⁻${SUP_DIGITS[Number(d)] || d}`);
+
 const ensureKeys = (nodes: any[]): any[] =>
     (nodes || []).map((n: any) => ({
         ...n,
         _key: n._key || genKey(),
-        body: n.body ?? "",
-        tables: Array.isArray(n.tables) ? n.tables : [],
+        body: showExponent(n.body ?? ""),
+        ...(n.body_after != null ? { body_after: showExponent(n.body_after) } : {}),
+        tables: (Array.isArray(n.tables) ? n.tables : []).map((tb: any[]) =>
+            (tb || []).map((row: any[]) =>
+                (row || []).map((c: any) => (typeof c === "string" && !c.startsWith("data:image") ? showExponent(c) : c))
+            )
+        ),
         images: Array.isArray(n.images) ? n.images : [],
         children: ensureKeys(n.children || []),
     }));
@@ -46,6 +55,68 @@ const removeNode = (nodes: any[], key: string): any[] =>
 const firstKey = (nodes: any[]): string => (nodes && nodes[0] ? nodes[0]._key : "");
 
 const stripNum = (title: string): string => String(title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();
+
+const isTeamTable = (tb: any[]): boolean => {
+    const header = (tb?.[0] || []).slice(0, 3).map((c: any) => String(c ?? "").trim());
+    return header[0] === "项目角色" && header[1] === "姓名" && header[2] === "职责";
+};
+
+const mergeCellText = (cell: any): string => {
+    const text = String(cell ?? "").trim();
+    if (!text || text.startsWith("data:image")) return "";
+    return text;
+};
+
+// 相邻且内容相同的格子合并：先横向，再向下扩展成同样宽的矩形。空单元格、签名图不参与。
+const duplicateMerges = (tb: any[], rowBlocked?: (row: any[]) => boolean) => {
+    const n = (tb || []).length;
+    const cols = Math.max(0, ...(tb || []).map((row: any[]) => (row || []).length));
+    const used = Array.from({ length: n }, () => Array(cols).fill(false));
+    const anchors: Record<string, { rs: number; cs: number }> = {};
+    const skip = new Set<string>();
+    for (let r = 0; r < n; r++) {
+        if (rowBlocked && rowBlocked(tb[r] || [])) {
+            for (let c = 0; c < cols; c++) used[r][c] = true;
+        }
+    }
+    for (let r = 0; r < n; r++) {
+        for (let c = 0; c < cols; c++) {
+            if (used[r][c]) continue;
+            const val = mergeCellText(tb[r]?.[c]);
+            if (!val) {
+                used[r][c] = true;
+                continue;
+            }
+            let w = 1;
+            while (c + w < cols && !used[r][c + w] && mergeCellText(tb[r]?.[c + w]) === val) w += 1;
+            let h = 1;
+            while (r + h < n) {
+                let ok = true;
+                for (let k = 0; k < w; k++) {
+                    if (used[r + h][c + k] || mergeCellText(tb[r + h]?.[c + k]) !== val) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok && c + w < cols && !used[r + h][c + w] && mergeCellText(tb[r + h]?.[c + w]) === val) ok = false;
+                if (!ok) break;
+                h += 1;
+            }
+            for (let rr = r; rr < r + h; rr++) {
+                for (let cc = c; cc < c + w; cc++) used[rr][cc] = true;
+            }
+            if (h > 1 || w > 1) {
+                anchors[`${r},${c}`] = { rs: h, cs: w };
+                for (let rr = r; rr < r + h; rr++) {
+                    for (let cc = c; cc < c + w; cc++) {
+                        if (rr !== r || cc !== c) skip.add(`${rr},${cc}`);
+                    }
+                }
+            }
+        }
+    }
+    return { anchors, skip };
+};
 
 // 编号：封面/修订记录/附录不编号；其余正文顶级 1/2/3，子级 1.1...
 const NO_NUM = new Set(["cover", "revision", "appendix"]);
@@ -153,11 +224,15 @@ export default () => {
     const active = findNode(data.sections, data.activeKey);
     const updateTables = (tables: any[]) => patchNode(data.activeKey, { tables });
     const setCell = (ti: number, r: number, ci: number, val: string) => {
-        const tables = (active.tables || []).map((tb: any[], i: number) =>
-            i !== ti ? tb : tb.map((row: any[], ri: number) =>
-                ri !== r ? row : row.map((cell: any, cc: number) => (cc === ci ? val : cell))
-            )
-        );
+        const tables = (active.tables || []).map((tb: any[], i: number) => {
+            if (i !== ti) return tb;
+            const span = isTeamTable(tb) ? undefined : duplicateMerges(tb).anchors[`${r},${ci}`];
+            const rs = span?.rs || 1;
+            const cs = span?.cs || 1;
+            return tb.map((row: any[], ri: number) => (
+                ri < r || ri >= r + rs ? row : row.map((cell: any, cc: number) => (cc >= ci && cc < ci + cs ? val : cell))
+            ));
+        });
         updateTables(tables);
     };
     const insertRowAfter = (ti: number, r: number) => {
@@ -322,7 +397,7 @@ export default () => {
                     <div className="pdp-nav">
                         <div className="pdp-nav-head">目录</div>
                         {!readonly && (
-                            <div className="pdp-nav-hint">点章节改名/编辑，右侧 + 加子章节、🗑 删除；编号按层级自动生成（封面/修订记录不编号）。产品名称/版本/项目时间自动填入「范围」「风险管理活动计划」。</div>
+                            <div className="pdp-nav-hint">点章节改名/编辑，右侧 + 加子章节、🗑 删除；编号按层级自动生成（封面/修订记录不编号）。产品名称/型号/版本/项目时间自动填入「范围」「风险管理活动计划」。风险管理小组表的姓名从风险参与人员自动获取，该表不可改。</div>
                         )}
                         {renderNav(data.sections, 0)}
                         {!readonly && (
@@ -351,7 +426,7 @@ export default () => {
                                     <div className="pdp-label">正文{isAuto ? "（产品信息/项目时间自动获取）" : ""}</div>
                                     <Input.TextArea
                                         autoSize={{ minRows: 3, maxRows: 24 }}
-                                        value={active.body ?? ""}
+                                        value={showExponent(active.body ?? "")}
                                         disabled={readonly || isAuto}
                                         placeholder="本章节正文内容，可多行"
                                         onChange={(e) => patchNode(active._key, { body: e.target.value })}
@@ -364,25 +439,18 @@ export default () => {
                                     const isFullRow = (row: any[]) => isAppendix && row.length > 1
                                         && String(row?.[0] ?? "").trim() !== ""
                                         && row.slice(1).every((c: any) => String(c ?? "").trim() === "");
-                                    // 第一列连续相同非空项纵向合并（跳过表头与整行合并的行）
-                                    const vSpan: Record<number, number> = {};
-                                    const vSkip = new Set<number>();
-                                    if (isAppendix) {
-                                        let r = 1;
-                                        while (r < tb.length) {
-                                            const val = String(tb[r]?.[0] ?? "").trim();
-                                            if (isFullRow(tb[r]) || !val) { r++; continue; }
-                                            let j = r + 1;
-                                            while (j < tb.length && !isFullRow(tb[j]) && String(tb[j]?.[0] ?? "").trim() === val) j++;
-                                            if (j - 1 > r) { vSpan[r] = j - r; for (let k = r + 1; k < j; k++) vSkip.add(k); }
-                                            r = j;
-                                        }
-                                    }
+                                    const teamLocked = isTeamTable(tb);
+                                    const merges = teamLocked ? { anchors: {}, skip: new Set<string>() } : duplicateMerges(tb, (row) => {
+                                        if (!isAppendix) return false;
+                                        if (isFullRow(row)) return true;
+                                        const label = String(row?.[0] ?? "").trim();
+                                        return label.startsWith("其他参会人员") || label.startsWith("其他参评人员");
+                                    });
                                     return (
                                         <div className="pdp-table-block" key={ti}>
                                             <div className="pdp-table-bar">
-                                                <span className="pdp-label">表格 {ti + 1}</span>
-                                                {!readonly && (
+                                                <span className="pdp-label">表格 {ti + 1}{teamLocked ? "（风险参与人员自动获取）" : ""}</span>
+                                                {!readonly && !teamLocked && (
                                                     <Space size={4}>
                                                         <Button size="small" onClick={() => addCol(ti)}>＋列</Button>
                                                         <Button size="small" disabled={(tb[0] || []).length <= 1} onClick={() => delCol(ti, (tb[0] || []).length - 1)}>－列</Button>
@@ -414,21 +482,26 @@ export default () => {
                                                                             className="pdp-cell"
                                                                             autoSize={{ minRows: 1, maxRows: 8 }}
                                                                             value={row[0] ?? ""}
-                                                                            disabled={readonly}
+                                                                            disabled={readonly || teamLocked}
                                                                             style={centerRow ? { textAlign: "center" } : undefined}
                                                                             onChange={(e) => setCell(ti, r, 0, e.target.value)}
                                                                         />
                                                                     </td>
                                                                 ) : (
                                                                     row.map((cell: any, ci: number) => {
-                                                                        if (ci === 0 && vSkip.has(r)) return null;
-                                                                        const rowSpan = ci === 0 ? vSpan[r] : undefined;
+                                                                        if (merges.skip.has(`${r},${ci}`)) return null;
+                                                                        const span = merges.anchors[`${r},${ci}`];
                                                                         return (
-                                                                            <td key={ci} className={r === 0 ? "head" : ""} rowSpan={rowSpan}>
+                                                                            <td
+                                                                                key={ci}
+                                                                                className={r === 0 ? "head" : ""}
+                                                                                rowSpan={span?.rs}
+                                                                                colSpan={span?.cs}
+                                                                                style={span ? { verticalAlign: "middle" } : undefined}>
                                                                                 {typeof cell === "string" && cell.startsWith("data:image") ? (
                                                                                     <span style={{ position: "relative", display: "inline-block" }}>
                                                                                         <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
-                                                                                        {!readonly && (
+                                                                                        {!readonly && !teamLocked && (
                                                                                             <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />
                                                                                         )}
                                                                                     </span>
@@ -436,8 +509,8 @@ export default () => {
                                                                                     <Input.TextArea
                                                                                         className="pdp-cell"
                                                                                         autoSize={{ minRows: 1, maxRows: 8 }}
-                                                                                        value={cell ?? ""}
-                                                                                        disabled={readonly}
+                                                                                        value={typeof cell === "string" ? showExponent(cell) : (cell ?? "")}
+                                                                                        disabled={readonly || teamLocked}
                                                                                         onChange={(e) => setCell(ti, r, ci, e.target.value)}
                                                                                     />
                                                                                 )}
@@ -445,7 +518,7 @@ export default () => {
                                                                         );
                                                                     })
                                                                 )}
-                                                                {!readonly && (
+                                                                {!readonly && !teamLocked && (
                                                                     <td className="pdp-row-op">
                                                                         <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
                                                                         {tb.length > 1 && (

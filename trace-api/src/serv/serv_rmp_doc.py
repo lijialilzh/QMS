@@ -16,7 +16,7 @@ from typing import List
 
 from sqlalchemy import delete, func, select
 from docx import Document
-from docx.shared import Inches, Pt
+from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.oxml import OxmlElement
@@ -27,6 +27,7 @@ from ..model.rmp_doc import RmpDoc
 from ..model.prod_dhf import ProdDhf
 from ..model.company_info import CompanyInfo
 from ..model.project_member import ProjectMember
+from ..model.risk_mgmt_doc import RiskParticipant
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
@@ -45,17 +46,7 @@ DOC_TITLE = "风险管理计划"
 # 修订日期从时间线「输出结果」匹配的文档名关键字（命中项取最早日期，参考产品开发计划）
 DATE_KEYWORDS = ["风险管理计划"]
 
-# 表1「风险管理小组」姓名列自动获取：按「项目角色」精确匹配项目人员职能关键字（按优先级取首个命中）
-TEAM_ROLE_KEYWORDS = {
-    "产品经理": ["产品经理", "项目经理"],
-    "模型负责人": ["模型负责人", "算法负责人"],
-    "产品开发负责人": ["产品开发负责人", "研发负责人", "开发负责人"],
-    "RA负责人": ["RA负责人", "RA", "法规负责人"],
-    "QA负责人": ["QA负责人", "QA", "质量负责人"],
-    "验证和确认负责人": ["验证和确认负责人", "验证负责人", "确认负责人"],
-    "执行负责人": ["执行负责人"],
-    "临床专家": ["临床专家"],
-}
+# 表1「风险管理小组」姓名列：按「项目角色」精确匹配该产品风险参与人员（不读项目人员）
 
 DEFAULT_RMP_CONTENT = {"sections": []}
 _DEFAULT_CONTENT_FILE = os.path.join(
@@ -178,6 +169,7 @@ class Server(object):
         return {
             "prod_id": product_id,
             "prod_name": (product.name or "").strip(),
+            "type_code": (product.type_code or "").strip(),
             "full_version": (product.full_version or "").strip(),
             "company": self.__company_name(product),
             "reviser": self.__member_name(product_id, ("产品经理", "项目经理")),
@@ -187,25 +179,39 @@ class Server(object):
             "time_range": self.__time_range(product_id),
         }
 
+    def __risk_participant_names(self, prod_id):
+        rows = db.session.execute(
+            select(RiskParticipant).where(RiskParticipant.product_id == prod_id).order_by(RiskParticipant.id.asc())
+        ).scalars().all()
+        grouped = {}
+        for row in rows:
+            role = (row.role or "").strip()
+            name = (row.name or "").strip()
+            if not role or not name:
+                continue
+            bucket = grouped.setdefault(role, [])
+            if name not in bucket:
+                bucket.append(name)
+        return grouped
+
     def __fill_team_table(self, node, prod_id):
-        # 表1「风险管理小组」：按表头(项目角色/姓名/职责)识别，姓名列按项目角色从项目人员自动获取（命中即覆盖）
+        # 表1「风险管理小组」：按表头(项目角色/姓名/职责)识别。姓名按项目角色精确匹配风险参与人员，打开即覆盖；同一角色多人用顿号连接；对不上则姓名留空。
         if not prod_id:
             return
+        names_by_role = None
         for table in (node.get("tables") or []):
             if not table or not isinstance(table[0], list):
                 continue
             header = [str(c).strip() for c in table[0][:3]]
             if header != ["项目角色", "姓名", "职责"]:
                 continue
+            if names_by_role is None:
+                names_by_role = self.__risk_participant_names(prod_id)
             for row in table[1:]:
                 if not isinstance(row, list) or len(row) < 2:
                     continue
-                keywords = TEAM_ROLE_KEYWORDS.get(str(row[0]).strip())
-                if not keywords:
-                    continue
-                name = self.__member_name(prod_id, keywords)
-                if name:
-                    row[1] = name
+                role = str(row[0] or "").strip()
+                row[1] = "、".join(names_by_role.get(role, []))
 
     def __fill_node(self, node, info, version):
         ref = node.get("ref_type")
@@ -215,6 +221,7 @@ class Server(object):
             node["body"] = (
                 "本文件适用的产品为的软件产品：\n"
                 f"产品名称：{info.get('prod_name', '')}\n"
+                f"产品型号：{info.get('type_code', '')}\n"
                 f"完整版本：{info.get('full_version', '')}\n"
                 "寿命周期内产品需要开展的风险管理活动的范围包括：\n"
                 "从实施过程的角度包括：设计和研发；采购；制造；包装；检查和测试等。\n"
@@ -443,6 +450,32 @@ class Server(object):
             if str(text or "").strip():
                 docx_util.save_txt2docx(str(text or ""), document)
 
+        exp_re = re.compile(r"10(?:-(\d)|⁻([⁰¹²³⁴⁵⁶⁷⁸⁹]))(?!\d)")
+        sup_digit = {ch: str(i) for i, ch in enumerate("⁰¹²³⁴⁵⁶⁷⁸⁹")}
+
+        def fonted_prob(para, text, font_size=10.5, bold=False):
+            # 「10-3」或页面上的「10⁻³」都导出为 10 的上标次方
+            s = str(text or "")
+            pos = 0
+            matched = False
+            for m in exp_re.finditer(s):
+                matched = True
+                if m.start() > pos:
+                    docx_util.fonted_txt(para, s[pos:m.start()], font_size=font_size, bold=bold)
+                docx_util.fonted_txt(para, "10", font_size=font_size, bold=bold)
+                digit = m.group(1) or sup_digit.get(m.group(2), "")
+                run = para.add_run("-" + digit)
+                run.font.size = Pt(font_size)
+                run.font.superscript = True
+                run.font.italic = False
+                run.font.bold = bool(bold)
+                run.font.color.rgb = RGBColor(0, 0, 0)
+                run.font.name = "Times New Roman"
+                run._element.rPr.rFonts.set(qn("w:eastAsia"), "Times New Roman")
+                pos = m.end()
+            if not matched or pos < len(s):
+                docx_util.fonted_txt(para, s[pos:], font_size=font_size, bold=bold)
+
         def set_cell(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
             s = str(text or "")
             # 签名图（编制/审核/批准人）：等比嵌入图片
@@ -462,7 +495,7 @@ class Server(object):
                 para = cell.paragraphs[0] if i == 0 else cell.add_paragraph()
                 para.alignment = align
                 para.paragraph_format.line_spacing = 1.3
-                docx_util.fonted_txt(para, line, font_size=10.5, bold=bold)
+                fonted_prob(para, line, font_size=10.5, bold=bold)
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
 
         def set_grid_widths(table, grid, cols):
@@ -501,7 +534,7 @@ class Server(object):
                     tc_w.set(qn("w:w"), str(widths[i]))
                     tc_w.set(qn("w:type"), "dxa")
 
-        def add_grid(grid, merge_full_rows=False):
+        def add_grid(grid, merge_full_rows=False, skip_duplicate=False):
             grid = [row for row in (grid or []) if isinstance(row, list)]
             cols = max((len(row) for row in grid), default=0)
             if cols <= 0:
@@ -540,22 +573,67 @@ class Server(object):
                     for c_idx in range(cols):
                         set_cell(cells[c_idx], row[c_idx] if c_idx < len(row) else "", bold=(r_idx == 0))
                     h_merged.append(False)
-            # 仅评审记录：第一列连续相同的非空项纵向合并（跳过整行合并的行与表头）
-            if merge_full_rows and cols > 0:
-                n = len(grid)
-                r = 1
-                while r < n:
-                    val = str((grid[r][0] if grid[r] else "") or "").strip()
-                    if h_merged[r] or not val:
-                        r += 1
+            # 相邻且内容相同的格子合并（横向、纵向）。评审记录的整行合并、其他参会人员行、风险管理小组表不再参与。
+            n = len(grid)
+            if skip_duplicate:
+                set_grid_widths(table, grid, cols)
+                document.add_paragraph()
+                return
+
+            def plain(rr, cc):
+                row = grid[rr] if rr < n else []
+                raw = row[cc] if cc < len(row) else ""
+                text = str(raw or "").strip()
+                if text.startswith("data:image"):
+                    return ""
+                return text
+
+            used = [[False] * cols for _ in range(n)]
+            for r_idx, row in enumerate(grid):
+                if h_merged[r_idx]:
+                    for c_idx in range(cols):
+                        used[r_idx][c_idx] = True
+                    continue
+                label = str((row[0] if row else "") or "").strip()
+                if merge_full_rows and (label.startswith("其他参会人员") or label.startswith("其他参评人员")):
+                    for c_idx in range(1, cols):
+                        used[r_idx][c_idx] = True
+            spans = []
+            for r_idx in range(n):
+                c_idx = 0
+                while c_idx < cols:
+                    if used[r_idx][c_idx]:
+                        c_idx += 1
                         continue
-                    j = r + 1
-                    while j < n and not h_merged[j] and str((grid[j][0] if grid[j] else "") or "").strip() == val:
-                        j += 1
-                    if j - 1 > r:
-                        m = table.cell(r, 0).merge(table.cell(j - 1, 0))
-                        set_cell(m, val)
-                    r = j
+                    val = plain(r_idx, c_idx)
+                    if not val:
+                        used[r_idx][c_idx] = True
+                        c_idx += 1
+                        continue
+                    w = 1
+                    while c_idx + w < cols and not used[r_idx][c_idx + w] and plain(r_idx, c_idx + w) == val:
+                        w += 1
+                    h = 1
+                    while r_idx + h < n:
+                        ok = True
+                        for k in range(w):
+                            if used[r_idx + h][c_idx + k] or plain(r_idx + h, c_idx + k) != val:
+                                ok = False
+                                break
+                        if ok and c_idx + w < cols and not used[r_idx + h][c_idx + w] and plain(r_idx + h, c_idx + w) == val:
+                            ok = False
+                        if not ok:
+                            break
+                        h += 1
+                    for rr in range(r_idx, r_idx + h):
+                        for cc in range(c_idx, c_idx + w):
+                            used[rr][cc] = True
+                    if h > 1 or w > 1:
+                        spans.append((r_idx, c_idx, h, w, val))
+                    c_idx += w
+            for r_idx, c_idx, h, w, val in sorted(spans, key=lambda item: (item[0], item[1]), reverse=True):
+                merged = table.cell(r_idx, c_idx).merge(table.cell(r_idx + h - 1, c_idx + w - 1))
+                set_cell(merged, val, bold=(r_idx == 0))
             set_grid_widths(table, grid, cols)
             document.add_paragraph()
 
@@ -650,7 +728,8 @@ class Server(object):
             add_text(node.get("body"))
             merge_full_rows = node.get("ref_type") == "appendix"
             for table in (node.get("tables") or []):
-                add_grid(table, merge_full_rows=merge_full_rows)
+                header = [str(c).strip() for c in (table[0][:3] if table and isinstance(table[0], list) else [])]
+                add_grid(table, merge_full_rows=merge_full_rows, skip_duplicate=(header == ["项目角色", "姓名", "职责"]))
             for image_url in (node.get("images") or []):
                 add_image(image_url)
             add_text(node.get("body_after"))
