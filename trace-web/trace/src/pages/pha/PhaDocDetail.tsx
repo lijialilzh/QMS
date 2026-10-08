@@ -8,6 +8,7 @@ import * as Api from "@/api/ApiPhaDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiProdHaz from "@/api/ApiProdHaz";
+import * as ApiMember from "@/api/ApiProjectMember";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import ReviewTable from "@/common/ReviewTable";
 import "../pdp/PdpDocDetail.less";
@@ -20,22 +21,27 @@ const stripNum = (title: string): string => String(title || "").replace(/^\s*\d+
 
 // 模板内置的基准产品名称，按所选产品名称全文替换
 const BASE_NAME = "肿瘤CT图像随访与评估软件";
-// 封面/修订日期从时间逻辑线匹配的关键字
-const DATE_KEYWORDS = ["初步危害分析", "危害分析", "风险管理"];
+// 封面/修订日期从时间逻辑线匹配的关键字。不用「风险管理」，避免命中风险管理报告/计划。
+const DATE_KEYWORDS = ["初步危害分析", "危害分析"];
 const FMEA_KEYS = ["CFMEA", "DFMEA", "PFMEA"];
 
-// 时间线里找含关键字输出的最新日期行，格式「YYYY年M月D日」
+const cellText = (r: any) => Object.values(r.cells || {}).map((v: any) => String(v || ""));
+const hitWords = (r: any, words: string[]) => cellText(r).some((v) => words.some((k) => v.includes(k)));
+
+// 时间线里找含关键字输出的日期。优先含「评审」的行，取最新一天，格式「YYYY年M月D日」
 const computeDate = (rows: any[], keywords: string[]): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
-    const matches = (rows || []).filter((r: any) =>
-        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => keywords.some((k) => String(v || "").includes(k)))
-    );
+    const dates = (rows || []).filter((r: any) => (r.row_type || "date") === "date" && hitWords(r, keywords));
+    const reviewed = dates.filter((r: any) => hitWords(r, ["评审"]));
+    const matches = reviewed.length ? reviewed : dates;
     if (!matches.length) return "";
     const key = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
     let best = matches[0];
     matches.forEach((r: any) => { if (key(r) > key(best)) best = r; });
     return `${num(best.year)}年${num(best.month)}月${num(best.day)}日`;
 };
+
+const isDateLabel = (value: any) => String(value ?? "").replace(/[\s\u3000]/g, "") === "日期";
 
 const ensureKeys = (nodes: any[]): any[] =>
     (nodes || []).map((n: any) => ({
@@ -86,10 +92,13 @@ const replaceName = (nodes: any[], oldName: string, newName: string): any[] => {
 
 const isFmea = (n: any): boolean => n.ref_type === "pha_fmea" || FMEA_KEYS.some((k) => stripNum(n.title).includes(k));
 
-// A.2/A.3/A.4(CFMEA/DFMEA/PFMEA) 表：按危害编号回填 潜在故障模式/故障的潜在原因/失效的潜在影响/分类
+const hazNo = (code: string) => parseInt(String(code || "").replace(/\D/g, ""), 10) || 0;
+
+// 1.2/1.3/1.4：只保留该产品版本产品 HAZ 里、且模板把该编号分到本章的危害。不铺危害总表。
 const fillFmea = (nodes: any[], hazMap: Record<string, any>): any[] => {
+    const hasProductHaz = Object.keys(hazMap || {}).length > 0;
     const fillTb = (tb: any[]): any[] => {
-        if (!Array.isArray(tb) || !tb.length) return tb;
+        if (!Array.isArray(tb) || !tb.length || !hasProductHaz) return tb;
         let hidx = -1;
         for (let i = 0; i < tb.length; i++) {
             const r = tb[i];
@@ -102,28 +111,33 @@ const fillFmea = (nodes: any[], hazMap: Record<string, any>): any[] => {
         const header = tb[hidx];
         const colOf = (kw: string) => header.findIndex((c: any) => String(c).includes(kw));
         const codeIdx = colOf("危害编号");
-        const fieldIdx: Record<string, number> = {
-            event: colOf("潜在故障模式"),
-            situation: colOf("故障的潜在原因"),
-            damage: colOf("失效的潜在影响"),
-            category: colOf("分类"),
-        };
+        const processIdx = colOf("过程");
+        const modeIdx = colOf("潜在故障模式");
+        const causeIdx = colOf("故障的潜在原因");
+        const damageIdx = colOf("失效的潜在影响");
+        const categoryIdx = colOf("分类");
         if (codeIdx < 0) return tb;
-        return tb.map((row: any[], ri: number) => {
-            if (ri <= hidx || !Array.isArray(row) || codeIdx >= row.length) return row;
+        const processByCode: Record<string, string> = {};
+        tb.slice(hidx + 1).forEach((row: any[]) => {
+            if (!Array.isArray(row) || codeIdx >= row.length) return;
             const m = String(row[codeIdx]).toUpperCase().match(/HAZ\d+/);
-            if (!m) return row;
-            const info = hazMap[m[0]];
-            if (!info) return row;
-            const next = [...row];
-            Object.entries(fieldIdx).forEach(([k, ci]) => {
-                if (ci >= 0 && ci < next.length) {
-                    const v = info[k] || "";
-                    if (v) next[ci] = v;
-                }
-            });
-            return next;
+            if (!m || processByCode[m[0]]) return;
+            processByCode[m[0]] = processIdx >= 0 ? String(row[processIdx] ?? "") : "";
         });
+        const codes = Object.keys(processByCode).filter((code) => hazMap[code]).sort((a, b) => hazNo(a) - hazNo(b));
+        const blank = header.map(() => "");
+        const data = codes.map((code) => {
+            const info = hazMap[code] || {};
+            const row = [...blank];
+            if (processIdx >= 0) row[processIdx] = processByCode[code] || "";
+            if (modeIdx >= 0) row[modeIdx] = info.source || "";
+            if (causeIdx >= 0) row[causeIdx] = info.situation || info.event || "";
+            if (damageIdx >= 0) row[damageIdx] = info.damage || "";
+            if (categoryIdx >= 0) row[categoryIdx] = info.category || "";
+            row[codeIdx] = code;
+            return row;
+        });
+        return [...tb.slice(0, hidx + 1), ...data];
     };
     const fix = (n: any): any => ({
         ...n,
@@ -134,7 +148,12 @@ const fillFmea = (nodes: any[], hazMap: Record<string, any>): any[] => {
 };
 
 // 封面/修订记录日期
-const fillDates = (nodes: any[], date: string, version: string): any[] => {
+const memberName = (rows: any[], roleKey: string) => {
+    const hit = (rows || []).find((m: any) => String(m.role || "").includes(roleKey) && String(m.name || "").trim());
+    return hit ? String(hit.name).trim() : "";
+};
+
+const fillDates = (nodes: any[], date: string, version: string, reviser = "", approver = ""): any[] => {
     const isCover = (n: any) => n.ref_type === "cover" || stripNum(n.title) === "初步危害分析清单";
     const isRev = (n: any) => n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
     const coverTbl = (tb: any[]) =>
@@ -142,12 +161,12 @@ const fillDates = (nodes: any[], date: string, version: string): any[] => {
             if (!Array.isArray(row)) return row;
             const next = [...row];
             if (String(row[0]).trim() === "生效日期") {
-                // 生效日期与编制/审核/批准日期统一为同一个时间
-                if (next.length >= 2 && !String(next[1] || "").trim()) next[1] = date;
+                // 生效日期与编制/审核/批准日期统一为时间线同一天，打开即覆盖
+                if (next.length >= 2) next[1] = date;
                 return next;
             }
             for (let ci = 0; ci < next.length; ci++) {
-                if (String(next[ci]).trim() === "日期" && ci + 1 < next.length) next[ci + 1] = date;
+                if (isDateLabel(next[ci]) && ci + 1 < next.length) next[ci + 1] = date;
             }
             return next;
         });
@@ -159,6 +178,9 @@ const fillDates = (nodes: any[], date: string, version: string): any[] => {
         row[0] = date || "";
         if (version) row[1] = version;
         if (!String(row[2] || "").trim()) row[2] = "首次发布";
+        // 修订人、批准人只写姓名，不放签名章
+        row[3] = reviser || "";
+        row[4] = approver || "";
         return t;
     };
     const fix = (n: any): any => {
@@ -219,7 +241,8 @@ export default () => {
                 ApiProduct.get_product({ id: productId }).catch(() => null),
                 ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
                 ApiProdHaz.list_prod_haz({ prod_id: productId, page_index: 0, page_size: 10000 }).catch(() => null),
-            ]).then(([pr, tl, ph]: any[]) => {
+                ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
+            ]).then(([pr, tl, ph, mb]: any[]) => {
                 const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
                 const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
                 const hazRows = ph && ph.code === Api.C_OK ? ((ph.data && ph.data.rows) || []) : [];
@@ -228,6 +251,7 @@ export default () => {
                     const code = String(h.code || "").trim().toUpperCase();
                     if (code) {
                         hazMap[code] = {
+                            source: String(h.source || "").trim(),
                             event: String(h.event || "").trim(),
                             situation: String(h.situation || "").trim(),
                             damage: String(h.damage || "").trim(),
@@ -238,8 +262,9 @@ export default () => {
                 const newName = String(prod.name || "").trim();
                 let out = replaceName(secs, BASE_NAME, newName);
                 if (oldName && oldName !== newName) out = replaceName(out, oldName, newName);
+                const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
                 const date = computeDate(tlRows, DATE_KEYWORDS);
-                out = fillDates(out, date, version);
+                out = fillDates(out, date, version, memberName(members, "产品经理"), memberName(members, "产品负责人"));
                 out = fillFmea(out, hazMap);
                 resolve({ sections: out, date });
             }).catch(() => resolve({ sections: secs, date: "" }));
@@ -310,6 +335,12 @@ export default () => {
             i !== ti ? tb : tb.map((row: any[], ri: number) =>
                 ri !== r ? row : row.map((cell: any, cc: number) => (cc === ci ? val : cell))
             )
+        );
+        updateTables(tables);
+    };
+    const setRowText = (ti: number, r: number, val: string) => {
+        const tables = (active.tables || []).map((tb: any[], i: number) =>
+            i !== ti ? tb : tb.map((row: any[], ri: number) => (ri !== r ? row : row.map(() => val)))
         );
         updateTables(tables);
     };
@@ -502,9 +533,24 @@ export default () => {
                                         </div>
                                         <table className="pdp-grid">
                                             <tbody>
-                                                {tb.map((row: any[], r: number) => (
+                                                {tb.map((row: any[], r: number) => {
+                                                    const texts = (row || []).map((c: any) => String(c ?? "").trim());
+                                                    const banner = texts.find((t) => t && !t.startsWith("data:image"));
+                                                    const mergeAll = !!banner && texts.length > 1 && texts.every((t) => t === banner);
+                                                    return (
                                                     <tr key={r}>
-                                                        {row.map((cell: any, ci: number) => (
+                                                        {mergeAll ? (
+                                                            <td className={r === 0 ? "head" : ""} colSpan={row.length} style={{ textAlign: "center", verticalAlign: "middle" }}>
+                                                                <Input.TextArea
+                                                                    className="pdp-cell"
+                                                                    autoSize={{ minRows: 1, maxRows: 8 }}
+                                                                    value={row[0] ?? ""}
+                                                                    disabled={readonly}
+                                                                    style={{ textAlign: "center" }}
+                                                                    onChange={(e) => setRowText(ti, r, e.target.value)}
+                                                                />
+                                                            </td>
+                                                        ) : row.map((cell: any, ci: number) => (
                                                             <td key={ci} className={r === 0 ? "head" : ""}>
                                                                 {typeof cell === "string" && cell.startsWith("data:image") ? (
                                                                     <span style={{ position: "relative", display: "inline-block" }}>
@@ -533,7 +579,8 @@ export default () => {
                                                             </td>
                                                         )}
                                                     </tr>
-                                                ))}
+                                                    );
+                                                })}
                                             </tbody>
                                         </table>
                                     </div>

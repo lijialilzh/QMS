@@ -47,8 +47,8 @@ logger = logging.getLogger(__name__)
 DOC_NAME = "初步危害分析清单"
 # 模板内置的基准产品名称，导出/编辑时按所选产品名称全文替换
 BASE_NAME = "肿瘤CT图像随访与评估软件"
-# 封面/修订日期从时间逻辑线匹配的关键字（按顺序取命中行里的最新日期）
-DATE_KEYWORDS = ["初步危害分析", "危害分析", "风险管理"]
+# 封面/修订日期从时间逻辑线匹配的关键字。不用「风险管理」，避免命中风险管理报告/计划。
+DATE_KEYWORDS = ["初步危害分析", "危害分析"]
 # 评审时间从时间线匹配的关键字（需同时命中「评审」）
 REVIEW_DATE_KEYWORDS = ["初步危害分析", "危害分析"]
 
@@ -162,8 +162,14 @@ class Server(object):
         def date_key(r):
             return to_int(r.year) * 10000 + to_int(r.month) * 100 + (to_int(r.day) or 0)
 
+        def hits(r, keywords):
+            return any(any(k in str(v or "") for k in keywords) for v in cell_map.get(r.id, []))
+
         def latest_date(keywords):
-            rows = [r for r in date_rows if any(any(k in str(v or "") for k in keywords) for v in cell_map.get(r.id, []))]
+            rows = [r for r in date_rows if hits(r, keywords)]
+            reviewed = [r for r in rows if hits(r, ["评审"])]
+            if reviewed:
+                rows = reviewed
             if not rows:
                 return ""
             r = max(rows, key=date_key)
@@ -181,6 +187,7 @@ class Server(object):
                 continue
             code = str(hz.code).strip().upper()
             haz_map[code] = {
+                "source": (hz.source or "").strip(),
                 "event": (hz.event or "").strip(),
                 "situation": ((ph.situation if ph else None) or hz.situation or "").strip(),
                 "damage": ((ph.damage if ph else None) or hz.damage or "").strip(),
@@ -189,6 +196,7 @@ class Server(object):
 
         return {
             "name": name,
+            "prod_id": prod_id,
             "cover_date": cover_date,
             "version": doc_version,
             "haz_map": haz_map,
@@ -231,29 +239,41 @@ class Server(object):
             return None
 
         code_idx = col_of("危害编号")
-        field_idx = {
-            "event": col_of("潜在故障模式"),
-            "situation": col_of("故障的潜在原因"),
-            "damage": col_of("失效的潜在影响"),
-            "category": col_of("分类"),
-        }
-        if code_idx is None:
+        process_idx = col_of("过程")
+        mode_idx = col_of("潜在故障模式")
+        cause_idx = col_of("故障的潜在原因")
+        damage_idx = col_of("失效的潜在影响")
+        category_idx = col_of("分类")
+        if code_idx is None or not haz_map:
             return
+        process_by_code = {}
         for row in tbl[hidx + 1:]:
             if not isinstance(row, list) or code_idx >= len(row):
                 continue
             m = re.search(r"HAZ\d+", str(row[code_idx]).upper())
-            if not m:
+            if not m or m.group(0) in process_by_code:
                 continue
-            info = haz_map.get(m.group(0))
-            if not info:
-                continue
-            for key, ci in field_idx.items():
-                if ci is None or ci >= len(row):
-                    continue
-                val = info.get(key) or ""
-                if val:
-                    row[ci] = val
+            process_by_code[m.group(0)] = str(row[process_idx] or "") if process_idx is not None and process_idx < len(row) else ""
+        codes = sorted((code for code in process_by_code if code in haz_map), key=lambda code: int(re.sub(r"\D", "", code) or 0))
+        blank = [""] * len(header)
+        data = []
+        for code in codes:
+            info = haz_map.get(code) or {}
+            row = list(blank)
+            if process_idx is not None and process_idx < len(row):
+                row[process_idx] = process_by_code.get(code) or ""
+            if mode_idx is not None and mode_idx < len(row):
+                row[mode_idx] = info.get("source") or ""
+            if cause_idx is not None and cause_idx < len(row):
+                row[cause_idx] = info.get("situation") or info.get("event") or ""
+            if damage_idx is not None and damage_idx < len(row):
+                row[damage_idx] = info.get("damage") or ""
+            if category_idx is not None and category_idx < len(row):
+                row[category_idx] = info.get("category") or ""
+            row[code_idx] = code
+            data.append(row)
+        del tbl[hidx + 1:]
+        tbl.extend(data)
 
     def __fill_node(self, node, info):
         ref = node.get("ref_type")
@@ -264,12 +284,12 @@ class Server(object):
                     if not isinstance(row, list):
                         continue
                     if row and str(row[0]).strip() == "生效日期":
-                        # 生效日期与编制/审核/批准日期统一为同一个时间
-                        if len(row) >= 2 and not str(row[1] or "").strip():
+                        # 生效日期与编制/审核/批准日期统一为时间线同一天，打开/导出即覆盖
+                        if len(row) >= 2:
                             row[1] = info["cover_date"]
                         continue
                     for ci in range(len(row)):
-                        if str(row[ci]).strip() == "日期" and ci + 1 < len(row):
+                        if re.sub(r"\s+", "", str(row[ci] or "")) == "日期" and ci + 1 < len(row):
                             row[ci + 1] = info["cover_date"]
         if ref == "revision" or title == "文件修订记录":
             tables = node.get("tables") or []
@@ -286,6 +306,10 @@ class Server(object):
                     row[1] = info["version"]
                 if not str(row[2] or "").strip():
                     row[2] = "首次发布"
+                # 修订人=编制人（产品经理），批准人=产品负责人。只写姓名，不放签名图。
+                names = serv_review_util.cover_signer_names(info.get("prod_id"), "pha") if info.get("prod_id") else {}
+                row[3] = names.get("编制人") or ""
+                row[4] = names.get("批准人") or ""
         if ref == "pha_fmea" or any(k in title for k in ("CFMEA", "DFMEA", "PFMEA")):
             for tbl in (node.get("tables") or []):
                 self.__fill_fmea(tbl, info["haz_map"])
@@ -368,6 +392,21 @@ class Server(object):
                         row[i] = f"评审时间：{review_date}"
         return content
 
+    def __fill_revision_names(self, node, names):
+        if not isinstance(node, dict):
+            return
+        title = self.__strip_num(node.get("title"))
+        if node.get("ref_type") == "revision" or title == "文件修订记录":
+            tables = node.get("tables") or []
+            if tables and isinstance(tables[0], list) and len(tables[0]) >= 2 and isinstance(tables[0][1], list):
+                row = tables[0][1]
+                while len(row) < 5:
+                    row.append("")
+                row[3] = (names or {}).get("编制人") or ""
+                row[4] = (names or {}).get("批准人") or ""
+        for child in (node.get("children") or []):
+            self.__fill_revision_names(child, names)
+
     def __to_obj(self, row: PhaDoc, product: Product = None):
         obj = PhaDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content)
@@ -379,6 +418,10 @@ class Server(object):
         serv_review_util.fill_cover_signers(
             obj.content, serv_review_util.cover_signers(row.product_id, "pha") if row.product_id else {}
         )
+        if row.product_id:
+            names = serv_review_util.cover_signer_names(row.product_id, "pha")
+            for section in (obj.content.get("sections") or []):
+                self.__fill_revision_names(section, names)
         if product:
             obj.product_name = product.name
             obj.product_version = product.full_version
