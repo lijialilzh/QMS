@@ -1,4 +1,5 @@
 import "./index.less";
+import "./pages/pdp/chapterWheel";
 import "./index.app.less";
 import "./index.ant.less";
 
