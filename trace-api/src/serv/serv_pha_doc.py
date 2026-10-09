@@ -77,6 +77,21 @@ REVIEW_PERSONS = [
 ]
 
 
+def _keep_review_last(content):
+    """正文顶级章节排在评审记录前面。评审记录保持目录最后一项。"""
+    sections = (content or {}).get("sections")
+    if not isinstance(sections, list):
+        return content
+    idx = next((
+        i for i, s in enumerate(sections)
+        if isinstance(s, dict) and (s.get("ref_type") == "review" or str(s.get("title") or "").strip() == "评审记录")
+    ), None)
+    if idx is None or idx == len(sections) - 1:
+        return content
+    sections.append(sections.pop(idx))
+    return content
+
+
 def _build_review_section(review_date=""):
     content_tbl = [["评审内容", "评审项", "评审结论"]]
     for q in REVIEW_ITEMS:
@@ -331,6 +346,7 @@ class Server(object):
             obj.product_id,
         )
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(obj.product_id, "pha"))
+        _keep_review_last(content)
         return content
 
     def __dhf_file_no(self, prod_id):
@@ -418,6 +434,7 @@ class Server(object):
         serv_review_util.fill_cover_signers(
             obj.content, serv_review_util.cover_signers(row.product_id, "pha") if row.product_id else {}
         )
+        _keep_review_last(obj.content)
         if row.product_id:
             names = serv_review_util.cover_signer_names(row.product_id, "pha")
             for section in (obj.content.get("sections") or []):
