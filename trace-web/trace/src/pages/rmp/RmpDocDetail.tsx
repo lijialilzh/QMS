@@ -291,7 +291,7 @@ export default () => {
     const setCell = (ti: number, r: number, ci: number, val: string) => {
         const tables = (active.tables || []).map((tb: any[], i: number) => {
             if (i !== ti) return tb;
-            const span = isTeamTable(tb) ? undefined : duplicateMerges(tb).anchors[`${r},${ci}`];
+            const span = (isTeamTable(tb) || active.ref_type === "cover") ? undefined : duplicateMerges(tb).anchors[`${r},${ci}`];
             const rs = span?.rs || 1;
             const cs = span?.cs || 1;
             return tb.map((row: any[], ri: number) => (
@@ -524,7 +524,7 @@ export default () => {
                                         && String(row?.[0] ?? "").trim() !== ""
                                         && row.slice(1).every((c: any) => String(c ?? "").trim() === "");
                                     const teamLocked = isTeamTable(tb);
-                                    const merges = teamLocked ? { anchors: {}, skip: new Set<string>() } : duplicateMerges(tb, (row) => {
+                                    const merges = (teamLocked || active.ref_type === "cover") ? { anchors: {}, skip: new Set<string>() } : duplicateMerges(tb, (row) => {
                                         if (!isAppendix) return false;
                                         if (isFullRow(row)) return true;
                                         const label = String(row?.[0] ?? "").trim();
