@@ -77,6 +77,20 @@ REVIEW_PERSONS = [
 ]
 
 
+def _ensure_review_once(content, prod_id):
+    """没有评审记录时按模板生成。已有章节保留用户改过的单元格，不再整章覆盖。"""
+    sections = (content or {}).get("sections")
+    if not isinstance(sections, list):
+        return content
+    if any(isinstance(s, dict) and (s.get("ref_type") == "review" or str(s.get("title") or "").strip() == "评审记录") for s in sections):
+        return content
+    return serv_review_util.ensure_review(
+        content, "pha",
+        serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS["pha"]["name_keywords"]) if prod_id else "",
+        prod_id,
+    )
+
+
 def _keep_review_last(content):
     """正文顶级章节排在评审记录前面。评审记录保持目录最后一项。"""
     sections = (content or {}).get("sections")
@@ -340,11 +354,7 @@ class Server(object):
         for node in sections:
             self.__replace_name(node, BASE_NAME, info["name"])
             self.__fill_node(node, info)
-        serv_review_util.ensure_review(
-            content, "pha",
-            serv_review_util.review_date(obj.product_id, serv_review_util.REVIEW_DEFS["pha"]["name_keywords"]),
-            obj.product_id,
-        )
+        _ensure_review_once(content, obj.product_id)
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(obj.product_id, "pha"))
         _keep_review_last(content)
         return content
@@ -426,11 +436,7 @@ class Server(object):
     def __to_obj(self, row: PhaDoc, product: Product = None):
         obj = PhaDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content)
-        serv_review_util.ensure_review(
-            obj.content, "pha",
-            serv_review_util.review_date(row.product_id, serv_review_util.REVIEW_DEFS["pha"]["name_keywords"]) if row.product_id else "",
-            row.product_id,
-        )
+        _ensure_review_once(obj.content, row.product_id)
         serv_review_util.fill_cover_signers(
             obj.content, serv_review_util.cover_signers(row.product_id, "pha") if row.product_id else {}
         )

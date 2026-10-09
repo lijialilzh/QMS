@@ -38,6 +38,7 @@ from ..utils.sql_ctx import db
 from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version, docx_util
+from .serv_doc_file import pick_doc_image_file_row
 from .serv_prod_haz import Server as ProdHazServer
 from .serv_prod_rcm import Server as ProdRcmServer
 from .serv_srs_doc import Server as SrsDocServer
@@ -376,7 +377,18 @@ class Server(object):
             "product_hazs": getattr(getattr(haz_resp, "data", None), "rows", None) or [],
             "risk_init": risk_init,
             "risk_cur": risk_cur,
+            "struct_image": self.__struct_image_url(product_id),
         }
+
+    def __struct_image_url(self, product_id):
+        # 体系结构图按当前产品（产品名称 + 完整版本 = product_id）取产品图示，不按研究报告文档版本。
+        row = pick_doc_image_file_row(product_id, "img_struct")
+        url = (row.file_url or "").strip() if row else ""
+        if not url:
+            return ""
+        if url.startswith("data:"):
+            return url
+        return url if url.startswith("/") else f"/{url}"
 
     _TABLE_PH_RE = re.compile(r"^\{\{TABLE:(\d+)\}\}$")
     _RISK_PH_RE = re.compile(r"^\{\{RISK:(\d+)\}\}$")
@@ -600,6 +612,10 @@ class Server(object):
                         elif not has_r1 and "采取风险措施后" in s:
                             out.append("{{RISK:1}}"); has_r1 = True
                     node["text"] = "\n".join(out)
+                if self.__strip_name(title) == "数据架构":
+                    # 打开和导出都用该产品体系结构图替换模板内置图。没有图则不留模板图。
+                    url = (auto.get("struct_image") or "").strip()
+                    node["images"] = [url] if url else []
                 if self.__strip_name(title) == "网络安全能力":
                     # 只填空白的「进一步风险分析编号」；已有编号视为手改，不再覆盖。
                     self.__fill_capability_haz_column(node, auto.get("product_hazs") or [])
