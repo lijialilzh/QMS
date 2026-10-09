@@ -1359,6 +1359,17 @@ def render_review_grid(document, grid, set_cell, header_rows=1, **_ignore):
         for c_idx in range(cols):
             val = row[c_idx] if c_idx < len(row) else ""
             s = str(val or "")
+            if is_review_check_line(s):
+                # Word 会把 ☑ 画成灰色表情。改用 Wingdings 单色方框，和风险管理计划导出一致。
+                cell = cells[c_idx]
+                cell.text = ""
+                para = cell.paragraphs[0]
+                para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                para.paragraph_format.space_before = Pt(0)
+                para.paragraph_format.space_after = Pt(0)
+                write_review_check_paragraph(para)
+                cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                continue
             if s.startswith("data:image"):
                 # 签字列签名图：等比缩放渲染，不变形
                 try:

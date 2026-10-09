@@ -495,7 +495,10 @@ class Server(object):
                 para = cell.paragraphs[0] if i == 0 else cell.add_paragraph()
                 para.alignment = align
                 para.paragraph_format.line_spacing = 1.3
-                fonted_prob(para, line, font_size=10.5, bold=bold)
+                if serv_review_util.is_review_check_line(line):
+                    serv_review_util.write_review_check_paragraph(para)
+                else:
+                    fonted_prob(para, line, font_size=10.5, bold=bold)
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
 
         def set_grid_widths(table, grid, cols):
