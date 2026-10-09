@@ -207,7 +207,10 @@ export default () => {
     };
     const addRoot = () => {
         const node = { _key: makeRowKey(), title: "新章节", text: "", tables: [], children: [] };
-        const sections = [...data.content.sections, node];
+        const sections = [...data.content.sections];
+        const reviewAt = sections.findIndex((n: any) => n.ref_type === "review" || String(n.title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").includes("评审记录"));
+        if (reviewAt >= 0) sections.splice(reviewAt, 0, node);
+        else sections.push(node);
         setSections(sections); dispatch({ activeSectionKey: node._key });
     };
     const delNode = (key: string) => {

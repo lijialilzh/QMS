@@ -2915,7 +2915,13 @@ export default () => {
             children: []
         };
 
-        const nextTree = [...data.treeStructure, newNode];
+        const nextTree = [...data.treeStructure];
+        const reviewAt = nextTree.findIndex((n) => {
+            const t = String(n?.title || "").replace(/\s+/g, "");
+            return t === "评审记录" || t.includes("评审记录") || t === "附件一评审结论" || t.startsWith("附件一") || (n as any).ref_type === "review";
+        });
+        if (reviewAt >= 0) nextTree.splice(reviewAt, 0, newNode);
+        else nextTree.push(newNode);
         treeStructureRef.current = nextTree as TreeNode[];
         dispatch({ treeStructure: nextTree });
     };

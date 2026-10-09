@@ -233,8 +233,11 @@ export default () => {
     };
     const addRoot = () => {
         const next = cloneContent({ sections: data.sections });
-        const idx = (next.sections || []).length;
-        next.sections = [...(next.sections || []), newSection()];
+        const sections = [...(next.sections || [])];
+        const reviewAt = sections.findIndex((n: any) => n.ref_type === "review" || String(n.title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").includes("评审记录"));
+        const idx = reviewAt >= 0 ? reviewAt : sections.length;
+        sections.splice(idx, 0, newSection());
+        next.sections = sections;
         assignKeys(next.sections);
         dispatch({ sections: next.sections, activeKey: `${idx}` });
     };

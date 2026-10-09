@@ -781,7 +781,11 @@ export default () => {
 
     const addRootSection = () => {
         const nextSection = makeNewSection(buildNewSectionTitle(bodySections));
-        dispatch({ activeSectionKey: sectionKey(nextSection), content: { ...(data.content || emptyContent), sections: [...(data.content.sections || []), nextSection] } });
+        const sections = [...(data.content.sections || [])];
+        const reviewAt = sections.findIndex((n: any) => n.ref_type === "review" || String(n.title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").includes("评审记录"));
+        if (reviewAt >= 0) sections.splice(reviewAt, 0, nextSection);
+        else sections.push(nextSection);
+        dispatch({ activeSectionKey: sectionKey(nextSection), content: { ...(data.content || emptyContent), sections } });
     };
 
     const addChildSection = (targetSection: any) => {

@@ -321,7 +321,7 @@ export default () => {
     const addRoot = () => {
         const node = { _key: genKey(), title: "新章节", body: "", tables: [], children: [] };
         const sections = [...data.sections];
-        const idx = sections.findIndex((n: any) => n.ref_type === "review" || stripNum(n.title) === "评审记录");
+        const idx = sections.findIndex((n: any) => n.ref_type === "review" || stripNum(n.title).includes("评审记录"));
         if (idx >= 0) sections.splice(idx, 0, node);
         else sections.push(node);
         dispatch({ sections, activeKey: node._key });

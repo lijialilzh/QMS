@@ -3844,7 +3844,10 @@ export default () => {
             children: []
         };
 
-        const nextTree = [...data.treeStructure, newNode];
+        const nextTree = [...data.treeStructure];
+        const reviewAt = nextTree.findIndex((n) => isReviewAppendixTitle(n?.title) || (n as any).ref_type === "review");
+        if (reviewAt >= 0) nextTree.splice(reviewAt, 0, newNode);
+        else nextTree.push(newNode);
         treeStructureRef.current = nextTree as TreeNode[];
         dispatch({ treeStructure: nextTree });
     };
