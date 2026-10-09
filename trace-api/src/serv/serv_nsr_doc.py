@@ -557,6 +557,18 @@ class Server(object):
                 row[haz_idx] = "\n".join(codes)
             elif need_idx >= 0 and str(row[need_idx] or "").strip().startswith("否"):
                 row[haz_idx] = "无"
+        # 模板提取时把合并格拆成了内容完全相同的多行，只保留一行。
+        seen = set()
+        kept = [rows[0]]
+        for row in rows[1:]:
+            if not isinstance(row, list):
+                continue
+            key = tuple(re.sub(r"\s+", "", str(c or "")) for c in row)
+            if key in seen:
+                continue
+            seen.add(key)
+            kept.append(row)
+        tables[0] = kept
 
     def __apply_autofill(self, content, auto):
         if not auto:

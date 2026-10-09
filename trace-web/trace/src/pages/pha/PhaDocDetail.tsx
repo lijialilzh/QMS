@@ -1,6 +1,6 @@
-import { Button, Input, Space, Spin, message } from "antd";
-import { PlusOutlined, DeleteOutlined, FileAddOutlined } from "@ant-design/icons";
-import { useEffect } from "react";
+import { Button, Input, Popconfirm, Space, Spin, message } from "antd";
+import { PlusOutlined, DeleteOutlined, EditOutlined, FileAddOutlined } from "@ant-design/icons";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
@@ -10,6 +10,8 @@ import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiProdHaz from "@/api/ApiProdHaz";
 import * as ApiMember from "@/api/ApiProjectMember";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
+import ReviewTable from "@/common/ReviewTable";
+import EditableTableGenerator from "@/pages/srs_doc/components/EditableTableGenerator";
 import "../pdp/PdpDocDetail.less";
 import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
@@ -17,6 +19,39 @@ let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
 
 const stripNum = (title: string): string => String(title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();
+
+const isReviewNode = (n: any) => !!n && (n.ref_type === "review" || stripNum(n.title).includes("评审记录"));
+
+const isOtherLabel = (text: string) => text.startsWith("其他参会人员") || text.startsWith("其他参评人员");
+const isBannerLabel = (text: string) => ["参评人员签字", "评审时间", "评审结论", "批准人员签字"].some((b) => text.startsWith(b));
+const isFullRow = (row: any[]) => (row || []).length > 1
+    && String(row?.[0] ?? "").trim() !== ""
+    && (row || []).slice(1).every((c: any) => String(c ?? "").trim() === "");
+
+const SIGN_MARK = "（签名图）";
+
+// 展示时把连续相同的类别留空，交给只读表按需求规格说明的规则纵向合并。评审结论列不合并。
+const reviewDisplayGrid = (tb: any[]) => {
+    const rows = (tb || []).map((row: any[]) => [...(row || [])]);
+    let prev = "";
+    rows.forEach((row) => {
+        const t = String(row[0] ?? "").trim();
+        if (isBannerLabel(t) || isOtherLabel(t) || isFullRow(row)) {
+            prev = "";
+            return;
+        }
+        if (t && t === prev) row[0] = "";
+        else if (t) prev = t;
+    });
+    return rows;
+};
+
+const isReviewHeaderRow = (tb: any[]) => {
+    const first = (tb?.[0] || []).map((c: any) => String(c ?? "").trim());
+    if (!first.length || isBannerLabel(first[0] || "")) return false;
+    const filled = first.filter(Boolean);
+    return filled.length === first.length && first.every((c: string) => c.length > 0 && c.length < 40);
+};
 
 // 模板内置的基准产品名称，按所选产品名称全文替换
 const BASE_NAME = "肿瘤CT图像随访与评估软件";
@@ -332,6 +367,36 @@ export default () => {
 
     const active = findNode(data.sections, data.activeKey);
     const updateTables = (tables: any[]) => patchNode(data.activeKey, { tables });
+    const [reviewEdit, setReviewEdit] = useState<any>(null);
+    const openReviewEdit = (ti: number, tb: any[]) => {
+        const split = isReviewHeaderRow(tb);
+        const body = split ? tb.slice(1) : tb;
+        const cols = Math.max(1, ...(tb || []).map((row: any[]) => (row || []).length));
+        const signs: Record<string, string> = {};
+        const dataRows = body.map((row: any[], ri: number) => Array.from({ length: cols }, (_, ci) => {
+            const raw = String(row?.[ci] ?? "");
+            if (raw.startsWith("data:image")) {
+                signs[`${ri},${ci}`] = raw;
+                return SIGN_MARK;
+            }
+            return raw;
+        }));
+        const headers = split
+            ? (tb[0] || []).map((c: any, i: number) => ({ code: `c${i}`, name: String(c ?? "") }))
+            : Array.from({ length: cols }, (_, i) => ({ code: `c${i}`, name: `列${i + 1}` }));
+        setReviewEdit({ ti, split, signs, initial: { headers, data: dataRows } });
+    };
+    const saveReviewEdit = (tableData: any) => {
+        if (!reviewEdit) return;
+        const { ti, split, signs } = reviewEdit;
+        const body = (tableData.data || []).map((row: any[], ri: number) => (row || []).map((c: any, ci: number) => {
+            const text = String(c ?? "");
+            return text === SIGN_MARK && signs[`${ri},${ci}`] ? signs[`${ri},${ci}`] : text;
+        }));
+        const grid = split ? [(tableData.headers || []).map((h: any) => h.name || ""), ...body] : body;
+        updateTables((active.tables || []).map((tb: any[], i: number) => (i === ti ? grid : tb)));
+        setReviewEdit(null);
+    };
     const setCell = (ti: number, r: number, ci: number, val: string) => {
         const tables = (active.tables || []).map((tb: any[], i: number) =>
             i !== ti ? tb : tb.map((row: any[], ri: number) =>
@@ -512,7 +577,29 @@ export default () => {
                                     />
                                 </div>
 
-                                {(active.tables || []).map((tb: any[], ti: number) => (
+                                {(active.tables || []).map((tb: any[], ti: number) => {
+                                    if (isReviewNode(active)) {
+                                        return (
+                                            <div className="pdp-table-block" key={ti}>
+                                                <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                                                    <div style={{ flex: 1, minWidth: 0, overflowX: "auto" }}>
+                                                        <ReviewTable grid={reviewDisplayGrid(tb)} headerRows={isReviewHeaderRow(tb) ? 1 : 0} />
+                                                    </div>
+                                                    {!readonly && (
+                                                        <Space size={8} style={{ flexShrink: 0, marginTop: 8 }}>
+                                                            <Button size="small" icon={<EditOutlined />} onClick={() => openReviewEdit(ti, tb)}>编辑</Button>
+                                                            <Popconfirm title="确定删除此表？" okText="确定" cancelText="取消" onConfirm={() => delTable(ti)}>
+                                                                <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+                                                            </Popconfirm>
+                                                        </Space>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    }
+                                    const review = false;
+                                    const col0 = null as { rowspan: number[]; skip: boolean[] } | null;
+                                    return (
                                     <div className="pdp-table-block" key={ti}>
                                         <div className="pdp-table-bar">
                                             <span className="pdp-label">表格 {ti + 1}</span>
@@ -524,27 +611,40 @@ export default () => {
                                                 </Space>
                                             )}
                                         </div>
-                                        <table className="pdp-grid">
+                                        <table className={review ? "pdp-grid review-grid" : "pdp-grid"}>
                                             <tbody>
                                                 {tb.map((row: any[], r: number) => {
                                                     const texts = (row || []).map((c: any) => String(c ?? "").trim());
                                                     const banner = texts.find((t) => t && !t.startsWith("data:image"));
-                                                    const mergeAll = !!banner && texts.length > 1 && texts.every((t) => t === banner);
+                                                    const mergeAll = !review && !!banner && texts.length > 1 && texts.every((t) => t === banner);
+                                                    const label = String(row?.[0] ?? "").trim();
+                                                    const otherRow = review && row.length > 2 && isOtherLabel(label);
+                                                    const mergeRow = review && isFullRow(row);
+                                                    const centerRow = mergeRow && (label.startsWith("参评人员签字") || label.startsWith("评审时间"));
                                                     return (
                                                     <tr key={r}>
-                                                        {mergeAll ? (
+                                                        {otherRow ? (
+                                                            <>
+                                                                <td className={r === 0 ? "head" : ""} style={{ textAlign: "center", verticalAlign: "middle" }}>{row[0]}</td>
+                                                                <td colSpan={row.length - 1} style={{ textAlign: "center", verticalAlign: "middle" }}>/</td>
+                                                            </>
+                                                        ) : mergeRow || mergeAll ? (
                                                             <td className={r === 0 ? "head" : ""} colSpan={row.length} style={{ textAlign: "center", verticalAlign: "middle" }}>
                                                                 <Input.TextArea
                                                                     className="pdp-cell"
                                                                     autoSize={{ minRows: 1, maxRows: 8 }}
                                                                     value={row[0] ?? ""}
                                                                     disabled={readonly}
-                                                                    style={{ textAlign: "center" }}
-                                                                    onChange={(e) => setRowText(ti, r, e.target.value)}
+                                                                    style={(centerRow || mergeAll) ? { textAlign: "center" } : undefined}
+                                                                    onChange={(e) => (mergeAll ? setRowText(ti, r, e.target.value) : setCell(ti, r, 0, e.target.value))}
                                                                 />
                                                             </td>
-                                                        ) : row.map((cell: any, ci: number) => (
-                                                            <td key={ci} className={r === 0 ? "head" : ""}>
+                                                        ) : row.map((cell: any, ci: number) => {
+                                                            if (ci === 0 && col0?.skip[r]) return null;
+                                                            const rs = ci === 0 && col0 && col0.rowspan[r] > 1 ? col0.rowspan[r] : undefined;
+                                                            const center = r === 0 || ci === 0;
+                                                            return (
+                                                            <td key={ci} className={r === 0 ? "head" : ""} rowSpan={rs} style={{ verticalAlign: "middle", textAlign: center ? "center" : undefined }}>
                                                                 {typeof cell === "string" && cell.startsWith("data:image") ? (
                                                                     <span style={{ position: "relative", display: "inline-block" }}>
                                                                         <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
@@ -558,11 +658,13 @@ export default () => {
                                                                         autoSize={{ minRows: 1, maxRows: 8 }}
                                                                         value={cell ?? ""}
                                                                         disabled={readonly}
+                                                                        style={center ? { textAlign: "center" } : undefined}
                                                                         onChange={(e) => setCell(ti, r, ci, e.target.value)}
                                                                     />
                                                                 )}
                                                             </td>
-                                                        ))}
+                                                            );
+                                                        })}
                                                         {!readonly && (
                                                             <td className="pdp-row-op">
                                                                 <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
@@ -577,7 +679,8 @@ export default () => {
                                             </tbody>
                                         </table>
                                     </div>
-                                ))}
+                                    );
+                                })}
 
                                 {!readonly && (
                                     <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
@@ -589,6 +692,12 @@ export default () => {
                     </div>
                 </div>
             </Spin>
+            <EditableTableGenerator
+                open={!!reviewEdit}
+                initialData={reviewEdit?.initial}
+                onConfirm={saveReviewEdit}
+                onCancel={() => setReviewEdit(null)}
+            />
         </div>
     );
 };

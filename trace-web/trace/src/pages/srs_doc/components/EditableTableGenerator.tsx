@@ -351,7 +351,19 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
   const buildTableColumns = (): ColumnsType<TableRowData> => {
     if (colCount < 1) return []; // 列数为0时，返回空列配置
 
+    const isFullBannerRow = (record: TableRowData) => {
+      const first = String(record?.col_0 ?? "").trim();
+      if (colCount <= 1 || !["参评人员签字", "评审时间", "评审结论", "批准人员签字"].some((b) => first.startsWith(b))) return false;
+      for (let i = 1; i < colCount; i++) {
+        if (String(record?.[`col_${i}`] ?? "").trim()) return false;
+      }
+      return true;
+    };
     const editableColumns: ColumnsType<TableRowData> = Array.from({ length: colCount }, (_, colIndex) => ({
+      onCell: (record: TableRowData) => {
+        if (!isFullBannerRow(record)) return {};
+        return { colSpan: colIndex === 0 ? colCount : 0 };
+      },
       ...(colCount === 2 && colIndex === 0 ? { width: 150 } : {}),
       ...(colCount === 2 && colIndex === 1 ? { className: "editable-table-content-col" } : {}),
       title: isLockedHeaderRow ? (
