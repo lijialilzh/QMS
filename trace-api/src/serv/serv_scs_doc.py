@@ -36,6 +36,7 @@ from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
+from .serv_scm_doc import DUP_MERGE_TITLES, duplicate_item_spans
 
 logger = logging.getLogger(__name__)
 
@@ -455,7 +456,7 @@ class Server(object):
                     gc.set(qn("w:w"), str(w))
                     grid_el.append(gc)
 
-        def add_grid(grid):
+        def add_grid(grid, merge_dup=False):
             grid = [row for row in (grid or []) if isinstance(row, list)]
             cols = max((len(row) for row in grid), default=0)
             if cols <= 0:
@@ -474,6 +475,11 @@ class Server(object):
                     _set_fixed_widths(table, [1700, 1100, 2000, 1500, 3000])
                 elif cols == 4:
                     _set_fixed_widths(table, [1700, 2200, 1500, 3600])
+            if merge_dup:
+                for rr, cc, rs, cs in sorted(duplicate_item_spans(grid), key=lambda a: (-(a[0] + a[2]), -(a[1] + a[3]))):
+                    merged = table.cell(rr, cc).merge(table.cell(rr + rs - 1, cc + cs - 1))
+                    set_cell(merged, grid[rr][cc] if cc < len(grid[rr]) else "", bold=(rr == 0))
+                    merged.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
             document.add_paragraph()
 
         def add_cover_grid(grid):
@@ -521,6 +527,11 @@ class Server(object):
             else:
                 body_text = str(node.get("body") or "")
                 tables = node.get("tables") or []
+                merge_dup = name in DUP_MERGE_TITLES
+
+                def add_section_grid(grid):
+                    add_grid(grid, merge_dup=merge_dup)
+
                 # 按"见下表"/"表N"切分 body，交错输出正文段和表格
                 if (("见下表" in body_text) or re.search(r"(?m)^表\s*\d", body_text)) and tables:
                     lines = body_text.split("\n")
@@ -535,18 +546,18 @@ class Server(object):
                         if ("见下表" in ln.strip() or re.match(r"^表\s*\d", ln.strip())) and tbl_idx < len(tables):
                             buf.append(ln)  # 保留"见下表"/"表N"行作为正文
                             flush_text()
-                            add_grid(tables[tbl_idx])
+                            add_section_grid(tables[tbl_idx])
                             tbl_idx += 1
                         else:
                             buf.append(ln)
                     flush_text()
                     for i in range(tbl_idx, len(tables)):
-                        add_grid(tables[i])
+                        add_section_grid(tables[i])
                 else:
                     if body_text.strip():
                         add_text(body_text)
                     for table in tables:
-                        add_grid(table)
+                        add_section_grid(table)
             idx = 0
             for child in (node.get("children") or []):
                 idx += 1

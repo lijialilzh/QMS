@@ -38,6 +38,88 @@ from .serv_utils import docx_util
 
 logger = logging.getLogger(__name__)
 
+# 只在这些章节合并相邻重复格。配置报告里对应的是现成软件/配置项状态两张 SCI 清单。
+DUP_MERGE_TITLES = {
+    "标识配置",
+    "产品开发部软件构建配置项版本控制",
+    "现成软件配置状态",
+    "软件配置项状态(不包括现成软件)",
+}
+
+
+def duplicate_item_spans(grid):
+    """相邻重复项的合并范围。(row, col, rowspan, colspan)。空单元格不合并。"""
+    rows = [row for row in (grid or []) if isinstance(row, list)]
+    n = len(rows)
+    cols = max((len(row) for row in rows), default=0)
+
+    def text(r, c):
+        if c >= len(rows[r]) or rows[r][c] is None:
+            return ""
+        return str(rows[r][c]).strip()
+
+    hide = [[False] * cols for _ in range(n)]
+    rowspan = [[1] * cols for _ in range(n)]
+    colspan = [[1] * cols for _ in range(n)]
+    for r in range(n):
+        c = 0
+        while c < cols:
+            val = text(r, c)
+            if not val:
+                c += 1
+                continue
+            c2 = c
+            while c2 + 1 < cols and text(r, c2 + 1) == val:
+                c2 += 1
+            if c2 > c:
+                colspan[r][c] = c2 - c + 1
+                for k in range(c + 1, c2 + 1):
+                    hide[r][k] = True
+            c = c2 + 1
+    r = 1
+    while r < n:
+        key = text(r, 0)
+        if not key:
+            r += 1
+            continue
+        r2 = r
+        while r2 + 1 < n and text(r2 + 1, 0) == key:
+            r2 += 1
+        if r2 > r:
+            for c in range(cols):
+                if hide[r][c]:
+                    continue
+                val = text(r, c)
+                cs = colspan[r][c]
+                if not val:
+                    continue
+                same = True
+                for rr in range(r, r2 + 1):
+                    if hide[rr][c] or colspan[rr][c] != cs:
+                        same = False
+                        break
+                    for k in range(c, c + cs):
+                        if text(rr, k) != val:
+                            same = False
+                            break
+                    if not same:
+                        break
+                if not same:
+                    continue
+                rowspan[r][c] = r2 - r + 1
+                for rr in range(r + 1, r2 + 1):
+                    for k in range(c, c + cs):
+                        hide[rr][k] = True
+        r = r2 + 1
+    anchors = []
+    for rr in range(n):
+        for cc in range(cols):
+            if hide[rr][cc]:
+                continue
+            if rowspan[rr][cc] > 1 or colspan[rr][cc] > 1:
+                anchors.append((rr, cc, rowspan[rr][cc], colspan[rr][cc]))
+    return anchors
+
 _DEFAULT_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "src-res", "scm_default_content.json")
 try:
     with open(_DEFAULT_FILE, encoding="utf-8") as _f:
@@ -423,7 +505,7 @@ class Server(object):
                         tcw.set(qn("w:w"), str(w))
                         tcw.set(qn("w:type"), "dxa")
 
-        def add_grid(grid):
+        def add_grid(grid, merge_dup=False):
             grid = [row for row in (grid or []) if isinstance(row, list)]
             cols = max((len(row) for row in grid), default=0)
             if cols <= 0:
@@ -444,25 +526,31 @@ class Server(object):
                 elif cols == 4:
                     _set_fixed_widths(table, [1700, 2200, 1500, 3600])
             elif first == "类别" and cols >= 3:
-                # 配置项存储地址表：类别列收窄、存储路径较宽；首列连续相同「类别」纵向合并；文字左对齐
+                # 配置项存储地址表：类别列收窄、存储路径较宽
                 if cols == 3:
                     _set_fixed_widths(table, [1300, 1300, 5000])
-                rows = table.rows
-                n = len(rows)
-                r = 1
-                while r < n:
-                    val = str((grid[r][0] if r < len(grid) and grid[r] else "") or "").strip()
-                    if not val:
-                        r += 1
-                        continue
-                    r2 = r
-                    while r2 + 1 < n and str((grid[r2 + 1][0] if grid[r2 + 1] else "") or "").strip() == val:
-                        r2 += 1
-                    if r2 > r:
-                        merged = rows[r].cells[0].merge(rows[r2].cells[0])
-                        set_cell(merged, val, align=WD_ALIGN_PARAGRAPH.LEFT)
-                        merged.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-                    r = r2 + 1
+                if not merge_dup:
+                    rows = table.rows
+                    n = len(rows)
+                    r = 1
+                    while r < n:
+                        val = str((grid[r][0] if r < len(grid) and grid[r] else "") or "").strip()
+                        if not val:
+                            r += 1
+                            continue
+                        r2 = r
+                        while r2 + 1 < n and str((grid[r2 + 1][0] if grid[r2 + 1] else "") or "").strip() == val:
+                            r2 += 1
+                        if r2 > r:
+                            merged = rows[r].cells[0].merge(rows[r2].cells[0])
+                            set_cell(merged, val, align=WD_ALIGN_PARAGRAPH.LEFT)
+                            merged.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                        r = r2 + 1
+            if merge_dup:
+                for rr, cc, rs, cs in sorted(duplicate_item_spans(grid), key=lambda a: (-(a[0] + a[2]), -(a[1] + a[3]))):
+                    merged = table.cell(rr, cc).merge(table.cell(rr + rs - 1, cc + cs - 1))
+                    set_cell(merged, grid[rr][cc] if cc < len(grid[rr]) else "", bold=(rr == 0))
+                    merged.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
             document.add_paragraph()
 
         def add_cover_grid(grid):
@@ -510,6 +598,11 @@ class Server(object):
             else:
                 body_text = str(node.get("body") or "")
                 tables = node.get("tables") or []
+                merge_dup = name in DUP_MERGE_TITLES
+
+                def add_section_grid(grid):
+                    add_grid(grid, merge_dup=merge_dup)
+
                 # 按"见下表"/"表N"切分 body，交错输出正文段和表格
                 if (("见下表" in body_text) or re.search(r"(?m)^表\s*\d", body_text)) and tables:
                     lines = body_text.split("\n")
@@ -524,18 +617,18 @@ class Server(object):
                         if ("见下表" in ln.strip() or re.match(r"^表\s*\d", ln.strip())) and tbl_idx < len(tables):
                             buf.append(ln)  # 保留"见下表"/"表N"行作为正文
                             flush_text()
-                            add_grid(tables[tbl_idx])
+                            add_section_grid(tables[tbl_idx])
                             tbl_idx += 1
                         else:
                             buf.append(ln)
                     flush_text()
                     for i in range(tbl_idx, len(tables)):
-                        add_grid(tables[i])
+                        add_section_grid(tables[i])
                 else:
                     if body_text.strip():
                         add_text(body_text)
                     for table in tables:
-                        add_grid(table)
+                        add_section_grid(table)
             idx = 0
             for child in (node.get("children") or []):
                 idx += 1

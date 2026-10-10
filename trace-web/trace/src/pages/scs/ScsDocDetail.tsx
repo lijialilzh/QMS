@@ -13,6 +13,7 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import ReviewTable from "@/common/ReviewTable";
 import "../pdp/PdpDocDetail.less";
 import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
+import { DUP_MERGE_TITLES, duplicateItemSpans, type ItemSpans } from "../scm/duplicateItemSpans";
 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
@@ -413,6 +414,23 @@ export default () => {
         );
         updateTables(tables);
     };
+    const mergeDup = DUP_MERGE_TITLES.has(stripNum(active?.title || ""));
+    const setMergedCell = (ti: number, r: number, ci: number, val: string, spans: ItemSpans | null) => {
+        const rs = spans?.rowSpan[r]?.[ci] || 1;
+        const cs = spans?.colSpan[r]?.[ci] || 1;
+        if (!spans || (rs === 1 && cs === 1)) {
+            setCell(ti, r, ci, val);
+            return;
+        }
+        const tables = (active.tables || []).map((tb: any[], i: number) => {
+            if (i !== ti) return tb;
+            return tb.map((row: any[], ri: number) => {
+                if (ri < r || ri >= r + rs) return row;
+                return row.map((cell: any, cc: number) => (cc >= ci && cc < ci + cs ? val : cell));
+            });
+        });
+        updateTables(tables);
+    };
     const insertRowAfter = (ti: number, r: number) => {
         const tables = (active.tables || []).map((tb: any[], i: number) => {
             if (i !== ti) return tb;
@@ -665,15 +683,17 @@ export default () => {
                                                             </div>
                                                             <table className="pdp-grid">
                                                                 <tbody>
-                                                                    {tb.map((row: any[], r: number) => (
+                                                                    {tb.map((row: any[], r: number) => {
+                                                                        const spans = mergeDup ? duplicateItemSpans(tb) : null;
+                                                                        return (
                                                                         <tr key={r}>
-                                                                            {row.map((cell: any, ci: number) => (
-                                                                                <td key={ci} className={r === 0 ? "head" : ""}>
+                                                                            {row.map((cell: any, ci: number) => spans?.hide[r]?.[ci] ? null : (
+                                                                                <td key={ci} rowSpan={spans?.rowSpan[r]?.[ci] || 1} colSpan={spans?.colSpan[r]?.[ci] || 1} className={r === 0 ? "head" : ""} style={(spans?.rowSpan[r]?.[ci] || 1) > 1 || (spans?.colSpan[r]?.[ci] || 1) > 1 ? { verticalAlign: "middle" } : undefined}>
                                                                                     {typeof cell === "string" && cell.startsWith("data:image") ? (
                                                                                         <span style={{ position: "relative", display: "inline-block" }}>
                                                                                             <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
                                                                                             {!readonly && (
-                                                                                                <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />
+                                                                                                <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setMergedCell(ti, r, ci, "", spans)} />
                                                                                             )}
                                                                                         </span>
                                                                                     ) : (
@@ -682,7 +702,7 @@ export default () => {
                                                                                             autoSize={{ minRows: 1, maxRows: 8 }}
                                                                                             value={cell ?? ""}
                                                                                             disabled={readonly}
-                                                                                            onChange={(e) => setCell(ti, r, ci, e.target.value)}
+                                                                                            onChange={(e) => setMergedCell(ti, r, ci, e.target.value, spans)}
                                                                                         />
                                                                                     )}
                                                                                 </td>
@@ -696,7 +716,8 @@ export default () => {
                                                                                 </td>
                                                                             )}
                                                                         </tr>
-                                                                    ))}
+                                                                        );
+                                                                    })}
                                                                 </tbody>
                                                             </table>
                                                         </div>
@@ -750,15 +771,17 @@ export default () => {
                                                     </div>
                                                     <table className="pdp-grid">
                                                         <tbody>
-                                                            {tb.map((row: any[], r: number) => (
+                                                            {tb.map((row: any[], r: number) => {
+                                                                const spans = mergeDup ? duplicateItemSpans(tb) : null;
+                                                                return (
                                                                 <tr key={r}>
-                                                                    {row.map((cell: any, ci: number) => (
-                                                                        <td key={ci} className={r === 0 ? "head" : ""}>
+                                                                    {row.map((cell: any, ci: number) => spans?.hide[r]?.[ci] ? null : (
+                                                                        <td key={ci} rowSpan={spans?.rowSpan[r]?.[ci] || 1} colSpan={spans?.colSpan[r]?.[ci] || 1} className={r === 0 ? "head" : ""} style={(spans?.rowSpan[r]?.[ci] || 1) > 1 || (spans?.colSpan[r]?.[ci] || 1) > 1 ? { verticalAlign: "middle" } : undefined}>
                                                                             {typeof cell === "string" && cell.startsWith("data:image") ? (
                                                                                 <span style={{ position: "relative", display: "inline-block" }}>
                                                                                     <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
                                                                                     {!readonly && (
-                                                                                        <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />
+                                                                                        <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setMergedCell(ti, r, ci, "", spans)} />
                                                                                     )}
                                                                                 </span>
                                                                             ) : (
@@ -767,7 +790,7 @@ export default () => {
                                                                                     autoSize={{ minRows: 1, maxRows: 8 }}
                                                                                     value={cell ?? ""}
                                                                                     disabled={readonly}
-                                                                                    onChange={(e) => setCell(ti, r, ci, e.target.value)}
+                                                                                    onChange={(e) => setMergedCell(ti, r, ci, e.target.value, spans)}
                                                                                 />
                                                                             )}
                                                                         </td>
@@ -781,7 +804,8 @@ export default () => {
                                                                         </td>
                                                                     )}
                                                                 </tr>
-                                                            ))}
+                                                                );
+                                                            })}
                                                         </tbody>
                                                     </table>
                                                 </div>
