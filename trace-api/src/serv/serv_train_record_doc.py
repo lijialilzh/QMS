@@ -22,7 +22,7 @@ from ..model.product import Product
 from ..model.train_record_doc import TrainRecordDoc
 from ..model.prod_dhf import ProdDhf
 from ..model.project_member import ProjectMember
-from ..model.project_timeline import ProjectTimelineRow
+from ..model.project_timeline import ProjectTimelineCell, ProjectTimelineRow
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
 from ..obj.vobj_user import UserObj
@@ -152,19 +152,24 @@ class Server(object):
         while len(grid) < 12:
             grid.append(["", "", "", "", "", ""])
 
-        # —— 培训时间（行1 [3]）：取项目时间线第一个日期行 ——
+        # —— 培训时间（行1 [2]）：时间逻辑线里「用户培训记录」所在日期行 ——
+        date_str = ""
         try:
             trow = db.session.execute(
                 select(ProjectTimelineRow)
-                .where(ProjectTimelineRow.prod_id == prod_id, ProjectTimelineRow.row_type == "date")
-                .order_by(ProjectTimelineRow.sort_order.asc(), ProjectTimelineRow.id.asc())
+                .join(ProjectTimelineCell, ProjectTimelineCell.row_id == ProjectTimelineRow.id)
+                .where(
+                    ProjectTimelineRow.prod_id == prod_id,
+                    ProjectTimelineRow.row_type == "date",
+                    ProjectTimelineCell.output_result.contains("用户培训记录"),
+                )
+                .order_by(ProjectTimelineRow.sort_order.desc(), ProjectTimelineRow.id.desc())
                 .limit(1)
             ).scalars().first()
             if trow:
                 y = (trow.year or "").strip()
                 m = (trow.month or "").strip()
                 d = (trow.day or "").strip()
-                # 规范化：确保带"年/月/日"后缀
                 if y and not y.endswith("年"):
                     y = y + "年"
                 if m and not m.endswith("月"):
@@ -172,12 +177,10 @@ class Server(object):
                 if d and not d.endswith("日"):
                     d = d + "日"
                 date_str = "".join([x for x in [y, m, d] if x])
-                if len(grid[1]) >= 6:
-                    grid[1][2] = date_str
         except Exception:
             logger.exception("autofill timeline failed")
 
-        # —— 培训人员名单（行5 [0]）：取该产品「用户测试」职能人员 ——
+        # —— 培训人数、培训人员名单：该产品项目人员中职能为「用户测试」的人 ——
         ut_names: list = []
         try:
             members = db.session.execute(
@@ -185,11 +188,10 @@ class Server(object):
                 .where(ProjectMember.prod_id == prod_id, ProjectMember.role == "用户测试")
                 .order_by(ProjectMember.sort_order.asc(), ProjectMember.id.asc())
             ).scalars().all()
-            ut_names = [n for n in members if n and n.strip()]
-            if ut_names:
-                roster = "、".join(ut_names)
-                if len(grid[5]) >= 1:
-                    grid[5][0] = roster
+            ut_names = [n.strip() for n in members if n and n.strip()]
+            while len(grid[5]) < 1:
+                grid[5].append("")
+            grid[5][0] = "、".join(ut_names)
         except Exception:
             logger.exception("autofill members failed")
 
@@ -204,25 +206,29 @@ class Server(object):
             ).scalars().first() or "").strip()
         except Exception:
             logger.exception("autofill pm failed")
-        # 行3: [2]=授课老师值
-        if pm_name and len(grid[3]) >= 6 and not (grid[3][2] or "").strip():
-            grid[3][2] = pm_name
-        # 行9: [2]=考核人员值
-        if pm_name and len(grid[9]) >= 3 and not (grid[9][2] or "").strip():
+        # 行9: [2]=考核人员值（仅空时填；格里如果还是「考核人员」也按空处理）
+        assessor = (grid[9][2] or "").strip() if len(grid[9]) >= 3 else ""
+        if pm_name and (not assessor or assessor == "考核人员"):
+            while len(grid[9]) < 3:
+                grid[9].append("")
             grid[9][2] = pm_name
 
-        # —— 默认值：培训地点 / 培训人数 / 培训方式 / 培训学时 / 考核方式 / 考核结果 / 培训评价 ——
-        # 行1: [2]=培训时间(已填), [3]=培训地点标签, [4]=培训地点值
-        if len(grid[1]) >= 6 and not (grid[1][4] or "").strip():
-            grid[1][4] = "公司"
-        # 行2: [2]=培训人数值, [3]=培训方式标签, [4]=培训方式值
-        if len(grid[2]) >= 6 and not (grid[2][2] or "").strip() and ut_names:
-            grid[2][2] = str(len(ut_names))
-        if len(grid[2]) >= 6 and not (grid[2][4] or "").strip():
-            grid[2][4] = "现场操作及线上"
-        # 行3: [2]=授课老师值, [3]=培训学时标签, [4]=培训学时值
-        if len(grid[3]) >= 6 and not (grid[3][4] or "").strip():
-            grid[3][4] = "2"
+        # 培训时间/地点/人数/方式/老师/学时：打开与导出时覆盖。格里如果还是字段名，按未填写处理。
+        # 行1 [2]=培训时间 [3]=培训地点标签 [4]=培训地点
+        # 行2 [2]=培训人数 [3]=培训方式标签 [4]=培训方式
+        # 行3 [2]=授课老师 [3]=培训学时标签 [4]=培训学时
+        for idx in (1, 2, 3):
+            while len(grid[idx]) < 6:
+                grid[idx].append("")
+        grid[1][2] = date_str
+        grid[1][3] = "培训地点"
+        grid[1][4] = "公司"
+        grid[2][2] = str(len(ut_names)) if ut_names else ""
+        grid[2][3] = "培训方式"
+        grid[2][4] = "现场操作及线上"
+        grid[3][2] = pm_name
+        grid[3][3] = "培训学时"
+        grid[3][4] = "2"
         # 行7: 培训内容摘要 [0]（产品名称/版本 + 培训说明）
         if (pname or pver) and len(grid[7]) >= 1 and not (grid[7][0] or "").strip():
             summary_parts = []
