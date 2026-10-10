@@ -257,7 +257,6 @@ export default () => {
     const displayProductId = productId ?? data.docProductId;
     const displayDocVersion = String(docVersion ?? data.docVersion ?? "").trim();
     const currentProduct = (data.products as any[]).find((p: any) => p.id === displayProductId);
-    const productLabel = currentProduct ? `${currentProduct.name}-${currentProduct.full_version}` : "";
 
     const normalizeScopeTitle = (title?: string) => String(title || "")
         .replace(/^(\d+(?:\.\d+)*\.?)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
@@ -1429,25 +1428,20 @@ export default () => {
                         <div className="div-h center-v hld-toolbar">
                             <Form.Item hidden name="id"><Input allowClear /></Form.Item>
                             {(data.isEdit || isReadOnly) ? (
+                                !isReadOnly ? (
                                 <>
-                                    {isReadOnly ? (
-                                        <span className="hld-toolbar-meta">
-                                            <span className="form-display-label">{ts("srs_doc.select_product")}：</span>
-                                            <span className="form-display-value">{productLabel || "-"}</span>
-                                        </span>
-                                    ) : (
                                         <Form.Item className="hld-toolbar-item" label={ts("srs_doc.select_product")} name="product_id" rules={[{ required: true, message: ts("hld_doc.please_select_product_required") }]}>
                                             {renderProductVersionSelect()}
                                         </Form.Item>
-                                    )}
                                     <Form.Item
                                         className="hld-toolbar-item"
-                                        label={(data.isEdit || isReadOnly) ? ts("hld_doc.current_version") : ts("hld_doc.version_label")}
+                                        label={data.isEdit ? ts("hld_doc.current_version") : ts("hld_doc.version_label")}
                                         name="version"
-                                        rules={[{ required: !isReadOnly, message: ts("hld_doc.version_required") }]}>
-                                        {renderDocVersionInput(isReadOnly)}
+                                        rules={[{ required: true, message: ts("hld_doc.version_required") }]}>
+                                        {renderDocVersionInput()}
                                     </Form.Item>
                                 </>
+                                ) : null
                             ) : (
                                 <>
                                     <Form.Item className="hld-toolbar-item" label={ts("srs_doc.select_product")} name="product_id" rules={[{ required: true, message: ts("hld_doc.please_select_product_required") }]}>

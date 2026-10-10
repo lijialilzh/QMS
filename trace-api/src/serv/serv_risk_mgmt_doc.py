@@ -528,12 +528,29 @@ class Server(object):
             for item in db.session.execute(select(Rcm).where(Rcm.code.in_(wanted))).scalars().all():
                 lib[(item.code or "").upper().replace(" ", "")] = (item.description or "").strip()
 
+        def deal_measure(rcm):
+            best = ""
+            for prod_haz, haz in haz_rows:
+                deal = prod_haz.deal or getattr(haz, "deal", "") or ""
+                for line in str(deal).split("\n"):
+                    text = line.strip()
+                    codes = rcm_codes(text)
+                    if codes and codes[0] == rcm and len(text) > len(best):
+                        best = text
+            return best
+
         out = []
         for raw, rcm, stored in parsed:
             stored_code = (rcm_codes(stored)[:1] or [""])[0]
             measure = stored
-            if rcm and stored_code != rcm and lib.get(rcm):
-                measure = lib[rcm]
+            if rcm and stored_code != rcm:
+                found = (lib.get(rcm) or "").strip() or deal_measure(rcm)
+                if found:
+                    measure = found
+                elif stored_code:
+                    measure = "未匹配到RCM"
+                elif not stored.strip():
+                    measure = "未匹配到RCM"
             elif not measure:
                 measure = raw
             ms = matches(rcm) if rcm else []

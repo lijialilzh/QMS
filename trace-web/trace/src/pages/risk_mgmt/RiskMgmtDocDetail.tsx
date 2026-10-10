@@ -761,8 +761,13 @@ export default () => {
     const resolveRcmMeasure = (rcmCode: string, stored: string) => {
         const text = String(stored || "");
         const storedCode = extractRcmCodes(text)[0] || "";
+        if (!rcmCode) return text;
         if (text.trim() && storedCode === rcmCode) return text;
-        return lookupRcmMeasure(rcmCode) || text;
+        const lib = lookupRcmMeasure(rcmCode);
+        if (lib) return lib;
+        if (storedCode && storedCode !== rcmCode) return "未匹配到RCM";
+        if (!text.trim()) return "未匹配到RCM";
+        return text;
     };
 
     const getRcmIntroducedTableMeta = (section: any) => {
@@ -915,7 +920,7 @@ export default () => {
             const stored = String(row[measureCol] || "");
             const storedCode = extractRcmCodes(stored)[0] || "";
             const lib = code ? lookupRcmMeasure(code) : "";
-            if (lib && storedCode !== code) row[measureCol] = lib;
+            if (code && storedCode !== code) row[measureCol] = lib || "未匹配到RCM";
             return { ...item, tables };
         });
         dispatch({
@@ -1661,7 +1666,7 @@ export default () => {
             }}>
             <div className="div-v page pdp-detail risk-mgmt-detail">
                 <div className="div-h pdp-toolbar">
-                    <div className="pdp-toolbar-title">
+                    {!isView && <div className="pdp-toolbar-title">
                         选择产品
                         <span className="pdp-meta" style={{ display: "inline-flex", alignItems: "center", gap: 8, marginLeft: 12 }}>
                             {!isView ? (
@@ -1718,7 +1723,7 @@ export default () => {
                                 <Input size="small" style={{ width: 120 }} />
                             </Form.Item>
                         </span>
-                    </div>
+                    </div>}
                     <Space>
                         {!isView && (
                             <Button type="primary" loading={data.saving} onClick={doSave}>{ts("save")}</Button>

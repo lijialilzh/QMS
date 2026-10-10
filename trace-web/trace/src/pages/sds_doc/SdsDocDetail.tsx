@@ -464,15 +464,10 @@ export default () => {
     }, []);
 
     const productId = Form.useWatch("product_id", editForm);
-    const srsdocId = Form.useWatch("srsdoc_id", editForm);
     const docVersion = Form.useWatch("version", editForm);
     const displayProductId = (data.isEdit || isReadOnly) ? (data.docProductId ?? productId) : productId;
-    const displaySrsdocId = (data.isEdit || isReadOnly) ? (data.docSrsdocId ?? srsdocId) : srsdocId;
     const displayDocVersion = (data.isEdit || isReadOnly) ? (data.docVersion ?? docVersion) : docVersion;
     const currentProduct = (data.products as any[]).find((p: any) => p.id === displayProductId);
-    const productLabel = currentProduct ? `${currentProduct.name}-${currentProduct.full_version}` : "";
-    const currentSrsdoc = (data.srsDocList as any[]).find((s: any) => s.id === displaySrsdocId);
-    const srsdocLabel = currentSrsdoc ? (currentSrsdoc.version || currentSrsdoc.full_version || "") : "";
     const normalizeScopeTitle = (title?: string) => String(title || "")
         .replace(/^(\d+(?:\.\d+)*\.?)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
         .replace(/[：:\s.．]/g, "")
@@ -3619,13 +3614,8 @@ export default () => {
                         <Input allowClear />
                     </Form.Item>
                     {(data.isEdit || isReadOnly) && !data.requireRebindSrs ? (
+                        !isReadOnly ? (
                         <>
-                            {isReadOnly ? (
-                                <span className="sds-toolbar-meta">
-                                    <span className="form-display-label">{ts("srs_doc.select_product")}：</span>
-                                    <span className="form-display-value">{productLabel || "-"}</span>
-                                </span>
-                            ) : (
                                 <Form.Item
                                     className="sds-toolbar-item"
                                     label={ts("srs_doc.select_product")}
@@ -3644,13 +3634,6 @@ export default () => {
                                         }}
                                     />
                                 </Form.Item>
-                            )}
-                            {isReadOnly ? (
-                                <span className="sds-toolbar-meta">
-                                    <span className="form-display-label">{ts("sds_doc.req_doc")}：</span>
-                                    <span className="form-display-value">{srsdocLabel || "-"}</span>
-                                </span>
-                            ) : (
                                 <Form.Item
                                     className="sds-toolbar-item"
                                     label={ts("sds_doc.req_doc")}
@@ -3669,16 +3652,16 @@ export default () => {
                                         }))}
                                     />
                                 </Form.Item>
-                            )}
                             <Form.Item
                                 className="sds-toolbar-item"
-                                label={(data.isEdit || isReadOnly) ? ts("sds_doc.current_version") : ts("sds_doc.version_label")}
+                                label={data.isEdit ? ts("sds_doc.current_version") : ts("sds_doc.version_label")}
                                 name="version"
-                                rules={[{ required: !isReadOnly, message: "" }]}>
-                                <Input allowClear placeholder={ts("sds_doc.please_input_version")} disabled={isReadOnly} style={{ width: 130 }} />
+                                rules={[{ required: true, message: "" }]}>
+                                <Input allowClear placeholder={ts("sds_doc.please_input_version")} style={{ width: 130 }} />
                             </Form.Item>
                         </>
-                    ) : (
+                        ) : null
+                    ) : isReadOnly ? null : (
                         <>
                             <Form.Item
                                 className="sds-toolbar-item"

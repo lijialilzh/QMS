@@ -1474,7 +1474,7 @@ export default () => {
             }}>
             <div className="div-v page pdp-detail risk-mgmt-detail">
                 <div className="div-h pdp-toolbar">
-                    <div className="pdp-toolbar-title">
+                    {!isView && <div className="pdp-toolbar-title">
                         选择产品
                         <span className="pdp-meta" style={{ display: "inline-flex", alignItems: "center", gap: 8, marginLeft: 12 }}>
                             {!isView ? (
@@ -1540,7 +1540,7 @@ export default () => {
                                 <Input size="small" style={{ width: 120 }} />
                             </Form.Item>
                         </span>
-                    </div>
+                    </div>}
                     <Space>
                         {!isView && (
                             <Button type="primary" loading={data.saving} onClick={doSave}>{ts("save")}</Button>

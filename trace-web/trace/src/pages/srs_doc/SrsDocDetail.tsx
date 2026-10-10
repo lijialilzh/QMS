@@ -828,7 +828,6 @@ export default () => {
     const displayProductId = isReadOnly ? (data.docProductId ?? productId) : productId;
     const displayDocVersion = isReadOnly ? (data.docVersion ?? docVersion) : docVersion;
     const currentProduct = (data.products as any[]).find((p: any) => p.id === displayProductId);
-    const productLabel = currentProduct ? `${currentProduct.name}-${currentProduct.full_version}` : "";
     const displayProductVersion = currentProduct?.full_version ?? "";
     const normalizeScopeTitle = (title?: string) => String(title || "")
         .replace(/^(\d+(?:\.\d+)*\.?)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
@@ -5642,33 +5641,30 @@ export default () => {
                     <Form.Item hidden name="file_no">
                         <Input allowClear />
                     </Form.Item>
-                    {isReadOnly ? (
-                        <span className="srs-toolbar-meta">
-                            <span className="form-display-label">{ts("srs_doc.select_product")}：</span>
-                            <span className="form-display-value">{productLabel || "-"}</span>
-                        </span>
-                    ) : (
-                        <Form.Item
-                            className="srs-toolbar-item"
-                            label={ts("srs_doc.select_product")}
-                            name="product_id"
-                            rules={[{ required: true, message: "" }]}>
-                            <ProductVersionSelect
-                                products={data.products}
-                                allowClear
-                                namePlaceholder={ts("product.name")}
-                                versionPlaceholder={ts("product.full_version")}
-                                onChange={(value) => editForm.setFieldValue("product_id", value)}
-                            />
-                        </Form.Item>
+                    {!isReadOnly && (
+                        <>
+                            <Form.Item
+                                className="srs-toolbar-item"
+                                label={ts("srs_doc.select_product")}
+                                name="product_id"
+                                rules={[{ required: true, message: "" }]}>
+                                <ProductVersionSelect
+                                    products={data.products}
+                                    allowClear
+                                    namePlaceholder={ts("product.name")}
+                                    versionPlaceholder={ts("product.full_version")}
+                                    onChange={(value) => editForm.setFieldValue("product_id", value)}
+                                />
+                            </Form.Item>
+                            <Form.Item
+                                className="srs-toolbar-item"
+                                label={data.isEdit ? ts("srs_doc.current_version") : ts("srs_doc.version_label")}
+                                name="version"
+                                rules={[{ required: true, message: "" }]}>
+                                <Input allowClear placeholder={ts("srs_doc.please_input_version")} style={{ width: 130 }} />
+                            </Form.Item>
+                        </>
                     )}
-                    <Form.Item
-                        className="srs-toolbar-item"
-                        label={(data.isEdit || isReadOnly) ? ts("srs_doc.current_version") : ts("srs_doc.version_label")}
-                        name="version"
-                        rules={[{ required: !isReadOnly, message: "" }]}>
-                        <Input allowClear placeholder={ts("srs_doc.please_input_version")} disabled={isReadOnly} style={{ width: 130 }} />
-                    </Form.Item>
                     <div className="expand"></div>
                     {!isReadOnly && (
                     <Space>

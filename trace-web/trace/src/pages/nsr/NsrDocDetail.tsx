@@ -602,15 +602,8 @@ export default () => {
     return (
         <div className="div-v page pdp-detail">
             <div className="div-h pdp-toolbar">
-                <div className="pdp-toolbar-title">
+{!readonly && <div className="pdp-toolbar-title">
                     选择产品
-                    {readonly ? (
-                        <span className="pdp-meta">
-                            {data.doc.product_name ? `　${data.doc.product_name}` : ""}
-                            {data.doc.product_full_version ? ` / ${data.doc.product_full_version}` : ""}
-                            {data.doc.version ? `　文档版本：${data.doc.version}` : ""}
-                        </span>
-                    ) : (
                         <span className="pdp-meta" style={{ display: "inline-flex", alignItems: "center", gap: 8, marginLeft: 12 }}>
                             <span style={{ width: 340, display: "inline-block" }}>
                                 <ProductVersionSelect
@@ -636,8 +629,7 @@ export default () => {
                                 }}
                             />
                         </span>
-                    )}
-                </div>
+                </div>}
                 <Space>
                     {!readonly && (
                         <Button type="primary" loading={data.saving} onClick={doSave}>

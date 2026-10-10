@@ -331,13 +331,6 @@ export default () => {
                 </Form>
                 <Space>
                     <Button type="primary" onClick={() => {
-                        importForm.resetFields();
-                        dispatch({ dlgType: DlgTypes.import, importFiles: [] });
-                        loadProducts(data, dispatch);
-                    }}>
-                        导入
-                    </Button>
-                    <Button type="primary" onClick={() => {
                         addForm.resetFields();
                         addForm.setFieldValue("version", "A0");
                         dispatch({ dlgType: DlgTypes.add });
