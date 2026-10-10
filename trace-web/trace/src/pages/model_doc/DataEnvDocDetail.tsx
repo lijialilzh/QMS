@@ -16,7 +16,7 @@ import {
     envCheckTitle, isEnvCheckGrid, parseEqAssets, prevEnvCheckRows,
 } from "./envMaintCheck";
 import "../pdp/PdpDocDetail.less";
-import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
+import { syncDocVersionFields, syncFileNoVersion } from "@/pages/doc_fill/syncDocVersion";
 
 const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", marginBottom: 8, tableLayout: "auto" };
 const tdBase: CSSProperties = { border: "1px solid #d9d9d9", padding: "4px 6px", fontSize: 12, verticalAlign: "middle" };
@@ -366,7 +366,7 @@ export default () => {
                 <div style={{ height: "100%", overflow: "auto" }}>
                     <div style={{ padding: "12px 20px" }}>
                         <div style={{ textAlign: "center", fontSize: 16, fontWeight: 700, margin: "4px 0 12px" }}>{title}</div>
-                        <div style={{ color: "#888", marginBottom: 4 }}>{data.doc.file_no || ""}</div>
+                        <div style={{ color: "#888", marginBottom: 4 }}>{syncFileNoVersion(data.doc.file_no, data.doc.version) || ""}</div>
 
                         <div style={{ color: "#888", margin: "16px 0 4px" }}>{assetLabel}</div>
                         <table style={{ ...tableStyle, maxWidth: 1000 }}>

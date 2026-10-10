@@ -1,3 +1,4 @@
+import { syncFileNoVersion } from "@/pages/doc_fill/syncDocVersion";
 import { Button, Input, Space, Spin, message } from "antd";
 import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
@@ -237,7 +238,7 @@ export default () => {
                                 size="small"
                                 style={{ width: 110 }}
                                 value={data.doc.version || ""}
-                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })}
+                                onChange={(e) => { const version = e.target.value; dispatch({ doc: { ...data.doc, version } }); }}
                             />
                         </span>
                 </div>}
@@ -252,7 +253,7 @@ export default () => {
                 <div style={{ height: "100%", overflow: "auto" }}>
                     <div style={{ padding: "12px 20px", maxWidth: 960 }}>
                         <div style={{ textAlign: "center", fontSize: 16, fontWeight: 700, margin: "4px 0 6px" }}>{meta.title}</div>
-                        <div style={{ textAlign: "center", color: "#999", marginBottom: 14 }}>{data.doc.file_no || ""}</div>
+                        <div style={{ textAlign: "center", color: "#999", marginBottom: 14 }}>{syncFileNoVersion(data.doc.file_no, data.doc.version) || ""}</div>
 
                         <table style={tableStyle}>
                             <colgroup>

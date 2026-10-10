@@ -185,8 +185,10 @@ class Server(object):
                 elif info.get("file_no"):
                     obj.file_no = info["file_no"]
             # auto 预览里的文件编号同步为最终展示值
-            info["file_no"] = obj.file_no or info.get("file_no") or ""
             obj.auto = info
+        obj.file_no = sync_file_no_version(obj.file_no or "", getattr(row, "version", None) or "") or obj.file_no
+        if isinstance(getattr(obj, "auto", None), dict):
+            obj.auto["file_no"] = obj.file_no or obj.auto.get("file_no") or ""
         return obj
 
     # ---------------- CRUD ----------------
@@ -254,6 +256,8 @@ class Server(object):
                 if key == "content":
                     value = self.__normalize_content(value)
                 setattr(row, key, value)
+            if getattr(form, "version", None) and hasattr(row, "file_no"):
+                row.file_no = sync_file_no_version(row.file_no or "", form.version or row.version) or row.file_no
             db.session.commit()
             return Resp.resp_ok()
         except Exception:

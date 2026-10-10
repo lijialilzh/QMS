@@ -557,6 +557,8 @@ class Server(object):
             row.change_log = form.change_log
         if form.content is not None:
             row.content = self.__normalize_content(form.content)
+        if form.version is not None and row.file_no:
+            row.file_no = sync_file_no_version(row.file_no, row.version) or row.file_no
         try:
             db.session.flush()
         except Exception as e:
@@ -583,7 +585,7 @@ class Server(object):
         product = db.session.execute(select(Product).where(Product.id == row.product_id)).scalars().first()
         content = self.__normalize_content(row.content)
         content = self.__autofill(content, row.product_id, row.version)
-        file_no = (row.file_no or "").strip() or self.__dhf_file_no(row.product_id)
+        file_no = sync_file_no_version((row.file_no or "").strip() or self.__dhf_file_no(row.product_id), row.version) or (row.file_no or "").strip() or self.__dhf_file_no(row.product_id)
         obj = CybersecPlanDocObj(
             id=row.id, product_id=row.product_id, version=row.version, file_no=file_no,
             change_log=row.change_log, content=content,

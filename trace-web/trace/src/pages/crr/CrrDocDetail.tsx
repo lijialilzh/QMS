@@ -1,3 +1,4 @@
+import { syncFileNoVersion } from "@/pages/doc_fill/syncDocVersion";
 import { Button, Checkbox, Input, Modal, Space, Spin, message } from "antd";
 import { DeleteOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
@@ -191,7 +192,7 @@ export default () => {
                                 size="small"
                                 style={{ width: 110 }}
                                 value={data.doc.version || ""}
-                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })}
+                                onChange={(e) => { const version = e.target.value; dispatch({ doc: { ...data.doc, version } }); }}
                             />
                         </span>
                 </div>}
@@ -208,7 +209,7 @@ export default () => {
                 <div style={{ height: "100%", overflow: "auto" }}>
                     <div style={{ padding: "12px 20px", maxWidth: 1000 }}>
                         <div style={{ textAlign: "center", fontSize: 16, fontWeight: 700, margin: "4px 0 6px" }}>代码审查记录</div>
-                        <div style={{ textAlign: "center", color: "#999", marginBottom: 14 }}>{data.doc.file_no || ""}</div>
+                        <div style={{ textAlign: "center", color: "#999", marginBottom: 14 }}>{syncFileNoVersion(data.doc.file_no, data.doc.version) || ""}</div>
 
                         {/* 抬头表 */}
                         <table style={tableStyle}>

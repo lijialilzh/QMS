@@ -1,3 +1,4 @@
+import { syncFileNoVersion } from "@/pages/doc_fill/syncDocVersion";
 import { Button, Checkbox, Input, Modal, Space, Spin, message } from "antd";
 import { useEffect } from "react";
 import type { CSSProperties } from "react";
@@ -194,7 +195,7 @@ export default () => {
                                 size="small"
                                 style={{ width: 110 }}
                                 value={data.doc.version || ""}
-                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })}
+                                onChange={(e) => { const version = e.target.value; dispatch({ doc: { ...data.doc, version } }); }}
                             />
                         </span>
                 </div>}
@@ -209,7 +210,7 @@ export default () => {
                 <div style={{ height: "100%", overflow: "auto" }}>
                     <div style={{ padding: "12px 20px" }}>
                         <div style={{ textAlign: "center", fontSize: 16, fontWeight: 700, margin: "4px 0 12px" }}>测试环境维护记录</div>
-                        <div style={{ color: "#888", marginBottom: 4 }}>{data.doc.file_no || ""}</div>
+                        <div style={{ color: "#888", marginBottom: 4 }}>{syncFileNoVersion(data.doc.file_no, data.doc.version) || ""}</div>
 
                         {/* 资产表 */}
                         <div style={{ color: "#888", margin: "16px 0 4px" }}>测试环境维护记录 · 资产</div>

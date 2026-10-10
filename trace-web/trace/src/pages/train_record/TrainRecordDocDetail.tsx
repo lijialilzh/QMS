@@ -1,3 +1,4 @@
+import { syncFileNoVersion } from "@/pages/doc_fill/syncDocVersion";
 import { Button, Input, Modal, Space, Spin, message } from "antd";
 import type { CSSProperties } from "react";
 import { useEffect, useMemo } from "react";
@@ -152,7 +153,7 @@ export default () => {
                             </span>
                             <span style={{ whiteSpace: "nowrap" }}>文档版本：</span>
                             <Input size="small" style={{ width: 110 }} value={data.doc.version || ""}
-                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })} />
+                                onChange={(e) => { const version = e.target.value; dispatch({ doc: { ...data.doc, version } }); }} />
                         </span>
                 </div>}
                 <Space>
@@ -166,7 +167,7 @@ export default () => {
                 <div style={{ height: "100%", overflow: "auto" }}>
                     <div style={{ padding: "12px 20px", maxWidth: 920 }}>
                         <div style={{ textAlign: "center", fontSize: 18, fontWeight: 700, margin: "4px 0" }}>培训记录表</div>
-                        <div style={{ textAlign: "center", color: "#888", marginBottom: 12 }}>{data.doc.file_no || ""}</div>
+                        <div style={{ textAlign: "center", color: "#888", marginBottom: 12 }}>{syncFileNoVersion(data.doc.file_no, data.doc.version) || ""}</div>
 
                         <table style={{ borderCollapse: "collapse", width: "100%" }}>
                             <tbody>

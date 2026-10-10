@@ -21,6 +21,21 @@ const patchTable = (tb: any[], ver: string): any[] => {
     });
 };
 
+/** 文件编号末尾的版本段（如 -A0）随文档版本变化，规则与后端 sync_file_no_version 一致。 */
+export const syncFileNoVersion = (fileNo: string, version: string): string => {
+    const no = String(fileNo || "");
+    const ver = String(version || "").trim();
+    if (!no || !ver) return no;
+    const idx = no.lastIndexOf("-");
+    if (idx < 0) return no;
+    const tail = no.slice(idx + 1);
+    if (!/^[A-Za-z]+\d+$/.test(tail)) return no;
+    const num = ver.match(/(\d+)(?!.*\d)/);
+    if (!num) return no.slice(0, idx + 1) + ver;
+    const letter = tail.match(/^[A-Za-z]+/)?.[0] || "";
+    return no.slice(0, idx + 1) + letter + num[1];
+};
+
 export const syncDocVersionFields = (nodes: any[], version: string): any[] => {
     const ver = String(version ?? "").trim();
     const walk = (n: any): any => ({

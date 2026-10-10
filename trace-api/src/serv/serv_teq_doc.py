@@ -77,6 +77,7 @@ class Server(object):
             obj.product_version = product.full_version
             obj.product_full_version = product.full_version
             obj.product_type_code = product.type_code
+        obj.file_no = sync_file_no_version(obj.file_no or "", getattr(row, "version", None) or "") or obj.file_no
         return obj
 
     async def add_teq_doc(self, form: TeqDocForm):
@@ -142,6 +143,8 @@ class Server(object):
                 if key == "content":
                     value = self.__normalize_content(value)
                 setattr(row, key, value)
+            if getattr(form, "version", None) and hasattr(row, "file_no"):
+                row.file_no = sync_file_no_version(row.file_no or "", form.version or row.version) or row.file_no
             db.session.commit()
             return Resp.resp_ok()
         except Exception:

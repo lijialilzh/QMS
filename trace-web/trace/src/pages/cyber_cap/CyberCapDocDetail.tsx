@@ -1,3 +1,4 @@
+import { syncFileNoVersion } from "@/pages/doc_fill/syncDocVersion";
 import { Button, Input, Select, Space, Spin, message } from "antd";
 import { useEffect } from "react";
 import type { CSSProperties } from "react";
@@ -162,7 +163,7 @@ export default () => {
                                 size="small"
                                 style={{ width: 110 }}
                                 value={data.doc.version || ""}
-                                onChange={(e) => dispatch({ doc: { ...data.doc, version: e.target.value } })}
+                                onChange={(e) => { const version = e.target.value; dispatch({ doc: { ...data.doc, version } }); }}
                             />
                         </span>
                 </div>}
@@ -204,7 +205,7 @@ export default () => {
                                         <td style={tdLabel}>制造商</td><td style={tdValue}>{auto.registrant || ""}</td>
                                     </tr>
                                     <tr>
-                                        <td style={tdLabel}>文件ID</td><td style={tdValue}>{auto.file_no || ""}</td>
+                                        <td style={tdLabel}>文件ID</td><td style={tdValue}>{syncFileNoVersion(auto.file_no || data.doc.file_no, data.doc.version) || ""}</td>
                                         <td style={tdLabel}>文件发布日期</td><td style={tdValue}>{auto.date || ""}</td>
                                     </tr>
                                     <tr>
