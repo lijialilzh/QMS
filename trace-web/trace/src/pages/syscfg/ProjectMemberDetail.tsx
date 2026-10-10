@@ -1,4 +1,4 @@
-import { Button, Table, message, Space, Input, AutoComplete, Modal, Upload, Popconfirm, Tooltip } from "antd";
+import { Button, Table, message, Space, Input, AutoComplete, Select, Modal, Upload, Popconfirm, Tooltip } from "antd";
 import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -66,6 +66,7 @@ const DEFAULT_MODEL_MEMBERS = [
 
 // 备注快捷标识：用于标注开发人员前后端及所属模块（仍可自由输入其它备注）
 const NOTE_OPTIONS = ["前端-NeoViewer", "后端-Repacs", "后端-Dlserver", "后端-DP"];
+const DEPTS = ["产品开发部", "模型部", "产品部", "生产部"];
 
 export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void }) => {
     const { t: ts } = useTranslation();
@@ -268,7 +269,7 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
         {
             title: "职能",
             dataIndex: "role",
-            width: "30%",
+            width: "22%",
             render: (value: any, row: any) => {
                 if (!isEditing(row, "role")) return clickToEdit(row, "role", value);
                 return (
@@ -288,7 +289,7 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
         {
             title: "姓名",
             dataIndex: "name",
-            width: "30%",
+            width: "22%",
             render: (value: any, row: any) => {
                 if (!isEditing(row, "name")) return clickToEdit(row, "name", value);
                 return (
@@ -298,6 +299,25 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
                         onChange={(e: any) => dispatch({ targetEdit: { ...data.targetEdit, name: e.target.value } })}
                         onBlur={() => saveCell()}
                         onPressEnter={() => saveCell()}
+                    />
+                );
+            },
+        },
+        {
+            title: "所属部门",
+            dataIndex: "dept",
+            width: "22%",
+            render: (value: any, row: any) => {
+                if (!isEditing(row, "dept")) return clickToEdit(row, "dept", value);
+                return (
+                    <Select
+                        autoFocus
+                        defaultOpen
+                        allowClear
+                        style={{ width: "100%" }}
+                        value={data.targetEdit.dept || undefined}
+                        options={DEPTS.map((d) => ({ label: d, value: d }))}
+                        onChange={(v: any) => saveCell({ dept: v || "" })}
                     />
                 );
             },

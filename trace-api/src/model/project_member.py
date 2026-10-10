@@ -12,5 +12,6 @@ class ProjectMember(Model):
     prod_id = Column(Integer, nullable=False, index=True, comment="产品ID")
     role = Column(String(64), nullable=False, comment="职能")
     name = Column(String(64), nullable=False, comment="姓名")
+    dept = Column(String(64), comment="所属部门")
     sort_order = Column(Integer, default=0, comment="排序")
     note = Column(String(256), comment="备注")

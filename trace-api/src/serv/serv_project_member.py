@@ -100,6 +100,7 @@ class Server(object):
             header = [str(c or "").strip() for c in grid[0]]
             role_col = header.index("职能") if "职能" in header else 0
             name_col = header.index("人员") if "人员" in header else 1
+            dept_col = header.index("所属部门") if "所属部门" in header else -1
 
             if replace:
                 db.session.execute(delete(ProjectMember).where(ProjectMember.prod_id == prod_id))
@@ -112,6 +113,7 @@ class Server(object):
                     return str(r[i]).strip() if i < len(r) and r[i] is not None else ""
                 role_raw = cell(role_col)
                 name_raw = cell(name_col)
+                dept = cell(dept_col) if dept_col >= 0 else ""
                 if role_raw:
                     last_role = role_raw
                 role = role_raw or last_role
@@ -123,7 +125,7 @@ class Server(object):
                     names = [""]
                 for nm in names:
                     sort_order += 1
-                    db.session.add(ProjectMember(prod_id=prod_id, role=role, name=nm, sort_order=sort_order))
+                    db.session.add(ProjectMember(prod_id=prod_id, role=role, name=nm, dept=dept, sort_order=sort_order))
                     imported += 1
             db.session.commit()
             return Resp.resp_ok(data={"imported": imported})

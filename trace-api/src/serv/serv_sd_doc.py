@@ -9,6 +9,64 @@ import copy
 import logging
 import re
 from datetime import date, timedelta
+
+# 国务院放假安排：法定假日放假；调休周末照常上班。计划完成日避开周末和法定假日。
+_HOLIDAYS = {
+    date(2022, 1, 1), date(2022, 1, 2), date(2022, 1, 3),
+    date(2022, 1, 31), date(2022, 2, 1), date(2022, 2, 2), date(2022, 2, 3), date(2022, 2, 4), date(2022, 2, 5), date(2022, 2, 6),
+    date(2022, 4, 3), date(2022, 4, 4), date(2022, 4, 5),
+    date(2022, 4, 30), date(2022, 5, 1), date(2022, 5, 2), date(2022, 5, 3), date(2022, 5, 4),
+    date(2022, 6, 3), date(2022, 6, 4), date(2022, 6, 5),
+    date(2022, 9, 10), date(2022, 9, 11), date(2022, 9, 12),
+    date(2022, 10, 1), date(2022, 10, 2), date(2022, 10, 3), date(2022, 10, 4), date(2022, 10, 5), date(2022, 10, 6), date(2022, 10, 7),
+    date(2022, 12, 31), date(2023, 1, 1), date(2023, 1, 2),
+    date(2023, 1, 21), date(2023, 1, 22), date(2023, 1, 23), date(2023, 1, 24), date(2023, 1, 25), date(2023, 1, 26), date(2023, 1, 27),
+    date(2023, 4, 5),
+    date(2023, 4, 29), date(2023, 4, 30), date(2023, 5, 1), date(2023, 5, 2), date(2023, 5, 3),
+    date(2023, 6, 22), date(2023, 6, 23), date(2023, 6, 24),
+    date(2023, 9, 29), date(2023, 9, 30), date(2023, 10, 1), date(2023, 10, 2), date(2023, 10, 3), date(2023, 10, 4), date(2023, 10, 5), date(2023, 10, 6),
+    date(2024, 1, 1),
+    date(2024, 2, 10), date(2024, 2, 11), date(2024, 2, 12), date(2024, 2, 13), date(2024, 2, 14), date(2024, 2, 15), date(2024, 2, 16), date(2024, 2, 17),
+    date(2024, 4, 4), date(2024, 4, 5), date(2024, 4, 6),
+    date(2024, 5, 1), date(2024, 5, 2), date(2024, 5, 3), date(2024, 5, 4), date(2024, 5, 5),
+    date(2024, 6, 8), date(2024, 6, 9), date(2024, 6, 10),
+    date(2024, 9, 15), date(2024, 9, 16), date(2024, 9, 17),
+    date(2024, 10, 1), date(2024, 10, 2), date(2024, 10, 3), date(2024, 10, 4), date(2024, 10, 5), date(2024, 10, 6), date(2024, 10, 7),
+    date(2025, 1, 1),
+    date(2025, 1, 28), date(2025, 1, 29), date(2025, 1, 30), date(2025, 1, 31), date(2025, 2, 1), date(2025, 2, 2), date(2025, 2, 3), date(2025, 2, 4),
+    date(2025, 4, 4), date(2025, 4, 5), date(2025, 4, 6),
+    date(2025, 5, 1), date(2025, 5, 2), date(2025, 5, 3), date(2025, 5, 4), date(2025, 5, 5),
+    date(2025, 5, 31), date(2025, 6, 1), date(2025, 6, 2),
+    date(2025, 10, 1), date(2025, 10, 2), date(2025, 10, 3), date(2025, 10, 4), date(2025, 10, 5), date(2025, 10, 6), date(2025, 10, 7), date(2025, 10, 8),
+    date(2026, 1, 1), date(2026, 1, 2), date(2026, 1, 3),
+    date(2026, 2, 15), date(2026, 2, 16), date(2026, 2, 17), date(2026, 2, 18), date(2026, 2, 19), date(2026, 2, 20), date(2026, 2, 21), date(2026, 2, 22), date(2026, 2, 23),
+    date(2026, 4, 4), date(2026, 4, 5), date(2026, 4, 6),
+    date(2026, 5, 1), date(2026, 5, 2), date(2026, 5, 3), date(2026, 5, 4), date(2026, 5, 5),
+    date(2026, 6, 19), date(2026, 6, 20), date(2026, 6, 21),
+    date(2026, 9, 25), date(2026, 9, 26), date(2026, 9, 27),
+    date(2026, 10, 1), date(2026, 10, 2), date(2026, 10, 3), date(2026, 10, 4), date(2026, 10, 5), date(2026, 10, 6), date(2026, 10, 7),
+}
+_EXTRA_WORKDAYS = {
+    date(2022, 1, 29), date(2022, 1, 30), date(2022, 4, 2), date(2022, 4, 24), date(2022, 5, 7), date(2022, 10, 8), date(2022, 10, 9),
+    date(2023, 1, 28), date(2023, 1, 29), date(2023, 4, 23), date(2023, 5, 6), date(2023, 6, 25), date(2023, 10, 7), date(2023, 10, 8),
+    date(2024, 2, 4), date(2024, 2, 18), date(2024, 4, 7), date(2024, 4, 28), date(2024, 5, 11), date(2024, 9, 14), date(2024, 9, 29), date(2024, 10, 12),
+    date(2025, 1, 26), date(2025, 2, 8), date(2025, 4, 27), date(2025, 9, 28), date(2025, 10, 11),
+    date(2026, 1, 4), date(2026, 2, 14), date(2026, 2, 28), date(2026, 5, 9), date(2026, 9, 20), date(2026, 10, 10),
+}
+
+
+def _is_workday(d):
+    if d in _EXTRA_WORKDAYS:
+        return True
+    if d in _HOLIDAYS or d.weekday() >= 5:
+        return False
+    return True
+
+
+def _to_workday(d):
+    while d and not _is_workday(d):
+        d = d + timedelta(days=1)
+    return d
 from io import BytesIO
 from typing import List
 from sqlalchemy import delete, func, select
@@ -220,6 +278,8 @@ class Server(object):
             return content
         product = db.session.execute(select(Product).where(Product.id == prod_id)).scalars().first()
         prod_name = (getattr(product, "name", "") or "").strip()
+        type_code = (getattr(product, "type_code", "") or "").strip()
+        full_version = (getattr(product, "full_version", "") or "").strip()
         overall_desc = (getattr(product, "overall_desc", "") or "").strip()
         tl_rows = db.session.execute(
             select(ProjectTimelineRow).where(ProjectTimelineRow.prod_id == prod_id)
@@ -231,8 +291,8 @@ class Server(object):
                 select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_([r.id for r in tl_rows]))
             ).scalars().all():
                 cell_map.setdefault(c.row_id, []).append(c.output_result or "")
-                # 产品开发活动：输出含「产品开发」但排除「产品开发计划」文档
-                if re.search(r"产品开发(?!计划)", str(c.output_result or "")):
+                # 产品开发周期只取产品开发部（产品开发部-开发等），输出含「产品开发」但排除「产品开发计划」
+                if str(c.dept or "").startswith("产品开发部") and re.search(r"产品开发(?!计划)", str(c.output_result or "")):
                     dev_row_ids.add(c.row_id)
 
         def to_int(v):
@@ -250,8 +310,9 @@ class Server(object):
         if dev_rows:
             s = min(dev_rows, key=date_key)
             e = max(dev_rows, key=date_key)
-            sy, sm, ey, em = to_int(s.year), to_int(s.month), to_int(e.year), to_int(e.month)
-            cycle = f"{sy}年{sm}月~{em}月" if sy == ey else f"{sy}年{sm}月~{ey}年{em}月"
+            sy, sm, sd_ = to_int(s.year), to_int(s.month), to_int(s.day) or 1
+            ey, em, ed_ = to_int(e.year), to_int(e.month), to_int(e.day) or 1
+            cycle = f"{sy}年{sm}月{sd_}日~{em}月{ed_}日" if sy == ey else f"{sy}年{sm}月{sd_}日~{ey}年{em}月{ed_}日"
 
         file_rows = [r for r in date_rows if any("软件开发计划" in str(v or "") for v in cell_map.get(r.id, []))]
         file_date = ""
@@ -265,8 +326,32 @@ class Server(object):
                 if pred(str(m.role or "")):
                     return (m.name or "").strip()
             return ""
-        pm = find_member(lambda r: "产品经理" in r or "经理" in r)
-        approver = find_member(lambda r: "负责人" in r)
+        def is_prod_dev_lead(m):
+            role = str(m.role or "")
+            dept = str(m.dept or "").strip()
+            if "研发负责人" in role or "产品经理" in role:
+                return False
+            if "产品开发负责人" in role or role.strip() == "开发负责人":
+                return True
+            return dept == "产品开发部" and ("TPM" in role.upper() or "负责人" in role or "经理" in role)
+        dev_lead = ""
+        for m in members:
+            if is_prod_dev_lead(m):
+                dev_lead = (m.name or "").strip()
+                break
+        if not dev_lead:
+            dev_lead = find_member(lambda r: "TPM" in r.upper())
+        approver = find_member(lambda r: "研发负责人" in r) or find_member(lambda r: "负责人" in r)
+        # 人员资源只取产品开发负责人（研发负责人）和前后端开发人员
+        def _is_front_back(m):
+            role = str(m.role or "").strip()
+            note = str(m.note or "")
+            if "研发负责人" in role or "产品开发负责人" in role:
+                return False
+            return "前端" in note or "后端" in note or role in ("开发人员", "开发工程师")
+        personnel_rows = [m for m in members if "研发负责人" in str(m.role or "") or "产品开发负责人" in str(m.role or "")]
+        personnel_rows += [m for m in members if _is_front_back(m)]
+        personnel_rows.sort(key=lambda m: (0 if ("研发负责人" in str(m.role or "") or "产品开发负责人" in str(m.role or "")) else 1, m.sort_order or 0, m.id or 0))
         # 备注模块映射：备注 前端-NeoViewer / 后端-DP 等 → 取"-"后模块名(小写) → 参与人员姓名
         module_map = {}
         for m in members:
@@ -296,6 +381,7 @@ class Server(object):
             total = (de - ds).days
 
             def fmt_d(d):
+                d = _to_workday(d)
                 return f"{d.year}年{d.month}月{d.day}日"
 
             ph_base = fmt_d(ds + timedelta(days=int(total * 0.25 + 0.5)))
@@ -347,6 +433,11 @@ class Server(object):
                         dt = ph_integ
                     else:
                         dt = dev_end
+                    if dt:
+                        mdt = re.match(r"(\d+)年(\d+)月(\d+)日", dt)
+                        if mdt:
+                            wd = _to_workday(date(int(mdt.group(1)), int(mdt.group(2)), int(mdt.group(3))))
+                            dt = f"{wd.year}年{wd.month}月{wd.day}日"
                     if force or dt:
                         row[c_time] = dt if not force else (dt or "")
                 # 负责人（可判定则覆盖）：评审行→TPM；任务含模块名→该模块参与人员；联调/整体行→全体参与
@@ -375,8 +466,15 @@ class Server(object):
             children = node.get("children") or []
             is_overview = ref == "prod_overview" or (title == "产品概况" and not children)
             is_cycle = ref == "prod_cycle" or (title == "项目开发时间" and not children)
-            if (ref == "prod_name" or title == "项目简介") and (prod_name or force):
-                node["body"] = f"产品名称：{prod_name}" if prod_name else ""
+            if (ref == "prod_name" or title == "项目简介") and (prod_name or type_code or full_version or force):
+                lines = []
+                if prod_name or force:
+                    lines.append(f"产品名称：{prod_name}" if prod_name else "")
+                if type_code or force:
+                    lines.append(f"产品型号：{type_code}" if type_code else "")
+                if full_version or force:
+                    lines.append(f"完整版本：{full_version}" if full_version else "")
+                node["body"] = "\n".join([x for x in lines if x or force])
             elif is_overview and (overall_desc or force):
                 node["body"] = overall_desc
             elif is_cycle and (cycle or force):
@@ -398,8 +496,19 @@ class Server(object):
                     set_if(1, obj.version)
                     if force or not str(row[2] if len(row) > 2 else "").strip():
                         if len(row) > 2: row[2] = "首次发布"
-                    set_if(3, pm)
+                    if dev_lead or force:
+                        if len(row) > 3:
+                            row[3] = dev_lead or ""
                     set_if(4, approver)
+            if ref == "personnel" or title == "人员资源":
+                tables = node.get("tables") or []
+                if tables and isinstance(tables[0], list) and tables[0] and personnel_rows:
+                    t = tables[0]
+                    header = t[0] if isinstance(t[0], list) else ["编号", "姓名", "所属部门", "角色"]
+                    body = []
+                    for i, m in enumerate(personnel_rows):
+                        body.append([str(i + 1), (m.name or "").strip(), "产品开发部", (m.role or "").strip()])
+                    node["tables"] = [[header] + body] + tables[1:]
             if ref == "milestone" or "里程碑" in title:
                 fill_milestone(node)
             for child in children:

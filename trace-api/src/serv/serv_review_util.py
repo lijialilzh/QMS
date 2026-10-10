@@ -199,6 +199,33 @@ REVIEW_DEFS = {
             ["批准人员签字/日期", "", "", "", "", ""],
         ],
     },
+    "hld": {
+        "name_keywords": ["软件概要设计", "概要设计"],
+        "items": [
+            ["文档完整程度", "文档结构清楚、内容详尽"],
+            ["文档完整程度", "包含架构设计"],
+            ["文档完整程度", "包含模块设计"],
+            ["文档完整程度", "包含接口设计"],
+            ["文档完整程度", "包含必要的数据结构"],
+            ["文档完整程度", "软件整体输入、输出接口清晰"],
+            ["功能覆盖程度", "设计中考虑了整体功能需求"],
+            ["功能覆盖程度", "性能要求清晰、明确"],
+            ["功能覆盖程度", "接口定义清晰、明确"],
+            ["功能覆盖程度", "模块设计覆盖所有功能要求"],
+            ["功能覆盖程度", "内/外部接口清晰明确"],
+            ["功能覆盖程度", "体系结构支持软件的正常运行"],
+        ],
+        "conclusion": (
+            "评审结论：\n通过，概要设计包含架构设计、包含模块设计、包含接口设计、包含必要的数据结构，"
+            "性能要求;接口定义清晰、明确。"
+        ),
+        "persons": [
+            ["产品经理", "", "", "产品开发部经理", "", ""],
+            ["开发负责人", "", "", "QA", "", ""],
+            ["其他参评人员", "", "", "", "", ""],
+            ["批准人员签字/日期", "", "", "", "", ""],
+        ],
+    },
     "srs": {
         "name_keywords": ["需求规格说明", "需求规格"],
         "items": [
@@ -444,7 +471,7 @@ DOC_DEPT = {
     "srs": "product", "ptr": "product", "acc": "product", "cyber_cap": "product",
     "risk": "product", "rmp": "product", "pha": "product",
     # 开发文件：编制人=TPM，审核/批准=研发负责人
-    "sd": "dev", "sds": "dev", "cybersec": "dev",
+    "sd": "dev", "sds": "dev", "hld": "dev", "cybersec": "dev",
     "nsmp": "product", "nsr": "product", "crr": "dev",
     "scm": "dev", "scs": "dev",
     # 测试文件：编制人=测试人员，审核/批准=研发负责人
@@ -1103,7 +1130,7 @@ def build_review_section(key, rev_date="", prod_id=None):
     # 「签字」列按「姓名」列自动取签名图（第2列姓名→第3列签字；第5列姓名→第6列签字），仅填空
     old_test = _before_202509(rev_date)
     # 测试文件：评审记录按「人员角色」获取当前产品参与人员姓名（其余模块保持模板名+宋月规则）
-    role_based = key in ("stp", "utp", "utr", "str", "sds", "srs")
+    role_based = key in ("stp", "utp", "utr", "str", "sds", "srs", "hld")
     rb_members = []
     if role_based and prod_id:
         rb_members = db.session.execute(

@@ -802,6 +802,7 @@ class Server(object):
             file_no = (doc_obj.file_no or "").strip()
 
         docx = Document()
+        wrote_review = {"ok": False}
 
         def __is_cover_title(title: str) -> bool:
             return self._biz_title(title) in ["软件概要设计", "软件概要设计说明书"]
@@ -809,9 +810,73 @@ class Server(object):
         def __is_revision_title(title: str) -> bool:
             return self._biz_title(title) == "文件修订记录"
 
+        def __is_review_title(title: str) -> bool:
+            t = re.sub(r"\s+", "", str(title or ""))
+            return t == "评审记录" or t == "附件一评审结论" or t.startswith("附件一")
+
+        def __set_review_cell(cell, text, bold=False, align=None):
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
+            from docx.shared import Pt
+            from .serv_utils import docx_util
+            if align is None:
+                align = WD_ALIGN_PARAGRAPH.LEFT
+            s = str(text or "")
+            if s.startswith("data:image"):
+                try:
+                    b64 = s.split(",", 1)[1] if "," in s else ""
+                    cell.text = ""
+                    para = cell.paragraphs[0]
+                    para.alignment = align
+                    para.add_run().add_picture(io.BytesIO(base64.b64decode(b64)), height=Pt(33))
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    return
+                except Exception:
+                    pass
+            cell.text = ""
+            lines = s.split("\n")
+            for i, line in enumerate(lines):
+                para = cell.paragraphs[0] if i == 0 else cell.add_paragraph()
+                para.alignment = align
+                para.paragraph_format.line_spacing = 1.3
+                docx_util.fonted_txt(para, line, font_size=10.5, bold=bold)
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER if align != WD_ALIGN_PARAGRAPH.LEFT else WD_CELL_VERTICAL_ALIGNMENT.TOP
+
+        def __grid_from_table(table, with_header: bool):
+            headers = getattr(table, "headers", None) or []
+            codes = [h.code for h in headers]
+            grid = []
+            if with_header:
+                grid.append([str(h.name or "") for h in headers])
+            for row in getattr(table, "rows", None) or []:
+                if isinstance(row, dict):
+                    grid.append([str(row.get(c) or "") for c in codes])
+            return grid
+
+        def __write_review_node(node):
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            from .serv_utils import docx_util
+            docx.add_page_break()
+            title = docx.add_paragraph()
+            title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            docx_util.fonted_txt(title, "附件一 评审结论", font_size=16.0, bold=True)
+            table = getattr(node, "table", None)
+            if table and getattr(table, "headers", None):
+                names = "".join(str(h.name or "") for h in table.headers)
+                with_header = "评审内容" in names and "评审项" in names
+                serv_review_util.render_review_grid(docx, __grid_from_table(table, with_header), __set_review_cell, merge_col0=with_header, merge_full=True)
+                for extra in getattr(table, "extra_tables", None) or []:
+                    extra_table = getattr(extra, "table", None) if not isinstance(extra, dict) else extra.get("table")
+                    if extra_table:
+                        serv_review_util.render_review_grid(docx, __grid_from_table(extra_table, False), __set_review_cell, merge_col0=False, merge_full=True)
+            wrote_review["ok"] = True
+
         def __write_nodes(nodes: List[HldNodeForm], default_level: int = 1):
             for node in nodes or []:
                 title = str(getattr(node, "title", "") or "").strip()
+                if getattr(node, "ref_type", None) == "review" or __is_review_title(title):
+                    __write_review_node(node)
+                    continue
                 if not title and not getattr(node, "text", None) and not getattr(node, "table", None):
                     if getattr(node, "children", None):
                         __write_nodes(node.children, default_level)
@@ -835,6 +900,21 @@ class Server(object):
                 __write_nodes(getattr(node, "children", None) or [], default_level + 1)
 
         __write_nodes(doc_obj.content or [])
+        if not wrote_review["ok"] and getattr(doc_obj, "product_id", None):
+            sec = serv_review_util.build_review_section(
+                "hld",
+                serv_review_util.review_date(doc_obj.product_id, ["软件概要设计", "概要设计"]),
+                doc_obj.product_id,
+            )
+            if sec:
+                from docx.enum.text import WD_ALIGN_PARAGRAPH
+                from .serv_utils import docx_util
+                docx.add_page_break()
+                title = docx.add_paragraph()
+                title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                docx_util.fonted_txt(title, "附件一 评审结论", font_size=16.0, bold=True)
+                for idx, grid in enumerate(sec.get("tables") or []):
+                    serv_review_util.render_review_grid(docx, grid, __set_review_cell, merge_col0=(idx == 0), merge_full=True)
         if file_no:
             section = docx.sections[0] if docx.sections else None
             if section is not None and section.header.paragraphs:

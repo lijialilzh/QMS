@@ -1900,6 +1900,8 @@ interface TreeNodeItemProps {
     onImportTable: (id: number, file: File) => Promise<void>;
     onEditTable: (id: number) => void;
     onDeleteTable: (id: number) => void;
+    onEditExtraTable?: (nodeId: number, index: number) => void;
+    onDeleteExtraTable?: (nodeId: number, index: number) => void;
     onOpenSrsTable?: () => void;  // 打开 SRS 表弹框
     onOpenReqList?: () => void;   // 打开需求列表弹框
     onEditSrsChangeTable?: (table: { id: number | string; title: string; data: any[]; type_code?: string }) => void;
@@ -1947,6 +1949,8 @@ const TreeNodeItem = ({
     onImportTable,
     onEditTable,
     onDeleteTable,
+    onEditExtraTable,
+    onDeleteExtraTable,
     onOpenSrsTable,
     onOpenReqList,
     onEditSrsChangeTable,
@@ -3097,6 +3101,22 @@ const TreeNodeItem = ({
                                     tableLayout="auto"
                                 />
                                     )}
+                                {!readOnly && (isReviewPersonTable(extraTable) || isReviewContentTable(extraTable)) && (
+                                    <Space className="node-table-actions" size={8}>
+                                        <Button size="small" icon={<EditOutlined />} onClick={() => onEditExtraTable?.(Number(node.id), idx)}>
+                                            {ts("edit")}
+                                        </Button>
+                                        <Popconfirm
+                                            title={ts("srs_doc.confirm_delete_table")}
+                                            onConfirm={() => onDeleteExtraTable?.(Number(node.id), idx)}
+                                            okText={ts("confirm")}
+                                            cancelText={ts("cancel")}>
+                                            <Button size="small" danger icon={<DeleteOutlined />}>
+                                                {ts("delete")}
+                                            </Button>
+                                        </Popconfirm>
+                                    </Space>
+                                )}
                             </div>
                         </div>
                     );
@@ -3341,6 +3361,8 @@ const TreeNodeItem = ({
                     onImportTable={onImportTable}
                     onEditTable={onEditTable}
                     onDeleteTable={onDeleteTable}
+                    onEditExtraTable={onEditExtraTable}
+                    onDeleteExtraTable={onDeleteExtraTable}
                     onOpenSrsTable={onOpenSrsTable}
                     onOpenReqList={onOpenReqList}
                     onEditSrsChangeTable={onEditSrsChangeTable}
@@ -3412,6 +3434,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
     const [tableModalVisible, setTableModalVisible] = useState(false);
     const [showReqTableHint, setShowReqTableHint] = useState(false);
     const [currentNodeId, setCurrentNodeId] = useState<number | null>(null);
+    const [extraTableEdit, setExtraTableEdit] = useState<{ nodeId: number; index: number; signs: Record<string, string> } | null>(null);
     const [initialTableData, setInitialTableData] = useState<TableDataWithHeaders | undefined>(undefined);
     const [tableCellsBackup, setTableCellsBackup] = useState<TableData["cells"] | undefined>(undefined);
     const [lockedTableRowLabels, setLockedTableRowLabels] = useState<string[]>([]);
@@ -4951,6 +4974,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         const headingNo = getHeadingNumberFromTitle(targetNode?.title);
         // 仅第 2 章小节（2.1、2.2…）的表格添加弹窗显示需求表规则提示
         setShowReqTableHint(/^2\./.test(headingNo));
+        setExtraTableEdit(null);
         setCurrentNodeId(id);
         setTableModalVisible(true);
         setInitialTableData(undefined); // 新增模式，不传初始数据
@@ -5022,6 +5046,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
     const handleEditSrsMainPreview = () => {
         const refNodeId = findSrsReqRefNodeId("srs_reqs");
         setShowReqTableHint(true);
+        setExtraTableEdit(null);
         setCurrentNodeId(refNodeId);
         setInitialTableData(buildMainSrsTableInitialData(srsReqPreview?.main || []));
         setTableCellsBackup(undefined);
@@ -5032,6 +5057,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
     const handleEditSrsOtherPreview = () => {
         const refNodeId = findSrsReqRefNodeId("srs_reqs_2");
         setShowReqTableHint(false);
+        setExtraTableEdit(null);
         setCurrentNodeId(refNodeId);
         setInitialTableData(buildOtherReqTableInitialData(srsReqPreview?.other || []));
         setTableCellsBackup(undefined);
@@ -5253,10 +5279,56 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         }
 
         setCurrentNodeId(id);
+        setExtraTableEdit(null);
         setInitialTableData(tableData);
         setTableCellsBackup(targetNode.table.cells);
         setLockedTableRowLabels(isFunctionalKvTable(targetNode.table) ? ["需求编号", "需求名称"] : []);
         setTableModalVisible(true);
+    };
+
+    const handleEditExtraTable = (nodeId: number, index: number) => {
+        const findNode = (nodeList: TreeNode[], targetId: number): TreeNode | undefined => {
+            for (const node of nodeList) {
+                if (node.id === targetId) return node;
+                if (node.children?.length) {
+                    const found = findNode(node.children, targetId);
+                    if (found) return found;
+                }
+            }
+            return undefined;
+        };
+        const extra = findNode(nodes, nodeId)?.table?.extra_tables?.[index];
+        const table = extra?.table;
+        if (!table?.headers?.length) return;
+        const headers = table.headers.map((header) => ({
+            code: header.code || uuidv4(),
+            name: header.name || "",
+        }));
+        const signs: Record<string, string> = {};
+        const data = (table.rows || []).map((row, ri) => headers.map((header, ci) => {
+            const raw = String((row as any)?.[header.code] ?? "");
+            if (raw.startsWith("data:image")) {
+                signs[`${ri},${ci}`] = raw;
+                return "（签名图）";
+            }
+            return raw;
+        }));
+        setExtraTableEdit({ nodeId, index, signs });
+        setCurrentNodeId(nodeId);
+        setInitialTableData({ tableName: String(extra?.title || ""), headers, data });
+        setTableCellsBackup(undefined);
+        setLockedTableRowLabels([]);
+        setShowReqTableHint(false);
+        setTableModalVisible(true);
+    };
+
+    const handleDeleteExtraTable = (nodeId: number, index: number) => {
+        const newNodes = findNodeAndUpdate(nodes, nodeId, (node) => {
+            const extras = [...(node.table?.extra_tables || [])];
+            extras.splice(index, 1);
+            return { ...node, table: { ...(node.table || {}), extra_tables: extras } };
+        });
+        updateNodes(newNodes);
     };
 
     const handleDeleteTable = async (id: number) => {
@@ -5341,6 +5413,34 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
     };
 
     const handleTableConfirm = async (tableData: TableDataWithHeaders) => {
+        if (extraTableEdit) {
+            const { nodeId, index, signs } = extraTableEdit;
+            const headers = (tableData.headers || []).map((header) => ({
+                code: header.code || uuidv4(),
+                name: String(header.name || "").trim(),
+            }));
+            const rows = (tableData.data || []).map((row, ri) => {
+                const rowObj: Record<string, string> = {};
+                headers.forEach((header, ci) => {
+                    const text = String(row?.[ci] ?? "");
+                    rowObj[header.code] = text === "（签名图）" && signs[`${ri},${ci}`] ? signs[`${ri},${ci}`] : text;
+                });
+                return rowObj;
+            });
+            const newNodes = findNodeAndUpdate(nodes, nodeId, (node) => {
+                const extras = [...(node.table?.extra_tables || [])];
+                const prev = extras[index] || {};
+                const title = String(tableData.tableName || "").trim() || String(prev.title || "");
+                extras[index] = { ...prev, title, table: { ...(prev.table || {}), headers, rows } };
+                return { ...node, table: { ...(node.table || {}), extra_tables: extras } };
+            });
+            updateNodes(newNodes);
+            setExtraTableEdit(null);
+            setTableModalVisible(false);
+            setCurrentNodeId(null);
+            setInitialTableData(undefined);
+            return;
+        }
         const headerTexts = (tableData?.headers || []).map((header) => normalizeCellText(header?.name));
         const isPreviewOtherReqTable = headerTexts.some((text) => isReqCodeHeaderText(text))
             && headerTexts.some((text) => text.includes("章节"));
@@ -7361,6 +7461,8 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             onImportTable={handleImportTable}
             onEditTable={handleEditTable}
             onDeleteTable={handleDeleteTable}
+            onEditExtraTable={handleEditExtraTable}
+            onDeleteExtraTable={handleDeleteExtraTable}
             onOpenSrsTable={onOpenSrsTable}
             onOpenReqList={onOpenReqList}
             onEditSrsChangeTable={onEditSrsChangeTable}
@@ -7461,6 +7563,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                     setTableModalVisible(false);
                     setShowReqTableHint(false);
                     setCurrentNodeId(null);
+                    setExtraTableEdit(null);
                     setInitialTableData(undefined);
                     setTableCellsBackup(undefined);
                     setLockedTableRowLabels([]);

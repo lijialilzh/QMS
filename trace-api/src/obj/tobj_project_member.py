@@ -12,5 +12,6 @@ class ProjectMemberForm(BaseModel):
     prod_id: Optional[int] = Field(title="产品ID")
     role: Optional[str] = Field(title="职能")
     name: Optional[str] = Field(title="姓名")
+    dept: Optional[str] = Field(title="所属部门")
     sort_order: Optional[int] = Field(title="排序")
     note: Optional[str] = Field(title="备注")
