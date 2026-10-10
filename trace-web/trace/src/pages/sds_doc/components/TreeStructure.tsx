@@ -157,6 +157,36 @@ function isEmbeddedImageCaptionNode(node: TreeNode): boolean {
     return /^图\s*\d+/i.test(title) || /^导入图片\d*$/.test(title);
 }
 
+function isNumberedChapterTitle(title?: string): boolean {
+    return /^\d+(?:\.\d+)*\.?\s+\S/.test(String(title || "").trim());
+}
+
+function splitProgramLogicText(raw: string): { before: string; after: string } | null {
+    const lines = String(raw || "").replace(/\r/g, "").split("\n");
+    const start = lines.findIndex((line) => /程序逻辑/.test(String(line || "")));
+    if (start < 0) return null;
+    let end = lines.length;
+    for (let i = start + 1; i < lines.length; i++) {
+        const trimmed = String(lines[i] || "").trim();
+        if (/^[（(]\s*\d+\s*[）)]/.test(trimmed) && !/程序逻辑/.test(trimmed)) {
+            end = i;
+            break;
+        }
+    }
+    return {
+        before: lines.slice(0, end).join("\n"),
+        after: lines.slice(end).join("\n"),
+    };
+}
+
+function joinProgramLogicText(before: string, after: string): string {
+    const head = String(before || "");
+    const tail = String(after || "");
+    if (!tail) return head;
+    if (!head) return tail;
+    return head.endsWith("\n") ? `${head}${tail}` : `${head}\n${tail}`;
+}
+
 /** 左目录排除：图题/导入图片等内容型子节点，不是真实章节（与 IMM 模板一致：图 N 不单独占目录项） */
 function isEmbeddedImageNode(node: TreeNode): boolean {
     const title = String(node.title || node.label || "").trim();
@@ -832,16 +862,20 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         return !!(cap || child.label || child.img_url);
     }) : undefined;
     const firstImageChild = mergedImageOnlyChildren.find((child) => !!child.img_url) || imageOnlyChildren.find((child) => !!child.img_url);
-    // 左导航单章模式不渲染子节点：把「图 N」子节点的图 inline 到父章节展示
+    // 左导航单章模式只内嵌「图 N」图题子节点。2.1 / 6.6.1 这类编号章节的图留在该章节，不抬到父章节。
     const navEmbeddedFigureChild = (!readOnly && renderChildren === false)
-        ? (imageChildrenAll.find((child) => isEmbeddedImageCaptionNode(child)) || imageChildrenAll[0] || firstImageChild)
+        ? (imageChildrenAll.find((child) => isEmbeddedImageCaptionNode(child) && !isNumberedChapterTitle(child.title)) || undefined)
         : undefined;
     const navInlineTableChildren = (!readOnly && renderChildren === false)
         ? (node.children || []).filter((child) => hasRenderableTable(child.table) && isEmbeddedTableNode(child))
         : [];
     const isNavSingleChapterEdit = !readOnly && renderChildren === false;
     const navEmbeddedDocImageChild = (!readOnly && renderChildren === false)
-        ? (node.children || []).find((child) => isDocImageRefType(child.ref_type))
+        ? (node.children || []).find((child) => (
+            isDocImageRefType(child.ref_type)
+            && isEmbeddedImageCaptionNode(child)
+            && !isNumberedChapterTitle(child.title)
+        ))
         : undefined;
     const flowHintText = `${node.title || ""} ${node.label || ""} ${node.text || ""}`;
     const suppressParentFlowImage = !!(
@@ -909,9 +943,21 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         childTableCaptionById.set(String(firstTableChild.id), cap);
         if (firstTableChild.n_id) childTableCaptionById.set(String(firstTableChild.n_id), cap);
     }
+    const nestedChapterImageUrls = new Set<string>();
+    const collectNestedChapterImages = (children: TreeNode[] | undefined, underNumberedChapter: boolean) => {
+        (children || []).forEach((child) => {
+            const numbered = isNumberedChapterTitle(child.title);
+            const url = String(child.img_url || "").trim();
+            if (url && (numbered || underNumberedChapter)) nestedChapterImageUrls.add(url);
+            collectNestedChapterImages(child.children, underNumberedChapter || numbered);
+        });
+    };
+    collectNestedChapterImages(node.children, false);
+    const ownImageUrl = String(node.img_url || "").trim();
+    const parentBorrowedImage = !!ownImageUrl && nestedChapterImageUrls.has(ownImageUrl);
     const displayImageUrl = !readOnly
         ? (renderChildren === false
-            ? String(node.img_url || navEmbeddedFigureChild?.img_url || navEmbeddedDocImageChild?.img_url || "")
+            ? String((parentBorrowedImage ? "" : node.img_url) || navEmbeddedFigureChild?.img_url || navEmbeddedDocImageChild?.img_url || "")
             : String(imageChildrenAll.length > 0 ? "" : (node.img_url || "")))
         : suppressParentFlowImage
         ? ""
@@ -1171,6 +1217,12 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
             || (isChapter345Section && !!navEmbeddedFigureChild?.img_url)
         );
     const editTextBeforeTable = showComplianceInlineInEdit ? (chapter7TableSplit?.before || "") : editDisplayNodeText;
+    const editFigureCaption = String(navEmbeddedFigureChild?.title || navEmbeddedDocImageChild?.title || "").trim();
+    const programLogicSplit = (
+        isNavSingleChapterEdit
+        && /程序逻辑/.test(editFigureCaption)
+        && !showComplianceInlineInEdit
+    ) ? splitProgramLogicText(editTextBeforeTable) : null;
     const editTextBetweenTables = showComplianceInlineInEdit ? (chapter7TableSplit?.middle || "") : "";
     const editTextAfterTable = showComplianceInlineInEdit ? (chapter7TableSplit?.after || "") : "";
     const mergeComplianceText = (before: string, middle: string, after: string): string => {
@@ -1559,14 +1611,17 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                     )
                   }
                   {navImageInHeaderRow && displayImageUrl && (
-                      <div className="node-pic-block node-pic-block--header-auto-image">
+                      <div className="node-pic-block node-pic-block--header-auto-image" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
                           <div className="node-pic node-pic-readonly node-pic-inline">
                               <Image
                                   src={resolveImageSrc(displayImageUrl)}
-                                  alt={displayTitle || 'image'}
+                                  alt={editFigureCaption || displayTitle || 'image'}
                                   preview={true}
                               />
                           </div>
+                          {editFigureCaption ? (
+                              <div className="node-image-caption" style={{ textAlign: "center", marginTop: 6, lineHeight: 1.5 }}>{editFigureCaption}</div>
+                          ) : null}
                       </div>
                   )}
                   {isDocImageRefType(node.ref_type) && !readOnly && imageChildrenAll.length === 0 && !hasDisplayImage && (
@@ -1788,6 +1843,20 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           </>
                       ) : (
                           <div className="node-content-below-title">
+                              {programLogicSplit ? (
+                                  <Input.TextArea
+                                      className="node-content node-text-area"
+                                      styles={{ textarea: chapterTextStyle }}
+                                      value={programLogicSplit.before}
+                                      onChange={(e) => {
+                                          onContentChange(node.id, joinProgramLogicText(e.target.value, programLogicSplit.after));
+                                      }}
+                                      placeholder={ts('srs_doc.please_input_content')}
+                                      size="small"
+                                      rows={1}
+                                      autoSize={{ minRows: 1, maxRows: 20 }}
+                                  />
+                              ) : (
                               <Input.TextArea
                                   className="node-content node-text-area"
                                   styles={{ textarea: chapterTextStyle }}
@@ -1804,17 +1873,35 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                   rows={1}
                                   autoSize={{ minRows: 1, maxRows: 20 }}
                               />
-                              {!navImageInHeaderRow && isNavSingleChapterEdit && !showComplianceInlineInEdit && navFullSizeImageMode && displayImageUrl && (
-                                  <div className={`node-pic-block ${navEmbeddedImageBlockClass}`}>
+                              )}
+                              {!navImageInHeaderRow && isNavSingleChapterEdit && !showComplianceInlineInEdit && (navFullSizeImageMode || !!programLogicSplit) && displayImageUrl && (
+                                  <div className={`node-pic-block ${navEmbeddedImageBlockClass}`} style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
                                       <div className="node-pic node-pic-readonly node-pic-inline">
                                           <Image
                                               src={resolveImageSrc(displayImageUrl)}
-                                              alt={String(navEmbeddedFigureChild?.title || navEmbeddedDocImageChild?.title || displayTitle || 'image')}
+                                              alt={editFigureCaption || displayTitle || 'image'}
                                               preview={true}
                                           />
                                       </div>
+                                      {editFigureCaption ? (
+                                          <div className="node-image-caption" style={{ textAlign: "center", marginTop: 6, lineHeight: 1.5 }}>{editFigureCaption}</div>
+                                      ) : null}
                                   </div>
                               )}
+                              {programLogicSplit ? (
+                                  <Input.TextArea
+                                      className="node-content node-text-area"
+                                      styles={{ textarea: chapterTextStyle }}
+                                      value={programLogicSplit.after}
+                                      onChange={(e) => {
+                                          onContentChange(node.id, joinProgramLogicText(programLogicSplit.before, e.target.value));
+                                      }}
+                                      placeholder={ts('srs_doc.please_input_content')}
+                                      size="small"
+                                      rows={1}
+                                      autoSize={{ minRows: 1, maxRows: 20 }}
+                                  />
+                              ) : null}
                               {!navImageInHeaderRow && isNavSingleChapterEdit && !showComplianceInlineInEdit && !navFullSizeImageMode && displayImageUrl && (
                                   <div
                                       className="node-pic node-pic-readonly node-pic-editable node-pic-inline"
@@ -2274,6 +2361,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
             ))}
             {showExpandedBody && renderChildren === false && !showComplianceInlineInEdit && navInlineTableChildren.map((child, idx) => (
                 <div key={`nav-inline-table-${child.id}`} className="node-table" style={{ marginTop: idx === 0 ? 8 : 12 }}>
+                    {(() => {
+                        const tableCaption = String(child.title || child.label || child.table?.name || "").trim();
+                        if (!tableCaption || isSyntheticTableCaption(tableCaption) || isNumberedChapterTitle(tableCaption)) return null;
+                        return <div className="node-image-caption" style={{ textAlign: "center", marginBottom: 6, lineHeight: 1.5 }}>{tableCaption}</div>;
+                    })()}
                     <div className="node-table-scroll">
                         <Table
                             columns={buildTableColumns(child.table)}

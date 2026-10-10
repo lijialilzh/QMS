@@ -1809,10 +1809,10 @@ class Server(SdsSrsTraceSyncMixin, object):
                         self.__set_cell_text(crow[ci + 1], sig, only_empty=True)
                     if ci + 2 < len(crow) and str(self.__cell_text(crow[ci + 2]) or "").strip() == "日期":
                         if ci + 3 < len(crow):
-                            self.__set_cell_text(crow[ci + 3], rev_date, only_empty=True)
+                            self.__set_cell_text(crow[ci + 3], rev_date, only_empty=False)
                 elif lab == "生效日期":
                     if ci + 1 < len(crow):
-                        self.__set_cell_text(crow[ci + 1], rev_date, only_empty=True)
+                        self.__set_cell_text(crow[ci + 1], rev_date, only_empty=False)
 
     def __autofill_tree_cover_revision(self, tree, prod_id, version):
         """封面自动获取：编制人=TPM，审核/批准=研发负责人；日期取时间线。仅填空。"""
@@ -1849,9 +1849,10 @@ class Server(SdsSrsTraceSyncMixin, object):
                         sig = signers.get(label, "")
                         if sig and not str(row.get("value1") or "").startswith("data:image"):
                             set_if(row, "value1", sig)
-                        set_if(row, "value2", rev_date)
-                    if len(rows) > 4:
-                        set_if(rows[4], "value1", rev_date)
+                        if rev_date:
+                            row["value2"] = rev_date
+                    if len(rows) > 4 and rev_date:
+                        rows[4]["value1"] = rev_date
                     self.__autofill_cover_cells(table, version, rev_date, signers)
                     if not getattr(table, "cells", None):
                         node.table = SdsTable(
@@ -1866,6 +1867,30 @@ class Server(SdsSrsTraceSyncMixin, object):
                         table.rows = rows
                         table.headers = self.__approval_headers()
                         table.show_header = 0
+                elif table and rev_date:
+                    headers = getattr(table, "headers", None) or []
+                    names = []
+                    codes = []
+                    for header in headers:
+                        if isinstance(header, dict):
+                            names.append(str(header.get("name") or "").replace(" ", ""))
+                            codes.append(header.get("code"))
+                        else:
+                            names.append(str(getattr(header, "name", "") or "").replace(" ", ""))
+                            codes.append(getattr(header, "code", None))
+                    if "修改日期" in names:
+                        idx = names.index("修改日期")
+                        code = codes[idx] or "change_date"
+                        data_rows = getattr(table, "rows", None) or []
+                        if data_rows and isinstance(data_rows[0], dict):
+                            data_rows[0][code] = rev_date
+                        cells = getattr(table, "cells", None) or []
+                        if len(cells) > 1 and idx < len(cells[1]):
+                            cell = cells[1][idx]
+                            if isinstance(cell, dict):
+                                cell["value"] = rev_date
+                            elif hasattr(cell, "value"):
+                                cell.value = rev_date
                 if getattr(node, "children", None):
                     walk(node.children)
 

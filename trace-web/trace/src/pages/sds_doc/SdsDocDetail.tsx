@@ -18,7 +18,7 @@ import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
 import TreeStructure, { TreeNode } from "./components/TreeStructure";
 
-const SDS_COVER_DATE_KEYWORDS = ["软件详细设计", "详细设计"];
+const SDS_COVER_DATE_KEYWORDS = ["软件详细设计"];
 
 const SDS_APPROVAL_HEADERS = [
     { code: "label1", name: "" },
@@ -66,16 +66,30 @@ const normalizeSdsApprovalRows = (node: TreeNode) => {
 const computeSdsCoverDate = (rows: any[]): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10) || 0;
     const dateKey = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
-    const cellVals = (r: any) => Object.values(r.cells || {});
-    const match = (r: any, needReview: boolean) => {
+    const isSdsOutput = (text: string) => (
+        SDS_COVER_DATE_KEYWORDS.some((k) => text.includes(k)) && !text.includes("算法方案")
+    );
+    const match = (r: any, needReview: boolean, devOnly: boolean) => {
         if ((r.row_type || "date") !== "date" || !num(r.year) || !num(r.month)) return false;
-        const vals = cellVals(r);
-        const hitName = vals.some((v: any) => SDS_COVER_DATE_KEYWORDS.some((k) => String(v || "").includes(k)));
-        const hitReview = vals.some((v: any) => String(v || "").includes("评审"));
-        return hitName && (needReview ? hitReview : true);
+        const cells = Object.entries(r.cells || {}).filter(([dept, value]) => {
+            const text = String(value || "");
+            if (!isSdsOutput(text)) return false;
+            if (devOnly && !String(dept || "").startsWith("产品开发部")) return false;
+            return true;
+        });
+        if (!cells.length) return false;
+        if (!needReview) return true;
+        return cells.some(([, value]) => {
+            const text = String(value || "");
+            return text.includes("评审") && !text.includes("含评审记录");
+        });
     };
-    const pool = (rows || []).filter((r) => match(r, true));
-    const candidates = pool.length ? pool : (rows || []).filter((r) => match(r, false));
+    const pools = [
+        (rows || []).filter((r) => match(r, true, true)),
+        (rows || []).filter((r) => match(r, false, true)),
+        (rows || []).filter((r) => match(r, false, false)),
+    ];
+    const candidates = pools.find((pool) => pool.length) || [];
     if (!candidates.length) return "";
     const best = candidates.reduce((a, b) => (dateKey(b) > dateKey(a) ? b : a));
     return `${num(best.year)}.${String(num(best.month)).padStart(2, "0")}.${String(num(best.day) || 1).padStart(2, "0")}`;
@@ -93,6 +107,12 @@ const applySdsCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAut
     let changed = false;
     const setIf = (row: Record<string, string>, key: string, val: string) => {
         if (val && !String(row[key] ?? "").trim()) {
+            row[key] = val;
+            changed = true;
+        }
+    };
+    const setDate = (row: Record<string, string>, key: string, val: string) => {
+        if (val && String(row[key] ?? "") !== val) {
             row[key] = val;
             changed = true;
         }
@@ -117,17 +137,30 @@ const applySdsCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAut
                     row.value1 = sig;
                     changed = true;
                 }
-                setIf(row, "value2", info.coverDate);
+                setDate(row, "value2", info.coverDate);
             });
             if (rows[4]) {
-                setIf(rows[4], "value1", info.coverDate);
+                setDate(rows[4], "value1", info.coverDate);
             }
             nextNode = { ...nextNode, table: { ...nextNode.table!, headers: SDS_APPROVAL_HEADERS, rows } };
         } else if (nextNode.table && isSdsChangeLogTableNode(nextNode)) {
             const rows = [...(nextNode.table.rows || [])].map((r: any) => ({ ...r }));
             while (rows.length < 1) rows.push({});
-            const row = rows[0] || {};
-            setIf(row, "change_date", info.coverDate);
+            const headers = nextNode.table.headers || [];
+            const dateHeader = headers.find((header: any) => String(header?.name || "").replace(/\s/g, "") === "修改日期");
+            const dateKey = String(dateHeader?.code || "change_date");
+            const row = rows.find((item: any) => String(item?.[dateKey] || item?.change_date || "").trim()) || rows[0] || {};
+            setDate(row, dateKey, info.coverDate);
+            if (dateKey !== "change_date") setDate(row, "change_date", info.coverDate);
+            const cells = Array.isArray(nextNode.table.cells) ? nextNode.table.cells.map((line: any[]) => (line || []).map((cell: any) => ({ ...cell }))) : null;
+            if (cells && cells.length > 1) {
+                const colIdx = (cells[0] || []).findIndex((cell: any) => String(cell?.value || "").replace(/\s/g, "") === "修改日期");
+                if (colIdx >= 0 && cells[1]?.[colIdx] && String(cells[1][colIdx].value || "") !== info.coverDate && info.coverDate) {
+                    cells[1][colIdx].value = info.coverDate;
+                    changed = true;
+                    nextNode = { ...nextNode, table: { ...nextNode.table, cells } };
+                }
+            }
             if (info.version && String(row.version_no ?? "").trim() !== info.version) {
                 row.version_no = info.version;
                 changed = true;
@@ -138,7 +171,8 @@ const applySdsCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAut
             }
             setIf(row, "changer", info.reviser);
             setIf(row, "approver", info.approver);
-            rows[0] = row;
+            const rowIndex = Math.max(0, rows.indexOf(row));
+            rows[rowIndex] = row;
             nextNode = { ...nextNode, table: { ...nextNode.table, rows } };
         }
         return nextNode;
