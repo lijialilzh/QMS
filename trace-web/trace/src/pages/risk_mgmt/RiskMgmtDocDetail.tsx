@@ -332,6 +332,27 @@ const syncProductNameInContent = (content: any, productName?: string) => {
 
 const stripSectionNo = (title: any) => String(title || "").replace(/^[0-9０-９.．\s、]+/, "").trim();
 
+const SUP_DIGITS = "⁰¹²³⁴⁵⁶⁷⁸⁹";
+const showExponent = (text: any): string =>
+    String(text ?? "")
+        .replace(/10-(\d)(?!\d)/g, (_m, d) => `10⁻${SUP_DIGITS[Number(d)] || d}`)
+        .replace(/10⁻(\d)(?!\d)/g, (_m, d) => `10⁻${SUP_DIGITS[Number(d)] || d}`);
+
+const applyExponent = (content: any) => {
+    const walk = (sections: any[] = []): any[] => (sections || []).map((section: any) => ({
+        ...section,
+        text: section.text != null ? showExponent(section.text) : section.text,
+        content: typeof section.content === "string" ? showExponent(section.content) : section.content,
+        tables: (Array.isArray(section.tables) ? section.tables : []).map((table: any[]) =>
+            (table || []).map((row: any[]) =>
+                (row || []).map((cell: any) => (typeof cell === "string" && !String(cell).startsWith("data:image") ? showExponent(cell) : cell))
+            )
+        ),
+        children: walk(section.children || []),
+    }));
+    return { ...(content || {}), sections: walk(content?.sections || []) };
+};
+
 const buildProductDescription = (product: any) => [
     `产品名称：${product?.name || ""}`,
     `产品型号：${product?.type_code || ""}`,
@@ -344,11 +365,10 @@ const buildDefaultSectionTextMap = (product: any): Record<string, string> => {
         "目的": `风险管理的目的是确保${pname}的危害得到了定义，评估和评价了相关风险，控制了这些风险和在寿命周期中监控这些控制措施的有效性。本公司采用的主要方式和程序来自于GB/T 42062、ISO14971和YY/T 1406.1-2016。`,
         "审评历史": `按照评审记录的模板，在风险管理过程中，形成了以下风险相关文件（部分含评审记录）：\n《风险管理计划》及评审记录\n《初步危害分析清单》及评审记录\n《网络安全漏洞自评报告》\n《自研软件网络安全研究报告》\n《风险管理报告》及评审记录`,
         "风险分析方式": `根据YY/T 0316、ISO14971和风险管理控制程序，对于每个危害发生概率、危害程度的评估、综合考虑概率和危害程度的风险等级、风险可接受准则如下所示。`,
-        "危害识别": `与合理可预见相关的环境相关的危害：\n正常使用\n不正确的使用\n人为恶意使用\n考虑的危害包括：\n对患者的危害\n对操作者的危害\n对信息资产的危害\n危害初步原因的考虑应包括:\n用户界面\n患者或者临床用户的忽视\n人因工程\n硬件故障\n软件故障\n集成错误\n环境条件\n网络安全\n危害重点考虑的原因应包括：\n网络工具；\n系统部件的集成，包括硬件和软件；\n用户界面，包括命令语言，警告和错误信息；\n在用户界面和用户手册中文字翻译的准确性；\n用户预期或非预期情况下数据的保护；\n第三方软件。`,
-        "与合理可预见相关的环境相关的危害": `与合理可预见相关的环境相关的危害：\n正常使用\n不正确的使用\n人为恶意使用`,
-        "考虑的危害包括": `考虑的危害包括：\n对患者的危害\n对操作者的危害\n对信息资产的危害`,
-        "危害初步原因的考虑应包括": `危害初步原因的考虑应包括:\n用户界面\n患者或者临床用户的忽视\n人因工程\n硬件故障\n软件故障\n集成错误\n环境条件\n网络安全`,
-        "危害重点考虑的原因应包括": `危害重点考虑的原因应包括：\n网络工具；\n系统部件的集成，包括硬件和软件；\n用户界面，包括命令语言，警告和错误信息；\n在用户界面和用户手册中文字翻译的准确性；\n用户预期或非预期情况下数据的保护；\n第三方软件。`,
+        "与合理可预见相关的环境相关的危害": `正常使用\n不正确的使用\n人为恶意使用`,
+        "考虑的危害包括": `对患者的危害\n对操作者的危害\n对信息资产的危害`,
+        "危害初步原因的考虑应包括": `用户界面\n患者或者临床用户的忽视\n人因工程\n硬件故障\n软件故障\n集成错误\n环境条件\n网络安全`,
+        "危害重点考虑的原因应包括": `网络工具；\n系统部件的集成，包括硬件和软件；\n用户界面，包括命令语言，警告和错误信息；\n在用户界面和用户手册中文字翻译的准确性；\n用户预期或非预期情况下数据的保护；\n第三方软件。`,
         "严重度定义": `见图1`,
         "发生概率定义": `见图2`,
         "风险分析": `根据YY/T 0316、ISO14971和风险管理控制程序，${pname}的风险分析过程应该定义可能的危险（源），评估每个危险情况，评估每个风险的可接受程度，降低风险的方式和评审由于采取风险控制措施带来的风险。在所有这些风险已经被分析后，这些程序和结果的记录见本报告。`,
@@ -361,6 +381,20 @@ const buildDefaultSectionTextMap = (product: any): Record<string, string> => {
     };
 };
 
+const HAZARD_DETAIL_TITLES = new Set([
+    "与合理可预见相关的环境相关的危害",
+    "考虑的危害包括",
+    "危害初步原因的考虑应包括",
+    "危害重点考虑的原因应包括",
+]);
+
+const stripDuplicateTitle = (text: string, title: string) => {
+    const lines = String(text || "").replace(/\r/g, "").split("\n");
+    const first = (lines[0] || "").trim().replace(/[：:]\s*$/, "");
+    if (first === title) return lines.slice(1).join("\n").trim();
+    return String(text || "").trim();
+};
+
 const fillProductTextSections = (content: any, product: any) => {
     const nextContent = ensureFrontMatterSections(content);
     const defaultMap = buildDefaultSectionTextMap(product);
@@ -368,13 +402,19 @@ const fillProductTextSections = (content: any, product: any) => {
         (sections || []).forEach((section: any) => {
             const key = stripSectionNo(section.title);
             const hasText = String(section.text || "").trim().length > 0;
-            if (!hasText) {
+            if (key === "产品预期用途") {
+                const scope = String(product?.scope || "").trim();
+                if (scope) section.text = scope;
+            } else if (key === "危害识别") {
+                section.text = "";
+            } else if (HAZARD_DETAIL_TITLES.has(key)) {
+                if (!hasText && defaultMap[key] !== undefined) section.text = defaultMap[key];
+                section.text = stripDuplicateTitle(section.text, key);
+            } else if (!hasText) {
                 if (key === "范围") {
                     section.text = product?.scope || "";
                 } else if (key === "产品描述") {
                     section.text = buildProductDescription(product);
-                } else if (key === "产品预期用途") {
-                    section.text = product?.component || "";
                 } else if (defaultMap[key] !== undefined) {
                     section.text = defaultMap[key];
                 }
@@ -383,7 +423,7 @@ const fillProductTextSections = (content: any, product: any) => {
         });
     };
     fill(nextContent.sections || []);
-    return nextContent;
+    return applyExponent(nextContent);
 };
 
 const syncFileVersionInCover = (content: any, version: any) => {
@@ -557,7 +597,7 @@ export default () => {
             if (res.code === Api.C_OK) {
                 const detail = res.data || {};
                 let content = syncProductNameInContent(relocateMisplacedRiskTables(detail.content || emptyContent), detail.product_name);
-                content = syncFileVersionInCover(content, detail.version);
+                content = applyExponent(syncFileVersionInCover(content, detail.version));
                 const participants = (content.participants || []).map((row: any) => ({ ...row, _rowKey: makeRowKey() }));
                 const selectedParticipantIds = participants.map((row: any) => row.id).filter(Boolean);
                 const defaultSection = (content.sections || []).find((section: any) => !isCoverSection(section) && !isRevisionSection(section));
@@ -620,9 +660,9 @@ export default () => {
 
     const doSave = () => {
         form.validateFields().then((values) => {
-            const participantSource = data.participantsTouched || (data.participants || []).length
-                ? (data.participants || [])
-                : (data.participantOptions || []);
+            const participantSource = (data.participantOptions || []).length
+                ? data.participantOptions
+                : (data.participants || []);
             const participants = participantSource.map(({ _rowKey, ...row }: any) => row);
             const selectedProduct = (data.products || []).find((p: any) => p.id === (values.product_id || data.selectedProductId || data.detail?.product_id));
             const productName = selectedProduct?.name || data.detail?.product_name || values.product_name;
@@ -635,7 +675,9 @@ export default () => {
                 dispatch({ saving: false });
                 if (res.code === Api.C_OK) {
                     message.success(ts("save_success"));
-                    navigate("/risk_mgmt_docs");
+                    if (isAdd && res.data?.id) {
+                        navigate(`/risk_mgmt_docs/edit/${res.data.id}`, { replace: true });
+                    }
                 } else {
                     message.error(res.msg);
                 }
@@ -656,21 +698,6 @@ export default () => {
         } finally {
             dispatch({ exporting: false });
         }
-    };
-
-    const deleteParticipantRow = (row: any, currentRows: any[]) => {
-        const sameParticipant = (item: any) => (
-            row.id ? Number(item.id) === Number(row.id) : item.role === row.role && item.name === row.name
-        );
-        const participants = (currentRows || []).filter((item: any) => !sameParticipant(item));
-        dispatch({ participants, participantsTouched: true });
-    };
-
-    const updateParticipantCell = (rowIndex: number, field: "role" | "name", value: string, currentRows: any[]) => {
-        const participants = (currentRows || []).map((row: any, index: number) => (
-            index === rowIndex ? { ...row, [field]: value, _rowKey: row._rowKey || makeRowKey() } : row
-        ));
-        dispatch({ participants, participantsTouched: true });
     };
 
     const findSectionByKey = (sections: any[] = [], key: string): any => {
@@ -714,6 +741,30 @@ export default () => {
         return relatedRcms.includes(rcmCode);
     });
 
+    const lookupRcmMeasure = (rcmCode: string) => {
+        const code = String(rcmCode || "").toUpperCase().replace(/\s+/g, "");
+        if (!code) return "";
+        const prod = (data.prodRcms || []).find((row: any) => String(row?.code || "").toUpperCase().replace(/\s+/g, "") === code);
+        const prodText = String(prod?.description || "").trim();
+        if (prodText) return prodText;
+        let best = "";
+        for (const haz of data.hazs || []) {
+            const lines = String(haz?.deal || "").split("\n");
+            for (const line of lines) {
+                const text = line.trim();
+                if ((extractRcmCodes(text)[0] || "") === code && text.length > best.length) best = text;
+            }
+        }
+        return best;
+    };
+
+    const resolveRcmMeasure = (rcmCode: string, stored: string) => {
+        const text = String(stored || "");
+        const storedCode = extractRcmCodes(text)[0] || "";
+        if (text.trim() && storedCode === rcmCode) return text;
+        return lookupRcmMeasure(rcmCode) || text;
+    };
+
     const getRcmIntroducedTableMeta = (section: any) => {
         const rows = Array.isArray(section?.tables?.[0]) ? section.tables[0] : [];
         const firstRow = rows[0] || [];
@@ -744,7 +795,7 @@ export default () => {
             const rawRcmValue = String(sourceRow?.[meta.rcmCol] || "");
             const rcmSearchText = rawRcmValue.trim() ? rawRcmValue : sourceRow?.[meta.measureCol];
             const rcmCode = extractRcmCodes(rcmSearchText)[0] || "";
-            const measure = sourceRow?.[meta.measureCol] || sourceRow?.[meta.rcmCol] || "";
+            const measure = resolveRcmMeasure(rcmCode, sourceRow?.[meta.measureCol] || "");
             const matches = rcmCode ? getRcmHazMatches(rcmCode) : [];
             if (matches.length === 0) {
                 rows.push({
@@ -847,6 +898,32 @@ export default () => {
         reader.onerror = () => message.error("图片读取失败");
         reader.readAsDataURL(file);
         return false;
+    };
+
+    const updateRcmIntroducedCode = (section: any, rowIndex: number, rcmCol: number, measureCol: number, value: string) => {
+        const key = sectionKey(section);
+        const code = extractRcmCodes(value)[0] || "";
+        const update = (sections: any[] = []): any[] => (sections || []).map((item) => {
+            if (sectionKey(item) !== key) {
+                return { ...item, children: update(item.children || []) };
+            }
+            const tables = Array.isArray(item.tables) ? item.tables.map((table: any[]) => (table || []).map((row: any[]) => [...(row || [])])) : [];
+            if (!tables[0]) tables[0] = [["RCM编号", "引入的危害", "RCM引入的风险分析", "风险控制措施"]];
+            if (!tables[0][rowIndex]) tables[0][rowIndex] = [];
+            const row = tables[0][rowIndex];
+            row[rcmCol] = value;
+            const stored = String(row[measureCol] || "");
+            const storedCode = extractRcmCodes(stored)[0] || "";
+            const lib = code ? lookupRcmMeasure(code) : "";
+            if (lib && storedCode !== code) row[measureCol] = lib;
+            return { ...item, tables };
+        });
+        dispatch({
+            content: {
+                ...(data.content || emptyContent),
+                sections: update(data.content.sections || []),
+            },
+        });
     };
 
     const updateSectionTableCell = (key: string, tableIndex: number, rowIndex: number, cellIndex: number, value: string) => {
@@ -1130,11 +1207,9 @@ export default () => {
             role: row?.[0] || "",
             name: row?.[1] || "",
         })).filter((row: any) => row.role || row.name);
-        const editableRows = (data.participantOptions || []).length ? data.participantOptions : importedRows;
-        const viewRows = (data.participants || []).length ? data.participants : importedRows;
-        const displayRows = isView
-            ? viewRows
-            : (data.participantsTouched || (data.participants || []).length ? data.participants : editableRows);
+        const libraryRows = data.participantOptions || [];
+        const savedRows = (data.participants || []).length ? data.participants : importedRows;
+        const displayRows = libraryRows.length ? libraryRows : savedRows;
         return (
             <div className="risk-mgmt-section-content">
                 <table className="risk-mgmt-section-table risk-mgmt-participant-static-table">
@@ -1142,40 +1217,16 @@ export default () => {
                         <tr>
                             <td><strong>项目角色</strong></td>
                             <td><strong>姓名</strong></td>
-                            {!isView && <td><strong>操作</strong></td>}
                         </tr>
                         {displayRows.map((row: any, index: number) => (
                             <tr key={row.id || row._rowKey || `${row.role}-${row.name}-${index}`}>
-                                <td>
-                                    {isView ? row.role || "" : (
-                                        <input
-                                            className="risk-mgmt-participant-input"
-                                            value={row.role || ""}
-                                            onChange={(event) => updateParticipantCell(index, "role", event.target.value, displayRows)}
-                                        />
-                                    )}
-                                </td>
-                                <td>
-                                    {isView ? row.name || "" : (
-                                        <input
-                                            className="risk-mgmt-participant-input"
-                                            value={row.name || ""}
-                                            onChange={(event) => updateParticipantCell(index, "name", event.target.value, displayRows)}
-                                        />
-                                    )}
-                                </td>
-                                {!isView && (
-                                    <td>
-                                        <Button type="link" danger size="small" onClick={() => deleteParticipantRow(row, displayRows)}>
-                                            删除
-                                        </Button>
-                                    </td>
-                                )}
+                                <td>{row.role || ""}</td>
+                                <td>{row.name || ""}</td>
                             </tr>
                         ))}
                         {!displayRows.length && (
                             <tr>
-                                <td colSpan={isView ? 2 : 3}>暂无参与人员，请先到“风险分析参与人员”总表维护。</td>
+                                <td colSpan={2}>暂无参与人员，请先到“风险分析参与人员”总表维护。</td>
                             </tr>
                         )}
                     </tbody>
@@ -1392,6 +1443,10 @@ export default () => {
                     <Input.TextArea
                         value={sectionText}
                         onChange={(e) => updateSectionText(sectionKey(activeSection), e.target.value)}
+                        onBlur={(e) => {
+                            const next = showExponent(e.target.value);
+                            if (next !== sectionText) updateSectionText(sectionKey(activeSection), next);
+                        }}
                         autoSize={{ minRows: 5, maxRows: 18 }}
                         placeholder="请输入章节内容"
                     />
@@ -1421,7 +1476,7 @@ export default () => {
                                                         size="small"
                                                         value={row.rawRcmValue}
                                                         placeholder="RCM编号"
-                                                        onChange={(e) => updateSectionTableCell(sectionKey(activeSection), 0, row.sourceRowIndex, rcmIntroducedTable?.rcmCol ?? 0, e.target.value)}
+                                                        onChange={(e) => updateRcmIntroducedCode(activeSection, row.sourceRowIndex, rcmIntroducedTable?.rcmCol ?? 0, rcmIntroducedTable?.measureCol ?? 3, e.target.value)}
                                                     />
                                                 )}
                                             </td>
@@ -1501,6 +1556,10 @@ export default () => {
                                                     autoSize={{ minRows: 1, maxRows: 8 }}
                                                     value={cell}
                                                     onChange={(e) => updateSectionTableCell(sectionKey(activeSection), tableIndex, rowIndex, cellIndex, e.target.value)}
+                                                    onBlur={(e) => {
+                                                        const next = showExponent(e.target.value);
+                                                        if (next !== cell) updateSectionTableCell(sectionKey(activeSection), tableIndex, rowIndex, cellIndex, next);
+                                                    }}
                                                 />
                                             )}
                                         </td>
@@ -1618,7 +1677,7 @@ export default () => {
                                             versionPlaceholder={ts("product.full_version")}
                                             onChange={(value: any) => {
                                                 form.setFieldValue("product_id", value);
-                                                dispatch({ selectedProductId: value });
+                                                dispatch({ selectedProductId: value, participantsTouched: false });
                                                 loadRiskLookupData(value);
                                                 loadParticipantOptions(dispatch, value);
                                                 const selectedProduct = (data.products || []).find((p: any) => p.id === value);
@@ -1633,7 +1692,7 @@ export default () => {
                                                 Api.preview_risk_mgmt_content({ product_id: value, version }).then((res: any) => {
                                                     if (res.code === Api.C_OK && res.data && Array.isArray(res.data.sections)) {
                                                         let content = syncProductNameInContent(res.data, productName);
-                                                        content = syncFileVersionInCover(content, version);
+                                                        content = applyExponent(syncFileVersionInCover(content, version));
                                                         content = { ...content, participants: prevParticipants };
                                                         const defaultSection = (content.sections || []).find((s: any) => !isCoverSection(s) && !isRevisionSection(s));
                                                         dispatch({ content, activeSectionKey: defaultSection ? sectionKey(defaultSection) : data.activeSectionKey });
@@ -1664,8 +1723,8 @@ export default () => {
                         {!isView && (
                             <Button type="primary" loading={data.saving} onClick={doSave}>{ts("save")}</Button>
                         )}
-                        {!isAdd && <Button loading={data.exporting} onClick={doExport}>导出</Button>}
-                        <Button onClick={() => navigate("/risk_mgmt_docs")}>{ts("back")}</Button>
+                        {!isAdd && <Button disabled={false} loading={data.exporting} onClick={doExport}>导出</Button>}
+                        <Button disabled={false} onClick={() => navigate("/risk_mgmt_docs")}>{ts("back")}</Button>
                     </Space>
                 </div>
 

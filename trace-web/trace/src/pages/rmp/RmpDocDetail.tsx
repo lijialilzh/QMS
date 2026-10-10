@@ -17,7 +17,9 @@ const genKey = () => `r${Date.now().toString(36)}_${(_seq++).toString(36)}`;
 
 const SUP_DIGITS = "⁰¹²³⁴⁵⁶⁷⁸⁹";
 const showExponent = (text: any): string =>
-    String(text ?? "").replace(/10-(\d)(?!\d)/g, (_m, d) => `10⁻${SUP_DIGITS[Number(d)] || d}`);
+    String(text ?? "")
+        .replace(/10-(\d)(?!\d)/g, (_m, d) => `10⁻${SUP_DIGITS[Number(d)] || d}`)
+        .replace(/10⁻(\d)(?!\d)/g, (_m, d) => `10⁻${SUP_DIGITS[Number(d)] || d}`);
 
 const ensureKeys = (nodes: any[]): any[] =>
     (nodes || []).map((n: any) => ({
@@ -491,10 +493,14 @@ export default () => {
                                     <div className="pdp-label">正文{isAuto ? "（产品信息/项目时间自动获取）" : ""}</div>
                                     <Input.TextArea
                                         autoSize={{ minRows: 3, maxRows: 24 }}
-                                        value={showExponent(active.body ?? "")}
+                                        value={active.body ?? ""}
                                         disabled={readonly || isAuto}
                                         placeholder="本章节正文内容，可多行"
                                         onChange={(e) => patchNode(active._key, { body: e.target.value })}
+                                        onBlur={(e) => {
+                                            const next = showExponent(e.target.value);
+                                            if (next !== (active.body ?? "")) patchNode(active._key, { body: next });
+                                        }}
                                     />
                                 </div>
 
@@ -593,9 +599,13 @@ export default () => {
                                                                                     <Input.TextArea
                                                                                         className="pdp-cell"
                                                                                         autoSize={{ minRows: 1, maxRows: 8 }}
-                                                                                        value={typeof cell === "string" ? showExponent(cell) : (cell ?? "")}
+                                                                                        value={typeof cell === "string" ? cell : (cell ?? "")}
                                                                                         disabled={readonly || teamLocked}
                                                                                         onChange={(e) => setCell(ti, r, ci, e.target.value)}
+                                                                                        onBlur={(e) => {
+                                                                                            const next = showExponent(e.target.value);
+                                                                                            if (next !== cell) setCell(ti, r, ci, next);
+                                                                                        }}
                                                                                     />
                                                                                 )}
                                                                             </td>

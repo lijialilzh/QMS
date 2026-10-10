@@ -195,7 +195,7 @@ class Server(object):
             self.__fill_node(node, info, version)
         if prod_id:
             serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, "nsmp"))
-            serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, "nsmp"))
+            serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, "nsmp"), force=True)
         return content
 
     # ---------------- 文件编号（未手填时从产品 DHF 匹配） ----------------

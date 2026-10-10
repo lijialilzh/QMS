@@ -128,12 +128,16 @@ export default () => {
             if (!productId) { resolve(secs); return; }
             Promise.all([
                 ApiProduct.get_product({ id: productId }).catch(() => null),
-                ApiCompanyInfo.list_company_info({ page_index: 0, page_size: 1 }).catch(() => null),
+                ApiCompanyInfo.list_company_info({ page_index: 0, page_size: 100 }).catch(() => null),
                 ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
                 ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
             ]).then(([pr, ci, tl, mb]: any[]) => {
                 const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
-                const company = ci && ci.code === Api.C_OK ? ((ci.data?.rows || [])[0] || {}) : {};
+                const companies = ci && ci.code === Api.C_OK ? (ci.data?.rows || []) : [];
+                const registrant = String(prod.registrant || "").trim();
+                const company = companies.find((c: any) => String(c.registrant || "").trim() === registrant)
+                    || [...companies].sort((a: any, b: any) => Number(a.id) - Number(b.id))[0]
+                    || {};
                 const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
                 const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
                 const findRole = (pred: (role: string) => boolean) => {
@@ -146,6 +150,7 @@ export default () => {
                     "完整版本": prod.full_version || "",
                     "发布版本": prod.release_version || "",
                     "软件名称": prod.name || "",
+                    "UDI": prod.udi || "",
                     "注册人": company.registrant || "",
                     "住所": company.address || "",
                     "受托生产企业": company.manufacturer || "",

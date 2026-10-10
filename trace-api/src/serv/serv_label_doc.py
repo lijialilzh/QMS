@@ -119,14 +119,22 @@ class Server(object):
         prod_name = (getattr(product, "name", "") or "").strip()
         full_version = (getattr(product, "full_version", "") or "").strip()
         release_version = (getattr(product, "release_version", "") or "").strip()
-        # 公司信息取「公司基本信息」首条记录（按 id 升序）作为注册人主体
-        company = db.session.execute(select(CompanyInfo).order_by(CompanyInfo.id)).scalars().first()
+        # 公司信息按该产品版本上的注册人匹配；对不上再取 id 最小的一条
+        registrant = (getattr(product, "registrant", "") or "").strip()
+        company = None
+        if registrant:
+            company = db.session.execute(
+                select(CompanyInfo).where(CompanyInfo.registrant == registrant)
+            ).scalars().first()
+        if not company:
+            company = db.session.execute(select(CompanyInfo).order_by(CompanyInfo.id.asc())).scalars().first()
         label_map = {
             "产品型号": type_code,
             "英文名称": type_code,
             "完整版本": full_version,
             "发布版本": release_version,
             "软件名称": prod_name,
+            "UDI": (getattr(product, "udi", "") or "").strip(),
         }
         if company:
             label_map.update({

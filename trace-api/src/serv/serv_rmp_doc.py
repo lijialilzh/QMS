@@ -450,7 +450,7 @@ class Server(object):
             if str(text or "").strip():
                 docx_util.save_txt2docx(str(text or ""), document)
 
-        exp_re = re.compile(r"10(?:-(\d)|⁻([⁰¹²³⁴⁵⁶⁷⁸⁹]))(?!\d)")
+        exp_re = re.compile(r"10(?:-(\d)|⁻([⁰¹²³⁴⁵⁶⁷⁸⁹])|⁻(\d))(?!\d)")
         sup_digit = {ch: str(i) for i, ch in enumerate("⁰¹²³⁴⁵⁶⁷⁸⁹")}
 
         def fonted_prob(para, text, font_size=10.5, bold=False):
@@ -463,7 +463,7 @@ class Server(object):
                 if m.start() > pos:
                     docx_util.fonted_txt(para, s[pos:m.start()], font_size=font_size, bold=bold)
                 docx_util.fonted_txt(para, "10", font_size=font_size, bold=bold)
-                digit = m.group(1) or sup_digit.get(m.group(2), "")
+                digit = m.group(1) or sup_digit.get(m.group(2) or "", "") or (m.group(3) or "")
                 run = para.add_run("-" + digit)
                 run.font.size = Pt(font_size)
                 run.font.superscript = True

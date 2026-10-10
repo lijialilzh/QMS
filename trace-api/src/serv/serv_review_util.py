@@ -445,7 +445,7 @@ DOC_DEPT = {
     "risk": "product", "rmp": "product", "pha": "product",
     # 开发文件：编制人=TPM，审核/批准=研发负责人
     "sd": "dev", "sds": "dev", "cybersec": "dev",
-    "nsmp": "dev", "nsr": "dev", "crr": "dev",
+    "nsmp": "product", "nsr": "product", "crr": "dev",
     "scm": "dev", "scs": "dev",
     # 测试文件：编制人=测试人员，审核/批准=研发负责人
     "stp": "test", "utp": "test", "utr": "test", "str": "test", "bug": "test", "imm": "test",

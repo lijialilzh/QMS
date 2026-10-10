@@ -14,12 +14,13 @@ from docx.table import Table as DocxTable
 from docx.text.paragraph import Paragraph
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Inches, Pt
+from docx.shared import Inches, Pt, RGBColor
 from docx.enum.section import WD_ORIENT, WD_SECTION_START
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 
 from ..model.product import Product
+from ..model.rcm import Rcm
 from ..model.haz import Haz
 from ..model.prod_haz import ProdHaz
 from ..model.risk_mgmt_doc import RiskAnalysis, RiskControl, RiskMgmtDoc, RiskParticipant
@@ -361,6 +362,16 @@ class Server(object):
         return re.sub(r"^[0-9．.、\s]+", "", str(title or "")).strip()
 
     @staticmethod
+    def __strip_duplicate_title(text, title):
+        lines = str(text or "").replace("\r", "").split("\n")
+        if not lines:
+            return ""
+        first = lines[0].strip().rstrip("：:").strip()
+        if first == title:
+            return "\n".join(lines[1:]).strip()
+        return str(text or "").strip()
+
+    @staticmethod
     def __level_number(depth, idx):
         if depth <= 1:
             return f"({idx})"
@@ -501,7 +512,7 @@ class Server(object):
                     res.append((getattr(haz, "code", "") or "", analysis))
             return res
 
-        out = []
+        parsed = []
         for row in data_rows:
             if not isinstance(row, list):
                 continue
@@ -509,7 +520,22 @@ class Server(object):
             search = raw if raw.strip() else str(row[measure_col] if measure_col < len(row) else "")
             codes = rcm_codes(search)
             rcm = codes[0] if codes else ""
-            measure = (row[measure_col] if measure_col < len(row) else "") or (row[rcm_col] if rcm_col < len(row) else "")
+            stored = str(row[measure_col] if measure_col < len(row) else "")
+            parsed.append((raw, rcm, stored))
+        wanted = sorted({rcm for _, rcm, stored in parsed if rcm and (rcm_codes(stored)[:1] != [rcm])})
+        lib = {}
+        if wanted:
+            for item in db.session.execute(select(Rcm).where(Rcm.code.in_(wanted))).scalars().all():
+                lib[(item.code or "").upper().replace(" ", "")] = (item.description or "").strip()
+
+        out = []
+        for raw, rcm, stored in parsed:
+            stored_code = (rcm_codes(stored)[:1] or [""])[0]
+            measure = stored
+            if rcm and stored_code != rcm and lib.get(rcm):
+                measure = lib[rcm]
+            elif not measure:
+                measure = raw
             ms = matches(rcm) if rcm else []
             if not ms:
                 out.append([raw, "未匹配到HAZ" if rcm else "", "", measure])
@@ -568,20 +594,11 @@ class Server(object):
                 "根据YY/T 0316、ISO14971和风险管理控制程序，对于每个危害发生概率、危害程度的评估、"
                 "综合考虑概率和危害程度的风险等级、风险可接受准则如下所示。"
             ),
-            "危害识别": (
-                "与合理可预见相关的环境相关的危害：\n正常使用\n不正确的使用\n人为恶意使用\n"
-                "考虑的危害包括：\n对患者的危害\n对操作者的危害\n对信息资产的危害\n"
-                "危害初步原因的考虑应包括:\n用户界面\n患者或者临床用户的忽视\n人因工程\n硬件故障\n软件故障\n集成错误\n环境条件\n网络安全\n"
-                "危害重点考虑的原因应包括：\n网络工具；\n系统部件的集成，包括硬件和软件；\n用户界面，包括命令语言，警告和错误信息；\n"
-                "在用户界面和用户手册中文字翻译的准确性；\n用户预期或非预期情况下数据的保护；\n第三方软件。"
-            ),
-            "与合理可预见相关的环境相关的危害": "与合理可预见相关的环境相关的危害：\n正常使用\n不正确的使用\n人为恶意使用",
-            "考虑的危害包括": "考虑的危害包括：\n对患者的危害\n对操作者的危害\n对信息资产的危害",
-            "危害初步原因的考虑应包括": (
-                "危害初步原因的考虑应包括:\n用户界面\n患者或者临床用户的忽视\n人因工程\n硬件故障\n软件故障\n集成错误\n环境条件\n网络安全"
-            ),
+            "与合理可预见相关的环境相关的危害": "正常使用\n不正确的使用\n人为恶意使用",
+            "考虑的危害包括": "对患者的危害\n对操作者的危害\n对信息资产的危害",
+            "危害初步原因的考虑应包括": "用户界面\n患者或者临床用户的忽视\n人因工程\n硬件故障\n软件故障\n集成错误\n环境条件\n网络安全",
             "危害重点考虑的原因应包括": (
-                "危害重点考虑的原因应包括：\n网络工具；\n系统部件的集成，包括硬件和软件；\n用户界面，包括命令语言，警告和错误信息；\n"
+                "网络工具；\n系统部件的集成，包括硬件和软件；\n用户界面，包括命令语言，警告和错误信息；\n"
                 "在用户界面和用户手册中文字翻译的准确性；\n用户预期或非预期情况下数据的保护；\n第三方软件。"
             ),
             "风险分析": (
@@ -690,14 +707,24 @@ class Server(object):
 
         def walk(node):
             title = self.__strip_no(node.get("title"))
-            if title in defaults and not has_text(node):
+            if title == "危害识别":
+                node["text"] = ""
+            elif title in defaults and not has_text(node):
                 node["text"] = defaults[title]
+            if title in (
+                "与合理可预见相关的环境相关的危害",
+                "考虑的危害包括",
+                "危害初步原因的考虑应包括",
+                "危害重点考虑的原因应包括",
+            ):
+                node["text"] = self.__strip_duplicate_title(node.get("text"), title)
             if title == "范围" and not has_text(node) and product and (getattr(product, "scope", "") or "").strip():
                 node["text"] = product.scope.strip()
             if title == "产品描述" and not has_text(node) and product:
                 node["text"] = product_desc()
-            if title == "产品预期用途" and not has_text(node) and product and (getattr(product, "component", "") or "").strip():
-                node["text"] = product.component.strip()
+            # 3.1 产品预期用途每次打开/导出按产品适用范围重取
+            if title == "产品预期用途" and product and (getattr(product, "scope", "") or "").strip():
+                node["text"] = product.scope.strip()
             if title == "严重度定义" and not (node.get("tables") or []):
                 node["tables"] = [copy.deepcopy(self.SEVERITY_TABLE)]
             if title == "发生概率定义" and not (node.get("tables") or []):
@@ -711,11 +738,11 @@ class Server(object):
             if (node or {}).get("ref_type") == "prod_func_detail":
                 if pname:
                     node["title"] = f"3.2.1 {pname}"
-                if not has_text(node):
-                    if lazy["ptr"] is None:
-                        lazy["ptr"] = self.__ptr_func_2_1(product_id) or ""
-                    if lazy["ptr"]:
-                        node["text"] = lazy["ptr"]
+                # 技术要求更新后同步覆盖，不因章节已有正文而跳过
+                if lazy["ptr"] is None:
+                    lazy["ptr"] = self.__ptr_func_2_1(product_id) or ""
+                if lazy["ptr"]:
+                    node["text"] = lazy["ptr"]
             if is_appendix_a(node) and not (node.get("tables") or []):
                 if lazy["appx_a"] is None:
                     lazy["appx_a"] = self.__pha_appendix_a_table(product_id) or []
@@ -743,12 +770,15 @@ class Server(object):
             walk(section)
         return content
 
-    def __fill_participants(self, content):
-        # 4.2 风险分析参与人员：content.participants 为空时回填主表数据（与编辑页回退一致，保证导出也有内容）
-        if not isinstance(content, dict) or content.get("participants"):
+    def __fill_participants(self, content, product_id=None):
+        # 4.2 按文档所属产品取风险参与人员，库里有多少带多少
+        if not isinstance(content, dict) or not product_id:
             return content
-        rows = db.session.execute(select(RiskParticipant).order_by(RiskParticipant.id)).scalars().all()
-        content["participants"] = [{"id": r.id, "role": r.role or "", "name": r.name or ""} for r in rows]
+        rows = db.session.execute(
+            select(RiskParticipant).where(RiskParticipant.product_id == product_id).order_by(RiskParticipant.id.asc())
+        ).scalars().all()
+        if rows:
+            content["participants"] = [{"id": r.id, "role": r.role or "", "name": r.name or ""} for r in rows]
         return content
 
     def __to_obj(self, row: RiskMgmtDoc, product: Product = None, with_autofill=True):
@@ -763,7 +793,7 @@ class Server(object):
             obj.content = self.__autofill_front_matter(obj.content, row.product_id, row.version)
             obj.content = self.__fill_risk_mgmt_files(obj.content, row.product_id)
             obj.content = self.__autofill_body_sections(obj.content, row.product_id, row.version, product)
-            obj.content = self.__fill_participants(obj.content)
+            obj.content = self.__fill_participants(obj.content, row.product_id)
         if product:
             obj.product_name = product.name
             obj.product_version = product.full_version
@@ -1576,7 +1606,33 @@ class Server(object):
                     return item
             return None
 
-        def set_cell_text(cell, text, bold=False):
+        exp_re = re.compile(r"10(?:-(\d)|⁻([⁰¹²³⁴⁵⁶⁷⁸⁹])|⁻(\d))(?!\d)")
+        sup_digit = {ch: str(i) for i, ch in enumerate("⁰¹²³⁴⁵⁶⁷⁸⁹")}
+
+        def fonted_prob(para, text, font_size=10.5, bold=False):
+            # 「10-3」或「10⁻³」导出为 10 的上标次方
+            s = str(text or "")
+            pos = 0
+            matched = False
+            for m in exp_re.finditer(s):
+                matched = True
+                if m.start() > pos:
+                    docx_util.fonted_txt(para, s[pos:m.start()], font_size=font_size, bold=bold)
+                docx_util.fonted_txt(para, "10", font_size=font_size, bold=bold)
+                digit = m.group(1) or sup_digit.get(m.group(2) or "", "") or (m.group(3) or "")
+                run = para.add_run("-" + digit)
+                run.font.size = Pt(font_size)
+                run.font.superscript = True
+                run.font.italic = False
+                run.font.bold = bool(bold)
+                run.font.color.rgb = RGBColor(0, 0, 0)
+                run.font.name = "Times New Roman"
+                run._element.rPr.rFonts.set(qn("w:eastAsia"), "Times New Roman")
+                pos = m.end()
+            if not matched or pos < len(s):
+                docx_util.fonted_txt(para, s[pos:], font_size=font_size, bold=bold)
+
+        def set_cell_text(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
             s = str(text or "")
             # 签名图（编制/审核/批准人）：等比嵌入图片，不渲染 base64 文本
             if s.startswith("data:image"):
@@ -1592,11 +1648,11 @@ class Server(object):
                     pass
             cell.text = ""
             paragraph = cell.paragraphs[0]
-            paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            paragraph.alignment = align
             paragraph.paragraph_format.space_before = Pt(0)
             paragraph.paragraph_format.space_after = Pt(0)
             paragraph.paragraph_format.line_spacing = 1.3
-            docx_util.fonted_txt(paragraph, s, font_size=10.5, bold=bold)
+            fonted_prob(paragraph, s, font_size=10.5, bold=bold)
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
 
         def set_cell_rcm(cell, text, bold=False):
@@ -1661,9 +1717,55 @@ class Server(object):
                 logger.exception("导出风险管理图片失败")
                 return False
 
-        def add_default_acceptance_image():
-            image_path = os.path.join(os.path.dirname(__file__), "assets", "risk_acceptance_matrix.jpg")
-            return add_section_image(image_path)
+        def add_acceptance_matrix():
+            # 5.2.3 用表格绘制，避免把低分辨率图片拉大后发糊
+            rate_rows = [("经常", "5"), ("有时", "4"), ("偶然", "3"), ("很少", "2"), ("非常少", "1")]
+            sev_labels = [("可忽略", "A"), ("轻度", "B"), ("严重", "C"), ("危重的", "D"), ("灾难性的", "E")]
+            risk_levels = [
+                ["bad", "bad", "bad", "bad", "bad"],
+                ["bad", "bad", "bad", "bad", "bad"],
+                ["ok", "warn", "bad", "bad", "bad"],
+                ["ok", "warn", "warn", "bad", "bad"],
+                ["ok", "ok", "warn", "warn", "warn"],
+            ]
+            level_fill = {"bad": "FF0000", "warn": "FFC000", "ok": "92D050"}
+            legends = [
+                ("红色", "FF0000", "不可接受：这类风险本质上不可接受。必须寻求风险降低措施。"),
+                ("橙色", "FFC000", "进一步降低的研究：这类风险必须降低到合理可行的最低限度才可视为可接受。"),
+                ("绿色", "92D050", "可忽略：这类风险实际上可接受，但只可挑选一步寻求风险降低措施。"),
+            ]
+            table = document.add_table(rows=10, cols=8)
+            table.style = "Table Grid"
+            table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+            def cell(r, c):
+                return table.cell(r, c)
+
+            center = WD_ALIGN_PARAGRAPH.CENTER
+            cell(0, 0).merge(cell(1, 2))
+            set_cell_text(cell(0, 0), "风险值", bold=True, align=center)
+            cell(0, 3).merge(cell(0, 7))
+            set_cell_text(cell(0, 3), "严重度", bold=True, align=center)
+            for ci, (label, letter) in enumerate(sev_labels):
+                set_cell_text(cell(1, 3 + ci), f"{label}\n{letter}", bold=True, align=center)
+            cell(2, 0).merge(cell(6, 0))
+            set_cell_text(cell(2, 0), "发生概率", bold=True, align=center)
+            for ri, (rate, score) in enumerate(rate_rows):
+                r = 2 + ri
+                set_cell_text(cell(r, 1), rate, bold=True, align=center)
+                set_cell_text(cell(r, 2), score, bold=True, align=center)
+                for ci, (_label, letter) in enumerate(sev_labels):
+                    target = cell(r, 3 + ci)
+                    set_cell_text(target, f"{score}{letter}", align=center)
+                    shade_cell(target, level_fill[risk_levels[ri][ci]])
+            for li, (word, fill, desc) in enumerate(legends):
+                r = 7 + li
+                set_cell_text(cell(r, 0), word, bold=True, align=center)
+                shade_cell(cell(r, 0), fill)
+                cell(r, 1).merge(cell(r, 7))
+                set_cell_text(cell(r, 1), desc)
+            document.add_paragraph()
+            return True
 
         def shade_cell(cell, hex_color):
             tc_pr = cell._tc.get_or_add_tcPr()
@@ -1842,7 +1944,7 @@ class Server(object):
                 add_product_haz_matrix()
             elif is_acceptance_standard_section(section):
                 if not image_added:
-                    add_default_acceptance_image()
+                    add_acceptance_matrix()
             elif section.get("ref_type") == "risk_analysis":
                 rows = db.session.execute(select(RiskAnalysis).where(RiskAnalysis.doc_id == id).order_by(RiskAnalysis.id)).scalars().all()
                 if rows:

@@ -12,7 +12,9 @@ import json
 import logging
 import os
 import re
+import struct
 from io import BytesIO
+from urllib.parse import unquote, urlparse
 from typing import List
 
 from sqlalchemy import func, select, delete
@@ -96,6 +98,43 @@ def _build_title_map(nodes):
 
 
 _build_title_map(DEFAULT_NSR_CONTENT.get("sections"))
+
+
+def _image_pixels(path):
+    raw_path = str(path or "").strip()
+    raw = b""
+    if raw_path.startswith("data:image/"):
+        matched = re.match(r"^data:image/[a-zA-Z0-9.+-]+;base64,(.+)$", raw_path, re.S)
+        if matched:
+            try:
+                raw = base64.b64decode(matched.group(1))
+            except Exception:
+                raw = b""
+    else:
+        parsed = urlparse(raw_path)
+        clean = unquote(parsed.path or raw_path.split("?", 1)[0])
+        for candidate in (clean, clean.lstrip("/"), clean if clean.startswith("/") else "/" + clean):
+            if candidate and os.path.exists(candidate):
+                with open(candidate, "rb") as handle:
+                    raw = handle.read()
+                break
+    if len(raw) >= 24 and raw[:8] == b"\x89PNG\r\n\x1a\n":
+        return struct.unpack(">II", raw[16:24])
+    if len(raw) >= 10 and raw[:6] in (b"GIF87a", b"GIF89a"):
+        return struct.unpack("<HH", raw[6:10])
+    return None
+
+
+def _fit_image_mw(path, max_w_px=340, max_h_px=690):
+    # 96dpi 下不放大；宽度不超过 max_w_px，高度不超过约 7.2 英寸，避免竖图压出页面。
+    size = _image_pixels(path)
+    if not size:
+        return max_w_px
+    ow, oh = size
+    if ow <= 0 or oh <= 0:
+        return max_w_px
+    scale = min(max_w_px / float(ow), max_h_px / float(oh), 1.0)
+    return max(1, int(round(ow * scale)))
 
 
 class Server(object):
@@ -378,6 +417,7 @@ class Server(object):
             "risk_init": risk_init,
             "risk_cur": risk_cur,
             "struct_image": self.__struct_image_url(product_id),
+            "scope": (product.scope or "").strip(),
         }
 
     def __struct_image_url(self, product_id):
@@ -501,6 +541,19 @@ class Server(object):
                 out.append(ln)
         return "\n".join(out)
 
+    def __fill_labeled_line(self, node_text, label, value):
+        value = str(value or "").strip()
+        if not value:
+            return node_text
+        out = []
+        for ln in str(node_text or "").split("\n"):
+            key = ln.replace("\t", "").strip()
+            if key.startswith(label):
+                out.append(f"{label}：{value}")
+            else:
+                out.append(ln)
+        return "\n".join(out)
+
     def __match_capability_haz_codes(self, basis_text, haz_objs):
         # 判断依据按换行和逗号、句号拆句，句子出现在 HAZ 事件或情况中即命中。
         parts = []
@@ -527,6 +580,33 @@ class Server(object):
         codes.sort(key=num)
         return codes
 
+    def __product_haz_by_num(self, haz_objs):
+        by_num = {}
+        for obj in haz_objs or []:
+            code = str(getattr(obj, "code", "") or "").strip()
+            matched = re.search(r"(\d+)", code)
+            if code and matched:
+                by_num[int(matched.group(1))] = code
+        return by_num
+
+    def __cell_product_haz_codes(self, text, by_num):
+        # 格子里的编号、以及「HAZ059～HAZ060」这种连续写法，只保留当前产品有的。
+        found = []
+
+        def add_num(num):
+            code = by_num.get(num)
+            if code and code not in found:
+                found.append(code)
+
+        raw = str(text or "")
+        for start, end in re.findall(r"HAZ\s*(\d+)\s*[～~\-—–]\s*HAZ\s*(\d+)", raw, flags=re.I):
+            lo, hi = sorted((int(start), int(end)))
+            for num in range(lo, hi + 1):
+                add_num(num)
+        for num in re.findall(r"HAZ\s*(\d+)", raw, flags=re.I):
+            add_num(int(num))
+        return found
+
     def __fill_capability_haz_column(self, node, haz_objs):
         tables = node.get("tables") or []
         if not tables or not tables[0] or len(tables[0]) < 2:
@@ -544,19 +624,24 @@ class Server(object):
         need_idx = col_index("是否需要进一步风险分析")
         if basis_idx < 0 or haz_idx < 0:
             return
+        by_num = self.__product_haz_by_num(haz_objs)
         width = max(basis_idx, haz_idx, need_idx if need_idx >= 0 else 0) + 1
         for row in rows[1:]:
             if not isinstance(row, list):
                 continue
             while len(row) < width:
                 row.append("")
-            if str(row[haz_idx] or "").strip():
-                continue
-            codes = self.__match_capability_haz_codes(row[basis_idx], haz_objs)
+            codes = self.__cell_product_haz_codes(row[haz_idx], by_num)
+            for code in self.__match_capability_haz_codes(row[basis_idx], haz_objs):
+                if code not in codes:
+                    codes.append(code)
+            codes.sort(key=lambda code: int(re.search(r"(\d+)", code).group(1)) if re.search(r"(\d+)", code) else 0)
             if codes:
                 row[haz_idx] = "\n".join(codes)
             elif need_idx >= 0 and str(row[need_idx] or "").strip().startswith("否"):
                 row[haz_idx] = "无"
+            else:
+                row[haz_idx] = ""
         # 模板提取时把合并格拆成了内容完全相同的多行，只保留一行。
         seen = set()
         kept = [rows[0]]
@@ -624,12 +709,15 @@ class Server(object):
                         elif not has_r1 and "采取风险措施后" in s:
                             out.append("{{RISK:1}}"); has_r1 = True
                     node["text"] = "\n".join(out)
+                if self.__strip_name(title) == "网络接口":
+                    # 1.2.4 的「预期用途」取产品适用范围。1.2.5 里的预期用途是媒介用途，不在这里改。
+                    node["text"] = self.__fill_labeled_line(node.get("text"), "预期用途", auto.get("scope") or "")
                 if self.__strip_name(title) == "数据架构":
                     # 打开和导出都用该产品体系结构图替换模板内置图。没有图则不留模板图。
                     url = (auto.get("struct_image") or "").strip()
                     node["images"] = [url] if url else []
                 if self.__strip_name(title) == "网络安全能力":
-                    # 只填空白的「进一步风险分析编号」；已有编号视为手改，不再覆盖。
+                    # 打开和导出都按当前产品 HAZ 重写「进一步风险分析编号」。
                     self.__fill_capability_haz_column(node, auto.get("product_hazs") or [])
                 # 正文/表/图按原 Word 顺序还原为有序 blocks（cover/revision 走导出专用逻辑，不重排）
                 if rt not in ("cover", "revision"):
@@ -694,7 +782,7 @@ class Server(object):
             content = self.__apply_autofill(content, auto)
             if row.product_id:
                 serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(row.product_id, "nsr"))
-                serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(row.product_id, "nsr"))
+                serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(row.product_id, "nsr"), force=True)
         if product:
             content["productName"] = product.name or ""
         obj.content = content
@@ -814,7 +902,7 @@ class Server(object):
         auto = await self.__collect_autofill(product_id)
         content = self.__apply_autofill(content, auto)
         serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(product_id, "nsr"))
-        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(product_id, "nsr"))
+        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(product_id, "nsr"), force=True)
         product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
         if product:
             content["productName"] = product.name or ""
@@ -990,8 +1078,8 @@ class Server(object):
             if not raw:
                 return
             try:
-                # 流程图等内置图：限制最大边，避免单图过大占满版面
-                docx_util.save_img2docx(raw, document, mw=340, mh=420)
+                # 按原图像素等比放入页面，不放大；过高时再缩小，避免流程图压出页脚。
+                docx_util.save_img2docx(raw, document, mw=_fit_image_mw(raw), mh=420)
             except Exception:
                 logger.exception("导出网络安全研究报告图片失败")
 
