@@ -10,7 +10,7 @@ import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
-import ReviewTable from "@/common/ReviewTable";
+import ReviewRecordTables from "@/pages/doc_fill/ReviewRecordTables";
 import "../pdp/PdpDocDetail.less";
 import { isRuntimeLockedBody, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
 import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
@@ -730,14 +730,9 @@ export default () => {
                                                 />
                                             </div>
                                             {active.ref_type === "review"
-                                                ? (active.tables || []).map((tb: any[], ti: number) => (
-                                                    <div className="pdp-table-block" key={ti}>
-                                                        <div className="pdp-table-bar">
-                                                            <span className="pdp-label">{ti === 0 ? "评审内容" : "参评人员签字"}</span>
-                                                        </div>
-                                                        <ReviewTable grid={tb} />
-                                                    </div>
-                                                ))
+                                                ? (
+                                                    <ReviewRecordTables tables={active.tables || []} readonly={readonly} onChange={updateTables} />
+                                                )
                                                 : (active.tables || []).map((tb: any[], ti: number) => {
                                                     const rtLock = readonly || isRuntimeLockedTable(active, ti);
                                                     return (

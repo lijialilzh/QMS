@@ -172,10 +172,8 @@ class Server(object):
                 for s in (content.get("sections") or []):
                     _update_version(s)
         self.__fill_revision(content, prod_id, version, force=force)
-        # 从「软件配置管理计划(SCM)」获取两张配置项清单，注入状态报告对应章节
-        # force（切换产品）时跳过，保留模板原值
-        if not force:
-            self.__pull_sci_from_scm(content, prod_id)
+        # 两张配置项清单始终从同产品《软件配置管理计划》覆盖，切换产品也同样覆盖
+        self.__pull_sci_from_scm(content, prod_id, version)
         serv_review_util.ensure_review(
             content, DOC_KEY,
             serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS[DOC_KEY]["name_keywords"]) if prod_id else "",
@@ -195,28 +193,82 @@ class Server(object):
                 return hit
         return None
 
-    def __pull_sci_from_scm(self, content, prod_id):
-        """从同产品最新的「软件配置管理计划」取①软件配置项清单、②现成软件配置项清单，注入状态报告两个章节。"""
+    @staticmethod
+    def __plain_title(title):
+        return re.sub(r"^\s*\d+(?:\.\d+)*[\.、\s]*", "", str(title or "")).strip()
+
+    def __pull_sci_from_scm(self, content, prod_id, version=""):
+        """从同产品《软件配置管理计划》「标识配置」取软件配置项清单、现成软件配置项清单，覆盖状态报告对应章节。"""
         if not prod_id:
             return content
-        scm = db.session.execute(
+        rows = db.session.execute(
             select(ScmDoc).where(ScmDoc.product_id == prod_id).order_by(ScmDoc.id.desc())
-        ).scalars().first()
-        if not scm:
+        ).scalars().all()
+        if not rows:
             return content
+        ver = str(version or "").strip()
+        scm = next((r for r in rows if str(r.version or "").strip() == ver), None) if ver else None
+        scm = scm or rows[0]
         scm_content = scm.content if isinstance(scm.content, dict) else {}
-        ident = self.__find_node(scm_content.get("sections") or [], lambda t: "标识配置" in t)
-        tables = (ident.get("tables") if ident else None) or []
-        sci_tbl = tables[0] if len(tables) > 0 else None
-        ots_tbl = tables[1] if len(tables) > 1 else None
+        ident = self.__find_node(
+            scm_content.get("sections") or [],
+            lambda t: self.__plain_title(t) == "标识配置" or self.__plain_title(t).endswith("标识配置"),
+        )
+        tables = [tb for tb in ((ident.get("tables") if ident else None) or []) if isinstance(tb, list) and tb]
+
+        def header(tb):
+            return [str(c or "").strip() for c in (tb[0] if tb else [])]
+
+        sci_tbl = next((tb for tb in tables if "SCI名字" in header(tb) and "SCI类型" in header(tb)), None)
+        ots_tbl = next((tb for tb in tables if "SCI名字" in header(tb) and "制造商/负责人" in header(tb) and "SCI类型" not in header(tb)), None)
         secs = content.get("sections") or []
-        n1 = self.__find_node(secs, lambda t: t.startswith("软件配置项状态"))
-        n2 = self.__find_node(secs, lambda t: t.startswith("现成软件配置状态"))
+        n1 = self.__find_node(secs, lambda t: self.__plain_title(t).startswith("软件配置项状态"))
+        n2 = self.__find_node(secs, lambda t: self.__plain_title(t).startswith("现成软件配置"))
         if n1 is not None and sci_tbl:
-            n1["tables"] = [copy.deepcopy(sci_tbl)]
+            n1["tables"] = [self.__expand_source_rows(copy.deepcopy(sci_tbl), scm_content.get("sections") or [])]
         if n2 is not None and ots_tbl:
             n2["tables"] = [copy.deepcopy(ots_tbl)]
         return content
+
+    def __expand_source_rows(self, grid, sections):
+        """标识配置里的一行「软开源代码」换成版本控制表中的源代码模块，并补上验证Build、最终构建工具。"""
+        node = self.__find_node(
+            sections,
+            lambda t: self.__plain_title(t) == "产品开发部软件构建配置项版本控制",
+        )
+        src_rows = []
+        extra_rows = []
+        for tb in ((node.get("tables") if node else None) or []):
+            if not isinstance(tb, list):
+                continue
+            for row in tb[1:]:
+                if not isinstance(row, list) or not row:
+                    continue
+                kind = str(row[0] or "").strip()
+                path = str(row[2] or "").strip() if len(row) > 2 else ""
+                if kind == "源代码":
+                    module = str(row[1] or "").strip() if len(row) > 1 else ""
+                    if not module and not path:
+                        continue
+                    src_rows.append(["软开源代码", module, "infervision", "/", path])
+                elif kind == "验证Build":
+                    extra_rows.append(["验证Build", "源代码", "infervision", "/", path])
+                elif kind == "最终构建工具":
+                    extra_rows.append(["最终构建工具", "构建工具", "infervision", "/", path])
+        if not src_rows and not extra_rows:
+            return grid
+        drop = set()
+        if src_rows:
+            drop.add("软开源代码")
+        if extra_rows:
+            drop.update({"验证Build", "最终构建工具"})
+        kept = [
+            row for row in grid
+            if not (isinstance(row, list) and str((row[0] if row else "") or "").strip() in drop)
+        ]
+        kept.extend(src_rows)
+        kept.extend(extra_rows)
+        return kept
 
     def __to_obj(self, row: ScsDoc, product: Product = None):
         obj = ScsDocObj(**row.dict())
@@ -314,7 +366,7 @@ class Server(object):
             db.session.execute(delete(ScsDoc).where(ScsDoc.product_id == product_id, ScsDoc.version == row.version, ScsDoc.id != id))
             content = self.__normalize_content(row.content)
             # 重置含产品名的固定章节为模板原值（恢复基准名 BASE_NAME，避免被旧产品名污染导致后续替换失效）
-            # 同时重置软件配置状态表（3章节）为模板原值，切换产品不做替换
+            # 先恢复模板，再由自动获取按新产品的配置管理计划覆盖两张配置项清单
             tpl = copy.deepcopy(DEFAULT_SCS_CONTENT) if isinstance(DEFAULT_SCS_CONTENT, dict) else {"sections": []}
             tpl_map = {}
             fixed_titles = {"软件配置项状态(不包括现成软件)", "现成软件配置状态"}

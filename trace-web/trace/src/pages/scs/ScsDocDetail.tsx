@@ -10,7 +10,7 @@ import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
-import ReviewTable from "@/common/ReviewTable";
+import ReviewRecordTables from "@/pages/doc_fill/ReviewRecordTables";
 import "../pdp/PdpDocDetail.less";
 import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 import { DUP_MERGE_TITLES, duplicateItemSpans, type ItemSpans } from "../scm/duplicateItemSpans";
@@ -415,6 +415,7 @@ export default () => {
         updateTables(tables);
     };
     const mergeDup = DUP_MERGE_TITLES.has(stripNum(active?.title || ""));
+    const sciFromPlan = stripNum(active?.title || "").startsWith("软件配置项状态") || stripNum(active?.title || "").startsWith("现成软件配置");
     const setMergedCell = (ti: number, r: number, ci: number, val: string, spans: ItemSpans | null) => {
         const rs = spans?.rowSpan[r]?.[ci] || 1;
         const cs = spans?.colSpan[r]?.[ci] || 1;
@@ -707,7 +708,7 @@ export default () => {
                                                                                     )}
                                                                                 </td>
                                                                             ))}
-                                                                            {!readonly && (
+                                                                            {!readonly && !sciFromPlan && (
                                                                                 <td className="pdp-row-op">
                                                                                     <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
                                                                                     {tb.length > 1 && (
@@ -749,19 +750,14 @@ export default () => {
                                                 </div>
                                             )}
                                             {active.ref_type === "review"
-                                                ? (active.tables || []).map((tb: any[], ti: number) => (
-                                                    <div className="pdp-table-block" key={ti}>
-                                                        <div className="pdp-table-bar">
-                                                            <span className="pdp-label">{ti === 0 ? "评审内容" : "参评人员签字"}</span>
-                                                        </div>
-                                                        <ReviewTable grid={tb} />
-                                                    </div>
-                                                ))
+                                                ? (
+                                                    <ReviewRecordTables tables={active.tables || []} readonly={readonly} onChange={updateTables} />
+                                                )
                                                 : (active.tables || []).map((tb: any[], ti: number) => (
                                                 <div className="pdp-table-block" key={ti}>
                                                     <div className="pdp-table-bar">
-                                                        <span className="pdp-label">表格 {ti + 1}</span>
-                                                        {!readonly && (
+                                                        <span className="pdp-label">{sciFromPlan ? "从《软件配置管理计划》自动获取" : `表格 ${ti + 1}`}</span>
+                                                        {!readonly && !sciFromPlan && (
                                                             <Space size={4}>
                                                                 <Button size="small" onClick={() => addCol(ti)}>＋列</Button>
                                                                 <Button size="small" disabled={(tb[0] || []).length <= 1} onClick={() => delCol(ti, (tb[0] || []).length - 1)}>－列</Button>
@@ -789,13 +785,13 @@ export default () => {
                                                                                     className="pdp-cell"
                                                                                     autoSize={{ minRows: 1, maxRows: 8 }}
                                                                                     value={cell ?? ""}
-                                                                                    disabled={readonly}
+                                                                                    disabled={readonly || sciFromPlan}
                                                                                     onChange={(e) => setMergedCell(ti, r, ci, e.target.value, spans)}
                                                                                 />
                                                                             )}
                                                                         </td>
                                                                     ))}
-                                                                    {!readonly && (
+                                                                    {!readonly && !sciFromPlan && (
                                                                         <td className="pdp-row-op">
                                                                             <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
                                                                             {tb.length > 1 && (
@@ -810,7 +806,7 @@ export default () => {
                                                     </table>
                                                 </div>
                                             ))}
-                                            {!readonly && active.ref_type !== "review" && (
+                                            {!readonly && !sciFromPlan && active.ref_type !== "review" && (
                                                 <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
                                                     添加表格
                                                 </Button>
