@@ -3441,6 +3441,34 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
     // 左目录 + 右单章 布局：当前选中的节点 id 与目录折叠集合（仅展示层，不影响数据）
     const [activeNodeId, setActiveNodeId] = useState<string | number | null>(null);
     const [navCollapsedIds, setNavCollapsedIds] = useState<Set<string>>(new Set());
+    const navCollapsedInitRef = useRef(false);
+    useEffect(() => {
+        if (navCollapsedInitRef.current) return;
+        const isChapter = (n: TreeNode) => (
+            !isEmbeddedImageNode(n) &&
+            !isEmbeddedTableNode(n) &&
+            n.ref_type !== "srs_reqs" &&
+            n.ref_type !== "srs_reqs_2" &&
+            n.ref_type !== "srs_reqds"
+        );
+        const isRef = (n: TreeNode) => (
+            n.ref_type === "srs_reqs" || n.ref_type === "srs_reqs_2" || n.ref_type === "srs_reqds"
+        );
+        const ids = new Set<string>();
+        const walk = (list: TreeNode[], depth: number) => {
+            (list || []).forEach((node) => {
+                if (!isChapter(node)) return;
+                const kids = (node.children || []).filter(isChapter);
+                const refKids = (node.children || []).filter((child) => isRef(child) && !isNavHiddenReqTableNode(child));
+                if ((kids.length > 0 || refKids.length > 0) && depth >= 1) ids.add(String(node.id));
+                walk(node.children || [], depth + 1);
+            });
+        };
+        walk(nodes, 0);
+        if (ids.size === 0) return;
+        navCollapsedInitRef.current = true;
+        setNavCollapsedIds(ids);
+    }, [nodes]);
     const toggleNavCollapse = (id: string | number) => {
         setNavCollapsedIds((prev) => {
             const next = new Set(prev);

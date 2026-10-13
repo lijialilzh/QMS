@@ -1,5 +1,5 @@
 import "./TreeStructure.less";
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, useRef, type ReactNode } from "react";
 import { Button, Input, Space, Popconfirm, Upload, Table, message, Empty, Tooltip, Image } from "antd";
 import { PlusOutlined, DeleteOutlined, TableOutlined, EditOutlined, UploadOutlined, FileOutlined, CaretRightOutlined, CaretDownOutlined, CloseOutlined } from "@ant-design/icons";
 import { numberToChinese } from "@/common";
@@ -2592,6 +2592,22 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
     const [tableCellsBackup, setTableCellsBackup] = useState<TableData["cells"] | undefined>(undefined);
     const [activeNodeId, setActiveNodeId] = useState<string | number | null>(null);
     const [navCollapsedIds, setNavCollapsedIds] = useState<Set<string>>(new Set());
+    const navCollapsedInitRef = useRef(false);
+    useEffect(() => {
+        if (navCollapsedInitRef.current) return;
+        const ids = new Set<string>();
+        const walk = (list: TreeNode[], depth: number) => {
+            (list || []).filter(isNavChapterNode).forEach((node) => {
+                const kids = (node.children || []).filter(isNavChapterNode);
+                if (kids.length > 0 && depth >= 1) ids.add(String(node.id));
+                walk(node.children || [], depth + 1);
+            });
+        };
+        walk(nodes, 0);
+        if (ids.size === 0) return;
+        navCollapsedInitRef.current = true;
+        setNavCollapsedIds(ids);
+    }, [nodes]);
     const toggleNavCollapse = (id: string | number) => {
         setNavCollapsedIds((prev) => {
             const next = new Set(prev);

@@ -1317,6 +1317,81 @@ class SdsSrsTraceSyncMixin:
 
         return clean(roots or [])
 
+    def _drop_sds_code_duplicates_outside_srs_path(
+        self,
+        roots: List[SdsNodeForm],
+        trace_rows,
+        hierarchy_map: dict,
+    ) -> List[SdsNodeForm]:
+        """同一设计编号只留在 SRS 路径上的那一节。路径外的重复章节删掉，程序逻辑图挪到保留的那节。"""
+        parent_map = self._build_node_parent_map(roots)
+        design_roots = self._find_design_chapter_roots(roots)
+
+        def title_norm(node: SdsNodeForm) -> str:
+            return self._normalize_sds_node_title(
+                self._strip_sds_heading_text(getattr(node, "title", "") or "")
+            )
+
+        def nodes_with_code(code: str) -> List[SdsNodeForm]:
+            found: List[SdsNodeForm] = []
+
+            def walk(items: List[SdsNodeForm]):
+                for node in items or []:
+                    tokens = {self._normalize_code(token) for token in self._extract_node_sds_codes(node)}
+                    field = self._normalize_code(getattr(node, "sds_code", "") or "")
+                    if code in tokens or field == code:
+                        found.append(node)
+                    walk(getattr(node, "children", None) or [])
+
+            walk(roots)
+            return found
+
+        for trace, req in trace_rows or []:
+            code = self._normalize_code(
+                getattr(trace, "sds_code", "") or str(getattr(req, "code", "") or "").replace("SRS", "SDS")
+            )
+            if not code or self._is_algorithm_requirement(req, hierarchy_map):
+                continue
+            matches = nodes_with_code(code)
+            if len(matches) <= 1:
+                continue
+            type_code = str(getattr(req, "type_code", "") or "").strip()
+            is_change = self._is_change_requirement(code, type_code)
+            path = self._req_hierarchy_path(req, hierarchy_map, is_change, trace_rows)
+            expected_parent = self._normalize_sds_node_title(path[-2]) if len(path) >= 2 else ""
+            keeper = None
+            if expected_parent:
+                for node in matches:
+                    parent = parent_map.get(id(node))
+                    if parent is not None and title_norm(parent) == expected_parent:
+                        keeper = node
+                        break
+            if keeper is None:
+                keeper = matches[0]
+            for node in matches:
+                if node is keeper or self._is_in_fixed_template_zone(roots, node, parent_map, design_roots):
+                    continue
+                if not (getattr(keeper, "text", "") or "").strip() and (getattr(node, "text", "") or "").strip():
+                    keeper.text = node.text
+                keeper.children = list(getattr(keeper, "children", None) or [])
+                kept_caps = {
+                    self._normalize_sds_node_title(getattr(child, "title", "") or "")
+                    for child in keeper.children
+                }
+                for child in getattr(node, "children", None) or []:
+                    cap = str(getattr(child, "title", "") or "")
+                    if not re.match(r"^\s*图\s*\d+", cap):
+                        continue
+                    cap_norm = self._normalize_sds_node_title(cap)
+                    if cap_norm in kept_caps:
+                        continue
+                    keeper.children.append(child)
+                    kept_caps.add(cap_norm)
+                node.sds_code = None
+                self._detach_node(roots, node)
+            parent_map = self._build_node_parent_map(roots)
+        return roots
+
     def _prune_sync_branches_without_active_trace(
         self,
         roots: List[SdsNodeForm],
@@ -3834,6 +3909,7 @@ class SdsSrsTraceSyncMixin:
             roots, {"SDS-RCN300-007"}, {"图像显示"}
         )
         roots = self._remove_stray_image_display_modules(roots)
+        roots = self._drop_sds_code_duplicates_outside_srs_path(roots, trace_rows, hierarchy_map)
         roots = self._prune_sync_branches_without_active_trace(roots, trace_rows)
         roots = cleanup_unmatched_generated_leaves(roots)
         roots = self._dedupe_sync_area_siblings_by_title(roots)
