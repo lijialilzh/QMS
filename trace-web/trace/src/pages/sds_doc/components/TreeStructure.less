@@ -278,6 +278,28 @@
                 }
             }
 
+            &.node-pic-block--figure-list {
+                max-width: 520px;
+                width: 100%;
+
+                .node-pic-readonly {
+                    width: 100%;
+                    max-width: 520px;
+                    height: auto;
+                    min-height: 80px;
+                    max-height: none;
+                }
+
+                .ant-image,
+                .ant-image-img,
+                img {
+                    width: 100% !important;
+                    height: auto !important;
+                    max-height: 360px;
+                    object-fit: contain !important;
+                }
+            }
+
             &.node-pic-block--embedded-figure {
                 max-width: 160px;
 
@@ -298,6 +320,16 @@
                     width: 100% !important;
                     height: 100% !important;
                     object-fit: contain !important;
+                }
+            }
+
+            &.node-pic-block--figure-list {
+                .node-pic-readonly,
+                .ant-image,
+                .ant-image-img,
+                img {
+                    height: auto !important;
+                    max-height: 360px;
                 }
             }
         }

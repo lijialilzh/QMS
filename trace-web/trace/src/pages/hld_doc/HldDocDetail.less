@@ -32,13 +32,28 @@
         }
     }
 
+    > .ant-spin-nested-loading {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+
+        > .ant-spin-container {
+            flex: 1;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+    }
+
     .detail-content {
         flex: 1;
+        min-height: 0;
         padding: 16px;
         display: flex;
         flex-direction: column;
-        overflow-y: auto;
-        overflow-x: hidden;
+        overflow: hidden;
     }
 
     .hld-toolbar-form {
@@ -99,10 +114,13 @@
         margin-top: 0;
         flex-shrink: 0;
 
-        // 目录结构区域自然展开
+        // 目录区铺满剩余高度，右侧正文在章节框内滚动
         &.doc-section-flex {
             display: flex;
             flex-direction: column;
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
         }
 
         .doc-section-header {

@@ -692,45 +692,50 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         }
     }, [node.img_url]);
 
+    const uploadImageTo = async (file: File & { uid?: string }, targetId: number) => {
+        try {
+            setUploadLoading(true);
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('doc_id', String(docId ?? 0));
+            if (node.ref_type) {
+                formData.append('ref_type', String(node.ref_type));
+            }
+            const uploadFn = uploadDocFile || Api.add_doc_file;
+            const res = await uploadFn(formData);
+            if (res.code === Api.C_OK || res.code === 1) {
+                const imgUrl = res.data;
+                onImageChange(targetId, imgUrl);
+                setFileList([{
+                    uid: file.uid || '-1',
+                    name: file.name,
+                    status: 'done',
+                    url: `${window.location.origin}/${imgUrl}`
+                }]);
+                message.success(ts('upload_success'));
+            } else {
+                message.error(res.msg || ts('upload_failed'));
+            }
+        } catch (error) {
+            console.error('图片上传失败:', error);
+            message.error(ts('upload_failed'));
+        } finally {
+            setUploadLoading(false);
+        }
+    };
+
     // 图片上传配置（Upload 无 loading 属性，通过 disabled 在上传时禁用）
     const uploadProps: UploadProps = {
         maxCount: 1,
         fileList: fileList,
         disabled: uploadLoading,
         beforeUpload: async (file) => {
-            try {
-                setUploadLoading(true);
-                const formData = new FormData();
-                formData.append('file', file);
-                formData.append('doc_id', String(docId ?? 0));
-                if (node.ref_type) {
-                    formData.append('ref_type', String(node.ref_type));
-                }
-                
-                const uploadFn = uploadDocFile || Api.add_doc_file;
-                const res = await uploadFn(formData);
-                if (res.code === Api.C_OK || res.code === 1) { // 兼容1表示成功的情况
-                    const imgUrl = res.data; // 接口返回的data就是图片服务器地址
-                    const figChild = (node.children || []).find((c) => isEmbeddedImageCaptionNode(c));
-                    const targetId = (renderChildren === false && !node.img_url && figChild) ? figChild.id : node.id;
-                    onImageChange(targetId, imgUrl);
-                    setFileList([{
-                        uid: file.uid,
-                        name: file.name,
-                        status: 'done',
-                        url: `${window.location.origin}/${imgUrl}`
-                    }]);
-                    message.success(ts('upload_success'));
-                } else {
-                    message.error(res.msg || ts('upload_failed'));
-                }
-            } catch (error) {
-                console.error('图片上传失败:', error);
-                message.error(ts('upload_failed'));
-            } finally {
-                setUploadLoading(false);
-            }
-            return false; // 阻止自动上传
+            const captionChildren = (node.children || []).filter((c) => isEmbeddedImageCaptionNode(c));
+            const logicFig = captionChildren.find((c) => /程序逻辑/.test(String(c.title || c.label || "")));
+            const figChild = logicFig || captionChildren[0];
+            const targetId = (renderChildren === false && figChild && (!node.img_url || logicFig)) ? figChild.id : node.id;
+            await uploadImageTo(file, targetId);
+            return false;
         },
         onRemove: () => {
             onImageChange(node.id, '');
@@ -863,9 +868,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     }) : undefined;
     const firstImageChild = mergedImageOnlyChildren.find((child) => !!child.img_url) || imageOnlyChildren.find((child) => !!child.img_url);
     // 左导航单章模式只内嵌「图 N」图题子节点。2.1 / 6.6.1 这类编号章节的图留在该章节，不抬到父章节。
-    const navEmbeddedFigureChild = (!readOnly && renderChildren === false)
-        ? (imageChildrenAll.find((child) => isEmbeddedImageCaptionNode(child) && !isNumberedChapterTitle(child.title)) || undefined)
-        : undefined;
+    const navEmbeddedFigureChildren = (!readOnly && renderChildren === false)
+        ? imageChildrenAll.filter((child) => isEmbeddedImageCaptionNode(child) && !isNumberedChapterTitle(child.title))
+        : [];
+    const navEmbeddedFigureChild = navEmbeddedFigureChildren[0];
+    const multiEmbeddedFigures = navEmbeddedFigureChildren.length > 1;
     const navInlineTableChildren = (!readOnly && renderChildren === false)
         ? (node.children || []).filter((child) => hasRenderableTable(child.table) && isEmbeddedTableNode(child))
         : [];
@@ -1209,6 +1216,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const navImageInHeaderRow = isNavSingleChapterEdit
         && !showComplianceInlineInEdit
         && hasDisplayImage
+        && !multiEmbeddedFigures
         && (
             node.ref_type === 'img_topo'
             || node.ref_type === 'img_struct'
@@ -1223,6 +1231,9 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         && /程序逻辑/.test(editFigureCaption)
         && !showComplianceInlineInEdit
     ) ? splitProgramLogicText(editTextBeforeTable) : null;
+    const figuresInBody = multiEmbeddedFigures
+        ? navEmbeddedFigureChildren.filter((child) => !(programLogicSplit && /程序逻辑/.test(String(child.title || child.label || ""))))
+        : [];
     const editTextBetweenTables = showComplianceInlineInEdit ? (chapter7TableSplit?.middle || "") : "";
     const editTextAfterTable = showComplianceInlineInEdit ? (chapter7TableSplit?.after || "") : "";
     const mergeComplianceText = (before: string, middle: string, after: string): string => {
@@ -1779,7 +1790,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   {!readOnly && (
                   <Space className="node-actions" size={compactWithImage ? 4 : 8}>
                       {
-                        !disableHierarchyActions && level < 2 && (
+                        !disableHierarchyActions && level < 4 && (
                         <Button
                           size="small"
                           icon={<PlusOutlined />}
@@ -1874,7 +1885,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                   autoSize={{ minRows: 1, maxRows: 20 }}
                               />
                               )}
-                              {!navImageInHeaderRow && isNavSingleChapterEdit && !showComplianceInlineInEdit && (navFullSizeImageMode || !!programLogicSplit) && displayImageUrl && (
+                              {!navImageInHeaderRow && isNavSingleChapterEdit && !showComplianceInlineInEdit && (!!programLogicSplit || (navFullSizeImageMode && !multiEmbeddedFigures)) && displayImageUrl && (
                                   <div className={`node-pic-block ${navEmbeddedImageBlockClass}`} style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
                                       <div className="node-pic node-pic-readonly node-pic-inline">
                                           <Image
@@ -1883,6 +1894,13 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                               preview={true}
                                           />
                                       </div>
+                                      {programLogicSplit && !isAutoOnlyImage ? (
+                                          <Upload {...uploadProps}>
+                                              <Button size="small" icon={<UploadOutlined />} style={{ marginTop: 8 }}>
+                                                  重新上传
+                                              </Button>
+                                          </Upload>
+                                      ) : null}
                                       {editFigureCaption ? (
                                           <div className="node-image-caption" style={{ textAlign: "center", marginTop: 6, lineHeight: 1.5 }}>{editFigureCaption}</div>
                                       ) : null}
@@ -2395,6 +2413,36 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                             </Popconfirm>
                         </Space>
                     )}
+                </div>
+            ))}
+            {showExpandedBody && renderChildren === false && !showComplianceInlineInEdit && figuresInBody.map((child) => (
+                <div key={`nav-inline-figure-${child.id}`} className="node-pic-block node-pic-block--figure-list" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                    <div className="node-pic node-pic-readonly node-pic-inline">
+                        <Image
+                            src={resolveImageSrc(String(child.img_url || ""))}
+                            alt={String(child.title || "image")}
+                            preview={true}
+                        />
+                    </div>
+                    {!isAutoOnlyImage ? (
+                        <Upload
+                            maxCount={1}
+                            showUploadList={false}
+                            accept="image/*"
+                            disabled={uploadLoading}
+                            beforeUpload={(file) => {
+                                void uploadImageTo(file, child.id);
+                                return false;
+                            }}
+                        >
+                            <Button size="small" icon={<UploadOutlined />} style={{ marginTop: 8 }}>
+                                重新上传
+                            </Button>
+                        </Upload>
+                    ) : null}
+                    {String(child.title || "").trim() ? (
+                        <div className="node-image-caption" style={{ textAlign: "center", marginTop: 6, lineHeight: 1.5 }}>{String(child.title || "").trim()}</div>
+                    ) : null}
                 </div>
             ))}
             {showExpandedBody && renderChildren !== false && (() => {
@@ -3099,7 +3147,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
     const navChapterNumberMap = useNavLayout ? computeNavChapterNumberMap(visibleNodes) : new Map<string, string>();
     const canAddChildInNav = (node: TreeNode, depth: number): boolean => (
         !readOnly &&
-        depth < 2 &&
+        depth < 4 &&
         node.ref_type !== "sds_reqds" &&
         node.ref_type !== "sds_traces" &&
         !isDocImageRefType(node.ref_type)

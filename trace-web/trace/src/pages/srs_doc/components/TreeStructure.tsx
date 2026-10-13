@@ -7280,11 +7280,10 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
     const effectiveExtra = activeExtra || (fallbackToFirstExtra ? extraNavSections[0] : null);
     const effectiveNode = effectiveExtra ? null : (activeNode || defaultActiveNode);
 
-    // 目录里能否给该节点加子章节：与右侧"添加下一级"按钮的显示条件保持一致
-    // （非只读、树深 < 2 支持到三级、排除自动需求组与需求/图片等特殊节点）
+    // 目录里能否给该节点加子章节：一级到四级都可加下一章（树深 < 4）
     const canAddChildInNav = (node: TreeNode, depth: number): boolean => (
         !readOnly &&
-        depth < 2 &&
+        depth < 4 &&
         node.label !== "__auto_req_group" &&
         node.label !== "__auto_req_detail" &&
         node.ref_type !== "srs_reqs" &&

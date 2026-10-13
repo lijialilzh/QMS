@@ -1,7 +1,7 @@
 import "./SdsDocDetail.less";
 import { ConfigProvider, Form, Input, Button, message, Select, Modal, Space, Table, Spin } from "antd";
 import { ArrowLeftOutlined, EditOutlined, DownloadOutlined, FileAddOutlined } from "@ant-design/icons";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { renderOneLineWithTooltip, useData } from "@/common";
@@ -103,6 +103,29 @@ type CoverRevisionAutofillInfo = {
     approver: string;
 };
 
+const syncSdsCoverDateCells = (table: TreeNode["table"], date: string) => {
+    if (!date || !Array.isArray(table?.cells)) return null;
+    let touched = false;
+    const cells = table.cells.map((line: any[]) => (line || []).map((cell: any) => ({ ...cell })));
+    cells.forEach((line: any[]) => {
+        line.forEach((cell: any, index: number) => {
+            const label = String(cell?.value || "").replace(/\s/g, "");
+            if ((label === "编制人" || label === "审核人" || label === "批准人") && line[index + 3]) {
+                const dateLabel = String(line[index + 2]?.value || "").replace(/\s/g, "");
+                if (dateLabel === "日期" && String(line[index + 3].value || "") !== date) {
+                    line[index + 3].value = date;
+                    touched = true;
+                }
+            }
+            if (label === "生效日期" && line[index + 1] && String(line[index + 1].value || "") !== date) {
+                line[index + 1].value = date;
+                touched = true;
+            }
+        });
+    });
+    return touched ? cells : null;
+};
+
 const applySdsCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAutofillInfo): { nodes: TreeNode[]; changed: boolean } => {
     let changed = false;
     const setIf = (row: Record<string, string>, key: string, val: string) => {
@@ -142,7 +165,9 @@ const applySdsCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAut
             if (rows[4]) {
                 setDate(rows[4], "value1", info.coverDate);
             }
-            nextNode = { ...nextNode, table: { ...nextNode.table!, headers: SDS_APPROVAL_HEADERS, rows } };
+            const coverCells = syncSdsCoverDateCells(nextNode.table, info.coverDate);
+            nextNode = { ...nextNode, table: { ...nextNode.table!, headers: SDS_APPROVAL_HEADERS, rows, ...(coverCells ? { cells: coverCells } : {}) } };
+            if (coverCells) changed = true;
         } else if (nextNode.table && isSdsChangeLogTableNode(nextNode)) {
             const rows = [...(nextNode.table.rows || [])].map((r: any) => ({ ...r }));
             while (rows.length < 1) rows.push({});
@@ -459,6 +484,7 @@ export default () => {
     const [editForm] = Form.useForm();
     const treeStructureRef = useRef<TreeNode[]>([]);
     const initialEditTreeRef = useRef<TreeNode[]>([]);
+    const [timelineCoverDate, setTimelineCoverDate] = useState("");
     const [data, dispatch] = useData({
         loading: false,
         isEdit: false,
@@ -3477,15 +3503,17 @@ export default () => {
                 }
                 return "";
             };
+            const timelineDate = computeSdsCoverDate(tlRows);
+            setTimelineCoverDate(timelineDate);
             const coverResult = applySdsCoverRevisionAutofill(data.treeStructure as TreeNode[], {
-                coverDate: computeSdsCoverDate(tlRows),
+                coverDate: timelineDate,
                 version: String(displayDocVersion || ""),
                 resolveSigner,
                 reviser: tpm,
                 approver: devLead,
             });
             const reviewResult = applySdsReviewPersonAutofill(coverResult.nodes, {
-                coverDate: computeSdsCoverDate(tlRows),
+                coverDate: timelineDate,
                 resolveName: resolveReviewName,
                 resolveSign: (name: string) => (name ? (signMap[name] || "") : ""),
                 approverName: devLead,
@@ -3519,7 +3547,14 @@ export default () => {
                 );
             },
         }));
-        const dataSource = normalizeApprovalRows(node).map((row: any, index: number) => ({ key: `${keyPrefix}-row-${index}`, ...row }));
+        const dataSource = normalizeApprovalRows(node).map((row: any, index: number) => {
+            const next = { ...row };
+            if (timelineCoverDate) {
+                if (["编制人", "审核人", "批准人"].includes(String(next.label1 || ""))) next.value2 = timelineCoverDate;
+                if (String(next.label1 || "") === "生效日期") next.value1 = timelineCoverDate;
+            }
+            return { key: `${keyPrefix}-row-${index}`, ...next };
+        });
         return (
             <Table
                 key={`${keyPrefix}-${node.id}`}
@@ -3545,22 +3580,34 @@ export default () => {
                 normalizedRows.push({});
             }
         }
+        const revisionDateCode = isChangeRecordTable
+            ? String((node.table.headers.find((header: any) => String(header?.name || "").replace(/\s/g, "") === "修改日期") || {}).code || "")
+            : "";
         const columns = node.table.headers.map((header: any, index: number) => ({
             title: header.name || `列${index + 1}`,
             dataIndex: header.code,
             key: `${keyPrefix}-col-${header.code}`,
             render: (text: string, _record: any, rowIndex: number) => {
-                if (isReadOnly) return text || "-";
+                const shown = isChangeRecordTable && revisionDateCode && header.code === revisionDateCode && rowIndex === 0 && timelineCoverDate
+                    ? timelineCoverDate
+                    : text;
+                if (isReadOnly) return shown || "-";
                 return (
                     <Input.TextArea
-                        value={text || ""}
+                        value={shown || ""}
                         onChange={(e) => updateExtractedTableCell(node.id, rowIndex, header.code, e.target.value)}
                         autoSize={{ minRows: 1, maxRows: 4 }}
                     />
                 );
             },
         }));
-        const dataSource = normalizedRows.map((row: any, index: number) => ({ key: `${keyPrefix}-row-${index}`, ...row }));
+        const dataSource = normalizedRows.map((row: any, index: number) => {
+            const next = { ...row };
+            if (isChangeRecordTable && revisionDateCode && index === 0 && timelineCoverDate) {
+                next[revisionDateCode] = timelineCoverDate;
+            }
+            return { key: `${keyPrefix}-row-${index}`, ...next };
+        });
         return (
             <Table
                 key={`${keyPrefix}-${node.id}`}

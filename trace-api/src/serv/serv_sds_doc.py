@@ -1807,7 +1807,7 @@ class Server(SdsSrsTraceSyncMixin, object):
                     sig = signers.get(lab, "")
                     if sig and ci + 1 < len(crow):
                         self.__set_cell_text(crow[ci + 1], sig, only_empty=True)
-                    if ci + 2 < len(crow) and str(self.__cell_text(crow[ci + 2]) or "").strip() == "日期":
+                    if ci + 2 < len(crow) and re.sub(r"\s+", "", str(self.__cell_text(crow[ci + 2]) or "")) == "日期":
                         if ci + 3 < len(crow):
                             self.__set_cell_text(crow[ci + 3], rev_date, only_empty=False)
                 elif lab == "生效日期":

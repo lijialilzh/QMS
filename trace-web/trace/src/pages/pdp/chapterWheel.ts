@@ -53,15 +53,27 @@ const wheelPixels = (event: WheelEvent) => {
     return event.deltaY;
 };
 
+const resetChapterScroll = (editor: HTMLElement) => {
+    editor.scrollTop = 0;
+    let el: HTMLElement | null = editor.parentElement;
+    const page = editor.closest(".page");
+    while (el && el !== page) {
+        const oy = getComputedStyle(el).overflowY;
+        if ((oy === "auto" || oy === "scroll" || oy === "overlay") && el.scrollTop !== 0) {
+            el.scrollTop = 0;
+        }
+        el = el.parentElement;
+    }
+};
+
 const showChapterStart = (editor: HTMLElement) => {
-    const apply = () => {
-        editor.scrollTop = 0;
-    };
+    const apply = () => resetChapterScroll(editor);
     apply();
     requestAnimationFrame(() => requestAnimationFrame(apply));
     window.setTimeout(apply, 0);
     window.setTimeout(apply, 60);
     window.setTimeout(apply, 160);
+    window.setTimeout(apply, 320);
 };
 
 const onNavClick = (event: MouseEvent) => {
