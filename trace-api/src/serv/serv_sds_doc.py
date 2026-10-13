@@ -45,7 +45,7 @@ from ..model.srs_req import SrsReq
 from ..model.sds_reqd import Logic, SdsReqd
 from ..model.doc_file import DocFile
 from ..model.sds_trace import SdsTrace
-from ..model.srs_doc import SrsDoc
+from ..model.srs_doc import SrsDoc, SrsNode
 from ..obj.tobj_srs_doc import Table, TabHeader
 from ..model.product import Product, UserProd
 from ..model.project_member import ProjectMember
@@ -1536,6 +1536,103 @@ class Server(SdsSrsTraceSyncMixin, object):
         return {row.category: row.file_url for row in rows}
 
 
+    @staticmethod
+    def _glossary_pairs_from_table(table) -> List[Tuple[str, str]]:
+        if not table:
+            return []
+        if isinstance(table, str):
+            try:
+                table = json.loads(table)
+            except Exception:
+                return []
+        if hasattr(table, "dict"):
+            table = table.dict()
+        if not isinstance(table, dict):
+            return []
+        headers = table.get("headers") or []
+        rows = table.get("rows") or []
+        term_code = ""
+        def_code = ""
+        for header in headers:
+            if not isinstance(header, dict):
+                header = header.dict() if hasattr(header, "dict") else {}
+            name = re.sub(r"\s+", "", str(header.get("name") or ""))
+            code = str(header.get("code") or "")
+            if not term_code and ("术语" in name or "缩写" in name):
+                term_code = code
+            elif not def_code and "定义" in name:
+                def_code = code
+        if not term_code and headers:
+            first = headers[0]
+            first = first if isinstance(first, dict) else (first.dict() if hasattr(first, "dict") else {})
+            term_code = str(first.get("code") or "")
+            if len(headers) > 1:
+                second = headers[1]
+                second = second if isinstance(second, dict) else (second.dict() if hasattr(second, "dict") else {})
+                def_code = str(second.get("code") or "")
+        pairs: List[Tuple[str, str]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            term = str(row.get(term_code) or "").strip()
+            definition = str(row.get(def_code) or "").strip()
+            if term or definition:
+                pairs.append((term, definition))
+        return pairs
+
+    def _srs_glossary_pairs(self, srsdoc_id: int) -> List[Tuple[str, str]]:
+        if not srsdoc_id:
+            return []
+        nodes = db.session.execute(
+            select(SrsNode).where(SrsNode.doc_id == srsdoc_id).order_by(SrsNode.priority)
+        ).scalars().all()
+        by_parent: Dict[int, List] = {}
+        term_nodes = []
+        for node in nodes:
+            by_parent.setdefault(int(node.p_id or 0), []).append(node)
+            title = str(node.title or "")
+            if "术语" in title and re.match(r"^\s*1\.3(?:\s|$|、|\.)", title):
+                term_nodes.append(node)
+        if not term_nodes:
+            term_nodes = [node for node in nodes if "术语" in str(node.title or "")]
+        for node in term_nodes:
+            pairs = self._glossary_pairs_from_table(node.table)
+            if pairs:
+                return pairs
+            for child in by_parent.get(int(node.n_id or 0), []):
+                pairs = self._glossary_pairs_from_table(child.table)
+                if pairs:
+                    return pairs
+        return []
+
+    def _apply_srs_glossary_to_sds(self, roots: List[SdsNodeForm], srsdoc_id: int) -> bool:
+        """详细设计 1.4 术语表跟需求规格说明 1.3 术语表。"""
+        pairs = self._srs_glossary_pairs(srsdoc_id)
+        if not pairs:
+            return False
+        changed = False
+
+        def walk(nodes: List[SdsNodeForm]):
+            nonlocal changed
+            for node in nodes or []:
+                title = str(getattr(node, "title", "") or "").strip()
+                if "术语" in title and re.match(r"^\s*1\.4(?:\s|$|、|\.)", title):
+                    current = self._glossary_pairs_from_table(getattr(node, "table", None))
+                    if current != pairs:
+                        node.table = SdsTable(
+                            show_header=1,
+                            headers=[
+                                TabHeader(code="term", name="术语/缩写"),
+                                TabHeader(code="definition", name="定义"),
+                            ],
+                            rows=[{"term": term, "definition": definition} for term, definition in pairs],
+                        )
+                        changed = True
+                walk(getattr(node, "children", None) or [])
+
+        walk(roots or [])
+        return changed
+
     def _load_sds_tree(self, doc_id: int) -> List[SdsNodeForm]:
         nodes: list[SdsNode] = db.session.execute(
             select(SdsNode).where(SdsNode.doc_id == doc_id).order_by(SdsNode.priority)
@@ -1675,6 +1772,8 @@ class Server(SdsSrsTraceSyncMixin, object):
                     hydrate_imgs(getattr(obj, "children", None) or [])
             hydrate_imgs(tree)
             tree = await self._refresh_trace_table_for_display(row.id, tree, persist=True)
+            if (not is_srs_deleted) and self._apply_srs_glossary_to_sds(tree, row.srsdoc_id or 0):
+                self._persist_sds_tree(row, tree)
         data = row.dict()
         data["srsdoc_id"] = 0 if is_srs_deleted else row.srsdoc_id
         data["product_id"] = row.product_id or (row_prd.id if row_prd else (row_srs.product_id if row_srs else 0))

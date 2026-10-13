@@ -2299,6 +2299,13 @@ const TreeNodeItem = ({
             ...embeddedTableNodes
                 .filter((child) => {
                     if (isFunctionalKvTable(node.table) && isFunctionalKvTable(child.table)) return false;
+                    const parentHeaders = (node.table?.headers || []).map((header) => String(header?.name || "").replace(/\s/g, ""));
+                    const childHeaders = (child.table?.headers || []).map((header) => String(header?.name || "").replace(/\s/g, ""));
+                    const parentIsGlossary = parentHeaders.some((name) => name.includes("术语") || name.includes("缩写"))
+                        && parentHeaders.some((name) => name.includes("定义"));
+                    const childIsGlossary = childHeaders.some((name) => name.includes("术语") || name.includes("缩写"))
+                        && childHeaders.some((name) => name.includes("定义"));
+                    if (/术语/.test(String(node.title || "")) && parentIsGlossary && childIsGlossary) return false;
                     return isRenderableTable(child.table);
                 })
                 .map((child, idx) => ({

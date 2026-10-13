@@ -94,7 +94,37 @@ class Server(object):
             if norm and any(norm != other and norm in other for other in norms):
                 continue
             kept.append(val)
-        return "\n".join(kept)
+        return Server._number_leading_function_lines(kept)
+
+    @staticmethod
+    def _number_leading_function_lines(parts):
+        """工作流已是 1.2.3. 时，前面没有编号的触发器补成第 1 条，后面的步骤顺延。"""
+        numbered_at = None
+        sep = "."
+        for idx, part in enumerate(parts):
+            for line in part.splitlines():
+                matched = re.match(r"^\s*\d+([.、．])\s*\S", line)
+                if matched:
+                    numbered_at = idx
+                    sep = matched.group(1)
+                    break
+            if numbered_at is not None:
+                break
+        if numbered_at is None or numbered_at == 0:
+            return "\n".join(parts)
+        before = []
+        for part in parts[:numbered_at]:
+            before.extend([line.strip() for line in part.splitlines() if line.strip()])
+        shifted = []
+        for line in parts[numbered_at].splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            shifted.append(re.sub(r"^\d+[.、．]\s*", "", stripped))
+        tail = "\n".join(part.strip() for part in parts[numbered_at + 1:] if part.strip())
+        lines = [f"{index}{sep}{text}" for index, text in enumerate(before + shifted, start=1)]
+        body = "\n".join(lines)
+        return f"{body}\n{tail}" if tail else body
 
     def compose_design_text_for_sync(self, overview: str, func_detail: str, logic_txt: str = "", intput: str = "", output: str = "", interface: str = ""):
         return "\n".join([

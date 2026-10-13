@@ -775,6 +775,12 @@ export default () => {
             return dedupeChildrenByHeading(output);
         };
 
+        const isGlossaryTable = (table: any) => {
+            const names = (table?.headers || []).map((header: any) => String(header?.name || "").replace(/\s/g, ""));
+            return names.some((name: string) => name.includes("术语") || name.includes("缩写"))
+                && names.some((name: string) => name.includes("定义"));
+        };
+
         const isEmptyNodeTable = (table: any) => {
             if (!table || (Array.isArray(table) && table.length === 0)) return true;
             if (Array.isArray(table.cells) && table.cells.length > 0) return false;
@@ -792,6 +798,16 @@ export default () => {
             if (/术语/.test(titleKey) && isEmptyNodeTable(current.table) && !isEmptyNodeTable(template.table)) {
                 changed = true;
                 merged.table = JSON.parse(JSON.stringify(template.table));
+            }
+            if (/术语/.test(titleKey) && isGlossaryTable(merged.table)) {
+                const nextChildren = (merged.children || []).filter((child) => {
+                    const childTitle = String(child.title || "").trim();
+                    return !(/^导入表格\d*$/.test(childTitle) && isGlossaryTable(child.table));
+                });
+                if (nextChildren.length !== (merged.children || []).length) {
+                    changed = true;
+                    merged.children = nextChildren;
+                }
             }
             return merged;
         };
