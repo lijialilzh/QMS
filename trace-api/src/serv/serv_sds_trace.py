@@ -80,6 +80,129 @@ FIXED_RCN300_TRACES = {
     ],
 }
 
+RCN300_TAIL_NAME_KEYS = ("文档需求", "法规符合", "外部连接")
+RCN300_TAIL_SDS_CODE = {
+    "文档需求": "SDS-RCN300-008",
+    "法规符合": "SDS-RCN300-009",
+    "外部连接": "SDS-RCN300-010",
+}
+_STANDALONE_SDS_CODE_RE = re.compile(r"^\s*(?:设计编号\s*[:：]\s*)?SDS-RCN300-\d+\s*$", re.I)
+
+
+def rcn300_tail_name_key(chapter: str) -> str:
+    text = str(chapter or "")
+    for key in RCN300_TAIL_NAME_KEYS:
+        if key in text:
+            return key
+    return ""
+
+
+def live_rcn300_tail_chapters(nodes) -> dict:
+    """按目录实际章号取 文档需求 / 法规符合 / 外部连接。没有对应章节则不给号。"""
+    found = {}
+
+    def skipped(node) -> bool:
+        ref = str(getattr(node, "ref_type", "") or "")
+        title = str(getattr(node, "title", "") or getattr(node, "label", "") or "").strip()
+        compact = re.sub(r"\s+", "", title)
+        if ref in ("sds_reqds", "sds_traces", "img_flow"):
+            return True
+        if compact == "目录" or "软件详细设计" in compact or "文件修订记录" in compact:
+            return True
+        if re.match(r"^\s*图\s*\d+", title) or re.match(r"^\s*导入表格\d*$", title):
+            return True
+        return False
+
+    def unnumbered(node) -> bool:
+        ref = str(getattr(node, "ref_type", "") or "")
+        compact = re.sub(r"\s+", "", str(getattr(node, "title", "") or ""))
+        raw = str(getattr(node, "title", "") or "")
+        if ref == "review" or compact in ("评审记录", "附件一评审结论") or compact.startswith("附件一"):
+            return True
+        return bool(re.match(r"^\s*表\d+([、.\s　]|$)", raw))
+
+    def consider(title: str, num: str):
+        name = re.sub(
+            r"^\s*\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))",
+            "",
+            str(title or ""),
+        ).strip()
+        for key in RCN300_TAIL_NAME_KEYS:
+            if key not in name:
+                continue
+            prev = found.get(key)
+            if not prev or num.count(".") < prev.count("."):
+                found[key] = num
+
+    def walk(items, prefix: str):
+        idx = 0
+        for node in items or []:
+            if skipped(node):
+                continue
+            children = getattr(node, "children", None) or []
+            if unnumbered(node):
+                walk(children, prefix)
+                continue
+            idx += 1
+            num = f"{prefix}.{idx}" if prefix else str(idx)
+            consider(getattr(node, "title", "") or "", num)
+            walk(children, num)
+
+    walk(nodes or [], "")
+    return found
+
+
+def align_rcn300_tail_node_codes(nodes) -> bool:
+    """法规符合 / 外部连接 / 文档需求的设计编号与追溯表一致，正文不再重复写编号。"""
+    changed = False
+
+    def strip_code_lines(text: str) -> str:
+        lines = str(text or "").replace("\r", "").split("\n")
+        kept = [line for line in lines if not _STANDALONE_SDS_CODE_RE.match(line or "")]
+        return "\n".join(kept).lstrip("\n")
+
+    def walk(items):
+        nonlocal changed
+        for node in items or []:
+            title = str(getattr(node, "title", "") or "")
+            name = re.sub(
+                r"^\s*\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))",
+                "",
+                title,
+            ).strip()
+            code = RCN300_TAIL_SDS_CODE.get(rcn300_tail_name_key(name) or "")
+            if code:
+                current = re.sub(r"\s+", "", str(getattr(node, "sds_code", "") or "")).upper()
+                if current != code:
+                    node.sds_code = code
+                    changed = True
+                text = str(getattr(node, "text", "") or "")
+                next_text = strip_code_lines(text)
+                if next_text != text:
+                    node.text = next_text
+                    changed = True
+            walk(getattr(node, "children", None) or [])
+
+    walk(nodes or [])
+    return changed
+
+
+def align_rcn300_tail_locations(chapter: str, location: str, nodes, tree_ready: bool = True) -> str:
+    names = [line.strip() for line in re.split(r"[\r\n]+", str(chapter or ""))]
+    locations = [line.strip() for line in re.split(r"[\r\n]+", str(location or ""))]
+    if not tree_ready or not any(rcn300_tail_name_key(name) for name in names):
+        return location
+    live = live_rcn300_tail_chapters(nodes)
+    adjusted = []
+    for idx, name in enumerate(names):
+        key = rcn300_tail_name_key(name)
+        if key:
+            adjusted.append(live.get(key, ""))
+        else:
+            adjusted.append(locations[idx] if idx < len(locations) else "")
+    return "\n".join(adjusted)
+
+
 def fixed_rcn300_sds_codes() -> set:
     codes = set()
     for items in FIXED_RCN300_TRACES.values():
@@ -1437,6 +1560,7 @@ class Server(object):
         type_names = self.__query_srs_types(req_ids)
         doc_ids = list(set([row_sdsdoc.id for row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product in rows]))
         doc_trees = self.__query_doc_tree(doc_ids)
+        doc_tail_chapters = {d_id: live_rcn300_tail_chapters(tree) for d_id, tree in doc_trees.items()}
         doc_sds_locations = {d_id: self.__build_sds_location_map(tree) for d_id, tree in doc_trees.items()}
         virtual_sds_locations = {} if from_sync else self.__build_virtual_location_map(rows, doc_trees, doc_sds_locations)
         srs_doc_ids = list(set([row_srsdoc.id for row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product in rows if row_srsdoc]))
@@ -1464,6 +1588,16 @@ class Server(object):
                 obj.sds_code = "\n".join(item[0] for item in fixed_trace)
                 obj.chapter = "\n".join(item[1] for item in fixed_trace)
                 obj.location = "\n".join(item[2] for item in fixed_trace)
+                tree = doc_trees.get(row_sdsdoc.id) if row_sdsdoc else None
+                if tree is not None:
+                    live_tail = doc_tail_chapters.get(row_sdsdoc.id) or {}
+                    names = [item[1] for item in fixed_trace]
+                    locations = [item[2] for item in fixed_trace]
+                    adjusted = []
+                    for name, loc in zip(names, locations):
+                        key = rcn300_tail_name_key(name)
+                        adjusted.append(live_tail.get(key, "") if key else loc)
+                    obj.location = "\n".join(adjusted)
                 obj.name = obj.chapter
                 objs.append(obj)
                 continue

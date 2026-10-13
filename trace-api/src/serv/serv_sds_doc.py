@@ -57,7 +57,7 @@ from ..utils.i18n import ts
 from ..utils import get_uuid
 from .serv_utils.tree_util import find_parent
 from .serv_utils import new_version
-from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, fixed_rcn300_sds_codes
+from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, fixed_rcn300_sds_codes, rcn300_tail_name_key, live_rcn300_tail_chapters, align_rcn300_tail_node_codes
 from .serv_sds_reqd import Server as ServSdsReqd
 from .serv_srs_doc import Server as ServSrsDoc
 from .serv_sds_srs_trace_sync import SdsSrsTraceSyncMixin
@@ -1666,6 +1666,7 @@ class Server(SdsSrsTraceSyncMixin, object):
         tree = []
         if with_tree:
             tree = self._load_sds_tree(row.id)
+            align_rcn300_tail_node_codes(tree)
             prod_imgs = self.__query_imgs(row.product_id) if row.product_id else (self.__query_imgs(row_srs.product_id) if row_srs else {})
             def hydrate_imgs(nodes: List[SdsNodeForm]):
                 for obj in nodes or []:
@@ -2289,7 +2290,8 @@ class Server(SdsSrsTraceSyncMixin, object):
             version = str(product_full_version or "").strip()
             return f"{version or '产品'}变更需求"
 
-        def __build_trace_table_from_rows(rows: List[SdsTraceObj], location_by_sds_code: Dict[str, str]):
+        def __build_trace_table_from_rows(rows: List[SdsTraceObj], location_by_sds_code: Dict[str, str], trace_roots: List[SdsNodeForm] = None):
+            live_tail = live_rcn300_tail_chapters(trace_roots or [])
             headers = [
                 TabHeader(code="srs_code", name="需求编号"),
                 TabHeader(code="sds_code", name="设计编号"),
@@ -2310,6 +2312,11 @@ class Server(SdsSrsTraceSyncMixin, object):
                 values = []
                 for idx in range(count):
                     chapter = chapters[idx].strip() if idx < len(chapters) else (chapters[0].strip() if chapters else "")
+                    tail_key = rcn300_tail_name_key(chapter)
+                    if tail_key:
+                        hit = live_tail.get(tail_key, "")
+                        values.append(f"{chapter}{f'（章节 {hit}）' if hit else ''}")
+                        continue
                     sds_code = __normalize_req_code(sds_codes[idx] if idx < len(sds_codes) else "")
                     location = locations[idx].strip() if idx < len(locations) else ""
                     if not location and sds_code:
@@ -2332,8 +2339,8 @@ class Server(SdsSrsTraceSyncMixin, object):
             location_by_sds_code = __build_sds_location_map_from_export_tree(roots)
             normal_rows = [row for row in reqs if not __is_change_trace_row(row)]
             change_rows = [row for row in reqs if __is_change_trace_row(row)]
-            normal_table = __build_trace_table_from_rows(normal_rows, location_by_sds_code)
-            change_table = __build_trace_table_from_rows(change_rows, location_by_sds_code)
+            normal_table = __build_trace_table_from_rows(normal_rows, location_by_sds_code, roots)
+            change_table = __build_trace_table_from_rows(change_rows, location_by_sds_code, roots)
             change_version = ""
             for row in change_rows:
                 change_version = str(getattr(row, "product_version", "") or "").strip()

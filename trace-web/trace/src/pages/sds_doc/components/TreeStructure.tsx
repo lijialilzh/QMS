@@ -554,6 +554,29 @@ function normalizeSdsCodeValue(code?: string): string {
     return String(code || "").replace(/\s+/g, "").toUpperCase();
 }
 
+const TAIL_CHAPTER_SDS_CODE: Record<string, string> = {
+    文档需求: "SDS-RCN300-008",
+    法规符合: "SDS-RCN300-009",
+    外部连接: "SDS-RCN300-010",
+};
+
+function tailChapterSdsCode(title?: string): string {
+    const name = stripNavChapterPrefix(String(title || "")).replace(/\s+/g, "");
+    if (name.includes("文档需求")) return TAIL_CHAPTER_SDS_CODE["文档需求"];
+    if (name.includes("法规符合")) return TAIL_CHAPTER_SDS_CODE["法规符合"];
+    if (name.includes("外部连接")) return TAIL_CHAPTER_SDS_CODE["外部连接"];
+    return "";
+}
+
+function stripStandaloneSdsCodeLines(text?: string): string {
+    return String(text || "")
+        .replace(/\r/g, "")
+        .split("\n")
+        .filter((line) => !/^\s*(?:设计编号\s*[：:]\s*)?SDS-RCN300-\d+\s*$/i.test(line))
+        .join("\n")
+        .replace(/^\n+/, "");
+}
+
 /** SDS 编号已在专用输入框展示时，从正文中去掉重复的编号行 */
 function stripRedundantSdsCodeFromText(text?: string, sdsCode?: string): string {
     const raw = String(text || "");
@@ -2700,7 +2723,14 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
         return (nodeList || []).map((node) => {
             const nextChildren = hydrateSdsCodeFallback(node.children || []);
             let nextNode: TreeNode = { ...node, children: nextChildren };
-            if ("sds_code" in nextNode) {
+            const tailCode = tailChapterSdsCode(nextNode.title);
+            if (tailCode) {
+                nextNode = {
+                    ...nextNode,
+                    sds_code: tailCode,
+                    text: stripStandaloneSdsCodeLines(nextNode.text),
+                };
+            } else if ("sds_code" in nextNode) {
                 const currentCode = String(nextNode.sds_code ?? "").trim();
                 if (!currentCode) {
                     const fallback = extractSdsCodeFromNodeText(nextNode.text);

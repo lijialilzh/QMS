@@ -2357,6 +2357,39 @@ export default () => {
         return synced;
     };
 
+    const alignTailChapterSdsCodes = (nodes: TreeNode[]): TreeNode[] => {
+        const codeByName: Record<string, string> = {
+            文档需求: "SDS-RCN300-008",
+            法规符合: "SDS-RCN300-009",
+            外部连接: "SDS-RCN300-010",
+        };
+        const codeOf = (title?: string) => {
+            const name = stripNavChapterPrefix(String(title || "")).replace(/\s+/g, "");
+            if (name.includes("文档需求")) return codeByName["文档需求"];
+            if (name.includes("法规符合")) return codeByName["法规符合"];
+            if (name.includes("外部连接")) return codeByName["外部连接"];
+            return "";
+        };
+        const stripCodeLines = (text?: string) => String(text || "")
+            .replace(/\r/g, "")
+            .split("\n")
+            .filter((line) => !/^\s*(?:设计编号\s*[：:]\s*)?SDS-RCN300-\d+\s*$/i.test(line))
+            .join("\n")
+            .replace(/^\n+/, "");
+        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+            const children = walk((node.children || []) as TreeNode[]);
+            const code = codeOf(node.title);
+            if (!code) return { ...node, children };
+            return {
+                ...node,
+                children,
+                sds_code: code,
+                text: stripCodeLines(node.text),
+            };
+        });
+        return walk(nodes || []);
+    };
+
     const applyLoadedDocTree = async (targetRow: any): Promise<TreeNode[]> => {
         const parsedTree = (targetRow.content || []).map((node: any) => parseTreeNode(node));
         const wordImported = isWordImportedDoc(parsedTree);
@@ -2375,12 +2408,13 @@ export default () => {
         );
         const docIdForSync = targetRow.id || (params.id ? parseInt(params.id) : undefined);
         const ensuredReqdContent = ensureFrontMatterTables(remappedContent as TreeNode[]);
-        return isTraceSyncedOnTree(ensuredReqdContent as TreeNode[])
+        const syncedContent = isTraceSyncedOnTree(ensuredReqdContent as TreeNode[])
             ? await syncTraceTableNodes(
                 ensuredReqdContent as TreeNode[],
                 docIdForSync
             ) as TreeNode[]
             : ensuredReqdContent as TreeNode[];
+        return alignTailChapterSdsCodes(syncedContent);
     };
 
     const refreshSdsDocTree = async (docId: number) => {
@@ -2796,17 +2830,51 @@ export default () => {
 
     const isFixedRcn300Row = (row: any) => /^SRS-RCN300-0(0[1-9]|10)$/i.test(String(row?.srs_code || "").replace(/\s+/g, ""));
 
+    const rcn300TailNameKey = (chapter: string) => {
+        const text = String(chapter || "");
+        if (text.includes("文档需求")) return "文档需求";
+        if (text.includes("法规符合")) return "法规符合";
+        if (text.includes("外部连接")) return "外部连接";
+        return "";
+    };
+
+    const buildLiveTailChapterByName = (nodes: TreeNode[]) => {
+        const chapterRoots = (nodes || []).filter((node) => {
+            const title = stripNavChapterPrefix(String(node.title || "")).replace(/\s+/g, "");
+            return title !== "目录" && !title.includes("软件详细设计") && !title.includes("文件修订记录");
+        });
+        const numberMap = computeNavChapterNumberMap(chapterRoots);
+        const found = new Map<string, string>();
+        const walk = (items: TreeNode[]) => {
+            (items || []).forEach((node) => {
+                const num = numberMap.get(String(node.id)) || "";
+                const key = rcn300TailNameKey(stripNavChapterPrefix(String(node.title || "")));
+                if (num && key) {
+                    const prev = found.get(key);
+                    if (!prev || num.split(".").length < prev.split(".").length) {
+                        found.set(key, num);
+                    }
+                }
+                walk((node.children || []) as TreeNode[]);
+            });
+        };
+        walk(nodes || []);
+        return found;
+    };
+
     const buildTraceTableFromRows = (
         rows: any[],
         locationBySdsCode?: Map<string, string>,
         navChapterBySdsCode?: Map<string, { name: string; num: string }>,
+        liveTailChapterByName?: Map<string, string>,
     ) => {
         const buildChapterCell = (row: any) => {
             const sdsCodes = splitTraceLines(row.sds_code);
             const locations = splitTraceLines(row.location);
             const rawChapters = splitTraceLines(row.chapter);
+            const isFixed = isFixedRcn300Row(row);
             const isMultiTrace = sdsCodes.length > 1 || rawChapters.length > 1 || locations.length > 1;
-            const reqChapter = isMultiTrace ? "" : resolveReqChapter(row);
+            const reqChapter = isFixed || isMultiTrace ? "" : resolveReqChapter(row);
             const chapters = reqChapter ? [reqChapter] : rawChapters;
             const count = Math.max(1, sdsCodes.length, chapters.length, locations.length);
             return Array.from({ length: count }).map((_, index) => {
@@ -2816,6 +2884,11 @@ export default () => {
                     return `${linked.name}（章节 ${linked.num}）`;
                 }
                 const chapter = String(chapters[index] ?? chapters[0] ?? "").trim();
+                const tailKey = rcn300TailNameKey(chapter);
+                if (tailKey && liveTailChapterByName) {
+                    const hit = liveTailChapterByName.get(tailKey) || "";
+                    return hit ? `${chapter}（章节 ${hit}）` : chapter;
+                }
                 const location = String(
                     locations[index]
                     || locationBySdsCode?.get(sdsCode)
@@ -2849,6 +2922,7 @@ export default () => {
         rows: any[],
         locationBySdsCode?: Map<string, string>,
         navChapterBySdsCode?: Map<string, { name: string; num: string }>,
+        liveTailChapterByName?: Map<string, string>,
     ) => {
         const groups: Array<{ typeCode: string; title: string; rows: any[] }> = [];
         const groupIndex = new Map<string, number>();
@@ -2870,7 +2944,7 @@ export default () => {
         });
         return groups.map((group) => ({
             title: group.title,
-            table: buildTraceTableFromRows(group.rows, locationBySdsCode, navChapterBySdsCode),
+            table: buildTraceTableFromRows(group.rows, locationBySdsCode, navChapterBySdsCode, liveTailChapterByName),
         }));
     };
 
@@ -2889,11 +2963,12 @@ export default () => {
             if (res?.code !== ApiSdsTrace.C_OK) return roots;
             const locationBySdsCode = buildSdsLocationMapFromTree(roots);
             const navChapterBySdsCode = buildNavTraceChapterIndex(roots);
+            const liveTailChapterByName = buildLiveTailChapterByName(roots);
             const rows = res.data?.rows || [];
             const normalRows = rows.filter((row: any) => !isChangeTraceRow(row)).sort(compareTraceRow);
             const changeRows = rows.filter((row: any) => isChangeTraceRow(row));
-            const table = buildTraceTableFromRows(normalRows, locationBySdsCode, navChapterBySdsCode);
-            const changeExtraTables = buildTraceChangeExtraTables(changeRows, locationBySdsCode, navChapterBySdsCode);
+            const table = buildTraceTableFromRows(normalRows, locationBySdsCode, navChapterBySdsCode, liveTailChapterByName);
+            const changeExtraTables = buildTraceChangeExtraTables(changeRows, locationBySdsCode, navChapterBySdsCode, liveTailChapterByName);
             let traceTableApplied = false;
             const updateNodes = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
                 if (!isTraceTableNode(node)) {

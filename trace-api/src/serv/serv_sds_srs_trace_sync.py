@@ -19,7 +19,7 @@ from ..obj.vobj_sds_trace import SdsTraceObj
 from ..obj import Resp
 from ..utils.sql_ctx import db
 from ..utils.i18n import ts
-from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, FIXED_RCN300_TRACES, fixed_rcn300_sds_codes
+from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, FIXED_RCN300_TRACES, fixed_rcn300_sds_codes, align_rcn300_tail_locations, rcn300_tail_name_key, live_rcn300_tail_chapters
 from .serv_sds_reqd import Server as ServSdsReqd
 
 logger = logging.getLogger(__name__)
@@ -86,6 +86,7 @@ class SdsSrsTraceSyncMixin:
             return roots
 
         location_by_code, location_by_title = self._build_sds_tree_location_indexes(roots)
+        live_tail = live_rcn300_tail_chapters(roots)
 
         resp = await sdstrace_serv.list_sds_trace(None, doc_id=doc_id, page_size=10000, from_sync=mark_synced)
         rows: List[SdsTraceObj] = resp.data.rows or []
@@ -123,6 +124,11 @@ class SdsSrsTraceSyncMixin:
             values = []
             for idx in range(count):
                 chapter = chapters[idx].strip() if idx < len(chapters) else (chapters[0].strip() if chapters else "")
+                tail_key = rcn300_tail_name_key(chapter)
+                if tail_key:
+                    hit = live_tail.get(tail_key, "")
+                    values.append(f"{chapter}{f'（章节 {hit}）' if hit else ''}")
+                    continue
                 sds_code = normalize_code(sds_codes[idx] if idx < len(sds_codes) else "")
                 location = locations[idx].strip() if idx < len(locations) else ""
                 if not location and sds_code:
@@ -2058,7 +2064,12 @@ class SdsSrsTraceSyncMixin:
             if fixed_trace:
                 trace.sds_code = "\n".join(item[0] for item in fixed_trace)
                 trace.chapter = "\n".join(item[1] for item in fixed_trace)
-                trace.location = "\n".join(item[2] for item in fixed_trace)
+                trace.location = align_rcn300_tail_locations(
+                    trace.chapter,
+                    "\n".join(item[2] for item in fixed_trace),
+                    roots,
+                    tree_ready=True,
+                )
                 continue
             req_fields = sdstrace_serv.hierarchy_for_req(req, hierarchy_map)
             chapter = sdstrace_serv.compose_srs_req_chapter(req, hierarchy_map=hierarchy_map, **req_fields)
