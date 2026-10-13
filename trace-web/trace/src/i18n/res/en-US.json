@@ -181,6 +181,8 @@
     "more": "更多",
     "save_success": "Saved successfully",
     "save_failed": "保存失败",
+    "upload_success": "Uploaded successfully",
+    "upload_failed": "Upload failed",
     "project": {
         "name": "产品线名称",
         "country": "注册国家",

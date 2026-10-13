@@ -1605,6 +1605,33 @@ class Server(SdsSrsTraceSyncMixin, object):
                     return pairs
         return []
 
+    @staticmethod
+    def _is_glossary_table(table) -> bool:
+        if not table:
+            return False
+        if isinstance(table, str):
+            try:
+                table = json.loads(table)
+            except Exception:
+                return False
+        if hasattr(table, "dict"):
+            table = table.dict()
+        if not isinstance(table, dict):
+            return False
+        names = []
+        for header in table.get("headers") or []:
+            if not isinstance(header, dict):
+                header = header.dict() if hasattr(header, "dict") else {}
+            names.append(re.sub(r"\s+", "", str(header.get("name") or "")).lower())
+        if len(names) < 2:
+            return False
+        has_term = any(
+            ("术语" in name) or ("缩写" in name) or ("abbreviation" in name) or name.startswith("term")
+            for name in names
+        )
+        has_def = any(("定义" in name) or ("definition" in name) for name in names)
+        return has_term and has_def
+
     def _apply_srs_glossary_to_sds(self, roots: List[SdsNodeForm], srsdoc_id: int) -> bool:
         """详细设计 1.4 术语表跟需求规格说明 1.3 术语表。"""
         pairs = self._srs_glossary_pairs(srsdoc_id)
@@ -1628,6 +1655,14 @@ class Server(SdsSrsTraceSyncMixin, object):
                             rows=[{"term": term, "definition": definition} for term, definition in pairs],
                         )
                         changed = True
+                    kept_children = []
+                    for child in getattr(node, "children", None) or []:
+                        child_title = str(getattr(child, "title", "") or "").strip()
+                        if re.match(r"^导入表格\d*$", child_title) and self._is_glossary_table(getattr(child, "table", None)):
+                            changed = True
+                            continue
+                        kept_children.append(child)
+                    node.children = kept_children
                 walk(getattr(node, "children", None) or [])
 
         walk(roots or [])
@@ -2439,8 +2474,19 @@ class Server(SdsSrsTraceSyncMixin, object):
             resp = await sdstrace_serv.list_sds_trace(None, doc_id=id, page_size=10000)
             reqs: List[SdsTraceObj] = resp.data.rows or []
             location_by_sds_code = __build_sds_location_map_from_export_tree(roots)
-            normal_rows = [row for row in reqs if not __is_change_trace_row(row)]
-            change_rows = [row for row in reqs if __is_change_trace_row(row)]
+            def __trace_row_sort_key(row):
+                # 与编辑页 compareTraceRow 一致：按需求编号 RCN300、RCN301、RCN306 往后排
+                txt = re.sub(r"\s+", "", str(getattr(row, "srs_code", "") or "")).upper()
+                matched = re.match(r"^SRS-[A-Z]+(\d+)-(\d+)$", txt)
+                if not matched:
+                    return (10 ** 9, 10 ** 9, txt)
+                series_raw = matched.group(1)
+                seq = int(matched.group(2))
+                series = int(series_raw[1:]) if series_raw.startswith("3") and len(series_raw) > 1 else int(series_raw)
+                return (series, seq, txt)
+
+            normal_rows = sorted([row for row in reqs if not __is_change_trace_row(row)], key=__trace_row_sort_key)
+            change_rows = sorted([row for row in reqs if __is_change_trace_row(row)], key=__trace_row_sort_key)
             normal_table = __build_trace_table_from_rows(normal_rows, location_by_sds_code, roots)
             change_table = __build_trace_table_from_rows(change_rows, location_by_sds_code, roots)
             change_version = ""
@@ -2932,8 +2978,20 @@ class Server(SdsSrsTraceSyncMixin, object):
                     docx_util.save_txt2docx(line, docx, 10.5)
 
         def __add_blank_lines(docx: Document, line_count: int):
+            # 空段去掉段后距，避免封面留白被 Normal 样式撑到下一页，形成封面与修订记录之间的空白页
             for _ in range(max(0, line_count)):
-                docx.add_paragraph("")
+                p = docx.add_paragraph()
+                p.paragraph_format.space_before = Pt(0)
+                p.paragraph_format.space_after = Pt(0)
+                p.paragraph_format.line_spacing = 1.0
+
+        def __start_next_page(docx: Document):
+            # 用段前分页，不单独插一个带分页符的空段，避免上一页刚好排满时多出一页空白
+            p = docx.add_paragraph()
+            p.paragraph_format.page_break_before = True
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            p.paragraph_format.line_spacing = Pt(1)
 
         def __refresh_toc_with_libreoffice(output_stream):
             soffice = shutil.which("soffice") or shutil.which("libreoffice")
@@ -3082,19 +3140,17 @@ finally:
                     return True
             return False
 
-        # 详细设计导出图片统一尺寸区间（像素）：
-        # - 大图缩小，小图适度放大，最终视觉尺寸统一且可读
-        IMG_MAX_W = 300
-        IMG_MAX_H = 200
-        IMG_MIN_W = 120
-        IMG_MIN_H = 90
-        IMG_TARGET_LONG = 200
-        # 6章节“功能类/程序逻辑”图片再缩小一档，避免单图占据过大版面
-        IMG_MAX_W_FUNC = 260
-        IMG_MAX_H_FUNC = 180
-        IMG_MIN_W_FUNC = 110
-        IMG_MIN_H_FUNC = 80
-        IMG_TARGET_LONG_FUNC = 180
+        # 详细设计导出图片：整页内容区内等比缩小，不放大、不裁切。限制在约七成页宽、三分之一页高。
+        IMG_MAX_W = 520
+        IMG_MAX_H = 340
+        IMG_MIN_W = 0
+        IMG_MIN_H = 0
+        IMG_TARGET_LONG = 0
+        IMG_MAX_W_FUNC = IMG_MAX_W
+        IMG_MAX_H_FUNC = IMG_MAX_H
+        IMG_MIN_W_FUNC = 0
+        IMG_MIN_H_FUNC = 0
+        IMG_TARGET_LONG_FUNC = 0
 
         export_state = {"pending_rev_label": False, "pending_table_caps": [], "pending_image_caps": []}
 
@@ -3309,7 +3365,7 @@ finally:
                         mh=img_max_h,
                         min_w=img_min_w,
                         min_h=img_min_h,
-                        target_long=img_target_long,
+                        target_long=img_target_long, page_fit=True,
                     )
                     caption = __image_caption_from_node(matched)
                     if caption:
@@ -3449,7 +3505,7 @@ finally:
                                 mh=img_max_h,
                                 min_w=img_min_w,
                                 min_h=img_min_h,
-                                target_long=img_target_long,
+                                target_long=img_target_long, page_fit=True,
                             )
                             __flush_image_caption(docx, font_def)
                             image_written = True
@@ -3466,7 +3522,7 @@ finally:
                                         mh=img_max_h,
                                         min_w=img_min_w,
                                         min_h=img_min_h,
-                                        target_long=img_target_long,
+                                        target_long=img_target_long, page_fit=True,
                                     )
                                     __flush_image_caption(docx, font_def)
                                     image_written = True
@@ -3603,7 +3659,7 @@ finally:
                         mh=img_max_h,
                         min_w=img_min_w,
                         min_h=img_min_h,
-                        target_long=img_target_long,
+                        target_long=img_target_long, page_fit=True,
                     )
                     __flush_image_caption(docx, font_def)
                     image_written = True
@@ -3695,7 +3751,7 @@ finally:
                         mh=IMG_MAX_H,
                         min_w=IMG_MIN_W,
                         min_h=IMG_MIN_H,
-                        target_long=IMG_TARGET_LONG,
+                        target_long=IMG_TARGET_LONG, page_fit=True,
                     )
                 if node.table and node.table.headers:
                     docx_util.save_tab2docx(node.table, docx)
@@ -3775,7 +3831,7 @@ finally:
                     if not section_nodes:
                         continue
                     if not first_section:
-                        docx.add_page_break()
+                        __start_next_page(docx)
                     major_offset = body_major_offset if section_name == "body" else 0
                     await __writenodes(section_nodes, docx, level=0, major_offset=major_offset)
                     if section_name == "rev":

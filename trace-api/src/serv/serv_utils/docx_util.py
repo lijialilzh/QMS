@@ -118,6 +118,22 @@ def __distribute_col_widths(scores, total_width: float, min_width: float, max_wi
         cur_sum = sum(widths)
     return widths
 
+def __nowrap_col_width(samples, floor: float, cap: float) -> float:
+    """按单元格里最长的一行估算英寸宽度，中文按字宽、英文按字符宽。"""
+    longest = 0.0
+    for sample in samples or []:
+        for line in str(sample or "").splitlines() or [""]:
+            width = 0.0
+            for ch in line.strip():
+                width += 0.16 if "\u4e00" <= ch <= "\u9fff" else 0.085
+            longest = max(longest, width)
+    return min(cap, max(floor, longest + 0.28))
+
+def __set_cell_nowrap(cell):
+    tc_pr = cell._tc.get_or_add_tcPr()
+    if tc_pr.find(qn("w:noWrap")) is None:
+        tc_pr.append(OxmlElement("w:noWrap"))
+
 def __apply_adaptive_col_width(tabx, headers, rows):
     col_count = len(headers or [])
     if col_count <= 0:
@@ -131,6 +147,7 @@ def __apply_adaptive_col_width(tabx, headers, rows):
     min_width = 0.78
     max_width = 3.6
     scores = []
+    nowrap_need = {}
     for ci, header in enumerate(headers or []):
         hname = str(getattr(header, "name", "") or "")
         header_score = max(2.0, __text_visual_len(hname) * 1.2)
@@ -141,19 +158,48 @@ def __apply_adaptive_col_width(tabx, headers, rows):
         sample_max = max((__text_visual_len(x) for x in col_samples), default=0.0)
         sample_avg = (sum(__text_visual_len(x) for x in col_samples) / max(1, len(col_samples))) if col_samples else 0.0
         score = max(header_score, sample_max * 0.9, sample_avg * 1.1, 2.0)
+        compact_name = re.sub(r"\s+", "", hname)
         # URL/备注/描述这类文本列给更高权重，避免被压窄
         if re.search(r"(url|uri|http|路径|地址|链接|备注|说明|描述|内容|参数|详情)", hname, re.I):
             score *= 1.55
-        # 编号/序号类列适度收窄
-        if re.search(r"(编号|序号|id|编码)", hname, re.I):
+        # 这些列按最长一行留足宽度，导出时不换行
+        if "接口设计编号" in compact_name:
+            score = max(score, sample_max * 1.6, 28.0)
+            nowrap_need[ci] = __nowrap_col_width(col_samples, floor=2.0, cap=2.4)
+        elif compact_name == "接口名称":
+            score = max(score, sample_max * 1.4, 22.0)
+            nowrap_need[ci] = __nowrap_col_width(col_samples, floor=1.35, cap=2.4)
+        elif compact_name in ("需求编号", "设计编号"):
+            score = max(score, sample_max * 1.3, 16.0)
+            nowrap_need[ci] = __nowrap_col_width(col_samples, floor=1.45, cap=2.2)
+        elif re.search(r"(编号|序号|id|编码)", hname, re.I):
             score *= 0.85
         scores.append(score)
     widths = __distribute_col_widths(scores, total_width=total_width, min_width=min_width, max_width=max_width)
+    if nowrap_need:
+        for ci, need in nowrap_need.items():
+            widths[ci] = max(widths[ci], need)
+        overflow = sum(widths) - total_width
+        if overflow > 0.01:
+            others = [i for i in range(col_count) if i not in nowrap_need]
+            pool = sum(max(0.0, widths[i] - min_width) for i in others) or 1.0
+            for i in others:
+                room = max(0.0, widths[i] - min_width)
+                widths[i] = max(min_width, widths[i] - overflow * (room / pool))
     tabx.autofit = False
+    tabx.allow_autofit = False
+    grid = tabx._tbl.find(qn("w:tblGrid"))
+    if grid is not None:
+        cols = grid.findall(qn("w:gridCol"))
+        for ci, width in enumerate(widths):
+            if ci < len(cols):
+                cols[ci].set(qn("w:w"), str(int(width * 1440)))
     for row in tabx.rows:
         for ci, width in enumerate(widths):
             if ci < len(row.cells):
                 row.cells[ci].width = Inches(width)
+                if ci in nowrap_need:
+                    __set_cell_nowrap(row.cells[ci])
 
 def save_tab2docx(tab: Table,  docx: Document):
     # 优先使用 cells 导出（保留Word导入时的合并单元格结构）
@@ -249,9 +295,10 @@ def save_img2docx(
     min_w: int = 0,
     min_h: int = 0,
     target_long: int = 0,
+    page_fit: bool = False,
 ):
     PIXELS_PER_INCH = 96
-    SPACE_VALUE = Pt(20)
+    SPACE_VALUE = Pt(6) if page_fit else Pt(20)
     image_source = None
     raw_path = str(path or "").strip()
     if raw_path and not raw_path.startswith("data:image/"):
@@ -291,9 +338,14 @@ def save_img2docx(
             margin_b_in = float(section.bottom_margin) / 914400.0
             avail_w_px = max(120.0, (page_w_in - margin_l_in - margin_r_in) * PIXELS_PER_INCH)
             avail_h_px = max(120.0, (page_h_in - margin_t_in - margin_b_in) * PIXELS_PER_INCH)
-            # 预留上下正文与题注空间，避免“单图吃满一页”
-            mw = int(min(float(mw), avail_w_px * 0.60))
-            mh = int(min(float(mh), avail_h_px * 0.32))
+            if page_fit:
+                # 比正文区再收一圈：边上的字不被页边裁掉，整图连题注停在一页里
+                mw = int(min(float(mw), avail_w_px * 0.72))
+                mh = int(min(float(mh), avail_h_px * 0.36))
+            else:
+                # 预留上下正文与题注空间，避免“单图吃满一页”
+                mw = int(min(float(mw), avail_w_px * 0.60))
+                mh = int(min(float(mh), avail_h_px * 0.32))
     except Exception:
         pass
 
@@ -301,6 +353,11 @@ def save_img2docx(
     node_para.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.CENTER
     node_para.paragraph_format.space_before = SPACE_VALUE
     node_para.paragraph_format.space_after = SPACE_VALUE
+    node_para.paragraph_format.left_indent = Pt(0)
+    node_para.paragraph_format.right_indent = Pt(0)
+    node_para.paragraph_format.first_line_indent = Pt(0)
+    if page_fit:
+        node_para.paragraph_format.keep_together = True
     if Image is None:
         # 本地环境未安装 Pillow 时，按最大宽度插入，避免导出失败
         node_para.add_run().add_picture(image_source, width=Inches(mw / PIXELS_PER_INCH))
@@ -316,8 +373,11 @@ def save_img2docx(
             with Image.open(image_source) as img:
                 ow, oh = img.size
         max_scale = min(mw / ow, mh / oh)
+        if page_fit:
+            # 只缩小到框内，不放大，整图按同一比例显示
+            max_scale = min(max_scale, 1.0)
         min_scale = 0.0
-        if min_w > 0 or min_h > 0:
+        if (not page_fit) and (min_w > 0 or min_h > 0):
             min_scale = max(
                 (min_w / ow) if min_w > 0 else 0.0,
                 (min_h / oh) if min_h > 0 else 0.0,

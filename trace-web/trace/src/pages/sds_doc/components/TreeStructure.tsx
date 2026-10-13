@@ -219,6 +219,14 @@ function isEmbeddedTableNode(node: TreeNode): boolean {
     return /^导入表格\d*$/.test(title) && hasTable && noExtra;
 }
 
+function isGlossaryTable(table?: { headers?: Array<{ name?: string }> } | null): boolean {
+    const names = (table?.headers || []).map((header) => String(header?.name || "").replace(/\s/g, "").toLowerCase());
+    if (names.length < 2) return false;
+    const hasTerm = names.some((name) => name.includes("术语") || name.includes("缩写") || name.includes("abbreviation") || name.startsWith("term"));
+    const hasDef = names.some((name) => name.includes("定义") || name.includes("definition"));
+    return hasTerm && hasDef;
+}
+
 function isInterfaceListTable(node: TreeNode): boolean {
     const names = (node.table?.headers || []).map((header) => String(header?.name || "").replace(/\s/g, ""));
     return names.includes("接口设计编号") && names.includes("接口名称") && names.includes("接口URL");
@@ -1020,8 +1028,13 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         : [];
     const navEmbeddedFigureChild = navEmbeddedFigureChildren[0];
     const multiEmbeddedFigures = navEmbeddedFigureChildren.length > 1;
+    const parentGlossaryReady = /术语/.test(String(node.title || "")) && isGlossaryTable(node.table);
     const navInlineTableChildren = (!readOnly && renderChildren === false)
-        ? (node.children || []).filter((child) => hasRenderableTable(child.table) && isEmbeddedTableNode(child))
+        ? (node.children || []).filter((child) => (
+            hasRenderableTable(child.table)
+            && isEmbeddedTableNode(child)
+            && !(parentGlossaryReady && isGlossaryTable(child.table))
+        ))
         : [];
     const isNavSingleChapterEdit = !readOnly && renderChildren === false;
     const navEmbeddedDocImageChild = (!readOnly && renderChildren === false)

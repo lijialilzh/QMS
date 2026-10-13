@@ -176,6 +176,8 @@
     "more": "更多",
     "save_success": "保存成功",
     "save_failed": "保存失败",
+    "upload_success": "上传成功",
+    "upload_failed": "上传失败",
     "project": {
         "name": "产品线名称",
         "country": "注册国家",

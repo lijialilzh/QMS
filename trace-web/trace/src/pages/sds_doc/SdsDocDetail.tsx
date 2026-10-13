@@ -814,8 +814,21 @@ export default () => {
                 : (node.text || ""),
             // 处理 table：有表头且存在行或单元格结构时保留（避免 rows 为空时误丢合并单元格表格）
             table: (hasValidHeaders && hasRowOrCellContent) ? node.table : {},
-            children: (node.children || []).map((child: any) => parseTreeNode(child))
+            children: (node.children || []).map((child: any) => parseTreeNode(child)).filter((child: TreeNode) => {
+                const parentTitle = String(node.title || "");
+                const childTitle = String(child.title || "").trim();
+                if (!/术语/.test(parentTitle) || !/^导入表格\d*$/.test(childTitle)) return true;
+                return !isGlossaryTableData(node.table) || !isGlossaryTableData(child.table);
+            }),
         };
+    };
+
+    const isGlossaryTableData = (table: any) => {
+        const names = (table?.headers || []).map((header: any) => String(header?.name || "").replace(/\s/g, "").toLowerCase());
+        if (names.length < 2) return false;
+        const hasTerm = names.some((name: string) => name.includes("术语") || name.includes("缩写") || name.includes("abbreviation") || name.startsWith("term"));
+        const hasDef = names.some((name: string) => name.includes("定义") || name.includes("definition"));
+        return hasTerm && hasDef;
     };
 
     const normalizePlain = (value?: string) => String(value || "").replace(/\s+/g, "").toLowerCase();
