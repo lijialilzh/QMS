@@ -1986,7 +1986,9 @@ class SdsSrsTraceSyncMixin:
                 trace.chapter = chapter or None
                 trace.location = None
                 continue
-            location = strict_location_map.get(trace_code) or ""
+            location = str((by_code or {}).get(trace_code) or "").strip()
+            if not location:
+                location = strict_location_map.get(trace_code) or ""
             if not location:
                 location = _trace_resolve_sds_tree_location(
                 getattr(trace, "sds_code", "") or "",
@@ -2037,41 +2039,42 @@ class SdsSrsTraceSyncMixin:
             txt = str(value or "").strip()
             return not txt or txt in {"/", "-", "\\", "--", "无", "暂无"}
 
-        def set_heading(node: SdsNodeForm, heading: str):
-            if node is None or not heading:
+        def set_srs_name(node: SdsNodeForm, name: str):
+            if node is None or not str(name or "").strip():
                 return
             if id(node) in design_root_ids:
+                return
+            if self._is_function_stopper_title(getattr(node, "title", "") or ""):
                 return
             # 第1-5/7/8章整章、以及第6章模板固定区(X.1~X.5)：一切以导入为准，不改标题。
             if self._is_in_fixed_template_zone(roots, node, parent_map, None):
                 return
-            body = self._strip_sds_heading_text(getattr(node, "title", "") or "") or getattr(node, "title", "") or ""
-            node.title = f"{heading} {body}".strip() if body else heading
+            heading = self._parse_sds_node_heading(getattr(node, "title", "") or "")
+            if not heading:
+                return
+            node.title = f"{heading} {str(name).strip()}"
 
         for trace, req in rows or []:
             sds_code = self._normalize_code(getattr(trace, "sds_code", "") or str(getattr(req, "code", "") or "").replace("SRS", "SDS"))
-            location = strict_location_map.get(sds_code)
-            if not location:
+            if not sds_code or self._is_algorithm_requirement(req, hierarchy_map):
                 continue
             node = self._find_node_by_code_in_tree(roots, sds_code)
             if node is None:
                 continue
             lv = self._resolve_srs_hierarchy_levels(req, hierarchy_map)
-            has_function = not is_placeholder(lv.get("function"))
-            has_sub = not is_placeholder(lv.get("sub_function"))
-            parts = location.split(".")
-            if has_sub and len(parts) >= 4:
-                set_heading(node, location)
+            module_name = "" if is_placeholder(lv.get("module")) else str(lv.get("module") or "").strip()
+            function_name = "" if is_placeholder(lv.get("function")) else str(lv.get("function") or "").strip()
+            sub_name = "" if is_placeholder(lv.get("sub_function")) else str(lv.get("sub_function") or "").strip()
+            leaf_name = sub_name or function_name or module_name
+            set_srs_name(node, leaf_name)
+            if sub_name and function_name:
                 function_node = parent_map.get(id(node))
+                set_srs_name(function_node, function_name)
                 module_node = parent_map.get(id(function_node)) if function_node is not None else None
-                set_heading(function_node, ".".join(parts[:3]))
-                set_heading(module_node, ".".join(parts[:2]))
-            elif has_function and len(parts) >= 3:
-                set_heading(node, location)
+                set_srs_name(module_node, module_name)
+            elif function_name and module_name:
                 module_node = parent_map.get(id(node))
-                set_heading(module_node, ".".join(parts[:2]))
-            elif len(parts) >= 2:
-                set_heading(node, location)
+                set_srs_name(module_node, module_name)
 
     def _build_strict_srs_trace_location_map(self, rows, hierarchy_map: dict, roots: List[SdsNodeForm]) -> Dict[str, str]:
         """按 SDS 编号顺序严格编号：模块=二级，功能=三级，子功能=四级（标准/变更需求统一）。"""

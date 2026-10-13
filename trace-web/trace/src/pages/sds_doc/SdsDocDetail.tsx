@@ -16,7 +16,7 @@ import * as ApiDocFile from "@/api/ApiDocFile";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
-import TreeStructure, { TreeNode } from "./components/TreeStructure";
+import TreeStructure, { computeNavChapterNumberMap, isLockedSdsFunctionChapter, stripNavChapterPrefix, TreeNode } from "./components/TreeStructure";
 
 const SDS_COVER_DATE_KEYWORDS = ["软件详细设计"];
 
@@ -2710,13 +2710,43 @@ export default () => {
         return map;
     };
 
+    const buildNavTraceChapterIndex = (nodes: TreeNode[]) => {
+        const numberMap = computeNavChapterNumberMap(nodes || []);
+        const byCode = new Map<string, { name: string; num: string }>();
+        const walk = (items: TreeNode[]) => {
+            (items || []).forEach((node) => {
+                const num = numberMap.get(String(node.id)) || "";
+                const name = stripNavChapterPrefix(String(node.title || ""));
+                if (num && name && isLockedSdsFunctionChapter(num, name)) {
+                    const codes = [
+                        normalizeReqCode((node as any).sds_code),
+                        normalizeReqCode(extractSdsCodeFromText(node.text).code),
+                    ].filter(Boolean);
+                    codes.forEach((code) => {
+                        const prev = byCode.get(code);
+                        if (!prev || num.split(".").length >= prev.num.split(".").length) {
+                            byCode.set(code, { name, num });
+                        }
+                    });
+                }
+                walk((node.children || []) as TreeNode[]);
+            });
+        };
+        walk(nodes || []);
+        return byCode;
+    };
+
     const isTraceTableNode = (node: TreeNode) => {
         const title = normalizeReqTitle(node.title);
         const refType = String((node as any).ref_type || "");
         return refType === "sds_traces" || title.includes("设计与需求追溯表") || title.includes("设计与需求追溯列表");
     };
 
-    const buildTraceTableFromRows = (rows: any[], locationBySdsCode?: Map<string, string>) => {
+    const buildTraceTableFromRows = (
+        rows: any[],
+        locationBySdsCode?: Map<string, string>,
+        navChapterBySdsCode?: Map<string, { name: string; num: string }>,
+    ) => {
         const buildChapterCell = (row: any) => {
             const sdsCodes = splitTraceLines(row.sds_code);
             const locations = splitTraceLines(row.location);
@@ -2726,8 +2756,12 @@ export default () => {
             const chapters = reqChapter ? [reqChapter] : rawChapters;
             const count = Math.max(1, sdsCodes.length, chapters.length, locations.length);
             return Array.from({ length: count }).map((_, index) => {
-                const chapter = String(chapters[index] ?? chapters[0] ?? "").trim();
                 const sdsCode = normalizeReqCode(sdsCodes[index] ?? "");
+                const linked = sdsCode ? navChapterBySdsCode?.get(sdsCode) : undefined;
+                if (linked) {
+                    return `${linked.name}（章节 ${linked.num}）`;
+                }
+                const chapter = String(chapters[index] ?? chapters[0] ?? "").trim();
                 const location = String(
                     locations[index]
                     || locationBySdsCode?.get(sdsCode)
@@ -2757,7 +2791,11 @@ export default () => {
         return !!typeCode && typeCode !== "1" && typeCode !== "2";
     };
 
-    const buildTraceChangeExtraTables = (rows: any[], locationBySdsCode?: Map<string, string>) => {
+    const buildTraceChangeExtraTables = (
+        rows: any[],
+        locationBySdsCode?: Map<string, string>,
+        navChapterBySdsCode?: Map<string, { name: string; num: string }>,
+    ) => {
         const groups: Array<{ typeCode: string; title: string; rows: any[] }> = [];
         const groupIndex = new Map<string, number>();
         const normalizeTypeNameKey = (value?: string) => String(value || "")
@@ -2778,7 +2816,7 @@ export default () => {
         });
         return groups.map((group) => ({
             title: group.title,
-            table: buildTraceTableFromRows(group.rows, locationBySdsCode),
+            table: buildTraceTableFromRows(group.rows, locationBySdsCode, navChapterBySdsCode),
         }));
     };
 
@@ -2796,11 +2834,12 @@ export default () => {
             });
             if (res?.code !== ApiSdsTrace.C_OK) return roots;
             const locationBySdsCode = buildSdsLocationMapFromTree(roots);
+            const navChapterBySdsCode = buildNavTraceChapterIndex(roots);
             const rows = res.data?.rows || [];
             const normalRows = rows.filter((row: any) => !isChangeTraceRow(row));
             const changeRows = rows.filter((row: any) => isChangeTraceRow(row));
-            const table = buildTraceTableFromRows(normalRows, locationBySdsCode);
-            const changeExtraTables = buildTraceChangeExtraTables(changeRows, locationBySdsCode);
+            const table = buildTraceTableFromRows(normalRows, locationBySdsCode, navChapterBySdsCode);
+            const changeExtraTables = buildTraceChangeExtraTables(changeRows, locationBySdsCode, navChapterBySdsCode);
             let traceTableApplied = false;
             const updateNodes = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
                 if (!isTraceTableNode(node)) {
