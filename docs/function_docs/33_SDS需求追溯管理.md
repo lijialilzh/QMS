@@ -51,7 +51,8 @@
 2. 必要时从 SRS Word 表补齐 `srs_req`/`srs_type`。
 3. 对每个 `type_code != "reqd"` 需求 upsert 追溯行。
 4. 删除已不在 SRS 的 req_id 追溯。
-5. **RCN300 固定映射**（`FIXED_RCN300_TRACES`）：一条 SRS 可对应多个 SDS 编号+章节+location（产品特例）。
+5. **RCN300 固定映射**（`FIXED_RCN300_TRACES`）：一条 SRS 可对应多个 SDS 编号+章节+location（产品特例）。展示和写回时用映射里的英文名称和章节号，不用需求上带数字后缀的中文名。例如 SRS-RCN300-001 写 RePACS，不写「数据库要求21」；SRS-RCN300-004 写 DataProcessing，不写「图像接收21」；SRS-RCN300-005 写 RePACS，不写「图像存储12」。
+6. **2.4 主表行序**：标准需求和其他需求放在同一张主表，按需求编号排。编号去掉开头的 3 后比段号、序号：RCN300 在前，然后 RCN301，再是 RCN306。不把标准需求整组排到其他需求前面。变更需求仍在主表下方单独成表。
 
 ### 6.2 location 解析（非 from_sync）
 1. DB 已存 location。
@@ -61,7 +62,7 @@
 5. 变更需求虚拟 location。
 
 ### 6.3 from_sync=true
-- 直接用 DB 的 chapter/location，不做树推算。
+- 直接用 DB 的 chapter/location，不做树推算。RCN300 固定映射除外，仍用映射里的英文名称和章节号。
 
 ### 6.4 type_code 分组（追溯表渲染）
 | type_code | 含义 | 位置 |

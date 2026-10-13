@@ -657,15 +657,49 @@ export default () => {
         });
         return { nodes: walk(nodes), changed };
     };
+    const isScopeChapterNode = (title?: string) => {
+        const name = String(title || "")
+            .replace(/^(\d+(?:\.\d+)*\.?)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+            .replace(/[：:\s.．]/g, "")
+            .trim();
+        return name === "范围" || name === "适用范围";
+    };
+    const buildScopeChapterText = (product?: any) => {
+        const name = String(product?.name ?? "").trim();
+        const model = String(product?.type_code ?? "").trim();
+        const version = String(product?.full_version ?? "").trim();
+        const scope = String(product?.scope ?? "").trim();
+        return [
+            `产品名称：${name}`,
+            `产品型号：${model}`,
+            `版本号：${version}`,
+            scope ? `适用范围：\n${scope}` : "适用范围：",
+        ].join("\n");
+    };
+    const applyScopeChapterFromProduct = (nodes: TreeNode[], product?: any): { nodes: TreeNode[]; changed: boolean } => {
+        if (!Array.isArray(nodes) || !product) return { nodes, changed: false };
+        const nextText = buildScopeChapterText(product);
+        let changed = false;
+        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+            const children = walk((node.children || []) as TreeNode[]);
+            if (!isScopeChapterNode(node.title) || String(node.text || "") === nextText) {
+                return children === node.children ? node : { ...node, children };
+            }
+            changed = true;
+            return { ...node, children, text: nextText };
+        });
+        return { nodes: walk(nodes), changed };
+    };
     useEffect(() => {
         const scopeResult = applyProductScopeToTree(data.treeStructure as TreeNode[], currentProduct);
         const basicResult = applyProductBasicInfoToTree(scopeResult.nodes as TreeNode[], currentProduct);
         const nameResult = applyProductNameAcrossTree(basicResult.nodes as TreeNode[], currentProduct);
-        if (scopeResult.changed || basicResult.changed || nameResult.changed) {
-            treeStructureRef.current = nameResult.nodes;
-            dispatch({ treeStructure: nameResult.nodes });
+        const chapterResult = applyScopeChapterFromProduct(nameResult.nodes as TreeNode[], currentProduct);
+        if (scopeResult.changed || basicResult.changed || nameResult.changed || chapterResult.changed) {
+            treeStructureRef.current = chapterResult.nodes;
+            dispatch({ treeStructure: chapterResult.nodes });
         }
-    }, [displayProductId, currentProduct?.scope, currentProduct?.name, currentProduct?.type_code, data.treeStructure]);
+    }, [displayProductId, currentProduct?.scope, currentProduct?.name, currentProduct?.type_code, currentProduct?.full_version, data.treeStructure]);
     const extractSdsCodeToken = (txt?: string): string => {
         const raw = String(txt || "");
         const matched = raw.match(/SDS\s*-\s*[A-Za-z0-9._-]+(?:\s*[-_]\s*[A-Za-z0-9._-]+)*/i);
@@ -1751,7 +1785,7 @@ export default () => {
     };
 
     const buildStandardTreeForDoc = async (productId: number, version: string, product?: any): Promise<TreeNode[]> => {
-        let nodesWithIds = applyProductScopeToTree(buildStandardNodesWithIds(), product).nodes;
+        let nodesWithIds = applyScopeChapterFromProduct(applyProductScopeToTree(buildStandardNodesWithIds(), product).nodes, product).nodes;
         nodesWithIds = rebindFlowImageToFlowChild(nodesWithIds);
         nodesWithIds = normalizeImageRefTypes(nodesWithIds);
         nodesWithIds = await remapRefTypeImagesByProduct(nodesWithIds, productId, version);
@@ -2742,6 +2776,26 @@ export default () => {
         return refType === "sds_traces" || title.includes("设计与需求追溯表") || title.includes("设计与需求追溯列表");
     };
 
+    const traceRowSortKey = (code?: string) => {
+        const matched = String(code || "").toUpperCase().match(/RCN(\d+)-(\d+)/);
+        if (!matched) return [9999, 9999, String(code || "")];
+        const seriesRaw = matched[1];
+        const series = seriesRaw.startsWith("3") && seriesRaw.length > 1
+            ? parseInt(seriesRaw.slice(1), 10)
+            : parseInt(seriesRaw, 10);
+        return [series, parseInt(matched[2], 10), String(code || "")];
+    };
+
+    const compareTraceRow = (a: any, b: any) => {
+        const ka = traceRowSortKey(a?.srs_code);
+        const kb = traceRowSortKey(b?.srs_code);
+        if (ka[0] !== kb[0]) return Number(ka[0]) - Number(kb[0]);
+        if (ka[1] !== kb[1]) return Number(ka[1]) - Number(kb[1]);
+        return String(ka[2]).localeCompare(String(kb[2]));
+    };
+
+    const isFixedRcn300Row = (row: any) => /^SRS-RCN300-0(0[1-9]|10)$/i.test(String(row?.srs_code || "").replace(/\s+/g, ""));
+
     const buildTraceTableFromRows = (
         rows: any[],
         locationBySdsCode?: Map<string, string>,
@@ -2757,7 +2811,7 @@ export default () => {
             const count = Math.max(1, sdsCodes.length, chapters.length, locations.length);
             return Array.from({ length: count }).map((_, index) => {
                 const sdsCode = normalizeReqCode(sdsCodes[index] ?? "");
-                const linked = sdsCode ? navChapterBySdsCode?.get(sdsCode) : undefined;
+                const linked = !isFixedRcn300Row(row) && sdsCode ? navChapterBySdsCode?.get(sdsCode) : undefined;
                 if (linked) {
                     return `${linked.name}（章节 ${linked.num}）`;
                 }
@@ -2836,7 +2890,7 @@ export default () => {
             const locationBySdsCode = buildSdsLocationMapFromTree(roots);
             const navChapterBySdsCode = buildNavTraceChapterIndex(roots);
             const rows = res.data?.rows || [];
-            const normalRows = rows.filter((row: any) => !isChangeTraceRow(row));
+            const normalRows = rows.filter((row: any) => !isChangeTraceRow(row)).sort(compareTraceRow);
             const changeRows = rows.filter((row: any) => isChangeTraceRow(row));
             const table = buildTraceTableFromRows(normalRows, locationBySdsCode, navChapterBySdsCode);
             const changeExtraTables = buildTraceChangeExtraTables(changeRows, locationBySdsCode, navChapterBySdsCode);
@@ -3029,7 +3083,7 @@ export default () => {
 
         const productId = editForm.getFieldValue("product_id");
         const version = editForm.getFieldValue("version");
-        let nodesWithIds = applyProductScopeToTree(buildStandardNodesWithIds(), currentProduct).nodes;
+        let nodesWithIds = applyScopeChapterFromProduct(applyProductScopeToTree(buildStandardNodesWithIds(), currentProduct).nodes, currentProduct).nodes;
         nodesWithIds = rebindFlowImageToFlowChild(nodesWithIds);
         nodesWithIds = normalizeImageRefTypes(nodesWithIds);
         nodesWithIds = await remapRefTypeImagesByProduct(nodesWithIds, productId, version);
@@ -3891,6 +3945,7 @@ export default () => {
                         onAddRoot={isReadOnly ? undefined : handleAddRootNode}
                         onNodeDelete={isReadOnly ? undefined : handleNodeDelete}
                         readOnly={isReadOnly}
+                        lockScopeChapter
                         readOnlyChapterOffset={0}
                         readOnlyRootWrapper={false}
                         onOpenReqdList={() => {

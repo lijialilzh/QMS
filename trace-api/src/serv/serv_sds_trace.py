@@ -476,11 +476,14 @@ class Server(object):
     ) -> str:
         """展示用章节名：优先按 SRS 层级字段实时计算，仅固定映射/多行追溯保留库内值。"""
         req_code = srs_code or (getattr(row_req, "code", None) if row_req is not None else None)
+        code = (req_code or "").strip().upper()
+        fixed = FIXED_RCN300_TRACES.get(code)
+        if fixed:
+            return "\n".join(item[1] for item in fixed)
         composed = cls.compose_srs_req_chapter(row_req, hierarchy_map=hierarchy_map, code=req_code, **fields)
         stored = (stored_chapter or "").strip()
         stored_lines = [ln.strip() for ln in re.split(r"[\r\n]+", stored) if ln and ln.strip()]
-        code = (req_code or "").strip().upper()
-        if code in FIXED_RCN300_TRACES or len(stored_lines) > 1:
+        if len(stored_lines) > 1:
             return stored
         return composed or (stored_lines[0] if stored_lines else "")
 
@@ -495,11 +498,12 @@ class Server(object):
     ) -> List[str]:
         """追溯表「需求/代码」列：单行需求用层级字段，固定多行映射保留各行原文。"""
         req_code = srs_code or (getattr(row_req, "code", None) if row_req is not None else None)
+        code = (req_code or "").strip().upper()
+        fixed = FIXED_RCN300_TRACES.get(code)
+        if fixed:
+            return [item[1] for item in fixed]
         composed = cls.compose_srs_req_chapter(row_req, hierarchy_map=hierarchy_map, code=req_code, **fields)
         stored_lines = [ln.strip() for ln in re.split(r"[\r\n]+", (stored_chapter or "")) if ln and ln.strip()]
-        code = (req_code or "").strip().upper()
-        if code in FIXED_RCN300_TRACES and stored_lines:
-            return stored_lines
         if composed:
             return [composed]
         return stored_lines or [""]
@@ -1455,6 +1459,14 @@ class Server(object):
                 obj.product_version = row_product.full_version
             obj.type_code = row_req.type_code
             obj.type_name = type_names.get(row_req.id) or default_types.get(row_req.type_code) or row_req.type_code
+            fixed_trace = FIXED_RCN300_TRACES.get((row_req.code or "").strip().upper())
+            if fixed_trace:
+                obj.sds_code = "\n".join(item[0] for item in fixed_trace)
+                obj.chapter = "\n".join(item[1] for item in fixed_trace)
+                obj.location = "\n".join(item[2] for item in fixed_trace)
+                obj.name = obj.chapter
+                objs.append(obj)
+                continue
             req_chapter = self.resolve_trace_chapter(
                 row_reqd.chapter, row_req, srs_code=row_req.code, hierarchy_map=hierarchy_map, **req_fields
             )

@@ -1,5 +1,5 @@
 import "./TreeStructure.less";
-import { useState, useEffect, useRef, type ReactNode } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { Button, Input, Space, Popconfirm, Upload, Table, message, Empty, Tooltip, Image } from "antd";
 import { PlusOutlined, DeleteOutlined, TableOutlined, EditOutlined, UploadOutlined, FileOutlined, CaretRightOutlined, CaretDownOutlined, CloseOutlined } from "@ant-design/icons";
 import { numberToChinese } from "@/common";
@@ -105,6 +105,16 @@ interface TreeNodeItemProps {
     autoNavChapterNo?: string;
     /** 可选：文档图片上传 API（HLD 等复用组件时传入，默认 SDS） */
     uploadDocFile?: (formData: FormData) => Promise<any>;
+    /** 1.2 范围正文由产品信息写入，不可手改 */
+    lockScopeChapter?: boolean;
+}
+
+function isProductScopeChapterTitle(title?: string): boolean {
+    const name = String(title || "")
+        .replace(/^(\d+(?:\.\d+)*\.?)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+        .replace(/[：:\s.．]/g, "")
+        .trim();
+    return name === "范围" || name === "适用范围";
 }
 
 function resolveImageSrc(url?: string): string {
@@ -683,7 +693,72 @@ function shiftChapterMajor(chapter: string, offset: number): string {
     return `${nextMajor}${m[2] || ""}`;
 }
 
-const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onSdsCodeChange, onImageChange, onAttachProgramLogicImage, pendingProgramLogicCaption = "", onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onEditExtraTable, onDeleteExtraTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, uploadDocFile, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [], useNavChapterEditor = false, autoNavChapterNo = "" }: TreeNodeItemProps) => {
+let chapterBodyMirror: HTMLTextAreaElement | null = null;
+
+function fitChapterBodyTextArea(el: HTMLTextAreaElement) {
+    if (!chapterBodyMirror) {
+        chapterBodyMirror = document.createElement("textarea");
+        chapterBodyMirror.setAttribute("aria-hidden", "true");
+        chapterBodyMirror.tabIndex = -1;
+        document.body.appendChild(chapterBodyMirror);
+    }
+    const style = window.getComputedStyle(el);
+    chapterBodyMirror.style.cssText = [
+        "position:absolute",
+        "visibility:hidden",
+        "z-index:-1000",
+        "top:0",
+        "left:0",
+        "height:0",
+        "min-height:0",
+        "max-height:none",
+        "overflow:hidden",
+        `width:${style.width}`,
+        `box-sizing:${style.boxSizing}`,
+        `font:${style.font}`,
+        `line-height:${style.lineHeight}`,
+        `letter-spacing:${style.letterSpacing}`,
+        `padding:${style.padding}`,
+        `border-top-width:${style.borderTopWidth}`,
+        `border-bottom-width:${style.borderBottomWidth}`,
+        `white-space:${style.whiteSpace}`,
+        `word-break:${style.wordBreak}`,
+    ].join(";");
+    const value = el.value || "";
+    chapterBodyMirror.value = value.endsWith("\n") ? `${value} ` : (value || " ");
+    const border = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
+    let height = chapterBodyMirror.scrollHeight;
+    if (style.boxSizing === "border-box") height += border;
+    else height -= (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0);
+    el.style.height = `${Math.ceil(height)}px`;
+    el.style.overflowY = "hidden";
+    el.style.resize = "none";
+}
+
+function ChapterBodyTextArea(props: React.ComponentProps<typeof Input.TextArea>) {
+    const { autoSize, onChange, ...rest } = props;
+    void autoSize;
+    const ref = useRef<{ resizableTextArea?: { textArea?: HTMLTextAreaElement } }>(null);
+    const fit = () => {
+        const el = ref.current?.resizableTextArea?.textArea;
+        if (el) fitChapterBodyTextArea(el);
+    };
+    useLayoutEffect(() => {
+        fit();
+    });
+    return (
+        <Input.TextArea
+            {...rest}
+            ref={ref as React.Ref<never>}
+            onChange={(e) => {
+                onChange?.(e);
+                fitChapterBodyTextArea(e.target);
+            }}
+        />
+    );
+}
+
+const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onSdsCodeChange, onImageChange, onAttachProgramLogicImage, pendingProgramLogicCaption = "", onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onEditExtraTable, onDeleteExtraTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, uploadDocFile, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [], useNavChapterEditor = false, autoNavChapterNo = "", lockScopeChapter = false }: TreeNodeItemProps) => {
     const { t: ts } = useTranslation();
     const [fileList, setFileList] = useState<UploadFile[]>([]);
     const [uploadLoading, setUploadLoading] = useState(false);
@@ -874,6 +949,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     };
 
     const title = String(node.title || "").trim();
+    const scopeChapterLocked = !!lockScopeChapter && isProductScopeChapterTitle(title);
     const safeNodeLabel = isJsonLikeKeyValueLine(node.label) ? "" : String(node.label || "").trim();
     const normalizedTitle = title.replace(/^[\s\u3000•·▪■◆●○□◇\-–—]+/, "").trim();
     const chapterMatch = normalizedTitle.match(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))?(.*)$/);
@@ -1278,7 +1354,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const editTextBetweenTables = showComplianceInlineInEdit ? (chapter7TableSplit?.middle || "") : "";
     const editTextAfterTable = showComplianceInlineInEdit ? (chapter7TableSplit?.after || "") : "";
     const mergeComplianceText = (before: string, middle: string, after: string): string => {
-        const parts = [String(before || "").trim(), String(middle || "").trim(), String(after || "").trim()].filter(Boolean);
+        const parts = [before, middle, after].filter((part) => String(part ?? "").trim());
         return parts.join("\n");
     };
     const hasDisplayTextContent = !!String(displayNodeText || "").trim();
@@ -1646,7 +1722,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           value={useNavChapterEditor ? navTitleValue : editDisplayTitle}
                           onChange={(e) => onTitleChange(node.id, e.target.value)}
                           placeholder={ts('please_input_title')}
-                          disabled={readOnly || isTraceReqNode || isLockedModuleChapter}
+                          disabled={readOnly || isTraceReqNode || isLockedModuleChapter || scopeChapterLocked}
                       />
                   )}
                   {
@@ -1702,7 +1778,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           : null
                   ) : (
                       !stackContentBelowTitle ? (
-                      <Input.TextArea
+                      <ChapterBodyTextArea
                           className="node-content node-text-area"
                           styles={{ textarea: chapterTextStyle }}
                           style={compactWithImage ? { marginRight: 8 } : undefined}
@@ -1718,7 +1794,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           size="small"
                           rows={1}
                           autoSize={{ minRows: 1, maxRows: 6 }}
-                          disabled={readOnly}
+                          disabled={readOnly || scopeChapterLocked}
                       />
                       ) : null
                   )}
@@ -1896,7 +1972,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                       ) : (
                           <div className="node-content-below-title">
                               {programLogicSplit ? (
-                                  <Input.TextArea
+                                  <ChapterBodyTextArea
                                       className="node-content node-text-area"
                                       styles={{ textarea: chapterTextStyle }}
                                       value={programLogicSplit.before}
@@ -1909,7 +1985,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       autoSize={{ minRows: 1, maxRows: 20 }}
                                   />
                               ) : (
-                              <Input.TextArea
+                              <ChapterBodyTextArea
                                   className="node-content node-text-area"
                                   styles={{ textarea: chapterTextStyle }}
                                   value={editTextBeforeTable}
@@ -1924,6 +2000,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                   size="small"
                                   rows={1}
                                   autoSize={{ minRows: 1, maxRows: 20 }}
+                                  disabled={scopeChapterLocked}
                               />
                               )}
                               {!navImageInHeaderRow && isNavSingleChapterEdit && !showComplianceInlineInEdit && (!!programLogicSplit || (navFullSizeImageMode && !multiEmbeddedFigures)) && (displayImageUrl || programLogicSplit) && (
@@ -1956,7 +2033,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                   </div>
                               )}
                               {programLogicSplit ? (
-                                  <Input.TextArea
+                                  <ChapterBodyTextArea
                                       className="node-content node-text-area"
                                       styles={{ textarea: chapterTextStyle }}
                                       value={programLogicSplit.after}
@@ -2197,7 +2274,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           <div className="node-row node-row-follow node-row-content-below">
                               <span className="node-expand-placeholder" />
                               <div className="node-content-below-title">
-                                  <Input.TextArea
+                                  <ChapterBodyTextArea
                                       className="node-content node-text-area"
                                       styles={{ textarea: chapterTextStyle }}
                                       value={editTextBetweenTables}
@@ -2210,7 +2287,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                               </div>
                           </div>
                       ) : (
-                              <Input.TextArea
+                              <ChapterBodyTextArea
                                   className="node-content node-text-area"
                                   styles={{ textarea: chapterTextStyle }}
                                   value={editTextBetweenTables}
@@ -2294,7 +2371,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           <div className="node-row node-row-follow node-row-content-below">
                               <span className="node-expand-placeholder" />
                               <div className="node-content-below-title">
-                                  <Input.TextArea
+                                  <ChapterBodyTextArea
                                       className="node-content node-text-area"
                                       styles={{ textarea: chapterTextStyle }}
                                       value={editTextAfterTable}
@@ -2307,7 +2384,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                               </div>
                           </div>
                       ) : (
-                              <Input.TextArea
+                              <ChapterBodyTextArea
                                   className="node-content node-text-area"
                                   styles={{ textarea: chapterTextStyle }}
                                   value={editTextAfterTable}
@@ -2547,6 +2624,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         traceSynced={traceSynced}
                         uploadDocFile={uploadDocFile}
                         readOnlyChapterOffset={readOnlyChapterOffset}
+                        lockScopeChapter={lockScopeChapter}
                         captionFromParent={childCaptionById.get(String(child.id)) || childCaptionById.get(String(child.n_id || ""))}
                         tableCaptionFromParent={
                             childTableCaptionById.get(String(child.id))
@@ -2580,9 +2658,10 @@ interface TreeStructureProps {
     extraNavSections?: { key: string; title: string; content: ReactNode }[];
     onAddRoot?: () => void;
     uploadDocFile?: (formData: FormData) => Promise<any>;
+    lockScopeChapter?: boolean;
 }
 
-export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = [], onNodeDelete, readOnly, readOnlyRootWrapper = true, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, extraNavSections = [], onAddRoot, uploadDocFile }: TreeStructureProps) => {
+export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = [], onNodeDelete, readOnly, readOnlyRootWrapper = true, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, extraNavSections = [], onAddRoot, uploadDocFile, lockScopeChapter = false }: TreeStructureProps) => {
     const { t: ts } = useTranslation();
     const [nodes, setNodes] = useState<TreeNode[]>(value);
     const [tableModalVisible, setTableModalVisible] = useState(false);
@@ -3395,6 +3474,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                 traceSynced,
                 uploadDocFile,
                 readOnlyChapterOffset: effectiveReadOnlyChapterOffset,
+                lockScopeChapter,
             };
             return readOnly && !readOnlyRootWrapper ? (
                 <TreeNodeItem key={node.id} {...rootItemProps} />
@@ -3471,6 +3551,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                                             hideLevelPrefix
                                             useNavChapterEditor={!readOnly}
                                             autoNavChapterNo={navChapterNumberMap.get(String(effectiveNode.id)) || ""}
+                                            lockScopeChapter={lockScopeChapter}
                                             onAdd={handleAdd}
                                             onAddSibling={handleAddSibling}
                                             onDelete={handleDelete}

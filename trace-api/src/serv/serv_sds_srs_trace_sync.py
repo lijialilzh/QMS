@@ -19,7 +19,7 @@ from ..obj.vobj_sds_trace import SdsTraceObj
 from ..obj import Resp
 from ..utils.sql_ctx import db
 from ..utils.i18n import ts
-from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, fixed_rcn300_sds_codes
+from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, FIXED_RCN300_TRACES, fixed_rcn300_sds_codes
 from .serv_sds_reqd import Server as ServSdsReqd
 
 logger = logging.getLogger(__name__)
@@ -93,6 +93,7 @@ class SdsSrsTraceSyncMixin:
             row for row in rows
             if str(getattr(row, "type_code", "") or "").strip() in ["", "1", "2"]
         ]
+        normal_rows.sort(key=lambda row: self._sds_code_sort_key(getattr(row, "srs_code", "") or ""))
         change_groups: List[Tuple[str, str, List[SdsTraceObj]]] = []
         change_group_index: Dict[str, int] = {}
         def normalize_type_name_key(value: str):
@@ -2053,6 +2054,12 @@ class SdsSrsTraceSyncMixin:
         self._restore_product_root_headings(roots)
         strict_location_map = self._build_strict_srs_trace_location_map(rows, hierarchy_map, roots)
         for trace, req in rows:
+            fixed_trace = FIXED_RCN300_TRACES.get(str(getattr(req, "code", "") or "").strip().upper())
+            if fixed_trace:
+                trace.sds_code = "\n".join(item[0] for item in fixed_trace)
+                trace.chapter = "\n".join(item[1] for item in fixed_trace)
+                trace.location = "\n".join(item[2] for item in fixed_trace)
+                continue
             req_fields = sdstrace_serv.hierarchy_for_req(req, hierarchy_map)
             chapter = sdstrace_serv.compose_srs_req_chapter(req, hierarchy_map=hierarchy_map, **req_fields)
             trace_code = self._normalize_code(getattr(trace, "sds_code", "") or str(getattr(req, "code", "") or "").replace("SRS", "SDS"))
