@@ -207,6 +207,11 @@ function isEmbeddedTableNode(node: TreeNode): boolean {
     return /^导入表格\d*$/.test(title) && hasTable && noExtra;
 }
 
+function isInterfaceListTable(node: TreeNode): boolean {
+    const names = (node.table?.headers || []).map((header) => String(header?.name || "").replace(/\s/g, ""));
+    return names.includes("接口设计编号") && names.includes("接口名称") && names.includes("接口URL");
+}
+
 /** 与 IMM 一致：去掉标题里已有章节号前缀，编辑时只填名称 */
 function stripNavChapterPrefix(title: string): string {
     return String(title || "")
@@ -762,12 +767,29 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         }
         const tableCells = table.cells || [];
         const hasMergedCells = Array.isArray(tableCells) && tableCells.length > 1;
+        const wrapCell = (table.headers || []).some((header) => {
+            const name = String(header?.name || "").replace(/\s/g, "");
+            return name === "设计编号" || name === "需求/代码" || name === "需求代码";
+        });
+        const renderWrapped = (value: string) => {
+            const lines = String(value || "").split("\n");
+            return (
+                <div className="table-cell-content">
+                    {lines.map((line, lineIndex) => (
+                        <div key={`${lineIndex}-${line}`}>{line}</div>
+                    ))}
+                </div>
+            );
+        };
         return table.headers.map((header, index) => {
             const col: any = {
                 title: header.name,
                 dataIndex: header.code,
                 key: `col_${index}`,
             };
+            if (wrapCell) {
+                col.onCell = () => ({ className: "trace-wrap-cell" });
+            }
             if (hasMergedCells) {
                 // 表头也按 cells[0] 的 col_span 合并，延续列 colSpan=0 隐藏，避免导入合并单元格时多出「列N」
                 col.onHeaderCell = () => {
@@ -783,15 +805,12 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                     const vAlign = (cell?.v_align || "top") as "top" | "middle" | "bottom";
                     const cellValue = formatTraceTableCell(header.name, cell?.value);
                     return {
-                        children: <div className="table-cell-content">{cellValue}</div>,
+                        children: renderWrapped(cellValue),
                         props: { rowSpan, colSpan, style: { textAlign: hAlign, verticalAlign: vAlign } },
                     };
                 };
             } else {
-                col.render = (val: any) => {
-                    const cellValue = formatTraceTableCell(header.name, val);
-                    return <div className="table-cell-content">{cellValue}</div>;
-                };
+                col.render = (val: any) => renderWrapped(formatTraceTableCell(header.name, val));
             }
             return col;
         });
@@ -3173,7 +3192,11 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
     const effectiveNode = effectiveExtra ? null : (activeNode || defaultActiveNode);
     const effectiveNodeParent = effectiveNode ? findNavNodeParent(visibleNodes, effectiveNode.id) : null;
     const navParentInlineTables = effectiveNodeParent
-        ? (effectiveNodeParent.children || []).filter((child) => hasRenderableTable(child.table) && isEmbeddedTableNode(child))
+        ? (effectiveNodeParent.children || []).filter((child) => (
+            hasRenderableTable(child.table)
+            && isEmbeddedTableNode(child)
+            && !isInterfaceListTable(child)
+        ))
         : [];
     const renderNav = (list: TreeNode[], depth: number): JSX.Element[] => (
         (list || []).filter(isNavChapter).map((node) => {
