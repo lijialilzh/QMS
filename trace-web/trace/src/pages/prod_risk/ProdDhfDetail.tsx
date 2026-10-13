@@ -439,6 +439,23 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}
                 loading={data.loading}
+                locale={{
+                    emptyText: readOnly ? (
+                        "暂无数据"
+                    ) : (
+                        <span>
+                            暂无数据
+                            <Button
+                                type="link"
+                                size="small"
+                                icon={<PlusOutlined />}
+                                onClick={() => dispatch({ dlgType: DlgTypes.add, targetRow: {} })}
+                            >
+                                {ts("add")}
+                            </Button>
+                        </span>
+                    ),
+                }}
                 scroll={embedded ? { x: 960, y: "68vh" } : undefined}
                 pagination={{
                     total: data.total,

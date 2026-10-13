@@ -2326,6 +2326,9 @@ class Server(SdsSrsTraceSyncMixin, object):
 
             table_rows = []
             for row in rows or []:
+                row_code = re.sub(r"\s+", "", str(getattr(row, "srs_code", "") or "")).upper()
+                if row_code == "SRS-RCN300-008" and "文档需求" not in live_tail:
+                    continue
                 table_rows.append({
                     "srs_code": getattr(row, "srs_code", "") or "",
                     "sds_code": getattr(row, "sds_code", "") or "",

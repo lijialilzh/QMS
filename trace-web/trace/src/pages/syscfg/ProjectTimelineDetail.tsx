@@ -460,13 +460,15 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
                         <tbody>
                             {(data.rows || []).length === 0 && (
                                 <tr>
-                                    <td colSpan={totalCols - 1} style={{ textAlign: "center", color: "#999" }}>
+                                    <td colSpan={totalCols} style={{ textAlign: "center", color: "#999" }}>
                                         暂无数据
-                                    </td>
-                                    <td className="tl-ops">
-                                            {readOnly ? null : (
-                                                <PlusOutlined title="新增行" onClick={() => addRow("date")} />
-                                            )}
+                                        {readOnly ? null : (
+                                            <PlusOutlined
+                                                title="新增行"
+                                                style={{ marginLeft: 8, color: "#1677ff", cursor: "pointer" }}
+                                                onClick={() => addRow("date")}
+                                            />
+                                        )}
                                     </td>
                                 </tr>
                             )}

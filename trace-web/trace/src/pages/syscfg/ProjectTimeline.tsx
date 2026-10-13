@@ -61,14 +61,15 @@ export default () => {
         }).catch(() => data.countMap || new Map<number, number>());
     };
 
-    const doSearch = (params: any, pageIndex: any, pageSize: any, countMap?: Map<number, number>) => {
+    const doSearch = (params: any, pageIndex: any, pageSize: any, countMap?: Map<number, number>, includeIds?: number[]) => {
         dispatch({ loading: true });
         const mapPromise = countMap ? Promise.resolve(countMap) : loadCounts();
         mapPromise.then((map) => {
             ApiProduct.list_product({ page_index: 0, page_size: 10000 }).then((res: any) => {
                 if (res.code === ApiProduct.C_OK) {
                     const productRows = res.data.rows || [];
-                    let allRows = productRows.filter((row: any) => (map.get(row.id) || 0) > 0);
+                    const includeSet = new Set((includeIds || []).map((id) => Number(id)));
+                    let allRows = productRows.filter((row: any) => (map.get(row.id) || 0) > 0 || includeSet.has(Number(row.id)));
                     const productId = params?.product_id;
                     const productName = params?.product_name;
                     if (productId) {
@@ -76,6 +77,9 @@ export default () => {
                     } else if (productName) {
                         allRows = allRows.filter((row: any) => row.name === productName);
                     }
+                    const pinned = allRows.filter((row: any) => includeSet.has(Number(row.id)));
+                    const rest = allRows.filter((row: any) => !includeSet.has(Number(row.id)));
+                    allRows = [...pinned, ...rest];
                     const total = allRows.length;
                     const start = (pageIndex - 1) * pageSize;
                     const rows = allRows.slice(start, start + pageSize);
@@ -127,11 +131,18 @@ export default () => {
                 message.warning(sprintf(ts("msg_select"), { label: ts("product.product") }));
                 return;
             }
-            dispatch({ dlgType: null, expandedKeys: [prodId], expandReadOnly: false });
+            dispatch({
+                dlgType: null,
+                expandedKeys: [prodId],
+                expandReadOnly: false,
+                filterProductId: undefined,
+                filterProductName: undefined,
+            });
+            queryForm.resetFields();
             loadCounts().then((map) => {
                 const next = new Map(map);
                 if (!next.has(prodId)) next.set(prodId, 0);
-                doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, 1, data.pageSize, next);
+                doSearch({}, 1, data.pageSize, next, [prodId]);
             });
         });
     };

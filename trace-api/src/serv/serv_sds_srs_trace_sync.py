@@ -93,6 +93,10 @@ class SdsSrsTraceSyncMixin:
         normal_rows = [
             row for row in rows
             if str(getattr(row, "type_code", "") or "").strip() in ["", "1", "2"]
+            and not (
+                re.sub(r"\s+", "", str(getattr(row, "srs_code", "") or "")).upper() == "SRS-RCN300-008"
+                and "文档需求" not in live_tail
+            )
         ]
         normal_rows.sort(key=lambda row: self._sds_code_sort_key(getattr(row, "srs_code", "") or ""))
         change_groups: List[Tuple[str, str, List[SdsTraceObj]]] = []
@@ -1715,7 +1719,7 @@ class SdsSrsTraceSyncMixin:
         by_req_id: Optional[Dict[int, SdsNodeForm]] = None,
         trace_rows=None,
     ):
-        """追溯同步：同 req_id 且正文已匹配 SRS 则保留；否则写入 SRS reqd 正文。"""
+        """追溯同步：同一功能重写总体描述和功能；程序逻辑及之后的段落保留。"""
         if node is None or not expected_text:
             return
         existing = (getattr(node, "text", "") or "").strip()
@@ -1728,15 +1732,12 @@ class SdsSrsTraceSyncMixin:
             and req_id is not None
             and by_req_id.get(req_id) is node
         ):
-            # 该节点已被内容/功能名匹配确认是同一功能：
-            # 1) 节点有实质设计内容 → 保留（改名/编号偏移不丢内容）；
             if self._node_has_substantive_design_body(node):
+                self._refresh_srs_overview_and_function(node, expected_text)
                 return
-            # 2) 节点为空、SRS 设计有实质内容 → 取 SRS 填充（新增功能补全内容）；
             if self._design_text_is_substantive(expected_text):
                 node.text = expected_text
                 return
-            # 3) 正文与 SRS 同源，或两者皆空 → 维持现状。
             return
         if (
             req is not None
@@ -1753,8 +1754,51 @@ class SdsSrsTraceSyncMixin:
         if req is not None and hierarchy_map is not None and self._node_content_belongs_to_req(
             node, req, req_id, hierarchy_map, module_name, expected_text, trace_rows, by_req_id
         ):
+            self._refresh_srs_overview_and_function(node, expected_text)
             return
         node.text = expected_text
+
+    def _refresh_srs_overview_and_function(self, node: Optional[SdsNodeForm], expected_text: str):
+        """用 SRS 重写（1）总体描述、（2）功能，不改程序逻辑、输入项、输出项、接口。"""
+        if node is None or not expected_text:
+            return
+        existing = str(getattr(node, "text", "") or "")
+        merged = self._replace_design_sections(existing, expected_text, ("总体描述", "功能"))
+        if merged.strip() != existing.strip():
+            node.text = merged
+
+    @staticmethod
+    def _replace_design_sections(existing: str, expected: str, names: Tuple[str, ...]) -> str:
+        def section_body(text: str, name: str):
+            matched = re.search(
+                rf"[（(]\s*\d+\s*[)）]\s*{name}[^\n]*\n?(.*?)(?=\n\s*[（(]\s*\d+\s*[)）]|\Z)",
+                text or "",
+                re.S,
+            )
+            if not matched:
+                return None
+            return matched.group(1).strip("\n")
+
+        updated = existing or ""
+        for name in names:
+            body = section_body(expected, name)
+            if body is None:
+                continue
+            pattern = re.compile(
+                rf"([（(]\s*\d+\s*[)）]\s*{name}[^\n]*\n?)(.*?)(?=\n\s*[（(]\s*\d+\s*[)）]|\Z)",
+                re.S,
+            )
+            if not pattern.search(updated):
+                continue
+
+            def repl(match, section_body=body):
+                heading = match.group(1)
+                if not heading.endswith("\n"):
+                    heading += "\n"
+                return f"{heading}{section_body.rstrip()}\n"
+
+            updated = pattern.sub(repl, updated, count=1)
+        return updated
 
     def _sync_path_titles(
         self,

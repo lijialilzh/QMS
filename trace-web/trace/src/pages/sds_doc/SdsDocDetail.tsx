@@ -2897,13 +2897,18 @@ export default () => {
                 return `${chapter}${location ? `（章节 ${location}）` : ""}`;
             }).join("\n");
         };
+        const visibleRows = (rows || []).filter((row: any) => {
+            const code = String(row?.srs_code || "").replace(/\s+/g, "").toUpperCase();
+            if (code !== "SRS-RCN300-008" || !liveTailChapterByName) return true;
+            return liveTailChapterByName.has("文档需求");
+        });
         return {
             headers: [
                 { code: "srs_code", name: "需求编号" },
                 { code: "sds_code", name: "设计编号" },
                 { code: "chapter", name: "需求/代码" },
             ],
-            rows: (rows || []).map((row: any) => {
+            rows: visibleRows.map((row: any) => {
                 return {
                     srs_code: row.srs_code || "",
                     sds_code: row.sds_code || "",

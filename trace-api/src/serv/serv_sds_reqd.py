@@ -78,11 +78,11 @@ class Server(object):
 
     @staticmethod
     def __compose_srs_function_for_design(row_srsreqd: SrsReqd):
-        """功能设计(2)功能：前置条件 + 触发器 + 工作流。"""
+        """功能设计(2)功能：前置条件 + 触发器 + 工作流 + 异常情况。"""
         if not row_srsreqd:
             return ""
         parts = []
-        for field in ["pre_condition", "trigger", "work_flow"]:
+        for field in ["pre_condition", "trigger", "work_flow", "exception"]:
             val = (getattr(row_srsreqd, field, None) or "").strip()
             if val and val not in parts:
                 parts.append(val)
