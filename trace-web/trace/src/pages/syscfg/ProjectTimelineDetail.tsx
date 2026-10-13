@@ -411,6 +411,9 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
                 <div className="div-h hspace">
                     {!readOnly && (
                         <>
+                            <Button type="primary" icon={<PlusOutlined />} onClick={() => addRow("date")}>
+                                新增行
+                            </Button>
                             <Upload showUploadList={false} accept=".xlsx" beforeUpload={doImport}>
                                 <Button type="primary" loading={data.importing}>导入模板</Button>
                             </Upload>
@@ -454,7 +457,7 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
                                 {depts.map((d) => (
                                     <th key={d}>{d}</th>
                                 ))}
-                                <th style={{ width: 92 }}>{ts("action")}</th>
+                                <th className="tl-ops" style={{ width: 92 }}>{ts("action")}</th>
                             </tr>
                         </thead>
                         <tbody>

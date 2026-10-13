@@ -145,6 +145,25 @@
             min-width: 0;
         }
 
+        th.tl-ops,
+        td.tl-ops {
+            position: sticky;
+            right: 0;
+            z-index: 2;
+            background: #fff;
+            box-shadow: -6px 0 6px -4px rgba(0, 0, 0, 0.15);
+        }
+
+        thead th.tl-ops {
+            z-index: 4;
+            background: #d9e1f2;
+        }
+
+        .tl-row-year > td.tl-ops,
+        .tl-row-milestone > td.tl-ops {
+            background: #fff7e6;
+        }
+
         td.tl-ops {
             white-space: nowrap;
             text-align: center;

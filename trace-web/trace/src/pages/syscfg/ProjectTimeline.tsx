@@ -126,9 +126,13 @@ export default () => {
 
     const doAddNavigate = () => {
         addForm.validateFields().then((values) => {
-            const prodId = values.prod_id;
+            const prodId = Number(values.prod_id);
             if (!prodId) {
                 message.warning(sprintf(ts("msg_select"), { label: ts("product.product") }));
+                return;
+            }
+            if ((data.countMap.get(prodId) || 0) > 0) {
+                message.warning("该产品已有时间逻辑线，不能重复新增");
                 return;
             }
             dispatch({

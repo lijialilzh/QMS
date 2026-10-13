@@ -143,9 +143,13 @@ export default () => {
 
     const doAddNavigate = () => {
         addForm.validateFields().then((values) => {
-            const prodId = values.prod_id;
+            const prodId = Number(values.prod_id);
             if (!prodId) {
                 message.warning(sprintf(ts("msg_select"), { label: ts("product.product") }));
+                return;
+            }
+            if ((data.dhfCountMap.get(prodId) || 0) > 0) {
+                message.warning("该产品已有 DHF 清单，不能重复新增");
                 return;
             }
             dispatch({

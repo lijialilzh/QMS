@@ -86,7 +86,15 @@ class Server(object):
             val = (getattr(row_srsreqd, field, None) or "").strip()
             if val and val not in parts:
                 parts.append(val)
-        return "\n".join(parts)
+        # 较短的一段若已包含在另一段里，只留较长的，避免「登录成功」再写一遍
+        norms = [re.sub(r"\s+", "", part) for part in parts]
+        kept = []
+        for idx, val in enumerate(parts):
+            norm = norms[idx]
+            if norm and any(norm != other and norm in other for other in norms):
+                continue
+            kept.append(val)
+        return "\n".join(kept)
 
     def compose_design_text_for_sync(self, overview: str, func_detail: str, logic_txt: str = "", intput: str = "", output: str = "", interface: str = ""):
         return "\n".join([

@@ -1764,6 +1764,9 @@ class SdsSrsTraceSyncMixin:
             return
         existing = str(getattr(node, "text", "") or "")
         merged = self._replace_design_sections(existing, expected_text, ("总体描述", "功能"))
+        overview = self._design_section_body(expected_text, "总体描述") or ""
+        merged = self._strip_preamble_overlap(merged, overview)
+        merged = self._ensure_program_logic_heading(node, merged)
         if merged.strip() != existing.strip():
             node.text = merged
 
@@ -1799,6 +1802,70 @@ class SdsSrsTraceSyncMixin:
 
             updated = pattern.sub(repl, updated, count=1)
         return updated
+
+    @staticmethod
+    def _design_section_body(text: str, name: str) -> Optional[str]:
+        matched = re.search(
+            rf"[（(]\s*\d+\s*[)）]\s*{name}[^\n]*\n?(.*?)(?=\n\s*[（(]\s*\d+\s*[)）]|\Z)",
+            text or "",
+            re.S,
+        )
+        if not matched:
+            return None
+        return matched.group(1).strip()
+
+    @staticmethod
+    def _strip_preamble_overlap(text: str, overview: str) -> str:
+        """章节开头里与总体描述重复的那句删掉，其余开头文字保留。"""
+        overview_raw = (overview or "").strip().rstrip("。．")
+        overview_compact = re.sub(r"\s+", "", overview_raw)
+        if len(overview_compact) < 4 or not text:
+            return text
+        matched = re.search(r"[（(]\s*\d+\s*[)）]", text)
+        if not matched:
+            return text
+        head = text[:matched.start()]
+        rest = text[matched.start():]
+        if overview_compact not in re.sub(r"\s+", "", head):
+            return text
+        phrase = re.compile(re.escape(overview_raw) + r"[。．]?")
+        lines = []
+        for line in head.split("\n"):
+            if overview_raw not in line:
+                lines.append(line)
+                continue
+            cleaned = phrase.sub("", line)
+            cleaned = re.sub(r"[，,、]\s*$", "", cleaned).strip()
+            if not cleaned or re.fullmatch(r"[\s，,。．、；;]+", cleaned):
+                continue
+            if cleaned[-1] not in "。．！!？?":
+                cleaned += "。"
+            lines.append(cleaned)
+        new_head = "\n".join(lines).strip()
+        if new_head:
+            return new_head + "\n" + rest.lstrip("\n")
+        return rest.lstrip("\n")
+
+    @staticmethod
+    def _ensure_program_logic_heading(node: Optional[SdsNodeForm], text: str) -> str:
+        """已有程序逻辑图、正文却没有「程序逻辑」时，在输入项前补回（3），图才能挂在这一节下面。"""
+        if re.search(r"程序逻辑", text or ""):
+            return text
+        children = getattr(node, "children", None) or []
+        has_logic_img = False
+        for child in children:
+            caption = f"{getattr(child, 'title', '') or ''}{getattr(child, 'label', '') or ''}"
+            if "程序逻辑" in caption and str(getattr(child, "img_url", "") or "").strip():
+                has_logic_img = True
+                break
+        if not has_logic_img:
+            return text
+        heading = "（3）程序逻辑"
+        slot = re.search(r"\n[ \t]*[（(]\s*\d+\s*[)）]\s*(?:输入项|输出项|接口)", text or "")
+        if slot:
+            return text[:slot.start()] + "\n" + heading + text[slot.start():]
+        body = (text or "").rstrip()
+        return (body + "\n" + heading + "\n") if body else heading + "\n"
 
     def _sync_path_titles(
         self,
