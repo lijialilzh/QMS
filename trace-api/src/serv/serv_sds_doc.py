@@ -3411,8 +3411,15 @@ finally:
                     elif __is_imported_placeholder_title(norm_title):
                         pass
                     elif __is_data_table_title(norm_title) and ((node.table and node.table.headers) or imported_table_children):
-                        # 数据表标题不是章节：不写入Heading，避免进入Word目录
-                        pending_table_captions.append(__strip_chapter_prefix(norm_title))
+                        # 数据表标题不是章节：不写入Heading，避免进入Word目录。
+                        # 表题放在表前，避免连续多张表时表题落到下一张表或下一章前面。
+                        cap = __strip_chapter_prefix(norm_title)
+                        if node.table and node.table.headers:
+                            __save_table_caption_txt(docx, cap, font_def)
+                            docx_util.save_tab2docx(node.table, docx)
+                            table_written = True
+                        else:
+                            pending_table_captions.append(cap)
                     elif __is_image_caption_line(norm_title) and (node.img_url or imported_image_children):
                         # 图片标题不是章节：导出时放到图片下方作为题注
                         pending_image_captions.append(norm_title)

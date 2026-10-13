@@ -134,7 +134,17 @@ def __set_cell_nowrap(cell):
     if tc_pr.find(qn("w:noWrap")) is None:
         tc_pr.append(OxmlElement("w:noWrap"))
 
-def __apply_adaptive_col_width(tabx, headers, rows):
+def __content_width_in(docx: Document) -> float:
+    try:
+        section = docx.sections[-1] if docx.sections else None
+        if section is None or not section.page_width:
+            return 6.3
+        width = (float(section.page_width) - float(section.left_margin) - float(section.right_margin)) / 914400.0
+        return max(5.6, width - 0.08)
+    except Exception:
+        return 6.3
+
+def __apply_adaptive_col_width(tabx, headers, rows, total_width: float = 6.3):
     col_count = len(headers or [])
     if col_count <= 0:
         return
@@ -142,9 +152,7 @@ def __apply_adaptive_col_width(tabx, headers, rows):
     if col_count == 2:
         __apply_two_col_width(tabx, col_count)
         return
-    # A4常规页边距下可用宽度约 6.5~6.9 英寸，这里取中值
-    total_width = 6.7
-    min_width = 0.78
+    min_width = 0.62
     max_width = 3.6
     scores = []
     nowrap_need = {}
@@ -165,10 +173,10 @@ def __apply_adaptive_col_width(tabx, headers, rows):
         # 这些列按最长一行留足宽度，导出时不换行
         if "接口设计编号" in compact_name:
             score = max(score, sample_max * 1.6, 28.0)
-            nowrap_need[ci] = __nowrap_col_width(col_samples, floor=2.0, cap=2.4)
+            nowrap_need[ci] = __nowrap_col_width(col_samples, floor=1.72, cap=2.05)
         elif compact_name == "接口名称":
             score = max(score, sample_max * 1.4, 22.0)
-            nowrap_need[ci] = __nowrap_col_width(col_samples, floor=1.35, cap=2.4)
+            nowrap_need[ci] = __nowrap_col_width(col_samples, floor=1.35, cap=1.95)
         elif compact_name in ("需求编号", "设计编号"):
             score = max(score, sample_max * 1.3, 16.0)
             nowrap_need[ci] = __nowrap_col_width(col_samples, floor=1.45, cap=2.2)
@@ -176,7 +184,34 @@ def __apply_adaptive_col_width(tabx, headers, rows):
             score *= 0.85
         scores.append(score)
     widths = __distribute_col_widths(scores, total_width=total_width, min_width=min_width, max_width=max_width)
-    if nowrap_need:
+    url_idx = [
+        ci for ci, header in enumerate(headers or [])
+        if re.sub(r"\s+", "", str(getattr(header, "name", "") or "")).lower() in ("接口url", "url")
+    ]
+    if url_idx and nowrap_need:
+        # 编号和名称单行占位后，把剩余宽度优先给接口 URL，避免第三列被压成几个字一行
+        fixed = sum(nowrap_need.values())
+        url_w = max(1.7, min(2.6, total_width - fixed - min_width * max(0, col_count - len(nowrap_need) - len(url_idx))))
+        for ci in url_idx:
+            widths[ci] = url_w
+        used = sum(nowrap_need.values()) + sum(widths[ci] for ci in url_idx)
+        others = [i for i in range(col_count) if i not in nowrap_need and i not in url_idx]
+        remain = max(0.0, total_width - used)
+        if others:
+            each = remain / len(others)
+            for i in others:
+                widths[i] = max(0.55, each)
+        # 总宽超出正文区时，只从 URL 和其他列回收，不拆编号和名称
+        overflow = sum(widths[i] if i not in nowrap_need else nowrap_need[i] for i in range(col_count)) - total_width
+        if overflow > 0.01:
+            flexible = url_idx + others
+            pool = sum(max(0.0, widths[i] - 0.55) for i in flexible) or 1.0
+            for i in flexible:
+                room = max(0.0, widths[i] - 0.55)
+                widths[i] = max(0.55, widths[i] - overflow * (room / pool))
+        for ci, need in nowrap_need.items():
+            widths[ci] = need
+    elif nowrap_need:
         for ci, need in nowrap_need.items():
             widths[ci] = max(widths[ci], need)
         overflow = sum(widths) - total_width
@@ -256,7 +291,7 @@ def save_tab2docx(tab: Table,  docx: Document):
                         val = ""
                     row_dict[code] = val
                 pseudo_rows.append(row_dict)
-            __apply_adaptive_col_width(tabx, pseudo_headers, pseudo_rows)
+            __apply_adaptive_col_width(tabx, pseudo_headers, pseudo_rows, __content_width_in(docx))
             __apply_table_border(tabx)
             empty = docx.add_paragraph()
             empty.paragraph_format.space_after = Pt(20)
@@ -280,7 +315,7 @@ def save_tab2docx(tab: Table,  docx: Document):
             text = str(cell_value) if cell_value is not None else ""
             __fonted_cell(row_cells[ci], text)
 
-    __apply_adaptive_col_width(tabx, tab.headers, tab.rows or [])
+    __apply_adaptive_col_width(tabx, tab.headers, tab.rows or [], __content_width_in(docx))
     __apply_table_border(tabx)
 
     empty = docx.add_paragraph()

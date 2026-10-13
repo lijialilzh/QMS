@@ -853,10 +853,18 @@ class Server(object):
                     grid.append([str(row.get(c) or "") for c in codes])
             return grid
 
+        def __start_next_page():
+            from docx.shared import Pt
+            p = docx.add_paragraph()
+            p.paragraph_format.page_break_before = True
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            p.paragraph_format.line_spacing = Pt(1)
+
         def __write_review_node(node):
             from docx.enum.text import WD_ALIGN_PARAGRAPH
             from .serv_utils import docx_util
-            docx.add_page_break()
+            __start_next_page()
             title = docx.add_paragraph()
             title.alignment = WD_ALIGN_PARAGRAPH.CENTER
             docx_util.fonted_txt(title, "附件一 评审结论", font_size=16.0, bold=True)
@@ -871,33 +879,84 @@ class Server(object):
                         serv_review_util.render_review_grid(docx, __grid_from_table(extra_table, False), __set_review_cell, merge_col0=False, merge_full=True)
             wrote_review["ok"] = True
 
+        def __save_fitted_image(img_url: str):
+            docx_util.save_img2docx(img_url, docx, mw=520, mh=340, page_fit=True)
+
+        def __save_plain_caption(text: str, center: bool = False):
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            from docx.shared import Pt
+            p = docx.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER if center else WD_ALIGN_PARAGRAPH.LEFT
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            p.paragraph_format.first_line_indent = Pt(0)
+            docx_util.fonted_txt(p, text, font_size=10.5)
+
+        def __is_data_table_caption(line: str) -> bool:
+            txt = str(line or "").strip()
+            if not txt or self._is_image_caption_line(txt):
+                return False
+            if self._is_table_caption_line(txt):
+                return True
+            return ("表" in txt) and re.match(r"^.+表\s*[:：]?$", txt) is not None
+
+        def __has_table(node) -> bool:
+            table = getattr(node, "table", None)
+            return bool(table and getattr(table, "headers", None))
+
         def __write_nodes(nodes: List[HldNodeForm], default_level: int = 1):
             for node in nodes or []:
                 title = str(getattr(node, "title", "") or "").strip()
                 if getattr(node, "ref_type", None) == "review" or __is_review_title(title):
                     __write_review_node(node)
                     continue
-                if not title and not getattr(node, "text", None) and not getattr(node, "table", None):
+                img_url = _normalize_hld_img_url(getattr(node, "img_url", "") or "")
+                is_figure = bool(img_url) and (
+                    self._is_image_caption_line(title) or self._is_imported_image_title(title)
+                )
+                if is_figure and not __has_table(node):
+                    __save_fitted_image(img_url)
+                    if title:
+                        __save_plain_caption(title, center=True)
+                    continue
+                if not title and not getattr(node, "text", None) and not __has_table(node):
                     if getattr(node, "children", None):
                         __write_nodes(node.children, default_level)
+                    continue
+                if self._is_imported_table_title(title) and __has_table(node):
+                    docx_util.save_tab2docx(node.table, docx)
+                    __write_nodes(getattr(node, "children", None) or [], default_level + 1)
                     continue
                 if title and not self._is_imported_image_title(title):
                     level = self._heading_level(title) if re.match(r"^\d", title) else default_level
                     if __is_cover_title(title) or __is_revision_title(title):
                         level = 1
                     docx_util.save_title2docx(title, docx, level=level)
-                text = str(getattr(node, "text", "") or "").strip()
-                if text:
-                    docx_util.save_txt2docx(text, docx)
-                table = getattr(node, "table", None)
-                if table and getattr(table, "headers", None):
-                    docx_util.save_tab2docx(table, docx)
-                img_url = _normalize_hld_img_url(getattr(node, "img_url", "") or "")
+                children = list(getattr(node, "children", None) or [])
+                table_children = [
+                    child for child in children
+                    if self._is_imported_table_title(str(getattr(child, "title", "") or "")) and __has_table(child)
+                ]
+                other_children = [child for child in children if child not in table_children]
+                consumed = 0
+                for raw_line in str(getattr(node, "text", "") or "").replace("\r", "").split("\n"):
+                    line = str(raw_line or "").strip()
+                    if not line:
+                        continue
+                    if __is_data_table_caption(line) and consumed < len(table_children):
+                        __save_plain_caption(line, center=False)
+                        docx_util.save_tab2docx(table_children[consumed].table, docx)
+                        consumed += 1
+                        continue
+                    docx_util.save_txt2docx(line, docx)
+                while consumed < len(table_children):
+                    docx_util.save_tab2docx(table_children[consumed].table, docx)
+                    consumed += 1
+                if __has_table(node):
+                    docx_util.save_tab2docx(node.table, docx)
                 if img_url:
-                    if self._is_imported_image_title(title):
-                        docx_util.save_txt2docx(title, docx)
-                    docx_util.save_img2docx(img_url, docx, mw=420, mh=240)
-                __write_nodes(getattr(node, "children", None) or [], default_level + 1)
+                    __save_fitted_image(img_url)
+                __write_nodes(other_children, default_level + 1)
 
         __write_nodes(doc_obj.content or [])
         if not wrote_review["ok"] and getattr(doc_obj, "product_id", None):
@@ -909,7 +968,7 @@ class Server(object):
             if sec:
                 from docx.enum.text import WD_ALIGN_PARAGRAPH
                 from .serv_utils import docx_util
-                docx.add_page_break()
+                __start_next_page()
                 title = docx.add_paragraph()
                 title.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 docx_util.fonted_txt(title, "附件一 评审结论", font_size=16.0, bold=True)
