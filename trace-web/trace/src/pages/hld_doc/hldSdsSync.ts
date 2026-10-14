@@ -1,4 +1,4 @@
-import { TreeNode } from "../sds_doc/components/TreeStructure";
+import { HLD_SDS_LOCK_REF, TreeNode } from "../sds_doc/components/TreeStructure";
 
 export type HldTableData = {
     name?: string | null;
@@ -246,7 +246,9 @@ const upsertFieldTableNode = (nodes: TreeNode[], item: { title: string; library:
     const existing = findNodeByTitle(nodes, (title) => normalizeTitle(title) === normalized);
     if (existing) {
         return walkTree(nodes, (node) => (
-            normalizeTitle(node.title) === normalized ? { ...node, table: converted as TreeNode["table"] } : node
+            normalizeTitle(node.title) === normalized
+                ? { ...node, ref_type: HLD_SDS_LOCK_REF, table: converted as TreeNode["table"] }
+                : node
         ));
     }
     return walkTree(nodes, (node) => {
@@ -261,6 +263,7 @@ const upsertFieldTableNode = (nodes: TreeNode[], item: { title: string; library:
             p_id: node.n_id || 0,
             title: item.title,
             text: "",
+            ref_type: HLD_SDS_LOCK_REF,
             table: converted as TreeNode["table"],
             children: [],
         } as TreeNode);
@@ -377,6 +380,7 @@ const buildFieldTableChildNodes = (
             p_id: parent.n_id || 0,
             title: item.title,
             text: "",
+            ref_type: HLD_SDS_LOCK_REF,
             table: converted as TreeNode["table"],
             children: [],
         } as TreeNode;
@@ -542,6 +546,7 @@ const mergeInterfaceDetails = (tree: TreeNode[], details: HldSdsSyncPayload["int
                 p_id: node.n_id || 0,
                 title: /^导入表格\d*$/.test(rawTitle) ? rawTitle : `导入表格${index + 1}`,
                 text: "",
+                ref_type: HLD_SDS_LOCK_REF,
                 table: item.table,
                 children: [],
             } as TreeNode;
@@ -550,6 +555,7 @@ const mergeInterfaceDetails = (tree: TreeNode[], details: HldSdsSyncPayload["int
         return {
             ...node,
             text: detail.text || node.text,
+            ref_type: HLD_SDS_LOCK_REF,
             children: [...kept, ...tableChildren],
         };
     });
@@ -599,6 +605,7 @@ export const splitHldInternalInterfaces = (tree: TreeNode[]): { nodes: TreeNode[
         p_id: internal.n_id || 0,
         title: `3.3.${index + 1} ${name}`,
         text: bodies[index] || "",
+        ref_type: HLD_SDS_LOCK_REF,
         table: {},
         children: [],
     })) as TreeNode[];

@@ -1,5 +1,5 @@
 import "./TreeStructure.less";
-import { useState, useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useState, useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { Button, Input, Space, Popconfirm, Upload, Table, message, Empty, Tooltip, Image } from "antd";
 import { PlusOutlined, DeleteOutlined, TableOutlined, EditOutlined, UploadOutlined, FileOutlined, CaretRightOutlined, CaretDownOutlined, CloseOutlined } from "@ant-design/icons";
 import { numberToChinese } from "@/common";
@@ -36,6 +36,37 @@ export interface TreeNode {
     text?: string;
     table?: TableData | null; // 允许空对象/ null 表示无表格数据
     children: TreeNode[];
+}
+
+/** 概要设计：从详细设计同步写入的 3.3.x / 4.1.x，正文与表格只读（对齐运行环境） */
+export const HLD_SDS_LOCK_REF = "hld_sds_lock";
+
+export function isHldSdsLockedNode(node?: TreeNode | { ref_type?: string; title?: string; children?: TreeNode[] } | null): boolean {
+    if (!node) return false;
+    if (String(node.ref_type || "") === HLD_SDS_LOCK_REF) return true;
+    // 已同步的 3.3.x：挂有「导入表格」参数表时，整章正文/表只读（兼容同步前未打标的旧数据）
+    const compact = String(node.title || "").replace(/\s+/g, "").replace(/[．、]/g, ".");
+    if (/^3\.3\.\d+/.test(compact)) {
+        const kids = (node as TreeNode).children || [];
+        if (kids.some((child) => /^导入表格\d*$/.test(String(child.title || "").trim()) && hasRenderableTable(child.table))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/** 带 hld_sds_lock / 已同步 3.3.x 的节点及其子孙：正文/表格只读 */
+export function collectHldSdsLockedContentIds(nodes: TreeNode[]): Set<string> {
+    const ids = new Set<string>();
+    const walk = (list: TreeNode[], under: boolean) => {
+        for (const n of list || []) {
+            const locked = under || isHldSdsLockedNode(n);
+            if (locked && n?.id != null) ids.add(String(n.id));
+            walk((n.children || []) as TreeNode[], locked);
+        }
+    };
+    walk(nodes || [], false);
+    return ids;
 }
 
 const SDS_REF_TYPE_LABEL_KEYS: Record<string, string> = {
@@ -112,6 +143,8 @@ interface TreeNodeItemProps {
     lockRuntimeEnv?: boolean;
     /** 运行环境章节及子孙 node.id（正文/表格只读） */
     runtimeLockedIds?: Set<string>;
+    /** 从详细设计同步写入的节点及子孙 id（正文/表格只读） */
+    sdsSyncLockedIds?: Set<string>;
     /** 详细设计：接口章始终拆「输入 | 表/图 | 输出」，便于在中间插入表或图 */
     splitInterfaceIO?: boolean;
 }
@@ -224,6 +257,17 @@ function isEmbeddedTableNode(node: TreeNode): boolean {
     const hasTable = hasRenderableTable(node.table);
     const noExtra = !node.img_url && !String(node.text || "").trim() && (!node.children || node.children.length === 0);
     return /^导入表格\d*$/.test(title) && hasTable && noExtra;
+}
+
+/** 内嵌「导入表格N」优先用 table.name / label 作可编辑表名，避免改 title 后从章节内嵌区消失 */
+function resolveEditableTableCaption(node: TreeNode): string {
+    const fromName = String(node.table?.name || "").trim();
+    if (fromName && !isSyntheticTableCaption(fromName)) return fromName;
+    const fromLabel = String(node.label || "").trim();
+    if (fromLabel && !isSyntheticTableCaption(fromLabel) && !isJsonLikeKeyValueLine(fromLabel)) return fromLabel;
+    const fromTitle = String(node.title || "").trim();
+    if (fromTitle && !isSyntheticTableCaption(fromTitle) && !isSystemPlaceholderTitle(fromTitle)) return fromTitle;
+    return fromName || "";
 }
 
 function isGlossaryTable(table?: { headers?: Array<{ name?: string }> } | null): boolean {
@@ -801,7 +845,7 @@ function ChapterBodyTextArea(props: React.ComponentProps<typeof Input.TextArea>)
     );
 }
 
-const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onSdsCodeChange, onImageChange, onAttachProgramLogicImage, pendingProgramLogicCaption = "", onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onEditExtraTable, onDeleteExtraTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, uploadDocFile, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [], useNavChapterEditor = false, autoNavChapterNo = "", lockScopeChapter = false, lockRuntimeEnv = false, runtimeLockedIds, splitInterfaceIO = false }: TreeNodeItemProps) => {
+const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onSdsCodeChange, onImageChange, onAttachProgramLogicImage, pendingProgramLogicCaption = "", onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onEditExtraTable, onDeleteExtraTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, uploadDocFile, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [], useNavChapterEditor = false, autoNavChapterNo = "", lockScopeChapter = false, lockRuntimeEnv = false, runtimeLockedIds, sdsSyncLockedIds, splitInterfaceIO = false }: TreeNodeItemProps) => {
     const { t: ts } = useTranslation();
     const [fileList, setFileList] = useState<UploadFile[]>([]);
     const [uploadLoading, setUploadLoading] = useState(false);
@@ -1025,12 +1069,16 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const runtimeSectionLocked = !!lockRuntimeEnv && isRuntimeEnvSection(node);
     const runtimeTableLocked = !!lockRuntimeEnv && isRuntimeTableNode(node);
     const runtimeDescendantLocked = !!lockRuntimeEnv && !!runtimeLockedIds?.has(String(node.id));
-    const runtimeContentLocked = runtimeSectionLocked || runtimeTableLocked || runtimeDescendantLocked;
+    const sdsSyncContentLocked = isHldSdsLockedNode(node) || !!sdsSyncLockedIds?.has(String(node.id));
+    // 运行环境自动获取 + 从详细设计同步写入：正文/表格只读（章节标题仍可改）
+    const runtimeContentLocked = runtimeSectionLocked || runtimeTableLocked || runtimeDescendantLocked || sdsSyncContentLocked;
     const isChildRuntimeLocked = (child: TreeNode) =>
-        !!lockRuntimeEnv && (
+        (!!lockRuntimeEnv && (
             isRuntimeTableNode(child)
             || !!runtimeLockedIds?.has(String(child.id))
-        );
+        ))
+        || isHldSdsLockedNode(child)
+        || !!sdsSyncLockedIds?.has(String(child.id));
     const safeNodeLabel = isJsonLikeKeyValueLine(node.label) ? "" : String(node.label || "").trim();
     const normalizedTitle = title.replace(/^[\s\u3000•·▪■◆●○□◇\-–—]+/, "").trim();
     const chapterMatch = normalizedTitle.match(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))?(.*)$/);
@@ -1401,6 +1449,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         readOnly ? (isInterfaceSubSection || isSdsInterfaceChapter) : isNavInterfaceLayoutCandidate
     ));
     const anchoredInlineTables = (() => {
+        // 详细设计接口章：表放在输入/输出之后，不插在中间
+        if (useInterfaceInlineSplit && splitInterfaceIO) return [];
         if (useInterfaceInlineSplit) {
             return readOnly ? inlineTableChildren : navInlineTableChildren;
         }
@@ -1410,6 +1460,9 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     })();
     const middleAnchoredInlineTables = (complianceTcpSplit || chapter7TableSplit) ? complianceSplitTables.slice(1, 2) : [];
     const trailingInlineTables = (() => {
+        if (useInterfaceInlineSplit && splitInterfaceIO) {
+            return readOnly ? inlineTableChildren : navInlineTableChildren;
+        }
         if (useInterfaceInlineSplit) return [];
         if (complianceTcpSplit) return complianceSplitTables.slice(2);
         if (chapter7TableSplit) return complianceSplitTables.slice(2);
@@ -1451,10 +1504,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const showComplianceInlineInEdit = isNavEditComplianceCandidate && !!chapter7TableSplit;
     const showInterfaceInlineInEdit = isNavInterfaceLayoutCandidate && !!interfaceOutputSplit;
     const showSplitInlineInEdit = showComplianceInlineInEdit || showInterfaceInlineInEdit;
-    /** 详细设计接口章：图放在输入与输出之间（与表同一中间区） */
-    const interfaceMiddleFigures = (showInterfaceInlineInEdit && splitInterfaceIO)
+    /** 详细设计接口章：图在输入上方；表在输入/输出下方 */
+    const interfaceTopFigures = (showInterfaceInlineInEdit && splitInterfaceIO)
         ? navEmbeddedFigureChildren
         : [];
+    const showInterfaceTopImageSlot = !!(showInterfaceInlineInEdit && splitInterfaceIO);
     const chapterMajorNo = (() => {
         const hints = [displayChapterFromDoc, chapterNo, effectiveChapter, title].map((v) => String(v || "").trim());
         for (const hint of hints) {
@@ -1593,16 +1647,68 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
             /设计与需求追溯/.test(`${titleWithoutChapter || ""}${title || ""}`)
                 ? ""
                 : (
-                    tableCaptionFromParent
-                    || stripChapterPrefixForTableCaption(safeNodeLabel)
-                    || (isLikelyTableCaptionLine(titleWithoutChapter || title) ? stripChapterPrefixForTableCaption(titleWithoutChapter || title) : "")
-                    || pickEditableTableCaption(node.text)
+                    // 编辑态优先用节点 title / table.name，避免绑到 label/正文导致输入框改不动
+                    (isLikelyTableCaptionLine(titleWithoutChapter || title)
+                        ? stripChapterPrefixForTableCaption(titleWithoutChapter || title)
+                        : "")
                     || normalizeInlineTableCaption(node.table?.name)
+                    || stripChapterPrefixForTableCaption(safeNodeLabel)
+                    || tableCaptionFromParent
+                    || pickEditableTableCaption(node.text)
                     || ""
                 )
         )
         : "";
     const sanitizedEditTableCaption = isSyntheticTableCaption(editFinalTableCaption) ? "" : editFinalTableCaption;
+    const editableOwnTableName = String(
+        resolveEditableTableCaption(node)
+        || (isLikelyTableCaptionLine(titleWithoutChapter || title)
+            ? stripChapterPrefixForTableCaption(titleWithoutChapter || title)
+            : "")
+        || normalizeInlineTableCaption(node.table?.name)
+        || sanitizedEditTableCaption
+        || "",
+    );
+    const editFigureCaptionNodeId = navEmbeddedFigureChild?.id || navEmbeddedDocImageChild?.id || undefined;
+    /** 编辑态表名/图题可改；只读仍纯文本。运行环境锁定时不可改。 */
+    const renderNameEditor = (
+        value: string,
+        targetId?: number | null,
+        opts?: { placeholder?: string; style?: CSSProperties; forceShow?: boolean },
+    ) => {
+        const text = String(value || "");
+        const trimmed = text.trim();
+        if (readOnly || runtimeContentLocked) {
+            return trimmed ? (
+                <div className="node-image-caption" style={{ textAlign: "center", marginBottom: 6, lineHeight: 1.5, ...(opts?.style || {}) }}>
+                    {trimmed}
+                </div>
+            ) : null;
+        }
+        if (!targetId) {
+            return trimmed ? (
+                <div className="node-image-caption" style={{ textAlign: "center", marginBottom: 6, lineHeight: 1.5, ...(opts?.style || {}) }}>
+                    {trimmed}
+                </div>
+            ) : null;
+        }
+        if (!opts?.forceShow && !trimmed) return null;
+        return (
+            <Input
+                className="node-caption-input"
+                size="small"
+                value={text}
+                onChange={(e) => onTitleChange(targetId, e.target.value)}
+                placeholder={opts?.placeholder || "请输入名称"}
+                style={{
+                    textAlign: "center",
+                    marginBottom: 6,
+                    maxWidth: "100%",
+                    ...(opts?.style || {}),
+                }}
+            />
+        );
+    };
     const hasTableBody = !!(
         hasTable
         || anchoredInlineTables.length > 0
@@ -1655,17 +1761,21 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const hasCaptionInBefore = /^图\s*\d+/m.test(String(displayTextBeforeTable || ""));
     const hasCaptionInBetween = /^图\s*\d+/m.test(String(displayTextBetweenTables || ""));
     const hasCaptionInAfter = /^图\s*\d+/m.test(String(displayTextAfterTable || ""));
-    const inlineImageUrlForBefore = hasInlineImageSplit
-        ? (hasCaptionInBefore ? inlineImageUrlForText : "")
-        : inlineImageUrlForText;
+    const inlineImageUrlForBefore = (showInterfaceTopImageSlot)
+        ? ""
+        : (hasInlineImageSplit
+            ? (hasCaptionInBefore ? inlineImageUrlForText : "")
+            : inlineImageUrlForText);
     const inlineImageUrlForBetween = hasInlineImageSplit
         ? (!hasCaptionInBefore && hasCaptionInBetween ? inlineImageUrlForText : "")
         : "";
-    const inlineImageUrlForAfter = hasInlineImageSplit
-        ? ((!hasCaptionInBefore && !hasCaptionInBetween && hasCaptionInAfter) || (!hasCaptionInBefore && !hasCaptionInBetween && !hasCaptionInAfter)
-            ? inlineImageUrlForText
-            : "")
-        : "";
+    const inlineImageUrlForAfter = (showInterfaceTopImageSlot)
+        ? ""
+        : (hasInlineImageSplit
+            ? ((!hasCaptionInBefore && !hasCaptionInBetween && hasCaptionInAfter) || (!hasCaptionInBefore && !hasCaptionInBetween && !hasCaptionInAfter)
+                ? inlineImageUrlForText
+                : "")
+            : "");
     const displayImageCaption = (() => {
         if (!readOnly || !displayImageUrl) return "";
         const candidates = [preferredFlowImageChild, embeddedImageChild, firstImageChild, node];
@@ -1888,9 +1998,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                   preview={true}
                               />
                           </div>
-                          {editFigureCaption ? (
-                              <div className="node-image-caption" style={{ textAlign: "center", marginTop: 6, lineHeight: 1.5 }}>{editFigureCaption}</div>
-                          ) : null}
+                          {renderNameEditor(editFigureCaption, editFigureCaptionNodeId, { placeholder: "请输入图题", style: { marginTop: 6 }, forceShow: !!editFigureCaptionNodeId })}
                       </div>
                   )}
                   {isDocImageRefType(node.ref_type) && !readOnly && imageChildrenAll.length === 0 && !hasDisplayImage && (
@@ -2100,6 +2208,76 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
               </div>
               )}
 
+              {showExpandedBody && showInterfaceTopImageSlot && (
+                  <div className="node-row node-row-follow node-row-content-below">
+                      <span className="node-expand-placeholder" />
+                      <div className="node-content-below-title">
+                          {interfaceTopFigures.length > 0 ? interfaceTopFigures.map((child) => (
+                              <div key={`iface-top-figure-${child.id}`} className={`node-pic-block node-pic-block--figure-list${!isAutoOnlyImage ? " node-pic-block--reupload-side" : ""}`}>
+                                  <div className="node-pic-reupload-row">
+                                      <div className="node-pic-reupload-figure">
+                                          {String(child.img_url || "").trim() ? (
+                                              <div className="node-pic node-pic-readonly node-pic-inline">
+                                                  <Image
+                                                      src={resolveImageSrc(String(child.img_url || ""))}
+                                                      alt={String(child.title || "image")}
+                                                      preview={true}
+                                                  />
+                                              </div>
+                                          ) : (
+                                              <div className="node-pic node-pic-readonly node-pic-inline node-pic-logic-placeholder" />
+                                          )}
+                                          {renderNameEditor(String(child.title || ""), child.id, { placeholder: "请输入图题", forceShow: true })}
+                                      </div>
+                                      {!readOnly && !isAutoOnlyImage ? (
+                                          <Upload
+                                              maxCount={1}
+                                              showUploadList={false}
+                                              accept="image/*"
+                                              disabled={uploadLoading}
+                                              beforeUpload={(file) => {
+                                                  void uploadImageTo(file, child.id);
+                                                  return false;
+                                              }}
+                                          >
+                                              <Button size="small" icon={<UploadOutlined />}>
+                                                  {String(child.img_url || "").trim() ? "重新上传" : "上传图"}
+                                              </Button>
+                                          </Upload>
+                                      ) : null}
+                                  </div>
+                              </div>
+                          )) : (
+                              <div className={`node-pic-block ${navEmbeddedImageBlockClass}${!isAutoOnlyImage ? " node-pic-block--reupload-side" : ""}`}>
+                                  <div className="node-pic-reupload-row">
+                                      <div className="node-pic-reupload-figure">
+                                          {displayImageUrl ? (
+                                              <div className="node-pic node-pic-readonly node-pic-inline">
+                                                  <Image
+                                                      src={resolveImageSrc(displayImageUrl)}
+                                                      alt={editFigureCaption || displayTitle || "image"}
+                                                      preview={true}
+                                                  />
+                                              </div>
+                                          ) : (
+                                              <div className="node-pic node-pic-readonly node-pic-inline node-pic-logic-placeholder" />
+                                          )}
+                                          {renderNameEditor(editFigureCaption, editFigureCaptionNodeId, { placeholder: "请输入图题", forceShow: !!editFigureCaptionNodeId || !!displayImageUrl })}
+                                      </div>
+                                      {!readOnly && !isAutoOnlyImage ? (
+                                          <Upload {...uploadProps}>
+                                              <Button size="small" icon={<UploadOutlined />}>
+                                                  {displayImageUrl ? "重新上传" : "上传图"}
+                                              </Button>
+                                          </Upload>
+                                      ) : null}
+                                  </div>
+                              </div>
+                          )}
+                      </div>
+                  </div>
+              )}
+
               {showExpandedBody && stackContentBelowTitle && (
                   <div className="node-row node-row-follow node-row-content-below">
                       <span className="node-expand-placeholder" />
@@ -2128,6 +2306,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       size="small"
                                       rows={1}
                                       autoSize={{ minRows: 1, maxRows: 20 }}
+                                      disabled={scopeChapterLocked || runtimeContentLocked}
                                   />
                               ) : (
                               <ChapterBodyTextArea
@@ -2165,11 +2344,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                               ) : (
                                                   <div className="node-pic node-pic-readonly node-pic-inline node-pic-logic-placeholder" />
                                               )}
-                                              {programLogicCaption ? (
-                                                  <div className="node-image-caption">{programLogicCaption}</div>
-                                              ) : (editFigureCaption && displayImageUrl) ? (
-                                                  <div className="node-image-caption">{editFigureCaption}</div>
-                                              ) : null}
+                                              {renderNameEditor(
+                                                  programLogicCaption || editFigureCaption,
+                                                  editFigureCaptionNodeId,
+                                                  { placeholder: "请输入图题", forceShow: !!editFigureCaptionNodeId || !!displayImageUrl || !!programLogicSplit },
+                                              )}
                                           </div>
                                           {!isAutoOnlyImage ? (
                                               <Upload {...uploadProps}>
@@ -2193,6 +2372,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       size="small"
                                       rows={1}
                                       autoSize={{ minRows: 1, maxRows: 20 }}
+                                      disabled={scopeChapterLocked || runtimeContentLocked}
                                   />
                               ) : null}
                               {!navImageInHeaderRow && isNavSingleChapterEdit && !showSplitInlineInEdit && !navFullSizeImageMode && displayImageUrl && (
@@ -2250,20 +2430,17 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   </div>
               )}
               
-              {/* 显示表格数据（ref_type 节点不展示表格） */}
-              {showExpandedBody && hasTable && !hideMisplacedReviewTable && !isDocImageRefType(node.ref_type) && node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces' && (
+              {/* 显示表格数据（ref_type 节点不展示表格；接口章本节点表放到输入/输出之后） */}
+              {showExpandedBody && hasTable && !showInterfaceTopImageSlot && !hideMisplacedReviewTable && !isDocImageRefType(node.ref_type) && node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces' && (
                   wrapReadOnlyAlignedTable(
                   <div className={`node-table${flushOwnTableTop ? " node-table--flush-top" : ""}${isInterfaceListTable(node) ? " node-table--fit-window" : ""}`}>
-                      {!readOnly && !!sanitizedEditTableCaption && (
-                          <div className="node-content" style={{ marginBottom: 8, textAlign: "center", fontSize: 13, fontWeight: 400 }}>
-                              {sanitizedEditTableCaption}
-                          </div>
-                      )}
-                      {readOnly && !!sanitizedFinalTableCaption && (
+                      {!readOnly
+                          ? renderNameEditor(editableOwnTableName, node.id, { placeholder: "请输入表名", forceShow: hasTable, style: { marginBottom: 8, fontSize: 13 } })
+                          : (!!sanitizedFinalTableCaption && (
                           <div className="node-content" style={{ marginBottom: 8, textAlign: "center", fontSize: 13, fontWeight: 400 }}>
                               {sanitizedFinalTableCaption}
                           </div>
-                      )}
+                      ))}
                       <div className="node-table-header">
                           <div className="node-table-scroll">
                           {isReviewContentTable(node.table) && node.table
@@ -2366,11 +2543,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           className={`node-table node-table--fit-window${flushFirstInlineTableTop && idx === 0 ? " node-table--flush-top" : ""}`}
                           key={`anchored-inline-table-${child.id}-${idx}`}
                       >
-                          {!!sanitizedCaption && (
-                              <div className="node-content" style={{ marginBottom: 8, textAlign: "center", fontSize: 13, fontWeight: 400 }}>
-                                  {sanitizedCaption}
-                              </div>
-                          )}
+                          {renderNameEditor(resolveEditableTableCaption(child) || sanitizedCaption, child.id, { placeholder: "请输入表名", forceShow: !readOnly, style: { marginBottom: 8, fontSize: 13 } })}
                           <div className="node-table-header">
                               <div className="node-table-scroll">
                                   <Table
@@ -2432,6 +2605,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       size="small"
                                       rows={1}
                                       autoSize={{ minRows: 1, maxRows: 20 }}
+                                      disabled={scopeChapterLocked || runtimeContentLocked}
                                   />
                               </div>
                           </div>
@@ -2445,6 +2619,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                   size="small"
                                   rows={1}
                                   autoSize={{ minRows: 1, maxRows: 6 }}
+                                  disabled={scopeChapterLocked || runtimeContentLocked}
                               />
                       )
                   )
@@ -2463,11 +2638,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           className="node-table"
                           key={`middle-inline-table-${child.id}-${idx}`}
                       >
-                          {!!sanitizedCaption && (
-                              <div className="node-content" style={{ marginBottom: 8, textAlign: "center", fontSize: 13, fontWeight: 400 }}>
-                                  {sanitizedCaption}
-                              </div>
-                          )}
+                          {renderNameEditor(resolveEditableTableCaption(child) || sanitizedCaption, child.id, { placeholder: "请输入表名", forceShow: !readOnly, style: { marginBottom: 8, fontSize: 13 } })}
                           <div className="node-table-header">
                               <div className="node-table-scroll">
                                   <Table
@@ -2505,44 +2676,6 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                       </div>
                   ), `aligned-middle-inline-table-${child.id}-${idx}`);
               })}
-              {showExpandedBody && interfaceMiddleFigures.map((child) => (
-                  <div key={`iface-middle-figure-${child.id}`} className={`node-pic-block node-pic-block--figure-list${!isAutoOnlyImage ? " node-pic-block--reupload-side" : ""}`}>
-                      <div className="node-pic-reupload-row">
-                          <div className="node-pic-reupload-figure">
-                              {String(child.img_url || "").trim() ? (
-                                  <div className="node-pic node-pic-readonly node-pic-inline">
-                                      <Image
-                                          src={resolveImageSrc(String(child.img_url || ""))}
-                                          alt={String(child.title || "image")}
-                                          preview={true}
-                                      />
-                                  </div>
-                              ) : (
-                                  <div className="node-pic node-pic-readonly node-pic-inline node-pic-logic-placeholder" />
-                              )}
-                              {String(child.title || "").trim() ? (
-                                  <div className="node-image-caption">{String(child.title || "").trim()}</div>
-                              ) : null}
-                          </div>
-                          {!isAutoOnlyImage ? (
-                              <Upload
-                                  maxCount={1}
-                                  showUploadList={false}
-                                  accept="image/*"
-                                  disabled={uploadLoading}
-                                  beforeUpload={(file) => {
-                                      void uploadImageTo(file, child.id);
-                                      return false;
-                                  }}
-                              >
-                                  <Button size="small" icon={<UploadOutlined />}>
-                                      {String(child.img_url || "").trim() ? "重新上传" : "上传图"}
-                                  </Button>
-                              </Upload>
-                          ) : null}
-                      </div>
-                  </div>
-              ))}
               {showExpandedBody && ((readOnly && !!String(displayTextAfterTable || "").trim()) || (showSplitInlineInEdit && !!String(editTextAfterTable || "").trim())) && (
                   (readOnly && alignSplitTailWithNodeRow) ? (
                       <div className="node-row node-row-follow">
@@ -2567,6 +2700,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       size="small"
                                       rows={1}
                                       autoSize={{ minRows: 1, maxRows: 20 }}
+                                      disabled={scopeChapterLocked || runtimeContentLocked}
                                   />
                               </div>
                           </div>
@@ -2580,8 +2714,45 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                   size="small"
                                   rows={1}
                                   autoSize={{ minRows: 1, maxRows: 6 }}
+                                  disabled={scopeChapterLocked || runtimeContentLocked}
                               />
                       )
+                  )
+              )}
+              {showExpandedBody && showInterfaceTopImageSlot && hasTable && !hideMisplacedReviewTable && !isDocImageRefType(node.ref_type) && node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces' && (
+                  wrapReadOnlyAlignedTable(
+                  <div className={`node-table node-table--fit-window${flushOwnTableTop ? " node-table--flush-top" : ""}`}>
+                      {renderNameEditor(editableOwnTableName, node.id, { placeholder: "请输入表名", forceShow: hasTable, style: { marginBottom: 8, fontSize: 13 } })}
+                      <div className="node-table-header">
+                          <div className="node-table-scroll">
+                              <Table
+                                  columns={buildTableColumns(node.table)}
+                                  dataSource={buildTableDataSource(node.table)}
+                                  pagination={false}
+                                  size="small"
+                                  bordered
+                                  tableLayout="fixed"
+                              />
+                          </div>
+                          {!readOnly && !runtimeContentLocked && (
+                              <Space className="node-table-actions" size={8}>
+                                  <Button size="small" icon={<EditOutlined />} onClick={() => onEditTable(node.id)}>
+                                      {ts('edit')}
+                                  </Button>
+                                  <Popconfirm
+                                      title={ts('srs_doc.confirm_delete_table')}
+                                      onConfirm={() => onDeleteTable(node.id)}
+                                      okText={ts('confirm')}
+                                      cancelText={ts('cancel')}>
+                                      <Button size="small" danger icon={<DeleteOutlined />}>
+                                          {ts('delete')}
+                                      </Button>
+                                  </Popconfirm>
+                              </Space>
+                          )}
+                      </div>
+                  </div>,
+                  `iface-own-table-${node.id}`
                   )
               )}
               {showExpandedBody && (readOnly || showSplitInlineInEdit) && trailingInlineTables.map((child, idx) => {
@@ -2595,14 +2766,10 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   const sanitizedCaption = isSyntheticTableCaption(caption) ? "" : caption;
                   return wrapReadOnlyAlignedTable((
                       <div
-                          className={`node-table${flushFirstInlineTableTop && idx === 0 ? " node-table--flush-top" : ""}`}
+                          className={`node-table node-table--fit-window${flushFirstInlineTableTop && idx === 0 ? " node-table--flush-top" : ""}`}
                           key={`inline-table-${child.id}-${idx}`}
                       >
-                          {!!sanitizedCaption && (
-                              <div className="node-content" style={{ marginBottom: 8, textAlign: "center", fontSize: 13, fontWeight: 400 }}>
-                                  {sanitizedCaption}
-                              </div>
-                          )}
+                          {renderNameEditor(resolveEditableTableCaption(child) || sanitizedCaption, child.id, { placeholder: "请输入表名", forceShow: !readOnly, style: { marginBottom: 8, fontSize: 13 } })}
                           <div className="node-table-header">
                               <div className="node-table-scroll">
                                   <Table
@@ -2641,11 +2808,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   ), `aligned-inline-table-${child.id}-${idx}`);
               })}
           </div>
-            {showExpandedBody && showSplitInlineInEdit && !(showInterfaceInlineInEdit && splitInterfaceIO && interfaceMiddleFigures.length > 0) && navFullSizeImageMode && displayImageUrl && (
+            {showExpandedBody && showSplitInlineInEdit && !showInterfaceTopImageSlot && navFullSizeImageMode && displayImageUrl && (
                 <div className="node-row node-row-follow node-row-content-below">
                     <span className="node-expand-placeholder" />
                     <div className="node-content-below-title">
-                        <div className={`node-pic-block ${navEmbeddedImageBlockClass}${showInterfaceInlineInEdit && !isAutoOnlyImage ? " node-pic-block--reupload-side" : ""}`}>
+                        <div className={`node-pic-block ${navEmbeddedImageBlockClass}${!isAutoOnlyImage ? " node-pic-block--reupload-side" : ""}`}>
                             <div className="node-pic-reupload-row">
                                 <div className="node-pic-reupload-figure">
                                     <div className="node-pic node-pic-readonly node-pic-inline">
@@ -2655,11 +2822,9 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                             preview={true}
                                         />
                                     </div>
-                                    {editFigureCaption ? (
-                                        <div className="node-image-caption">{editFigureCaption}</div>
-                                    ) : null}
+                                    {renderNameEditor(editFigureCaption, editFigureCaptionNodeId, { placeholder: "请输入图题", forceShow: !!editFigureCaptionNodeId || !!displayImageUrl })}
                                 </div>
-                                {showInterfaceInlineInEdit && !isAutoOnlyImage ? (
+                                {!isAutoOnlyImage ? (
                                     <Upload {...uploadProps}>
                                         <Button size="small" icon={<UploadOutlined />}>
                                             {displayImageUrl ? "重新上传" : "上传图"}
@@ -2725,16 +2890,13 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                 return (
                 <div key={`nav-inline-table-${child.id}`} className="node-table" style={{ marginTop: idx === 0 ? 8 : 12 }}>
                     {manyInlineTables ? (
-                        <div
-                            className="node-image-caption"
-                            style={{ textAlign: "left", cursor: "pointer", marginBottom: 6, lineHeight: 1.5 }}
-                            onClick={() => setOpenInlineTableId(null)}
-                        >
-                            {tableCaption || storedCaption}
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                            {renderNameEditor(resolveEditableTableCaption(child) || tableCaption || storedCaption, child.id, { placeholder: "请输入表名", forceShow: true, style: { textAlign: "left", marginBottom: 0, flex: 1 } })}
+                            <Button size="small" type="link" onClick={() => setOpenInlineTableId(null)}>收起</Button>
                         </div>
-                    ) : (showStoredCaption ? (
-                        <div className="node-image-caption" style={{ textAlign: "center", marginBottom: 6, lineHeight: 1.5 }}>{storedCaption}</div>
-                    ) : null)}
+                    ) : (showStoredCaption || !readOnly) ? (
+                        renderNameEditor(resolveEditableTableCaption(child) || storedCaption, child.id, { placeholder: "请输入表名", forceShow: !readOnly })
+                    ) : null}
                     <div className="node-table-scroll">
                         <Table
                             columns={buildTableColumns(child.table)}
@@ -2778,9 +2940,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                     preview={true}
                                 />
                             </div>
-                            {String(child.title || "").trim() ? (
-                                <div className="node-image-caption">{String(child.title || "").trim()}</div>
-                            ) : null}
+                            {renderNameEditor(String(child.title || ""), child.id, { placeholder: "请输入图题", forceShow: true })}
                         </div>
                         {!isAutoOnlyImage ? (
                             <Upload
@@ -2853,6 +3013,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         lockScopeChapter={lockScopeChapter}
                         lockRuntimeEnv={lockRuntimeEnv}
                         runtimeLockedIds={runtimeLockedIds}
+                        sdsSyncLockedIds={sdsSyncLockedIds}
                         splitInterfaceIO={splitInterfaceIO}
                         captionFromParent={childCaptionById.get(String(child.id)) || childCaptionById.get(String(child.n_id || ""))}
                         tableCaptionFromParent={
@@ -3129,10 +3290,25 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
     };
 
     const handleTitleChange = (id: number, title: string) => {
-        const newNodes = findNodeAndUpdate(nodes, id, (node) => ({
-            ...node,
-            title
-        }));
+        const newNodes = findNodeAndUpdate(nodes, id, (node) => {
+            // 同步来的内嵌「导入表格N」：只改显示名，保留结构标题，避免从章节正文内嵌区消失
+            if (isEmbeddedTableNode(node) || /^导入表格\d*$/.test(String(node.title || "").trim())) {
+                return {
+                    ...node,
+                    label: title,
+                    table: node.table ? { ...node.table, name: title } : { name: title },
+                };
+            }
+            const next: TreeNode = { ...node, title };
+            // 字段表等：表名写在 title，同步 table.name / 同名 label，导出与输入框一致
+            if (node.table && (hasRenderableTable(node.table) || String(node.table.name || "").trim() || isLikelyTableCaptionLine(title))) {
+                next.table = { ...node.table, name: title };
+            }
+            if (isLikelyTableCaptionLine(String(node.label || "").trim()) || isLikelyTableCaptionLine(title)) {
+                next.label = title;
+            }
+            return next;
+        });
         updateNodes(newNodes);
     };
 
@@ -3346,7 +3522,8 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
 
         const targetNode = findNode(nodes, id);
         if (!targetNode || !targetNode.table) return;
-    
+        if (isHldSdsLockedNode(targetNode) || sdsSyncLockedIds.has(String(id))) return;
+
         // 适配新的表头结构：将字符串表头/带code的表头转换为 TableHeaderItem 数组
         const headers = (targetNode.table.headers || []).map(header => {
             // 兼容旧数据（字符串表头）和新数据（{code, name} 表头）
@@ -3370,9 +3547,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
             data: rows.map(row =>
                 headers.map(header => row[header.code] || '')
             ),
-            tableName: stripChapterPrefixForTableCaption(
-                String(targetNode.label || "").trim() || String(targetNode.title || "").trim() || ""
-            ),
+            tableName: stripChapterPrefixForTableCaption(resolveEditableTableCaption(targetNode)),
         };
 
         setCurrentNodeId(id);
@@ -3521,13 +3696,28 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
             }
         }
 
-        const newNodes = findNodeAndUpdate(nodes, currentNodeId, (node) => ({
-            ...node,
-            label: stripChapterPrefixForTableCaption(String(tableData.tableName || '').trim()),
-            table: tableFormat && Object.keys(tableFormat).length > 0
-                ? { ...tableFormat, extra_tables: node.table?.extra_tables }
-                : tableFormat
-        }));
+        const captionName = stripChapterPrefixForTableCaption(String(tableData.tableName || "").trim());
+        const newNodes = findNodeAndUpdate(nodes, currentNodeId, (node) => {
+            const keepImportTitle = /^导入表格\d*$/.test(String(node.title || "").trim());
+            const nextTable = tableFormat && Object.keys(tableFormat).length > 0
+                ? {
+                    ...tableFormat,
+                    name: captionName || String(node.table?.name || "").trim() || undefined,
+                    extra_tables: node.table?.extra_tables,
+                }
+                : tableFormat;
+            if (keepImportTitle) {
+                return { ...node, label: captionName || node.label, table: nextTable };
+            }
+            const titleIsCaption = isLikelyTableCaptionLine(String(node.title || "").trim())
+                || isNavDbFieldTableNode(node);
+            return {
+                ...node,
+                ...(captionName && titleIsCaption ? { title: captionName } : {}),
+                label: captionName || node.label,
+                table: nextTable,
+            };
+        });
         updateNodes(newNodes);
         setTableCellsBackup(undefined);
     };
@@ -3543,6 +3733,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
     };
     const visibleNodes = getVisibleNodes(nodes);
     const runtimeLockedIds = lockRuntimeEnv ? collectRuntimeLockedContentIds(nodes) : undefined;
+    const sdsSyncLockedIds = collectHldSdsLockedContentIds(nodes);
     const effectiveReadOnlyChapterOffset = (() => {
         if (!readOnly) return 0;
         const majorFromTitle = (title?: string): number => {
@@ -3723,6 +3914,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                 lockScopeChapter,
                 lockRuntimeEnv,
                 runtimeLockedIds,
+                sdsSyncLockedIds,
                 splitInterfaceIO,
             };
             return readOnly && !readOnlyRootWrapper ? (
@@ -3803,6 +3995,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                                             lockScopeChapter={lockScopeChapter}
                                             lockRuntimeEnv={lockRuntimeEnv}
                                             runtimeLockedIds={runtimeLockedIds}
+                                            sdsSyncLockedIds={sdsSyncLockedIds}
                                             splitInterfaceIO={splitInterfaceIO}
                                             onAdd={handleAdd}
                                             onAddSibling={handleAddSibling}

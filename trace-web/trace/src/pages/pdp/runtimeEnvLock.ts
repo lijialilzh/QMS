@@ -19,20 +19,27 @@ export function isRuntimeEnvSection(node: any): boolean {
 export function isRuntimeTableNode(node: any): boolean {
     if (TABLE_REFS.has(String(node?.ref_type || ""))) return true;
     if (isRuntimeEnvSection(node)) return false;
+    // 详细设计同步来的字段表 / 接口内嵌表，不按运行环境只读
+    const title = String(node?.title || "").trim();
+    if (/^导入表格\d*$/.test(title)) return false;
+    const h0 = String(node?.table?.headers?.[0]?.name || "").replace(/\s+/g, "");
+    if (h0 === "字段ID" || h0 === "FieldID" || h0 === "Name") return false;
     const t = String(node?.title || "");
     const plain = stripRuntimeTitle(t);
     if (t.includes("确认运行环境") || plain.includes("确认运行环境")) return false;
     const tableName = String(node?.table?.name || "");
-    if (/表\s*[1-4]/.test(tableName) && /(硬件|软件|用户端|网络)/.test(tableName)) return true;
+    const isRuntimeTableCaption = (s: string) =>
+        /表\s*[1-4]/.test(s) && /(硬件|软件|用户端|网络)/.test(s);
+    // 须同时带「表1~4」与硬件/软件/用户端/网络语义，避免同步库表/接口表被误锁
+    if (isRuntimeTableCaption(tableName) || isRuntimeTableCaption(t)) return true;
     return (
-        /表\s*[1-4]/.test(t) ||
         plain.startsWith("服务器硬件") ||
         plain.includes("硬件环境") ||
         plain.includes("服务器软件") ||
         plain.includes("软件环境") ||
         plain.includes("配置见表") ||
         plain.startsWith("用户端") ||
-        (plain.includes("网络") && (plain.includes("条件") || plain.includes("要求") || /表/.test(t)))
+        (plain.includes("网络") && (plain.includes("条件") || plain.includes("要求")))
     );
 }
 

@@ -1,5 +1,5 @@
 import "./HldDocDetail.less";
-import { ConfigProvider, Form, Input, Button, message, Modal, Select, Space, Table, Spin } from "antd";
+import { Alert, ConfigProvider, Form, Input, Button, message, Modal, Select, Space, Table, Spin } from "antd";
 import { ArrowLeftOutlined, EditOutlined, DownloadOutlined, FileAddOutlined } from "@ant-design/icons";
 import { useEffect, useRef } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
@@ -14,8 +14,22 @@ import * as ApiDocFile from "@/api/ApiDocFile";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
-import TreeStructure, { TreeNode } from "../sds_doc/components/TreeStructure";
+import TreeStructure, { HLD_SDS_LOCK_REF, TreeNode } from "../sds_doc/components/TreeStructure";
 import { applySdsSyncToTree, hasMisplacedHldPhysicalChapter, hasSdsSyncData, needsLegacyInterfaceRepair, promoteHldFieldTables, splitHldInternalInterfaces, stripLegacyInterfaceText, tidyHldFieldChapters } from "./hldSdsSync";
+
+const SDS_SYNC_TIP = "尚未从详细设计同步接口与库表，请点击「从详细设计同步」";
+
+/** 是否已点过「从详细设计同步」（仅认锁定标记，避免 Word 自带「导入表格」误判） */
+const hasHldSyncedFromSds = (nodes: TreeNode[]): boolean => {
+    const walk = (list: TreeNode[]): boolean => {
+        for (const n of list || []) {
+            if (String(n.ref_type || "") === HLD_SDS_LOCK_REF) return true;
+            if (walk((n.children || []) as TreeNode[])) return true;
+        }
+        return false;
+    };
+    return walk(nodes || []);
+};
 
 const HLD_COVER_DATE_KEYWORDS = ["软件概要设计", "概要设计"];
 
@@ -486,6 +500,7 @@ export default () => {
         docProductId: undefined as number | undefined,
         docVersion: "" as string,
         treeRefreshKey: 0,
+        showSdsSyncTip: false,
     });
 
     useEffect(() => {
@@ -1129,7 +1144,12 @@ export default () => {
         return next;
     };
 
-    const buildStandardTreeForDoc = async (productId: number, version: string, product?: any): Promise<TreeNode[]> => {
+    const buildStandardTreeForDoc = async (
+        productId: number,
+        version: string,
+        product?: any,
+        options?: { syncFromSds?: boolean },
+    ): Promise<TreeNode[]> => {
         let nodesWithIds = applyProductScopeToTree(buildStandardNodesWithIds(), product).nodes;
         nodesWithIds = applyProductBasicInfoToTree(nodesWithIds, product).nodes;
         nodesWithIds = applyScopeChapterFromProduct(nodesWithIds, product).nodes;
@@ -1137,8 +1157,11 @@ export default () => {
         nodesWithIds = rebindFlowImageToFlowChild(nodesWithIds);
         nodesWithIds = normalizeImageRefTypes(nodesWithIds);
         nodesWithIds = await remapRefTypeImagesByProduct(nodesWithIds, productId, version);
-        const sdsdocId = Number(editForm.getFieldValue("sdsdoc_id") || 0);
-        if (sdsdocId) nodesWithIds = await syncTreeFromSds(productId, sdsdocId, nodesWithIds);
+        // 打开新增/空文档初始化模版时不同步，需用户点「从详细设计同步」；加载标准目录结构时可同步
+        if (options?.syncFromSds !== false) {
+            const sdsdocId = Number(editForm.getFieldValue("sdsdoc_id") || 0);
+            if (sdsdocId) nodesWithIds = await syncTreeFromSds(productId, sdsdocId, nodesWithIds);
+        }
         return nodesWithIds;
     };
 
@@ -1370,11 +1393,12 @@ export default () => {
         if (!id) {
             editForm.resetFields();
             const initialTree = buildStandardNodesWithIds();
-            dispatch({ isEdit: false, treeStructure: initialTree, treeRefreshKey: Date.now() });
+            dispatch({ isEdit: false, treeStructure: initialTree, treeRefreshKey: Date.now(), showSdsSyncTip: !isReadOnly });
             treeStructureRef.current = initialTree;
             lastProductContextRef.current = { version: "" };
             productContextReadyRef.current = true;
             productSyncModalOpenRef.current = false;
+            if (!isReadOnly) message.warning({ content: SDS_SYNC_TIP, duration: 6 });
             return () => { cancelled = true; };
         }
         dispatch({ loading: true, isEdit: !isReadOnly });
@@ -1404,9 +1428,11 @@ export default () => {
                 if (!isReadOnly && needsStandardTemplate(ensuredContent)) {
                     const product = await resolveProductById(targetRow.product_id);
                     if (cancelled) return;
-                    ensuredContent = await buildStandardTreeForDoc(targetRow.product_id, targetRow.version, product);
+                    // 新增空文档初始化：不同步详细设计，便于提示用户手动点同步
+                    ensuredContent = await buildStandardTreeForDoc(targetRow.product_id, targetRow.version, product, { syncFromSds: false });
                     shouldInitStandard = true;
                 }
+                const needSdsSyncTip = !isReadOnly && !hasHldSyncedFromSds(ensuredContent as TreeNode[]);
                 dispatch({
                     loading: false,
                     changeDescription: targetRow.change_log || "",
@@ -1415,6 +1441,7 @@ export default () => {
                     docProductId: targetRow.product_id,
                     docVersion: targetRow.version ?? "",
                     treeRefreshKey: Date.now(),
+                    showSdsSyncTip: needSdsSyncTip,
                 });
                 treeStructureRef.current = ensuredContent;
                 lastProductContextRef.current = {
@@ -1423,6 +1450,9 @@ export default () => {
                 };
                 productContextReadyRef.current = true;
                 productSyncModalOpenRef.current = false;
+                if (needSdsSyncTip) {
+                    message.warning({ content: SDS_SYNC_TIP, duration: 6 });
+                }
                 if (!isReadOnly && (shouldInitStandard || shouldSaveRepaired)) {
                     const docId = targetRow.id || parseInt(String(id), 10);
                     try {
@@ -1503,7 +1533,11 @@ export default () => {
         try {
             const syncedTree = await syncTreeFromSds(pid, sdsdocId, (treeStructureRef.current || data.treeStructure || []) as TreeNode[]);
             treeStructureRef.current = syncedTree;
-            dispatch({ treeStructure: syncedTree, treeRefreshKey: Date.now() });
+            dispatch({
+                treeStructure: syncedTree,
+                treeRefreshKey: Date.now(),
+                showSdsSyncTip: !hasHldSyncedFromSds(syncedTree as TreeNode[]),
+            });
             const docId = params.id ? parseInt(String(params.id), 10) : 0;
             if (docId && data.isEdit && !isReadOnly) {
                 try {
@@ -2014,6 +2048,17 @@ export default () => {
                             </Space>
                         </div>
                     </Form>
+                    {!isReadOnly && data.showSdsSyncTip && (
+                        <Alert
+                            type="warning"
+                            showIcon
+                            closable
+                            banner
+                            message={SDS_SYNC_TIP}
+                            style={{ margin: "0 16px 8px" }}
+                            onClose={() => dispatch({ showSdsSyncTip: false })}
+                        />
+                    )}
                     <div className="div-v detail-content">
                         <div className="doc-section doc-section-flex">
                             {!isReadOnly && (
