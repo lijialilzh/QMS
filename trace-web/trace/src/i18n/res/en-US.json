@@ -450,6 +450,8 @@
         "please_select_product_and_version": "Please select product and version first",
         "please_save_document_first": "Please save document first",
         "load_standard_structure_success": "Standard structure loaded",
+        "sds_doc": "SDS",
+        "please_select_sds_doc": "Select an SDS version",
         "sync_from_sds": "Sync from SDS",
         "sync_from_sds_success": "Interfaces and DB tables synced from SDS",
         "auto_sync_interface_layout": "Interface detail tables merged into sections; please save",

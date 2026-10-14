@@ -1,5 +1,5 @@
 import "./HldDocDetail.less";
-import { ConfigProvider, Form, Input, Button, message, Modal, Space, Table, Spin } from "antd";
+import { ConfigProvider, Form, Input, Button, message, Modal, Select, Space, Table, Spin } from "antd";
 import { ArrowLeftOutlined, EditOutlined, DownloadOutlined, FileAddOutlined } from "@ant-design/icons";
 import { useEffect, useRef } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
@@ -8,13 +8,14 @@ import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import standardNodes from "./data/standard_nodes.json";
 import * as Api from "@/api/ApiHldDoc";
+import * as ApiSdsDoc from "@/api/ApiSdsDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiDocFile from "@/api/ApiDocFile";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
 import TreeStructure, { TreeNode } from "../sds_doc/components/TreeStructure";
-import { applySdsSyncToTree, hasSdsSyncData, needsLegacyInterfaceRepair, stripLegacyInterfaceText } from "./hldSdsSync";
+import { applySdsSyncToTree, hasSdsSyncData, needsLegacyInterfaceRepair, promoteHldFieldTables, splitHldInternalInterfaces, stripLegacyInterfaceText, tidyHldFieldChapters } from "./hldSdsSync";
 
 const HLD_COVER_DATE_KEYWORDS = ["软件概要设计", "概要设计"];
 
@@ -327,6 +328,7 @@ export default () => {
         loading: false,
         isEdit: false,
         products: [],
+        sdsDocList: [] as any[],
         changeDescription: "",
         showChangeDescModal: false,
         tempChangeDescription: "",
@@ -845,18 +847,28 @@ export default () => {
         return cleaned;
     };
 
+    const loadSdsDocList = (productId?: number) => {
+        if (!productId) {
+            dispatch({ sdsDocList: [] });
+            return;
+        }
+        ApiSdsDoc.list_sds_doc({ product_id: productId, page_index: 0, page_size: 1000 }).then((res: any) => {
+            dispatch({ sdsDocList: res.code === Api.C_OK ? (res.data?.rows || []) : [] });
+        }).catch(() => dispatch({ sdsDocList: [] }));
+    };
+
     const syncTreeFromSds = async (
         productId: number,
-        version: string,
+        sdsdocId: number,
         nodes: TreeNode[],
         options?: { silent?: boolean },
     ): Promise<TreeNode[]> => {
-        if (!productId || !String(version || "").trim()) return nodes;
+        if (!productId || !sdsdocId) return nodes;
         const silent = !!options?.silent;
         try {
-            const res: any = await Api.sync_hld_from_sds({ product_id: productId, version: String(version).trim() });
+            const res: any = await Api.sync_hld_from_sds({ product_id: productId, sdsdoc_id: sdsdocId });
             if (res.code !== Api.C_OK) {
-                if (!silent) message.warning(res?.msg || "未找到同版本详细设计，接口/库表未同步");
+                if (!silent) message.warning(res?.msg || "未找到所选详细设计，接口/库表未同步");
                 return stripLegacyInterfaceText(nodes);
             }
             if (!hasSdsSyncData(res.data)) {
@@ -884,7 +896,8 @@ export default () => {
         let next = applyProductScopeToTree(nodes, product).nodes;
         next = applyProductBasicInfoToTree(next, product).nodes;
         next = await remapRefTypeImagesByProduct(next, targetProductId, targetVersion);
-        next = await syncTreeFromSds(targetProductId, targetVersion, next, options);
+        const sdsdocId = Number(editForm.getFieldValue("sdsdoc_id") || 0);
+        if (sdsdocId) next = await syncTreeFromSds(targetProductId, sdsdocId, next, options);
         return next;
     };
 
@@ -893,7 +906,8 @@ export default () => {
         nodesWithIds = rebindFlowImageToFlowChild(nodesWithIds);
         nodesWithIds = normalizeImageRefTypes(nodesWithIds);
         nodesWithIds = await remapRefTypeImagesByProduct(nodesWithIds, productId, version);
-        nodesWithIds = await syncTreeFromSds(productId, version, nodesWithIds);
+        const sdsdocId = Number(editForm.getFieldValue("sdsdoc_id") || 0);
+        if (sdsdocId) nodesWithIds = await syncTreeFromSds(productId, sdsdocId, nodesWithIds);
         return nodesWithIds;
     };
 
@@ -1029,6 +1043,8 @@ export default () => {
 
     const handleProductIdFieldChange = (value?: number) => {
         editForm.setFieldValue("product_id", value);
+        editForm.setFieldValue("sdsdoc_id", undefined);
+        loadSdsDocList(value);
         const ver = String(editForm.getFieldValue("version") || "").trim();
         if (!value) return;
         if (!ver) {
@@ -1044,6 +1060,23 @@ export default () => {
         if (!pid || !ver) return;
         tryPromptProductContextSync(pid, ver);
     };
+
+    const renderSdsDocSelect = () => (
+        <Form.Item className="hld-toolbar-item" label={ts("hld_doc.sds_doc")} name="sdsdoc_id">
+            <Select
+                placeholder={ts("hld_doc.please_select_sds_doc")}
+                showSearch
+                allowClear
+                optionFilterProp="label"
+                disabled={!data.sdsDocList.length}
+                style={{ width: 160 }}
+                options={(data.sdsDocList || []).map((item: any) => ({
+                    label: `${item.version || ""}`,
+                    value: item.id,
+                }))}
+            />
+        </Form.Item>
+    );
 
     const renderProductVersionSelect = () => (
         <ProductVersionSelect
@@ -1074,17 +1107,20 @@ export default () => {
         const parsedContent = isReadOnly ? bindTableCaptionsForPersist(normalizedRefTree) : normalizedRefTree;
         let remappedContent = await remapRefTypeImagesByProduct(parsedContent, targetRow.product_id, targetRow.version);
         remappedContent = ensureFrontMatterTables(remappedContent as TreeNode[]);
+        const beforeRepair = JSON.stringify(remappedContent);
         const needRepair = !isReadOnly && needsLegacyInterfaceRepair(remappedContent as TreeNode[]);
-        if (needRepair) {
-            const before = JSON.stringify(remappedContent);
-            remappedContent = await syncTreeFromSds(targetRow.product_id, targetRow.version, remappedContent as TreeNode[]);
-            const autoRepaired = before !== JSON.stringify(remappedContent);
-            if (autoRepaired) {
-                message.info(ts("hld_doc.auto_sync_interface_layout"));
-            }
-            return { nodes: remappedContent as TreeNode[], autoRepaired };
+        if (needRepair && targetRow.sdsdoc_id) {
+            remappedContent = await syncTreeFromSds(targetRow.product_id, targetRow.sdsdoc_id, remappedContent as TreeNode[]);
         }
-        return { nodes: remappedContent as TreeNode[], autoRepaired: false };
+        const split = splitHldInternalInterfaces(remappedContent as TreeNode[]);
+        if (split.changed) remappedContent = split.nodes;
+        const fields = promoteHldFieldTables(remappedContent as TreeNode[]);
+        if (fields.changed) remappedContent = fields.nodes;
+        const tidied = tidyHldFieldChapters(remappedContent as TreeNode[]);
+        if (tidied.changed) remappedContent = tidied.nodes;
+        const autoRepaired = !isReadOnly && beforeRepair !== JSON.stringify(remappedContent);
+        if (autoRepaired && split.changed) message.info(ts("hld_doc.auto_sync_interface_layout"));
+        return { nodes: remappedContent as TreeNode[], autoRepaired };
     };
 
     useEffect(() => {
@@ -1115,9 +1151,11 @@ export default () => {
                 editForm.setFieldsValue({
                     id: targetRow.id,
                     product_id: targetRow.product_id,
+                    sdsdoc_id: targetRow.sdsdoc_id || undefined,
                     version: targetRow.version,
                     file_no: targetRow.file_no,
                 });
+                loadSdsDocList(targetRow.product_id);
                 const loadResult = await applyLoadedDocTree(targetRow);
                 let ensuredContent = loadResult.nodes;
                 let shouldInitStandard = false;
@@ -1152,6 +1190,7 @@ export default () => {
                             id: docId,
                             product_id: targetRow.product_id,
                             version: targetRow.version,
+                            sdsdoc_id: targetRow.sdsdoc_id || 0,
                             file_no: targetRow.file_no,
                             change_log: targetRow.change_log || "",
                             content: contentPayload,
@@ -1209,14 +1248,18 @@ export default () => {
 
     const handleSyncFromSds = async () => {
         const pid = editForm.getFieldValue("product_id");
-        const version = editForm.getFieldValue("version");
-        if (!pid || !String(version || "").trim()) {
+        const sdsdocId = Number(editForm.getFieldValue("sdsdoc_id") || 0);
+        if (!pid || !String(editForm.getFieldValue("version") || "").trim()) {
             message.warning(ts("hld_doc.please_select_product_and_version"));
+            return;
+        }
+        if (!sdsdocId) {
+            message.warning(ts("hld_doc.please_select_sds_doc"));
             return;
         }
         dispatch({ loading: true });
         try {
-            const syncedTree = await syncTreeFromSds(pid, version, (treeStructureRef.current || data.treeStructure || []) as TreeNode[]);
+            const syncedTree = await syncTreeFromSds(pid, sdsdocId, (treeStructureRef.current || data.treeStructure || []) as TreeNode[]);
             treeStructureRef.current = syncedTree;
             dispatch({ treeStructure: syncedTree, treeRefreshKey: Date.now() });
             message.success(ts("hld_doc.sync_from_sds_success"));
@@ -1309,6 +1352,7 @@ export default () => {
             id: docId,
             product_id: productIdVal,
             version,
+            sdsdoc_id: Number(editForm.getFieldValue("sdsdoc_id") || 0),
             file_no: editForm.getFieldValue("file_no"),
             change_log: data.changeDescription || "",
             content: currentTree.map((node) => cleanTreeNode(node, docId, 0)),
@@ -1328,6 +1372,7 @@ export default () => {
                         editForm.setFieldsValue({
                             id: targetRow.id,
                             product_id: targetRow.product_id,
+                            sdsdoc_id: targetRow.sdsdoc_id || undefined,
                             version: targetRow.version,
                             file_no: targetRow.file_no,
                         });
@@ -1660,6 +1705,7 @@ export default () => {
                                         <Form.Item className="hld-toolbar-item" label={ts("srs_doc.select_product")} name="product_id" rules={[{ required: true, message: ts("hld_doc.please_select_product_required") }]}>
                                             {renderProductVersionSelect()}
                                         </Form.Item>
+                                        {renderSdsDocSelect()}
                                     <Form.Item
                                         className="hld-toolbar-item"
                                         label={data.isEdit ? ts("hld_doc.current_version") : ts("hld_doc.version_label")}
@@ -1674,6 +1720,7 @@ export default () => {
                                     <Form.Item className="hld-toolbar-item" label={ts("srs_doc.select_product")} name="product_id" rules={[{ required: true, message: ts("hld_doc.please_select_product_required") }]}>
                                         {renderProductVersionSelect()}
                                     </Form.Item>
+                                    {renderSdsDocSelect()}
                                     <Form.Item className="hld-toolbar-item" label={ts("hld_doc.version_label")} name="version" rules={[{ required: true, message: ts("hld_doc.version_required") }]}>
                                         {renderDocVersionInput()}
                                     </Form.Item>

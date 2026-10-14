@@ -7,6 +7,7 @@ import { useNavigate } from "react-router-dom";
 import { useData } from "@/common";
 import { createDocBatchDelete, getDocTableRowSelection } from "../doc_shared/docBatchDelete";
 import * as Api from "@/api/ApiHldDoc";
+import * as ApiSdsDoc from "@/api/ApiSdsDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import { sanitizeListQuery } from "../doc_shared/sanitizeListQuery";
@@ -51,6 +52,7 @@ export default () => {
         selectedRowKeys: [],
         loadingProducts: false,
         products: [],
+        addSdsDocList: [] as any[],
         versionOptions: [] as { value: string; label: string }[],
         importFiles: [],
         editingFileNoId: 0,
@@ -133,9 +135,20 @@ export default () => {
         });
     };
 
+    const loadAddSdsDocList = (productId?: number) => {
+        if (!productId) {
+            dispatch({ addSdsDocList: [] });
+            return;
+        }
+        ApiSdsDoc.list_sds_doc({ product_id: productId, page_index: 0, page_size: 1000 }).then((res: any) => {
+            dispatch({ addSdsDocList: res.code === Api.C_OK ? (res.data?.rows || []) : [] });
+        }).catch(() => dispatch({ addSdsDocList: [] }));
+    };
+
     const openAddModal = () => {
         addForm.resetFields();
         addForm.setFieldValue("version", "A0");
+        dispatch({ addSdsDocList: [] });
         doSearchProducts(data, dispatch);
         dispatch({ dlgType: DlgTypes.add });
     };
@@ -370,6 +383,7 @@ export default () => {
                 onCancel={() => {
                     dispatch({ dlgType: null });
                     addForm.resetFields();
+                    dispatch({ addSdsDocList: [] });
                 }}>
                 <Form form={addForm} layout="vertical">
                     <Form.Item
@@ -380,7 +394,27 @@ export default () => {
                             products={data.products}
                             namePlaceholder={ts("product.name")}
                             versionPlaceholder={ts("product.full_version")}
-                            onChange={(value) => addForm.setFieldValue("product_id", value)}
+                            onChange={(value) => {
+                                addForm.setFieldValue("product_id", value);
+                                addForm.setFieldValue("sdsdoc_id", undefined);
+                                loadAddSdsDocList(value);
+                            }}
+                        />
+                    </Form.Item>
+                    <Form.Item
+                        label={ts("hld_doc.sds_doc")}
+                        name="sdsdoc_id"
+                        rules={[{ required: true, message: ts("hld_doc.please_select_sds_doc") }]}>
+                        <Select
+                            placeholder={ts("hld_doc.please_select_sds_doc")}
+                            showSearch
+                            allowClear
+                            optionFilterProp="label"
+                            disabled={!data.addSdsDocList.length}
+                            options={data.addSdsDocList.map((item: any) => ({
+                                label: `${item.version || ""}`,
+                                value: item.id,
+                            }))}
                         />
                     </Form.Item>
                     <Form.Item

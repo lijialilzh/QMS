@@ -449,6 +449,8 @@
         "please_select_product_and_version": "请先选择产品和版本",
         "please_save_document_first": "请先保存文档",
         "load_standard_structure_success": "加载标准结构成功",
+        "sds_doc": "详细设计",
+        "please_select_sds_doc": "请选择详细设计版本",
         "sync_from_sds": "从详细设计同步",
         "sync_from_sds_success": "已从详细设计同步接口与库表",
         "auto_sync_interface_layout": "已自动合并接口明细表到对应章节，请保存文档",

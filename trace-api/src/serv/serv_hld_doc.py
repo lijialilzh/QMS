@@ -274,9 +274,11 @@ class Server(object):
         for node in nodes or []:
             ref_type = getattr(node, "ref_type", None)
             existing = _normalize_hld_img_url(getattr(node, "img_url", "") or "")
-            # 章节或图题上已经有图时保留原图。没有图才用产品图示补，避免产品功能章被拓扑图/体系结构图盖掉。
+            # 章节或图题上已经有图时保留原图。没有图才用产品图示补。
+            # 只补给物理拓扑/图1、系统结构/图2；子图题已经有图时不再往父章节补，避免导出重复。
             if ref_type in prod_imgs and prod_imgs.get(ref_type) and not existing:
-                node.img_url = prod_imgs[ref_type]
+                if self.__title_accepts_product_image(node, ref_type) and not self.__child_owns_figure(node):
+                    node.img_url = prod_imgs[ref_type]
             self.__hydrate_tree_product_images(getattr(node, "children", None) or [], prod_imgs)
 
     def __upsert_product_doc_image(self, doc_id: int, ref_type: str, file_name: str, file_size: int, file_url: str):
@@ -311,6 +313,7 @@ class Server(object):
                 return Resp.resp_err(msg=f"该产品下已经有{version}版本文档存在" if version else ts("msg_obj_exist"))
             row = HldDoc(
                 product_id=form.product_id,
+                sdsdoc_id=form.sdsdoc_id or 0,
                 version=form.version,
                 change_log=form.change_log,
                 n_id=0,
@@ -347,6 +350,7 @@ class Server(object):
             version = new_version(version)
         newdoc = HldDoc(
             product_id=target_pid,
+            sdsdoc_id=fromdoc.sdsdoc_id or 0,
             version=version,
             file_no=serv_review_util.resolve_doc_file_no(target_pid, fromdoc.file_no, version, "hld"),
             change_log=fromdoc.change_log,
@@ -478,9 +482,28 @@ class Server(object):
         tree = []
         if with_tree:
             tree = self._load_tree(row.id)
+            try:
+                if self._repair_product_function_chapter(row, tree):
+                    db.session.commit()
+            except Exception:
+                logger.exception("概要设计产品功能章节拆分失败")
+                db.session.rollback()
+            try:
+                if self._tidy_hld_field_chapters(row, tree):
+                    db.session.commit()
+            except Exception:
+                logger.exception("概要设计字段表目录整理失败")
+                db.session.rollback()
             if row.product_id:
                 prod_imgs = self.__query_imgs(row.product_id)
                 self.__hydrate_tree_product_images(tree, prod_imgs)
+                try:
+                    pairs = await self._sds_glossary_pairs(row.sdsdoc_id or 0)
+                    if self._apply_sds_glossary_to_hld(row.id, tree, pairs):
+                        db.session.commit()
+                except Exception:
+                    logger.exception("概要设计术语同步失败")
+                    db.session.rollback()
         doc_data = row.dict()
         if not (doc_data.get("file_no") or "").strip():
             doc_data["file_no"] = serv_review_util.resolve_doc_file_no(row.product_id, row.file_no, row.version, "hld") or doc_data.get("file_no")
@@ -572,6 +595,24 @@ class Server(object):
     @staticmethod
     def _is_imported_table_title(value: str) -> bool:
         return re.match(r"^导入表格\d*$", str(value or "").strip()) is not None
+
+    @staticmethod
+    def __title_accepts_product_image(node, ref_type: str) -> bool:
+        title = str(getattr(node, "title", "") or "").strip()
+        plain = Server._biz_title(title)
+        if ref_type == "img_topo":
+            return "物理拓扑" in plain or re.match(r"^图\s*1", title) is not None
+        if ref_type == "img_struct":
+            return ("系统结构" in plain or "体系结构" in plain) or re.match(r"^图\s*2", title) is not None
+        return False
+
+    @staticmethod
+    def __child_owns_figure(node) -> bool:
+        for child in getattr(node, "children", None) or []:
+            child_title = str(getattr(child, "title", "") or "").strip()
+            if re.match(r"^图\s*\d+", child_title) and _normalize_hld_img_url(getattr(child, "img_url", "") or ""):
+                return True
+        return False
 
     @staticmethod
     def _is_image_caption_line(value: str) -> bool:
@@ -883,6 +924,8 @@ class Server(object):
 
         def __save_fitted_image(img_url: str):
             docx_util.save_img2docx(img_url, docx, mw=520, mh=340, page_fit=True)
+            if docx.paragraphs:
+                __drop_list_number(docx.paragraphs[-1])
 
         def __save_plain_caption(text: str, center: bool = False):
             from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -898,9 +941,52 @@ class Server(object):
             txt = str(line or "").strip()
             if not txt or self._is_image_caption_line(txt):
                 return False
-            if self._is_table_caption_line(txt):
+            if re.match(r"^(表|table)\s*\d+", txt, re.I):
                 return True
-            return ("表" in txt) and re.match(r"^.+表\s*[:：]?$", txt) is not None
+            if "表" in txt and re.match(r"^.+表\s*[:：]?$", txt):
+                return True
+            if re.match(r"^[A-Za-z][A-Za-z0-9_]{1,64}[:：]\s*.+$", txt):
+                return True
+            if re.search(r"[:：]", txt) and len(txt) <= 80 and re.search(r"[。！？]$", txt) is None:
+                parts = [seg.strip() for seg in re.split(r"[:：]", txt)]
+                left = parts[0] if parts else ""
+                right = "".join(parts[1:]).strip() if len(parts) > 1 else ""
+                left_is_identifier = re.match(r"^[A-Za-z][A-Za-z0-9_]{1,64}$", left or "") is not None
+                if left and right and (left_is_identifier or "表" in left):
+                    return True
+                if left and not right and "表" in left:
+                    return True
+            return False
+
+        def __drop_list_number(paragraph):
+            from docx.oxml import OxmlElement
+            from docx.oxml.ns import qn
+            p_pr = paragraph._p.get_or_add_pPr()
+            for child in list(p_pr):
+                if child.tag == qn("w:numPr"):
+                    p_pr.remove(child)
+            num_pr = OxmlElement("w:numPr")
+            ilvl = OxmlElement("w:ilvl")
+            ilvl.set(qn("w:val"), "0")
+            num_id = OxmlElement("w:numId")
+            num_id.set(qn("w:val"), "0")
+            num_pr.append(ilvl)
+            num_pr.append(num_id)
+            p_pr.append(num_pr)
+
+        def __write_heading(title: str, level: int):
+            docx_util.save_title2docx(title, docx, level=level)
+            if docx.paragraphs:
+                __drop_list_number(docx.paragraphs[-1])
+
+        def __table_caption_name(node) -> str:
+            return str(getattr(getattr(node, "table", None), "name", "") or "").strip()
+
+        def __write_imported_table(node, caption: str = ""):
+            cap = str(caption or "").strip() or __table_caption_name(node)
+            if cap:
+                __save_plain_caption(cap, center=False)
+            docx_util.save_tab2docx(node.table, docx)
 
         def __has_table(node) -> bool:
             table = getattr(node, "table", None)
@@ -926,14 +1012,18 @@ class Server(object):
                         __write_nodes(node.children, default_level)
                     continue
                 if self._is_imported_table_title(title) and __has_table(node):
-                    docx_util.save_tab2docx(node.table, docx)
+                    __write_imported_table(node)
+                    __write_nodes(getattr(node, "children", None) or [], default_level + 1)
+                    continue
+                if self._is_field_table_node(node):
+                    __write_imported_table(node, title)
                     __write_nodes(getattr(node, "children", None) or [], default_level + 1)
                     continue
                 if title and not self._is_imported_image_title(title):
                     level = self._heading_level(title) if re.match(r"^\d", title) else default_level
                     if __is_cover_title(title) or __is_revision_title(title):
                         level = 1
-                    docx_util.save_title2docx(title, docx, level=level)
+                    __write_heading(title, level)
                 children = list(getattr(node, "children", None) or [])
                 table_children = [
                     child for child in children
@@ -946,24 +1036,35 @@ class Server(object):
                     if not line:
                         continue
                     if __is_data_table_caption(line) and consumed < len(table_children):
-                        __save_plain_caption(line, center=False)
-                        docx_util.save_tab2docx(table_children[consumed].table, docx)
+                        __write_imported_table(table_children[consumed], line)
                         consumed += 1
                         continue
                     docx_util.save_txt2docx(line, docx)
                 while consumed < len(table_children):
-                    docx_util.save_tab2docx(table_children[consumed].table, docx)
+                    __write_imported_table(table_children[consumed])
                     consumed += 1
                 if __has_table(node):
-                    docx_util.save_tab2docx(node.table, docx)
-                if img_url:
+                    __write_imported_table(node)
+                if img_url and not self.__child_owns_figure(node):
                     __save_fitted_image(img_url)
+                    if docx.paragraphs:
+                        __drop_list_number(docx.paragraphs[-1])
                 __write_nodes(other_children, default_level + 1)
 
-        def __blank_cover_table():
+        def __cover_signers():
             rev_date = ""
-            if getattr(doc_obj, "product_id", None):
-                rev_date = serv_review_util.cover_date(doc_obj.product_id, "hld") or ""
+            signers = {}
+            pid = getattr(doc_obj, "product_id", None)
+            if pid:
+                rev_date = serv_review_util.cover_date(pid, "hld") or ""
+                if serv_review_util.sign_mode_enabled():
+                    signers = serv_review_util.cover_signers(pid, "hld", rev_date) or {}
+                else:
+                    signers = serv_review_util.cover_signer_names(pid, "hld", rev_date) or {}
+            return rev_date, signers
+
+        def __blank_cover_table():
+            rev_date, signers = __cover_signers()
             version = str(getattr(doc_obj, "version", "") or "")
             return Table(
                 show_header=0,
@@ -975,12 +1076,27 @@ class Server(object):
                 ],
                 rows=[
                     {"label1": "编制部门", "value1": "研发部", "label2": "文件版本", "value2": version},
-                    {"label1": "编制人", "value1": "", "label2": "日期", "value2": rev_date},
-                    {"label1": "审核人", "value1": "", "label2": "日期", "value2": rev_date},
-                    {"label1": "批准人", "value1": "", "label2": "日期", "value2": rev_date},
+                    {"label1": "编制人", "value1": signers.get("编制人") or "", "label2": "日期", "value2": rev_date},
+                    {"label1": "审核人", "value1": signers.get("审核人") or "", "label2": "日期", "value2": rev_date},
+                    {"label1": "批准人", "value1": signers.get("批准人") or "", "label2": "日期", "value2": rev_date},
                     {"label1": "生效日期", "value1": rev_date, "label2": "", "value2": ""},
                 ],
             )
+
+        def __fill_cover_signers(table):
+            if not table:
+                return
+            rev_date, signers = __cover_signers()
+            for row in getattr(table, "rows", None) or []:
+                if not isinstance(row, dict):
+                    continue
+                label = str(row.get("label1") or "").strip()
+                if label in ("编制人", "审核人", "批准人") and not str(row.get("value1") or "").strip():
+                    row["value1"] = signers.get(label) or ""
+                if label in ("编制人", "审核人", "批准人") and rev_date and not str(row.get("value2") or "").strip():
+                    row["value2"] = rev_date
+                if label == "生效日期" and rev_date and not str(row.get("value1") or "").strip():
+                    row["value1"] = rev_date
 
         def __blank_revision_table():
             version = str(getattr(doc_obj, "version", "") or "")
@@ -1008,13 +1124,18 @@ class Server(object):
                 rows=rows,
             )
 
+        def __add_blank_lines(line_count: int):
+            from docx.shared import Pt
+            for _ in range(max(0, line_count)):
+                blank = docx.add_paragraph()
+                blank.paragraph_format.space_before = Pt(0)
+                blank.paragraph_format.space_after = Pt(0)
+                blank.paragraph_format.line_spacing = 1.0
+
         def __write_front_title(text: str):
             from docx.enum.text import WD_ALIGN_PARAGRAPH
-            from docx.shared import Pt
             p = docx.add_paragraph()
             p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            p.paragraph_format.space_before = Pt(12)
-            p.paragraph_format.space_after = Pt(12)
             docx_util.fonted_txt(p, text, font_size=16.0, bold=True)
 
         roots = list(doc_obj.content or [])
@@ -1024,15 +1145,20 @@ class Server(object):
             cover_node = HldNodeForm(title="软件概要设计", table=__blank_cover_table())
         elif not __has_table(cover_node):
             cover_node.table = __blank_cover_table()
+        else:
+            __fill_cover_signers(cover_node.table)
         if revision_node is None:
             revision_node = HldNodeForm(title="文件修订记录", table=__blank_revision_table())
         elif not __has_table(revision_node):
             revision_node.table = __blank_revision_table()
+        __add_blank_lines(10)
         __write_front_title("软件概要设计")
+        __add_blank_lines(9)
         if __has_table(cover_node):
             docx_util.save_tab2docx(cover_node.table, docx)
         __start_next_page()
         __write_front_title("文件修订记录")
+        __add_blank_lines(2)
         if __has_table(revision_node):
             docx_util.save_tab2docx(revision_node.table, docx)
         __start_next_page()
@@ -1079,19 +1205,314 @@ class Server(object):
             return "lib2"
         return "lib1"
 
-    async def sync_hld_from_sds(self, op_user: UserObj, product_id: int, version: str):
-        if not product_id:
-            return Resp.resp_err(msg="请选择产品")
-        version = str(version or "").strip()
-        if not version:
-            return Resp.resp_err(msg="请填写版本")
+    _PRODUCT_FN_SECTIONS = (
+        ("功能模块定义", "2.2.1 功能模块定义"),
+        ("DataProcessing（DP）", "2.2.2 DataProcessing（DP）"),
+        ("DLServer", "2.2.3 DLServer"),
+        ("RePACS", "2.2.4 RePACS"),
+        ("NeoViewer", "2.2.5 NeoViewer"),
+        ("系统性能", "2.2.6 系统性能"),
+    )
+
+    @staticmethod
+    def _norm_section_title(value: str) -> str:
+        title = re.sub(r"^\s*\d+(?:\.\d+)*[\s、.．]*", "", str(value or "").strip())
+        return re.sub(r"[\s（）()\-–—_]+", "", title).lower()
+
+    def _split_numbered_blob(self, text: str) -> dict:
+        src = str(text or "").strip()
+        if not src:
+            return {}
+        parts = re.split(r"\n(?=\s*\d+(?:\.\d+)*\.\s+)", src)
+        out = {}
+        for part in parts:
+            part = part.strip()
+            matched = re.match(r"^(\d+(?:\.\d+)*)\.\s*(.+?)(?:\n|$)", part)
+            if not matched:
+                continue
+            title = matched.group(2).strip()
+            body = part[matched.end():].strip()
+            out[self._norm_section_title(title)] = f"{title}\n{body}".strip() if body else title
+        return out
+
+    @staticmethod
+    def _field_title_key(title: str) -> str:
+        return re.sub(r"[\u200b\s]+", "", str(title or ""))
+
+    @staticmethod
+    def _is_field_table_node(node) -> bool:
+        table = getattr(node, "table", None)
+        headers = getattr(table, "headers", None) or []
+        if not headers:
+            return False
+        name = re.sub(r"\s+", "", str(getattr(headers[0], "name", "") or ""))
+        return name in ("FieldID", "字段ID")
+
+    def _drop_repeated_field_block(self, children: List[HldNodeForm]):
+        keys = [self._field_title_key(getattr(child, "title", "")) for child in children or []]
+        if not keys or not keys[0]:
+            return list(children or []), []
+        again = next((idx for idx, key in enumerate(keys) if idx > 0 and key == keys[0]), -1)
+        if again <= 0:
+            return list(children or []), []
+        head = keys[:again]
+        tail = keys[again:]
+        if len(tail) < len(head) or any(head[idx] != tail[idx] for idx in range(len(head))):
+            return list(children or []), []
+        return list(children[again:]), list(children[:again])
+
+    def _delete_hld_nodes(self, doc: HldDoc, nodes: List[HldNodeForm]):
+        for node in nodes or []:
+            self._delete_hld_nodes(doc, getattr(node, "children", None) or [])
+            n_id = getattr(node, "n_id", None)
+            if n_id:
+                db.session.execute(delete(HldNode).where(HldNode.doc_id == doc.id, HldNode.n_id == n_id))
+
+    def _tidy_hld_field_chapters(self, doc: HldDoc, roots: List[HldNodeForm]) -> bool:
+        """导出和打开用同一套字段表目录：去掉空的标记信息，去掉重复挂上的那一套表。"""
+        changed = False
+
+        def walk(nodes: List[HldNodeForm]):
+            nonlocal changed
+            for node in nodes or []:
+                compact = re.sub(r"\s+", "", str(getattr(node, "title", "") or ""))
+                children = list(getattr(node, "children", None) or [])
+                if re.match(r"^4\.1(?!\.)", compact) and "逻辑结构" in compact:
+                    data = next((child for child in children if re.sub(r"\s+", "", str(getattr(child, "title", "") or "")).startswith("4.1.1")), None)
+                    data_children = list(getattr(data, "children", None) or []) if data is not None else []
+                    has_tables = any(self._is_field_table_node(child) for child in data_children)
+                    kept = []
+                    removed = []
+                    for child in children:
+                        child_title = re.sub(r"\s+", "", str(getattr(child, "title", "") or ""))
+                        empty_mark = (
+                            "标记信息" in child_title
+                            and not str(getattr(child, "text", "") or "").strip()
+                            and not (getattr(child, "children", None) or [])
+                            and not self._is_field_table_node(child)
+                        )
+                        if empty_mark and has_tables:
+                            removed.append(child)
+                            continue
+                        kept.append(child)
+                    if data is not None:
+                        fresh, dropped = self._drop_repeated_field_block(list(getattr(data, "children", None) or []))
+                        if dropped:
+                            data.children = fresh
+                            removed.extend(dropped)
+                    if removed:
+                        self._delete_hld_nodes(doc, removed)
+                        node.children = kept
+                        changed = True
+                if re.match(r"^4(?!\.)", compact) and "数据结构" in compact:
+                    for child in children:
+                        child_title = re.sub(r"\s+", "", str(getattr(child, "title", "") or ""))
+                        if not child_title.startswith("4.2"):
+                            continue
+                        fresh, dropped = self._drop_repeated_field_block(list(getattr(child, "children", None) or []))
+                        if dropped:
+                            child.children = fresh
+                            self._delete_hld_nodes(doc, dropped)
+                            changed = True
+                walk(getattr(node, "children", None) or [])
+
+        walk(roots or [])
+        return changed
+
+    def _repair_product_function_chapter(self, doc: HldDoc, roots: List[HldNodeForm]) -> bool:
+        """导入时压在「2.2 产品功能」正文里的 1.1.1 / 2.2.2 / 3.3.3 整段，拆回 2.2.1～2.2.6。"""
+        target = None
+
+        def find(nodes: List[HldNodeForm]):
+            nonlocal target
+            for node in nodes or []:
+                title = str(getattr(node, "title", "") or "").strip()
+                if re.match(r"^\s*2\.2(?:\s|$|[、.．])", title) and "产品功能" in title:
+                    target = node
+                    return
+                find(getattr(node, "children", None) or [])
+
+        find(roots or [])
+        if target is None or not target.n_id:
+            return False
+        children = list(getattr(target, "children", None) or [])
+        if any(re.match(r"^\s*2\.2\.[1-6]", str(getattr(child, "title", "") or "").strip()) for child in children):
+            return False
+        sections = self._split_numbered_blob(getattr(target, "text", "") or "")
+        built = []
+        for source_title, chapter_title in self._PRODUCT_FN_SECTIONS:
+            body = sections.get(self._norm_section_title(source_title))
+            if not body:
+                return False
+            built.append((chapter_title, body))
+        figures = [child for child in children if re.match(r"^图\s*2", str(getattr(child, "title", "") or "").strip())]
+        others = [child for child in children if child not in figures]
+        ordered: List[HldNodeForm] = []
+        priority = 0
+
+        def add_chapter(title: str, body: str):
+            nonlocal priority
+            doc.n_id = int(doc.n_id or 0) + 1
+            db.session.add(HldNode(
+                doc_id=doc.id,
+                n_id=doc.n_id,
+                p_id=target.n_id,
+                priority=priority,
+                title=title,
+                text=body,
+                img_url="",
+                ref_type=None,
+                table=None,
+            ))
+            ordered.append(HldNodeForm(
+                doc_id=doc.id,
+                n_id=doc.n_id,
+                p_id=target.n_id,
+                title=title,
+                text=body,
+                img_url="",
+                children=[],
+            ))
+            priority += 1
+
+        add_chapter(*built[0])
+        for figure in figures:
+            if figure.n_id:
+                row = db.session.execute(
+                    select(HldNode).where(HldNode.doc_id == doc.id, HldNode.n_id == figure.n_id)
+                ).scalars().first()
+                if row:
+                    row.priority = priority
+            ordered.append(figure)
+            priority += 1
+        for title, body in built[1:]:
+            add_chapter(title, body)
+        for child in others:
+            if child.n_id:
+                row = db.session.execute(
+                    select(HldNode).where(HldNode.doc_id == doc.id, HldNode.n_id == child.n_id)
+                ).scalars().first()
+                if row:
+                    row.priority = priority
+            ordered.append(child)
+            priority += 1
+        parent = db.session.execute(
+            select(HldNode).where(HldNode.doc_id == doc.id, HldNode.n_id == target.n_id)
+        ).scalars().first()
+        if parent:
+            parent.text = ""
+        target.text = ""
+        target.children = ordered
+        return True
+
+    @staticmethod
+    def _is_hld_glossary_title(title: str) -> bool:
+        title = str(title or "").strip()
+        return "术语" in title and re.match(r"^\s*1\.4(?:\s|$|[、.．])", title) is not None
+
+    def _glossary_pairs_from_nodes(self, nodes) -> List[tuple]:
+        from .serv_sds_doc import Server as SdsServer
+
+        found: List[tuple] = []
+
+        def walk(items):
+            if found:
+                return
+            for node in items or []:
+                title = str(getattr(node, "title", "") or "").strip()
+                if self._is_hld_glossary_title(title):
+                    pairs = SdsServer._glossary_pairs_from_table(getattr(node, "table", None))
+                    if not pairs:
+                        for child in getattr(node, "children", None) or []:
+                            pairs = SdsServer._glossary_pairs_from_table(getattr(child, "table", None))
+                            if pairs:
+                                break
+                    if pairs:
+                        found.extend(pairs)
+                        return
+                walk(getattr(node, "children", None) or [])
+
+        walk(nodes or [])
+        return found
+
+    @staticmethod
+    def _glossary_table(pairs: List[tuple]) -> Table:
+        return Table(
+            show_header=1,
+            headers=[
+                TabHeader(code="term", name="术语/缩写"),
+                TabHeader(code="definition", name="定义"),
+            ],
+            rows=[{"term": term, "definition": definition} for term, definition in pairs],
+        )
+
+    async def _sds_glossary_pairs(self, sdsdoc_id: int) -> List[tuple]:
+        if not sdsdoc_id:
+            return []
         sds_row: SdsDoc = db.session.execute(
-            select(SdsDoc)
-            .where(SdsDoc.product_id == product_id, SdsDoc.version == version)
-            .order_by(desc(SdsDoc.create_time))
+            select(SdsDoc).where(SdsDoc.id == sdsdoc_id)
         ).scalars().first()
         if not sds_row:
-            return Resp.resp_err(msg="未找到同版本详细设计文档")
+            return []
+        from .serv_sds_doc import Server as SdsServer
+
+        sds_resp = await SdsServer().get_sds_doc(sds_row.id, with_tree=True)
+        if sds_resp.code != c_ok or not sds_resp.data:
+            return []
+        return self._glossary_pairs_from_nodes(sds_resp.data.content or [])
+
+    def _apply_sds_glossary_to_hld(self, doc_id: int, roots: List[HldNodeForm], pairs: List[tuple]) -> bool:
+        """概要设计 1.4 术语表跟同版本详细设计 1.4。详细设计没有术语时不改原文。"""
+        if not pairs:
+            return False
+        from .serv_sds_doc import Server as SdsServer
+
+        changed = False
+
+        def walk(nodes: List[HldNodeForm]):
+            nonlocal changed
+            for node in nodes or []:
+                title = str(getattr(node, "title", "") or "").strip()
+                if self._is_hld_glossary_title(title):
+                    current = SdsServer._glossary_pairs_from_table(getattr(node, "table", None))
+                    if current != pairs:
+                        node.table = self._glossary_table(pairs)
+                        changed = True
+                        if doc_id and node.n_id:
+                            row = db.session.execute(
+                                select(HldNode).where(HldNode.doc_id == doc_id, HldNode.n_id == node.n_id)
+                            ).scalars().first()
+                            if row:
+                                row.table = self._serialize_table(node.table)
+                    kept = []
+                    for child in list(getattr(node, "children", None) or []):
+                        child_title = str(getattr(child, "title", "") or "").strip()
+                        if re.match(r"^导入表格\d*$", child_title) and SdsServer._is_glossary_table(getattr(child, "table", None)):
+                            changed = True
+                            if doc_id and child.n_id:
+                                db.session.execute(
+                                    delete(HldNode).where(HldNode.doc_id == doc_id, HldNode.n_id == child.n_id)
+                                )
+                            continue
+                        kept.append(child)
+                    node.children = kept
+                walk(getattr(node, "children", None) or [])
+
+        walk(roots or [])
+        return changed
+
+    async def sync_hld_from_sds(self, op_user: UserObj, product_id: int, sdsdoc_id: int):
+        if not product_id:
+            return Resp.resp_err(msg="请选择产品")
+        if not sdsdoc_id:
+            return Resp.resp_err(msg="请选择详细设计版本")
+        sds_row: SdsDoc = db.session.execute(
+            select(SdsDoc).where(SdsDoc.id == sdsdoc_id)
+        ).scalars().first()
+        if not sds_row:
+            return Resp.resp_err(msg="未找到详细设计文档")
+        if sds_row.product_id != product_id:
+            return Resp.resp_err(msg="详细设计与当前产品不一致")
         from .serv_sds_doc import Server as SdsServer
 
         sds_resp = await SdsServer().get_sds_doc(sds_row.id, with_tree=True)
@@ -1120,20 +1541,37 @@ class Server(object):
                         })
                 detail_name = self.__parse_interface_detail_title(title)
                 detail_text = str(getattr(node, "text", "") or "").strip()
-                if detail_name and detail_text:
-                    interface_details.append({
-                        "name": detail_name,
-                        "source_title": title,
-                        "text": detail_text,
-                    })
+                child_tables = []
+                if detail_name:
+                    for child in getattr(node, "children", None) or []:
+                        child_table = self._parse_table(getattr(child, "table", None))
+                        if not child_table or not getattr(child_table, "headers", None):
+                            continue
+                        h0 = self.__table_header_name(child_table, 0)
+                        if h0 in ("字段ID", "Field ID", "接口设计编号"):
+                            continue
+                        child_tables.append({
+                            "title": str(getattr(child, "title", "") or "").strip() or "导入表格",
+                            "table": self._serialize_table(child_table),
+                        })
+                    if detail_text or child_tables:
+                        interface_details.append({
+                            "name": detail_name,
+                            "source_title": title,
+                            "text": detail_text,
+                            "tables": child_tables,
+                        })
                 walk(getattr(node, "children", None) or [], chain)
 
-        walk(sds_resp.data.content or [])
+        sds_nodes = sds_resp.data.content or []
+        walk(sds_nodes)
+        glossary_pairs = self._glossary_pairs_from_nodes(sds_nodes)
         return Resp.resp_ok(data={
             "sds_doc_id": sds_row.id,
             "interface_table": interface_table,
             "interface_details": interface_details,
             "field_tables": field_tables,
+            "glossary_table": self._serialize_table(self._glossary_table(glossary_pairs)) if glossary_pairs else None,
         })
 
     @staticmethod

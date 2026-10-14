@@ -3426,35 +3426,17 @@ export default () => {
                                 loadSrsDocList(targetRow.product_id);
                             }
 
-                            const parsedTree = (targetRow.content || []).map((node: any) => parseTreeNode(node));
-                            // 严格按 Word 导入层级展示：不做前端二次“章节重排/补号/拆分”
-                            const parsedTreeForView = isReadOnly
-                                ? relocateReviewTablesToStandalonePage(parsedTree)
-                                : normalizeEditRootChapterNumbers(parsedTree);
-                            const flowReboundTree = rebindFlowImageToFlowChild(parsedTreeForView);
-                            const normalizedRefTree = normalizeImageRefTypes(flowReboundTree);
-                            const parsedContent = isReadOnly
-                                ? bindTableCaptionsForPersist(normalizedRefTree)
-                                : normalizedRefTree;
-                            const remappedContent = await remapRefTypeImagesByProduct(parsedContent, targetRow.product_id, targetRow.version);
-                            const ensuredReqdContent = await syncMissingReqdNodes(
-                                ensureFrontMatterTables(remappedContent as TreeNode[]),
-                                targetRow.id || (params.id ? parseInt(params.id) : undefined)
-                            );
-                            const ensuredContent = isTraceSyncedOnTree(ensuredReqdContent as TreeNode[])
-                                ? await syncTraceTableNodes(
-                                    ensuredReqdContent as TreeNode[],
-                                    targetRow.id || (params.id ? parseInt(params.id) : undefined)
-                                )
-                                : ensuredReqdContent as TreeNode[];
+                            // 与打开页/刷新同一套加载，避免再跑 syncMissingReqdNodes 把接口章节剪掉
+                            const ensuredContent = await applyLoadedDocTree(targetRow);
                             dispatch({
                                 changeDescription: targetRow.change_log || "",
                                 docNId: targetRow.n_id || 0,
                                 treeStructure: ensuredContent,
                                 requireRebindSrs: !targetRow.srsdoc_id,
+                                traceTreeRefreshKey: Date.now(),
                             });
                             treeStructureRef.current = ensuredContent;
-
+                            initialEditTreeRef.current = cloneTree(ensuredContent as TreeNode[]);
                         }
                     });
                 }

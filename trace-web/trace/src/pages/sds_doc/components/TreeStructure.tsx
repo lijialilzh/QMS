@@ -229,7 +229,8 @@ function isGlossaryTable(table?: { headers?: Array<{ name?: string }> } | null):
 
 function isInterfaceListTable(node: TreeNode): boolean {
     const names = (node.table?.headers || []).map((header) => String(header?.name || "").replace(/\s/g, ""));
-    return names.includes("接口设计编号") && names.includes("接口名称") && names.includes("接口URL");
+    if (!names.includes("接口设计编号")) return false;
+    return names.includes("接口名称") || names.includes("接口URL") || names.includes("涉及模块") || names.includes("功能");
 }
 
 /** 与 IMM 一致：去掉标题里已有章节号前缀，编辑时只填名称 */
@@ -793,6 +794,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const { t: ts } = useTranslation();
     const [fileList, setFileList] = useState<UploadFile[]>([]);
     const [uploadLoading, setUploadLoading] = useState(false);
+    const [openInlineTableId, setOpenInlineTableId] = useState<string | number | null>(null);
     // 文档内容仍全量加载，仅默认收起目录节点，避免进入编辑页时铺开过多内容。
     const [expanded, setExpanded] = useState(false);
     const normalizedNodeSdsCode = String(node.sds_code ?? "").trim();
@@ -1035,6 +1037,10 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
             && isEmbeddedTableNode(child)
             && !(parentGlossaryReady && isGlossaryTable(child.table))
         ))
+        : [];
+    const manyInlineTables = navInlineTableChildren.length > 8;
+    const inlineTableCaptionByIndex = manyInlineTables
+        ? pickTableCaptions(node.text, navInlineTableChildren.length).captions
         : [];
     const isNavSingleChapterEdit = !readOnly && renderChildren === false;
     const navEmbeddedDocImageChild = (!readOnly && renderChildren === false)
@@ -2544,13 +2550,37 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                     )}
                 </div>
             ))}
-            {showExpandedBody && renderChildren === false && !showComplianceInlineInEdit && navInlineTableChildren.map((child, idx) => (
+            {showExpandedBody && renderChildren === false && !showComplianceInlineInEdit && navInlineTableChildren.map((child, idx) => {
+                const storedCaption = String(child.title || child.label || child.table?.name || "").trim();
+                const tableCaption = inlineTableCaptionByIndex[idx] || storedCaption;
+                const showStoredCaption = !!storedCaption && !isSyntheticTableCaption(storedCaption) && !isNumberedChapterTitle(storedCaption);
+                const collapsed = manyInlineTables && String(openInlineTableId) !== String(child.id);
+                if (collapsed) {
+                    return (
+                        <div key={`nav-inline-table-${child.id}`} className="node-table" style={{ marginTop: idx === 0 ? 8 : 4 }}>
+                            <div
+                                className="node-image-caption"
+                                style={{ textAlign: "left", cursor: "pointer", marginBottom: 0, lineHeight: 1.7 }}
+                                onClick={() => setOpenInlineTableId(child.id)}
+                            >
+                                {tableCaption || storedCaption}
+                            </div>
+                        </div>
+                    );
+                }
+                return (
                 <div key={`nav-inline-table-${child.id}`} className="node-table" style={{ marginTop: idx === 0 ? 8 : 12 }}>
-                    {(() => {
-                        const tableCaption = String(child.title || child.label || child.table?.name || "").trim();
-                        if (!tableCaption || isSyntheticTableCaption(tableCaption) || isNumberedChapterTitle(tableCaption)) return null;
-                        return <div className="node-image-caption" style={{ textAlign: "center", marginBottom: 6, lineHeight: 1.5 }}>{tableCaption}</div>;
-                    })()}
+                    {manyInlineTables ? (
+                        <div
+                            className="node-image-caption"
+                            style={{ textAlign: "left", cursor: "pointer", marginBottom: 6, lineHeight: 1.5 }}
+                            onClick={() => setOpenInlineTableId(null)}
+                        >
+                            {tableCaption || storedCaption}
+                        </div>
+                    ) : (showStoredCaption ? (
+                        <div className="node-image-caption" style={{ textAlign: "center", marginBottom: 6, lineHeight: 1.5 }}>{storedCaption}</div>
+                    ) : null)}
                     <div className="node-table-scroll">
                         <Table
                             columns={buildTableColumns(child.table)}
@@ -2581,7 +2611,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         </Space>
                     )}
                 </div>
-            ))}
+                );
+            })}
             {showExpandedBody && renderChildren === false && !showComplianceInlineInEdit && figuresInBody.map((child) => (
                 <div key={`nav-inline-figure-${child.id}`} className={`node-pic-block node-pic-block--figure-list${!isAutoOnlyImage ? " node-pic-block--reupload-side" : ""}`}>
                     <div className="node-pic-reupload-row">

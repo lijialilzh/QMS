@@ -20,6 +20,7 @@ class HldNodeForm(Node):
 class HldDocForm(BaseModel):
     id: Optional[int] = Field(title="ID")
     product_id: Optional[int] = Field(title="产品ID")
+    sdsdoc_id: Optional[int] = Field(title="关联的详细设计文档ID")
     version: Optional[str] = Field(title="版本号")
     file_no: Optional[str] = Field(title="文件编号")
     change_log: Optional[str] = Field(title="版本变更说明")

@@ -8,6 +8,7 @@ from . import Model
 class HldDoc(Model):
     __tablename__ = "hld_doc"
     product_id = Column(Integer, nullable=False, comment="产品ID")
+    sdsdoc_id = Column(Integer, nullable=False, default=0, comment="关联的详细设计文档ID")
     version = Column(String(64), nullable=False, comment="版本号")
     file_no = Column(String(64), comment="文件编号")
     change_log = Column(String(256), comment="版本变更说明")
