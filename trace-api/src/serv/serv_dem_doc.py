@@ -3,7 +3,7 @@
 
 # 开发环境维护说明服务层（开发文件）。
 # 结构：说明正文(固定模板) + 资产表(固定模板，产品名称/完整版本自动获取) + 各资产周检查表。
-# 周检查表：日期行按产品时间线「开始开发~测试结束」每周一条(周一~周五)自动生成；每格 是/否 复选框。
+# 周检查表：日期行按产品时间线「产品开发开始~产品开发结束」按周生成（跳过周末与法定节假日，调休上班日计入）；每格 是/否 复选框。
 
 import base64
 import copy
@@ -13,7 +13,7 @@ from datetime import date, timedelta
 from io import BytesIO
 from typing import List
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -28,6 +28,7 @@ from ..model.deq_doc import DeqDoc
 from ..model.prod_dhf import ProdDhf
 from ..model.project_member import ProjectMember
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
+from .serv_sd_doc import _is_workday
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
 from ..obj.vobj_user import UserObj
@@ -222,8 +223,9 @@ class Server(object):
             base["checks"] = content["checks"]
         return base
 
-    # ---------------- 时间线：开始开发 ~ 测试结束 ----------------
-    def __dev_test_range(self, prod_id):
+    # ---------------- 时间线：产品开发开始 ~ 产品开发结束 ----------------
+    def __dev_range(self, prod_id):
+        """取时间线中「产品开发」（不含计划）最早～最晚日期。"""
         if not prod_id:
             return (None, None)
         rows = db.session.execute(
@@ -250,7 +252,7 @@ class Server(object):
             except ValueError:
                 return None
 
-        dev_dates, test_dates = [], []
+        dev_dates = []
         for r in rows:
             if (r.row_type or "date") != "date":
                 continue
@@ -260,14 +262,13 @@ class Server(object):
             vals = cell_map.get(r.id, [])
             if any(("产品开发" in str(v)) and ("计划" not in str(v)) for v in vals):
                 dev_dates.append(dt)
-            if any("测试" in str(v) for v in vals):
-                test_dates.append(dt)
-        start_d = min(dev_dates) if dev_dates else None
-        end_d = max(test_dates) if test_dates else None
-        return (start_d, end_d)
+        if not dev_dates:
+            return (None, None)
+        return (min(dev_dates), max(dev_dates))
 
     def __week_ranges(self, prod_id):
-        start_d, end_d = self.__dev_test_range(prod_id)
+        """按周拆分产品开发区间；周末/法定假日不计入，调休上班日记入；整周无工作日则跳过。"""
+        start_d, end_d = self.__dev_range(prod_id)
         if not start_d or not end_d or start_d > end_d:
             return []
 
@@ -278,17 +279,15 @@ class Server(object):
         cur = start_d - timedelta(days=start_d.weekday())  # 起始周的周一
         while cur <= end_d:
             monday = cur
-            friday = monday + timedelta(days=4)
-            ws = max(monday, start_d)
-            we = min(friday, end_d)
-            # 只保留工作日（周一~周五）
-            if ws.weekday() >= 5:
-                cur = monday + timedelta(days=7)
-                continue
-            if we.weekday() >= 5:
-                we = friday
-            if ws <= we:
-                ranges.append(f"{fmt(ws)}- {fmt(we)}")
+            workdays = []
+            for i in range(7):  # 周一～周日（含调休周末上班）
+                d = monday + timedelta(days=i)
+                if d < start_d or d > end_d:
+                    continue
+                if _is_workday(d):
+                    workdays.append(d)
+            if workdays:
+                ranges.append(f"{fmt(workdays[0])}- {fmt(workdays[-1])}")
             cur = monday + timedelta(days=7)
         return ranges
 
@@ -315,16 +314,38 @@ class Server(object):
                 out.append((code, usage))
         return out
 
-    def __autofill(self, content, prod_id, product=None, force=False):
+    def __autofill(self, content, prod_id, product=None, force=False, sync_assets=True):
+        """sync_assets=False：不改资产表（保存时用，避免冲掉用户编辑的设备信息）。"""
         if not isinstance(content, dict):
             return content
         # 资产编码/检查表：从「开发设备清单」中品牌=组装机/Apple 的设备自动获取（用途含「共用」=服务器表，否则开发机表）
-        deq_assets = self.__deq_assets(prod_id)
+        # 同编码原样保留整行（含设备信息），仅新编码用默认模板
+        deq_assets = self.__deq_assets(prod_id) if sync_assets or force else []
         if deq_assets:
-            content["assets"] = [list(_ASSET_HEADER)] + [
-                [code, (_MAC_INFO if code.upper().startswith("ISER") else _UBUNTU_INFO), "", ""]
-                for code, _u in deq_assets
-            ]
+            old_by_code = {}
+            for r in (content.get("assets") or []):
+                if not isinstance(r, list) or not r:
+                    continue
+                code0 = str(r[0] or "").strip()
+                if not code0 or code0 == "资产编码":
+                    continue
+                prev = [str(x) if x is not None else "" for x in r]
+                while len(prev) < 4:
+                    prev.append("")
+                old_by_code[code0] = prev
+            new_assets = [list(_ASSET_HEADER)]
+            for code, _u in deq_assets:
+                default_info = _MAC_INFO if code.upper().startswith("ISER") else _UBUNTU_INFO
+                if code in old_by_code and not force:
+                    # 非切换产品：原样保留用户已存行（设备信息一字不改）
+                    new_assets.append(list(old_by_code[code]))
+                elif code in old_by_code and force:
+                    prev = old_by_code[code]
+                    info = prev[1] if str(prev[1] or "").strip() else default_info
+                    new_assets.append([code, info, "", ""])
+                else:
+                    new_assets.append([code, default_info, "", ""])
+            content["assets"] = new_assets
             old_checks = {str(ch.get("asset")): ch for ch in (content.get("checks") or []) if isinstance(ch, dict)}
             content["checks"] = [
                 {
@@ -483,16 +504,35 @@ class Server(object):
             row: DemDoc = db.session.execute(select(DemDoc).where(DemDoc.id == form.id)).scalars().first()
             if not row:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
-            for key, value in form.dict(exclude_none=True).items():
-                if key == "id":
-                    continue
-                if key == "content":
-                    value = self.__normalize_content(value)
-                setattr(row, key, value)
-            if getattr(form, "version", None) and hasattr(row, "file_no"):
-                row.file_no = sync_file_no_version(row.file_no or "", form.version or row.version) or row.file_no
+            prod_id = form.product_id if form.product_id is not None else row.product_id
+            product: Product = db.session.execute(select(Product).where(Product.id == prod_id)).scalars().first() if prod_id else None
+            version = form.version if form.version is not None else row.version
+            file_no = row.file_no
+            if form.version is not None:
+                file_no = sync_file_no_version(row.file_no or "", form.version or row.version) or row.file_no
+            change_log = form.change_log if form.change_log is not None else row.change_log
+            # 以用户提交的 content 为准；sync_assets=False 不从 DEQ 重建资产表（只刷周次）
+            raw = copy.deepcopy(form.content) if form.content is not None else copy.deepcopy(row.content)
+            content = self.__normalize_content(raw)
+            content = self.__autofill(content, prod_id, product, force=False, sync_assets=False)
+            # 用户若提交了资产表，再强制盖回（防止 normalize/周次逻辑误伤）
+            if isinstance(form.content, dict) and isinstance(form.content.get("assets"), list) and form.content["assets"]:
+                content["assets"] = [list(r) if isinstance(r, list) else [r] for r in copy.deepcopy(form.content["assets"])]
+            # 直接 UPDATE JSON，绕过 ORM 对 JSON 字段脏检查失效的问题
+            db.session.execute(
+                update(DemDoc)
+                .where(DemDoc.id == row.id)
+                .values(
+                    product_id=prod_id,
+                    version=version,
+                    file_no=file_no,
+                    change_log=change_log,
+                    content=content,
+                )
+            )
             db.session.commit()
-            return Resp.resp_ok()
+            fresh: DemDoc = db.session.execute(select(DemDoc).where(DemDoc.id == form.id)).scalars().first()
+            return Resp.resp_ok(data=self.__to_obj(fresh, product))
         except Exception:
             logger.exception("")
             db.session.rollback()

@@ -144,10 +144,29 @@ export default () => {
 
     const doSave = () => {
         dispatch({ saving: true });
-        Api.update_dem_doc({ id, content: data.content, product_id: data.doc.product_id, version: data.doc.version }).then((res: any) => {
+        const payload = {
+            id,
+            content: JSON.parse(JSON.stringify(data.content || {})),
+            product_id: data.doc.product_id,
+            version: data.doc.version,
+        };
+        Api.update_dem_doc(payload).then((res: any) => {
             dispatch({ saving: false });
-            if (res.code === Api.C_OK) message.success(ts("save_success"));
-            else message.error(res.msg);
+            if (res.code === Api.C_OK) {
+                message.success(ts("save_success"));
+                // 以后端落库并回传的 content 为准（含设备信息）
+                const saved = res.data || {};
+                if (saved.content) {
+                    dispatch({
+                        doc: { ...data.doc, ...saved, content: undefined },
+                        content: saved.content,
+                    });
+                } else {
+                    load();
+                }
+            } else {
+                message.error(res.msg);
+            }
         });
     };
 
@@ -274,7 +293,7 @@ export default () => {
                                                 )}
                                             </tr>
                                             {rows.length === 0 ? (
-                                                <tr><td colSpan={ncols} style={{ ...tdValue, textAlign: "center", color: "#bbb" }}>该产品未查询到「开发~测试」时间线，暂无周记录</td></tr>
+                                                <tr><td colSpan={ncols} style={{ ...tdValue, textAlign: "center", color: "#bbb" }}>该产品未查询到「产品开发」时间线，暂无周记录</td></tr>
                                             ) : rows.map((row, ri) => {
                                                 let checkIdx = -1;
                                                 const marks = row.marks || [];
