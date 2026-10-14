@@ -25,7 +25,7 @@ from ..model.product import Product, UserProd
 from ..model.sds_doc import SdsDoc
 from ..obj import Page, Resp, c_ok
 from ..obj.tobj_hld_doc import HldDocForm, HldNodeForm
-from ..obj.tobj_srs_doc import Table
+from ..obj.tobj_srs_doc import TabHeader, Table
 from ..obj.vobj_hld_doc import HldDocObj
 from ..obj.vobj_user import UserObj
 from ..obj.tobj_role import Roles
@@ -273,7 +273,9 @@ class Server(object):
             return
         for node in nodes or []:
             ref_type = getattr(node, "ref_type", None)
-            if ref_type in prod_imgs and prod_imgs.get(ref_type):
+            existing = _normalize_hld_img_url(getattr(node, "img_url", "") or "")
+            # 章节或图题上已经有图时保留原图。没有图才用产品图示补，避免产品功能章被拓扑图/体系结构图盖掉。
+            if ref_type in prod_imgs and prod_imgs.get(ref_type) and not existing:
                 node.img_url = prod_imgs[ref_type]
             self.__hydrate_tree_product_images(getattr(node, "children", None) or [], prod_imgs)
 
@@ -958,7 +960,89 @@ class Server(object):
                     __save_fitted_image(img_url)
                 __write_nodes(other_children, default_level + 1)
 
-        __write_nodes(doc_obj.content or [])
+        def __blank_cover_table():
+            rev_date = ""
+            if getattr(doc_obj, "product_id", None):
+                rev_date = serv_review_util.cover_date(doc_obj.product_id, "hld") or ""
+            version = str(getattr(doc_obj, "version", "") or "")
+            return Table(
+                show_header=0,
+                headers=[
+                    TabHeader(code="label1", name=""),
+                    TabHeader(code="value1", name=""),
+                    TabHeader(code="label2", name=""),
+                    TabHeader(code="value2", name=""),
+                ],
+                rows=[
+                    {"label1": "编制部门", "value1": "研发部", "label2": "文件版本", "value2": version},
+                    {"label1": "编制人", "value1": "", "label2": "日期", "value2": rev_date},
+                    {"label1": "审核人", "value1": "", "label2": "日期", "value2": rev_date},
+                    {"label1": "批准人", "value1": "", "label2": "日期", "value2": rev_date},
+                    {"label1": "生效日期", "value1": rev_date, "label2": "", "value2": ""},
+                ],
+            )
+
+        def __blank_revision_table():
+            version = str(getattr(doc_obj, "version", "") or "")
+            desc = str(getattr(doc_obj, "change_log", "") or "").strip() or "首次发布"
+            rev_date = ""
+            if getattr(doc_obj, "product_id", None):
+                rev_date = serv_review_util.cover_date(doc_obj.product_id, "hld") or ""
+            rows = [{
+                "change_date": rev_date,
+                "version_no": version,
+                "change_desc": desc,
+                "changer": "",
+                "approver": "",
+            }]
+            while len(rows) < 5:
+                rows.append({"change_date": "", "version_no": "", "change_desc": "", "changer": "", "approver": ""})
+            return Table(
+                headers=[
+                    TabHeader(code="change_date", name="修改日期"),
+                    TabHeader(code="version_no", name="版本号"),
+                    TabHeader(code="change_desc", name="修订说明"),
+                    TabHeader(code="changer", name="修订人"),
+                    TabHeader(code="approver", name="批准人"),
+                ],
+                rows=rows,
+            )
+
+        def __write_front_title(text: str):
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            from docx.shared import Pt
+            p = docx.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.paragraph_format.space_before = Pt(12)
+            p.paragraph_format.space_after = Pt(12)
+            docx_util.fonted_txt(p, text, font_size=16.0, bold=True)
+
+        roots = list(doc_obj.content or [])
+        cover_node = next((node for node in roots if __is_cover_title(getattr(node, "title", ""))), None)
+        revision_node = next((node for node in roots if __is_revision_title(getattr(node, "title", ""))), None)
+        if cover_node is None:
+            cover_node = HldNodeForm(title="软件概要设计", table=__blank_cover_table())
+        elif not __has_table(cover_node):
+            cover_node.table = __blank_cover_table()
+        if revision_node is None:
+            revision_node = HldNodeForm(title="文件修订记录", table=__blank_revision_table())
+        elif not __has_table(revision_node):
+            revision_node.table = __blank_revision_table()
+        __write_front_title("软件概要设计")
+        if __has_table(cover_node):
+            docx_util.save_tab2docx(cover_node.table, docx)
+        __start_next_page()
+        __write_front_title("文件修订记录")
+        if __has_table(revision_node):
+            docx_util.save_tab2docx(revision_node.table, docx)
+        __start_next_page()
+        body_roots = [
+            node for node in roots
+            if node is not cover_node and node is not revision_node
+            and not __is_cover_title(getattr(node, "title", ""))
+            and not __is_revision_title(getattr(node, "title", ""))
+        ]
+        __write_nodes(body_roots)
         if not wrote_review["ok"] and getattr(doc_obj, "product_id", None):
             sec = serv_review_util.build_review_section(
                 "hld",

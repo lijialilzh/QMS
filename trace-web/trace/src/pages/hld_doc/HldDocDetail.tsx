@@ -297,14 +297,16 @@ export default () => {
         if (fileMaps.size === 0) return treeNodes;
         const walk = (nodes: TreeNode[]): TreeNode[] =>
             (nodes || []).map((node) => {
+                const children = walk((node.children || []) as TreeNode[]);
                 const refType = String((node as any).ref_type || "");
-                const currentUrl = withCacheBuster((node as any).img_url, Date.now());
-                const mappedUrl = fileMaps.get(refType);
-                const finalUrl = mappedUrl || currentUrl || "";
+                const currentRaw = String((node as any).img_url || "").trim();
+                const childHasFigure = children.some((child) => /^图\s*\d+/.test(String(child.title || "").trim()) && String(child.img_url || "").trim());
+                const mappedUrl = (!currentRaw && !childHasFigure) ? fileMaps.get(refType) : "";
+                const finalUrl = currentRaw ? withCacheBuster(currentRaw, Date.now()) : (mappedUrl || "");
                 return {
                     ...node,
-                    ...(finalUrl ? { img_url: finalUrl } : {}),
-                    children: walk((node.children || []) as TreeNode[]),
+                    ...(finalUrl ? { img_url: finalUrl } : { img_url: "" }),
+                    children,
                 };
             });
         return walk(treeNodes);
@@ -537,17 +539,33 @@ export default () => {
             if (/系统结构|体系结构/.test(normalized)) return "img_struct";
             return undefined;
         };
+        const plainTitle = (title?: string) => String(title || "")
+            .replace(/^(\d+(?:\.\d+)+|\d{1,2})(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+            .replace(/^图\s*\d+\s*/, "")
+            .replace(/\s+/g, "");
+        const matchesImageRef = (node: TreeNode, refType?: string) => {
+            const title = String(node.title || "");
+            const normalized = plainTitle(`${title} ${node.label || ""}`);
+            if (refType === "img_topo") return /物理拓扑/.test(normalized) || /^图\s*1/.test(title.trim());
+            if (refType === "img_struct") return /系统结构|体系结构/.test(normalized) || /^图\s*2/.test(title.trim());
+            return false;
+        };
         const walk = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
             const merged = `${node.title || ""} ${node.label || ""}`;
             const guessedRefType = detectRefType(merged);
             const nextChildren = walk((node.children || []) as TreeNode[]);
             const keepExistingRefType = node.ref_type && !DOC_IMAGE_REF_TYPES.includes(node.ref_type as any);
-            const keepDocImageRefType = node.ref_type && DOC_IMAGE_REF_TYPES.includes(node.ref_type as any);
-            const isMisboundProductImg = !guessedRefType && /\/img_topo\/|\/img_struct\//.test(String((node as any).img_url || ""));
+            const keptDocImageRef = node.ref_type && DOC_IMAGE_REF_TYPES.includes(node.ref_type as any) && matchesImageRef(node, node.ref_type)
+                ? node.ref_type
+                : undefined;
+            const nextRefType = guessedRefType || keptDocImageRef || (keepExistingRefType ? node.ref_type : undefined);
+            const childOwnsFigure = nextChildren.some((child) => /^图\s*\d+/.test(String(child.title || "").trim()) && String(child.img_url || "").trim());
+            const dropParentImage = childOwnsFigure && !/^图\s*\d+/.test(String(node.title || "").trim());
+            const isMisboundProductImg = !nextRefType && /\/img_topo\/|\/img_struct\//.test(String((node as any).img_url || ""));
             return {
                 ...node,
-                ref_type: guessedRefType || (keepDocImageRefType ? node.ref_type : undefined) || (keepExistingRefType ? node.ref_type : undefined),
-                ...(isMisboundProductImg ? { img_url: "" } : {}),
+                ref_type: nextRefType,
+                ...(dropParentImage || isMisboundProductImg ? { img_url: "" } : {}),
                 children: nextChildren,
             };
         });
@@ -680,35 +698,45 @@ export default () => {
             return t === "评审记录" || t === "附件一评审结论" || t.startsWith("附件一");
         };
         const stripReviewTail = (text?: string) => String(text || "").replace(/\n?附件一\s*评审结论\s*$/, "");
+        const isReviewNode = (node?: TreeNode) => isReviewTitle(node?.title) || String((node as any)?.ref_type || "") === "review";
+        const isReviewContentTable = (table?: TreeNode["table"]) => {
+            const names = (table?.headers || []).map((header) => String(header?.name || "")).join("|");
+            return /评审内容/.test(names) && /评审项/.test(names);
+        };
         const walk = (nodes: TreeNode[]) => {
             (nodes || []).forEach((node) => {
                 const title = String(node?.title || "").replace(/\s+/g, "");
                 if (title.includes("软件概要设计")) hasCover = true;
                 if (title.includes("文件修订记录")) hasChange = true;
-                if (isReviewTitle(node?.title) || String((node as any)?.ref_type || "") === "review") hasReview = true;
+                if (isReviewNode(node)) hasReview = true;
                 if (getTableHitCount(node, ["编制科室", "编制部门", "文件版本", "编制人", "审核人", "批准人", "生效日期"]) >= 3) hasCover = true;
                 if (getTableHitCount(node, ["修改日期", "版本号", "修订说明", "修订人", "批准人"]) >= 3) hasChange = true;
                 walk((node.children || []) as TreeNode[]);
             });
         };
         walk(list);
-        const cleaned = list.map((node) => {
-            const walkClean = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
-                const text = stripReviewTail(node.text);
-                return {
-                    ...node,
-                    text: text === node.text ? node.text : text,
-                    children: walkClean((node.children || []) as TreeNode[]),
-                };
-            });
-            return walkClean([node])[0];
-        });
+        const liftedReviews: TreeNode[] = [];
+        const detachReview = (node: TreeNode): TreeNode | null => {
+            if (isReviewNode(node)) {
+                liftedReviews.push(node);
+                return null;
+            }
+            const text = stripReviewTail(node.text);
+            const table = node.table && isReviewContentTable(node.table) ? undefined : node.table;
+            return {
+                ...node,
+                text,
+                table,
+                children: ((node.children || []) as TreeNode[]).map(detachReview).filter((child): child is TreeNode => !!child),
+            };
+        };
+        const cleaned = list.map(detachReview).filter((node): node is TreeNode => !!node);
         const prefix: TreeNode[] = [];
         if (!hasCover) prefix.push(createCoverTableNode());
         if (!hasChange) prefix.push(createChangeLogTableNode());
         const withPrefix = prefix.length > 0 ? [...prefix, ...cleaned] : cleaned;
-        if (hasReview) return withPrefix;
-        return [...withPrefix, createReviewAppendixNode()];
+        const reviewNode = liftedReviews[0] || (hasReview ? null : createReviewAppendixNode());
+        return reviewNode ? [...withPrefix, reviewNode] : withPrefix;
     };
     const buildStandardNodesWithIds = (): TreeNode[] => {
         const addIdsToNodes = (nodes: any[]): TreeNode[] => nodes.map((node) => ({

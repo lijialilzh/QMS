@@ -144,6 +144,43 @@ def __content_width_in(docx: Document) -> float:
     except Exception:
         return 6.3
 
+def __commit_table_col_widths(tabx, widths, nowrap_cols=None, tight_margin: bool = False):
+    """按给定英寸宽度锁定表格，避免 Word 再按内容把接口 URL 列挤窄。"""
+    nowrap_cols = set(nowrap_cols or [])
+    tabx.autofit = False
+    tabx.allow_autofit = False
+    total_dxa = str(int(round(sum(widths) * 1440)))
+    tbl_pr = tabx._tbl.tblPr
+    tbl_w = tbl_pr.find(qn("w:tblW"))
+    if tbl_w is None:
+        tbl_w = OxmlElement("w:tblW")
+        tbl_pr.append(tbl_w)
+    tbl_w.set(qn("w:w"), total_dxa)
+    tbl_w.set(qn("w:type"), "dxa")
+    if tight_margin:
+        old_mar = tbl_pr.find(qn("w:tblCellMar"))
+        if old_mar is not None:
+            tbl_pr.remove(old_mar)
+        tbl_mar = OxmlElement("w:tblCellMar")
+        for edge, val in (("top", "40"), ("left", "50"), ("bottom", "40"), ("right", "50")):
+            node = OxmlElement(f"w:{edge}")
+            node.set(qn("w:w"), val)
+            node.set(qn("w:type"), "dxa")
+            tbl_mar.append(node)
+        tbl_pr.append(tbl_mar)
+    grid = tabx._tbl.find(qn("w:tblGrid"))
+    if grid is not None:
+        cols = grid.findall(qn("w:gridCol"))
+        for ci, width in enumerate(widths):
+            if ci < len(cols):
+                cols[ci].set(qn("w:w"), str(int(round(width * 1440))))
+    for row in tabx.rows:
+        for ci, width in enumerate(widths):
+            if ci < len(row.cells):
+                row.cells[ci].width = Inches(width)
+                if ci in nowrap_cols:
+                    __set_cell_nowrap(row.cells[ci])
+
 def __apply_adaptive_col_width(tabx, headers, rows, total_width: float = 6.3):
     col_count = len(headers or [])
     if col_count <= 0:
@@ -175,8 +212,8 @@ def __apply_adaptive_col_width(tabx, headers, rows, total_width: float = 6.3):
             score = max(score, sample_max * 1.6, 28.0)
             nowrap_need[ci] = __nowrap_col_width(col_samples, floor=1.72, cap=2.05)
         elif compact_name == "接口名称":
-            score = max(score, sample_max * 1.4, 22.0)
-            nowrap_need[ci] = __nowrap_col_width(col_samples, floor=1.35, cap=1.95)
+            score = max(score, sample_max * 1.15, 14.0)
+            nowrap_need[ci] = __nowrap_col_width(col_samples, floor=1.08, cap=1.28)
         elif compact_name in ("需求编号", "设计编号"):
             score = max(score, sample_max * 1.3, 16.0)
             nowrap_need[ci] = __nowrap_col_width(col_samples, floor=1.45, cap=2.2)
@@ -188,29 +225,36 @@ def __apply_adaptive_col_width(tabx, headers, rows, total_width: float = 6.3):
         ci for ci, header in enumerate(headers or [])
         if re.sub(r"\s+", "", str(getattr(header, "name", "") or "")).lower() in ("接口url", "url")
     ]
+    tight_margin = False
+    nowrap_cols = set(nowrap_need)
     if url_idx and nowrap_need:
-        # 编号和名称单行占位后，把剩余宽度优先给接口 URL，避免第三列被压成几个字一行
-        fixed = sum(nowrap_need.values())
-        url_w = max(1.7, min(2.6, total_width - fixed - min_width * max(0, col_count - len(nowrap_need) - len(url_idx))))
+        # 编号保持一行。名称略收窄，长名称允许换两行。空出的宽度给接口 URL，避免链接被折成一行十几个字。
+        name_idx = [
+            ci for ci, header in enumerate(headers or [])
+            if re.sub(r"\s+", "", str(getattr(header, "name", "") or "")) == "接口名称"
+        ]
+        code_idx = [ci for ci in nowrap_need if ci not in name_idx]
+        for ci in code_idx:
+            widths[ci] = min(1.62, max(1.52, float(nowrap_need.get(ci) or 1.58)))
+        for ci in name_idx:
+            widths[ci] = 1.28
+        others = [i for i in range(col_count) if i not in code_idx and i not in name_idx and i not in url_idx]
+        remain = total_width - sum(widths[ci] for ci in code_idx) - sum(widths[ci] for ci in name_idx)
+        other_w = 0.72
+        url_share = remain - other_w * len(others)
+        if url_share < 2.05 and others:
+            other_w = max(0.62, (remain - 2.05) / len(others))
+            url_share = remain - other_w * len(others)
+        url_w = max(1.55, url_share / max(1, len(url_idx)))
         for ci in url_idx:
             widths[ci] = url_w
-        used = sum(nowrap_need.values()) + sum(widths[ci] for ci in url_idx)
-        others = [i for i in range(col_count) if i not in nowrap_need and i not in url_idx]
-        remain = max(0.0, total_width - used)
-        if others:
-            each = remain / len(others)
-            for i in others:
-                widths[i] = max(0.55, each)
-        # 总宽超出正文区时，只从 URL 和其他列回收，不拆编号和名称
-        overflow = sum(widths[i] if i not in nowrap_need else nowrap_need[i] for i in range(col_count)) - total_width
-        if overflow > 0.01:
-            flexible = url_idx + others
-            pool = sum(max(0.0, widths[i] - 0.55) for i in flexible) or 1.0
-            for i in flexible:
-                room = max(0.0, widths[i] - 0.55)
-                widths[i] = max(0.55, widths[i] - overflow * (room / pool))
-        for ci, need in nowrap_need.items():
-            widths[ci] = need
+        for ci in others:
+            widths[ci] = other_w if others else 0.0
+        drift = sum(widths) - total_width
+        if abs(drift) > 0.01 and url_idx:
+            widths[url_idx[0]] = max(1.45, widths[url_idx[0]] - drift)
+        nowrap_cols = set(code_idx)
+        tight_margin = True
     elif nowrap_need:
         for ci, need in nowrap_need.items():
             widths[ci] = max(widths[ci], need)
@@ -221,20 +265,7 @@ def __apply_adaptive_col_width(tabx, headers, rows, total_width: float = 6.3):
             for i in others:
                 room = max(0.0, widths[i] - min_width)
                 widths[i] = max(min_width, widths[i] - overflow * (room / pool))
-    tabx.autofit = False
-    tabx.allow_autofit = False
-    grid = tabx._tbl.find(qn("w:tblGrid"))
-    if grid is not None:
-        cols = grid.findall(qn("w:gridCol"))
-        for ci, width in enumerate(widths):
-            if ci < len(cols):
-                cols[ci].set(qn("w:w"), str(int(width * 1440)))
-    for row in tabx.rows:
-        for ci, width in enumerate(widths):
-            if ci < len(row.cells):
-                row.cells[ci].width = Inches(width)
-                if ci in nowrap_need:
-                    __set_cell_nowrap(row.cells[ci])
+    __commit_table_col_widths(tabx, widths, nowrap_cols, tight_margin=tight_margin)
 
 def save_tab2docx(tab: Table,  docx: Document):
     # 优先使用 cells 导出（保留Word导入时的合并单元格结构）

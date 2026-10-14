@@ -1148,6 +1148,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const isAutoOnlyImage = node.ref_type === 'img_topo' || node.ref_type === 'img_struct'
         || navEmbeddedDocImageChild?.ref_type === 'img_topo' || navEmbeddedDocImageChild?.ref_type === 'img_struct';
     const showNodeTableActions = node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces';
+    const nodeIsReviewAppendix = (() => {
+        const compactTitle = String(node.title || "").replace(/\s+/g, "");
+        return node.ref_type === "review" || compactTitle === "评审记录" || compactTitle === "附件一评审结论" || compactTitle.startsWith("附件一");
+    })();
+    const hideMisplacedReviewTable = hasTable && !nodeIsReviewAppendix && isReviewContentTable(node.table);
     // 标准需求/变更需求对应章节(SDS-RCN 编码)：章节标题与 SDS 编码只读，不可修改
     const isTraceReqNode = /^SDS-RCN/i.test(String(resolvedSdsCode || node.sds_code || "").trim());
     // 第6章功能章节按 SRS 生成，标题和结构不可手改。限制条件、尚未解决的问题除外。
@@ -2138,7 +2143,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
               )}
               
               {/* 显示表格数据（ref_type 节点不展示表格） */}
-              {showExpandedBody && hasTable && !isDocImageRefType(node.ref_type) && node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces' && (
+              {showExpandedBody && hasTable && !hideMisplacedReviewTable && !isDocImageRefType(node.ref_type) && node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces' && (
                   wrapReadOnlyAlignedTable(
                   <div className={`node-table${flushOwnTableTop ? " node-table--flush-top" : ""}`}>
                       {!readOnly && !!sanitizedEditTableCaption && (
