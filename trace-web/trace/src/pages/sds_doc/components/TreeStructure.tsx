@@ -12,6 +12,7 @@ import * as XLSX from "xlsx";
 import * as Api from "@/api/ApiSdsDoc";
 import { isSdsTraceSectionNode, SdsTraceSectionActions } from "./SdsTraceSection";
 import ReviewTable from "@/common/ReviewTable";
+import { collectRuntimeLockedContentIds, isRuntimeEnvSection, isRuntimeTableNode } from "@/pages/pdp/runtimeEnvLock";
 
 // 表格数据结构（匹配后端接口，允许空对象表示无表格数据）
 interface TableData {
@@ -107,6 +108,10 @@ interface TreeNodeItemProps {
     uploadDocFile?: (formData: FormData) => Promise<any>;
     /** 1.2 范围正文由产品信息写入，不可手改 */
     lockScopeChapter?: boolean;
+    /** 概要设计：运行环境自动获取的正文与表格只读 */
+    lockRuntimeEnv?: boolean;
+    /** 运行环境章节及子孙 node.id（正文/表格只读） */
+    runtimeLockedIds?: Set<string>;
 }
 
 function isProductScopeChapterTitle(title?: string): boolean {
@@ -388,13 +393,17 @@ function isReviewStyleTable(table?: TableData | null): boolean {
 function isReviewContentTable(table?: TableData | null): boolean {
     if (!table?.headers?.length) return false;
     const names = table.headers.map((h) => String(h?.name || "")).join("|");
-    return /评审内容/.test(names) && /评审项/.test(names);
+    return /评审内容/.test(names) && (/评审项/.test(names) || /评审结论/.test(names));
 }
 
 function isReviewPersonTable(table?: TableData | null): boolean {
     if (!table?.headers?.length) return false;
     const names = table.headers.map((h) => String(h?.name || "")).join("|");
-    return /人员角色/.test(names) && /签字/.test(names);
+    return (/人员角色/.test(names) || /参评人员/.test(names)) && /签字/.test(names);
+}
+
+function isMisplacedReviewTable(table?: TableData | null): boolean {
+    return isReviewContentTable(table) || isReviewPersonTable(table);
 }
 
 function tableToReviewGrid(table: TableData): string[][] {
@@ -790,7 +799,7 @@ function ChapterBodyTextArea(props: React.ComponentProps<typeof Input.TextArea>)
     );
 }
 
-const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onSdsCodeChange, onImageChange, onAttachProgramLogicImage, pendingProgramLogicCaption = "", onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onEditExtraTable, onDeleteExtraTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, uploadDocFile, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [], useNavChapterEditor = false, autoNavChapterNo = "", lockScopeChapter = false }: TreeNodeItemProps) => {
+const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onSdsCodeChange, onImageChange, onAttachProgramLogicImage, pendingProgramLogicCaption = "", onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onEditExtraTable, onDeleteExtraTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, uploadDocFile, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [], useNavChapterEditor = false, autoNavChapterNo = "", lockScopeChapter = false, lockRuntimeEnv = false, runtimeLockedIds }: TreeNodeItemProps) => {
     const { t: ts } = useTranslation();
     const [fileList, setFileList] = useState<UploadFile[]>([]);
     const [uploadLoading, setUploadLoading] = useState(false);
@@ -983,6 +992,15 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
 
     const title = String(node.title || "").trim();
     const scopeChapterLocked = !!lockScopeChapter && isProductScopeChapterTitle(title);
+    const runtimeSectionLocked = !!lockRuntimeEnv && isRuntimeEnvSection(node);
+    const runtimeTableLocked = !!lockRuntimeEnv && isRuntimeTableNode(node);
+    const runtimeDescendantLocked = !!lockRuntimeEnv && !!runtimeLockedIds?.has(String(node.id));
+    const runtimeContentLocked = runtimeSectionLocked || runtimeTableLocked || runtimeDescendantLocked;
+    const isChildRuntimeLocked = (child: TreeNode) =>
+        !!lockRuntimeEnv && (
+            isRuntimeTableNode(child)
+            || !!runtimeLockedIds?.has(String(child.id))
+        );
     const safeNodeLabel = isJsonLikeKeyValueLine(node.label) ? "" : String(node.label || "").trim();
     const normalizedTitle = title.replace(/^[\s\u3000•·▪■◆●○□◇\-–—]+/, "").trim();
     const chapterMatch = normalizedTitle.match(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))?(.*)$/);
@@ -1031,11 +1049,16 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const navEmbeddedFigureChild = navEmbeddedFigureChildren[0];
     const multiEmbeddedFigures = navEmbeddedFigureChildren.length > 1;
     const parentGlossaryReady = /术语/.test(String(node.title || "")) && isGlossaryTable(node.table);
+    const nodeIsReviewAppendix = (() => {
+        const compactTitle = String(node.title || "").replace(/\s+/g, "");
+        return node.ref_type === "review" || compactTitle === "评审记录" || compactTitle === "附件一评审结论" || compactTitle.startsWith("附件一");
+    })();
     const navInlineTableChildren = (!readOnly && renderChildren === false)
         ? (node.children || []).filter((child) => (
             hasRenderableTable(child.table)
             && isEmbeddedTableNode(child)
             && !(parentGlossaryReady && isGlossaryTable(child.table))
+            && (nodeIsReviewAppendix || !isMisplacedReviewTable(child.table))
         ))
         : [];
     const manyInlineTables = navInlineTableChildren.length > 8;
@@ -1154,11 +1177,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const isAutoOnlyImage = node.ref_type === 'img_topo' || node.ref_type === 'img_struct'
         || navEmbeddedDocImageChild?.ref_type === 'img_topo' || navEmbeddedDocImageChild?.ref_type === 'img_struct';
     const showNodeTableActions = node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces';
-    const nodeIsReviewAppendix = (() => {
-        const compactTitle = String(node.title || "").replace(/\s+/g, "");
-        return node.ref_type === "review" || compactTitle === "评审记录" || compactTitle === "附件一评审结论" || compactTitle.startsWith("附件一");
-    })();
-    const hideMisplacedReviewTable = hasTable && !nodeIsReviewAppendix && isReviewContentTable(node.table);
+    const hideMisplacedReviewTable = hasTable && !nodeIsReviewAppendix && isMisplacedReviewTable(node.table);
     // 标准需求/变更需求对应章节(SDS-RCN 编码)：章节标题与 SDS 编码只读，不可修改
     const isTraceReqNode = /^SDS-RCN/i.test(String(resolvedSdsCode || node.sds_code || "").trim());
     // 第6章功能章节按 SRS 生成，标题和结构不可手改。限制条件、尚未解决的问题除外。
@@ -1841,7 +1860,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           size="small"
                           rows={1}
                           autoSize={{ minRows: 1, maxRows: 6 }}
-                          disabled={readOnly || scopeChapterLocked}
+                          disabled={readOnly || scopeChapterLocked || runtimeContentLocked}
                       />
                       ) : null
                   )}
@@ -1954,7 +1973,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   {!readOnly && (
                   <Space className="node-actions" size={compactWithImage ? 4 : 8}>
                       {
-                        !disableHierarchyActions && !isLockedModuleChapter && level < 4 && (
+                        !disableHierarchyActions && !isLockedModuleChapter && !runtimeContentLocked && level < 4 && (
                         <Button
                           size="small"
                           icon={<PlusOutlined />}
@@ -1963,7 +1982,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           {ts('add')}{numberToChinese(level + 2)}{ts('level_menu')}
                         </Button>)
                       }
-                      {showNodeTableActions && (
+                      {showNodeTableActions && !runtimeContentLocked && (
                       <Button
                           size="small"
                           icon={<TableOutlined />}
@@ -1972,7 +1991,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           {ts('srs_doc.table')}
                       </Button>
                       )}
-                      {showNodeTableActions && (
+                      {showNodeTableActions && !runtimeContentLocked && (
                       <Upload {...tableImportProps}>
                           <Button
                               size="small"
@@ -2047,7 +2066,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                   size="small"
                                   rows={1}
                                   autoSize={{ minRows: 1, maxRows: 20 }}
-                                  disabled={scopeChapterLocked}
+                                  disabled={scopeChapterLocked || runtimeContentLocked}
                               />
                               )}
                               {!navImageInHeaderRow && isNavSingleChapterEdit && !showComplianceInlineInEdit && (!!programLogicSplit || (navFullSizeImageMode && !multiEmbeddedFigures)) && (displayImageUrl || programLogicSplit) && (
@@ -2177,7 +2196,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           />
                               )}
                           </div>
-                          {!readOnly && !isTraceSectionTitle && (
+                          {!readOnly && !isTraceSectionTitle && !runtimeContentLocked && (
                           <Space className="node-table-actions" size={8}>
                               <Button
                                   size="small"
@@ -2280,7 +2299,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       tableLayout="auto"
                                   />
                               </div>
-                              {!readOnly && (
+                              {!readOnly && !isChildRuntimeLocked(child) && (
                                   <Space className="node-table-actions" size={8}>
                                       <Button
                                           size="small"
@@ -2377,7 +2396,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       tableLayout="auto"
                                   />
                               </div>
-                              {!readOnly && (
+                              {!readOnly && !isChildRuntimeLocked(child) && (
                                   <Space className="node-table-actions" size={8}>
                                       <Button
                                           size="small"
@@ -2474,7 +2493,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       tableLayout="auto"
                                   />
                               </div>
-                              {!readOnly && (
+                              {!readOnly && !isChildRuntimeLocked(child) && (
                                   <Space className="node-table-actions" size={8}>
                                       <Button
                                           size="small"
@@ -2529,7 +2548,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                             tableLayout="auto"
                         />
                     </div>
-                    {!readOnly && (
+                    {!readOnly && !isChildRuntimeLocked(child) && (
                         <Space className="node-table-actions" size={8} style={{ marginTop: 8 }}>
                             <Button
                                 size="small"
@@ -2591,7 +2610,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                             tableLayout="auto"
                         />
                     </div>
-                    {!readOnly && (
+                    {!readOnly && !isChildRuntimeLocked(child) && (
                         <Space className="node-table-actions" size={8} style={{ marginTop: 8 }}>
                             <Button
                                 size="small"
@@ -2697,6 +2716,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         uploadDocFile={uploadDocFile}
                         readOnlyChapterOffset={readOnlyChapterOffset}
                         lockScopeChapter={lockScopeChapter}
+                        lockRuntimeEnv={lockRuntimeEnv}
+                        runtimeLockedIds={runtimeLockedIds}
                         captionFromParent={childCaptionById.get(String(child.id)) || childCaptionById.get(String(child.n_id || ""))}
                         tableCaptionFromParent={
                             childTableCaptionById.get(String(child.id))
@@ -2731,9 +2752,11 @@ interface TreeStructureProps {
     onAddRoot?: () => void;
     uploadDocFile?: (formData: FormData) => Promise<any>;
     lockScopeChapter?: boolean;
+    /** 概要设计：运行环境自动获取的正文与表格只读 */
+    lockRuntimeEnv?: boolean;
 }
 
-export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = [], onNodeDelete, readOnly, readOnlyRootWrapper = true, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, extraNavSections = [], onAddRoot, uploadDocFile, lockScopeChapter = false }: TreeStructureProps) => {
+export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = [], onNodeDelete, readOnly, readOnlyRootWrapper = true, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, extraNavSections = [], onAddRoot, uploadDocFile, lockScopeChapter = false, lockRuntimeEnv = false }: TreeStructureProps) => {
     const { t: ts } = useTranslation();
     const [nodes, setNodes] = useState<TreeNode[]>(value);
     const [tableModalVisible, setTableModalVisible] = useState(false);
@@ -3381,6 +3404,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
             }));
     };
     const visibleNodes = getVisibleNodes(nodes);
+    const runtimeLockedIds = lockRuntimeEnv ? collectRuntimeLockedContentIds(nodes) : undefined;
     const effectiveReadOnlyChapterOffset = (() => {
         if (!readOnly) return 0;
         const majorFromTitle = (title?: string): number => {
@@ -3482,7 +3506,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                         <span className="srs-nav-title" title={navLabel}>{navLabel}</span>
                         {!readOnly && (
                             <span className="srs-nav-ops" onClick={(e) => e.stopPropagation()}>
-                                {canAddChildInNav(node, depth) && !isLockedSdsFunctionChapter(chapterNum, node.title) && chapterNum !== "6" && (
+                                {canAddChildInNav(node, depth) && !isLockedSdsFunctionChapter(chapterNum, node.title) && chapterNum !== "6" && !(lockRuntimeEnv && isRuntimeEnvSection(node)) && (
                                     <Tooltip title={ts("sds_doc.add_sub_chapter") || ts("srs_doc.add_sub_chapter") || "添加子章节"}>
                                         <PlusOutlined
                                             className="srs-nav-add-child"
@@ -3554,6 +3578,8 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                 uploadDocFile,
                 readOnlyChapterOffset: effectiveReadOnlyChapterOffset,
                 lockScopeChapter,
+                lockRuntimeEnv,
+                runtimeLockedIds,
             };
             return readOnly && !readOnlyRootWrapper ? (
                 <TreeNodeItem key={node.id} {...rootItemProps} />
@@ -3631,6 +3657,8 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                                             useNavChapterEditor={!readOnly}
                                             autoNavChapterNo={navChapterNumberMap.get(String(effectiveNode.id)) || ""}
                                             lockScopeChapter={lockScopeChapter}
+                                            lockRuntimeEnv={lockRuntimeEnv}
+                                            runtimeLockedIds={runtimeLockedIds}
                                             onAdd={handleAdd}
                                             onAddSibling={handleAddSibling}
                                             onDelete={handleDelete}

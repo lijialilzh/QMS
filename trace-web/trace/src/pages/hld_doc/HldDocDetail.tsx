@@ -703,8 +703,16 @@ export default () => {
         const isReviewNode = (node?: TreeNode) => isReviewTitle(node?.title) || String((node as any)?.ref_type || "") === "review";
         const isReviewContentTable = (table?: TreeNode["table"]) => {
             const names = (table?.headers || []).map((header) => String(header?.name || "")).join("|");
-            return /评审内容/.test(names) && /评审项/.test(names);
+            return /评审内容/.test(names) && (/评审项/.test(names) || /评审结论/.test(names));
         };
+        const isReviewPersonTable = (table?: TreeNode["table"]) => {
+            const names = (table?.headers || []).map((header) => String(header?.name || "")).join("|");
+            return (/人员角色/.test(names) || /参评人员/.test(names)) && /签字/.test(names);
+        };
+        const isMisplacedReviewTable = (table?: TreeNode["table"]) =>
+            isReviewContentTable(table) || isReviewPersonTable(table);
+        const isEmbeddedReviewTableChild = (child: TreeNode) =>
+            /^导入表格\d*$/.test(String(child.title || "").trim()) && isMisplacedReviewTable(child.table);
         const walk = (nodes: TreeNode[]) => {
             (nodes || []).forEach((node) => {
                 const title = String(node?.title || "").replace(/\s+/g, "");
@@ -724,12 +732,16 @@ export default () => {
                 return null;
             }
             const text = stripReviewTail(node.text);
-            const table = node.table && isReviewContentTable(node.table) ? undefined : node.table;
+            const table = node.table && isMisplacedReviewTable(node.table) ? undefined : node.table;
+            const children = ((node.children || []) as TreeNode[])
+                .filter((child) => !isEmbeddedReviewTableChild(child))
+                .map(detachReview)
+                .filter((child): child is TreeNode => !!child);
             return {
                 ...node,
                 text,
                 table,
-                children: ((node.children || []) as TreeNode[]).map(detachReview).filter((child): child is TreeNode => !!child),
+                children,
             };
         };
         const cleaned = list.map(detachReview).filter((node): node is TreeNode => !!node);
@@ -1775,6 +1787,7 @@ export default () => {
                                 readOnlyChapterOffset={0}
                                 readOnlyRootWrapper={false}
                                 uploadDocFile={Api.add_doc_file}
+                                lockRuntimeEnv
                             />
                         </div>
                     </div>

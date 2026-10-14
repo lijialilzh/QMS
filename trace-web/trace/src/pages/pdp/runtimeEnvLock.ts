@@ -21,17 +21,36 @@ export function isRuntimeTableNode(node: any): boolean {
     if (isRuntimeEnvSection(node)) return false;
     const t = String(node?.title || "");
     const plain = stripRuntimeTitle(t);
-    if (t.includes("确认运行环境")) return false;
+    if (t.includes("确认运行环境") || plain.includes("确认运行环境")) return false;
+    const tableName = String(node?.table?.name || "");
+    if (/表\s*[1-4]/.test(tableName) && /(硬件|软件|用户端|网络)/.test(tableName)) return true;
     return (
-        t.includes("表1") ||
+        /表\s*[1-4]/.test(t) ||
         plain.startsWith("服务器硬件") ||
-        t.includes("表2") ||
+        plain.includes("硬件环境") ||
         plain.includes("服务器软件") ||
-        t.includes("表3") ||
+        plain.includes("软件环境") ||
+        plain.includes("配置见表") ||
         plain.startsWith("用户端") ||
-        t.includes("表4") ||
-        (plain.includes("网络") && (plain.includes("条件") || plain.includes("要求") || t.includes("表")))
+        (plain.includes("网络") && (plain.includes("条件") || plain.includes("要求") || /表/.test(t)))
     );
+}
+
+/** 「运行环境」章及其子孙：正文/表格只读。 */
+export function collectRuntimeLockedContentIds(nodes: any[]): Set<string> {
+    const ids = new Set<string>();
+    const walk = (list: any[], underRuntime: boolean) => {
+        for (const n of list || []) {
+            const section = isRuntimeEnvSection(n);
+            const under = underRuntime || section;
+            if (under || isRuntimeTableNode(n)) {
+                if (n?.id != null) ids.add(String(n.id));
+            }
+            walk(n?.children || [], under);
+        }
+    };
+    walk(nodes || [], false);
+    return ids;
 }
 
 export function isRuntimeLockedNode(node: any): boolean {
