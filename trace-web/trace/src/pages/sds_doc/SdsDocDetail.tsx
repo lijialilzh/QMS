@@ -3870,18 +3870,20 @@ export default () => {
                                     label={ts("srs_doc.select_product")}
                                     name="product_id"
                                     rules={[{ required: true, message: "" }]}>
-                                    <ProductVersionSelect
-                                        products={data.products}
-                                        allowClear
-                                        namePlaceholder={ts("product.name")}
-                                        versionPlaceholder={ts("product.full_version")}
-                                        onChange={(value) => {
-                                            editForm.setFieldValue("product_id", value);
-                                            editForm.setFieldsValue({ srsdoc_id: undefined });
-                                            dispatch({ srsDocList: [] });
-                                            if (value) loadSrsDocList(value);
-                                        }}
-                                    />
+                                    <div className="sds-toolbar-product-select">
+                                        <ProductVersionSelect
+                                            products={data.products}
+                                            allowClear
+                                            namePlaceholder={ts("product.name")}
+                                            versionPlaceholder={ts("product.full_version")}
+                                            onChange={(value) => {
+                                                editForm.setFieldValue("product_id", value);
+                                                editForm.setFieldsValue({ srsdoc_id: undefined });
+                                                dispatch({ srsDocList: [] });
+                                                if (value) loadSrsDocList(value);
+                                            }}
+                                        />
+                                    </div>
                                 </Form.Item>
                                 <Form.Item
                                     className="sds-toolbar-item"
@@ -3894,7 +3896,7 @@ export default () => {
                                         allowClear
                                         optionFilterProp="label"
                                         disabled={!data.srsDocList.length}
-                                        style={{ width: 160 }}
+                                        style={{ width: 88 }}
                                         options={data.srsDocList.map((item: any) => ({
                                             label: `${item.version || item.full_version || ""}`,
                                             value: item.id,
@@ -3906,7 +3908,7 @@ export default () => {
                                 label={data.isEdit ? ts("sds_doc.current_version") : ts("sds_doc.version_label")}
                                 name="version"
                                 rules={[{ required: true, message: "" }]}>
-                                <Input allowClear placeholder={ts("sds_doc.please_input_version")} style={{ width: 130 }} />
+                                <Input allowClear placeholder={ts("sds_doc.please_input_version")} style={{ width: 88 }} />
                             </Form.Item>
                         </>
                         ) : null
@@ -3917,18 +3919,20 @@ export default () => {
                                 label={ts("srs_doc.select_product")}
                                 name="product_id"
                                 rules={[{ required: true, message: "" }]}>
-                                <ProductVersionSelect
-                                    products={data.products}
-                                    allowClear
-                                    namePlaceholder={ts("product.name")}
-                                    versionPlaceholder={ts("product.full_version")}
-                                    onChange={(value) => {
-                                        editForm.setFieldValue("product_id", value);
-                                        editForm.setFieldsValue({ srsdoc_id: undefined });
-                                        dispatch({ srsDocList: [] });
-                                        if (value) loadSrsDocList(value);
-                                    }}
-                                />
+                                <div className="sds-toolbar-product-select">
+                                    <ProductVersionSelect
+                                        products={data.products}
+                                        allowClear
+                                        namePlaceholder={ts("product.name")}
+                                        versionPlaceholder={ts("product.full_version")}
+                                        onChange={(value) => {
+                                            editForm.setFieldValue("product_id", value);
+                                            editForm.setFieldsValue({ srsdoc_id: undefined });
+                                            dispatch({ srsDocList: [] });
+                                            if (value) loadSrsDocList(value);
+                                        }}
+                                    />
+                                </div>
                             </Form.Item>
                             <Form.Item
                                 className="sds-toolbar-item"
@@ -3941,7 +3945,7 @@ export default () => {
                                     allowClear
                                     optionFilterProp="label"
                                     disabled={!data.srsDocList.length}
-                                    style={{ width: 160 }}
+                                    style={{ width: 88 }}
                                     options={data.srsDocList.map((item: any) => ({
                                         label: `${item.version || item.full_version || ""}`,
                                         value: item.id,
@@ -3953,41 +3957,43 @@ export default () => {
                                 label={ts("sds_doc.version_label")}
                                 name="version"
                                 rules={[{ required: true, message: "" }]}>
-                                <Input allowClear placeholder={ts("sds_doc.please_input_version")} style={{ width: 130 }} />
+                                <Input allowClear placeholder={ts("sds_doc.please_input_version")} style={{ width: 88 }} />
                             </Form.Item>
                         </>
                     )}
                     <div className="expand"></div>
-                    {!isReadOnly && (
-                        <Space>
-                            <Button
-                                type="primary"
-                                icon={<DownloadOutlined />}
-                                loading={data.exporting}
-                                onClick={handleExport}
-                                disabled={!data.isEdit}>
-                                {ts("export")}
-                            </Button>
-                            <Button
-                                type="primary"
-                                icon={<FileAddOutlined />}
-                                onClick={handleInitTemplate}>
-                                {ts("sds_doc.init_template")}
-                            </Button>
-                            <Button
-                                type="primary"
-                                loading={data.saving}
-                                onClick={handleSaveTreeStructure}>
-                                {ts("save")}
-                            </Button>
-                        </Space>
-                    )}
-                    <Button
-                        className="sds-toolbar-back"
-                        icon={<ArrowLeftOutlined />}
-                        onClick={() => navigate("/sds_docs")}>
-                        {ts("back")}
-                    </Button>
+                    <Space className="sds-toolbar-actions" wrap={false}>
+                        {!isReadOnly && (
+                            <>
+                                <Button
+                                    type="primary"
+                                    icon={<DownloadOutlined />}
+                                    loading={data.exporting}
+                                    onClick={handleExport}
+                                    disabled={!data.isEdit}>
+                                    {ts("export")}
+                                </Button>
+                                <Button
+                                    type="primary"
+                                    icon={<FileAddOutlined />}
+                                    onClick={handleInitTemplate}>
+                                    {ts("sds_doc.init_template")}
+                                </Button>
+                                <Button
+                                    type="primary"
+                                    loading={data.saving}
+                                    onClick={handleSaveTreeStructure}>
+                                    {ts("save")}
+                                </Button>
+                            </>
+                        )}
+                        <Button
+                            className="sds-toolbar-back"
+                            icon={<ArrowLeftOutlined />}
+                            onClick={() => navigate("/sds_docs")}>
+                            {ts("back")}
+                        </Button>
+                    </Space>
                 </div>
             </Form>
             <div className="div-v detail-content">

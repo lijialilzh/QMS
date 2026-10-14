@@ -88,10 +88,39 @@ type CoverRevisionAutofillInfo = {
     approver: string;
 };
 
+const syncHldCoverDateCells = (table: TreeNode["table"], date: string) => {
+    if (!date || !Array.isArray(table?.cells)) return null;
+    let touched = false;
+    const cells = table.cells.map((line: any[]) => (line || []).map((cell: any) => ({ ...cell })));
+    cells.forEach((line: any[]) => {
+        line.forEach((cell: any, index: number) => {
+            const label = String(cell?.value || "").replace(/\s/g, "");
+            if ((label === "编制人" || label === "审核人" || label === "批准人") && line[index + 3]) {
+                const dateLabel = String(line[index + 2]?.value || "").replace(/\s/g, "");
+                if (dateLabel === "日期" && String(line[index + 3].value || "") !== date) {
+                    line[index + 3].value = date;
+                    touched = true;
+                }
+            }
+            if (label === "生效日期" && line[index + 1] && String(line[index + 1].value || "") !== date) {
+                line[index + 1].value = date;
+                touched = true;
+            }
+        });
+    });
+    return touched ? cells : null;
+};
+
 const applyHldCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAutofillInfo): { nodes: TreeNode[]; changed: boolean } => {
     let changed = false;
     const setIf = (row: Record<string, string>, key: string, val: string) => {
         if (val && !String(row[key] ?? "").trim()) {
+            row[key] = val;
+            changed = true;
+        }
+    };
+    const setDate = (row: Record<string, string>, key: string, val: string) => {
+        if (val && String(row[key] ?? "") !== val) {
             row[key] = val;
             changed = true;
         }
@@ -116,17 +145,42 @@ const applyHldCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAut
                     row.value1 = sig;
                     changed = true;
                 }
-                setIf(row, "value2", info.coverDate);
+                setDate(row, "value2", info.coverDate);
             });
             if (rows[4]) {
-                setIf(rows[4], "value1", info.coverDate);
+                setDate(rows[4], "value1", info.coverDate);
             }
-            nextNode = { ...nextNode, table: { ...nextNode.table!, headers: HLD_APPROVAL_HEADERS, rows } };
+            const coverCells = syncHldCoverDateCells(nextNode.table, info.coverDate);
+            nextNode = {
+                ...nextNode,
+                table: {
+                    ...nextNode.table!,
+                    headers: HLD_APPROVAL_HEADERS,
+                    rows,
+                    ...(coverCells ? { cells: coverCells } : {}),
+                },
+            };
+            if (coverCells) changed = true;
         } else if (nextNode.table && isHldChangeLogTableNode(nextNode)) {
             const rows = [...(nextNode.table.rows || [])].map((r: any) => ({ ...r }));
             while (rows.length < 1) rows.push({});
-            const row = rows[0] || {};
-            setIf(row, "change_date", info.coverDate);
+            const headers = nextNode.table.headers || [];
+            const dateHeader = headers.find((header: any) => String(header?.name || "").replace(/\s/g, "") === "修改日期");
+            const dateKey = String(dateHeader?.code || "change_date");
+            const row = rows.find((item: any) => String(item?.[dateKey] || item?.change_date || "").trim()) || rows[0] || {};
+            setDate(row, dateKey, info.coverDate);
+            if (dateKey !== "change_date") setDate(row, "change_date", info.coverDate);
+            const cells = Array.isArray(nextNode.table.cells)
+                ? nextNode.table.cells.map((line: any[]) => (line || []).map((cell: any) => ({ ...cell })))
+                : null;
+            if (cells && cells.length > 1) {
+                const colIdx = (cells[0] || []).findIndex((cell: any) => String(cell?.value || "").replace(/\s/g, "") === "修改日期");
+                if (colIdx >= 0 && cells[1]?.[colIdx] && String(cells[1][colIdx].value || "") !== info.coverDate && info.coverDate) {
+                    cells[1][colIdx].value = info.coverDate;
+                    changed = true;
+                    nextNode = { ...nextNode, table: { ...nextNode.table, cells } };
+                }
+            }
             if (info.version && String(row.version_no ?? "").trim() !== info.version) {
                 row.version_no = info.version;
                 changed = true;
@@ -1081,7 +1135,7 @@ export default () => {
                 allowClear
                 optionFilterProp="label"
                 disabled={!data.sdsDocList.length}
-                style={{ width: 160 }}
+                style={{ width: 88 }}
                 options={(data.sdsDocList || []).map((item: any) => ({
                     label: `${item.version || ""}`,
                     value: item.id,
@@ -1091,16 +1145,18 @@ export default () => {
     );
 
     const renderProductVersionSelect = () => (
-        <ProductVersionSelect
-            products={data.products}
-            allowClear
-            namePlaceholder={ts("product.name")}
-            versionPlaceholder={ts("product.full_version")}
-            onChange={handleProductIdFieldChange}
-        />
+        <div className="hld-toolbar-product-select">
+            <ProductVersionSelect
+                products={data.products}
+                allowClear
+                namePlaceholder={ts("product.name")}
+                versionPlaceholder={ts("product.full_version")}
+                onChange={handleProductIdFieldChange}
+            />
+        </div>
     );
 
-    const renderDocVersionInput = (disabled?: boolean, width = 130) => (
+    const renderDocVersionInput = (disabled?: boolean, width = 88) => (
         <Input
             allowClear
             placeholder={ts("hld_doc.please_input_version")}
@@ -1765,22 +1821,24 @@ export default () => {
                                 </>
                             )}
                             <div className="expand" />
-                            {!isReadOnly && (
-                                <Space>
-                                    <Button type="primary" icon={<DownloadOutlined />} loading={data.exporting} onClick={handleExport} disabled={!data.isEdit}>
-                                        {ts("export")}
-                                    </Button>
-                                    <Button type="primary" icon={<FileAddOutlined />} onClick={handleInitTemplate}>
-                                        {ts("hld_doc.init_template")}
-                                    </Button>
-                                    <Button type="primary" loading={data.saving} onClick={handleSaveTreeStructure}>
-                                        {ts("save")}
-                                    </Button>
-                                </Space>
-                            )}
-                            <Button className="hld-toolbar-back" icon={<ArrowLeftOutlined />} onClick={() => navigate("/hld_docs")}>
-                                {ts("back")}
-                            </Button>
+                            <Space className="hld-toolbar-actions" wrap={false}>
+                                {!isReadOnly && (
+                                    <>
+                                        <Button type="primary" icon={<DownloadOutlined />} loading={data.exporting} onClick={handleExport} disabled={!data.isEdit}>
+                                            {ts("export")}
+                                        </Button>
+                                        <Button type="primary" icon={<FileAddOutlined />} onClick={handleInitTemplate}>
+                                            {ts("hld_doc.init_template")}
+                                        </Button>
+                                        <Button type="primary" loading={data.saving} onClick={handleSaveTreeStructure}>
+                                            {ts("save")}
+                                        </Button>
+                                    </>
+                                )}
+                                <Button className="hld-toolbar-back" icon={<ArrowLeftOutlined />} onClick={() => navigate("/hld_docs")}>
+                                    {ts("back")}
+                                </Button>
+                            </Space>
                         </div>
                     </Form>
                     <div className="div-v detail-content">

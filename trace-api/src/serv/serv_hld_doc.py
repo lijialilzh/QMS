@@ -1144,10 +1144,26 @@ class Server(object):
                 label = str(row.get("label1") or "").strip()
                 if label in ("编制人", "审核人", "批准人") and not str(row.get("value1") or "").strip():
                     row["value1"] = signers.get(label) or ""
-                if label in ("编制人", "审核人", "批准人") and rev_date and not str(row.get("value2") or "").strip():
+                # 编审批日期、生效日期：有时间线日期则覆盖错误旧值
+                if label in ("编制人", "审核人", "批准人") and rev_date:
                     row["value2"] = rev_date
-                if label == "生效日期" and rev_date and not str(row.get("value1") or "").strip():
+                if label == "生效日期" and rev_date:
                     row["value1"] = rev_date
+
+        def __fill_revision_dates(table):
+            if not table:
+                return
+            rev_date = ""
+            if getattr(doc_obj, "product_id", None):
+                rev_date = serv_review_util.cover_date(doc_obj.product_id, "hld") or ""
+            if not rev_date:
+                return
+            rows = list(getattr(table, "rows", None) or [])
+            if not rows:
+                return
+            first = rows[0] if isinstance(rows[0], dict) else None
+            if first is not None:
+                first["change_date"] = rev_date
 
         def __blank_revision_table():
             version = str(getattr(doc_obj, "version", "") or "")
@@ -1202,6 +1218,8 @@ class Server(object):
             revision_node = HldNodeForm(title="文件修订记录", table=__blank_revision_table())
         elif not __has_table(revision_node):
             revision_node.table = __blank_revision_table()
+        else:
+            __fill_revision_dates(revision_node.table)
         __add_blank_lines(10)
         __write_front_title("软件概要设计")
         __add_blank_lines(9)
