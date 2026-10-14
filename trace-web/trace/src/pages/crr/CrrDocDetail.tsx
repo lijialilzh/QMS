@@ -12,6 +12,7 @@ import * as ApiProduct from "@/api/ApiProduct";
 import "../pdp/PdpDocDetail.less";
 
 const CATEGORIES = ["结构", "文档", "变量", "算法操作", "循环和分支"];
+const CONCLUSIONS = ["通过", "有条件通过", "不通过"];
 const isCategory = (row: any[]) =>
     Array.isArray(row) && CATEGORIES.includes(String(row[0] ?? "").trim())
     && row.slice(1).every((c: any) => !String(c ?? "").trim());
@@ -281,12 +282,24 @@ export default () => {
                             </tbody>
                         </table>
 
-                        {/* 结论 */}
+                        {/* 结论：与标准文档一致，横排三选一 */}
                         <table style={tableStyle}>
                             <tbody>
                                 <tr><td style={barCell}>结论</td></tr>
                                 <tr>
-                                    <td style={tdValue}>{editValue(c.conclusion, (v) => setField("conclusion", v), { minHeight: 60 })}</td>
+                                    <td style={tdValue}>
+                                        {CONCLUSIONS.map((name) => (
+                                            <Checkbox
+                                                key={name}
+                                                checked={String(c.conclusion || "") === name}
+                                                disabled={readonly}
+                                                onChange={() => setField("conclusion", String(c.conclusion || "") === name ? "" : name)}
+                                                style={{ marginRight: 16 }}
+                                            >
+                                                {name}
+                                            </Checkbox>
+                                        ))}
+                                    </td>
                                 </tr>
                             </tbody>
                         </table>

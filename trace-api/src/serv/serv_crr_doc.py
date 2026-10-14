@@ -21,6 +21,7 @@ from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT, WD_R
 
 from ..model.product import Product
 from ..model.crr_doc import CrrDoc
+from ..model.scm_doc import ScmDoc
 from ..model.prod_dhf import ProdDhf
 from ..model.project_member import ProjectMember
 from ..obj import Page, Resp
@@ -40,17 +41,18 @@ logger = logging.getLogger(__name__)
 # 检查表分类行（整行只有首格有内容，导出/编辑时作为分组标题横向合并）。
 _CATEGORIES = ("结构", "文档", "变量", "算法操作", "循环和分支")
 
-# 代码地址默认模板（取自《代码审查记录》，可手动编辑；用空格分隔，避免制表符导致导出内容不左对齐）。
+# 代码地址兜底模板（无 SCM 时用）；优先从《软件配置管理计划》配置项存储地址自动获取。
 _DEFAULT_CODE_URL = (
     "DP http://gitlab.quality.info:8081/infercare-recist/repacs/tree/1.0.0.0\n"
     "RePACS http://gitlab.quality.info:8081/infercare-recist/repacs/tree/1.0.0.0\n"
     "DLServer http://gitlab.quality.info:8081/infercare-recist/dlserver/tree/1.0.0.0\n"
     "NeoViewer http://gitlab.quality.info:8081/infercare-recist/neoviewer/tree/1.0.0.0"
 )
+_CRR_CONCLUSIONS = ("通过", "有条件通过", "不通过")
 
 # 标准模板默认内容（取自《代码审查记录》模板），新增文档时预填、可改。
 DEFAULT_CRR_CONTENT = {
-    "code_url": _DEFAULT_CODE_URL,
+    "code_url": "",  # 空则 autofill 从 SCM 取，取不到再用 _DEFAULT_CODE_URL
     "check_date": "",
     "auditee": "",
     "auditor": "",
@@ -95,13 +97,88 @@ class Server(object):
                 base[key] = content.get(key)
         # 代码地址：制表符转空格，保证左对齐不缩进
         base["code_url"] = str(base.get("code_url") or "").replace("\t", "  ")
+        # 旧文案「无条件通过」归一为标准「有条件通过」
+        if str(base.get("conclusion") or "").strip() == "无条件通过":
+            base["conclusion"] = "有条件通过"
         return base
 
+    def __scm_code_url(self, prod_id):
+        """从该产品最新《软件配置管理计划》『配置项存储地址』表取源代码行：名称 + URL。"""
+        if not prod_id:
+            return ""
+        doc = db.session.execute(
+            select(ScmDoc).where(ScmDoc.product_id == prod_id).order_by(ScmDoc.id.desc())
+        ).scalars().first()
+        if not doc:
+            return ""
+        content = doc.content if isinstance(doc.content, dict) else {}
+
+        def is_storage_table(tb):
+            if not isinstance(tb, list) or not tb or not isinstance(tb[0], list):
+                return False
+            hdr = " ".join(str(c or "") for c in tb[0])
+            return ("存储" in hdr) and (("路径" in hdr) or ("位置" in hdr) or ("地址" in hdr))
+
+        def extract_lines(tb):
+            out = []
+            for r in tb[1:]:
+                if not isinstance(r, list) or len(r) < 2:
+                    continue
+                cells = [str(c or "").strip() for c in r]
+                cat = cells[0] if cells else ""
+                # 只要源代码类配置项
+                if cat and ("源代码" not in cat) and cat not in ("DP", "RePACS", "DLServer", "NeoViewer"):
+                    if not any(x.startswith("http") for x in cells):
+                        continue
+                    if any(k in cat for k in ("验证", "构建工具", "类别")):
+                        continue
+                url = next((x for x in cells if x.startswith("http")), "")
+                if not url:
+                    continue
+                name = ""
+                for x in cells:
+                    if not x or x.startswith("http") or x == cat:
+                        continue
+                    if "源代码" in x or "验证" in x or "构建" in x:
+                        continue
+                    name = x
+                    break
+                if not name and cat and "源代码" not in cat:
+                    name = cat
+                out.append(f"{name} {url}".strip() if name else url)
+            return out
+
+        def walk(ns):
+            for n in ns or []:
+                if not isinstance(n, dict):
+                    continue
+                title = str(n.get("title") or "")
+                prefer = ("配置项" in title) and any(k in title for k in ("存储", "版本控制", "标识"))
+                tables = n.get("tables") or []
+                if prefer:
+                    for tb in tables:
+                        if is_storage_table(tb):
+                            lines = extract_lines(tb)
+                            if lines:
+                                return "\n".join(lines)
+                for tb in tables:
+                    if is_storage_table(tb):
+                        lines = extract_lines(tb)
+                        if lines:
+                            return "\n".join(lines)
+                hit = walk(n.get("children") or [])
+                if hit:
+                    return hit
+            return ""
+
+        return walk(content.get("sections") or [])
+
     def __autofill(self, content, prod_id, force=False):
-        """按产品参与人员/时间线自动获取：
-        检查日期/签字日期←时间线(代码审查)；被审核人←TPM；审核人←研发负责人；审核签字←研发负责人签名章。
+        """按产品参与人员/时间线/SCM 自动获取：
+        检查日期/签字日期←时间线(代码审查)；被审核人←TPM；审核人←研发负责人；审核签字←研发负责人签名章；
+        代码地址←软件配置管理计划配置项存储地址（无则兜底模板）。
         force=False（默认）：仅填空，不覆盖已填（保留用户手动编辑）。
-        force=True（切换产品）：强制覆盖，无数据则置空。"""
+        force=True（切换产品）：强制覆盖，无数据则置空/兜底。"""
         if not isinstance(content, dict):
             return content
         members = db.session.execute(
@@ -118,6 +195,8 @@ class Server(object):
         auditee_val = role_name("TPM")
         auditor_val = role_name("研发负责人")
         sign_val = (serv_review_util._sign_by_name(auditor_val) if auditor_val else "") or ""
+        scm_url = (self.__scm_code_url(prod_id) if prod_id else "") or ""
+        code_url_val = scm_url or _DEFAULT_CODE_URL
         if force:
             # 强制覆盖：用新产品数据替换，无则置空
             content["check_date"] = rev_date or ""
@@ -125,8 +204,9 @@ class Server(object):
             content["auditor"] = auditor_val
             content["sign_img"] = sign_val
             content["sign_date"] = rev_date or ""
+            content["code_url"] = code_url_val
         else:
-            # 仅填空，不覆盖已填
+            # 仅填空，不覆盖已填（仍为兜底模板时也允许被 SCM 覆盖一次）
             if rev_date:
                 content["check_date"] = rev_date
             if not str(content.get("auditee") or "").strip():
@@ -137,6 +217,9 @@ class Server(object):
             if not str(content.get("sign_img") or "").startswith("data:image"):
                 content["sign_img"] = (serv_review_util._sign_by_name(auditor) if auditor else "") or ""
             content["sign_date"] = str(content.get("check_date") or "")
+            cur_url = str(content.get("code_url") or "").strip()
+            if (not cur_url) or (cur_url == _DEFAULT_CODE_URL.strip()):
+                content["code_url"] = code_url_val
         return content
 
     # ---------------- 文件编号（未手填时从产品 DHF 匹配） ----------------
@@ -155,6 +238,9 @@ class Server(object):
     def __to_obj(self, row: CrrDoc, product: Product = None):
         obj = CrrDocObj(**row.dict())
         obj.content = self.__autofill(self.__normalize_content(obj.content), row.product_id)
+        if not (obj.file_no or "").strip():
+            obj.file_no = self.__dhf_file_no(row.product_id)
+        obj.file_no = sync_file_no_version(obj.file_no or "", getattr(row, "version", None) or "") or obj.file_no
         if product:
             obj.product_name = product.name
             obj.product_version = product.full_version
@@ -172,7 +258,13 @@ class Server(object):
                 return Resp.resp_err(msg=ts("msg_obj_exist"))
             row = CrrDoc(**form.dict(exclude_none=True))
             row.id = None
-            row.content = self.__normalize_content(row.content)
+            if not (row.file_no or "").strip():
+                row.file_no = self.__dhf_file_no(row.product_id) or None
+            if row.file_no:
+                row.file_no = sync_file_no_version(row.file_no, row.version) or row.file_no
+            content = self.__normalize_content(row.content)
+            content = self.__autofill(content, row.product_id, force=False)
+            row.content = content
             db.session.add(row)
             db.session.commit()
             return Resp.resp_ok(data=CrrDocForm(id=row.id))
@@ -250,6 +342,10 @@ class Server(object):
             content = self.__normalize_content(row.content)
             content = self.__autofill(content, product_id, force=True)
             row.content = content
+            # 切换产品后按新产品 DHF 重取文件编号（空或强制同步版本后缀）
+            dhf_no = self.__dhf_file_no(product_id)
+            if dhf_no:
+                row.file_no = sync_file_no_version(dhf_no, row.version) or dhf_no
             db.session.commit()
             return Resp.resp_ok(data=self.__to_obj(row, product))
         except Exception:
@@ -437,11 +533,15 @@ class Server(object):
                     _tcw.set(qn("w:type"), "dxa")
         document.add_paragraph()
 
-        # 结论
+        # 结论：与标准文档一致，横排 通过/有条件通过/不通过 勾选
+        concl = str(c.get("conclusion") or "").strip()
+        if concl == "无条件通过":
+            concl = "有条件通过"
         concl_tbl = document.add_table(rows=1, cols=1)
         concl_tbl.style = "Table Grid"
         concl_tbl.alignment = WD_TABLE_ALIGNMENT.CENTER
-        set_cell(concl_tbl.rows[0].cells[0], f"结论：{c.get('conclusion', '') or ''}")
+        marks = " ".join([("%s%s" % ("\u2611\ufe0e" if concl == name else "\u2610", name)) for name in _CRR_CONCLUSIONS])
+        set_cell(concl_tbl.rows[0].cells[0], "结论： " + marks)
         document.add_paragraph()
 
         # 审核人（签字）/日期
