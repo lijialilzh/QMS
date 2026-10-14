@@ -81,6 +81,10 @@ export default () => {
     const delRow = (r: number) => {
         const next = clone();
         next.rows.splice(r, 1);
+        // 删除后按 1…n 重排「序号」列（跳过表头）
+        for (let i = 1; i < next.rows.length; i++) {
+            if (Array.isArray(next.rows[i])) next.rows[i][0] = String(i);
+        }
         dispatch({ content: next });
     };
 
