@@ -3870,20 +3870,18 @@ export default () => {
                                     label={ts("srs_doc.select_product")}
                                     name="product_id"
                                     rules={[{ required: true, message: "" }]}>
-                                    <div className="sds-toolbar-product-select">
-                                        <ProductVersionSelect
-                                            products={data.products}
-                                            allowClear
-                                            namePlaceholder={ts("product.name")}
-                                            versionPlaceholder={ts("product.full_version")}
-                                            onChange={(value) => {
-                                                editForm.setFieldValue("product_id", value);
-                                                editForm.setFieldsValue({ srsdoc_id: undefined });
-                                                dispatch({ srsDocList: [] });
-                                                if (value) loadSrsDocList(value);
-                                            }}
-                                        />
-                                    </div>
+                                    <ProductVersionSelect
+                                        products={data.products}
+                                        allowClear
+                                        namePlaceholder={ts("product.name")}
+                                        versionPlaceholder={ts("product.full_version")}
+                                        onChange={(value) => {
+                                            editForm.setFieldValue("product_id", value);
+                                            editForm.setFieldsValue({ srsdoc_id: undefined });
+                                            dispatch({ srsDocList: [] });
+                                            if (value) loadSrsDocList(value);
+                                        }}
+                                    />
                                 </Form.Item>
                                 <Form.Item
                                     className="sds-toolbar-item"
@@ -3919,20 +3917,18 @@ export default () => {
                                 label={ts("srs_doc.select_product")}
                                 name="product_id"
                                 rules={[{ required: true, message: "" }]}>
-                                <div className="sds-toolbar-product-select">
-                                    <ProductVersionSelect
-                                        products={data.products}
-                                        allowClear
-                                        namePlaceholder={ts("product.name")}
-                                        versionPlaceholder={ts("product.full_version")}
-                                        onChange={(value) => {
-                                            editForm.setFieldValue("product_id", value);
-                                            editForm.setFieldsValue({ srsdoc_id: undefined });
-                                            dispatch({ srsDocList: [] });
-                                            if (value) loadSrsDocList(value);
-                                        }}
-                                    />
-                                </div>
+                                <ProductVersionSelect
+                                    products={data.products}
+                                    allowClear
+                                    namePlaceholder={ts("product.name")}
+                                    versionPlaceholder={ts("product.full_version")}
+                                    onChange={(value) => {
+                                        editForm.setFieldValue("product_id", value);
+                                        editForm.setFieldsValue({ srsdoc_id: undefined });
+                                        dispatch({ srsDocList: [] });
+                                        if (value) loadSrsDocList(value);
+                                    }}
+                                />
                             </Form.Item>
                             <Form.Item
                                 className="sds-toolbar-item"
@@ -4027,6 +4023,7 @@ export default () => {
                         onNodeDelete={isReadOnly ? undefined : handleNodeDelete}
                         readOnly={isReadOnly}
                         lockScopeChapter
+                        splitInterfaceIO
                         readOnlyChapterOffset={0}
                         readOnlyRootWrapper={false}
                         onOpenReqdList={() => {

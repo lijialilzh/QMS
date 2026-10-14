@@ -1020,7 +1020,8 @@ class Server(object):
         def __write_imported_table(node, caption: str = ""):
             cap = str(caption or "").strip() or __table_caption_name(node)
             if cap:
-                __save_plain_caption(cap, center=False)
+                # 原模版：表题（表 N … / ××表）居中
+                __save_plain_caption(cap, center=True)
             docx_util.save_tab2docx(node.table, docx)
 
         def __has_table(node) -> bool:
@@ -1350,11 +1351,33 @@ class Server(object):
         def compact_title(title) -> str:
             return re.sub(r"\s+", "", str(title or ""))
 
+        def biz_title(title) -> str:
+            return re.sub(r"^\d+(?:\.\d+)*[\s、.．]*", "", compact_title(title))
+
+        def is_chapter4(title) -> bool:
+            biz = biz_title(title)
+            if "逻辑结构" in biz or "物理结构" in biz:
+                return False
+            if "库1数据库" in biz or "库2数据库" in biz or "Postgresql" in biz:
+                return False
+            return "系统数据结构设计" in biz or biz in ("数据结构设计", "数据结构") or (
+                "数据结构" in biz and "逻辑" not in biz and "物理" not in biz
+            )
+
+        def is_logic_structure(title) -> bool:
+            return "逻辑结构" in biz_title(title)
+
+        def is_physical_structure(title) -> bool:
+            return "物理结构" in biz_title(title)
+
         def is_lib2_title(title) -> bool:
+            biz = biz_title(title)
             compact = compact_title(title)
-            if compact.startswith("4.1.2") and ("库2数据库" in compact or compact == "4.1.2"):
+            if "物理结构" in biz:
+                return False
+            if compact.startswith("4.1.2") or "库2数据库" in biz:
                 return True
-            return compact.startswith("4.2") and "物理结构" in compact
+            return False
 
         def persist_title_text(node: HldNodeForm, title: str = None, text: str = None):
             n_id = getattr(node, "n_id", None)
@@ -1388,22 +1411,18 @@ class Server(object):
                 compact = compact_title(getattr(node, "title", ""))
                 children = list(getattr(node, "children", None) or [])
 
-                # 章 4：把误挂的「4.2 物理结构设计要点」整节迁到 4.1 下的 4.1.2
-                if re.match(r"^4(?!\.)", compact) and "数据结构" in compact:
-                    section41 = next(
-                        (c for c in children if re.match(r"^4\.1(?!\.\d)", compact_title(c.title)) and "逻辑结构" in compact_title(c.title)),
-                        None,
-                    )
-                    misplaced = [
-                        c for c in children
-                        if compact_title(c.title).startswith("4.2") and "物理结构" in compact_title(c.title)
-                    ]
+                # 章 4：把误挂的「物理结构设计要点」整节迁到 4.1 下的 4.1.2（不依赖 title 是否带 4.2 章号）
+                if is_chapter4(getattr(node, "title", "")):
+                    section41 = next((c for c in children if is_logic_structure(c.title)), None)
+                    misplaced = [c for c in children if is_physical_structure(c.title)]
+                    if misplaced and section41 is None:
+                        section41 = HldNodeForm(title="4.1 逻辑结构设计要点", children=[])
+                        children.insert(0, section41)
+                        node.children = children
+                        changed = True
                     if misplaced and section41 is not None:
                         sec41_kids = list(getattr(section41, "children", None) or [])
-                        lib2 = next(
-                            (c for c in sec41_kids if is_lib2_title(c.title) and compact_title(c.title).startswith("4.1.2")),
-                            None,
-                        )
+                        lib2 = next((c for c in sec41_kids if is_lib2_title(c.title)), None)
                         moved_tables: List[HldNodeForm] = []
                         for item in misplaced:
                             moved_tables.extend(list(getattr(item, "children", None) or []))
@@ -1446,38 +1465,23 @@ class Server(object):
                             for item in misplaced:
                                 item.children = []
                             self._delete_hld_nodes(doc, misplaced)
-                        section41.children = [
-                            c for c in sec41_kids
-                            if not (compact_title(c.title).startswith("4.2") and "物理结构" in compact_title(c.title))
-                        ]
+                        section41.children = [c for c in sec41_kids if not is_physical_structure(c.title)]
                         if lib2 not in section41.children:
                             section41.children.append(lib2)
                         node.children = [c for c in children if c not in misplaced]
                         changed = True
                         children = list(node.children or [])
 
-                    # 仍挂在章 4 下的纯 4.2（无物理结构字样）只清重复表
-                    for child in children:
-                        child_title = compact_title(child.title)
-                        if not child_title.startswith("4.2"):
-                            continue
-                        if "物理结构" in child_title:
-                            continue
-                        fresh, dropped = self._drop_repeated_field_block(list(getattr(child, "children", None) or []))
-                        if dropped:
-                            child.children = fresh
-                            self._delete_hld_nodes(doc, dropped)
-                            changed = True
-
-                if re.match(r"^4\.1(?!\.\d)", compact) and "逻辑结构" in compact:
+                if is_logic_structure(getattr(node, "title", "")):
                     kept = []
                     removed = []
                     for child in children:
                         child_title = compact_title(child.title)
-                        if "标记信息" in child_title:
+                        child_biz = biz_title(child.title)
+                        if "标记信息" in child_title or is_physical_structure(child.title):
                             removed.append(child)
                             continue
-                        if child_title.startswith("4.1.1"):
+                        if child_title.startswith("4.1.1") or "库1数据库" in child_biz or "Postgresql库1" in child_biz:
                             if str(getattr(child, "title", "") or "").strip() != lib1_title:
                                 child.title = lib1_title
                                 persist_title_text(child, title=lib1_title)
@@ -1730,7 +1734,7 @@ class Server(object):
                     h0 = self.__table_header_name(tbl, 0)
                     if h0 == "接口设计编号" and interface_table is None:
                         interface_table = self._serialize_table(tbl)
-                    elif h0 in ("字段ID", "Field ID"):
+                    elif re.sub(r"\s+", "", h0) in ("字段ID", "FieldID"):
                         field_tables.append({
                             "title": title,
                             "library": self.__detect_field_library(parent_titles),

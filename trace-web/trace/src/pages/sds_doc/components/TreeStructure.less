@@ -804,6 +804,8 @@
             padding-top: 12px;
             border-top: 1px solid #e8e8e8;
             max-width: 100%;
+            width: 100%;
+            box-sizing: border-box;
 
             &.node-table--flush-top {
                 margin-top: 0;
@@ -811,26 +813,43 @@
                 border-top: none;
             }
 
+            /* 窗口适配：表区不超出右栏，过长时可横滚；URL 等长文本优先换行 */
+            .node-table-scroll {
+                width: 100%;
+                max-width: 100%;
+                min-width: 0;
+                overflow-x: auto;
+                overflow-y: visible;
+                -webkit-overflow-scrolling: touch;
+            }
+
             .node-table-header {
                 display: flex;
                 align-items: flex-start;
                 gap: 12px;
+                width: 100%;
+                max-width: 100%;
+                min-width: 0;
+                box-sizing: border-box;
 
                 .node-table-scroll {
-                    flex: 1;
+                    flex: 1 1 auto;
                     min-width: 0;
-                    overflow-x: hidden;
+                    max-width: calc(100% - 120px); /* 给右侧编辑/删除留位 */
                 }
 
                 .node-table-actions {
+                    flex: 0 0 auto;
                     flex-shrink: 0;
                     margin-top: 8px;
+                    white-space: nowrap;
                 }
             }
 
             // 覆盖全局样式，确保表格正常显示
             .ant-table-wrapper {
                 height: auto !important;
+                max-width: 100%;
             }
 
             .ant-table-tbody > tr > td.ant-table-cell {
@@ -845,15 +864,36 @@
                 vertical-align: top;
             }
 
+            .ant-table-tbody > tr > td.ant-table-cell.iface-url-cell,
+            .ant-table-thead > tr > th.iface-url-cell {
+                word-break: break-all !important;
+                overflow-wrap: anywhere !important;
+            }
+
             .table-cell-content {
                 white-space: pre-line;
                 word-break: break-word;
                 overflow-wrap: anywhere;
+                max-width: 100%;
             }
 
-            .ant-table {
-                table-layout: auto;
-                width: 100%;
+            .iface-url-cell .table-cell-content {
+                word-break: break-all;
+                overflow-wrap: anywhere;
+            }
+
+            /* 表宽吃满滚动区即可，不把编辑/删除顶出窗口 */
+            .ant-table,
+            .ant-table table {
+                width: 100% !important;
+                max-width: 100% !important;
+                table-layout: fixed !important;
+            }
+
+            &.node-table--fit-window .ant-table,
+            &.node-table--fit-window .ant-table table {
+                width: 100% !important;
+                table-layout: fixed !important;
             }
         }
     }

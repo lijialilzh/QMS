@@ -15,7 +15,7 @@ import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
 import TreeStructure, { TreeNode } from "../sds_doc/components/TreeStructure";
-import { applySdsSyncToTree, hasSdsSyncData, needsLegacyInterfaceRepair, promoteHldFieldTables, splitHldInternalInterfaces, stripLegacyInterfaceText, tidyHldFieldChapters } from "./hldSdsSync";
+import { applySdsSyncToTree, hasMisplacedHldPhysicalChapter, hasSdsSyncData, needsLegacyInterfaceRepair, promoteHldFieldTables, splitHldInternalInterfaces, stripLegacyInterfaceText, tidyHldFieldChapters } from "./hldSdsSync";
 
 const HLD_COVER_DATE_KEYWORDS = ["软件概要设计", "概要设计"];
 
@@ -62,22 +62,71 @@ const normalizeHldApprovalRows = (node: TreeNode) => {
     ];
 };
 
+/** 日期行补全年份（年份行向下填充），与后端 _timeline_date_rows_with_year 同口径 */
+const fillHldTimelineDateYears = (rows: any[]): Array<{ row: any; year: number }> => {
+    const parseYear = (value: any) => {
+        const text = String(value || "").trim();
+        const matched = text.match(/(20\d{2})/);
+        if (matched) return parseInt(matched[1], 10);
+        const digits = text.replace(/[^\d]/g, "");
+        if (digits.length === 4 && digits.startsWith("20")) return parseInt(digits, 10);
+        return 0;
+    };
+    const sorted = [...(rows || [])].sort(
+        (a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0) || (Number(a.id) || 0) - (Number(b.id) || 0),
+    );
+    let defaultYear = new Date().getFullYear();
+    sorted.forEach((r) => {
+        const y = parseYear(r.year) || parseYear(r.milestone_text);
+        if (y) defaultYear = y;
+    });
+    let lastYear = 0;
+    const dated: Array<{ row: any; year: number }> = [];
+    sorted.forEach((r) => {
+        const rowType = r.row_type || "date";
+        if (rowType === "year") {
+            const y = parseYear(r.milestone_text) || parseYear(r.year);
+            if (y) lastYear = y;
+            return;
+        }
+        if (rowType !== "date") return;
+        const explicit = parseYear(r.year);
+        if (explicit) lastYear = explicit;
+        dated.push({ row: r, year: explicit || lastYear || defaultYear });
+    });
+    return dated;
+};
+
+/** 产品开发部 +「软件概要设计/概要设计」最晚一天；优先含评审行。覆盖模板错误旧日期。 */
 const computeHldCoverDate = (rows: any[]): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10) || 0;
-    const dateKey = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
-    const cellVals = (r: any) => Object.values(r.cells || {});
-    const match = (r: any, needReview: boolean) => {
-        if ((r.row_type || "date") !== "date" || !num(r.year) || !num(r.month)) return false;
-        const vals = cellVals(r);
-        const hitName = vals.some((v: any) => HLD_COVER_DATE_KEYWORDS.some((k) => String(v || "").includes(k)));
-        const hitReview = vals.some((v: any) => String(v || "").includes("评审"));
-        return hitName && (needReview ? hitReview : true);
+    const isHldOutput = (text: string) => HLD_COVER_DATE_KEYWORDS.some((k) => text.includes(k));
+    const match = (r: any, needReview: boolean, devOnly: boolean) => {
+        if (!num(r.month)) return false;
+        const cells = Object.entries(r.cells || {}).filter(([dept, value]) => {
+            const text = String(value || "");
+            if (!isHldOutput(text)) return false;
+            if (devOnly && !String(dept || "").startsWith("产品开发部")) return false;
+            return true;
+        });
+        if (!cells.length) return false;
+        if (!needReview) return true;
+        return cells.some(([, value]) => {
+            const text = String(value || "");
+            return text.includes("评审") && !text.includes("含评审记录");
+        });
     };
-    const pool = (rows || []).filter((r) => match(r, true));
-    const candidates = pool.length ? pool : (rows || []).filter((r) => match(r, false));
+    const dated = fillHldTimelineDateYears(rows).filter(({ row }) => (row.row_type || "date") === "date" && num(row.month));
+    const dateKey = ({ row, year }: { row: any; year: number }) => year * 10000 + num(row.month) * 100 + (num(row.day) || 0);
+    const pools = [
+        dated.filter(({ row }) => match(row, true, true)),
+        dated.filter(({ row }) => match(row, false, true)),
+        dated.filter(({ row }) => match(row, false, false)),
+    ];
+    const candidates = pools.find((pool) => pool.length) || [];
     if (!candidates.length) return "";
     const best = candidates.reduce((a, b) => (dateKey(b) > dateKey(a) ? b : a));
-    return `${num(best.year)}.${String(num(best.month)).padStart(2, "0")}.${String(num(best.day) || 1).padStart(2, "0")}`;
+    return `${best.year}.${String(num(best.row.month)).padStart(2, "0")}.${String(num(best.row.day) || 1).padStart(2, "0")}`;
 };
 
 type CoverRevisionAutofillInfo = {
@@ -321,6 +370,50 @@ export default () => {
         return `${base}${base.includes("?") ? "&" : "?"}_v=${encodeURIComponent(token)}`;
     };
 
+    /** 模版/历史文档里图 3～6 子模块结构图若被清空，按标准模版同名图题回填。 */
+    const restoreHldSubmoduleFigures = (treeNodes: TreeNode[]): { nodes: TreeNode[]; changed: boolean } => {
+        const figureMap = new Map<string, string>();
+        const chapterRename: Record<string, string> = {
+            "2.4.2 DP模块结构设计": "2.4.1 DP模块结构设计",
+            "2.4.3 DLserver模块结构设计": "2.4.2 DLserver模块结构设计",
+            "2.4.4 RePACS模块结构设计": "2.4.3 RePACS模块结构设计",
+            "2.4.5 NeoViewer模块结构设计": "2.4.4 NeoViewer模块结构设计",
+        };
+        const collect = (nodes: any[]) => {
+            (nodes || []).forEach((node) => {
+                const title = String(node?.title || "").trim();
+                const img = String(node?.img_url || "").trim();
+                if (/^图\s*[3-6]/.test(title) && img) figureMap.set(title.replace(/\s+/g, ""), img);
+                collect(node?.children || []);
+            });
+        };
+        collect(standardNodes as any[]);
+        if (!figureMap.size) return { nodes: treeNodes, changed: false };
+        let changed = false;
+        const walk = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
+            const children = walk((node.children || []) as TreeNode[]);
+            let title = String(node.title || "").trim();
+            let nextTitle = chapterRename[title] || title;
+            if (nextTitle !== title) {
+                title = nextTitle;
+                changed = true;
+            }
+            const compact = title.replace(/\s+/g, "");
+            const mapped = figureMap.get(compact) || "";
+            const current = String(node.img_url || "").trim();
+            const needFill = /^图\s*[3-6]/.test(title) && !current && !!mapped;
+            if (needFill) changed = true;
+            return {
+                ...node,
+                title: nextTitle,
+                ...(needFill ? { img_url: mapped } : {}),
+                children,
+            };
+        });
+        const nodes = walk(treeNodes);
+        return { nodes, changed };
+    };
+
     const remapRefTypeImagesByProduct = async (treeNodes: TreeNode[], productId?: number, docVersion?: string) => {
         if (!productId || !Array.isArray(treeNodes) || treeNodes.length === 0) return treeNodes;
         const fileMaps = new Map<string, string>();
@@ -486,6 +579,74 @@ export default () => {
         });
         return { nodes: walk(nodes), changed };
     };
+    const isScopeChapterNode = (title?: string) => {
+        const name = normalizeScopeTitle(title);
+        return name === "范围" || name === "适用范围";
+    };
+    const buildScopeChapterText = (product?: any) => {
+        const name = String(product?.name ?? "").trim();
+        const model = String(product?.type_code ?? "").trim();
+        const version = String(product?.full_version ?? "").trim();
+        const scope = String(product?.scope ?? "").trim();
+        return [
+            `产品名称：${name}`,
+            `产品型号：${model}`,
+            `版本号：${version}`,
+            scope ? `适用范围：\n${scope}` : "适用范围：",
+        ].join("\n");
+    };
+    const applyScopeChapterFromProduct = (nodes: TreeNode[], product?: any): { nodes: TreeNode[]; changed: boolean } => {
+        if (!Array.isArray(nodes) || !product) return { nodes, changed: false };
+        const nextText = buildScopeChapterText(product);
+        let changed = false;
+        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+            const children = walk((node.children || []) as TreeNode[]);
+            if (!isScopeChapterNode(node.title) || String(node.text || "") === nextText) {
+                return children === node.children ? node : { ...node, children };
+            }
+            changed = true;
+            return { ...node, children, text: nextText };
+        });
+        return { nodes: walk(nodes), changed };
+    };
+    /** 正文首行与章节标题（去章号）相同时去掉，避免标题区再重复一行。 */
+    const stripRedundantLeadingTitleFromTree = (nodes: TreeNode[]): { nodes: TreeNode[]; changed: boolean } => {
+        const norm = (s: string) => String(s || "")
+            .replace(/[（）]/g, (ch) => (ch === "（" ? "(" : ")"))
+            .replace(/\s+/g, "")
+            .trim();
+        let changed = false;
+        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+            const children = walk((node.children || []) as TreeNode[]);
+            const title = String(node.title || "").trim();
+            const bare = title
+                .replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+                .trim();
+            const text = String(node.text || "").replace(/\r/g, "");
+            if (!bare || !text.trim()) {
+                return children === node.children ? node : { ...node, children };
+            }
+            const lines = text.split("\n");
+            const first = String(lines[0] || "").trim();
+            if (!first || (norm(first) !== norm(bare) && norm(first) !== norm(title))) {
+                return children === node.children ? node : { ...node, children };
+            }
+            let i = 1;
+            while (i < lines.length && !String(lines[i] || "").trim()) i += 1;
+            const nextText = lines.slice(i).join("\n");
+            changed = true;
+            return { ...node, children, text: nextText };
+        });
+        return { nodes: walk(nodes), changed };
+    };
+    useEffect(() => {
+        if (!currentProduct || !(data.treeStructure || []).length) return;
+        const chapterResult = applyScopeChapterFromProduct(data.treeStructure as TreeNode[], currentProduct);
+        if (!chapterResult.changed) return;
+        treeStructureRef.current = chapterResult.nodes;
+        dispatch({ treeStructure: chapterResult.nodes });
+    }, [displayProductId, currentProduct?.scope, currentProduct?.name, currentProduct?.type_code, currentProduct?.full_version]);
+
     const hasRenderableTable = (table: any): boolean => {
         if (!table || !Array.isArray(table.headers) || table.headers.length === 0) return false;
         const hasRows = Array.isArray(table.rows) && table.rows.length > 0;
@@ -961,6 +1122,7 @@ export default () => {
         }
         let next = applyProductScopeToTree(nodes, product).nodes;
         next = applyProductBasicInfoToTree(next, product).nodes;
+        next = applyScopeChapterFromProduct(next, product).nodes;
         next = await remapRefTypeImagesByProduct(next, targetProductId, targetVersion);
         const sdsdocId = Number(editForm.getFieldValue("sdsdoc_id") || 0);
         if (sdsdocId) next = await syncTreeFromSds(targetProductId, sdsdocId, next, options);
@@ -969,6 +1131,9 @@ export default () => {
 
     const buildStandardTreeForDoc = async (productId: number, version: string, product?: any): Promise<TreeNode[]> => {
         let nodesWithIds = applyProductScopeToTree(buildStandardNodesWithIds(), product).nodes;
+        nodesWithIds = applyProductBasicInfoToTree(nodesWithIds, product).nodes;
+        nodesWithIds = applyScopeChapterFromProduct(nodesWithIds, product).nodes;
+        nodesWithIds = stripRedundantLeadingTitleFromTree(nodesWithIds).nodes;
         nodesWithIds = rebindFlowImageToFlowChild(nodesWithIds);
         nodesWithIds = normalizeImageRefTypes(nodesWithIds);
         nodesWithIds = await remapRefTypeImagesByProduct(nodesWithIds, productId, version);
@@ -1145,15 +1310,13 @@ export default () => {
     );
 
     const renderProductVersionSelect = () => (
-        <div className="hld-toolbar-product-select">
-            <ProductVersionSelect
-                products={data.products}
-                allowClear
-                namePlaceholder={ts("product.name")}
-                versionPlaceholder={ts("product.full_version")}
-                onChange={handleProductIdFieldChange}
-            />
-        </div>
+        <ProductVersionSelect
+            products={data.products}
+            allowClear
+            namePlaceholder={ts("product.name")}
+            versionPlaceholder={ts("product.full_version")}
+            onChange={handleProductIdFieldChange}
+        />
     );
 
     const renderDocVersionInput = (disabled?: boolean, width = 88) => (
@@ -1176,9 +1339,19 @@ export default () => {
         let remappedContent = await remapRefTypeImagesByProduct(parsedContent, targetRow.product_id, targetRow.version);
         remappedContent = ensureFrontMatterTables(remappedContent as TreeNode[]);
         const beforeRepair = JSON.stringify(remappedContent);
+        const productForScope = (data.products as any[]).find((p: any) => p.id === targetRow.product_id)
+            || currentProduct
+            || await resolveProductById(targetRow.product_id);
+        const scopeChapter = applyScopeChapterFromProduct(remappedContent as TreeNode[], productForScope);
+        if (scopeChapter.changed) remappedContent = scopeChapter.nodes;
+        const strippedTitles = stripRedundantLeadingTitleFromTree(remappedContent as TreeNode[]);
+        if (strippedTitles.changed) remappedContent = strippedTitles.nodes;
+        const submoduleFigs = restoreHldSubmoduleFigures(remappedContent as TreeNode[]);
+        if (submoduleFigs.changed) remappedContent = submoduleFigs.nodes;
         const needRepair = !isReadOnly && needsLegacyInterfaceRepair(remappedContent as TreeNode[]);
-        if (needRepair && targetRow.sdsdoc_id) {
-            remappedContent = await syncTreeFromSds(targetRow.product_id, targetRow.sdsdoc_id, remappedContent as TreeNode[]);
+        const needFieldFromSds = !isReadOnly && !!targetRow.sdsdoc_id && hasMisplacedHldPhysicalChapter(remappedContent as TreeNode[]);
+        if ((needRepair || needFieldFromSds) && targetRow.sdsdoc_id) {
+            remappedContent = await syncTreeFromSds(targetRow.product_id, targetRow.sdsdoc_id, remappedContent as TreeNode[], { silent: true });
         }
         const split = splitHldInternalInterfaces(remappedContent as TreeNode[]);
         if (split.changed) remappedContent = split.nodes;
@@ -1871,6 +2044,7 @@ export default () => {
                                 readOnlyChapterOffset={0}
                                 readOnlyRootWrapper={false}
                                 uploadDocFile={Api.add_doc_file}
+                                lockScopeChapter
                                 lockRuntimeEnv
                             />
                         </div>

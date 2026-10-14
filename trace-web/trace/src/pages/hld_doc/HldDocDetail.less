@@ -89,16 +89,11 @@
                 align-self: center;
             }
 
-            .hld-toolbar-product-select {
+            /* 收窄产品名称/完整版本，且 Form.Item 直接包 ProductVersionSelect 才能带上 value */
+            .hld-toolbar-item .product-version-select {
                 width: 280px;
                 max-width: 280px;
-                flex-shrink: 1;
-                min-width: 200px;
-
-                .product-version-select {
-                    width: 100%;
-                    gap: 6px !important;
-                }
+                gap: 6px !important;
             }
 
             .hld-toolbar-actions {

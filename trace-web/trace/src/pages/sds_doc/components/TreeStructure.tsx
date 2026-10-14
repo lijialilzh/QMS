@@ -112,6 +112,8 @@ interface TreeNodeItemProps {
     lockRuntimeEnv?: boolean;
     /** 运行环境章节及子孙 node.id（正文/表格只读） */
     runtimeLockedIds?: Set<string>;
+    /** 详细设计：接口章始终拆「输入 | 表/图 | 输出」，便于在中间插入表或图 */
+    splitInterfaceIO?: boolean;
 }
 
 function isProductScopeChapterTitle(title?: string): boolean {
@@ -799,7 +801,7 @@ function ChapterBodyTextArea(props: React.ComponentProps<typeof Input.TextArea>)
     );
 }
 
-const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onSdsCodeChange, onImageChange, onAttachProgramLogicImage, pendingProgramLogicCaption = "", onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onEditExtraTable, onDeleteExtraTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, uploadDocFile, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [], useNavChapterEditor = false, autoNavChapterNo = "", lockScopeChapter = false, lockRuntimeEnv = false, runtimeLockedIds }: TreeNodeItemProps) => {
+const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onSdsCodeChange, onImageChange, onAttachProgramLogicImage, pendingProgramLogicCaption = "", onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onEditExtraTable, onDeleteExtraTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, uploadDocFile, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [], useNavChapterEditor = false, autoNavChapterNo = "", lockScopeChapter = false, lockRuntimeEnv = false, runtimeLockedIds, splitInterfaceIO = false }: TreeNodeItemProps) => {
     const { t: ts } = useTranslation();
     const [fileList, setFileList] = useState<UploadFile[]>([]);
     const [uploadLoading, setUploadLoading] = useState(false);
@@ -905,7 +907,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         },
     };
 
-    // 构建表格列配置：编辑态不强制列宽，避免出现横向滚动条
+    // 构建表格列配置：列宽随内容；接口 URL 列加宽并换行，表区窗口适配可横滚
     const buildTableColumns = (targetTable?: TableData | null): ColumnsType<any> => {
         const table = targetTable || node.table;
         if (!table || !table.headers || table.headers.length === 0) {
@@ -913,10 +915,10 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         }
         const tableCells = table.cells || [];
         const hasMergedCells = Array.isArray(tableCells) && tableCells.length > 1;
-        const wrapCell = (table.headers || []).some((header) => {
-            const name = String(header?.name || "").replace(/\s/g, "");
-            return name === "设计编号" || name === "需求/代码" || name === "需求代码";
-        });
+        const headerNames = (table.headers || []).map((header) => String(header?.name || "").replace(/\s/g, ""));
+        const isIfaceList = headerNames.includes("接口设计编号")
+            && (headerNames.includes("接口名称") || headerNames.includes("接口URL") || headerNames.includes("涉及模块") || headerNames.includes("功能"));
+        const wrapCell = headerNames.some((name) => name === "设计编号" || name === "需求/代码" || name === "需求代码");
         const renderWrapped = (value: string) => {
             const lines = String(value || "").split("\n");
             return (
@@ -928,19 +930,42 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
             );
         };
         return table.headers.map((header, index) => {
+            const headerName = String(header?.name || "").replace(/\s/g, "");
+            const isUrlCol = headerName === "接口URL" || headerName === "URL";
+            const isIfaceCodeCol = headerName === "接口设计编号";
+            const isIfaceNameCol = headerName === "接口名称" || headerName === "功能";
             const col: any = {
                 title: header.name,
                 dataIndex: header.code,
                 key: `col_${index}`,
             };
+            if (isIfaceList && isUrlCol) {
+                col.width = "46%";
+                col.onCell = () => ({ className: "iface-url-cell" });
+                col.onHeaderCell = () => ({ className: "iface-url-cell" });
+            } else if (isIfaceList && isIfaceCodeCol) {
+                col.width = "24%";
+            } else if (isIfaceList && isIfaceNameCol) {
+                col.width = "18%";
+            } else if (headerName === "Name" || headerName === "名称" || headerName === "参数名") {
+                col.width = "28%";
+            } else if (headerName === "Value" || headerName === "值" || headerName === "参数值") {
+                col.width = "72%";
+                col.onCell = () => ({ className: "iface-url-cell" });
+            }
             if (wrapCell) {
-                col.onCell = () => ({ className: "trace-wrap-cell" });
+                const prevOnCell = col.onCell as undefined | (() => Record<string, any>);
+                col.onCell = () => {
+                    const prev = prevOnCell ? prevOnCell() : {};
+                    return { ...prev, className: [prev.className, "trace-wrap-cell"].filter(Boolean).join(" ") };
+                };
             }
             if (hasMergedCells) {
                 // 表头也按 cells[0] 的 col_span 合并，延续列 colSpan=0 隐藏，避免导入合并单元格时多出「列N」
+                const prevHeaderCell = col.onHeaderCell;
                 col.onHeaderCell = () => {
                     const headerCell = tableCells[0]?.[index];
-                    return { colSpan: headerCell?.col_span ?? 1 } as any;
+                    return { ...(prevHeaderCell ? prevHeaderCell() : {}), colSpan: headerCell?.col_span ?? 1 } as any;
                 };
                 col.render = (_val: any, _row: any, rowIndex: number) => {
                     const bodyCells = tableCells.slice(1);
@@ -952,7 +977,12 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                     const cellValue = formatTraceTableCell(header.name, cell?.value);
                     return {
                         children: renderWrapped(cellValue),
-                        props: { rowSpan, colSpan, style: { textAlign: hAlign, verticalAlign: vAlign } },
+                        props: {
+                            rowSpan,
+                            colSpan,
+                            className: isUrlCol ? "iface-url-cell" : undefined,
+                            style: { textAlign: hAlign, verticalAlign: vAlign },
+                        },
                     };
                 };
             } else {
@@ -1274,17 +1304,47 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
             : baseNodeText)
         : baseNodeText;
     const editDisplayNodeText = tableTargetCount > 0 ? tableCaptionPack.body : baseNodeText;
+    /** 接口子章：正文按「（2）输出」切开；详细设计无表时也切开，便于在输入后插入表/图。 */
+    const isSdsInterfaceChapter = !!(
+        splitInterfaceIO
+        && /^\d+\.\d+\.\d+(?:\.\d+)*$/.test(effectiveChapter)
+        && (/^5\.7\./.test(effectiveChapter) || /接口/.test(`${titleWithoutChapter || ""} ${title || ""}`))
+    );
+    const isNavInterfaceLayoutCandidate = !!(
+        !readOnly
+        && renderChildren === false
+        && (
+            isSdsInterfaceChapter
+            || (
+                /^\d+\.\d+\.\d+(?:\.\d+)*$/.test(effectiveChapter)
+                && /接口/.test(`${titleWithoutChapter || ""} ${title || ""}`)
+                && (hasTable || navInlineTableChildren.length > 0)
+            )
+        )
+    );
     const interfaceOutputSplit = (() => {
-        if (!(readOnly && isInterfaceSubSection && (hasTable || inlineTableChildren.length > 0) && String(displayNodeText || "").trim())) return null;
+        const tablesForSplit = readOnly ? inlineTableChildren : navInlineTableChildren;
+        const textSrc = readOnly ? displayNodeText : editDisplayNodeText;
+        const enabled = readOnly
+            ? !!((isInterfaceSubSection || isSdsInterfaceChapter) && String(textSrc || "").trim()
+                && (isSdsInterfaceChapter || hasTable || tablesForSplit.length > 0))
+            : !!(isNavInterfaceLayoutCandidate && String(textSrc || "").trim());
+        if (!enabled) return null;
         if (isReviewStyleTable(node.table)) return null;
-        if (inlineTableChildren.some((child) => isReviewStyleTable(child.table))) return null;
-        const raw = String(displayNodeText || "");
-        const idx = raw.search(/[（(]2[）)]\s*输出项/);
-        if (idx <= 0) return null;
-        return {
-            before: raw.slice(0, idx).trimEnd(),
-            after: raw.slice(idx).trimStart(),
-        };
+        if (tablesForSplit.some((child) => isReviewStyleTable(child.table))) return null;
+        const raw = String(textSrc || "");
+        const idx = raw.search(/[（(]\s*2\s*[）)]\s*输出/);
+        if (idx > 0) {
+            return {
+                before: raw.slice(0, idx).trimEnd(),
+                after: raw.slice(idx).trimStart(),
+            };
+        }
+        // 详细设计接口章：无「（2）输出」时仍切开，中间可插表/图
+        if (isSdsInterfaceChapter) {
+            return { before: raw.trimEnd(), after: "" };
+        }
+        return null;
     })();
     const complianceTcpSplit = (() => {
         if (!readOnly || isInterfaceSubSection || inlineTableChildren.length < 2) return null;
@@ -1337,15 +1397,20 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const displayTextBeforeTable = interfaceOutputSplit?.before ?? complianceTcpSplit?.before ?? chapter7TableSplit?.before ?? displayNodeText;
     const displayTextBetweenTables = complianceTcpSplit?.middle ?? chapter7TableSplit?.middle ?? "";
     const displayTextAfterTable = interfaceOutputSplit?.after ?? complianceTcpSplit?.after ?? chapter7TableSplit?.after ?? "";
+    const useInterfaceInlineSplit = !!(interfaceOutputSplit && (
+        readOnly ? (isInterfaceSubSection || isSdsInterfaceChapter) : isNavInterfaceLayoutCandidate
+    ));
     const anchoredInlineTables = (() => {
-        if (readOnly && isInterfaceSubSection && interfaceOutputSplit) return inlineTableChildren;
+        if (useInterfaceInlineSplit) {
+            return readOnly ? inlineTableChildren : navInlineTableChildren;
+        }
         if (complianceTcpSplit) return complianceSplitTables.slice(0, 1);
         if (chapter7TableSplit) return complianceSplitTables.slice(0, 1);
         return [];
     })();
     const middleAnchoredInlineTables = (complianceTcpSplit || chapter7TableSplit) ? complianceSplitTables.slice(1, 2) : [];
     const trailingInlineTables = (() => {
-        if (readOnly && isInterfaceSubSection && interfaceOutputSplit) return [];
+        if (useInterfaceInlineSplit) return [];
         if (complianceTcpSplit) return complianceSplitTables.slice(2);
         if (chapter7TableSplit) return complianceSplitTables.slice(2);
         return readOnly ? inlineTableChildren : [];
@@ -1384,6 +1449,12 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
             .join("\n");
     })();
     const showComplianceInlineInEdit = isNavEditComplianceCandidate && !!chapter7TableSplit;
+    const showInterfaceInlineInEdit = isNavInterfaceLayoutCandidate && !!interfaceOutputSplit;
+    const showSplitInlineInEdit = showComplianceInlineInEdit || showInterfaceInlineInEdit;
+    /** 详细设计接口章：图放在输入与输出之间（与表同一中间区） */
+    const interfaceMiddleFigures = (showInterfaceInlineInEdit && splitInterfaceIO)
+        ? navEmbeddedFigureChildren
+        : [];
     const chapterMajorNo = (() => {
         const hints = [displayChapterFromDoc, chapterNo, effectiveChapter, title].map((v) => String(v || "").trim());
         for (const hint of hints) {
@@ -1395,7 +1466,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const isChapter345Section = chapterMajorNo >= 3 && chapterMajorNo <= 5;
     // 2.1/2.3 自动图 + 第3/4/5章内嵌「图N」：图放首行标题/编码旁；正文输入框独占下一行
     const navImageInHeaderRow = isNavSingleChapterEdit
-        && !showComplianceInlineInEdit
+        && !showSplitInlineInEdit
         && hasDisplayImage
         && !multiEmbeddedFigures
         && (
@@ -1405,9 +1476,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
             || navEmbeddedDocImageChild?.ref_type === 'img_struct'
             || (isChapter345Section && !!navEmbeddedFigureChild?.img_url)
         );
-    const editTextBeforeTable = showComplianceInlineInEdit ? (chapter7TableSplit?.before || "") : editDisplayNodeText;
+    const editTextBeforeTable = showComplianceInlineInEdit
+        ? (chapter7TableSplit?.before || "")
+        : (showInterfaceInlineInEdit ? (interfaceOutputSplit?.before || "") : editDisplayNodeText);
     const editFigureCaption = String(navEmbeddedFigureChild?.title || navEmbeddedDocImageChild?.title || "").trim();
-    const bodyLogicSplit = (isNavSingleChapterEdit && !showComplianceInlineInEdit)
+    const bodyLogicSplit = (isNavSingleChapterEdit && !showSplitInlineInEdit)
         ? splitProgramLogicText(editTextBeforeTable)
         : null;
     const hasLogicFigure = /程序逻辑/.test(editFigureCaption);
@@ -1418,7 +1491,9 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         ? navEmbeddedFigureChildren.filter((child) => !(programLogicSplit && /程序逻辑/.test(String(child.title || child.label || ""))))
         : [];
     const editTextBetweenTables = showComplianceInlineInEdit ? (chapter7TableSplit?.middle || "") : "";
-    const editTextAfterTable = showComplianceInlineInEdit ? (chapter7TableSplit?.after || "") : "";
+    const editTextAfterTable = showComplianceInlineInEdit
+        ? (chapter7TableSplit?.after || "")
+        : (showInterfaceInlineInEdit ? (interfaceOutputSplit?.after || "") : "");
     const mergeComplianceText = (before: string, middle: string, after: string): string => {
         const parts = [before, middle, after].filter((part) => String(part ?? "").trim());
         return parts.join("\n");
@@ -1851,7 +1926,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           value={editTextBeforeTable}
                           onChange={(e) => {
                               const nextBefore = e.target.value;
-                              const nextText = showComplianceInlineInEdit
+                              const nextText = showSplitInlineInEdit
                                   ? mergeComplianceText(nextBefore, editTextBetweenTables, editTextAfterTable)
                                   : nextBefore;
                               onContentChange(node.id, nextText);
@@ -1926,7 +2001,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           )}
                       </div>
                   )}
-                  {(level <= 2 || !!String(node.img_url || "").trim() || !!navEmbeddedFigureChild?.img_url) && !readOnly && !isAutoOnlyImage && (
+                  {/* 无图：标题行「选择文件」；有图且图在正文区时不在标题行放「重新上传」（改到图右侧） */}
+                  {!readOnly && !isAutoOnlyImage && (
+                      (!hasDisplayImage && (level <= 2 || !!String(node.img_url || "").trim() || !!navEmbeddedFigureChild?.img_url))
+                      || (navImageInHeaderRow && hasDisplayImage)
+                  ) && (
                       <Space className="node-pic" size={compactWithImage ? 4 : 8} style={compactWithImage ? { marginRight: 6 } : undefined}>
                           <Upload {...uploadProps}>
                               <Button
@@ -2059,7 +2138,9 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       const nextBefore = e.target.value;
                                       onContentChange(
                                           node.id,
-                                          mergeComplianceText(nextBefore, editTextBetweenTables, editTextAfterTable)
+                                          showSplitInlineInEdit
+                                              ? mergeComplianceText(nextBefore, editTextBetweenTables, editTextAfterTable)
+                                              : nextBefore
                                       );
                                   }}
                                   placeholder={ts('srs_doc.please_input_content')}
@@ -2069,8 +2150,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                   disabled={scopeChapterLocked || runtimeContentLocked}
                               />
                               )}
-                              {!navImageInHeaderRow && isNavSingleChapterEdit && !showComplianceInlineInEdit && (!!programLogicSplit || (navFullSizeImageMode && !multiEmbeddedFigures)) && (displayImageUrl || programLogicSplit) && (
-                                  <div className={`node-pic-block ${navEmbeddedImageBlockClass}${programLogicSplit && !isAutoOnlyImage ? " node-pic-block--reupload-side" : ""}`}>
+                              {!navImageInHeaderRow && isNavSingleChapterEdit && !showSplitInlineInEdit && (!!programLogicSplit || (navFullSizeImageMode && !multiEmbeddedFigures)) && (displayImageUrl || programLogicSplit) && (
+                                  <div className={`node-pic-block ${navEmbeddedImageBlockClass}${!isAutoOnlyImage ? " node-pic-block--reupload-side" : ""}`}>
                                       <div className="node-pic-reupload-row">
                                           <div className="node-pic-reupload-figure">
                                               {displayImageUrl ? (
@@ -2086,9 +2167,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                               )}
                                               {programLogicCaption ? (
                                                   <div className="node-image-caption">{programLogicCaption}</div>
+                                              ) : (editFigureCaption && displayImageUrl) ? (
+                                                  <div className="node-image-caption">{editFigureCaption}</div>
                                               ) : null}
                                           </div>
-                                          {programLogicSplit && !isAutoOnlyImage ? (
+                                          {!isAutoOnlyImage ? (
                                               <Upload {...uploadProps}>
                                                   <Button size="small" icon={<UploadOutlined />}>
                                                       {displayImageUrl ? "重新上传" : "上传图"}
@@ -2112,7 +2195,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       autoSize={{ minRows: 1, maxRows: 20 }}
                                   />
                               ) : null}
-                              {!navImageInHeaderRow && isNavSingleChapterEdit && !showComplianceInlineInEdit && !navFullSizeImageMode && displayImageUrl && (
+                              {!navImageInHeaderRow && isNavSingleChapterEdit && !showSplitInlineInEdit && !navFullSizeImageMode && displayImageUrl && (
                                   <div
                                       className="node-pic node-pic-readonly node-pic-editable node-pic-inline"
                                       style={{
@@ -2170,7 +2253,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
               {/* 显示表格数据（ref_type 节点不展示表格） */}
               {showExpandedBody && hasTable && !hideMisplacedReviewTable && !isDocImageRefType(node.ref_type) && node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces' && (
                   wrapReadOnlyAlignedTable(
-                  <div className={`node-table${flushOwnTableTop ? " node-table--flush-top" : ""}`}>
+                  <div className={`node-table${flushOwnTableTop ? " node-table--flush-top" : ""}${isInterfaceListTable(node) ? " node-table--fit-window" : ""}`}>
                       {!readOnly && !!sanitizedEditTableCaption && (
                           <div className="node-content" style={{ marginBottom: 8, textAlign: "center", fontSize: 13, fontWeight: 400 }}>
                               {sanitizedEditTableCaption}
@@ -2269,7 +2352,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   `own-table-${node.id}`
                   )
               )}
-              {showExpandedBody && (readOnly || showComplianceInlineInEdit) && anchoredInlineTables.map((child, idx) => {
+              {showExpandedBody && (readOnly || showSplitInlineInEdit) && anchoredInlineTables.map((child, idx) => {
                   const caption = normalizeInlineTableCaption(
                       childTableCaptionById.get(String(child.id))
                       || childTableCaptionById.get(String(child.n_id || ""))
@@ -2280,7 +2363,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   const sanitizedCaption = isSyntheticTableCaption(caption) ? "" : caption;
                   return wrapReadOnlyAlignedTable((
                       <div
-                          className={`node-table${flushFirstInlineTableTop && idx === 0 ? " node-table--flush-top" : ""}`}
+                          className={`node-table node-table--fit-window${flushFirstInlineTableTop && idx === 0 ? " node-table--flush-top" : ""}`}
                           key={`anchored-inline-table-${child.id}-${idx}`}
                       >
                           {!!sanitizedCaption && (
@@ -2296,7 +2379,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       pagination={false}
                                       size="small"
                                       bordered
-                                      tableLayout="auto"
+                                      tableLayout="fixed"
                                   />
                               </div>
                               {!readOnly && !isChildRuntimeLocked(child) && (
@@ -2422,7 +2505,45 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                       </div>
                   ), `aligned-middle-inline-table-${child.id}-${idx}`);
               })}
-              {showExpandedBody && ((readOnly && !!String(displayTextAfterTable || "").trim()) || (showComplianceInlineInEdit && !!String(editTextAfterTable || "").trim())) && (
+              {showExpandedBody && interfaceMiddleFigures.map((child) => (
+                  <div key={`iface-middle-figure-${child.id}`} className={`node-pic-block node-pic-block--figure-list${!isAutoOnlyImage ? " node-pic-block--reupload-side" : ""}`}>
+                      <div className="node-pic-reupload-row">
+                          <div className="node-pic-reupload-figure">
+                              {String(child.img_url || "").trim() ? (
+                                  <div className="node-pic node-pic-readonly node-pic-inline">
+                                      <Image
+                                          src={resolveImageSrc(String(child.img_url || ""))}
+                                          alt={String(child.title || "image")}
+                                          preview={true}
+                                      />
+                                  </div>
+                              ) : (
+                                  <div className="node-pic node-pic-readonly node-pic-inline node-pic-logic-placeholder" />
+                              )}
+                              {String(child.title || "").trim() ? (
+                                  <div className="node-image-caption">{String(child.title || "").trim()}</div>
+                              ) : null}
+                          </div>
+                          {!isAutoOnlyImage ? (
+                              <Upload
+                                  maxCount={1}
+                                  showUploadList={false}
+                                  accept="image/*"
+                                  disabled={uploadLoading}
+                                  beforeUpload={(file) => {
+                                      void uploadImageTo(file, child.id);
+                                      return false;
+                                  }}
+                              >
+                                  <Button size="small" icon={<UploadOutlined />}>
+                                      {String(child.img_url || "").trim() ? "重新上传" : "上传图"}
+                                  </Button>
+                              </Upload>
+                          ) : null}
+                      </div>
+                  </div>
+              ))}
+              {showExpandedBody && ((readOnly && !!String(displayTextAfterTable || "").trim()) || (showSplitInlineInEdit && !!String(editTextAfterTable || "").trim())) && (
                   (readOnly && alignSplitTailWithNodeRow) ? (
                       <div className="node-row node-row-follow">
                           <span className="node-expand-placeholder" />
@@ -2433,7 +2554,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   ) : (
                       readOnly
                           ? renderReadOnlyText(displayTextAfterTable, { inlineImageUrl: inlineImageUrlForAfter })
-                          : showComplianceInlineInEdit ? (
+                          : showSplitInlineInEdit ? (
                           <div className="node-row node-row-follow node-row-content-below">
                               <span className="node-expand-placeholder" />
                               <div className="node-content-below-title">
@@ -2463,7 +2584,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                       )
                   )
               )}
-              {showExpandedBody && (readOnly || showComplianceInlineInEdit) && trailingInlineTables.map((child, idx) => {
+              {showExpandedBody && (readOnly || showSplitInlineInEdit) && trailingInlineTables.map((child, idx) => {
                   const caption = normalizeInlineTableCaption(
                       childTableCaptionById.get(String(child.id))
                       || childTableCaptionById.get(String(child.n_id || ""))
@@ -2520,23 +2641,37 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   ), `aligned-inline-table-${child.id}-${idx}`);
               })}
           </div>
-            {showExpandedBody && showComplianceInlineInEdit && navFullSizeImageMode && displayImageUrl && (
+            {showExpandedBody && showSplitInlineInEdit && !(showInterfaceInlineInEdit && splitInterfaceIO && interfaceMiddleFigures.length > 0) && navFullSizeImageMode && displayImageUrl && (
                 <div className="node-row node-row-follow node-row-content-below">
                     <span className="node-expand-placeholder" />
                     <div className="node-content-below-title">
-                        <div className={`node-pic-block ${navEmbeddedImageBlockClass}`}>
-                            <div className="node-pic node-pic-readonly node-pic-inline">
-                                <Image
-                                    src={resolveImageSrc(displayImageUrl)}
-                                    alt={String(navEmbeddedFigureChild?.title || navEmbeddedDocImageChild?.title || displayTitle || 'image')}
-                                    preview={true}
-                                />
+                        <div className={`node-pic-block ${navEmbeddedImageBlockClass}${showInterfaceInlineInEdit && !isAutoOnlyImage ? " node-pic-block--reupload-side" : ""}`}>
+                            <div className="node-pic-reupload-row">
+                                <div className="node-pic-reupload-figure">
+                                    <div className="node-pic node-pic-readonly node-pic-inline">
+                                        <Image
+                                            src={resolveImageSrc(displayImageUrl)}
+                                            alt={String(navEmbeddedFigureChild?.title || navEmbeddedDocImageChild?.title || displayTitle || 'image')}
+                                            preview={true}
+                                        />
+                                    </div>
+                                    {editFigureCaption ? (
+                                        <div className="node-image-caption">{editFigureCaption}</div>
+                                    ) : null}
+                                </div>
+                                {showInterfaceInlineInEdit && !isAutoOnlyImage ? (
+                                    <Upload {...uploadProps}>
+                                        <Button size="small" icon={<UploadOutlined />}>
+                                            {displayImageUrl ? "重新上传" : "上传图"}
+                                        </Button>
+                                    </Upload>
+                                ) : null}
                             </div>
                         </div>
                     </div>
                 </div>
             )}
-            {showExpandedBody && renderChildren === false && !showComplianceInlineInEdit && navParentInlineTables.map((child, idx) => (
+            {showExpandedBody && renderChildren === false && !showSplitInlineInEdit && navParentInlineTables.map((child, idx) => (
                 <div key={`nav-parent-inline-table-${child.id}`} className="node-table" style={{ marginTop: idx === 0 ? 8 : 12 }}>
                     <div className="node-table-scroll">
                         <Table
@@ -2569,7 +2704,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                     )}
                 </div>
             ))}
-            {showExpandedBody && renderChildren === false && !showComplianceInlineInEdit && navInlineTableChildren.map((child, idx) => {
+            {showExpandedBody && renderChildren === false && !showSplitInlineInEdit && navInlineTableChildren.map((child, idx) => {
                 const storedCaption = String(child.title || child.label || child.table?.name || "").trim();
                 const tableCaption = inlineTableCaptionByIndex[idx] || storedCaption;
                 const showStoredCaption = !!storedCaption && !isSyntheticTableCaption(storedCaption) && !isNumberedChapterTitle(storedCaption);
@@ -2632,7 +2767,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                 </div>
                 );
             })}
-            {showExpandedBody && renderChildren === false && !showComplianceInlineInEdit && figuresInBody.map((child) => (
+            {showExpandedBody && renderChildren === false && !showSplitInlineInEdit && figuresInBody.map((child) => (
                 <div key={`nav-inline-figure-${child.id}`} className={`node-pic-block node-pic-block--figure-list${!isAutoOnlyImage ? " node-pic-block--reupload-side" : ""}`}>
                     <div className="node-pic-reupload-row">
                         <div className="node-pic-reupload-figure">
@@ -2718,6 +2853,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         lockScopeChapter={lockScopeChapter}
                         lockRuntimeEnv={lockRuntimeEnv}
                         runtimeLockedIds={runtimeLockedIds}
+                        splitInterfaceIO={splitInterfaceIO}
                         captionFromParent={childCaptionById.get(String(child.id)) || childCaptionById.get(String(child.n_id || ""))}
                         tableCaptionFromParent={
                             childTableCaptionById.get(String(child.id))
@@ -2754,9 +2890,11 @@ interface TreeStructureProps {
     lockScopeChapter?: boolean;
     /** 概要设计：运行环境自动获取的正文与表格只读 */
     lockRuntimeEnv?: boolean;
+    /** 详细设计：接口章始终拆「输入 | 表/图 | 输出」 */
+    splitInterfaceIO?: boolean;
 }
 
-export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = [], onNodeDelete, readOnly, readOnlyRootWrapper = true, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, extraNavSections = [], onAddRoot, uploadDocFile, lockScopeChapter = false, lockRuntimeEnv = false }: TreeStructureProps) => {
+export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = [], onNodeDelete, readOnly, readOnlyRootWrapper = true, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, extraNavSections = [], onAddRoot, uploadDocFile, lockScopeChapter = false, lockRuntimeEnv = false, splitInterfaceIO = false }: TreeStructureProps) => {
     const { t: ts } = useTranslation();
     const [nodes, setNodes] = useState<TreeNode[]>(value);
     const [tableModalVisible, setTableModalVisible] = useState(false);
@@ -3471,13 +3609,18 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
     const effectiveExtra = activeExtra || (fallbackToFirstExtra ? extraNavSections[0] : null);
     const effectiveNode = effectiveExtra ? null : (activeNode || defaultActiveNode);
     const effectiveNodeParent = effectiveNode ? findNavNodeParent(visibleNodes, effectiveNode.id) : null;
-    const navParentInlineTables = effectiveNodeParent
-        ? (effectiveNodeParent.children || []).filter((child) => (
+    // 仅法规符合性等章：切到子章仍展示父章端口表。接口章下新增空子章不得带出父章 Name/Value 表。
+    const navParentInlineTables = (() => {
+        if (!effectiveNodeParent) return [] as TreeNode[];
+        const parentHint = `${effectiveNodeParent.title || ""} ${navChapterNumberMap.get(String(effectiveNodeParent.id)) || ""}`;
+        if (!/法规符合性|网络安全/.test(parentHint)) return [] as TreeNode[];
+        if (/接口/.test(parentHint)) return [] as TreeNode[];
+        return (effectiveNodeParent.children || []).filter((child) => (
             hasRenderableTable(child.table)
             && isEmbeddedTableNode(child)
             && !isInterfaceListTable(child)
-        ))
-        : [];
+        ));
+    })();
     const renderNav = (list: TreeNode[], depth: number): JSX.Element[] => (
         (list || []).filter(isNavChapter).map((node) => {
             const kids = (node.children || []).filter(isNavChapter);
@@ -3580,6 +3723,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                 lockScopeChapter,
                 lockRuntimeEnv,
                 runtimeLockedIds,
+                splitInterfaceIO,
             };
             return readOnly && !readOnlyRootWrapper ? (
                 <TreeNodeItem key={node.id} {...rootItemProps} />
@@ -3659,6 +3803,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                                             lockScopeChapter={lockScopeChapter}
                                             lockRuntimeEnv={lockRuntimeEnv}
                                             runtimeLockedIds={runtimeLockedIds}
+                                            splitInterfaceIO={splitInterfaceIO}
                                             onAdd={handleAdd}
                                             onAddSibling={handleAddSibling}
                                             onDelete={handleDelete}

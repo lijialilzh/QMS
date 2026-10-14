@@ -37,32 +37,44 @@ const moduleForSeq = (seq: number): string => {
 
 const normalizeTitle = (value?: string) => String(value || "").replace(/\s+/g, "").replace(/[.．、]/g, ".");
 
+/** 去掉自动章号，只看业务名（目录显示的 4.2 未必写进 title）。 */
+const bizTitleKey = (title?: string) =>
+    String(title || "")
+        .replace(/^\s*\d+(?:\.\d+)*[\s、.．]*/, "")
+        .replace(/\s+/g, "");
+
 /** 与详细设计 5.6.1 / 5.6.2 对应；概要设计原模版只有 4.1，两库都挂在 4.1 下。 */
 export const HLD_LIB1_CHAPTER_TITLE = "4.1.1 Postgresql库1数据库：";
 export const HLD_LIB2_CHAPTER_TITLE = "4.1.2 库2数据库：";
 
 const isHldLib1ChapterTitle = (title?: string) => {
+    const biz = bizTitleKey(title);
     const compact = normalizeTitle(title);
-    if (!compact.startsWith("4.1.1")) return false;
-    return compact.includes("Postgresql库1数据库") || compact.includes("图像数据与处理结果") || compact.includes("图像处理结果");
+    if (biz.includes("物理结构") || biz.includes("逻辑结构")) return false;
+    if (compact.startsWith("4.1.1")) return true;
+    return biz.includes("Postgresql库1") || biz.includes("库1数据库")
+        || biz.includes("图像数据与处理结果") || biz.includes("图像处理结果");
 };
 
 const isHldLib2ChapterTitle = (title?: string) => {
+    const biz = bizTitleKey(title);
     const compact = normalizeTitle(title);
-    if (compact.startsWith("4.1.2") && (compact.includes("库2数据库") || compact === "4.1.2")) return true;
-    // 历史误挂：把库 2 写成「4.2 物理结构设计要点」
-    return compact.startsWith("4.2") && compact.includes("物理结构");
+    if (biz.includes("物理结构")) return false;
+    if (compact.startsWith("4.1.2")) return true;
+    return biz.includes("库2数据库");
 };
 
-const isLogicStructureTitle = (title?: string) => {
-    const compact = normalizeTitle(title);
-    return /^4\.1(?!\.\d)/.test(compact) && compact.includes("逻辑结构");
-};
+const isLogicStructureTitle = (title?: string) => bizTitleKey(title).includes("逻辑结构");
 
 const isChapter4Title = (title?: string) => {
-    const compact = normalizeTitle(title);
-    return /^4(?!\.)/.test(compact) && compact.includes("数据结构");
+    const biz = bizTitleKey(title);
+    if (biz.includes("逻辑结构") || biz.includes("物理结构")) return false;
+    if (biz.includes("库1数据库") || biz.includes("库2数据库") || biz.includes("Postgresql")) return false;
+    return biz.includes("系统数据结构设计") || biz === "数据结构设计"
+        || (biz.includes("数据结构") && !biz.includes("逻辑") && !biz.includes("物理"));
 };
+
+const isMisplacedHldPhysicalChapter = (title?: string) => bizTitleKey(title).includes("物理结构");
 
 const parseInterfaceSeq = (code?: string): number => {
     const txt = String(code || "").trim();
@@ -191,26 +203,39 @@ const makeEmptyChapter = (parent: TreeNode, title: string): TreeNode => ({
 }) as TreeNode;
 
 const ensureChapter4Structure = (nodes: TreeNode[]): TreeNode[] => walkTree(nodes, (node) => {
-    const title = String(node.title || "");
-    if (!(/^4[\s.．、]/.test(title) && title.includes("数据结构") && !/^4\.[0-9]/.test(title.replace(/\s/g, "")))) {
-        return node;
-    }
-    const children = [...((node.children || []) as TreeNode[])];
+    if (!isChapter4Title(node.title)) return node;
+    let children = [...((node.children || []) as TreeNode[])];
+    const misplaced = children.filter((item) => isMisplacedHldPhysicalChapter(item.title));
+    const movedFromPhysical: TreeNode[] = [];
+    misplaced.forEach((item) => {
+        ((item.children || []) as TreeNode[]).forEach((child) => movedFromPhysical.push(child));
+    });
+    children = children.filter((item) => !isMisplacedHldPhysicalChapter(item.title));
     let section41 = children.find((item) => isLogicStructureTitle(item.title));
     if (!section41) {
         section41 = makeEmptyChapter(node, "4.1 逻辑结构设计要点");
         children.unshift(section41);
     }
-    const sec41Children = [...((section41.children || []) as TreeNode[])];
-    if (!sec41Children.some((item) => isHldLib1ChapterTitle(item.title) || normalizeTitle(item.title).startsWith("4.1.1"))) {
+    let sec41Children = [...((section41.children || []) as TreeNode[])].filter(
+        (item) => !isMisplacedHldPhysicalChapter(item.title) && !bizTitleKey(item.title).includes("标记信息"),
+    );
+    if (!sec41Children.some((item) => isHldLib1ChapterTitle(item.title))) {
         sec41Children.push(makeEmptyChapter(section41, HLD_LIB1_CHAPTER_TITLE));
     }
-    if (!sec41Children.some((item) => isHldLib2ChapterTitle(item.title) && normalizeTitle(item.title).startsWith("4.1.2"))) {
-        sec41Children.push(makeEmptyChapter(section41, HLD_LIB2_CHAPTER_TITLE));
+    let lib2 = sec41Children.find((item) => isHldLib2ChapterTitle(item.title));
+    if (!lib2) {
+        lib2 = { ...makeEmptyChapter(section41, HLD_LIB2_CHAPTER_TITLE), children: movedFromPhysical };
+        sec41Children.push(lib2);
+    } else if (movedFromPhysical.length) {
+        const idx = sec41Children.findIndex((item) => isHldLib2ChapterTitle(item.title));
+        sec41Children[idx] = {
+            ...lib2,
+            title: HLD_LIB2_CHAPTER_TITLE,
+            children: [...((lib2.children || []) as TreeNode[]), ...movedFromPhysical],
+        };
     }
-    const sec41Idx = children.findIndex((item) => item === section41);
-    children[sec41Idx] = { ...section41, children: sec41Children };
-    // 原模版无「4.2 物理结构设计要点」，不在此创建
+    const sec41Idx = children.findIndex((item) => item === section41 || isLogicStructureTitle(item.title));
+    children[sec41Idx] = { ...section41, title: String(section41.title || "4.1 逻辑结构设计要点"), children: sec41Children };
     return { ...node, children };
 });
 
@@ -226,10 +251,7 @@ const upsertFieldTableNode = (nodes: TreeNode[], item: { title: string; library:
     }
     return walkTree(nodes, (node) => {
         const isLib1Parent = item.library !== "lib2" && isHldLib1ChapterTitle(node.title);
-        const isLib2Parent = item.library === "lib2" && (
-            (isHldLib2ChapterTitle(node.title) && normalizeTitle(node.title).startsWith("4.1.2"))
-            || normalizeTitle(node.title) === normalizeTitle(HLD_LIB2_CHAPTER_TITLE)
-        );
+        const isLib2Parent = item.library === "lib2" && isHldLib2ChapterTitle(node.title);
         if (!isLib1Parent && !isLib2Parent) return node;
         const children = [...((node.children || []) as TreeNode[])];
         children.push({
@@ -341,6 +363,57 @@ export const needsLegacyInterfaceRepair = (tree: TreeNode[]): boolean => {
     return legacy;
 };
 
+const buildFieldTableChildNodes = (
+    items: Array<{ title: string; library: "lib1" | "lib2"; table: HldTableData }>,
+    parent: TreeNode,
+): TreeNode[] =>
+    (items || []).map((item) => {
+        const converted = convertFieldTable(item.table);
+        if (!converted) return null;
+        return {
+            id: nextTempNodeId(),
+            doc_id: parent.doc_id || 0,
+            n_id: 0,
+            p_id: parent.n_id || 0,
+            title: item.title,
+            text: "",
+            table: converted as TreeNode["table"],
+            children: [],
+        } as TreeNode;
+    }).filter(Boolean) as TreeNode[];
+
+/** 用详细设计 5.6.1/5.6.2 的字段表覆盖 4.1.1/4.1.2，并去掉误挂的「物理结构」章。 */
+const applySdsFieldTablesToTree = (
+    tree: TreeNode[],
+    fieldTables?: Array<{ title: string; library: "lib1" | "lib2"; table: HldTableData }>,
+): TreeNode[] => {
+    let nextTree = ensureChapter4Structure([...(tree || [])]);
+    const list = fieldTables || [];
+    if (!list.length) return nextTree;
+    const lib1Items = list.filter((item) => item.library !== "lib2");
+    const lib2Items = list.filter((item) => item.library === "lib2");
+    nextTree = walkTree(nextTree, (node) => {
+        if (isHldLib1ChapterTitle(node.title)) {
+            return {
+                ...node,
+                title: HLD_LIB1_CHAPTER_TITLE,
+                text: /^Postgresql数据库[:：]?\s*$/i.test(String(node.text || "").trim()) ? "" : String(node.text || ""),
+                children: buildFieldTableChildNodes(lib1Items, node),
+            };
+        }
+        if (isHldLib2ChapterTitle(node.title)) {
+            return {
+                ...node,
+                title: HLD_LIB2_CHAPTER_TITLE,
+                text: /^库\s*2数据库[:：]?\s*$/i.test(String(node.text || "").trim()) ? "" : String(node.text || ""),
+                children: buildFieldTableChildNodes(lib2Items, node),
+            };
+        }
+        return node;
+    });
+    return ensureChapter4Structure(nextTree);
+};
+
 export const applySdsSyncToTree = (tree: TreeNode[], payload?: HldSdsSyncPayload | null): TreeNode[] => {
     if (!payload) return tree;
     tempNodeSeed = 0;
@@ -370,9 +443,7 @@ export const applySdsSyncToTree = (tree: TreeNode[], payload?: HldSdsSyncPayload
             return node;
         });
     }
-    (payload.field_tables || []).forEach((item) => {
-        nextTree = upsertFieldTableNode(nextTree, item);
-    });
+    nextTree = applySdsFieldTablesToTree(nextTree, payload.field_tables);
     nextTree = applyGlossaryTable(nextTree, payload.glossary_table);
     nextTree = splitHldInternalInterfaces(nextTree).nodes;
     return mergeInterfaceDetails(nextTree, interfaceDetails);
@@ -692,62 +763,20 @@ const dropRepeatedFieldBlock = (children: TreeNode[]): TreeNode[] => {
     return children;
 };
 
-/** 两库都挂在 4.1 下（4.1.1 / 4.1.2）；去掉标记信息；把误挂在 4.2 物理结构下的库 2 表迁回。 */
+/** 两库都挂在 4.1 下（4.1.1 / 4.1.2）；去掉标记信息；把误挂的「物理结构」下库 2 表迁回 4.1.2 并删掉该章。 */
 export const tidyHldFieldChapters = (tree: TreeNode[]): { nodes: TreeNode[]; changed: boolean } => {
-    let changed = false;
+    const ensured = ensureChapter4Structure(tree || []);
+    let changed = JSON.stringify(ensured) !== JSON.stringify(tree || []);
     const snap = (list: TreeNode[]) => list.map((item) => `${item.n_id}:${item.title}:${String(item.text || "")}:${(item.children || []).length}`).join("|");
-    const next = walkTree(tree, (node) => {
+    const next = walkTree(ensured, (node) => {
         if (!isChapter4Title(node.title) && !isLogicStructureTitle(node.title)) return node;
         let children = [...((node.children || []) as TreeNode[])];
         const before = snap(children);
 
-        if (isChapter4Title(node.title)) {
-            const misplaced = children.filter((item) => {
-                const compact = normalizeTitle(item.title);
-                return compact.startsWith("4.2") && compact.includes("物理结构");
-            });
-            if (misplaced.length) {
-                let section41 = children.find((item) => isLogicStructureTitle(item.title));
-                if (!section41) {
-                    section41 = makeEmptyChapter(node, "4.1 逻辑结构设计要点");
-                    children.unshift(section41);
-                }
-                const movedTables: TreeNode[] = [];
-                misplaced.forEach((item) => {
-                    ((item.children || []) as TreeNode[]).forEach((child) => movedTables.push(child));
-                });
-                const sec41Kids = [...((section41.children || []) as TreeNode[])].filter(
-                    (item) => !String(item.title || "").replace(/\s+/g, "").includes("标记信息"),
-                );
-                let lib2 = sec41Kids.find((item) => isHldLib2ChapterTitle(item.title) && normalizeTitle(item.title).startsWith("4.1.2"));
-                if (!lib2) {
-                    lib2 = { ...makeEmptyChapter(section41, HLD_LIB2_CHAPTER_TITLE), children: movedTables };
-                    sec41Kids.push(lib2);
-                } else {
-                    const idx = sec41Kids.indexOf(lib2);
-                    sec41Kids[idx] = {
-                        ...lib2,
-                        title: HLD_LIB2_CHAPTER_TITLE,
-                        text: /^库\s*2数据库[:：]?\s*$/i.test(String(lib2.text || "").trim()) ? "" : String(lib2.text || ""),
-                        children: dropRepeatedFieldBlock([...(lib2.children || []) as TreeNode[], ...movedTables]),
-                    };
-                }
-                const sec41Idx = children.findIndex((item) => item === section41 || isLogicStructureTitle(item.title));
-                if (sec41Idx >= 0) {
-                    children[sec41Idx] = { ...children[sec41Idx], children: sec41Kids };
-                }
-                children = children.filter((item) => {
-                    const compact = normalizeTitle(item.title);
-                    return !(compact.startsWith("4.2") && compact.includes("物理结构"));
-                });
-            }
-        }
-
         if (isLogicStructureTitle(node.title)) {
-            children = children.filter((item) => !String(item.title || "").replace(/\s+/g, "").includes("标记信息"));
+            children = children.filter((item) => !isMisplacedHldPhysicalChapter(item.title) && !bizTitleKey(item.title).includes("标记信息"));
             children = children.map((item) => {
-                const compact = normalizeTitle(item.title);
-                if (compact.startsWith("4.1.1")) {
+                if (isHldLib1ChapterTitle(item.title)) {
                     const prevText = String(item.text || "").trim();
                     return {
                         ...item,
@@ -756,10 +785,7 @@ export const tidyHldFieldChapters = (tree: TreeNode[]): { nodes: TreeNode[]; cha
                         children: dropRepeatedFieldBlock((item.children || []) as TreeNode[]),
                     };
                 }
-                if (
-                    (compact.startsWith("4.1.2") && (compact.includes("库2") || isHldLib2ChapterTitle(item.title)))
-                    || (compact.startsWith("4.2") && compact.includes("物理结构"))
-                ) {
+                if (isHldLib2ChapterTitle(item.title)) {
                     const prevText = String(item.text || "").trim();
                     return {
                         ...item,
@@ -770,9 +796,16 @@ export const tidyHldFieldChapters = (tree: TreeNode[]): { nodes: TreeNode[]; cha
                 }
                 return item;
             });
-            if (!children.some((item) => normalizeTitle(item.title).startsWith("4.1.2"))) {
-                // 有库 2 表却无 4.1.2 时由 ensure/sync 补；此处不空建
+            if (!children.some((item) => isHldLib2ChapterTitle(item.title))) {
+                children.push(makeEmptyChapter(node, HLD_LIB2_CHAPTER_TITLE));
             }
+            if (!children.some((item) => isHldLib1ChapterTitle(item.title))) {
+                children.unshift(makeEmptyChapter(node, HLD_LIB1_CHAPTER_TITLE));
+            }
+        }
+
+        if (isChapter4Title(node.title)) {
+            children = children.filter((item) => !isMisplacedHldPhysicalChapter(item.title));
         }
 
         const after = snap(children);
@@ -780,7 +813,19 @@ export const tidyHldFieldChapters = (tree: TreeNode[]): { nodes: TreeNode[]; cha
         changed = true;
         return { ...node, children };
     });
-    return { nodes: changed ? next : tree, changed };
+    return { nodes: changed ? next : ensured, changed };
+};
+
+export const hasMisplacedHldPhysicalChapter = (tree: TreeNode[]): boolean => {
+    let found = false;
+    const walk = (list: TreeNode[]) => {
+        (list || []).forEach((node) => {
+            if (isMisplacedHldPhysicalChapter(node.title)) found = true;
+            walk((node.children || []) as TreeNode[]);
+        });
+    };
+    walk(tree || []);
+    return found;
 };
 
 export const hasSdsSyncData = (payload?: HldSdsSyncPayload | null) =>

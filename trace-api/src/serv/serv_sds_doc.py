@@ -3167,7 +3167,8 @@ finally:
             docx_util.fonted_txt(p, txt, font_size)
 
         def __save_table_caption_txt(docx: Document, text: str, font_size: float = 10.5):
-            __save_caption_txt(docx, text, font_size, align="left")
+            # 原模版：表题（表 N … / ××表）居中
+            __save_caption_txt(docx, text, font_size, align="center")
 
         def __save_image_caption_txt(docx: Document, text: str, font_size: float = 10.5):
             __save_caption_txt(docx, text, font_size, align="center")
