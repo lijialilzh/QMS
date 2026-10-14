@@ -66,11 +66,32 @@
             border-bottom: 1px solid #eef0f3;
             flex-wrap: wrap;
             row-gap: 6px;
+
+            .ant-form-item,
+            .hld-toolbar-item {
+                margin-top: 0 !important;
+                margin-bottom: 0 !important;
+            }
+
+            .ant-form-item-row {
+                align-items: center !important;
+                flex-wrap: nowrap;
+            }
+
+            .ant-form-item-explain {
+                position: absolute;
+                top: 100%;
+            }
+
+            .ant-space,
+            .ant-btn {
+                align-self: center;
+            }
         }
 
         .hld-toolbar-item {
             margin-right: 0;
-            margin-bottom: 0;
+            margin-bottom: 0 !important;
         }
 
         .hld-toolbar-meta {

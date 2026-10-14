@@ -48,7 +48,8 @@ def sign_mode_enabled() -> bool:
 # 选中用 Wingdings 方框对号，未选空框。不用 ☑ 字符，Word 会把它画成灰色表情。
 # 框与文字之间留一格，两项之间留四格。
 CHECK = "\u2611\ufe0e 通过    \u25a1 存在问题"
-_REVIEW_CHECK_LINE = re.compile(r"^[☑✓✔■]\ufe0e?\s*通过\s*[□☐]\ufe0e?\s*存在问题\s*$")
+# 兼容原 Word「通过 □存在问题」与导出模板「☑ 通过    □ 存在问题」
+_REVIEW_CHECK_LINE = re.compile(r"^(?:[☑✓✔■]\ufe0e?\s*)?通过\s*[□☐]\ufe0e?\s*存在问题\s*$")
 
 
 def is_review_check_line(text: str) -> bool:

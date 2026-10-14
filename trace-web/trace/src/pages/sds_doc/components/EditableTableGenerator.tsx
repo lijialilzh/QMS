@@ -1,6 +1,7 @@
 import './EditableTableGenerator.less';
 import { useState, useEffect } from 'react';
 import { Form, InputNumber, Button, Table, Input, Space, message, Modal } from 'antd';
+import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuidv4 } from 'uuid';
@@ -169,7 +170,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
   const buildTableColumns = (): ColumnsType<TableRowData> => {
     if (colCount < 1) return []; // 列数为0时，返回空列配置
 
-    return Array.from({ length: colCount }, (_, colIndex) => ({
+    const editableColumns: ColumnsType<TableRowData> = Array.from({ length: colCount }, (_, colIndex) => ({
       title: (
         <Input
           value={customHeaders[colIndex]?.name || `${ts('srs_doc.column')} ${colIndex + 1}`}
@@ -192,6 +193,35 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
         />
       ),
     }));
+    return [
+      ...editableColumns,
+      {
+        title: '操作',
+        key: 'operation',
+        width: 96,
+        className: 'editable-table-op-col',
+        render: (_: unknown, record: TableRowData) => (
+          <Space size={4} className="editable-table-row-actions">
+            <Button
+              type="text"
+              size="small"
+              icon={<PlusOutlined />}
+              title="在下方插入行"
+              onClick={() => handleAddRowAfter(record.key)}
+            />
+            <Button
+              type="text"
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              title="删除行"
+              disabled={tableData.length <= 1}
+              onClick={() => handleDeleteRow(record.key)}
+            />
+          </Space>
+        ),
+      },
+    ];
   };
 
   // 5. 处理单元格编辑：更新对应位置的表格数据
@@ -206,6 +236,36 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       // 重新设置表格数据状态，触发组件重渲染
       setTableData(newTableData);
     }
+  };
+
+  const createEmptyRow = (): TableRowData => {
+    const rowData: TableRowData = { key: Date.now() + Math.floor(Math.random() * 1000) };
+    for (let colIndex = 0; colIndex < colCount; colIndex++) {
+      rowData[`col_${colIndex}`] = '';
+    }
+    return rowData;
+  };
+
+  const syncRowCount = (nextData: TableRowData[]) => {
+    setTableData(nextData);
+    setRowCount(nextData.length);
+    form.setFieldsValue({ rowCount: nextData.length });
+  };
+
+  const handleAddRowAfter = (rowKey: number) => {
+    const currentIndex = tableData.findIndex((item) => item.key === rowKey);
+    const insertIndex = currentIndex >= 0 ? currentIndex + 1 : tableData.length;
+    const nextData = [...tableData];
+    nextData.splice(insertIndex, 0, createEmptyRow());
+    syncRowCount(nextData);
+  };
+
+  const handleDeleteRow = (rowKey: number) => {
+    if (tableData.length <= 1) {
+      message.warning('至少保留一行');
+      return;
+    }
+    syncRowCount(tableData.filter((item) => item.key !== rowKey));
   };
 
   // 6. 重置表格：清空所有状态和表单

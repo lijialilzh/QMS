@@ -1260,8 +1260,9 @@ export default () => {
 
     const handleSyncFromSds = async () => {
         const pid = editForm.getFieldValue("product_id");
+        const version = String(editForm.getFieldValue("version") || "").trim();
         const sdsdocId = Number(editForm.getFieldValue("sdsdoc_id") || 0);
-        if (!pid || !String(editForm.getFieldValue("version") || "").trim()) {
+        if (!pid || !version) {
             message.warning(ts("hld_doc.please_select_product_and_version"));
             return;
         }
@@ -1274,7 +1275,32 @@ export default () => {
             const syncedTree = await syncTreeFromSds(pid, sdsdocId, (treeStructureRef.current || data.treeStructure || []) as TreeNode[]);
             treeStructureRef.current = syncedTree;
             dispatch({ treeStructure: syncedTree, treeRefreshKey: Date.now() });
-            message.success(ts("hld_doc.sync_from_sds_success"));
+            const docId = params.id ? parseInt(String(params.id), 10) : 0;
+            if (docId && data.isEdit && !isReadOnly) {
+                try {
+                    const contentPayload = (syncedTree as TreeNode[]).map((node) => cleanTreeNode(node, docId, 0));
+                    const saveRes: any = await Api.update_hld_doc({
+                        id: docId,
+                        product_id: pid,
+                        version,
+                        sdsdoc_id: sdsdocId,
+                        file_no: editForm.getFieldValue("file_no"),
+                        change_log: data.changeDescription || "",
+                        content: contentPayload,
+                        n_id: data.docNId || 0,
+                    });
+                    if (saveRes?.code === Api.C_OK) {
+                        message.success(`${ts("hld_doc.sync_from_sds_success")}，已自动保存`);
+                    } else {
+                        message.warning(`${ts("hld_doc.sync_from_sds_success")}，但自动保存失败：${saveRes?.msg || ""}`.trim());
+                    }
+                } catch (error) {
+                    console.error("同步后自动保存概要设计失败:", error);
+                    message.warning(`${ts("hld_doc.sync_from_sds_success")}，但自动保存失败，请手动点保存`);
+                }
+            } else {
+                message.success(ts("hld_doc.sync_from_sds_success"));
+            }
         } finally {
             dispatch({ loading: false });
         }

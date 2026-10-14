@@ -37,6 +37,33 @@ const moduleForSeq = (seq: number): string => {
 
 const normalizeTitle = (value?: string) => String(value || "").replace(/\s+/g, "").replace(/[.．、]/g, ".");
 
+/** 与详细设计 5.6.1 / 5.6.2 对应；概要设计原模版只有 4.1，两库都挂在 4.1 下。 */
+export const HLD_LIB1_CHAPTER_TITLE = "4.1.1 Postgresql库1数据库：";
+export const HLD_LIB2_CHAPTER_TITLE = "4.1.2 库2数据库：";
+
+const isHldLib1ChapterTitle = (title?: string) => {
+    const compact = normalizeTitle(title);
+    if (!compact.startsWith("4.1.1")) return false;
+    return compact.includes("Postgresql库1数据库") || compact.includes("图像数据与处理结果") || compact.includes("图像处理结果");
+};
+
+const isHldLib2ChapterTitle = (title?: string) => {
+    const compact = normalizeTitle(title);
+    if (compact.startsWith("4.1.2") && (compact.includes("库2数据库") || compact === "4.1.2")) return true;
+    // 历史误挂：把库 2 写成「4.2 物理结构设计要点」
+    return compact.startsWith("4.2") && compact.includes("物理结构");
+};
+
+const isLogicStructureTitle = (title?: string) => {
+    const compact = normalizeTitle(title);
+    return /^4\.1(?!\.\d)/.test(compact) && compact.includes("逻辑结构");
+};
+
+const isChapter4Title = (title?: string) => {
+    const compact = normalizeTitle(title);
+    return /^4(?!\.)/.test(compact) && compact.includes("数据结构");
+};
+
 const parseInterfaceSeq = (code?: string): number => {
     const txt = String(code || "").trim();
     const m = txt.match(/-(\d+)$/);
@@ -152,53 +179,38 @@ const walkTree = (nodes: TreeNode[], fn: (node: TreeNode, parents: TreeNode[]) =
         return { ...mapped, children };
     });
 
+const makeEmptyChapter = (parent: TreeNode, title: string): TreeNode => ({
+    id: Date.now() + Math.floor(Math.random() * 1000),
+    doc_id: parent.doc_id || 0,
+    n_id: 0,
+    p_id: parent.n_id || 0,
+    title,
+    text: "",
+    table: {},
+    children: [],
+}) as TreeNode;
+
 const ensureChapter4Structure = (nodes: TreeNode[]): TreeNode[] => walkTree(nodes, (node) => {
     const title = String(node.title || "");
     if (!(/^4[\s.．、]/.test(title) && title.includes("数据结构") && !/^4\.[0-9]/.test(title.replace(/\s/g, "")))) {
         return node;
     }
     const children = [...((node.children || []) as TreeNode[])];
-    let section41 = children.find((item) => normalizeTitle(item.title).startsWith("4.1"));
+    let section41 = children.find((item) => isLogicStructureTitle(item.title));
     if (!section41) {
-        section41 = {
-            id: Date.now() + Math.floor(Math.random() * 1000),
-            doc_id: node.doc_id || 0,
-            n_id: 0,
-            p_id: node.n_id || 0,
-            title: "4.1 逻辑结构设计要点",
-            text: String(node.children?.[0]?.text || ""),
-            table: {},
-            children: [],
-        } as TreeNode;
+        section41 = makeEmptyChapter(node, "4.1 逻辑结构设计要点");
         children.unshift(section41);
     }
     const sec41Children = [...((section41.children || []) as TreeNode[])];
-    if (!sec41Children.some((item) => normalizeTitle(item.title).includes("4.1.1"))) {
-        sec41Children.unshift({
-            id: Date.now() + Math.floor(Math.random() * 1000),
-            doc_id: section41.doc_id || 0,
-            n_id: 0,
-            p_id: section41.n_id || 0,
-            title: "4.1.1 图像数据与处理结果",
-            text: "",
-            table: {},
-            children: [],
-        } as TreeNode);
+    if (!sec41Children.some((item) => isHldLib1ChapterTitle(item.title) || normalizeTitle(item.title).startsWith("4.1.1"))) {
+        sec41Children.push(makeEmptyChapter(section41, HLD_LIB1_CHAPTER_TITLE));
+    }
+    if (!sec41Children.some((item) => isHldLib2ChapterTitle(item.title) && normalizeTitle(item.title).startsWith("4.1.2"))) {
+        sec41Children.push(makeEmptyChapter(section41, HLD_LIB2_CHAPTER_TITLE));
     }
     const sec41Idx = children.findIndex((item) => item === section41);
     children[sec41Idx] = { ...section41, children: sec41Children };
-    if (!children.some((item) => normalizeTitle(item.title).startsWith("4.2"))) {
-        children.push({
-            id: Date.now() + Math.floor(Math.random() * 1000),
-            doc_id: node.doc_id || 0,
-            n_id: 0,
-            p_id: node.n_id || 0,
-            title: "4.2 物理结构设计要点",
-            text: "",
-            table: {},
-            children: [],
-        } as TreeNode);
-    }
+    // 原模版无「4.2 物理结构设计要点」，不在此创建
     return { ...node, children };
 });
 
@@ -212,9 +224,13 @@ const upsertFieldTableNode = (nodes: TreeNode[], item: { title: string; library:
             normalizeTitle(node.title) === normalized ? { ...node, table: converted as TreeNode["table"] } : node
         ));
     }
-    const parentTitle = item.library === "lib2" ? "4.2 物理结构设计要点" : "4.1.1 图像数据与处理结果";
     return walkTree(nodes, (node) => {
-        if (normalizeTitle(node.title) !== normalizeTitle(parentTitle)) return node;
+        const isLib1Parent = item.library !== "lib2" && isHldLib1ChapterTitle(node.title);
+        const isLib2Parent = item.library === "lib2" && (
+            (isHldLib2ChapterTitle(node.title) && normalizeTitle(node.title).startsWith("4.1.2"))
+            || normalizeTitle(node.title) === normalizeTitle(HLD_LIB2_CHAPTER_TITLE)
+        );
+        if (!isLib1Parent && !isLib2Parent) return node;
         const children = [...((node.children || []) as TreeNode[])];
         children.push({
             id: Date.now() + Math.floor(Math.random() * 1000),
@@ -571,16 +587,6 @@ const isHldFieldCaptionLine = (line: string) => {
     return false;
 };
 
-const isLogicStructureTitle = (title?: string) => {
-    const compact = String(title || "").replace(/\s+/g, "");
-    return /^4\.1(?!\.\d)/.test(compact) && compact.includes("逻辑结构");
-};
-
-const isChapter4Title = (title?: string) => {
-    const compact = String(title || "").replace(/\s+/g, "");
-    return /^4(?!\.)/.test(compact) && compact.includes("数据结构");
-};
-
 /** 与详细设计一致：字段表按表名挂到目录，点开一张只显示这一张。 */
 export const promoteHldFieldTables = (tree: TreeNode[]): { nodes: TreeNode[]; changed: boolean } => {
     let changed = false;
@@ -617,51 +623,56 @@ export const promoteHldFieldTables = (tree: TreeNode[]): { nodes: TreeNode[]; ch
             .join("\n")
             .trim();
         const rest = sectionChildren.filter((item) => !isImportedFieldTableNode(item));
-        let section41 = rest.find((item) => String(item.title || "").replace(/\s+/g, "").startsWith("4.1.1"));
+        let section41 = rest.find((item) => isHldLib1ChapterTitle(item.title) || String(item.title || "").replace(/\s+/g, "").startsWith("4.1.1"));
         if (!section41) {
             section41 = {
                 id: nextTempNodeId(),
                 doc_id: section.doc_id || 0,
                 n_id: 0,
                 p_id: section.n_id || 0,
-                title: "4.1.1 图像数据与处理结果",
-                text: "Postgresql数据库：",
+                title: HLD_LIB1_CHAPTER_TITLE,
+                text: "",
                 table: {},
                 children: lib1Tables,
             } as TreeNode;
             rest.unshift(section41);
         } else {
             const idx = rest.indexOf(section41);
+            const prevText = String(section41.text || "").trim();
             rest[idx] = {
                 ...section41,
-                text: String(section41.text || "").trim() || "Postgresql数据库：",
+                title: HLD_LIB1_CHAPTER_TITLE,
+                text: /^Postgresql数据库[:：]?\s*$/i.test(prevText) ? "" : prevText,
                 children: [...((section41.children || []) as TreeNode[]), ...lib1Tables],
             };
         }
-        const sectionIdx = chapters.findIndex((item) => item === section);
-        chapters[sectionIdx] = { ...section, text: intro, children: rest };
         if (lib2Tables.length > 0) {
-            let section42 = chapters.find((item) => String(item.title || "").replace(/\s+/g, "").startsWith("4.2"));
-            if (!section42) {
-                chapters.push({
+            let section412 = rest.find((item) => isHldLib2ChapterTitle(item.title) && normalizeTitle(item.title).startsWith("4.1.2"));
+            if (!section412) {
+                section412 = {
                     id: nextTempNodeId(),
-                    doc_id: node.doc_id || 0,
+                    doc_id: section.doc_id || 0,
                     n_id: 0,
-                    p_id: node.n_id || 0,
-                    title: "4.2 物理结构设计要点",
-                    text: "库2数据库：",
+                    p_id: section.n_id || 0,
+                    title: HLD_LIB2_CHAPTER_TITLE,
+                    text: "",
                     table: {},
                     children: lib2Tables,
-                } as TreeNode);
+                } as TreeNode;
+                rest.push(section412);
             } else {
-                const idx = chapters.indexOf(section42);
-                chapters[idx] = {
-                    ...section42,
-                    text: String(section42.text || "").trim() || "库2数据库：",
-                    children: [...((section42.children || []) as TreeNode[]), ...lib2Tables],
+                const idx = rest.indexOf(section412);
+                const prevText = String(section412.text || "").trim();
+                rest[idx] = {
+                    ...section412,
+                    title: HLD_LIB2_CHAPTER_TITLE,
+                    text: /^库\s*2数据库[:：]?\s*$/i.test(prevText) ? "" : prevText,
+                    children: [...((section412.children || []) as TreeNode[]), ...lib2Tables],
                 };
             }
         }
+        const sectionIdx = chapters.findIndex((item) => item === section);
+        chapters[sectionIdx] = { ...section, text: intro, children: rest };
         changed = true;
         return { ...node, children: chapters };
     });
@@ -681,37 +692,90 @@ const dropRepeatedFieldBlock = (children: TreeNode[]): TreeNode[] => {
     return children;
 };
 
-/** 去掉空的「4.1.2 标记信息」，并去掉 4.1.1 / 4.2 下整表重复挂上的那一套字段表。 */
+/** 两库都挂在 4.1 下（4.1.1 / 4.1.2）；去掉标记信息；把误挂在 4.2 物理结构下的库 2 表迁回。 */
 export const tidyHldFieldChapters = (tree: TreeNode[]): { nodes: TreeNode[]; changed: boolean } => {
     let changed = false;
+    const snap = (list: TreeNode[]) => list.map((item) => `${item.n_id}:${item.title}:${String(item.text || "")}:${(item.children || []).length}`).join("|");
     const next = walkTree(tree, (node) => {
         if (!isChapter4Title(node.title) && !isLogicStructureTitle(node.title)) return node;
         let children = [...((node.children || []) as TreeNode[])];
-        const before = children.map((item) => `${item.n_id}:${item.title}:${(item.children || []).length}`).join("|");
-        if (isLogicStructureTitle(node.title)) {
-            const dataChapter = children.find((item) => String(item.title || "").replace(/\s+/g, "").startsWith("4.1.1"));
-            const dataHasTables = ((dataChapter?.children || []) as TreeNode[]).some(isImportedFieldTableNode)
-                || ((dataChapter?.children || []) as TreeNode[]).some((item) => fieldTitleKey(item).length > 0 && String(item.table?.headers?.[0]?.name || "").replace(/\s/g, "").includes("Field"));
-            children = children.filter((item) => {
-                const title = String(item.title || "").replace(/\s+/g, "");
-                if (!title.includes("标记信息")) return true;
-                const hasBody = !!String(item.text || "").trim() || ((item.children || []) as TreeNode[]).length > 0;
-                const rows = item.table?.rows?.length || 0;
-                if (hasBody || rows > 0) return true;
-                return !dataHasTables;
-            });
-            children = children.map((item) => {
-                if (!String(item.title || "").replace(/\s+/g, "").startsWith("4.1.1")) return item;
-                return { ...item, children: dropRepeatedFieldBlock((item.children || []) as TreeNode[]) };
-            });
-        }
+        const before = snap(children);
+
         if (isChapter4Title(node.title)) {
-            children = children.map((item) => {
-                if (!String(item.title || "").replace(/\s+/g, "").startsWith("4.2")) return item;
-                return { ...item, children: dropRepeatedFieldBlock((item.children || []) as TreeNode[]) };
+            const misplaced = children.filter((item) => {
+                const compact = normalizeTitle(item.title);
+                return compact.startsWith("4.2") && compact.includes("物理结构");
             });
+            if (misplaced.length) {
+                let section41 = children.find((item) => isLogicStructureTitle(item.title));
+                if (!section41) {
+                    section41 = makeEmptyChapter(node, "4.1 逻辑结构设计要点");
+                    children.unshift(section41);
+                }
+                const movedTables: TreeNode[] = [];
+                misplaced.forEach((item) => {
+                    ((item.children || []) as TreeNode[]).forEach((child) => movedTables.push(child));
+                });
+                const sec41Kids = [...((section41.children || []) as TreeNode[])].filter(
+                    (item) => !String(item.title || "").replace(/\s+/g, "").includes("标记信息"),
+                );
+                let lib2 = sec41Kids.find((item) => isHldLib2ChapterTitle(item.title) && normalizeTitle(item.title).startsWith("4.1.2"));
+                if (!lib2) {
+                    lib2 = { ...makeEmptyChapter(section41, HLD_LIB2_CHAPTER_TITLE), children: movedTables };
+                    sec41Kids.push(lib2);
+                } else {
+                    const idx = sec41Kids.indexOf(lib2);
+                    sec41Kids[idx] = {
+                        ...lib2,
+                        title: HLD_LIB2_CHAPTER_TITLE,
+                        text: /^库\s*2数据库[:：]?\s*$/i.test(String(lib2.text || "").trim()) ? "" : String(lib2.text || ""),
+                        children: dropRepeatedFieldBlock([...(lib2.children || []) as TreeNode[], ...movedTables]),
+                    };
+                }
+                const sec41Idx = children.findIndex((item) => item === section41 || isLogicStructureTitle(item.title));
+                if (sec41Idx >= 0) {
+                    children[sec41Idx] = { ...children[sec41Idx], children: sec41Kids };
+                }
+                children = children.filter((item) => {
+                    const compact = normalizeTitle(item.title);
+                    return !(compact.startsWith("4.2") && compact.includes("物理结构"));
+                });
+            }
         }
-        const after = children.map((item) => `${item.n_id}:${item.title}:${(item.children || []).length}`).join("|");
+
+        if (isLogicStructureTitle(node.title)) {
+            children = children.filter((item) => !String(item.title || "").replace(/\s+/g, "").includes("标记信息"));
+            children = children.map((item) => {
+                const compact = normalizeTitle(item.title);
+                if (compact.startsWith("4.1.1")) {
+                    const prevText = String(item.text || "").trim();
+                    return {
+                        ...item,
+                        title: HLD_LIB1_CHAPTER_TITLE,
+                        text: /^Postgresql数据库[:：]?\s*$/i.test(prevText) ? "" : prevText,
+                        children: dropRepeatedFieldBlock((item.children || []) as TreeNode[]),
+                    };
+                }
+                if (
+                    (compact.startsWith("4.1.2") && (compact.includes("库2") || isHldLib2ChapterTitle(item.title)))
+                    || (compact.startsWith("4.2") && compact.includes("物理结构"))
+                ) {
+                    const prevText = String(item.text || "").trim();
+                    return {
+                        ...item,
+                        title: HLD_LIB2_CHAPTER_TITLE,
+                        text: /^库\s*2数据库[:：]?\s*$/i.test(prevText) ? "" : prevText,
+                        children: dropRepeatedFieldBlock((item.children || []) as TreeNode[]),
+                    };
+                }
+                return item;
+            });
+            if (!children.some((item) => normalizeTitle(item.title).startsWith("4.1.2"))) {
+                // 有库 2 表却无 4.1.2 时由 ensure/sync 补；此处不空建
+            }
+        }
+
+        const after = snap(children);
         if (before === after) return node;
         changed = true;
         return { ...node, children };

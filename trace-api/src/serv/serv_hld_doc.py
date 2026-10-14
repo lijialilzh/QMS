@@ -846,6 +846,7 @@ class Server(object):
 
         docx = Document()
         wrote_review = {"ok": False}
+        pending_reviews: List[HldNodeForm] = []
 
         def __is_cover_title(title: str) -> bool:
             return self._biz_title(title) in ["软件概要设计", "软件概要设计说明书"]
@@ -856,6 +857,23 @@ class Server(object):
         def __is_review_title(title: str) -> bool:
             t = re.sub(r"\s+", "", str(title or ""))
             return t == "评审记录" or t == "附件一评审结论" or t.startswith("附件一")
+
+        def __table_header_names(table) -> str:
+            return "".join(str(getattr(h, "name", "") or "") for h in (getattr(table, "headers", None) or []))
+
+        def __is_review_content_table(table) -> bool:
+            names = __table_header_names(table)
+            return "评审内容" in names and ("评审项" in names or "评审结论" in names)
+
+        def __is_review_person_table(table) -> bool:
+            names = __table_header_names(table)
+            return (("人员角色" in names or "参评人员" in names) and "签字" in names)
+
+        def __is_misplaced_review_table(table) -> bool:
+            return bool(table) and (__is_review_content_table(table) or __is_review_person_table(table))
+
+        def __strip_review_tail(text: str) -> str:
+            return re.sub(r"\n?附件一\s*评审结论\s*$", "", str(text or ""))
 
         def __set_review_cell(cell, text, bold=False, align=None):
             from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -904,23 +922,48 @@ class Server(object):
             p.paragraph_format.space_after = Pt(0)
             p.paragraph_format.line_spacing = Pt(1)
 
-        def __write_review_node(node):
+        def __write_review_title():
             from docx.enum.text import WD_ALIGN_PARAGRAPH
+            from docx.shared import Pt
             from .serv_utils import docx_util
             __start_next_page()
             title = docx.add_paragraph()
             title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            title.paragraph_format.first_line_indent = Pt(0)
             docx_util.fonted_txt(title, "附件一 评审结论", font_size=16.0, bold=True)
+
+        def __write_review_tables(node):
             table = getattr(node, "table", None)
             if table and getattr(table, "headers", None):
-                names = "".join(str(h.name or "") for h in table.headers)
-                with_header = "评审内容" in names and "评审项" in names
-                serv_review_util.render_review_grid(docx, __grid_from_table(table, with_header), __set_review_cell, merge_col0=with_header, merge_full=True)
+                names = __table_header_names(table)
+                with_header = "评审内容" in names and ("评审项" in names or "评审结论" in names)
+                serv_review_util.render_review_grid(
+                    docx, __grid_from_table(table, with_header), __set_review_cell,
+                    merge_col0=with_header, merge_full=True,
+                )
                 for extra in getattr(table, "extra_tables", None) or []:
                     extra_table = getattr(extra, "table", None) if not isinstance(extra, dict) else extra.get("table")
                     if extra_table:
-                        serv_review_util.render_review_grid(docx, __grid_from_table(extra_table, False), __set_review_cell, merge_col0=False, merge_full=True)
+                        serv_review_util.render_review_grid(
+                            docx, __grid_from_table(extra_table, False), __set_review_cell,
+                            merge_col0=False, merge_full=True,
+                        )
+            # 子评审表已在遍历正文时单独收集进 pending_reviews，这里不再递归整棵子树
+            for child in getattr(node, "children", None) or []:
+                child_title = str(getattr(child, "title", "") or "").strip()
+                if getattr(child, "ref_type", None) == "review" or __is_review_title(child_title):
+                    __write_review_tables(child)
+                elif __has_table(child) and __is_misplaced_review_table(child.table):
+                    __write_review_tables(child)
+
+        def __flush_pending_reviews():
+            if not pending_reviews:
+                return
+            __write_review_title()
+            for node in pending_reviews:
+                __write_review_tables(node)
             wrote_review["ok"] = True
+            pending_reviews.clear()
 
         def __save_fitted_image(img_url: str):
             docx_util.save_img2docx(img_url, docx, mw=520, mh=340, page_fit=True)
@@ -959,20 +1002,12 @@ class Server(object):
             return False
 
         def __drop_list_number(paragraph):
-            from docx.oxml import OxmlElement
+            """去掉 Heading 自带列表编号，避免正文已有「1 引言」再叠出「.1 引言」。"""
             from docx.oxml.ns import qn
             p_pr = paragraph._p.get_or_add_pPr()
             for child in list(p_pr):
                 if child.tag == qn("w:numPr"):
                     p_pr.remove(child)
-            num_pr = OxmlElement("w:numPr")
-            ilvl = OxmlElement("w:ilvl")
-            ilvl.set(qn("w:val"), "0")
-            num_id = OxmlElement("w:numId")
-            num_id.set(qn("w:val"), "0")
-            num_pr.append(ilvl)
-            num_pr.append(num_id)
-            p_pr.append(num_pr)
 
         def __write_heading(title: str, level: int):
             docx_util.save_title2docx(title, docx, level=level)
@@ -996,7 +1031,10 @@ class Server(object):
             for node in nodes or []:
                 title = str(getattr(node, "title", "") or "").strip()
                 if getattr(node, "ref_type", None) == "review" or __is_review_title(title):
-                    __write_review_node(node)
+                    pending_reviews.append(node)
+                    continue
+                if self._is_imported_table_title(title) and __has_table(node) and __is_misplaced_review_table(node.table):
+                    pending_reviews.append(node)
                     continue
                 img_url = _normalize_hld_img_url(getattr(node, "img_url", "") or "")
                 is_figure = bool(img_url) and (
@@ -1025,15 +1063,26 @@ class Server(object):
                         level = 1
                     __write_heading(title, level)
                 children = list(getattr(node, "children", None) or [])
-                table_children = [
-                    child for child in children
-                    if self._is_imported_table_title(str(getattr(child, "title", "") or "")) and __has_table(child)
-                ]
-                other_children = [child for child in children if child not in table_children]
+                review_children = []
+                table_children = []
+                other_children = []
+                for child in children:
+                    child_title = str(getattr(child, "title", "") or "").strip()
+                    if getattr(child, "ref_type", None) == "review" or __is_review_title(child_title):
+                        review_children.append(child)
+                        continue
+                    if self._is_imported_table_title(child_title) and __has_table(child) and __is_misplaced_review_table(child.table):
+                        review_children.append(child)
+                        continue
+                    if self._is_imported_table_title(child_title) and __has_table(child):
+                        table_children.append(child)
+                    else:
+                        other_children.append(child)
+                pending_reviews.extend(review_children)
                 consumed = 0
-                for raw_line in str(getattr(node, "text", "") or "").replace("\r", "").split("\n"):
+                for raw_line in __strip_review_tail(getattr(node, "text", "") or "").replace("\r", "").split("\n"):
                     line = str(raw_line or "").strip()
-                    if not line:
+                    if not line or re.sub(r"\s+", "", line) in ("附件一评审结论", "评审记录"):
                         continue
                     if __is_data_table_caption(line) and consumed < len(table_children):
                         __write_imported_table(table_children[consumed], line)
@@ -1043,8 +1092,10 @@ class Server(object):
                 while consumed < len(table_children):
                     __write_imported_table(table_children[consumed])
                     consumed += 1
-                if __has_table(node):
+                if __has_table(node) and not __is_misplaced_review_table(node.table):
                     __write_imported_table(node)
+                elif __has_table(node) and __is_misplaced_review_table(node.table):
+                    pending_reviews.append(node)
                 if img_url and not self.__child_owns_figure(node):
                     __save_fitted_image(img_url)
                     if docx.paragraphs:
@@ -1169,6 +1220,7 @@ class Server(object):
             and not __is_revision_title(getattr(node, "title", ""))
         ]
         __write_nodes(body_roots)
+        __flush_pending_reviews()
         if not wrote_review["ok"] and getattr(doc_obj, "product_id", None):
             sec = serv_review_util.build_review_section(
                 "hld",
@@ -1176,18 +1228,21 @@ class Server(object):
                 doc_obj.product_id,
             )
             if sec:
-                from docx.enum.text import WD_ALIGN_PARAGRAPH
-                from .serv_utils import docx_util
-                __start_next_page()
-                title = docx.add_paragraph()
-                title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                docx_util.fonted_txt(title, "附件一 评审结论", font_size=16.0, bold=True)
+                __write_review_title()
                 for idx, grid in enumerate(sec.get("tables") or []):
-                    serv_review_util.render_review_grid(docx, grid, __set_review_cell, merge_col0=(idx == 0), merge_full=True)
+                    serv_review_util.render_review_grid(
+                        docx, grid, __set_review_cell, merge_col0=(idx == 0), merge_full=True,
+                    )
+                wrote_review["ok"] = True
         if file_no:
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
             section = docx.sections[0] if docx.sections else None
-            if section is not None and section.header.paragraphs:
-                docx_util.fonted_txt(section.header.paragraphs[0], file_no)
+            if section is not None:
+                header_para = section.header.paragraphs[0] if section.header.paragraphs else section.header.add_paragraph()
+                header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                for run in list(header_para.runs):
+                    run.text = ""
+                docx_util.fonted_txt(header_para, file_no)
         docx_util.add_page_number_footer(docx.sections[0], file_no=file_no, skip_first=True)
         docx.save(output)
 
@@ -1269,51 +1324,175 @@ class Server(object):
                 db.session.execute(delete(HldNode).where(HldNode.doc_id == doc.id, HldNode.n_id == n_id))
 
     def _tidy_hld_field_chapters(self, doc: HldDoc, roots: List[HldNodeForm]) -> bool:
-        """导出和打开用同一套字段表目录：去掉空的标记信息，去掉重复挂上的那一套表。"""
+        """两库都挂在 4.1 下（4.1.1 / 4.1.2）；去掉标记信息；把误挂在 4.2 物理结构下的库 2 迁回。"""
         changed = False
+        lib1_title = "4.1.1 Postgresql库1数据库："
+        lib2_title = "4.1.2 库2数据库："
+
+        def compact_title(title) -> str:
+            return re.sub(r"\s+", "", str(title or ""))
+
+        def is_lib2_title(title) -> bool:
+            compact = compact_title(title)
+            if compact.startswith("4.1.2") and ("库2数据库" in compact or compact == "4.1.2"):
+                return True
+            return compact.startswith("4.2") and "物理结构" in compact
+
+        def persist_title_text(node: HldNodeForm, title: str = None, text: str = None):
+            n_id = getattr(node, "n_id", None)
+            if not n_id:
+                return
+            row = db.session.execute(
+                select(HldNode).where(HldNode.doc_id == doc.id, HldNode.n_id == n_id)
+            ).scalars().first()
+            if not row:
+                return
+            if title is not None:
+                row.title = title
+            if text is not None:
+                row.text = text
+
+        def persist_parent(node: HldNodeForm, p_id: int, priority: int):
+            n_id = getattr(node, "n_id", None)
+            if not n_id:
+                return
+            row = db.session.execute(
+                select(HldNode).where(HldNode.doc_id == doc.id, HldNode.n_id == n_id)
+            ).scalars().first()
+            if not row:
+                return
+            row.p_id = p_id
+            row.priority = priority
 
         def walk(nodes: List[HldNodeForm]):
             nonlocal changed
             for node in nodes or []:
-                compact = re.sub(r"\s+", "", str(getattr(node, "title", "") or ""))
+                compact = compact_title(getattr(node, "title", ""))
                 children = list(getattr(node, "children", None) or [])
-                if re.match(r"^4\.1(?!\.)", compact) and "逻辑结构" in compact:
-                    data = next((child for child in children if re.sub(r"\s+", "", str(getattr(child, "title", "") or "")).startswith("4.1.1")), None)
-                    data_children = list(getattr(data, "children", None) or []) if data is not None else []
-                    has_tables = any(self._is_field_table_node(child) for child in data_children)
-                    kept = []
-                    removed = []
-                    for child in children:
-                        child_title = re.sub(r"\s+", "", str(getattr(child, "title", "") or ""))
-                        empty_mark = (
-                            "标记信息" in child_title
-                            and not str(getattr(child, "text", "") or "").strip()
-                            and not (getattr(child, "children", None) or [])
-                            and not self._is_field_table_node(child)
-                        )
-                        if empty_mark and has_tables:
-                            removed.append(child)
-                            continue
-                        kept.append(child)
-                    if data is not None:
-                        fresh, dropped = self._drop_repeated_field_block(list(getattr(data, "children", None) or []))
-                        if dropped:
-                            data.children = fresh
-                            removed.extend(dropped)
-                    if removed:
-                        self._delete_hld_nodes(doc, removed)
-                        node.children = kept
-                        changed = True
+
+                # 章 4：把误挂的「4.2 物理结构设计要点」整节迁到 4.1 下的 4.1.2
                 if re.match(r"^4(?!\.)", compact) and "数据结构" in compact:
+                    section41 = next(
+                        (c for c in children if re.match(r"^4\.1(?!\.\d)", compact_title(c.title)) and "逻辑结构" in compact_title(c.title)),
+                        None,
+                    )
+                    misplaced = [
+                        c for c in children
+                        if compact_title(c.title).startswith("4.2") and "物理结构" in compact_title(c.title)
+                    ]
+                    if misplaced and section41 is not None:
+                        sec41_kids = list(getattr(section41, "children", None) or [])
+                        lib2 = next(
+                            (c for c in sec41_kids if is_lib2_title(c.title) and compact_title(c.title).startswith("4.1.2")),
+                            None,
+                        )
+                        moved_tables: List[HldNodeForm] = []
+                        for item in misplaced:
+                            moved_tables.extend(list(getattr(item, "children", None) or []))
+                        if lib2 is None:
+                            # 直接把第一个 4.2 节点改名为 4.1.2 挂到 4.1
+                            lib2 = misplaced[0]
+                            lib2.title = lib2_title
+                            body = str(getattr(lib2, "text", "") or "").strip()
+                            if re.match(r"^库\s*2数据库[:：]?\s*$", body, re.I):
+                                lib2.text = ""
+                            lib2.children = moved_tables
+                            persist_title_text(lib2, title=lib2_title, text=str(getattr(lib2, "text", "") or ""))
+                            if section41.n_id:
+                                persist_parent(lib2, int(section41.n_id), len(sec41_kids))
+                            if lib2.n_id:
+                                for idx, table_node in enumerate(moved_tables):
+                                    persist_parent(table_node, int(lib2.n_id), idx)
+                            for extra in misplaced[1:]:
+                                # 其余 4.2 空壳删掉（表已并入 lib2）；先摘掉 children 避免级联删表
+                                extra.children = []
+                            sec41_kids.append(lib2)
+                            for drop in misplaced[1:]:
+                                self._delete_hld_nodes(doc, [drop])
+                        else:
+                            if str(getattr(lib2, "title", "") or "").strip() != lib2_title:
+                                lib2.title = lib2_title
+                                persist_title_text(lib2, title=lib2_title)
+                            body = str(getattr(lib2, "text", "") or "").strip()
+                            if re.match(r"^库\s*2数据库[:：]?\s*$", body, re.I):
+                                lib2.text = ""
+                                persist_title_text(lib2, text="")
+                            merged = list(getattr(lib2, "children", None) or []) + moved_tables
+                            fresh, dropped = self._drop_repeated_field_block(merged)
+                            lib2.children = fresh
+                            if lib2.n_id:
+                                for idx, table_node in enumerate(fresh):
+                                    persist_parent(table_node, int(lib2.n_id), idx)
+                            if dropped:
+                                self._delete_hld_nodes(doc, dropped)
+                            for item in misplaced:
+                                item.children = []
+                            self._delete_hld_nodes(doc, misplaced)
+                        section41.children = [
+                            c for c in sec41_kids
+                            if not (compact_title(c.title).startswith("4.2") and "物理结构" in compact_title(c.title))
+                        ]
+                        if lib2 not in section41.children:
+                            section41.children.append(lib2)
+                        node.children = [c for c in children if c not in misplaced]
+                        changed = True
+                        children = list(node.children or [])
+
+                    # 仍挂在章 4 下的纯 4.2（无物理结构字样）只清重复表
                     for child in children:
-                        child_title = re.sub(r"\s+", "", str(getattr(child, "title", "") or ""))
+                        child_title = compact_title(child.title)
                         if not child_title.startswith("4.2"):
+                            continue
+                        if "物理结构" in child_title:
                             continue
                         fresh, dropped = self._drop_repeated_field_block(list(getattr(child, "children", None) or []))
                         if dropped:
                             child.children = fresh
                             self._delete_hld_nodes(doc, dropped)
                             changed = True
+
+                if re.match(r"^4\.1(?!\.\d)", compact) and "逻辑结构" in compact:
+                    kept = []
+                    removed = []
+                    for child in children:
+                        child_title = compact_title(child.title)
+                        if "标记信息" in child_title:
+                            removed.append(child)
+                            continue
+                        if child_title.startswith("4.1.1"):
+                            if str(getattr(child, "title", "") or "").strip() != lib1_title:
+                                child.title = lib1_title
+                                persist_title_text(child, title=lib1_title)
+                                changed = True
+                            body = str(getattr(child, "text", "") or "").strip()
+                            if re.match(r"^Postgresql数据库[:：]?\s*$", body, re.I):
+                                child.text = ""
+                                persist_title_text(child, text="")
+                                changed = True
+                            fresh, dropped = self._drop_repeated_field_block(list(getattr(child, "children", None) or []))
+                            if dropped:
+                                child.children = fresh
+                                removed.extend(dropped)
+                        elif is_lib2_title(child.title):
+                            if str(getattr(child, "title", "") or "").strip() != lib2_title:
+                                child.title = lib2_title
+                                persist_title_text(child, title=lib2_title)
+                                changed = True
+                            body = str(getattr(child, "text", "") or "").strip()
+                            if re.match(r"^库\s*2数据库[:：]?\s*$", body, re.I):
+                                child.text = ""
+                                persist_title_text(child, text="")
+                                changed = True
+                            fresh, dropped = self._drop_repeated_field_block(list(getattr(child, "children", None) or []))
+                            if dropped:
+                                child.children = fresh
+                                removed.extend(dropped)
+                        kept.append(child)
+                    if removed or kept != children:
+                        if removed:
+                            self._delete_hld_nodes(doc, removed)
+                        node.children = kept
+                        changed = True
                 walk(getattr(node, "children", None) or [])
 
         walk(roots or [])

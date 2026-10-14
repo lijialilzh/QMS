@@ -3,9 +3,7 @@
 
 import io
 import urllib.parse
-from datetime import datetime
 from typing import Any
-from uuid import uuid4
 
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
@@ -19,6 +17,14 @@ from . import CtxUser, try_log
 
 router = APIRouter()
 server = Server()
+
+
+def _hld_export_filename(file_no: str) -> str:
+    # 与详细设计互逆：{文件编号}软件概要设计.docx，中间不加分隔符
+    name = f"{(file_no or '').strip()}软件概要设计.docx"
+    for ch in '/\\:*?"<>|':
+        name = name.replace(ch, "_")
+    return name or "软件概要设计.docx"
 
 
 @router.post("/add_hld_doc", summary="添加HLD_DOC", response_model=Resp[HldDocForm])
@@ -112,12 +118,12 @@ async def import_hld_doc_word(
 @router.get("/export_hld_doc", summary="导出HLD_DOC")
 @try_log(perm=Perms.hld_doc_view)
 async def export_hld_doc(id: int = 0):
+    resp = await server.get_hld_doc(id, with_tree=False)
+    doc = resp.data or HldDocObj()
     output = io.BytesIO()
     await server.export_hld_doc(output, id)
     output.seek(0)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M%S")
-    suffix = uuid4().hex[:8]
-    raw_name = f"hld_doc_{timestamp}_{suffix}.docx"
+    raw_name = _hld_export_filename(getattr(doc, "file_no", None) or "")
     filename = urllib.parse.quote(raw_name)
     return StreamingResponse(
         content=output,
@@ -136,9 +142,7 @@ async def export_hld_doc_snapshot(form: HldDocForm):
     output = io.BytesIO()
     await server.export_hld_doc(output, form.id or 0, snapshot=form)
     output.seek(0)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M%S")
-    suffix = uuid4().hex[:8]
-    raw_name = f"hld_doc_{timestamp}_{suffix}.docx"
+    raw_name = _hld_export_filename((form.file_no or "").strip())
     filename = urllib.parse.quote(raw_name)
     return StreamingResponse(
         content=output,
