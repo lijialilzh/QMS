@@ -823,6 +823,19 @@ export default () => {
                                                         />
                                                     </div>
                                                 )}
+                                                {!readonly && active.ref_type !== "review" && (
+                                                    <>
+                                                        <Space wrap style={{ margin: "8px 0" }}>
+                                                            <Button size="small" onClick={addBodyBlock}>添加正文</Button>
+                                                            <Upload accept="image/*" showUploadList={false} beforeUpload={(file) => uploadImage(file as File)}>
+                                                                <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
+                                                            </Upload>
+                                                        </Space>
+                                                        <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
+                                                            添加表格
+                                                        </Button>
+                                                    </>
+                                                )}
                                             </>
                                         );
                                     }

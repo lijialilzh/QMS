@@ -725,8 +725,10 @@ export default () => {
                                     const segments = buildFreeSegments(String(active.body || ""), active.tables || [], images);
                                     const hasInterleave = shouldUseFreeInterleave(String(active.body || ""), segments);
                                     if (hasInterleave && active.ref_type !== "review") {
-                                        // 交错模式：正文段和表格/图片按顺序展示，正文段可编辑，写回 body
-                                        return segments.map((seg, si) => {
+                                        // 交错模式：正文段和表格/图片按顺序展示；末尾保留添加正文/图/表
+                                        return (
+                                        <>
+                                        {segments.map((seg, si) => {
                                             if (seg.type === "text") {
                                                 return (
                                                     <div className="pdp-field" key={si}>
@@ -825,7 +827,22 @@ export default () => {
                                                     </table>
                                                 </div>
                                             );
-                                        });
+                                        })}
+                                        {!readonly && (
+                                            <>
+                                                <Space wrap style={{ margin: "8px 0" }}>
+                                                    <Button size="small" onClick={addBodyBlock}>添加正文</Button>
+                                                    <Upload accept="image/*" showUploadList={false} beforeUpload={(file) => uploadImage(file as File)}>
+                                                        <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
+                                                    </Upload>
+                                                </Space>
+                                                <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
+                                                    添加表格
+                                                </Button>
+                                            </>
+                                        )}
+                                        </>
+                                        );
                                     }
                                     // 非交错模式：原有的正文 + 表格顺序展示
                                     return (
