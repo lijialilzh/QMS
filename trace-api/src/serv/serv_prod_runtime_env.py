@@ -246,12 +246,73 @@ def _apply_runtime_captions(node, titles, count):
         node[field] = new_caps
 
 
+def _normalize_runtime_body_tbl(body, arch=""):
+    """运行环境正文：前 4 项「N）」标题与表交错（插入 {{TBL}}）；测试设备表不占位、仍追加在后。
+    保留架构说明首行；去掉旧「见表N/见下表」占位。"""
+    raw = str(body or "")
+    lines = raw.split("\n")
+    arch_line = ""
+    items = []
+    for ln in lines:
+        s = ln.strip()
+        if not s or s == "{{TBL}}" or s in ("见下表", "如下表", "下表"):
+            continue
+        if re.search(r"见表\s*\d", s):
+            s = re.sub(r"见表\s*\d+", "", s).strip()
+            if not s:
+                continue
+        if re.match(r"^表\s*\d", s):
+            continue
+        if re.match(r"^\d+[）)]", s):
+            # 跳过「5）测试设备」类：不插 {{TBL}}，也不并入前 4 项
+            if re.match(r"^5[）)]", s) and ("测试设备" in s or "设备" in s):
+                continue
+            items.append(s)
+            continue
+        if not arch_line and (any(t in s for t in ("B/S", "C/S", "架构")) or s.startswith("本软件") or s.startswith("软件")):
+            arch_line = s
+            continue
+        if not arch_line and not items:
+            arch_line = s
+    # 不足 4 项时用标准标题补齐
+    defaults = [
+        "1）服务器硬件环境配置",
+        "2）服务器软件环境配置",
+        "3）用户端配置",
+        "4）服务器及用户端网络条件",
+    ]
+    while len(items) < 4:
+        items.append(defaults[len(items)])
+    items = items[:4]
+    if arch:
+        arch_text = str(arch)
+        if not arch_text.endswith(("。", ".", "！", "？")):
+            arch_text += "。"
+        if arch_line and arch_line.startswith("本软件"):
+            rest = arch_text[2:] if arch_text.startswith("软件") else arch_text
+            if not rest.startswith("为"):
+                rest = "为" + rest
+            arch_line = "本软件" + rest
+        else:
+            arch_line = arch_text if arch_text.startswith("本软件") else (
+                ("本软件为" + arch_text[2:]) if arch_text.startswith("软件") else arch_line or arch_text
+            )
+    parts = []
+    if arch_line:
+        parts.append(arch_line)
+    for it in items:
+        parts.append(it)
+        parts.append("{{TBL}}")
+    return "\n".join(parts)
+
+
 def apply_runtime_to_pdp_content(content, prod_id):
     """PDP/章节树：用运行环境 tables_json 整表覆盖「运行环境」章节。
 
     - 父节点挂多张表（STP/UTP/FTR/网络安全计划）：按顺序覆盖前 4 张，其余保留。
     - 子节点各挂 1 张表（安装维护手册等）：按标题匹配覆盖。
     - 同步已有 table_captions / table_titles；架构说明只改已有正文首行。
+    - 父节点多表时规范化正文为「N）标题 + {{TBL}}」交错（测试设备除外）。
     """
     if not isinstance(content, dict):
         return content
@@ -283,6 +344,11 @@ def apply_runtime_to_pdp_content(content, prod_id):
                 new_tables[i] = _wrap_cells_like(tables[i], cells_list[i], titles[i] if i < len(titles) else "")
             node["tables"] = new_tables
             _apply_runtime_captions(node, titles, n)
+            # 正文交错：1～4 标题各跟一张表；第 5 张测试设备不写占位（架构行已在上方 patch）
+            if node.get("body") is not None:
+                node["body"] = _normalize_runtime_body_tbl(node.get("body"))
+            elif node.get("text") is not None:
+                node["text"] = _normalize_runtime_body_tbl(node.get("text"))
         else:
             child_key = _match_child_key(title, plain) if is_runtime else None
             item = by_key.get(child_key) if child_key else None

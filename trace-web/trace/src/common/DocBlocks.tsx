@@ -26,6 +26,7 @@ export const splitBodyTables = (body: string, tables: any[], images?: any[]): an
         buf = [];
     };
 
+    const hasTblPh = text.includes("{{TBL}}");
     for (const ln of lines) {
         const s = ln.trim();
         if (s === "{{IMG}}" && imgIdx < imagesArr.length) {
@@ -34,8 +35,8 @@ export const splitBodyTables = (body: string, tables: any[], images?: any[]): an
             imgIdx++;
             continue;
         }
-        // 表格占位：见下表/{{TBL}}/见表N —— 不写入正文（标准文档无「见下表」描述），仅用于交错排表
-        if ((s === "{{TBL}}" || /^(见下表|如下表|下表)$/.test(s) || /见下表|如下表/.test(s)) && tableIdx < tablesArr.length) {
+        // 表格占位：仅整行 {{TBL}}/见下表/如下表/下表 才插表；正文里的「见下表」保留为文字，避免删表后顺序颠倒
+        if ((s === "{{TBL}}" || /^(见下表|如下表|下表)$/.test(s)) && tableIdx < tablesArr.length) {
             flushText();
             segments.push({ type: "table", tableIndex: tableIdx });
             tableIdx++;
@@ -54,6 +55,14 @@ export const splitBodyTables = (body: string, tables: any[], images?: any[]): an
         if (/^表\s*\d/.test(s) && tableIdx < tablesArr.length) {
             flushText();
             segments.push({ type: "table", tableIndex: tableIdx, caption: s });
+            tableIdx++;
+            continue;
+        }
+        // 运行环境旧正文：无 {{TBL}} 时，1）2）3）4）标题行后紧跟下一张表
+        if (!hasTblPh && /^\d+[）)]/.test(s) && tableIdx < tablesArr.length) {
+            buf.push(ln);
+            flushText();
+            segments.push({ type: "table", tableIndex: tableIdx });
             tableIdx++;
             continue;
         }

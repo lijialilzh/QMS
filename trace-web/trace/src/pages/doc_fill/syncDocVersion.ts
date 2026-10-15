@@ -1,4 +1,8 @@
-/** 文档版本同步到封面「文件版本」；修订记录首行「首次发布」版本号不随 A0→A1 覆盖。 */
+/**
+ * 文档版本同步规则（全模块统一）：
+ * - 封面「文件版本」：随文档版本始终更新（A0→A1）
+ * - 文件修订记录「版本号」：已有值不覆盖；升版时最多只给一个空行写入当前版本（不刷满所有空行）
+ */
 
 const cell = (v: any) => String(v ?? "").trim();
 
@@ -7,25 +11,40 @@ const patchTable = (tb: any[], ver: string): any[] => {
     const header = (tb[0] || []).map(cell);
     const isRev = header.includes("版本号") && header.includes("修订说明");
     const verIdx = header.indexOf("版本号");
-    const noteIdx = header.indexOf("修订说明");
-    return tb.map((row, ri) => {
-        if (!Array.isArray(row)) return row;
-        const next = [...row];
-        if (isRev && ri === 1 && ver && verIdx >= 0) {
-            while (next.length <= verIdx) next.push("");
-            const note = noteIdx >= 0 ? cell(next[noteIdx]) : "";
-            // 「首次发布」行保持原版本（如 A0）；仅空时填入当前文档版本
-            if (note === "首次发布") {
-                if (!cell(next[verIdx])) next[verIdx] = ver;
-            } else {
-                next[verIdx] = ver;
+    const nextTb = tb.map((row) => (Array.isArray(row) ? [...row] : row));
+
+    for (const row of nextTb) {
+        if (!Array.isArray(row)) continue;
+        for (let i = 0; i < row.length - 1; i++) {
+            if (cell(row[i]) === "文件版本" && ver) row[i + 1] = ver;
+        }
+    }
+
+    if (isRev && ver && verIdx >= 0) {
+        const isBlankRow = (row: any[]) => {
+            if (!Array.isArray(row)) return false;
+            return row.every((c, i) => i === verIdx || !cell(c));
+        };
+        // 清掉「只填了版本号」的空行上的多余版本，避免升版刷出多个 A1
+        for (let ri = 1; ri < nextTb.length; ri++) {
+            const row = nextTb[ri];
+            if (!Array.isArray(row)) continue;
+            while (row.length <= verIdx) row.push("");
+            if (isBlankRow(row) && cell(row[verIdx])) row[verIdx] = "";
+        }
+        const hasVer = nextTb.slice(1).some((r) => Array.isArray(r) && cell(r[verIdx]) === ver);
+        if (!hasVer) {
+            let target = nextTb.findIndex((r, ri) => ri >= 1 && Array.isArray(r) && isBlankRow(r));
+            if (target < 0 && nextTb.length > 1 && Array.isArray(nextTb[1]) && !cell(nextTb[1][verIdx])) {
+                target = 1;
+            }
+            if (target >= 0) {
+                while (nextTb[target].length <= verIdx) nextTb[target].push("");
+                nextTb[target][verIdx] = ver;
             }
         }
-        for (let i = 0; i < next.length - 1; i++) {
-            if (cell(next[i]) === "文件版本" && ver) next[i + 1] = ver;
-        }
-        return next;
-    });
+    }
+    return nextTb;
 };
 
 /** 文件编号末尾的版本段（如 -A0）随文档版本变化，规则与后端 sync_file_no_version 一致。 */

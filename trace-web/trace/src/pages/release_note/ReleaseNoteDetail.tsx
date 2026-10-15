@@ -203,7 +203,7 @@ export default () => {
         return (nodes || []).map(fix);
     };
 
-    // 文件修订记录首行：日期/修订说明/人仅填空；版本号始终等于当前文档 version
+    // 文件修订记录首行：日期/版本/修订说明/人仅填空，不随文档升版覆盖
     const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; pm?: string; approver?: string }): any[] => {
         const fix = (n: any): any => {
             const isRev = n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
@@ -216,7 +216,7 @@ export default () => {
                 while (row.length < 5) row.push("");
                 const setIf = (i: number, val: any) => { if (val && !String(row[i] || "").trim()) row[i] = val; };
                 setIf(0, info.fileDate);
-                if (info.version) row[1] = info.version;
+                if (info.version && !String(row[1] || "").trim()) row[1] = info.version;
                 if (!String(row[2] || "").trim()) row[2] = "首次发布";
                 setIf(3, info.pm);
                 setIf(4, info.approver);

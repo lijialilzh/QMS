@@ -186,7 +186,8 @@ const applySdsCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAut
                     nextNode = { ...nextNode, table: { ...nextNode.table, cells } };
                 }
             }
-            if (info.version && String(row.version_no ?? "").trim() !== info.version) {
+            // 修订记录版本号仅填空，不随文档版本覆盖
+            if (info.version && !String(row.version_no ?? "").trim()) {
                 row.version_no = info.version;
                 changed = true;
             }

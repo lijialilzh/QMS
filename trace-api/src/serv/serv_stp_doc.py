@@ -137,13 +137,13 @@ class Server(object):
         return (row.code or "").strip() if row and row.code else ""
 
     def __fill_revision(self, content, prod_id, version, force=False):
-        """文件修订记录首行：修改日期(评审/封面日期)、版本号、首次发布、修订人(TPM)、批准人(研发负责人)。
-        force=True（切换产品）时强制覆盖，无数据则置空。"""
+        """文件修订记录首行：修改日期(评审/封面日期)、版本号、首次发布、
+        修订人=测试人员（2025.09 前宋月/之后孙家旭）、批准人=研发负责人。打开即覆盖修订人/批准人。"""
         rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
-        reviser = approver = ""
+        reviser = "宋月" if serv_review_util._before_202509(rev_date) else "孙家旭"
+        approver = ""
         if prod_id:
             members = db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == prod_id)).scalars().all()
-            reviser = next((m.name for m in members if "TPM" in str(m.role or "")), "")
             approver = next((m.name for m in members if "研发负责人" in str(m.role or "")), "")
         for s in (content.get("sections") or []):
             if s.get("ref_type") != "revision":
@@ -160,20 +160,21 @@ class Server(object):
                         row[0] = rev_date or ""
                         if len(row) >= 2: row[1] = str(version or "")
                         if len(row) >= 3: row[2] = "首次发布"
-                        if len(row) >= 4: row[3] = reviser
-                        if len(row) >= 5: row[4] = approver
                     else:
                         if not str(row[0] or "").strip(): row[0] = rev_date
                         if version and len(row) >= 2 and not str(row[1] or "").strip(): row[1] = str(version)
                         if len(row) >= 3 and not str(row[2] or "").strip(): row[2] = "首次发布"
-                        if len(row) >= 4 and reviser and not str(row[3] or "").strip(): row[3] = reviser
-                        if len(row) >= 5 and approver and not str(row[4] or "").strip(): row[4] = approver
+                    if len(row) >= 4:
+                        row[3] = reviser
+                    if len(row) >= 5:
+                        row[4] = approver
             break
         return content
 
     def __fill_test_plan(self, content, prod_id, force=False):
-        """「测试计划」表：计划完成时间按行「测试活动」匹配时间线；负责人取产品参与人员中的测试角色。
-        force=False：仅填空，保留用户手改；force=True：切换产品时覆盖。"""
+        """「测试计划」表：计划完成时间按行「测试活动」匹配时间线。
+        负责人：计划/用例/报告 → 2025.09 前宋月、之后孙家旭；测试记录/bug回归 → 全部测试人员。
+        负责人打开即覆盖；计划完成时间 force=False 仅填空。"""
         if not prod_id or not isinstance(content, dict):
             return content
         doc_date = serv_review_util.cover_date(prod_id, DOC_KEY) or ""
@@ -196,12 +197,11 @@ class Server(object):
 
             def role_ok(r):
                 return ("测试" in r) and ("用户" not in r)
-        # 参与人员中的测试角色（含负责人）
         testers = []
         for m in members:
             if role_ok(str(m.role or "")):
                 nm = (m.name or "").strip()
-                if nm and nm not in testers:
+                if nm and nm not in [t[1] for t in testers]:
                     testers.append((str(m.role or ""), nm))
 
         def to_month(d):
@@ -210,7 +210,7 @@ class Server(object):
 
         def row_kind(activity):
             a = str(activity or "")
-            if any(k in a for k in ("测试记录", "回归", "首轮")):
+            if any(k in a for k in ("测试记录", "回归", "首轮", "bug")):
                 return "执行"
             for kind in ("报告", "用例", "计划"):
                 if kind in a:
@@ -228,20 +228,12 @@ class Server(object):
             if is_user:
                 names = [nm for _r, nm in testers]
             else:
-                primary = ""
-                for r, nm in testers:
-                    if "负责人" in r or "主测试" in r:
-                        primary = nm
-                        break
-                if not primary and testers:
-                    primary = testers[0][1]
-                if not primary:
-                    primary = "宋月" if serv_review_util._before_202509(dt or doc_date) else "孙家旭"
-                others = [nm for _r, nm in testers if nm != primary]
+                primary = "宋月" if serv_review_util._before_202509(dt or doc_date) else "孙家旭"
                 if kind in ("报告", "用例", "计划"):
                     names = [primary]
                 else:
-                    names = [primary] + others
+                    # 测试记录 / bug 回归：全部测试人员
+                    names = [nm for _r, nm in testers] if testers else [primary]
             return "、".join([n for n in names if n])
 
         def walk(node):
@@ -262,8 +254,12 @@ class Server(object):
                         dt = to_month(row_date(kind))
                         if ci_time < len(r) and (force or not str(r[ci_time] or "").strip()):
                             r[ci_time] = dt
-                        if ci_own < len(r) and (force or not str(r[ci_own] or "").strip()):
-                            r[ci_own] = owners(dt, kind)
+                        if ci_own < len(r):
+                            own = owners(dt, kind)
+                            if own and (force or not is_user):
+                                r[ci_own] = own
+                            elif own and not str(r[ci_own] or "").strip():
+                                r[ci_own] = own
             for ch in (node.get("children") or []):
                 walk(ch)
 
@@ -283,7 +279,7 @@ class Server(object):
 
         def kind_of(duty):
             a = str(duty or "")
-            if any(k in a for k in ("测试记录", "回归", "首轮")):
+            if any(k in a for k in ("测试记录", "回归", "首轮", "bug")):
                 return "执行"
             for k in ("报告", "用例", "计划"):
                 if k in a:
@@ -291,6 +287,7 @@ class Server(object):
             return ""
 
         def names_for(role_label, kind):
+            """与测试计划负责人同一规则：计划/用例/报告→宋月或孙家旭；执行→全部测试人员。"""
             label = str(role_label or "")
             if ("测试" in label) and ("用户" not in label):
                 testers = []
@@ -298,19 +295,13 @@ class Server(object):
                     r = str(m.role or "")
                     if ("测试" in r) and ("用户" not in r):
                         nm = (m.name or "").strip()
-                        if nm and nm not in [t[1] for t in testers]:
-                            testers.append((r, nm))
-                primary = ""
-                for r, nm in testers:
-                    if "负责人" in r or "主测试" in r:
-                        primary = nm
-                        break
-                if not primary and testers:
-                    primary = testers[0][1]
-                if not primary:
-                    primary = "宋月" if serv_review_util._before_202509(doc_date) else "孙家旭"
-                others = [nm for _r, nm in testers if nm != primary]
-                names = [primary] if kind in ("报告", "用例", "计划") else [primary] + others
+                        if nm and nm not in testers:
+                            testers.append(nm)
+                primary = "宋月" if serv_review_util._before_202509(doc_date) else "孙家旭"
+                if kind in ("报告", "用例", "计划"):
+                    names = [primary]
+                else:
+                    names = list(testers) if testers else [primary]
                 return "、".join([n for n in names if n])
             if "用户测试" in label:
                 names = [(m.name or "").strip() for m in members if "用户测试" in str(m.role or "")]
@@ -340,12 +331,18 @@ class Server(object):
                             continue
                         role_label = r[ci_r] if ci_r < len(r) else ""
                         duty = r[ci_d] if ci_d < len(r) else ""
-                        nm = names_for(role_label, kind_of(duty))
-                        if force:
-                            if ci_p < len(r):
-                                r[ci_p] = nm or ""
-                        elif nm and ci_p < len(r) and not str(r[ci_p] or "").strip():
-                            # 仅填空，保留用户手改
+                        kind = kind_of(duty)
+                        nm = names_for(role_label, kind)
+                        if not (ci_p < len(r)):
+                            continue
+                        # 测试角色人员与测试计划负责人一致：打开即覆盖
+                        is_tester_role = ("测试" in str(role_label or "")) and ("用户" not in str(role_label or ""))
+                        if force or is_tester_role:
+                            if nm:
+                                r[ci_p] = nm
+                            elif force:
+                                r[ci_p] = ""
+                        elif nm and not str(r[ci_p] or "").strip():
                             r[ci_p] = nm
             for ch in (node.get("children") or []):
                 walk(ch)
@@ -384,8 +381,24 @@ class Server(object):
             prod_id,
             force=force,
         )
-        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else "", force=force)
-        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, DOC_KEY) if prod_id else {}, force=force)
+        rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
+        serv_review_util.fill_cover_dates(content, rev_date, force=force)
+        signers = serv_review_util.cover_signers(prod_id, DOC_KEY, rev_date) if prod_id else {}
+        # 方案A：封面编制人按测试人员日期规则强制覆盖（2025.09 前宋月 / 之后孙家旭），与修订人(TPM)区分
+        author_name = "宋月" if serv_review_util._before_202509(rev_date) else "孙家旭"
+        signers = dict(signers or {})
+        signers["编制人"] = serv_review_util._sign_by_name(author_name) or author_name
+        serv_review_util.fill_cover_signers(content, signers, force=force)
+        if prod_id and signers.get("编制人"):
+            for section in (content.get("sections") or []):
+                if not isinstance(section, dict):
+                    continue
+                for table in (section.get("tables") or []):
+                    if not isinstance(table, list):
+                        continue
+                    for row in table:
+                        if isinstance(row, list) and row and str(row[0] or "").strip() == "编制人" and len(row) >= 2:
+                            row[1] = signers["编制人"]
         return content
 
     def __to_obj(self, row: StpDoc, product: Product = None):
@@ -745,8 +758,10 @@ class Server(object):
                         add_text(cap)
                     add_grid(tables[t_idx])
 
-                # 按 {{TBL}}/见下表/见表N/表N 切分，交错输出；静默占位不写入正文
-                if (("{{TBL}}" in body_text) or ("见下表" in body_text)
+                # 按 {{TBL}}/见下表/见表N/表N 切分，交错输出；静默占位不写入正文。
+                # 旧运行环境正文仅首行有「见表1」、其后 2）3）4）无占位：编号小节行后紧跟下一张表。
+                has_tbl_ph = "{{TBL}}" in body_text
+                if (has_tbl_ph or ("见下表" in body_text)
                         or re.search(r"见表\s*\d", body_text) or re.search(r"(?m)^表\s*\d", body_text)) and tables:
                     lines = body_text.split("\n")
                     buf = []
@@ -772,6 +787,16 @@ class Server(object):
                             _emit_table(tbl_idx)
                             tbl_idx += 1
                         elif re.match(r"^表\s*\d", s) and tbl_idx < len(tables):
+                            flush_text()
+                            _emit_table(tbl_idx)
+                            tbl_idx += 1
+                        elif (
+                            not has_tbl_ph
+                            and re.match(r"^\d+[）)]", s)
+                            and tbl_idx < len(tables)
+                        ):
+                            # 兼容旧模板：2）3）4）标题行后立即插表（有 {{TBL}} 时不走此分支）
+                            buf.append(ln)
                             flush_text()
                             _emit_table(tbl_idx)
                             tbl_idx += 1

@@ -111,7 +111,7 @@ export default () => {
                 const row = t[1];
                 while (row.length < 5) row.push("");
                 row[0] = info.fileDate || "";
-                if (info.version) row[1] = info.version;
+                if (info.version && !String(row[1] || "").trim()) row[1] = info.version;
                 if (!String(row[2] || "").trim()) row[2] = "首次发布";
                 row[3] = info.pm || "";
                 if (info.approver) row[4] = info.approver;

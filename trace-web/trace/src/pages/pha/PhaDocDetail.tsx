@@ -210,7 +210,8 @@ const fillDates = (nodes: any[], date: string, version: string, reviser = "", ap
         const row = t[1];
         while (row.length < 5) row.push("");
         row[0] = date || "";
-        if (version) row[1] = version;
+        // 修订记录版本号仅填空，不随文档版本 A0→A1 覆盖
+        if (version && !String(row[1] || "").trim()) row[1] = version;
         if (!String(row[2] || "").trim()) row[2] = "首次发布";
         // 修订人、批准人只写姓名，不放签名章
         row[3] = reviser || "";

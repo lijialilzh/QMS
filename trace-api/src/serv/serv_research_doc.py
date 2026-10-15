@@ -763,7 +763,8 @@ class Server(object):
                             row[0] = rev_date
                         elif placeholder:
                             row[0] = ""
-                        if version:
+                        # 修订记录版本号仅填空，不随文档升版覆盖
+                        if version and not str(row[1] or "").strip():
                             row[1] = version
                         if not str(row[2] or "").strip():
                             row[2] = "首次发布"

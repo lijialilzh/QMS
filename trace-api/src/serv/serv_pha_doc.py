@@ -331,7 +331,8 @@ class Server(object):
                 while len(row) < 5:
                     row.append("")
                 row[0] = info["cover_date"] or ""
-                if info["version"]:
+                # 修订记录版本号仅填空，不随文档升版覆盖
+                if info["version"] and not str(row[1] or "").strip():
                     row[1] = info["version"]
                 if not str(row[2] or "").strip():
                     row[2] = "首次发布"

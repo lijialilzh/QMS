@@ -194,8 +194,8 @@ export default () => {
         return (nodes || []).map(fix);
     };
 
-    // 文件修订记录首行默认值：日期/版本/修订说明/修订人/批准人，仅填空格不覆盖已填
-    const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; pm?: string; approver?: string }): any[] => {
+    // 文件修订记录：日期/版本/修订说明仅填空；修订人=测试人员(日期规则)、批准人=研发负责人始终覆盖
+    const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; reviser?: string; approver?: string }): any[] => {
         const fix = (n: any): any => {
             const isRev = n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
             let tables = n.tables;
@@ -204,13 +204,14 @@ export default () => {
                 const cols = (t[0] || []).length || 5;
                 while (t.length < 6) t.push(new Array(cols).fill(""));
                 const row = t[1];
+                while (row.length < 5) row.push("");
                 const setIf = (i: number, val: any) => { if (val && !String(row[i] || "").trim()) row[i] = val; };
                 setIf(0, info.fileDate);
                 // 版本号仅填空：首次发布行不因文档升版被改成 A1
                 setIf(1, info.version);
                 if (!String(row[2] || "").trim()) row[2] = "首次发布";
-                setIf(3, info.pm);
-                setIf(4, info.approver);
+                if (info.reviser) row[3] = info.reviser;
+                if (info.approver) row[4] = info.approver;
                 tables = [t, ...n.tables.slice(1)];
             }
             return { ...n, tables, children: (n.children || []).map(fix) };
@@ -315,11 +316,14 @@ export default () => {
                     desc: prod.overall_desc,
                     cycle: computeCycle(tlRows),
                 });
+                const fileDate = computeFileDate(tlRows);
+                const m = String(fileDate || "").match(/(\d{4})\D+(\d{1,2})/);
+                const before202509 = m ? (Number(m[1]) * 100 + Number(m[2]) < 202509) : false;
                 out = fillRevision(out, {
-                    fileDate: computeFileDate(tlRows),
+                    fileDate,
                     version,
-                    // 修订人与后端一致：TPM；批准人：研发负责人
-                    pm: findRole((r) => r.toUpperCase().includes("TPM")),
+                    // 修订人=测试人员（2025.09 前宋月 / 之后孙家旭）；批准人=研发负责人
+                    reviser: before202509 ? "宋月" : "孙家旭",
                     approver: findRole((r) => r.includes("研发负责人")),
                 });
                 out = fillMilestone(out, {

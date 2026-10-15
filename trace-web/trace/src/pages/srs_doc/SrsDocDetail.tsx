@@ -294,7 +294,8 @@ const applyCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAutofi
             while (rows.length < 1) rows.push({});
             const row = rows[0] || {};
             setIf(row, "change_date", info.coverDate);
-            if (info.version && String(row.version_no ?? "").trim() !== info.version) {
+            // 修订记录版本号仅填空，不随文档版本覆盖
+            if (info.version && !String(row.version_no ?? "").trim()) {
                 row.version_no = info.version;
                 changed = true;
             }
