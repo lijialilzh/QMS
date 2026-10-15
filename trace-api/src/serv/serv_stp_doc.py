@@ -82,7 +82,7 @@ class Server(object):
                 elif btype == "table" and blk.get("table"):
                     tbl = blk["table"]
                     tbls.append([[str(c) if c is not None else "" for c in (row or [])] for row in tbl if isinstance(row, list)])
-                    parts.append("见下表")  # 在表格前插入分隔符，让前端能正确切分
+                    parts.append("{{TBL}}")  # 静默占位，界面不展示「见下表」
             if parts:
                 result["body"] = "\n".join(parts)
             if tbls:
@@ -90,6 +90,16 @@ class Server(object):
             result.pop("blocks", None)
         elif "blocks" in result:
             result.pop("blocks", None)
+        # 旧数据：单独一行的「见下表」改为静默占位，避免无法删除且标准文档无此描述
+        if result["body"]:
+            lines = []
+            for ln in str(result["body"]).split("\n"):
+                s = ln.strip()
+                if s in ("见下表", "如下表", "下表"):
+                    lines.append("{{TBL}}")
+                else:
+                    lines.append(ln)
+            result["body"] = "\n".join(lines)
         children = result.get("children")
         result["children"] = [self.__normalize_node(c) for c in children] if isinstance(children, list) else []
         return result
@@ -161,8 +171,9 @@ class Server(object):
             break
         return content
 
-    def __fill_test_plan(self, content, prod_id):
-        """「测试计划」表：计划完成时间按行「测试活动」匹配时间线；负责人=主测试工程师(2025.09前宋月/之后孙家旭)+其他测试工程师。"""
+    def __fill_test_plan(self, content, prod_id, force=False):
+        """「测试计划」表：计划完成时间按行「测试活动」匹配时间线；负责人取产品参与人员中的测试角色。
+        force=False：仅填空，保留用户手改；force=True：切换产品时覆盖。"""
         if not prod_id or not isinstance(content, dict):
             return content
         doc_date = serv_review_util.cover_date(prod_id, DOC_KEY) or ""
@@ -177,20 +188,21 @@ class Server(object):
             def role_ok(r):
                 return "用户测试" in r
         else:
+            # 执行类不用宽泛「软件测试」，避免与封面/计划日期串台
             date_kw = {"报告": ["软件测试报告"],
                        "用例": ["软件测试用例", "单元测试用例", "集成测试用例", "系统测试用例", "测试用例"],
                        "计划": ["软件测试计划"],
-                       "执行": ["软件测试", "系统测试", "集成测试", "单元测试", "测试"]}
+                       "执行": ["系统测试", "集成测试", "单元测试", "回归测试", "测试记录"]}
 
             def role_ok(r):
                 return ("测试" in r) and ("用户" not in r)
-        # 该产品下的测试人员（软件测试计划=测试工程师；用户测试计划=用户测试），排除固定主测试工程师本身
-        others = []
+        # 参与人员中的测试角色（含负责人）
+        testers = []
         for m in members:
             if role_ok(str(m.role or "")):
                 nm = (m.name or "").strip()
-                if nm and nm not in ("宋月", "孙家旭") and nm not in others:
-                    others.append(nm)
+                if nm and nm not in testers:
+                    testers.append((str(m.role or ""), nm))
 
         def to_month(d):
             mt = re.match(r"(\d{4})\D+(\d{1,2})", str(d or ""))
@@ -214,14 +226,22 @@ class Server(object):
 
         def owners(dt, kind):
             if is_user:
-                names = list(others)
+                names = [nm for _r, nm in testers]
             else:
-                primary = "宋月" if serv_review_util._before_202509(dt or doc_date) else "孙家旭"
-                # 评审计划/测试用例/测试报告：只写主测试工程师一人；其余(执行)：主+其他测试人员
+                primary = ""
+                for r, nm in testers:
+                    if "负责人" in r or "主测试" in r:
+                        primary = nm
+                        break
+                if not primary and testers:
+                    primary = testers[0][1]
+                if not primary:
+                    primary = "宋月" if serv_review_util._before_202509(dt or doc_date) else "孙家旭"
+                others = [nm for _r, nm in testers if nm != primary]
                 if kind in ("报告", "用例", "计划"):
                     names = [primary]
                 else:
-                    names = [primary] + [n for n in others if n != primary]
+                    names = [primary] + others
             return "、".join([n for n in names if n])
 
         def walk(node):
@@ -240,9 +260,9 @@ class Server(object):
                         act = r[ci_act] if ci_act < len(r) else ""
                         kind = row_kind(act)
                         dt = to_month(row_date(kind))
-                        if ci_time < len(r):
+                        if ci_time < len(r) and (force or not str(r[ci_time] or "").strip()):
                             r[ci_time] = dt
-                        if ci_own < len(r):
+                        if ci_own < len(r) and (force or not str(r[ci_own] or "").strip()):
                             r[ci_own] = owners(dt, kind)
             for ch in (node.get("children") or []):
                 walk(ch)
@@ -273,14 +293,23 @@ class Server(object):
         def names_for(role_label, kind):
             label = str(role_label or "")
             if ("测试" in label) and ("用户" not in label):
-                primary = "宋月" if serv_review_util._before_202509(doc_date) else "孙家旭"
-                others = []
+                testers = []
                 for m in members:
                     r = str(m.role or "")
                     if ("测试" in r) and ("用户" not in r):
                         nm = (m.name or "").strip()
-                        if nm and nm not in ("宋月", "孙家旭") and nm not in others:
-                            others.append(nm)
+                        if nm and nm not in [t[1] for t in testers]:
+                            testers.append((r, nm))
+                primary = ""
+                for r, nm in testers:
+                    if "负责人" in r or "主测试" in r:
+                        primary = nm
+                        break
+                if not primary and testers:
+                    primary = testers[0][1]
+                if not primary:
+                    primary = "宋月" if serv_review_util._before_202509(doc_date) else "孙家旭"
+                others = [nm for _r, nm in testers if nm != primary]
                 names = [primary] if kind in ("报告", "用例", "计划") else [primary] + others
                 return "、".join([n for n in names if n])
             if "用户测试" in label:
@@ -315,7 +344,8 @@ class Server(object):
                         if force:
                             if ci_p < len(r):
                                 r[ci_p] = nm or ""
-                        elif nm and ci_p < len(r):
+                        elif nm and ci_p < len(r) and not str(r[ci_p] or "").strip():
+                            # 仅填空，保留用户手改
                             r[ci_p] = nm
             for ch in (node.get("children") or []):
                 walk(ch)
@@ -344,7 +374,7 @@ class Server(object):
                         _update_version(c)
                 for s in (content.get("sections") or []):
                     _update_version(s)
-        self.__fill_test_plan(content, prod_id)
+        self.__fill_test_plan(content, prod_id, force=force)
         self.__fill_roles(content, prod_id, force=force)
         self.__fill_runtime_env(content, prod_id, force=force)
         self.__fill_revision(content, prod_id, version, force=force)
@@ -352,6 +382,7 @@ class Server(object):
             content, DOC_KEY,
             serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS[DOC_KEY]["name_keywords"]) if prod_id else "",
             prod_id,
+            force=force,
         )
         serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else "", force=force)
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, DOC_KEY) if prod_id else {}, force=force)
@@ -707,42 +738,53 @@ class Server(object):
                 body_text = str(node.get("body") or "")
                 tables = node.get("tables") or []
                 caps = node.get("table_captions") or []
-                # 按"见下表"/"表N"切分 body，交错输出正文段和表格
-                if (("见下表" in body_text) or re.search(r"(?m)^表\s*\d", body_text)) and tables:
+
+                def _emit_table(t_idx):
+                    cap = caps[t_idx] if t_idx < len(caps) else ""
+                    if str(cap or "").strip():
+                        add_text(cap)
+                    add_grid(tables[t_idx])
+
+                # 按 {{TBL}}/见下表/见表N/表N 切分，交错输出；静默占位不写入正文
+                if (("{{TBL}}" in body_text) or ("见下表" in body_text)
+                        or re.search(r"见表\s*\d", body_text) or re.search(r"(?m)^表\s*\d", body_text)) and tables:
                     lines = body_text.split("\n")
                     buf = []
                     tbl_idx = 0
+
                     def flush_text():
                         t = "\n".join(buf).strip()
                         if t:
                             add_text(t)
                         buf.clear()
+
                     for ln in lines:
-                        if ("见下表" in ln.strip() or re.match(r"^表\s*\d", ln.strip())) and tbl_idx < len(tables):
-                            buf.append(ln)  # 保留"见下表"/"表N"行作为正文
+                        s = ln.strip()
+                        if (s == "{{TBL}}" or s in ("见下表", "如下表", "下表") or "见下表" in s) and tbl_idx < len(tables):
                             flush_text()
-                            cap = caps[tbl_idx] if tbl_idx < len(caps) else ""
-                            if str(cap or "").strip():
-                                add_text(cap)
-                            add_grid(tables[tbl_idx])
+                            _emit_table(tbl_idx)
+                            tbl_idx += 1
+                        elif re.search(r"见表\s*\d", s) and tbl_idx < len(tables):
+                            rest = re.sub(r"见表\s*\d+", "", ln).strip()
+                            if rest:
+                                buf.append(rest)
+                            flush_text()
+                            _emit_table(tbl_idx)
+                            tbl_idx += 1
+                        elif re.match(r"^表\s*\d", s) and tbl_idx < len(tables):
+                            flush_text()
+                            _emit_table(tbl_idx)
                             tbl_idx += 1
                         else:
                             buf.append(ln)
                     flush_text()
-                    # 剩余表格
                     for i in range(tbl_idx, len(tables)):
-                        cap = caps[i] if i < len(caps) else ""
-                        if str(cap or "").strip():
-                            add_text(cap)
-                        add_grid(tables[i])
+                        _emit_table(i)
                 else:
                     if body_text.strip():
                         add_text(body_text)
                     for t_idx, table in enumerate(tables):
-                        cap = caps[t_idx] if t_idx < len(caps) else ""
-                        if str(cap or "").strip():
-                            add_text(cap)
-                        add_grid(table)
+                        _emit_table(t_idx)
                 if str(node.get("body_tail") or "").strip():
                     add_text(node.get("body_tail"))
             idx = 0

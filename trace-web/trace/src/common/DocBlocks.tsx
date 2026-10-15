@@ -34,17 +34,17 @@ export const splitBodyTables = (body: string, tables: any[], images?: any[]): an
             imgIdx++;
             continue;
         }
-        // 遇到"见下表/如下表/下表"行，先加入正文再 flush，然后插入表格
-        if (/见下表|如下表|下表/.test(s) && tableIdx < tablesArr.length) {
-            buf.push(ln);  // 保留"见下表"行作为正文
+        // 表格占位：见下表/{{TBL}}/见表N —— 不写入正文（标准文档无「见下表」描述），仅用于交错排表
+        if ((s === "{{TBL}}" || /^(见下表|如下表|下表)$/.test(s) || /见下表|如下表/.test(s)) && tableIdx < tablesArr.length) {
             flushText();
             segments.push({ type: "table", tableIndex: tableIdx });
             tableIdx++;
             continue;
         }
-        // 遇到"见表N"行，把"见表N"替换为"见下表"保留在正文，然后插入表格
         if (/见表\s*\d/.test(s) && tableIdx < tablesArr.length) {
-            buf.push(ln.replace(/见表\s*\d+/, "见下表"));
+            // 保留「见表N」前后的说明文字（如「配置见表1」），去掉占位本身
+            const rest = ln.replace(/见表\s*\d+/, "").trim();
+            if (rest) buf.push(rest);
             flushText();
             segments.push({ type: "table", tableIndex: tableIdx });
             tableIdx++;
@@ -86,29 +86,29 @@ export const splitBodyTables = (body: string, tables: any[], images?: any[]): an
     return segments;
 };
 
-// 编辑某段正文后，重组回 body（表格位置用"见下表"占位，图片位置用"见下图"占位）
-export const reassembleBody = (segments: any[], editedIndex: number, newText: string): string => {
+/** 整段重组 body：表格用静默占位 {{TBL}}（界面不展示「见下表」） */
+export const reassembleBodyAll = (segments: any[]): string => {
     const parts: string[] = [];
-    segments.forEach((seg, i) => {
+    segments.forEach((seg) => {
         if (seg.type === "text") {
-            parts.push(i === editedIndex ? newText : seg.text);
+            parts.push(seg.text);
         } else if (seg.type === "table") {
-            const last = parts[parts.length - 1];
-            if (!last || !/见下表|如下表|下表/.test(last)) {
-                parts.push("见下表");
-            }
+            if (seg.caption) parts.push(seg.caption);
+            else parts.push("{{TBL}}");
         } else if (seg.type === "image") {
-            if (seg.caption) {
-                parts.push(seg.caption);
-            } else {
-                const last = parts[parts.length - 1];
-                if (!last || !/见下图|如下图|下图|\{\{IMG\}\}/.test(last)) {
-                    parts.push("见下图");
-                }
-            }
+            if (seg.caption) parts.push(seg.caption);
+            else parts.push("{{IMG}}");
         }
     });
     return parts.join("\n");
+};
+
+// 编辑某段正文后，重组回 body（表格位置用 {{TBL}} 占位，图片用 {{IMG}}）
+export const reassembleBody = (segments: any[], editedIndex: number, newText: string): string => {
+    const next = segments.map((seg, i) =>
+        seg.type === "text" && i === editedIndex ? { ...seg, text: newText } : seg
+    );
+    return reassembleBodyAll(next);
 };
 
 export const ChapterBlocks = (props: {

@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
-import { splitBodyTables, reassembleBody } from "@/common/DocBlocks";
+import { splitBodyTables, reassembleBody, reassembleBodyAll } from "@/common/DocBlocks";
 import * as Api from "@/api/ApiStpDoc";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiProduct from "@/api/ApiProduct";
@@ -206,7 +206,8 @@ export default () => {
                 const row = t[1];
                 const setIf = (i: number, val: any) => { if (val && !String(row[i] || "").trim()) row[i] = val; };
                 setIf(0, info.fileDate);
-                if (info.version) row[1] = info.version;
+                // 版本号仅填空：首次发布行不因文档升版被改成 A1
+                setIf(1, info.version);
                 if (!String(row[2] || "").trim()) row[2] = "首次发布";
                 setIf(3, info.pm);
                 setIf(4, info.approver);
@@ -317,8 +318,9 @@ export default () => {
                 out = fillRevision(out, {
                     fileDate: computeFileDate(tlRows),
                     version,
-                    pm: findRole((r) => r.includes("产品经理") || r.includes("经理")),
-                    approver: findRole((r) => r.includes("负责人")),
+                    // 修订人与后端一致：TPM；批准人：研发负责人
+                    pm: findRole((r) => r.toUpperCase().includes("TPM")),
+                    approver: findRole((r) => r.includes("研发负责人")),
                 });
                 out = fillMilestone(out, {
                     devEnd: computeDevEnd(tlRows),
@@ -440,10 +442,26 @@ export default () => {
         tables: [...(active.tables || []), [["", ""], ["", ""]]],
         table_captions: [...(Array.isArray(active.table_captions) ? active.table_captions : []), ""],
     });
-    const delTable = (ti: number) => patchNode(active._key, {
-        tables: (active.tables || []).filter((_: any, i: number) => i !== ti),
-        table_captions: (Array.isArray(active.table_captions) ? active.table_captions : []).filter((_: any, i: number) => i !== ti),
-    });
+    const delTable = (ti: number) => {
+        const oldTables = active.tables || [];
+        const tables = oldTables.filter((_: any, i: number) => i !== ti);
+        const table_captions = (Array.isArray(active.table_captions) ? active.table_captions : []).filter((_: any, i: number) => i !== ti);
+        // 同步 body 占位，避免删表后正文/表格交错顺序颠倒
+        const segs = splitBodyTables(active.body, oldTables, active.images);
+        const nextSegs: any[] = [];
+        segs.forEach((seg: any) => {
+            if (seg.type === "table") {
+                if (seg.tableIndex === ti) return;
+                nextSegs.push({
+                    ...seg,
+                    tableIndex: seg.tableIndex > ti ? seg.tableIndex - 1 : seg.tableIndex,
+                });
+            } else {
+                nextSegs.push(seg);
+            }
+        });
+        patchNode(active._key, { tables, table_captions, body: reassembleBodyAll(nextSegs) });
+    };
     const setCaption = (ti: number, val: string) => {
         const caps = Array.isArray(active.table_captions) ? [...active.table_captions] : [];
         while (caps.length <= ti) caps.push("");

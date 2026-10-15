@@ -685,7 +685,7 @@ COVER_KEYWORDS = {
     "release_note": ["产品发布说明", "发布说明"],
     "nsr": ["自研软件网络安全研究报告", "网络安全研究报告"],
     "research": ["自研软件研究报告", "软件研究报告"],
-    "stp": ["软件测试计划", "软件测试"],
+    "stp": ["软件测试计划"],  # 不用宽泛「软件测试」，避免编审批日期与时间线串台
     "utp": ["用户测试计划", "用户测试"],
     "utr": ["用户测试报告", "用户测试"],
     "str": ["软件测试报告"],
@@ -1195,7 +1195,6 @@ def autofill_review_person_table(tbl, key="", rev_date="", prod_id=None):
         return tbl
     if not any(isinstance(r, list) and r and str(r[0] or "").startswith("参评人员签字") for r in tbl):
         return tbl
-    passed_date = bool(rev_date)
     # 评审日期缺省时，取表内「评审时间」行已有的日期
     if not rev_date:
         for row in tbl:
@@ -1206,13 +1205,27 @@ def autofill_review_person_table(tbl, key="", rev_date="", prod_id=None):
                 break
     old_test = _before_202509(rev_date)
     approver = review_approver(key, prod_id, rev_date) if key else ""
+    role_based = key in ("stp", "utp", "utr", "str", "sds", "srs", "hld")
+    rb_members = []
+    if role_based and prod_id:
+        rb_members = db.session.execute(
+            select(ProjectMember).where(ProjectMember.prod_id == prod_id)
+        ).scalars().all()
     for row in tbl:
         if not isinstance(row, list) or not row:
             continue
         lab = str(row[0] or "").strip()
         if lab.startswith("评审时间"):
-            if passed_date and rev_date:
+            # 仅空时填时间线日期；用户手改后保留（可编辑）
+            cur = ""
+            for sep in ("：", ":"):
+                if sep in lab:
+                    cur = lab.split(sep, 1)[1].strip()
+                    break
+            if (not cur) and rev_date:
                 row[0] = f"评审时间：{rev_date}"
+                for i in range(1, len(row)):
+                    row[i] = ""
             continue
         if lab.startswith("批准人员签字"):
             if approver and len(row) >= 2 and not str(row[1] or "").strip():
@@ -1228,11 +1241,20 @@ def autofill_review_person_table(tbl, key="", rev_date="", prod_id=None):
             if len(row) >= 2:
                 row[1] = "/"
             continue
-        # 参评人员数据行：测试角色宋月 + 签字列取签名图
-        if old_test:
-            if "测试" in lab and len(row) >= 2:
+        # 参评人员数据行：姓名仅空时按角色补；签字列仅空时取签名图（不冲掉用户已改）
+        if role_based and rb_members:
+            if len(row) >= 2 and not str(row[1] or "").strip():
+                nm = _resolve_review_name(row[0], rb_members, rev_date)
+                if nm:
+                    row[1] = nm
+            if len(row) >= 5 and not str(row[4] or "").strip():
+                nm = _resolve_review_name(row[3] if len(row) >= 4 else "", rb_members, rev_date)
+                if nm:
+                    row[4] = nm
+        elif old_test:
+            if "测试" in lab and len(row) >= 2 and not str(row[1] or "").strip():
                 row[1] = "宋月"
-            if len(row) >= 4 and "测试" in str(row[3] or ""):
+            if len(row) >= 4 and "测试" in str(row[3] or "") and not str(row[4] or "").strip():
                 row[4] = "宋月"
         if len(row) >= 3 and str(row[1] or "").strip() and not str(row[2] or "").strip():
             row[2] = _sign_by_name(str(row[1]).strip()) if sign_mode_enabled() else ""
@@ -1357,16 +1379,35 @@ def fill_annex_reviews(content, prod_id, doc_type, prod_name=""):
     return content
 
 
-def ensure_review(content, key, rev_date="", prod_id=None):
-    """在 content.sections 末尾放置「评审记录」章节。内容为模板化，每次按最新格式重建，
-    保证样式一致并带最新评审时间（同时清理历史遗留的旧格式）。"""
+def ensure_review(content, key, rev_date="", prod_id=None, force=False):
+    """在 content.sections 末尾放置「评审记录」章节。
+    force=False：已有评审记录则保留用户修改，仅对空字段（含评审时间）自动补全；
+    force=True：按模板整章重建（切换产品等场景）。"""
     sections = (content or {}).get("sections")
     if not isinstance(sections, list):
+        return content
+    existing_idx = next((
+        i for i, s in enumerate(sections)
+        if isinstance(s, dict) and (
+            s.get("ref_type") == "review" or str(s.get("title") or "").strip() == "评审记录"
+        )
+    ), None)
+    if existing_idx is not None and not force:
+        existing = sections[existing_idx]
+        for tbl in (existing.get("tables") or []):
+            autofill_review_person_table(tbl, key=key, rev_date=rev_date, prod_id=prod_id)
+        if existing_idx != len(sections) - 1:
+            sections.append(sections.pop(existing_idx))
         return content
     sec = build_review_section(key, rev_date, prod_id)
     if not sec:
         return content
-    sections[:] = [s for s in sections if s.get("ref_type") != "review"]
+    sections[:] = [
+        s for s in sections
+        if not (isinstance(s, dict) and (
+            s.get("ref_type") == "review" or str(s.get("title") or "").strip() == "评审记录"
+        ))
+    ]
     sections.append(sec)
     return content
 

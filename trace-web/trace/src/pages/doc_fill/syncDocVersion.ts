@@ -1,4 +1,4 @@
-/** 文档版本同步到封面「文件版本」和文件修订记录首行「版本号」，始终覆盖。 */
+/** 文档版本同步到封面「文件版本」；修订记录首行「首次发布」版本号不随 A0→A1 覆盖。 */
 
 const cell = (v: any) => String(v ?? "").trim();
 
@@ -7,12 +7,19 @@ const patchTable = (tb: any[], ver: string): any[] => {
     const header = (tb[0] || []).map(cell);
     const isRev = header.includes("版本号") && header.includes("修订说明");
     const verIdx = header.indexOf("版本号");
+    const noteIdx = header.indexOf("修订说明");
     return tb.map((row, ri) => {
         if (!Array.isArray(row)) return row;
         const next = [...row];
         if (isRev && ri === 1 && ver && verIdx >= 0) {
             while (next.length <= verIdx) next.push("");
-            next[verIdx] = ver;
+            const note = noteIdx >= 0 ? cell(next[noteIdx]) : "";
+            // 「首次发布」行保持原版本（如 A0）；仅空时填入当前文档版本
+            if (note === "首次发布") {
+                if (!cell(next[verIdx])) next[verIdx] = ver;
+            } else {
+                next[verIdx] = ver;
+            }
         }
         for (let i = 0; i < next.length - 1; i++) {
             if (cell(next[i]) === "文件版本" && ver) next[i + 1] = ver;
