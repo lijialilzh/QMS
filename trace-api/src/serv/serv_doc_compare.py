@@ -41,7 +41,7 @@ DOC_TYPES = {
     "crr": {"table": "crr_doc", "name": "代码审查记录", "group": "开发文件"},
     "dem": {"table": "dem_doc", "name": "开发环境维护说明", "group": "开发文件"},
     "deq": {"table": "deq_doc", "name": "开发设备清单", "group": "开发文件"},
-    "dat": {"table": "dat_doc", "name": "数据申请单", "group": "开发文件"},
+    "dat": {"table": "dat_doc", "name": "数据申请单", "group": "测试文件"},
     # ===== 测试文件 =====
     "stp": {"table": "stp_doc", "name": "软件测试计划", "group": "测试文件"},
     "utp": {"table": "utp_doc", "name": "用户测试计划", "group": "测试文件"},

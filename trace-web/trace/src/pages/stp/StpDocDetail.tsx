@@ -37,7 +37,7 @@ const computeCycle = (rows: any[]): string => {
     return min.y === max.y ? `${min.y}年${min.m}月~${max.m}月` : `${min.y}年${min.m}月~${max.y}年${max.m}月`;
 };
 
-// 从时间线里找「软件测试计划」文件所在行的日期（取最早匹配行），格式「YYYY年M月D日」
+// 从时间线找「软件测试计划」日期（取最晚一天，与后端 cover_date 一致），格式 yyyy.MM.dd
 const computeFileDate = (rows: any[], keyword = "软件测试计划"): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
     const matches = (rows || []).filter((r: any) =>
@@ -46,8 +46,9 @@ const computeFileDate = (rows: any[], keyword = "软件测试计划"): string =>
     if (!matches.length) return "";
     const key = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
     let best = matches[0];
-    matches.forEach((r: any) => { if (key(r) < key(best)) best = r; });
-    return `${num(best.year)}年${num(best.month)}月${num(best.day)}日`;
+    matches.forEach((r: any) => { if (key(r) > key(best)) best = r; });
+    const d = num(best.day) || 1;
+    return `${num(best.year)}.${String(num(best.month)).padStart(2, "0")}.${String(d).padStart(2, "0")}`;
 };
 
 // 里程碑日期辅助：num/日期键/格式化 YYYY年M月D日
@@ -206,7 +207,8 @@ export default () => {
                 const row = t[1];
                 while (row.length < 5) row.push("");
                 const setIf = (i: number, val: any) => { if (val && !String(row[i] || "").trim()) row[i] = val; };
-                setIf(0, info.fileDate);
+                // 修改日期←时间线「软件测试计划」，有则覆盖模板错误旧值
+                if (info.fileDate) row[0] = info.fileDate;
                 // 版本号仅填空：首次发布行不因文档升版被改成 A1
                 setIf(1, info.version);
                 if (!String(row[2] || "").trim()) row[2] = "首次发布";

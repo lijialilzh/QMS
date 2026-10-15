@@ -64,6 +64,18 @@ async def get_str_doc(id: int):
     return await server.get_str_doc(id)
 
 
+@router.get("/refill_str_test_items", summary="按阶段拉取测试项列表表格", response_model=Resp[Any])
+@try_log(perm=Perms.str_doc_view)
+async def refill_str_test_items(product_id: int, stages: str = ""):
+    return await server.refill_str_test_items(product_id, stages)
+
+
+@router.get("/refill_str_compat_items", summary="按SRS叶子拉取兼容性测试模块/测试点", response_model=Resp[Any])
+@try_log(perm=Perms.str_doc_view)
+async def refill_str_compat_items(product_id: int, kind: str = "win"):
+    return await server.refill_str_compat_items(product_id, kind)
+
+
 @router.get("/export_str_doc", summary="导出软件测试报告")
 @try_log(perm=Perms.str_doc_view)
 async def export_str_doc(id: int = 0, mode: str = "full"):

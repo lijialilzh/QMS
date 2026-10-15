@@ -296,7 +296,8 @@ REVIEW_DEFS = {
         ],
     },
     "stp": {
-        "name_keywords": ["软件测试计划", "软件测试"],
+        # 与 COVER_KEYWORDS 一致，不用宽泛「软件测试」，避免评审时间与其它测试活动串台
+        "name_keywords": ["软件测试计划"],
         "items": [
             ["文档完整程度", "测试目的明确"],
             ["文档完整程度", "报告描述/范围严谨准确"],
@@ -1185,11 +1186,12 @@ def build_review_section(key, rev_date="", prod_id=None):
     }
 
 
-def autofill_review_person_table(tbl, key="", rev_date="", prod_id=None):
+def autofill_review_person_table(tbl, key="", rev_date="", prod_id=None, force_date=False):
     """对「已存在的参评人员签字表」就地自动填充（用于评审记录内置于默认内容、不经 build_review_section 的模块，如 rmp）：
       - 「签字」列按「姓名」列取签名图（仅填空）；测试角色 2025.09 前统一取宋月；
       - 「批准人员签字/日期」行填批准人签名(按部门) + 评审日期；
       - 「其他参评人员/其他参会人员」行标签后合并为一格并填 /。
+      - force_date=True：有时间线日期则覆盖「评审时间」与批准日期（盖掉模板错误旧值）。
     仅处理含「参评人员签字」标记的人员表，避免误伤评审内容表。"""
     if not isinstance(tbl, list):
         return tbl
@@ -1216,13 +1218,12 @@ def autofill_review_person_table(tbl, key="", rev_date="", prod_id=None):
             continue
         lab = str(row[0] or "").strip()
         if lab.startswith("评审时间"):
-            # 仅空时填时间线日期；用户手改后保留（可编辑）
             cur = ""
             for sep in ("：", ":"):
                 if sep in lab:
                     cur = lab.split(sep, 1)[1].strip()
                     break
-            if (not cur) and rev_date:
+            if rev_date and (force_date or not cur):
                 row[0] = f"评审时间：{rev_date}"
                 for i in range(1, len(row)):
                     row[i] = ""
@@ -1230,7 +1231,7 @@ def autofill_review_person_table(tbl, key="", rev_date="", prod_id=None):
         if lab.startswith("批准人员签字"):
             if approver and len(row) >= 2 and not str(row[1] or "").strip():
                 row[1] = (_sign_by_name(approver) or approver) if sign_mode_enabled() else ""
-            if len(row) >= 3 and not str(row[2] or "").strip():
+            if len(row) >= 3 and rev_date and (force_date or not str(row[2] or "").strip()):
                 row[2] = rev_date
             continue
         if _is_banner(lab) or lab == "人员角色":
@@ -1241,21 +1242,37 @@ def autofill_review_person_table(tbl, key="", rev_date="", prod_id=None):
             if len(row) >= 2:
                 row[1] = "/"
             continue
-        # 参评人员数据行：姓名仅空时按角色补；签字列仅空时取签名图（不冲掉用户已改）
-        if role_based and rb_members:
-            if len(row) >= 2 and not str(row[1] or "").strip():
-                nm = _resolve_review_name(row[0], rb_members, rev_date)
-                if nm:
-                    row[1] = nm
-            if len(row) >= 5 and not str(row[4] or "").strip():
-                nm = _resolve_review_name(row[3] if len(row) >= 4 else "", rb_members, rev_date)
-                if nm:
-                    row[4] = nm
+        # 参评人员数据行：非测试角色姓名仅空时按角色补；测试角色（含测试、不含用户）按日期规则强制覆盖姓名与签字
+        def _apply_review_name(role_lab, name_i, sign_i):
+            if name_i >= len(row):
+                return
+            is_tester = ("测试" in str(role_lab or "")) and ("用户" not in str(role_lab or ""))
+            cur = str(row[name_i] or "").strip()
+            if not is_tester and cur:
+                return
+            if not is_tester and not rb_members:
+                return
+            nm = _resolve_review_name(role_lab, rb_members, rev_date)
+            if not nm:
+                return
+            if is_tester or not cur:
+                row[name_i] = nm
+                if is_tester and sign_i < len(row):
+                    row[sign_i] = _sign_by_name(nm) if sign_mode_enabled() else ""
+
+        if role_based:
+            _apply_review_name(row[0] if row else "", 1, 2)
+            if len(row) >= 4:
+                _apply_review_name(row[3], 4, 5)
         elif old_test:
-            if "测试" in lab and len(row) >= 2 and not str(row[1] or "").strip():
+            if "测试" in lab and "用户" not in lab and len(row) >= 2:
                 row[1] = "宋月"
-            if len(row) >= 4 and "测试" in str(row[3] or "") and not str(row[4] or "").strip():
+                if len(row) >= 3:
+                    row[2] = _sign_by_name("宋月") if sign_mode_enabled() else ""
+            if len(row) >= 4 and "测试" in str(row[3] or "") and "用户" not in str(row[3] or ""):
                 row[4] = "宋月"
+                if len(row) >= 6:
+                    row[5] = _sign_by_name("宋月") if sign_mode_enabled() else ""
         if len(row) >= 3 and str(row[1] or "").strip() and not str(row[2] or "").strip():
             row[2] = _sign_by_name(str(row[1]).strip()) if sign_mode_enabled() else ""
         if len(row) >= 6 and str(row[4] or "").strip() and not str(row[5] or "").strip():
@@ -1379,10 +1396,11 @@ def fill_annex_reviews(content, prod_id, doc_type, prod_name=""):
     return content
 
 
-def ensure_review(content, key, rev_date="", prod_id=None, force=False):
+def ensure_review(content, key, rev_date="", prod_id=None, force=False, force_date=False):
     """在 content.sections 末尾放置「评审记录」章节。
-    force=False：已有评审记录则保留用户修改，仅对空字段（含评审时间）自动补全；
-    force=True：按模板整章重建（切换产品等场景）。"""
+    force=False：已有评审记录则保留用户修改，仅对空字段自动补全；
+    force=True：按模板整章重建（切换产品等场景）。
+    force_date=True：有时间线日期则覆盖评审时间/批准日期（盖掉模板错误旧值）。"""
     sections = (content or {}).get("sections")
     if not isinstance(sections, list):
         return content
@@ -1395,7 +1413,10 @@ def ensure_review(content, key, rev_date="", prod_id=None, force=False):
     if existing_idx is not None and not force:
         existing = sections[existing_idx]
         for tbl in (existing.get("tables") or []):
-            autofill_review_person_table(tbl, key=key, rev_date=rev_date, prod_id=prod_id)
+            autofill_review_person_table(
+                tbl, key=key, rev_date=rev_date, prod_id=prod_id,
+                force_date=force_date or force,
+            )
         if existing_idx != len(sections) - 1:
             sections.append(sections.pop(existing_idx))
         return content

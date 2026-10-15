@@ -63,6 +63,86 @@ const compatSpan = (tb: any[], mg: Record<number, number> | null, r: number, ci:
     return {};
 };
 
+// 单元测试项表：仅「需求编号」「设计编号」连续相同非空纵向合并
+const isUnitTestItemTable = (tb: any[]): boolean => {
+    const h = (tb?.[0] || []).map((c: any) => String(c || "").trim());
+    return h.includes("需求编号") && h.includes("设计编号");
+};
+
+type UnitSpans = { hide: boolean[][]; rowSpan: number[][] };
+
+const unitItemSpans = (tb: any[]): UnitSpans | null => {
+    if (!isUnitTestItemTable(tb)) return null;
+    const header = (tb[0] || []).map((c: any) => String(c || "").trim());
+    const mergeCols = header
+        .map((name: string, i: number) => (name === "需求编号" || name === "设计编号" ? i : -1))
+        .filter((i: number) => i >= 0);
+    if (!mergeCols.length) return null;
+    const n = tb.length;
+    const cols = header.length;
+    const hide = Array.from({ length: n }, () => Array(cols).fill(false));
+    const rowSpan = Array.from({ length: n }, () => Array(cols).fill(1));
+    const text = (r: number, c: number) => String((tb[r] || [])[c] ?? "").trim();
+    for (const c of mergeCols) {
+        let r = 1;
+        while (r < n) {
+            const val = text(r, c);
+            if (!val) {
+                r += 1;
+                continue;
+            }
+            let r2 = r;
+            while (r2 + 1 < n && text(r2 + 1, c) === val) r2 += 1;
+            if (r2 > r) {
+                rowSpan[r][c] = r2 - r + 1;
+                for (let rr = r + 1; rr <= r2; rr++) hide[rr][c] = true;
+            }
+            r = r2 + 1;
+        }
+    }
+    return { hide, rowSpan };
+};
+
+/** 缺陷统计表：表头含 Bug级别，且存在「用例总数」行 */
+const isDefectStatTable = (tb: any[]): boolean => {
+    if (!tb?.length || !Array.isArray(tb[0])) return false;
+    const hj = (tb[0] || []).map((c: any) => String(c || "").trim()).join(" ");
+    if (!hj.includes("Bug级别")) return false;
+    return tb.some((row: any[]) => Array.isArray(row) && String(row[0] || "").trim().startsWith("用例总数"));
+};
+
+/** 「用例总数」行：从第 2 列（下标 1）起合并到行末 */
+const defectCaseTotalSpan = (
+    tb: any[],
+    r: number,
+    ci: number,
+): { skip?: boolean; colSpan?: number } => {
+    if (!isDefectStatTable(tb) || r <= 0 || r >= tb.length) return {};
+    const lab = String((tb[r] || [])[0] || "").trim();
+    if (!lab.startsWith("用例总数")) return {};
+    const cols = Math.max((tb[0] || []).length, (tb[r] || []).length);
+    if (ci === 1) return cols > 1 ? { colSpan: cols - 1 } : {};
+    if (ci > 1) return { skip: true };
+    return {};
+};
+
+const tableCellSpan = (
+    tb: any[],
+    mg: Record<number, number> | null,
+    us: UnitSpans | null,
+    r: number,
+    ci: number,
+): { skip?: boolean; rowSpan?: number; colSpan?: number } => {
+    const cs = compatSpan(tb, mg, r, ci);
+    if (cs.skip || cs.rowSpan || cs.colSpan) return cs;
+    const ds = defectCaseTotalSpan(tb, r, ci);
+    if (ds.skip || ds.colSpan) return ds;
+    if (!us) return {};
+    if (us.hide[r]?.[ci]) return { skip: true };
+    const rs = us.rowSpan[r]?.[ci] || 1;
+    return rs > 1 ? { rowSpan: rs } : {};
+};
+
 // 离屏渲染阶段折线图（x=功能点, y=用例个数, 是否通过线），返回 PNG dataURL
 const buildChartUrl = (title: string, funcs: string[], counts: number[], flags: number[]): string => {
     const el = document.createElement("div");
@@ -221,6 +301,54 @@ const firstKey = (nodes: any[]): string => (nodes && nodes[0] ? nodes[0]._key : 
 
 const stripNum = (title: string): string => String(title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();
 
+const TEST_STAGE_TITLES = new Set(["单元测试", "集成测试", "系统测试"]);
+const isTestStageChapter = (n: any) => TEST_STAGE_TITLES.has(stripNum(n?.title));
+/** 无表或仅表头/全空行 → 视为空章节，可显示「自动获取」 */
+const isEmptyTestStageTable = (n: any) => {
+    const tb = (n?.tables || [])[0];
+    if (!tb || !Array.isArray(tb) || tb.length <= 1) return true;
+    return tb.slice(1).every(
+        (r: any) => !Array.isArray(r) || r.every((c: any) => !String(c ?? "").trim()),
+    );
+};
+const showTestItemPull = (n: any) => isTestStageChapter(n) && isEmptyTestStageTable(n);
+
+/** 兼容性：Win10/Win11 测试项列表、用户端测试 */
+const compatKindOf = (n: any): "" | "win" | "client" => {
+    const t = stripNum(n?.title);
+    if (t === "用户端测试" || (t.startsWith("用户端") && t.includes("测试") && !t.includes("服务端"))) return "client";
+    if (t.includes("Win10") && t.includes("测试项")) return "win";
+    if (t.includes("Win11") && t.includes("测试项")) return "win";
+    return "";
+};
+const isEmptyCompatModuleTable = (n: any) => {
+    const tb = (n?.tables || [])[0];
+    if (!tb || !Array.isArray(tb) || !tb.length) return true;
+    let i = 0;
+    while (i < tb.length && Array.isArray(tb[i]) && String(tb[i][0] || "").trim() === "测试模块") i += 1;
+    const data = tb.slice(i);
+    if (!data.length) return true;
+    return data.every(
+        (r: any) => !Array.isArray(r) || r.every((c: any) => !String(c ?? "").trim()),
+    );
+};
+const showCompatPull = (n: any) => !!compatKindOf(n) && isEmptyCompatModuleTable(n);
+
+const applyTestItemFill = (sections: any[], key: string, tables: any[]): any[] => {
+    const walk = (nodes: any[]): any[] =>
+        (nodes || []).map((n: any) => {
+            const kids = n.children || [];
+            if (kids.some((c: any) => c._key === key)) {
+                const children = kids.map((c: any) => (c._key === key ? { ...c, tables } : c));
+                const stages = children.map((c: any) => stripNum(c.title)).filter(Boolean);
+                return { ...n, ref_type: "test_items", stages, children };
+            }
+            if (n._key === key) return { ...n, tables };
+            return { ...n, children: walk(kids) };
+        });
+    return walk(sections);
+};
+
 const computeNumbers = (nodes: any[]): Record<string, string> => {
     const map: Record<string, string> = {};
     let bodyIdx = 0;
@@ -288,8 +416,8 @@ export default () => {
         return (nodes || []).map(fix);
     };
 
-    // 文件修订记录首行默认值：日期/版本/修订说明/修订人/批准人，仅填空格不覆盖已填
-    const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; pm?: string; approver?: string }): any[] => {
+    // 文件修订记录：日期/版本/说明仅填空；修订人=测试人员(日期规则)、批准人=研发负责人始终覆盖
+    const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; reviser?: string; approver?: string }): any[] => {
         const fix = (n: any): any => {
             const isRev = n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
             let tables = n.tables;
@@ -298,12 +426,13 @@ export default () => {
                 const cols = (t[0] || []).length || 5;
                 while (t.length < 6) t.push(new Array(cols).fill(""));
                 const row = t[1];
+                while (row.length < 5) row.push("");
                 const setIf = (i: number, val: any) => { if (val && !String(row[i] || "").trim()) row[i] = val; };
                 setIf(0, info.fileDate);
                 if (info.version && !String(row[1] || "").trim()) row[1] = info.version;
                 if (!String(row[2] || "").trim()) row[2] = "首次发布";
-                setIf(3, info.pm);
-                setIf(4, info.approver);
+                if (info.reviser) row[3] = info.reviser;
+                if (info.approver) row[4] = info.approver;
                 tables = [t, ...n.tables.slice(1)];
             }
             return { ...n, tables, children: (n.children || []).map(fix) };
@@ -408,11 +537,15 @@ export default () => {
                     desc: prod.overall_desc,
                     cycle: computeCycle(tlRows),
                 });
+                const fileDate = computeFileDate(tlRows);
+                const m = String(fileDate || "").match(/(\d{4})\D+(\d{1,2})/);
+                const before202509 = m ? (Number(m[1]) * 100 + Number(m[2]) < 202509) : false;
                 out = fillRevision(out, {
-                    fileDate: computeFileDate(tlRows),
+                    fileDate,
                     version,
-                    pm: findRole((r) => r.includes("产品经理") || r.includes("经理")),
-                    approver: findRole((r) => r.includes("负责人")),
+                    // 修订人=测试人员（2025.09 前宋月 / 之后孙家旭）；批准人=研发负责人
+                    reviser: before202509 ? "宋月" : "孙家旭",
+                    approver: findRole((r) => r.includes("研发负责人")),
                 });
                 out = fillMilestone(out, {
                     devEnd: computeDevEnd(tlRows),
@@ -596,6 +729,84 @@ export default () => {
             if (hit) return hit;
         }
         return null;
+    };
+
+    const pullTestItems = () => {
+        if (readonly || !active || !showTestItemPull(active)) return;
+        const product_id = data.doc?.product_id;
+        if (!product_id) {
+            message.warning("请先选择产品");
+            return;
+        }
+        const stage = stripNum(active.title);
+        dispatch({ pulling: true });
+        Api.refill_str_test_items({ product_id, stages: stage })
+            .then((res: any) => {
+                dispatch({ pulling: false });
+                if (res.code !== Api.C_OK) {
+                    message.error(res.msg || "获取失败");
+                    return;
+                }
+                const items = res.data?.items || [];
+                const item = items.find((it: any) => it.title === stage) || items[0];
+                if (!item || !(item.row_count > 0)) {
+                    message.warning("该产品暂无对应阶段测试用例");
+                    return;
+                }
+                setSections(applyTestItemFill(data.sections, active._key, item.tables || []));
+                message.success(`已获取 ${item.row_count} 项`);
+            })
+            .catch(() => {
+                dispatch({ pulling: false });
+                message.error("获取失败");
+            });
+    };
+
+    const pullCompatItems = () => {
+        if (readonly || !active || !showCompatPull(active)) return;
+        const product_id = data.doc?.product_id;
+        if (!product_id) {
+            message.warning("请先选择产品");
+            return;
+        }
+        const kind = compatKindOf(active);
+        if (!kind) return;
+        dispatch({ pulling: true });
+        Api.refill_str_compat_items({ product_id, kind })
+            .then((res: any) => {
+                dispatch({ pulling: false });
+                if (res.code !== Api.C_OK) {
+                    message.error(res.msg || "获取失败");
+                    return;
+                }
+                const rows: any[][] = res.data?.rows || [];
+                if (!rows.length) {
+                    message.warning("该产品暂无 SRS 标准需求");
+                    return;
+                }
+                const oldTb = (active.tables || [])[0] || [];
+                let hi = 0;
+                while (
+                    hi < oldTb.length &&
+                    Array.isArray(oldTb[hi]) &&
+                    String(oldTb[hi][0] || "").trim() === "测试模块"
+                ) {
+                    hi += 1;
+                }
+                const hdr = hi > 0 ? oldTb.slice(0, hi).map((r: any[]) => [...r]) : [["测试模块", "测试点", "结果", "结果"]];
+                const cols = Math.max(...hdr.map((r: any[]) => (Array.isArray(r) ? r.length : 0)), 2);
+                const dataRows = rows.map((r: any[]) => {
+                    const next = [...(r || [])];
+                    while (next.length < cols) next.push("通过");
+                    return next.slice(0, cols);
+                });
+                patchNode(active._key, { tables: [[...hdr, ...dataRows]] });
+                message.success(`已获取 ${res.data?.leaves?.length || 0} 个模块、${rows.length} 行测试点`);
+            })
+            .catch(() => {
+                dispatch({ pulling: false });
+                message.error("获取失败");
+            });
     };
 
     const generateCharts = () => {
@@ -800,6 +1011,26 @@ export default () => {
                                                         </span>
                                                     </div>
                                                 )}
+                                                {!readonly && showTestItemPull(active) && (
+                                                    <div className="pdp-pull-bar">
+                                                        <Button type="primary" ghost loading={data.pulling} onClick={pullTestItems}>
+                                                            自动获取
+                                                        </Button>
+                                                        <span className="pdp-pull-hint">
+                                                            从该产品已上传的「{stripNum(active.title)}」测试用例拉取测试项列表
+                                                        </span>
+                                                    </div>
+                                                )}
+                                                {!readonly && showCompatPull(active) && (
+                                                    <div className="pdp-pull-bar">
+                                                        <Button type="primary" ghost loading={data.pulling} onClick={pullCompatItems}>
+                                                            自动获取
+                                                        </Button>
+                                                        <span className="pdp-pull-hint">
+                                                            从该产品 SRS 需求自动填充测试模块，并按模板补全测试点
+                                                        </span>
+                                                    </div>
+                                                )}
                                                 {(stripNum(active.title).includes("分布图") || stripNum(active.title).includes("缺陷统计")) && (
                                                     <>
                                                         {!readonly && (
@@ -852,6 +1083,7 @@ export default () => {
                                                     const tb = (active.tables || [])[ti];
                                                     if (!tb) return null;
                                                     const mg = compatMerge(tb);
+                                                    const us = unitItemSpans(tb);
                                                     return (
                                                         <div className="pdp-table-block" key={si}>
                                                             <div className="pdp-table-bar">
@@ -872,24 +1104,23 @@ export default () => {
                                                                 style={{ marginBottom: 6, fontSize: 13 }}
                                                                 onChange={(e) => setCaption(ti, e.target.value)}
                                                             />
-                                                            <div style={{ overflowX: "auto" }}>
-                                                            <table className="pdp-grid" style={(tb[0] && tb[0].length > 4) ? { tableLayout: "fixed", width: (tb[0].length + 1) * 140, minWidth: (tb[0].length + 1) * 140 } : undefined}>
-                                                                {tb[0] && tb[0].length > 4 && (
+                                                            <table className="pdp-grid" style={{ tableLayout: "fixed", width: "100%" }}>
+                                                                {tb[0] && (
                                                                     <colgroup>
                                                                         {tb[0].map((_: any, ci: number) => (
-                                                                            <col key={ci} style={{ width: 140 }} />
+                                                                            <col key={ci} />
                                                                         ))}
-                                                                        {!readonly && <col style={{ width: 40 }} />}
+                                                                        {!readonly && <col style={{ width: 72 }} />}
                                                                     </colgroup>
                                                                 )}
                                                                 <tbody>
                                                                     {tb.map((row: any[], r: number) => (
                                                                         <tr key={r}>
                                                                             {row.map((cell: any, ci: number) => {
-                                                                                const sp = compatSpan(tb, mg, r, ci);
+                                                                                const sp = tableCellSpan(tb, mg, us, r, ci);
                                                                                 if (sp.skip) return null;
                                                                                 return (
-                                                                                <td key={ci} rowSpan={sp.rowSpan} colSpan={sp.colSpan} className={r === 0 ? "head" : ""}>
+                                                                                <td key={ci} rowSpan={sp.rowSpan} colSpan={sp.colSpan} className={r === 0 ? "head" : ""} style={(sp.rowSpan && sp.rowSpan > 1) || (sp.colSpan && sp.colSpan > 1) ? { verticalAlign: "middle", textAlign: sp.colSpan && sp.colSpan > 1 ? "center" : undefined } : undefined}>
                                                                                     {typeof cell === "string" && cell.startsWith("data:image") ? (
                                                                                         <span style={{ position: "relative", display: "inline-block" }}>
                                                                                             <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
@@ -910,7 +1141,7 @@ export default () => {
                                                                                 );
                                                                             })}
                                                                             {!readonly && (
-                                                                                <td className="pdp-row-op">
+                                                                                <td className="pdp-row-op" style={{ width: 72, whiteSpace: "nowrap", verticalAlign: "middle" }}>
                                                                                     <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
                                                                                     {tb.length > 1 && (
                                                                                         <Button type="link" danger size="small" onClick={() => delRow(ti, r)}>删除</Button>
@@ -921,7 +1152,6 @@ export default () => {
                                                                     ))}
                                                                 </tbody>
                                                             </table>
-                                                            </div>
                                                         </div>
                                                     );
                                                 })}
@@ -962,6 +1192,26 @@ export default () => {
                                                     </span>
                                                 </div>
                                             )}
+                                            {!readonly && showTestItemPull(active) && (
+                                                <div className="pdp-pull-bar">
+                                                    <Button type="primary" ghost loading={data.pulling} onClick={pullTestItems}>
+                                                        自动获取
+                                                    </Button>
+                                                    <span className="pdp-pull-hint">
+                                                        从该产品已上传的「{stripNum(active.title)}」测试用例拉取测试项列表
+                                                    </span>
+                                                </div>
+                                            )}
+                                            {!readonly && showCompatPull(active) && (
+                                                <div className="pdp-pull-bar">
+                                                    <Button type="primary" ghost loading={data.pulling} onClick={pullCompatItems}>
+                                                        自动获取
+                                                    </Button>
+                                                    <span className="pdp-pull-hint">
+                                                        从该产品 SRS 需求自动填充测试模块，并按模板补全测试点
+                                                    </span>
+                                                </div>
+                                            )}
                                             {(stripNum(active.title).includes("分布图") || stripNum(active.title).includes("缺陷统计")) && (
                                                 <>
                                                     {!readonly && (
@@ -988,6 +1238,7 @@ export default () => {
                                                 )
                                                 : (active.tables || []).map((tb: any[], ti: number) => {
                                                 const mg = compatMerge(tb);
+                                                const us = unitItemSpans(tb);
                                                 return (
                                                 <div className="pdp-table-block" key={ti}>
                                                     <div className="pdp-table-bar">
@@ -1008,24 +1259,23 @@ export default () => {
                                                         style={{ marginBottom: 6, fontSize: 13 }}
                                                         onChange={(e) => setCaption(ti, e.target.value)}
                                                     />
-                                                    <div style={{ overflowX: "auto" }}>
-                                                    <table className="pdp-grid" style={(tb[0] && tb[0].length > 4) ? { tableLayout: "fixed", width: (tb[0].length + 1) * 140, minWidth: (tb[0].length + 1) * 140 } : undefined}>
-                                                        {tb[0] && tb[0].length > 4 && (
+                                                    <table className="pdp-grid" style={{ tableLayout: "fixed", width: "100%" }}>
+                                                        {tb[0] && (
                                                             <colgroup>
                                                                 {tb[0].map((_: any, ci: number) => (
-                                                                    <col key={ci} style={{ width: 140 }} />
+                                                                    <col key={ci} />
                                                                 ))}
-                                                                {!readonly && <col style={{ width: 40 }} />}
+                                                                {!readonly && <col style={{ width: 72 }} />}
                                                             </colgroup>
                                                         )}
                                                         <tbody>
                                                             {tb.map((row: any[], r: number) => (
                                                                 <tr key={r}>
                                                                     {row.map((cell: any, ci: number) => {
-                                                                        const sp = compatSpan(tb, mg, r, ci);
+                                                                        const sp = tableCellSpan(tb, mg, us, r, ci);
                                                                         if (sp.skip) return null;
                                                                         return (
-                                                                        <td key={ci} rowSpan={sp.rowSpan} colSpan={sp.colSpan} className={r === 0 ? "head" : ""}>
+                                                                        <td key={ci} rowSpan={sp.rowSpan} colSpan={sp.colSpan} className={r === 0 ? "head" : ""} style={(sp.rowSpan && sp.rowSpan > 1) || (sp.colSpan && sp.colSpan > 1) ? { verticalAlign: "middle", textAlign: sp.colSpan && sp.colSpan > 1 ? "center" : undefined } : undefined}>
                                                                             {typeof cell === "string" && cell.startsWith("data:image") ? (
                                                                                 <span style={{ position: "relative", display: "inline-block" }}>
                                                                                     <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
@@ -1046,7 +1296,7 @@ export default () => {
                                                                         );
                                                                     })}
                                                                     {!readonly && (
-                                                                        <td className="pdp-row-op">
+                                                                        <td className="pdp-row-op" style={{ width: 72, whiteSpace: "nowrap", verticalAlign: "middle" }}>
                                                                             <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
                                                                             {tb.length > 1 && (
                                                                                 <Button type="link" danger size="small" onClick={() => delRow(ti, r)}>删除</Button>
@@ -1057,7 +1307,6 @@ export default () => {
                                                             ))}
                                                         </tbody>
                                                     </table>
-                                                    </div>
                                                 </div>
                                                 );
                                             })}

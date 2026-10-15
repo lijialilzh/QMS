@@ -30,6 +30,14 @@ export const get_str_doc = async (params: any) => {
     return await httpGet("/trace-api/str_doc/get_str_doc", params);
 };
 
+export const refill_str_test_items = async (params: any) => {
+    return await httpGet("/trace-api/str_doc/refill_str_test_items", params);
+};
+
+export const refill_str_compat_items = async (params: any) => {
+    return await httpGet("/trace-api/str_doc/refill_str_compat_items", params);
+};
+
 export const export_str_doc = async (params: any) => {
     return await httpGet("/trace-api/str_doc/export_str_doc", params);
 };

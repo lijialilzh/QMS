@@ -457,11 +457,6 @@ export default () => {
                                 perm: "crr_doc_view",
                             },
                             {
-                                key: "/dat_docs",
-                                label: ts("menu.dat_docs"),
-                                perm: "dat_doc_view",
-                            },
-                            {
                                 key: "/deq_docs",
                                 label: ts("menu.deq_docs"),
                                 perm: "deq_doc_view",
@@ -476,6 +471,11 @@ export default () => {
                                 key: "/stp_docs",
                                 label: ts("menu.stp_docs"),
                                 perm: "stp_doc_view",
+                            },
+                            {
+                                key: "/dat_docs",
+                                label: ts("menu.dat_docs"),
+                                perm: "dat_doc_view",
                             },
                             {
                                 key: "/bug_docs",

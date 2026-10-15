@@ -156,12 +156,15 @@ class Server(object):
                     t.append([""] * cols)
                 if len(t) >= 2 and isinstance(t[1], list) and len(t[1]) >= 3:
                     row = t[1]
-                    if force:
+                    # 修改日期←时间线「软件测试计划」（有则覆盖模板错误旧日期）
+                    if force or rev_date:
                         row[0] = rev_date or ""
+                    elif not str(row[0] or "").strip():
+                        row[0] = rev_date
+                    if force:
                         if len(row) >= 2: row[1] = str(version or "")
                         if len(row) >= 3: row[2] = "首次发布"
                     else:
-                        if not str(row[0] or "").strip(): row[0] = rev_date
                         if version and len(row) >= 2 and not str(row[1] or "").strip(): row[1] = str(version)
                         if len(row) >= 3 and not str(row[2] or "").strip(): row[2] = "首次发布"
                     if len(row) >= 4:
@@ -375,16 +378,15 @@ class Server(object):
         self.__fill_roles(content, prod_id, force=force)
         self.__fill_runtime_env(content, prod_id, force=force)
         self.__fill_revision(content, prod_id, version, force=force)
-        serv_review_util.ensure_review(
-            content, DOC_KEY,
-            serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS[DOC_KEY]["name_keywords"]) if prod_id else "",
-            prod_id,
-            force=force,
-        )
+        # 编审批/生效/评审记录日期均←时间线「软件测试计划」；有日期则覆盖模板错误旧值
         rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
-        serv_review_util.fill_cover_dates(content, rev_date, force=force)
+        serv_review_util.ensure_review(
+            content, DOC_KEY, rev_date, prod_id,
+            force=force, force_date=bool(rev_date) or force,
+        )
+        serv_review_util.fill_cover_dates(content, rev_date, force=bool(rev_date) or force)
         signers = serv_review_util.cover_signers(prod_id, DOC_KEY, rev_date) if prod_id else {}
-        # 方案A：封面编制人按测试人员日期规则强制覆盖（2025.09 前宋月 / 之后孙家旭），与修订人(TPM)区分
+        # 封面编制人按测试人员日期规则强制覆盖（2025.09 前宋月 / 之后孙家旭）
         author_name = "宋月" if serv_review_util._before_202509(rev_date) else "孙家旭"
         signers = dict(signers or {})
         signers["编制人"] = serv_review_util._sign_by_name(author_name) or author_name

@@ -29,6 +29,8 @@ from ..model.test_set import TestSet
 from ..model.test_case import TestCase
 from ..model.srs_doc import SrsDoc
 from ..model.srs_req import SrsReq
+from ..model.sds_doc import SdsDoc
+from ..model.sds_trace import SdsTrace
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
 from ..obj.vobj_user import UserObj
@@ -96,6 +98,13 @@ class Server(object):
             result.pop("blocks", None)
         children = result.get("children")
         result["children"] = [self.__normalize_node(c) for c in children] if isinstance(children, list) else []
+        # 测试项列表：stages 与当前子章同步，删除子章保存后不再按旧 stages 补回
+        if result.get("ref_type") == "test_items":
+            result["stages"] = [
+                str(ch.get("title") or "").strip()
+                for ch in (result.get("children") or [])
+                if isinstance(ch, dict) and str(ch.get("title") or "").strip()
+            ]
         return result
 
     def __normalize_content(self, content):
@@ -131,13 +140,13 @@ class Server(object):
         return (row.code or "").strip() if row and row.code else ""
 
     def __fill_revision(self, content, prod_id, version, force=False):
-        """文件修订记录首行：修改日期(评审/封面日期)、版本号、首次发布、修订人(TPM)、批准人(研发负责人)。
-        force=True（切换产品）时强制覆盖，无数据则置空。"""
+        """文件修订记录首行：修改日期←时间线「软件测试报告」；修订人=测试人员（日期规则）；批准人=研发负责人。
+        修订人/批准人打开即覆盖；有时间线日期则覆盖修改日期。"""
         rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
-        reviser = approver = ""
+        reviser = "宋月" if serv_review_util._before_202509(rev_date) else "孙家旭"
+        approver = ""
         if prod_id:
             members = db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == prod_id)).scalars().all()
-            reviser = next((m.name for m in members if "TPM" in str(m.role or "")), "")
             approver = next((m.name for m in members if "研发负责人" in str(m.role or "")), "")
         for s in (content.get("sections") or []):
             if s.get("ref_type") != "revision":
@@ -150,25 +159,122 @@ class Server(object):
                     t.append([""] * cols)
                 if len(t) >= 2 and isinstance(t[1], list) and len(t[1]) >= 3:
                     row = t[1]
-                    if force:
+                    if force or rev_date:
                         row[0] = rev_date or ""
+                    elif not str(row[0] or "").strip():
+                        row[0] = rev_date
+                    if force:
                         if len(row) >= 2: row[1] = str(version or "")
                         if len(row) >= 3: row[2] = "首次发布"
-                        if len(row) >= 4: row[3] = reviser
-                        if len(row) >= 5: row[4] = approver
                     else:
-                        if not str(row[0] or "").strip(): row[0] = rev_date
                         if version and len(row) >= 2 and not str(row[1] or "").strip(): row[1] = str(version)
                         if len(row) >= 3 and not str(row[2] or "").strip(): row[2] = "首次发布"
-                        if len(row) >= 4 and reviser and not str(row[3] or "").strip(): row[3] = reviser
-                        if len(row) >= 5 and approver and not str(row[4] or "").strip(): row[4] = approver
+                    if len(row) >= 4:
+                        row[3] = reviser
+                    if len(row) >= 5:
+                        row[4] = approver
             break
         return content
 
     TESTITEM_HEADER = ["需求编号", "Case编号", "功能点概述", "用例个数", "是否通过", "备注"]
+    TESTITEM_HEADER_UNIT = ["需求编号", "设计编号", "Case编号", "功能点概述", "用例个数", "是否通过", "备注"]
 
-    def __stage_rows(self, prod_id, stage, prev):
-        """按阶段(测试集)取用例，按功能点分组：需求编号/Case编号取段/功能点/用例个数/是否通过/备注。"""
+    def __srs_sds_maps(self, prod_id):
+        """产品下 SRS→SDS、SDS→SRS 映射（来自 sds_trace），及本产品已有 SRS 编号集合。"""
+        srs_to_sds, sds_to_srs, known_srs = {}, {}, set()
+        if not prod_id:
+            return srs_to_sds, sds_to_srs, known_srs
+        known_rows = db.session.execute(
+            select(SrsReq.code).join(SrsDoc, SrsReq.doc_id == SrsDoc.id).where(SrsDoc.product_id == prod_id)
+        ).scalars().all()
+        for code in known_rows:
+            c = (code or "").strip()
+            if c:
+                known_srs.add(c)
+                known_srs.add(c.upper())
+        rows = db.session.execute(
+            select(SrsReq.code, SdsTrace.sds_code)
+            .join(SdsTrace, SdsTrace.req_id == SrsReq.id)
+            .join(SdsDoc, SdsDoc.id == SdsTrace.doc_id)
+            .where(SdsDoc.product_id == prod_id)
+        ).all()
+        for code, sds in rows:
+            srs = (code or "").strip()
+            raw = (sds or "").strip()
+            if not srs or not raw:
+                continue
+            parts = [p.strip() for p in re.split(r"[\r\n]+", raw) if p and p.strip()]
+            if not parts:
+                continue
+            if srs not in srs_to_sds:
+                srs_to_sds[srs] = "\n".join(parts)
+            for p in parts:
+                sds_to_srs.setdefault(re.sub(r"\s+", "", p).upper(), srs)
+        return srs_to_sds, sds_to_srs, known_srs
+
+    def __if_to_srs_candidates(self, raw):
+        """接口编号 SDS-IF… → SRS 候选（与需求追溯互转规则一致）。"""
+        code = re.sub(r"\s+", "", str(raw or "")).upper()
+        if not code.startswith("SDS-IF"):
+            return []
+        candidates = []
+        matched = re.match(r"SDS-IF(\d+)-RUS(\d+)-\d+", code)
+        if matched:
+            candidates.append(f"SRS-RUS{matched.group(1)}-{matched.group(2)}")
+        matched2 = re.match(r"SDS-IF\d+-([A-Z0-9]+-\d+)$", code)
+        if matched2:
+            candidates.append(f"SRS-{matched2.group(1)}")
+            seg = matched2.group(1)
+            seg_parts = seg.split("-")
+            if len(seg_parts) == 2:
+                left, _right = seg_parts
+                m3 = re.match(r"^([A-Z]+)(\d{3,})(\d)$", left)
+                if m3:
+                    req_group = str(m3.group(3) or "").zfill(3)
+                    candidates.append(f"SRS-{m3.group(1)}{m3.group(2)}-{req_group}")
+        seen, uniq = set(), []
+        for item in candidates:
+            if item and item not in seen:
+                seen.add(item)
+                uniq.append(item)
+        return uniq
+
+    def __pick_srs_from_if(self, raw, known_srs):
+        """从接口编号解析 SRS：优先本产品已有需求编号，否则取压缩段候选。"""
+        cands = self.__if_to_srs_candidates(raw)
+        if not cands:
+            return ""
+        known = known_srs or set()
+        for c in cands:
+            if c in known or c.upper() in known:
+                # 若已知集合里有原大小写，尽量回原样
+                for k in known:
+                    if k.upper() == c.upper() and k.startswith("SRS"):
+                        return k
+                return c
+        # 优先压缩段（通常在候选末尾）
+        return cands[-1] if len(cands) > 1 else cands[0]
+
+    def __split_req_design(self, raw, srs_to_sds, sds_to_srs, known_srs=None):
+        """拆分需求编号与设计编号；单元测试表专用。"""
+        raw = (raw or "").strip()
+        if not raw:
+            return "", ""
+        key = re.sub(r"\s+", "", raw).upper()
+        if key.startswith("SDS-IF"):
+            srs = sds_to_srs.get(key, "") or self.__pick_srs_from_if(raw, known_srs)
+            return srs, raw
+        if key.startswith("SDS"):
+            return sds_to_srs.get(key, ""), raw
+        if key.startswith("SRS"):
+            sds = srs_to_sds.get(raw, "") or srs_to_sds.get(key, "")
+            if not sds and raw.upper().startswith("SRS"):
+                sds = "SDS" + raw[3:]
+            return raw, sds
+        return raw, srs_to_sds.get(raw, "") or srs_to_sds.get(key, "")
+
+    def __stage_rows(self, prod_id, stage, prev, with_design=False, srs_to_sds=None, sds_to_srs=None, known_srs=None):
+        """按阶段(测试集)取用例，按功能点分组：需求编号[/设计编号]/Case编号取段/功能点/用例个数/是否通过/备注。"""
         set_ids = db.session.execute(
             select(TestSet.id).where(TestSet.product_id == prod_id, TestSet.stage == stage)
         ).scalars().all()
@@ -190,31 +296,79 @@ class Server(object):
             if not gmap[key]["srs"]:
                 gmap[key]["srs"] = (c.srs_code or "").strip()
         rows = []
+        srs_to_sds = srs_to_sds or {}
+        sds_to_srs = sds_to_srs or {}
         for key in order:
             g = gmap[key]
             cs = sorted(g["codes"])
             case_no = "" if not cs else (cs[0] if len(cs) == 1 else f"{cs[0]} 至 {cs[-1]}")
             p = prev.get(g["func"], {})
-            rows.append([g["srs"], case_no, g["func"], str(len(g["codes"])), p.get("pass", "是"), p.get("note", "")])
+            if with_design:
+                srs, sds = self.__split_req_design(g["srs"], srs_to_sds, sds_to_srs, known_srs=known_srs)
+                rows.append([srs, sds, case_no, g["func"], str(len(g["codes"])), p.get("pass", "是"), p.get("note", "")])
+            else:
+                rows.append([g["srs"], case_no, g["func"], str(len(g["codes"])), p.get("pass", "是"), p.get("note", "")])
         return rows
 
     def __fill_test_items(self, content, prod_id):
         if not prod_id or not isinstance(content, dict):
             return content
+        srs_to_sds, sds_to_srs, known_srs = self.__srs_sds_maps(prod_id)
+
+        def _build_stage_child(stage, prev, old=None):
+            stage = str(stage or "").strip()
+            with_design = stage == "单元测试"
+            header = self.TESTITEM_HEADER_UNIT if with_design else self.TESTITEM_HEADER
+            grid = [list(header)] + self.__stage_rows(
+                prod_id, stage, prev, with_design=with_design,
+                srs_to_sds=srs_to_sds, sds_to_srs=sds_to_srs, known_srs=known_srs,
+            )
+            if isinstance(old, dict):
+                ch = dict(old)
+                ch["title"] = stage or ch.get("title") or ""
+                ch["tables"] = [grid]
+                ch.setdefault("children", [])
+                return ch
+            return {"title": stage, "body": "", "tables": [grid], "children": []}
 
         def walk(node):
             if node.get("ref_type") == "test_items":
                 prev = {}
                 for ch in (node.get("children") or []):
                     for tbl in (ch.get("tables") or []):
+                        if not tbl or not isinstance(tbl[0], list):
+                            continue
+                        header = [str(c or "") for c in tbl[0]]
+                        fi = next((i for i, h in enumerate(header) if "功能点" in h), 2)
+                        pi = next((i for i, h in enumerate(header) if "是否通过" in h), -1)
+                        ni = next((i for i, h in enumerate(header) if h.strip() == "备注" or "备注" in h), -1)
                         for r in (tbl or [])[1:]:
-                            if isinstance(r, list) and len(r) >= 6 and str(r[2] or "").strip():
-                                prev[str(r[2]).strip()] = {"pass": str(r[4] or "").strip() or "是", "note": str(r[5] or "").strip()}
-                children = []
-                for stage in (node.get("stages") or []):
-                    grid = [list(self.TESTITEM_HEADER)] + self.__stage_rows(prod_id, stage, prev)
-                    children.append({"title": stage, "body": "", "tables": [grid], "children": []})
-                node["children"] = children
+                            if not isinstance(r, list) or fi >= len(r):
+                                continue
+                            func = str(r[fi] or "").strip()
+                            if not func:
+                                continue
+                            prev[func] = {
+                                "pass": (str(r[pi] or "").strip() if 0 <= pi < len(r) else "") or "是",
+                                "note": str(r[ni] or "").strip() if 0 <= ni < len(r) else "",
+                            }
+                existing = [ch for ch in (node.get("children") or []) if isinstance(ch, dict)]
+                if existing:
+                    # 尊重用户删除：只刷新现有子章，并把 stages 同步为当前子章标题
+                    children = []
+                    stages = []
+                    for ch in existing:
+                        stage = str(ch.get("title") or "").strip()
+                        if stage:
+                            stages.append(stage)
+                        children.append(_build_stage_child(stage, prev, old=ch))
+                    node["stages"] = stages
+                    node["children"] = children
+                else:
+                    children = []
+                    for stage in (node.get("stages") or []):
+                        children.append(_build_stage_child(stage, prev))
+                    node["children"] = children
                 node["tables"] = []
             for ch in (node.get("children") or []):
                 walk(ch)
@@ -301,8 +455,56 @@ class Server(object):
             walk(s)
         return content
 
+    # Win10/Win11：每模块统一测试点；用户端：每模块单点
+    COMPAT_WIN_TEST_POINTS = [
+        "页面格式，字体，输入框，按钮字图片是否正常显示",
+        "排版是否统一",
+        "提示信息是否正常完整",
+        "功能是否正常使用",
+    ]
+    COMPAT_CLIENT_TEST_POINTS = ["功能是否正常"]
+
+    def __compat_kind_of_title(self, title):
+        t = re.sub(r"^\s*\d+(?:\.\d+)*[\.、\s]*", "", str(title or "")).strip()
+        if t == "用户端测试" or (t.startswith("用户端") and "测试" in t and "服务端" not in t):
+            return "client"
+        if "Win10" in t and "测试项" in t:
+            return "win"
+        if "Win11" in t and "测试项" in t:
+            return "win"
+        return ""
+
+    def __compat_hdr_rows(self, tbl):
+        hdr = []
+        for r in (tbl or []):
+            if isinstance(r, list) and r and str(r[0] or "").strip() == "测试模块":
+                hdr.append(r)
+            else:
+                break
+        return hdr
+
+    def __rebuild_compat_module_table(self, tbl, leaves, points):
+        """保留表头行，按 SRS 叶子 × 测试点模板重建数据行；结果列默认「通过」。"""
+        if not isinstance(tbl, list) or not leaves or not points:
+            return False
+        hdr = self.__compat_hdr_rows(tbl)
+        if not hdr:
+            return False
+        cols = max((len(r) for r in hdr if isinstance(r, list)), default=2)
+        pass_tail = ["通过"] * max(0, cols - 2)
+        data = []
+        for leaf in leaves:
+            for pt in points:
+                row = [leaf, pt] + list(pass_tail)
+                while len(row) < cols:
+                    row.append("通过" if len(row) >= 2 else "")
+                data.append(row[:cols])
+        tbl[:] = [list(r) for r in hdr] + data
+        return True
+
     def __fill_compat(self, content, prod_id, product=None):
-        """兼容性测试报告附件：产品名称/版本、测试执行人(宋月/孙家旭)、测试时间自动获取；正文产品名替换。"""
+        """兼容性测试报告附件：产品名称/版本、测试执行人(宋月/孙家旭)、测试时间自动获取；正文产品名替换。
+        Win10/Win11/用户端测试表：按 SRS 叶子 + 测试点模板重建数据行。"""
         if not isinstance(content, dict):
             return content
         name = (getattr(product, "name", "") or "").strip()
@@ -318,34 +520,15 @@ class Server(object):
             s = str(s or "")
             return s.replace("InferCare RECIST", name) if name else s
 
-        def relabel(tbl):
-            """测试项列表：测试模块列按 SRS 标准需求叶子名(顺序)重贴（跳过表头行）。"""
-            if not srs_leaves or not tbl:
-                return
-            hdr = 0
-            for r in tbl:
-                if isinstance(r, list) and r and str(r[0] or "").strip() == "测试模块":
-                    hdr += 1
-                else:
-                    break
-            data = [r for r in tbl[hdr:] if isinstance(r, list) and r]
-            order = []
-            for r in data:
-                m = str(r[0] or "").strip()
-                if m and m not in order:
-                    order.append(m)
-            mapping = {m: srs_leaves[i] for i, m in enumerate(order) if i < len(srs_leaves)}
-            for r in data:
-                m = str(r[0] or "").strip()
-                if m in mapping:
-                    r[0] = mapping[m]
-
-        def proc(node, relabel_on):
+        def proc(node):
             node["body"] = repl(node.get("body"))
             if node.get("body_tail"):
                 node["body_tail"] = repl(node.get("body_tail"))
             title = str(node.get("title") or "")
-            do_relabel = relabel_on or ("测试项列表" in title) or ("用户端" in title)
+            kind = self.__compat_kind_of_title(title)
+            points = self.COMPAT_CLIENT_TEST_POINTS if kind == "client" else (
+                self.COMPAT_WIN_TEST_POINTS if kind == "win" else None
+            )
             for tbl in (node.get("tables") or []):
                 for row in tbl:
                     if not isinstance(row, list):
@@ -359,14 +542,14 @@ class Server(object):
                         row[1] = engineer
                     elif lab == "测试时间" and len(row) >= 2 and rev:
                         row[1] = rev
-                if do_relabel:
-                    relabel(tbl)
+                if kind and points and srs_leaves:
+                    self.__rebuild_compat_module_table(tbl, srs_leaves, points)
             for ch in (node.get("children") or []):
-                proc(ch, do_relabel)
+                proc(ch)
 
         for s in (content.get("sections") or []):
             if s.get("ref_type") == "attachment":
-                proc(s, False)
+                proc(s)
         return content
 
     def __srs_leaves(self, prod_id):
@@ -389,6 +572,37 @@ class Server(object):
             if leaf:
                 leaves.append(leaf)
         return leaves
+
+    async def refill_str_compat_items(self, product_id: int, kind: str = "win"):
+        """按产品 SRS 叶子 + 测试点模板生成兼容性模块表（供空章节「自动获取」）。kind=win|client。"""
+        kind = str(kind or "win").strip().lower()
+        if kind not in ("win", "client"):
+            return Resp.resp_err(msg="kind 须为 win 或 client")
+        if not product_id:
+            return Resp.resp_err(msg=ts("msg_obj_null"))
+        leaves = self.__srs_leaves(product_id)
+        if not leaves:
+            return Resp.resp_err(msg="该产品暂无 SRS 标准需求，无法获取测试模块")
+        points = self.COMPAT_CLIENT_TEST_POINTS if kind == "client" else self.COMPAT_WIN_TEST_POINTS
+        # 默认列：测试模块/测试点 + 两列结果（前端会按原表列数截断或补齐）
+        cols = 4 if kind == "win" else 5
+        hdr = [
+            ["测试模块", "测试点"] + ["结果"] * (cols - 2),
+        ]
+        # 与模板一致：两行表头（第二行常放版本号，此处留空由原表头保留时由前端合并）
+        # API 只返回数据行；前端用原表头 + 本数据行拼接
+        data = []
+        pass_tail = ["通过"] * (cols - 2)
+        for leaf in leaves:
+            for pt in points:
+                data.append([leaf, pt] + list(pass_tail))
+        return Resp.resp_ok(data={
+            "kind": kind,
+            "leaves": leaves,
+            "points": list(points),
+            "rows": data,
+            "row_count": len(data),
+        })
 
     def __total_cases(self, content):
         total = 0
@@ -521,9 +735,34 @@ class Server(object):
             fill(s)
         return content
 
+    def __strip_caption_code(self, cap):
+        """表题去掉产品代号前缀，如「XUS缺陷统计分析：」→「缺陷统计分析：」。"""
+        s = str(cap or "")
+        return re.sub(
+            r"^[A-Za-z][A-Za-z0-9_-]*(?=缺陷统计分析|参与此项目)",
+            "",
+            s,
+        )
+
+    def __strip_caption_codes(self, content):
+        if not isinstance(content, dict):
+            return content
+
+        def walk(node):
+            caps = node.get("table_captions")
+            if isinstance(caps, list) and caps:
+                node["table_captions"] = [self.__strip_caption_code(c) for c in caps]
+            for ch in (node.get("children") or []):
+                walk(ch)
+
+        for s in (content.get("sections") or []):
+            walk(s)
+        return content
+
     def __fill_hr(self, content, prod_id, force=False):
-        """人力资源表：按「角色」列自动匹配当前产品参与人员，填「资源数量/具体人员」列(N人/姓名)。
-        force=False：匹配不到保留原值；force=True：强制覆盖，无人员则置空。"""
+        """人力资源表：填「资源数量/具体人员」(N人/姓名)。
+        测试角色与测试计划负责人一致：计划/用例类→主测(宋月/孙家旭)；执行/记录/回归→全部测试人员。
+        测试角色打开即覆盖；其它角色 force=False 仅填空。"""
         if not isinstance(content, dict):
             return content
         doc_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
@@ -546,8 +785,11 @@ class Server(object):
             if "用户" in lab and "测试" in lab:
                 return by_kw(lambda r: "用户测试" in r)
             if "测试" in lab and "用户" not in lab:
-                others = [n for n in by_kw(lambda r: ("测试" in r) and ("用户" not in r)) if n not in ("宋月", "孙家旭")]
-                return ([primary] + others) if any(k in d for k in ("执行", "记录", "回归", "首轮")) else [primary]
+                testers = by_kw(lambda r: ("测试" in r) and ("用户" not in r))
+                # 执行/记录/回归 → 全部测试人员；计划/用例/报告类 → 仅主测
+                if any(k in d for k in ("执行", "记录", "回归", "首轮")):
+                    return testers if testers else [primary]
+                return [primary]
             if "产品经理" in lab:
                 return by_kw(lambda r: "产品经理" in r)
             if "开发" in lab and "负责" not in lab:
@@ -572,12 +814,16 @@ class Server(object):
                 for r in tbl[1:]:
                     if not isinstance(r, list) or not r:
                         continue
-                    nm = names_for(r[0], r[ci_d] if ci_d < len(r) else "")
-                    if force:
-                        if ci_p < len(r):
-                            r[ci_p] = ("%d人/%s" % (len(nm), "、".join(nm))) if nm else ""
-                    elif nm and ci_p < len(r):
-                        r[ci_p] = "%d人/%s" % (len(nm), "、".join(nm))
+                    role_label = r[0]
+                    nm = names_for(role_label, r[ci_d] if ci_d < len(r) else "")
+                    if not (ci_p < len(r)):
+                        continue
+                    is_tester = ("测试" in str(role_label or "")) and ("用户" not in str(role_label or ""))
+                    cell = ("%d人/%s" % (len(nm), "、".join(nm))) if nm else ""
+                    if force or is_tester:
+                        r[ci_p] = cell
+                    elif nm and not str(r[ci_p] or "").strip():
+                        r[ci_p] = cell
             for ch in (node.get("children") or []):
                 walk(ch)
 
@@ -672,14 +918,26 @@ class Server(object):
         self.__fill_defects(content, prod_id)
         self.__fill_workload(content, prod_id)
         self.__fill_compat(content, prod_id, product)
+        self.__strip_caption_codes(content)
         self.__fill_revision(content, prod_id, version, force=force)
-        serv_review_util.ensure_review(
-            content, DOC_KEY,
-            serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS[DOC_KEY]["name_keywords"]) if prod_id else "",
-            prod_id,
+        # 编审批/生效/评审记录日期←时间线「软件测试报告」；有日期则覆盖模板错误旧值
+        rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
+        secs = content.get("sections") or []
+        has_review = any(
+            isinstance(s, dict) and (
+                s.get("ref_type") == "review"
+                or str(s.get("title") or "").strip() == "评审记录"
+            )
+            for s in secs
         )
-        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else "", force=force)
-        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, DOC_KEY) if prod_id else {}, force=force)
+        # 已删评审记录：普通打开不自动再建；force（新建/换产品）仍生成
+        if has_review or force:
+            serv_review_util.ensure_review(
+                content, DOC_KEY, rev_date, prod_id,
+                force=force, force_date=bool(rev_date) or force,
+            )
+        serv_review_util.fill_cover_dates(content, rev_date, force=bool(rev_date) or force)
+        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, DOC_KEY, rev_date) if prod_id else {}, force=force)
         # 附件(兼容性测试报告)排到评审记录之后
         secs = content.get("sections") or []
         atts = [s for s in secs if s.get("ref_type") == "attachment"]
@@ -707,7 +965,10 @@ class Server(object):
                 return Resp.resp_err(msg=ts("msg_obj_exist"))
             row = StrDoc(**form.dict(exclude_none=True))
             row.id = None
-            row.content = self.__normalize_content(row.content)
+            product = db.session.execute(select(Product).where(Product.id == form.product_id)).scalars().first()
+            content = self.__normalize_content(row.content)
+            # 新建时 force 补评审记录等自动章（之后用户删除并保存则不再自动补回）
+            row.content = self.__autofill(content, form.product_id, product, form.version or "", force=True)
             db.session.add(row)
             db.session.commit()
             return Resp.resp_ok(data=StrDocForm(id=row.id))
@@ -882,6 +1143,28 @@ class Server(object):
         db.session.execute(delete(StrDoc).where(StrDoc.id == id))
         db.session.commit()
         return Resp.resp_ok()
+
+    async def refill_str_test_items(self, product_id: int, stages: str = ""):
+        """按产品 + 阶段名列表拉取测试项表格（供编辑页「自动获取」）。stages 逗号分隔。"""
+        stage_list = [s.strip() for s in str(stages or "").split(",") if s and str(s).strip()]
+        if not product_id:
+            return Resp.resp_err(msg=ts("msg_obj_null"))
+        if not stage_list:
+            return Resp.resp_err(msg="请指定测试阶段")
+        srs_to_sds, sds_to_srs, known_srs = self.__srs_sds_maps(product_id)
+        items = []
+        for stage in stage_list:
+            with_design = stage == "单元测试"
+            header = self.TESTITEM_HEADER_UNIT if with_design else self.TESTITEM_HEADER
+            rows = self.__stage_rows(
+                product_id, stage, {}, with_design=with_design,
+                srs_to_sds=srs_to_sds, sds_to_srs=sds_to_srs, known_srs=known_srs,
+            )
+            grid = [list(header)] + rows
+            items.append({"title": stage, "tables": [grid], "row_count": len(rows)})
+        if not any(it["row_count"] > 0 for it in items):
+            return Resp.resp_err(msg="该产品暂无对应阶段测试用例")
+        return Resp.resp_ok(data={"items": items})
 
     async def get_str_doc(self, id: int):
         sql = select(StrDoc, Product).join(Product, StrDoc.product_id == Product.id).where(StrDoc.id == id)
@@ -1081,6 +1364,54 @@ class Server(object):
                         set_cell(merged, val, align=WD_ALIGN_PARAGRAPH.CENTER)
                         merged.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
                     r = r2 + 1
+            elif first == "需求编号" and cols >= 2:
+                # 单元测试项表：需求编号/设计编号 连续相同非空纵向合并
+                headers = [str(c or "").strip() for c in (grid[0] or [])]
+                if "设计编号" in headers:
+                    merge_cis = [i for i, h in enumerate(headers) if h in ("需求编号", "设计编号")]
+                    rows = table.rows
+                    n = len(rows)
+                    for ci in merge_cis:
+                        r = 1
+                        while r < n:
+                            val = str((grid[r][ci] if r < len(grid) and ci < len(grid[r]) else "") or "").strip()
+                            if not val:
+                                r += 1
+                                continue
+                            r2 = r
+                            while r2 + 1 < n and str(
+                                (grid[r2 + 1][ci] if r2 + 1 < len(grid) and ci < len(grid[r2 + 1]) else "") or ""
+                            ).strip() == val:
+                                r2 += 1
+                            if r2 > r:
+                                try:
+                                    merged = rows[r].cells[ci].merge(rows[r2].cells[ci])
+                                    set_cell(merged, val, align=WD_ALIGN_PARAGRAPH.CENTER)
+                                    merged.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                                except Exception:
+                                    pass
+                            r = r2 + 1
+            elif first == "Bug级别" or (grid and "Bug级别" in " ".join(str(c or "") for c in (grid[0] or []))):
+                # 缺陷统计：「用例总数」行从第 2 列起横向合并至行末
+                rows = table.rows
+                for r_idx, grow in enumerate(grid):
+                    if r_idx == 0 or not isinstance(grow, list):
+                        continue
+                    if not str(grow[0] or "").strip().startswith("用例总数"):
+                        continue
+                    if cols <= 2:
+                        break
+                    try:
+                        merged = rows[r_idx].cells[1].merge(rows[r_idx].cells[cols - 1])
+                        set_cell(
+                            merged,
+                            grow[1] if len(grow) > 1 else "",
+                            align=WD_ALIGN_PARAGRAPH.CENTER,
+                        )
+                        merged.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    except Exception:
+                        pass
+                    break
             elif first in ("测试目标", "测试方法和技术") and cols == 2:
                 _set_fixed_widths(table, [2200, 7100])
             elif first == "配置":
@@ -1138,6 +1469,7 @@ class Server(object):
                 caps = node.get("table_captions") or []
                 def _emit_table(t_idx):
                     cap = caps[t_idx] if t_idx < len(caps) else ""
+                    cap = self.__strip_caption_code(cap)
                     if str(cap or "").strip():
                         add_text(cap)
                     add_grid(tables[t_idx])

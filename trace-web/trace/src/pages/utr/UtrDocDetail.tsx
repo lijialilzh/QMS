@@ -871,14 +871,13 @@ export default () => {
                                                                 style={{ marginBottom: 6, fontSize: 13 }}
                                                                 onChange={(e) => setCaption(ti, e.target.value)}
                                                             />
-                                                            <div style={{ overflowX: "auto" }}>
-                                                            <table className="pdp-grid" style={(tb[0] && tb[0].length > 4) ? { tableLayout: "fixed", width: (tb[0].length + 1) * 140, minWidth: (tb[0].length + 1) * 140 } : undefined}>
-                                                                {tb[0] && tb[0].length > 4 && (
+                                                            <table className="pdp-grid" style={{ tableLayout: "fixed", width: "100%" }}>
+                                                                {tb[0] && (
                                                                     <colgroup>
                                                                         {tb[0].map((_: any, ci: number) => (
-                                                                            <col key={ci} style={{ width: 140 }} />
+                                                                            <col key={ci} />
                                                                         ))}
-                                                                        {!readonly && <col style={{ width: 40 }} />}
+                                                                        {!readonly && <col style={{ width: 72 }} />}
                                                                     </colgroup>
                                                                 )}
                                                                 <tbody>
@@ -909,7 +908,7 @@ export default () => {
                                                                                 );
                                                                             })}
                                                                             {!readonly && (
-                                                                                <td className="pdp-row-op">
+                                                                                <td className="pdp-row-op" style={{ width: 72, whiteSpace: "nowrap", verticalAlign: "middle" }}>
                                                                                     <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
                                                                                     {tb.length > 1 && (
                                                                                         <Button type="link" danger size="small" onClick={() => delRow(ti, r)}>删除</Button>
@@ -920,7 +919,6 @@ export default () => {
                                                                     ))}
                                                                 </tbody>
                                                             </table>
-                                                            </div>
                                                         </div>
                                                     );
                                                 })}
@@ -1007,14 +1005,13 @@ export default () => {
                                                         style={{ marginBottom: 6, fontSize: 13 }}
                                                         onChange={(e) => setCaption(ti, e.target.value)}
                                                     />
-                                                    <div style={{ overflowX: "auto" }}>
-                                                    <table className="pdp-grid" style={(tb[0] && tb[0].length > 4) ? { tableLayout: "fixed", width: (tb[0].length + 1) * 140, minWidth: (tb[0].length + 1) * 140 } : undefined}>
-                                                        {tb[0] && tb[0].length > 4 && (
+                                                    <table className="pdp-grid" style={{ tableLayout: "fixed", width: "100%" }}>
+                                                        {tb[0] && (
                                                             <colgroup>
                                                                 {tb[0].map((_: any, ci: number) => (
-                                                                    <col key={ci} style={{ width: 140 }} />
+                                                                    <col key={ci} />
                                                                 ))}
-                                                                {!readonly && <col style={{ width: 40 }} />}
+                                                                {!readonly && <col style={{ width: 72 }} />}
                                                             </colgroup>
                                                         )}
                                                         <tbody>
@@ -1045,7 +1042,7 @@ export default () => {
                                                                         );
                                                                     })}
                                                                     {!readonly && (
-                                                                        <td className="pdp-row-op">
+                                                                        <td className="pdp-row-op" style={{ width: 72, whiteSpace: "nowrap", verticalAlign: "middle" }}>
                                                                             <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
                                                                             {tb.length > 1 && (
                                                                                 <Button type="link" danger size="small" onClick={() => delRow(ti, r)}>删除</Button>
@@ -1056,7 +1053,6 @@ export default () => {
                                                             ))}
                                                         </tbody>
                                                     </table>
-                                                    </div>
                                                 </div>
                                                 );
                                             })}

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # encoding: utf-8
 
-# 数据申请单服务层（开发文件）。单张表单，字段化存储于 content(JSON)。
+# 数据申请单服务层（测试文件）。单张表单，字段化存储于 content(JSON)。
 
 import base64
 import copy
@@ -76,7 +76,8 @@ class Server(object):
         return (row.code or "").strip() if row and row.code else ""
 
     def __autofill(self, content, prod_id, product=None, force=False):
-        """产品信息自动获取：project/reason←产品名+版本；日期←时间线(数据申请)；签字←申请人签名章。
+        """产品信息自动获取：project/reason←产品名+版本；日期←时间线(数据申请)；
+        申请人←参与人员测试人员（2025.09 前宋月 / 之后孙家旭）；签字←申请人签名章。
         force=False（默认）：仅填空，不覆盖已填。
         force=True（切换产品）：强制覆盖，无数据则置空。"""
         if not isinstance(content, dict):
@@ -86,24 +87,28 @@ class Server(object):
         project_val = f"{name}（{ver}）" if ver else name
         reason_val = f"“{name} {ver}”项目测试时应有的数据支持。" if name else ""
         rev_date = serv_review_util.review_date(prod_id, ["数据申请单", "数据申请"]) if prod_id else ""
-        applicant = str(content.get("applicant") or "").strip()
-        sign_val = (serv_review_util._sign_by_name(applicant) if applicant else "") or ""
+        # 申请人：与测试文件一致，按日期取主测试人员
+        applicant_auto = "宋月" if serv_review_util._before_202509(rev_date) else "孙家旭"
         if force:
             content["project"] = project_val
             content["reason"] = reason_val
+            content["applicant"] = applicant_auto
             for k in ("apply_date", "deliver_date", "sign_date"):
                 content[k] = rev_date or ""
-            content["sign_img"] = sign_val
+            content["sign_img"] = serv_review_util._sign_by_name(applicant_auto) or ""
         else:
             if name and not str(content.get("project") or "").strip():
                 content["project"] = project_val
             if name and not str(content.get("reason") or "").strip():
                 content["reason"] = reason_val
+            if not str(content.get("applicant") or "").strip():
+                content["applicant"] = applicant_auto
             for k in ("apply_date", "deliver_date", "sign_date"):
                 if rev_date and not str(content.get(k) or "").strip():
                     content[k] = rev_date
+            applicant = str(content.get("applicant") or "").strip()
             if applicant and not str(content.get("sign_img") or "").startswith("data:image"):
-                content["sign_img"] = sign_val
+                content["sign_img"] = serv_review_util._sign_by_name(applicant) or ""
         return content
 
     def __to_obj(self, row: DatDoc, product: Product = None):
