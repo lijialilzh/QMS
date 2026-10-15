@@ -129,13 +129,13 @@ class Server(object):
         return (row.code or "").strip() if row and row.code else ""
 
     def __fill_revision(self, content, prod_id, version, force=False):
-        """文件修订记录首行：修改日期(评审/封面日期)、版本号、首次发布、修订人(TPM)、批准人(研发负责人)。
-        force=True（切换产品）时强制覆盖，无数据则置空。"""
+        """文件修订记录首行：修改日期(评审/封面日期)、版本号、首次发布、
+        修订人=测试人员（2025.09 前宋月/之后孙家旭）、批准人=研发负责人。打开即覆盖修订人/批准人。"""
         rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
-        reviser = approver = ""
+        reviser = "宋月" if serv_review_util._before_202509(rev_date) else "孙家旭"
+        approver = ""
         if prod_id:
             members = db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == prod_id)).scalars().all()
-            reviser = next((m.name for m in members if "TPM" in str(m.role or "")), "")
             approver = next((m.name for m in members if "研发负责人" in str(m.role or "")), "")
         for s in (content.get("sections") or []):
             if s.get("ref_type") != "revision":
@@ -148,18 +148,20 @@ class Server(object):
                     t.append([""] * cols)
                 if len(t) >= 2 and isinstance(t[1], list) and len(t[1]) >= 3:
                     row = t[1]
-                    if force:
+                    if force or rev_date:
                         row[0] = rev_date or ""
+                    elif not str(row[0] or "").strip():
+                        row[0] = rev_date
+                    if force:
                         if len(row) >= 2: row[1] = str(version or "")
                         if len(row) >= 3: row[2] = "首次发布"
-                        if len(row) >= 4: row[3] = reviser
-                        if len(row) >= 5: row[4] = approver
                     else:
-                        if not str(row[0] or "").strip(): row[0] = rev_date
                         if version and len(row) >= 2 and not str(row[1] or "").strip(): row[1] = str(version)
                         if len(row) >= 3 and not str(row[2] or "").strip(): row[2] = "首次发布"
-                        if len(row) >= 4 and reviser and not str(row[3] or "").strip(): row[3] = reviser
-                        if len(row) >= 5 and approver and not str(row[4] or "").strip(): row[4] = approver
+                    if len(row) >= 4:
+                        row[3] = reviser
+                    if len(row) >= 5:
+                        row[4] = approver
             break
         return content
 

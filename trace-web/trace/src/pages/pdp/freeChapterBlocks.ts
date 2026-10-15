@@ -10,23 +10,55 @@ export const appendBodyLine = (body: string, line: string) => {
     return b.endsWith("\n") ? `${b}${line}` : `${b}\n${line}`;
 };
 
-/** 为图/表补齐 {{IMG}}/{{TBL}}；无占位且同时有图和表时按先图后表 */
+/** 统计正文中已能占住一张表/图的行（含旧「见下表/见下图」等），避免再追加 {{TBL}}/{{IMG}} 导致露到编辑框 */
+const countMediaSlots = (body: string) => {
+    let tbl = 0;
+    let img = 0;
+    for (const ln of String(body || "").split("\n")) {
+        const s = ln.trim();
+        if (s === "{{TBL}}" || /^(见下表|如下表|下表)$/.test(s) || /^表\s*\d/.test(s) || /见表\s*\d/.test(s)) tbl += 1;
+        else if (s === "{{IMG}}" || /^(见下图|如下图|下图)$/.test(s) || /^图\s*\d/.test(s) || /见下图|如下图|下图/.test(s)) img += 1;
+    }
+    return { tbl, img };
+};
+
+/** 为图/表补齐 {{IMG}}/{{TBL}}；无占位且同时有图和表时按先图后表；旧占位已够则不再追加 */
 export const ensureMediaPlaceholders = (body: string, tables: any[], images: any[]) => {
     let b = String(body || "");
     const nImg = Array.isArray(images) ? images.length : 0;
     const nTbl = Array.isArray(tables) ? tables.length : 0;
-    const imgPh = (b.match(/\{\{IMG\}\}/g) || []).length;
-    const tblPh = (b.match(/\{\{TBL\}\}/g) || []).length;
+    const slots = countMediaSlots(b);
     const hasLegacy = /见下图|如下图|下图|见下表|如下表|下表|见表\s*\d/.test(b);
-    if (imgPh === 0 && tblPh === 0 && !hasLegacy && nImg > 0 && nTbl > 0) {
+    if (slots.img === 0 && slots.tbl === 0 && !hasLegacy && nImg > 0 && nTbl > 0) {
         let next = b;
         for (let i = 0; i < nImg; i++) next = appendBodyLine(next, "{{IMG}}");
         for (let i = 0; i < nTbl; i++) next = appendBodyLine(next, "{{TBL}}");
         return next;
     }
-    for (let i = imgPh; i < nImg; i++) b = appendBodyLine(b, "{{IMG}}");
-    for (let i = tblPh; i < nTbl; i++) b = appendBodyLine(b, "{{TBL}}");
+    for (let i = slots.img; i < nImg; i++) b = appendBodyLine(b, "{{IMG}}");
+    for (let i = slots.tbl; i < nTbl; i++) b = appendBodyLine(b, "{{TBL}}");
     return b;
+};
+
+/** 去掉正文段中未消耗的整行 {{TBL}}/{{IMG}}（不展示给用户）；纯占位段丢弃以免多出空框 */
+export const stripOrphanMediaLines = (segs: any[]): any[] => {
+    const out: any[] = [];
+    for (const seg of segs) {
+        if (seg.type !== "text") {
+            out.push(seg);
+            continue;
+        }
+        const kept = String(seg.text ?? "")
+            .split("\n")
+            .filter((ln) => {
+                const s = ln.trim();
+                return s !== "{{TBL}}" && s !== "{{IMG}}";
+            })
+            .join("\n");
+        if (!kept.trim()) continue;
+        out.push({ ...seg, text: kept });
+    }
+    return out;
 };
 
 export const removeNthPlaceholder = (body: string, kind: "IMG" | "TBL", index: number) => {
@@ -104,7 +136,9 @@ export const reassembleFreeBody = (segments: any[], editedIndex?: number, newTex
 
 export const buildFreeSegments = (body: string, tables: any[], images: any[]) => {
     const normalized = ensureMediaPlaceholders(body, tables, images);
-    return expandTxtMarkers(ensureInterleaveTextSlots(splitBodyTables(normalized, tables, images)));
+    return expandTxtMarkers(
+        ensureInterleaveTextSlots(stripOrphanMediaLines(splitBodyTables(normalized, tables, images)))
+    );
 };
 
 export const shouldUseFreeInterleave = (body: string, segments: any[], opts?: { skip?: boolean }) => {

@@ -233,6 +233,16 @@
             &.head {
                 background: #f5f8fc;
             }
+
+            // 功能测试用例等：标签加粗、无表头底色（对齐 Word）
+            &.case-label {
+                background: transparent;
+
+                .pdp-cell,
+                textarea.pdp-cell {
+                    font-weight: 600;
+                }
+            }
         }
 
         td:not(.pdp-row-op) {

@@ -1,6 +1,6 @@
-import { Button, Dropdown, Input, Modal, Space, Spin, Upload, message } from "antd";
+import { Button, Input, Modal, Space, Spin, Upload, message } from "antd";
 import { PlusOutlined, DeleteOutlined, FileAddOutlined, UploadOutlined, ArrowUpOutlined, ArrowDownOutlined } from "@ant-design/icons";
-import { useEffect } from "react";
+import { useEffect, type ClipboardEvent } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
@@ -69,29 +69,20 @@ const moveSibling = (nodes: any[], key: string, dir: -1 | 1): any[] => {
 
 const blankChapter = () => ({ _key: genKey(), title: "新章节", body: "", tables: [], images: [], children: [] as any[] });
 
-/** 在同级上方/下方插入；返回新树与新节点 key */
-const insertSibling = (nodes: any[], key: string, where: "before" | "after"): { sections: any[]; newKey: string } | null => {
-    const list = nodes || [];
-    const idx = list.findIndex((n: any) => n._key === key);
-    if (idx >= 0) {
-        const child = blankChapter();
-        const next = [...list];
-        next.splice(where === "before" ? idx : idx + 1, 0, child);
-        return { sections: next, newKey: child._key };
-    }
-    for (let i = 0; i < list.length; i++) {
-        const hit = insertSibling(list[i].children || [], key, where);
-        if (!hit) continue;
-        const next = [...list];
-        next[i] = { ...list[i], children: hit.sections };
-        return { sections: next, newKey: hit.newKey };
-    }
-    return null;
-};
-
 const firstKey = (nodes: any[]): string => (nodes && nodes[0] ? nodes[0]._key : "");
 
 const stripNum = (title: string): string => String(title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();
+
+/** 自动获取正文（总体描述/适用范围/联系信息/确认产品信息）：编辑页只读 */
+const isImmAutofillLockedBody = (node: any): boolean => {
+    const plain = stripNum(node?.title || "");
+    return (
+        plain === "软件总体描述" ||
+        plain === "适用范围" ||
+        plain === "联系信息" ||
+        plain === "确认产品信息"
+    );
+};
 
 // 编号：封面/修订记录/附录不编号；其余正文顶级 1/2/3，子级 1.1...
 // "表N xxx" 这类节点是表格标题块（被上一章节引用），不作为独立章节编号，
@@ -186,11 +177,6 @@ export default () => {
         const child = blankChapter();
         setSections(mapNode(data.sections, key, (n: any) => ({ ...n, children: [...(n.children || []), child] })));
         dispatch({ activeKey: child._key });
-    };
-    const addSiblingAt = (key: string, where: "before" | "after") => {
-        const hit = insertSibling(data.sections, key, where);
-        if (!hit) return;
-        dispatch({ sections: hit.sections, activeKey: hit.newKey });
     };
     const addRoot = () => {
         const node = blankChapter();
@@ -301,6 +287,83 @@ export default () => {
         patchNode(data.activeKey, { images: current, body });
     };
 
+    /** 表内单元格：上传/粘贴图片为 data:image（截图列等） */
+    const putCellImage = (ti: number, r: number, ci: number, file: File) => {
+        if (!file.type.startsWith("image/")) {
+            message.error("请选择图片文件");
+            return false;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+            setCell(ti, r, ci, String(reader.result || ""));
+            message.success("图片已写入单元格，请保存文档");
+        };
+        reader.onerror = () => message.error("图片读取失败");
+        reader.readAsDataURL(file);
+        return false;
+    };
+    const onCellPasteImage = (e: ClipboardEvent, ti: number, r: number, ci: number, locked: boolean) => {
+        if (locked) return;
+        const items = Array.from(e.clipboardData?.items || []);
+        const imgItem = items.find((it) => it.type.startsWith("image/"));
+        if (!imgItem) return;
+        const file = imgItem.getAsFile();
+        if (!file) return;
+        e.preventDefault();
+        putCellImage(ti, r, ci, file);
+    };
+    /** 仅「截图」列表头对应列允许上传/粘贴图片 */
+    const isScreenshotCol = (tb: any[], ci: number) => {
+        const h = String((tb?.[0] || [])[ci] ?? "").replace(/\s+/g, "");
+        return h === "截图";
+    };
+    const renderCellBody = (ti: number, r: number, ci: number, cell: any, locked: boolean, tb: any[]) => {
+        const allowImg = r > 0 && isScreenshotCol(tb, ci);
+        const isImg = typeof cell === "string" && cell.startsWith("data:image");
+        if (isImg) {
+            return (
+                <div style={{ textAlign: "center" }}>
+                    <img
+                        src={cell}
+                        alt=""
+                        style={{ maxWidth: "100%", maxHeight: 220, width: "auto", objectFit: "contain", display: "block", margin: "0 auto" }}
+                    />
+                    {!locked && allowImg && (
+                        <Space size={4} style={{ marginTop: 4, justifyContent: "center" }}>
+                            <Upload accept="image/*" showUploadList={false} beforeUpload={(file) => putCellImage(ti, r, ci, file as File)}>
+                                <Button size="small" icon={<UploadOutlined />}>更换</Button>
+                            </Upload>
+                            <Button size="small" danger onClick={() => setCell(ti, r, ci, "")}>清除</Button>
+                        </Space>
+                    )}
+                    {!locked && !allowImg && (
+                        <DeleteOutlined title="清除" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />
+                    )}
+                </div>
+            );
+        }
+        return (
+            <div>
+                <Input.TextArea
+                    className="pdp-cell"
+                    autoSize={{ minRows: 1, maxRows: 8 }}
+                    value={cell ?? ""}
+                    disabled={locked}
+                    placeholder={allowImg && !locked ? "可上传或粘贴截图" : undefined}
+                    onChange={(e) => setCell(ti, r, ci, e.target.value)}
+                    onPaste={(e) => (allowImg ? onCellPasteImage(e, ti, r, ci, locked) : undefined)}
+                />
+                {allowImg && !locked && (
+                    <Upload accept="image/*" showUploadList={false} beforeUpload={(file) => putCellImage(ti, r, ci, file as File)}>
+                        <Button size="small" type="link" icon={<UploadOutlined />} style={{ padding: "0 4px" }}>
+                            上传图片
+                        </Button>
+                    </Upload>
+                )}
+            </div>
+        );
+    };
+
     const doSave = () => {
         if (!id) return;
         dispatch({ saving: true });
@@ -376,17 +439,7 @@ export default () => {
                                     {i > 0 && <ArrowUpOutlined title="上移" onClick={() => moveNode(n._key, -1)} />}
                                     {i < (nodes || []).length - 1 && <ArrowDownOutlined title="下移" onClick={() => moveNode(n._key, 1)} />}
                                 </span>
-                                <Dropdown
-                                    trigger={["click"]}
-                                    menu={{
-                                        items: [
-                                            { key: "before", label: "上方同级", onClick: () => addSiblingAt(n._key, "before") },
-                                            { key: "after", label: "下方同级", onClick: () => addSiblingAt(n._key, "after") },
-                                            { key: "child", label: "子章节", onClick: () => addChild(n._key) },
-                                        ],
-                                    }}>
-                                    <PlusOutlined title="添加章节" />
-                                </Dropdown>
+                                <PlusOutlined title="添加子章节" onClick={() => addChild(n._key)} />
                                 <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
                             </span>
                         )}
@@ -473,6 +526,8 @@ export default () => {
                                 {(() => {
                                     const images: string[] = Array.isArray(active.images) ? active.images : [];
                                     const isTopoAuto = stripNum(active.title) === "硬件拓扑";
+                                    const autofillBodyLock = isImmAutofillLockedBody(active);
+                                    const bodyLock = readonly || isRuntimeLockedBody(active) || autofillBodyLock;
                                     const segments = buildFreeSegments(String(active.body || ""), active.tables || [], images);
                                     // 有图/表，或多段正文（含 {{TXT}}）时走交错；清空某段正文仍保留输入框
                                     const hasInterleave = shouldUseFreeInterleave(String(active.body || ""), segments, { skip: isMd5Review });
@@ -499,11 +554,11 @@ export default () => {
                                             if (seg.type === "text") {
                                                 return (
                                                     <div className="pdp-field" key={si}>
-                                                        <div className="pdp-label">正文 {segments.slice(0, si + 1).filter((s: any) => s.type === "text").length}</div>
+                                                        <div className="pdp-label">正文 {segments.slice(0, si + 1).filter((s: any) => s.type === "text").length}{autofillBodyLock ? "（自动获取，只读）" : ""}</div>
                                                         <Input.TextArea
                                                             autoSize={{ minRows: 3, maxRows: 24 }}
                                                             value={seg.text}
-                                                            disabled={readonly || isRuntimeLockedBody(active)}
+                                                            disabled={bodyLock}
                                                             placeholder="本段正文内容，可多行"
                                                             onChange={(e) => {
                                                                 patchNode(active._key, { body: reassembleFreeBody(segments, si, e.target.value) });
@@ -519,7 +574,7 @@ export default () => {
                                                 return (
                                                     <div key={si} style={{ margin: "8px 0", textAlign: "center" }}>
                                                         <img src={url} alt="" style={{ maxWidth: "100%", border: "1px solid #eee" }} />
-                                                        {!readonly && (
+                                                        {!readonly && !autofillBodyLock && (
                                                             <Space size={4} style={{ marginTop: 4, display: "flex", justifyContent: "center" }}>
                                                                 <Upload
                                                                     accept="image/*"
@@ -603,22 +658,7 @@ export default () => {
                                                                                 const rowSpan = ci === 0 ? vSpan[r] : undefined;
                                                                                 return (
                                                                                     <td key={ci} className={r === 0 ? "head" : ""} rowSpan={rowSpan}>
-                                                                                        {typeof cell === "string" && cell.startsWith("data:image") ? (
-                                                                                            <span style={{ position: "relative", display: "inline-block" }}>
-                                                                                                <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
-                                                                                                {!rtLock && (
-                                                                                                    <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />
-                                                                                                )}
-                                                                                            </span>
-                                                                                        ) : (
-                                                                                            <Input.TextArea
-                                                                                                className="pdp-cell"
-                                                                                                autoSize={{ minRows: 1, maxRows: 8 }}
-                                                                                                value={cell ?? ""}
-                                                                                                disabled={rtLock}
-                                                                                                onChange={(e) => setCell(ti, r, ci, e.target.value)}
-                                                                                            />
-                                                                                        )}
+                                                                                        {renderCellBody(ti, r, ci, cell, rtLock, tb)}
                                                                                     </td>
                                                                                 );
                                                                             })
@@ -639,7 +679,7 @@ export default () => {
                                                 </div>
                                             );
                                         })}
-                                        {!readonly && (
+                                        {!readonly && !autofillBodyLock && (
                                             <Space wrap style={{ margin: "8px 0" }}>
                                                 <Button size="small" onClick={addBodyBlock}>添加正文</Button>
                                                 <Upload
@@ -650,7 +690,7 @@ export default () => {
                                                 </Upload>
                                             </Space>
                                         )}
-                                        {!readonly && !isMd5Review && (
+                                        {!readonly && !autofillBodyLock && !isMd5Review && (
                                             <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
                                                 添加表格
                                             </Button>
@@ -662,11 +702,11 @@ export default () => {
                                         <>
                                             {!hideBodyBox && (
                                             <div className="pdp-field">
-                                                <div className="pdp-label">正文</div>
+                                                <div className="pdp-label">正文{autofillBodyLock ? "（自动获取，只读）" : ""}</div>
                                                 <Input.TextArea
                                                     autoSize={{ minRows: 3, maxRows: 24 }}
                                                     value={active.body ?? ""}
-                                                    disabled={readonly || isRuntimeLockedBody(active)}
+                                                    disabled={bodyLock}
                                                     placeholder="本章节正文内容，可多行"
                                                     onChange={(e) => patchNode(active._key, { body: e.target.value })}
                                                 />
@@ -744,22 +784,7 @@ export default () => {
                                                                                     const rowSpan = ci === 0 ? vSpan[r] : undefined;
                                                                                     return (
                                                                                         <td key={ci} className={r === 0 ? "head" : ""} rowSpan={rowSpan}>
-                                                                                            {typeof cell === "string" && cell.startsWith("data:image") ? (
-                                                                                                <span style={{ position: "relative", display: "inline-block" }}>
-                                                                                                    <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
-                                                                                                    {!rtLock && (
-                                                                                                        <DeleteOutlined title="清除签名" style={{ marginLeft: 6, color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />
-                                                                                                    )}
-                                                                                                </span>
-                                                                                            ) : (
-                                                                                                <Input.TextArea
-                                                                                                    className="pdp-cell"
-                                                                                                    autoSize={{ minRows: 1, maxRows: 8 }}
-                                                                                                    value={cell ?? ""}
-                                                                                                    disabled={rtLock}
-                                                                                                    onChange={(e) => setCell(ti, r, ci, e.target.value)}
-                                                                                                />
-                                                                                            )}
+                                                                                            {renderCellBody(ti, r, ci, cell, rtLock, tb)}
                                                                                         </td>
                                                                                     );
                                                                                 })
@@ -800,7 +825,7 @@ export default () => {
                                                         )}
                                                     </div>
                                                 ))}
-                                                {!readonly && (
+                                                {!readonly && !autofillBodyLock && (
                                                     <Space wrap style={{ margin: "4px 0" }}>
                                                         <Button size="small" onClick={addBodyBlock}>添加正文</Button>
                                                         <Upload
@@ -814,7 +839,7 @@ export default () => {
                                             </div>
                                             )}
 
-                                            {!readonly && !isMd5Review && (
+                                            {!readonly && !autofillBodyLock && !isMd5Review && (
                                                 <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
                                                     添加表格
                                                 </Button>

@@ -243,15 +243,22 @@ def _match_child_key(title, plain):
 
 
 def _apply_runtime_captions(node, titles, count):
+    """写入运行环境表名到 table_captions（无则新建），保证编辑页「表格上方说明/表名」有值。"""
+    n = max(0, int(count or 0))
+    if n <= 0:
+        return
+    titles = list(titles or [])
     for field in ("table_captions", "table_titles"):
         caps = node.get(field)
-        if not isinstance(caps, list) or not caps:
-            continue
+        if not isinstance(caps, list):
+            caps = []
         new_caps = list(caps)
-        for i in range(min(count, len(new_caps), len(titles))):
+        while len(new_caps) < n:
+            new_caps.append("")
+        for i in range(min(n, len(titles))):
             if titles[i]:
                 new_caps[i] = titles[i]
-        node[field] = new_caps
+        node[field] = new_caps[: max(len(new_caps), n)]
 
 
 def _normalize_runtime_body_tbl(body, arch=""):
@@ -363,6 +370,18 @@ def apply_runtime_to_pdp_content(content, prod_id):
             if item and tables and item.get("cells"):
                 node["tables"] = [_wrap_cells_like(tables[0], item.get("cells"), item.get("title") or "")]
                 _apply_runtime_captions(node, [item.get("title") or ""], 1)
+                # IMM 等子章：警告/说明放表后。正文尚无表占位时在文首插入 {{TBL}}
+                body = node.get("body")
+                if isinstance(body, str) and body.strip():
+                    has_ph = (
+                        "{{TBL}}" in body
+                        or re.search(r"(?m)^(见下表|如下表|下表)$", body)
+                        or re.search(r"(?m)^表\s*\d", body)
+                        or re.search(r"见表\s*\d", body)
+                    )
+                    if not has_ph:
+                        node["body"] = "{{TBL}}\n" + body.lstrip("\n")
+
 
         for child in (node.get("children") or []):
             fill_node(child, is_runtime)

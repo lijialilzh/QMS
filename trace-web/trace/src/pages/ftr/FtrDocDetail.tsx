@@ -31,6 +31,20 @@ import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
 
+/** 功能测试用例表（首格「序号」）：无表头底色；标签列与「执行步骤|预期结果」行加粗 */
+const isCaseTable = (tb: any[]): boolean => String((tb?.[0] || [])[0] || "").trim() === "序号";
+const caseCellClass = (tb: any[], r: number, ci: number): string => {
+    if (!isCaseTable(tb)) return r === 0 ? "head" : "";
+    const lab = String((tb[r] || [])[0] || "").trim();
+    if (lab === "执行步骤") return "case-label";
+    if (["序号", "用例标题", "功能描述", "系统设置"].includes(lab) && ci === 0) return "case-label";
+    return "";
+};
+
+/** 1.2 范围：产品信息自动获取后正文只读 */
+const isScopeAutofillLocked = (node: any): boolean =>
+    String(node?.title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim() === "范围";
+
 // 从「产品时间逻辑线」计算产品开发周期：取输出含「产品开发」活动（排除「产品开发计划」文档）的日期，
 // 最早=开发开始、最晚=开发结束。格式「YYYY年M月~M月」（同年省略后段年份，跨年则完整显示）。
 const computeCycle = (rows: any[]): string => {
@@ -695,7 +709,8 @@ export default () => {
                                     />
                                 </div>
                                 {(() => {
-                                    const rtBodyLock = readonly || isRuntimeLockedBody(active);
+                                    const scopeLock = isScopeAutofillLocked(active);
+                                    const rtBodyLock = readonly || isRuntimeLockedBody(active) || scopeLock;
                                     const images: string[] = Array.isArray(active.images) ? active.images : [];
                                     const segments = buildFreeSegments(String(active.body || ""), active.tables || [], images);
                                     const hasInterleave = shouldUseFreeInterleave(String(active.body || ""), segments, { skip: active.ref_type === "review" });
@@ -716,7 +731,7 @@ export default () => {
                                                     if (seg.type === "text") {
                                                         return (
                                                             <div className="pdp-field" key={si}>
-                                                                <div className="pdp-label">正文 {segments.slice(0, si + 1).filter((s: any) => s.type === "text").length}</div>
+                                                                <div className="pdp-label">正文 {segments.slice(0, si + 1).filter((s: any) => s.type === "text").length}{scopeLock ? "（自动获取，只读）" : ""}</div>
                                                                 <Input.TextArea
                                                                     autoSize={{ minRows: 3, maxRows: 20 }}
                                                                     value={seg.text}
@@ -737,7 +752,7 @@ export default () => {
                                                         return (
                                                             <div key={si} style={{ margin: "8px 0", textAlign: "center" }}>
                                                                 <img src={url} alt="" style={{ maxWidth: "100%", border: "1px solid #eee" }} />
-                                                                {!readonly && (
+                                                                {!readonly && !scopeLock && (
                                                                     <Space size={4} style={{ marginTop: 4, display: "flex", justifyContent: "center" }}>
                                                                         <Upload accept="image/*" showUploadList={false} beforeUpload={(file) => uploadImage(file as File, ii)}>
                                                                             <Button size="small" icon={<UploadOutlined />}>更换</Button>
@@ -777,7 +792,7 @@ export default () => {
                                                                     {tb.map((row: any[], r: number) => (
                                                                         <tr key={r}>
                                                                             {row.map((cell: any, ci: number) => (
-                                                                                <td key={ci} className={r === 0 ? "head" : ""}>
+                                                                                <td key={ci} className={caseCellClass(tb, r, ci)}>
                                                                                     {typeof cell === "string" && cell.startsWith("data:image") ? (
                                                                                         <span style={{ position: "relative", display: "inline-block" }}>
                                                                                             <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
@@ -829,7 +844,7 @@ export default () => {
                                     return (
                                         <>
                                             <div className="pdp-field">
-                                                <div className="pdp-label">正文{rtBodyLock ? "（运行环境自动获取，只读）" : ""}</div>
+                                                <div className="pdp-label">正文{scopeLock ? "（自动获取，只读）" : (isRuntimeLockedBody(active) ? "（运行环境自动获取，只读）" : "")}</div>
                                                 <Input.TextArea
                                                     autoSize={{ minRows: 3, maxRows: 20 }}
                                                     value={active.body ?? ""}
@@ -879,7 +894,7 @@ export default () => {
                                                             {tb.map((row: any[], r: number) => (
                                                                 <tr key={r}>
                                                                     {row.map((cell: any, ci: number) => (
-                                                                        <td key={ci} className={r === 0 ? "head" : ""}>
+                                                                        <td key={ci} className={caseCellClass(tb, r, ci)}>
                                                                             {typeof cell === "string" && cell.startsWith("data:image") ? (
                                                                                 <span style={{ position: "relative", display: "inline-block" }}>
                                                                                     <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
@@ -913,7 +928,7 @@ export default () => {
                                                 </div>
                                                 );
                                             })}
-                                            {!readonly && active.ref_type !== "review" && (
+                                            {!readonly && !scopeLock && active.ref_type !== "review" && (
                                                 <>
                                                 <Space wrap style={{ margin: "8px 0" }}>
                                                     <Button size="small" onClick={addBodyBlock}>添加正文</Button>

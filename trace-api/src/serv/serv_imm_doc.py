@@ -26,6 +26,7 @@ from ..model.imm_doc import ImmDoc
 from ..model.prod_dhf import ProdDhf
 from ..model.project_member import ProjectMember
 from ..model.scm_doc import ScmDoc
+from ..model.company_info import CompanyInfo
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
 from ..obj.vobj_user import UserObj
@@ -146,6 +147,66 @@ class Server(object):
             out.append("{{IMG}}")
             inserted += 1
         return "\n".join(out)
+
+    @staticmethod
+    def __append_body_line(body, line):
+        b = str(body or "")
+        if not b.strip():
+            return line
+        return f"{b}{line}" if b.endswith("\n") else f"{b}\n{line}"
+
+    @staticmethod
+    def __count_media_slots(body):
+        """与编辑页 freeChapterBlocks.countMediaSlots 对齐：统计已能占住表/图的行。"""
+        tbl = img = 0
+        for ln in str(body or "").split("\n"):
+            s = ln.strip()
+            if s == "{{TBL}}" or s in ("见下表", "如下表", "下表") or re.match(r"^表\s*\d", s) or re.search(r"见表\s*\d", s):
+                tbl += 1
+            elif (
+                s == "{{IMG}}"
+                or s in ("见下图", "如下图", "下图")
+                or re.match(r"^图\s*\d", s)
+                or re.search(r"见下图|如下图|下图", s)
+            ):
+                img += 1
+        return tbl, img
+
+    @classmethod
+    def __ensure_export_media_placeholders(cls, body, tables, images):
+        """导出前补齐 {{TBL}}/{{IMG}}，与编辑页 ensureMediaPlaceholders 一致。"""
+        b = str(body or "")
+        n_tbl = len(tables or [])
+        n_img = len(images or [])
+        tbl_ph, img_ph = cls.__count_media_slots(b)
+        for _ in range(max(0, n_img - img_ph)):
+            b = cls.__append_body_line(b, "{{IMG}}")
+        for _ in range(max(0, n_tbl - tbl_ph)):
+            b = cls.__append_body_line(b, "{{TBL}}")
+        return b
+
+    @staticmethod
+    def __clean_export_text(text):
+        """导出正文去掉内部占位，不写入 Word。"""
+        parts = []
+        for ln in str(text or "").split("\n"):
+            s = ln.strip()
+            if s in ("{{TBL}}", "{{IMG}}", "{{EMPTY}}", "{{TXT}}"):
+                continue
+            cleaned = ln.replace("{{TXT}}", "").replace("{{EMPTY}}", "")
+            if cleaned.strip() in ("{{TBL}}", "{{IMG}}", ""):
+                if cleaned.strip() == "":
+                    # 保留空行结构：仅当原行非纯占位时
+                    if s == "":
+                        parts.append("")
+                continue
+            parts.append(cleaned)
+        # 去掉首尾多余空行
+        while parts and not parts[0].strip():
+            parts.pop(0)
+        while parts and not parts[-1].strip():
+            parts.pop()
+        return "\n".join(parts)
 
     def __normalize_content(self, content):
         if not isinstance(content, dict) or not isinstance(content.get("sections"), list):
@@ -602,8 +663,20 @@ class Server(object):
             db.session.rollback()
         return Resp.resp_err(msg=ts(msg_err_db))
 
+    def __resolve_company(self, product):
+        """公司基本信息：优先按产品注册人匹配，未匹配再取 id 最小一条（同标签文档）。"""
+        prod_registrant = (getattr(product, "registrant", "") or "").strip() if product else ""
+        company = None
+        if prod_registrant:
+            company = db.session.execute(
+                select(CompanyInfo).where(CompanyInfo.registrant == prod_registrant)
+            ).scalars().first()
+        if not company:
+            company = db.session.execute(select(CompanyInfo).order_by(CompanyInfo.id.asc())).scalars().first()
+        return company
+
     def __fill_product_info(self, content, product):
-        """切换产品时按新产品信息重建自动获取的章节正文（1.1软件说明/1.4总体描述/1.5适用范围/2.确认产品信息/概述）。
+        """切换产品时按新产品信息重建自动获取的章节正文（1.1软件说明/1.4总体描述/1.5适用范围/1.7联系信息/2.确认产品信息/概述）。
         参考 rmp 模式：按标题定位，用新产品字段强制覆盖，不依赖旧值匹配。"""
         if not product or not isinstance(content, dict):
             return content
@@ -617,6 +690,11 @@ class Server(object):
         scope = (product.scope or "").strip()
         # 型号直接用 type_code 原值（字段本身可能已含/不含 InferCare 前缀，不再额外拼接）
         type_display = type_code
+        # 联系信息：公司名称/地址/电话 ← 公司基本信息
+        company = self.__resolve_company(product)
+        co_name = (getattr(company, "registrant", "") or "").strip() if company else registrant
+        co_addr = (getattr(company, "address", "") or "").strip() if company else ""
+        co_phone = (getattr(company, "contact_phone", "") or "").strip() if company else ""
         # 物理拓扑图：取产品图示 img_topo 最新一条（与 PTR 等一致，不取体系结构图）
         topo_url = ""
         topo_row = pick_doc_image_file_row(product.id, "img_topo")
@@ -646,6 +724,12 @@ class Server(object):
             elif plain == "适用范围":
                 # 自动获取：为空则显示空
                 node["body"] = scope
+            elif plain == "联系信息":
+                node["body"] = (
+                    f"公司名称：{co_name}\n"
+                    f"地址：{co_addr}\n"
+                    f"电话：{co_phone}"
+                )
             elif plain == "确认产品信息":
                 node["body"] = (
                     f"产品名称：{prod_name}\n"
@@ -740,6 +824,12 @@ class Server(object):
         sections = c.get("sections") or []
 
         document = Document()
+        # 关闭 Word 自动压缩图片，避免粘贴截图导出发虚
+        try:
+            no_compress = OxmlElement("w:doNotAutoCompressPictures")
+            document.settings.element.append(no_compress)
+        except Exception:
+            pass
         section = document.sections[0]
         section.top_margin = Inches(0.8)
         section.bottom_margin = Inches(0.8)
@@ -767,19 +857,42 @@ class Server(object):
         def add_text(text):
             docx_util.save_txt2docx(str(text or ""), document)
 
-        def set_cell(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
+        def set_cell(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT, img_max_w_in=5.2):
             s = str(text or "")
             if s.startswith("data:image"):
                 try:
                     b64 = s.split(",", 1)[1] if "," in s else ""
+                    raw = base64.b64decode(b64)
+                    ow = oh = None
+                    try:
+                        from PIL import Image as PILImage
+                        with PILImage.open(BytesIO(raw)) as im:
+                            ow, oh = im.size
+                    except Exception:
+                        pass
                     cell.text = ""
                     para = cell.paragraphs[0]
-                    para.alignment = align
-                    para.add_run().add_picture(BytesIO(base64.b64decode(b64)), height=Pt(33))
+                    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    run = para.add_run()
+                    # 签字小图矮高度；截图按 ~150DPI 定寸，避免按 96DPI 撑虚
+                    is_sign = (ow is not None and oh is not None and ow <= 220 and oh <= 90) or (
+                        ow is None and len(raw) < 15000
+                    )
+                    if is_sign:
+                        run.add_picture(BytesIO(raw), height=Pt(33))
+                    elif ow and oh:
+                        target_dpi = 150.0
+                        max_w_in = float(img_max_w_in or 5.2)
+                        max_h_in = 6.0
+                        w_in, h_in = ow / target_dpi, oh / target_dpi
+                        scale = min(max_w_in / w_in if w_in else 1.0, max_h_in / h_in if h_in else 1.0, 1.0)
+                        run.add_picture(BytesIO(raw), width=Inches(max(1.2, w_in * scale)))
+                    else:
+                        run.add_picture(BytesIO(raw), width=Inches(min(4.5, float(img_max_w_in or 5.2))))
                     cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
                     return
                 except Exception:
-                    pass
+                    logger.exception("导出表内图片失败")
             cell.text = ""
             for i, line in enumerate(s.split("\n")):
                 para = cell.paragraphs[0] if i == 0 else cell.add_paragraph()
@@ -821,16 +934,39 @@ class Server(object):
             cols = max((len(row) for row in grid), default=0)
             if cols <= 0:
                 return
+            # 「截图」列加宽，避免图被挤虚
+            shot_ci = -1
+            if grid and grid[0]:
+                for i, h in enumerate(grid[0]):
+                    if str(h or "").replace(" ", "") == "截图":
+                        shot_ci = i
+                        break
             table = document.add_table(rows=0, cols=cols)
             table.style = "Table Grid"
             table.alignment = WD_TABLE_ALIGNMENT.CENTER
             table.autofit = True
+            shot_max_w = 4.8 if shot_ci >= 0 else 5.2
             for r_idx, row in enumerate(grid):
                 cells = table.add_row().cells
                 for c_idx in range(cols):
-                    set_cell(cells[c_idx], row[c_idx] if c_idx < len(row) else "", bold=(r_idx == 0))
+                    val = row[c_idx] if c_idx < len(row) else ""
+                    if c_idx == shot_ci and r_idx > 0 and str(val or "").startswith("data:image"):
+                        set_cell(cells[c_idx], val, bold=False, img_max_w_in=shot_max_w)
+                    else:
+                        set_cell(cells[c_idx], val, bold=(r_idx == 0))
             first = str(grid[0][0]).strip() if grid and grid[0] else ""
-            if first == "SCI名字":
+            if shot_ci >= 0 and cols >= 2:
+                # 总宽约 9360 dxa：截图列加宽，减少挤扁发虚
+                total_w, shot_w = 9360, 4800
+                rest = max(2400, total_w - shot_w)
+                each = max(600, rest // max(1, cols - 1))
+                widths = [each] * cols
+                widths[shot_ci] = shot_w
+                rem = total_w - sum(widths)
+                if rem != 0 and shot_ci < len(widths):
+                    widths[shot_ci] = max(3000, widths[shot_ci] + rem)
+                _set_fixed_widths(table, widths)
+            elif first == "SCI名字":
                 if cols == 5:
                     _set_fixed_widths(table, [1700, 1100, 2000, 1500, 3000])
                 elif cols == 4:
@@ -886,14 +1022,11 @@ class Server(object):
 
         def add_image(image_url):
             raw_url = str(image_url or "").strip()
-            if not raw_url or not raw_url.startswith("data:image/"):
+            if not raw_url:
                 return
             try:
-                image_data = raw_url.split(",", 1)[1]
-                paragraph = document.add_paragraph()
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                paragraph.add_run().add_picture(BytesIO(base64.b64decode(image_data)), width=Inches(6.2))
-                document.add_paragraph()
+                # 与编辑页一致：支持 data:image 与 /data.trace/ 文件路径
+                docx_util.save_img2docx(raw_url, document, mw=620, mh=480, page_fit=True)
             except Exception:
                 logger.exception("导出安装维护手册图片失败")
 
@@ -916,64 +1049,91 @@ class Server(object):
             heading = f"{number} {name}".strip() if number else name
             if heading:
                 add_body_heading(heading, level=max(1, min(level, 9)))
-            body_text = str(node.get("body") or "")
             tables = node.get("tables") or []
             caps = node.get("table_captions") or []
-            images = node.get("images") or []
-            def _emit_table(t_idx):
-                cap = caps[t_idx] if t_idx < len(caps) else ""
-                if str(cap or "").strip():
-                    add_text(cap)
-                add_grid(tables[t_idx])
-            # 按 {{TBL}}/见下表/表N / {{IMG}}/见下图/图N 切分 body，交错输出正文段、表格和图片
-            if ((("{{TBL}}" in body_text) or ("见下表" in body_text) or re.search(r"(?m)^表\s*\d", body_text)) and tables) or (
-                ("{{IMG}}" in body_text) or ("见下图" in body_text) or re.search(r"(?m)^图\s*\d", body_text)
-            ) and images:
-                lines = body_text.split("\n")
-                buf = []
-                tbl_idx = 0
-                img_idx = 0
-                def flush_text():
-                    t = "\n".join(buf).strip()
-                    if t:
-                        add_text(t)
-                    buf.clear()
-                for ln in lines:
-                    s = ln.strip()
-                    if (s == "{{TBL}}" or s in ("见下表", "如下表", "下表") or re.match(r"^表\s*\d", s)) and tbl_idx < len(tables):
-                        if s != "{{TBL}}" and s not in ("见下表", "如下表", "下表"):
-                            buf.append(ln)  # 「表N」题注保留
-                        flush_text()
-                        _emit_table(tbl_idx)
-                        tbl_idx += 1
-                    elif (s == "{{IMG}}" or s in ("见下图", "如下图", "下图") or re.match(r"^图\s*\d", s)) and img_idx < len(images):
-                        if s != "{{IMG}}" and s not in ("见下图", "如下图", "下图"):
-                            buf.append(ln)  # 「图N」题注保留
-                        flush_text()
-                        add_image(images[img_idx])
-                        img_idx += 1
-                    elif (("见下图" in s) or ("如下图" in s) or ("下图" in s)) and img_idx < len(images) and s not in ("见下图", "如下图", "下图"):
-                        # 句子中含「见下图」：保留该行文字，其后插图
-                        buf.append(ln)
-                        flush_text()
-                        add_image(images[img_idx])
-                        img_idx += 1
-                    else:
-                        buf.append(ln)
-                flush_text()
-                for i in range(tbl_idx, len(tables)):
-                    _emit_table(i)
-                for i in range(img_idx, len(images)):
-                    add_image(images[i])
-            else:
-                if body_text.strip():
-                    add_text(body_text)
-                for t_idx in range(len(tables)):
-                    _emit_table(t_idx)
+            images = [x for x in (node.get("images") or []) if isinstance(x, str) and x]
+            # 硬件拓扑：编辑页无正文框，仅导出图
+            if name == "硬件拓扑":
                 for image_url in images:
                     add_image(image_url)
+            else:
+                body_text = self.__ensure_export_media_placeholders(str(node.get("body") or ""), tables, images)
+                body_text = self.__ensure_step_img_interleave(body_text, images)
+
+                def _emit_table(t_idx):
+                    if t_idx < 0 or t_idx >= len(tables):
+                        return
+                    cap = caps[t_idx] if t_idx < len(caps) else ""
+                    if str(cap or "").strip():
+                        add_text(cap)
+                    add_grid(tables[t_idx])
+
+                # 与编辑页 splitBodyTables 对齐：有表或图则按占位交错；静默占位不写入正文
+                if tables or images:
+                    lines = body_text.split("\n")
+                    buf = []
+                    tbl_idx = 0
+                    img_idx = 0
+                    has_tbl_ph = "{{TBL}}" in body_text
+
+                    def flush_text():
+                        t = self.__clean_export_text("\n".join(buf))
+                        if t:
+                            add_text(t)
+                        buf.clear()
+
+                    for ln in lines:
+                        s = ln.strip()
+                        if (s == "{{TBL}}" or s in ("见下表", "如下表", "下表") or re.match(r"^表\s*\d", s)) and tbl_idx < len(tables):
+                            # 「表N」与 {{TBL}} 均为静默占位（编辑页不展示占位字）
+                            flush_text()
+                            _emit_table(tbl_idx)
+                            tbl_idx += 1
+                        elif re.search(r"见表\s*\d", s) and tbl_idx < len(tables):
+                            rest = re.sub(r"见表\s*\d+", "", ln).strip()
+                            if rest:
+                                buf.append(rest)
+                            flush_text()
+                            _emit_table(tbl_idx)
+                            tbl_idx += 1
+                        elif (s == "{{IMG}}" or s in ("见下图", "如下图", "下图") or re.match(r"^图\s*\d", s)) and img_idx < len(images):
+                            flush_text()
+                            add_image(images[img_idx])
+                            img_idx += 1
+                        elif (
+                            (("见下图" in s) or ("如下图" in s) or ("下图" in s))
+                            and img_idx < len(images)
+                            and s not in ("见下图", "如下图", "下图")
+                        ):
+                            buf.append(ln)
+                            flush_text()
+                            add_image(images[img_idx])
+                            img_idx += 1
+                        elif (
+                            not has_tbl_ph
+                            and re.match(r"^\d+[）)]", s)
+                            and tbl_idx < len(tables)
+                        ):
+                            buf.append(ln)
+                            flush_text()
+                            _emit_table(tbl_idx)
+                            tbl_idx += 1
+                        elif s in ("{{TBL}}", "{{IMG}}", "{{EMPTY}}", "{{TXT}}"):
+                            # 孤儿占位：跳过，不写入 Word
+                            continue
+                        else:
+                            buf.append(ln)
+                    flush_text()
+                    for i in range(tbl_idx, len(tables)):
+                        _emit_table(i)
+                    for i in range(img_idx, len(images)):
+                        add_image(images[i])
+                else:
+                    cleaned = self.__clean_export_text(body_text)
+                    if cleaned:
+                        add_text(cleaned)
             if str(node.get("body_tail") or "").strip():
-                add_text(node.get("body_tail"))
+                add_text(self.__clean_export_text(node.get("body_tail")))
             idx = 0
             for child in (node.get("children") or []):
                 # "表N xxx" 是表格标题块（被上一章节引用），不作为独立章节编号，
