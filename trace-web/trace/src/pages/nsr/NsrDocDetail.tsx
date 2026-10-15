@@ -1,5 +1,5 @@
 import { Button, Input, Space, Spin, Tag, message } from "antd";
-import { PlusOutlined, DeleteOutlined } from "@ant-design/icons";
+import { PlusOutlined, DeleteOutlined, ArrowUpOutlined, ArrowDownOutlined } from "@ant-design/icons";
 import { useEffect, CSSProperties } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -106,6 +106,20 @@ const findNode = (nodes: any[], key: string): any => {
 
 const removeNode = (nodes: any[], key: string): any[] =>
     (nodes || []).filter((n: any) => n._key !== key).map((n: any) => ({ ...n, children: removeNode(n.children || [], key) }));
+
+/** 同级交换位置：dir=-1 上移，dir=1 下移；找不到或越界则原样返回 */
+const moveSibling = (nodes: any[], key: string, dir: -1 | 1): any[] => {
+    const list = nodes || [];
+    const idx = list.findIndex((n: any) => n._key === key);
+    if (idx >= 0) {
+        const j = idx + dir;
+        if (j < 0 || j >= list.length) return list;
+        const next = [...list];
+        [next[idx], next[j]] = [next[j], next[idx]];
+        return next;
+    }
+    return list.map((n: any) => ({ ...n, children: moveSibling(n.children || [], key, dir) }));
+};
 
 const newSection = () => ({ title: "新章节", text: "", images: [], tables: [], table_titles: [], children: [] });
 
@@ -249,6 +263,13 @@ export default () => {
         const keep = findNode(remained, data.activeKey);
         dispatch({ sections: remained, activeKey: keep ? data.activeKey : firstSelectableKey(remained) });
     };
+    const moveNode = (key: string, dir: -1 | 1) => {
+        const next = cloneContent({ sections: data.sections });
+        assignKeys(next.sections || []);
+        const moved = moveSibling(next.sections || [], key, dir);
+        assignKeys(moved);
+        dispatch({ sections: moved });
+    };
 
     const doSave = () => {
         if (!id) return;
@@ -286,7 +307,7 @@ export default () => {
     const active = findNode(data.sections, data.activeKey);
 
     const renderNav = (nodes: any[], depth: number) =>
-        (nodes || []).map((n: any) => (
+        (nodes || []).map((n: any, i: number) => (
             <div key={n._key}>
                 <div
                     className={`pdp-nav-item${n._key === data.activeKey ? " active" : ""}`}
@@ -295,6 +316,10 @@ export default () => {
                     <span className="pdp-nav-title" title={n.title}>{n.title || "(未命名)"}</span>
                     {!readonly && (
                         <span className="pdp-nav-ops" onClick={(e) => e.stopPropagation()}>
+                            <span className="pdp-nav-move">
+                                {i > 0 && <ArrowUpOutlined title="上移" onClick={() => moveNode(n._key, -1)} />}
+                                {i < (nodes || []).length - 1 && <ArrowDownOutlined title="下移" onClick={() => moveNode(n._key, 1)} />}
+                            </span>
                             <PlusOutlined title="添加子章节" onClick={() => addChild(n._key)} />
                             <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
                         </span>

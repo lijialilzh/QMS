@@ -101,9 +101,19 @@
             .pdp-nav-ops {
                 opacity: 1;
             }
+
+            .pdp-nav-move {
+                max-width: 48px;
+                opacity: 1;
+            }
         }
 
         &.active .pdp-nav-ops {
+            opacity: 1;
+        }
+
+        &.active .pdp-nav-move {
+            max-width: 48px;
             opacity: 1;
         }
 
@@ -134,6 +144,16 @@
         .anticon:last-child:hover {
             color: #ff4d4f;
         }
+    }
+
+    /* 同级上下移：默认收起，悬停/选中再展开，避免目录常驻四个图标过挤 */
+    .pdp-nav-move {
+        display: inline-flex;
+        gap: 10px;
+        max-width: 0;
+        opacity: 0;
+        overflow: hidden;
+        transition: max-width 0.15s ease, opacity 0.15s ease;
     }
 
     .pdp-nav-add {

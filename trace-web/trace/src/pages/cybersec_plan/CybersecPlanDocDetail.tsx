@@ -1,5 +1,5 @@
 import { Button, Input, Space, Spin, message } from "antd";
-import { PlusOutlined, DeleteOutlined, FileAddOutlined } from "@ant-design/icons";
+import { PlusOutlined, DeleteOutlined, FileAddOutlined, ArrowUpOutlined, ArrowDownOutlined} from "@ant-design/icons";
 import { useEffect } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -87,6 +87,21 @@ const mapNode = (nodes: any[], key: string, fn: (n: any) => any): any[] =>
     (nodes || []).map((n: any) => n._key === key ? fn(n) : { ...n, children: mapNode(n.children || [], key, fn) });
 const removeNode = (nodes: any[], key: string): any[] =>
     (nodes || []).filter((n: any) => n._key !== key).map((n: any) => ({ ...n, children: removeNode(n.children || [], key) }));
+
+
+/** 同级交换位置：dir=-1 上移，dir=1 下移；找不到或越界则原样返回 */
+const moveSibling = (nodes: any[], key: string, dir: -1 | 1): any[] => {
+    const list = nodes || [];
+    const idx = list.findIndex((n: any) => n._key === key);
+    if (idx >= 0) {
+        const j = idx + dir;
+        if (j < 0 || j >= list.length) return list;
+        const next = [...list];
+        [next[idx], next[j]] = [next[j], next[idx]];
+        return next;
+    }
+    return list.map((n: any) => ({ ...n, children: moveSibling(n.children || [], key, dir) }));
+};
 const sectionKey = (s: any) => s?._key || s?.title || s?.ref_type || "";
 
 const NO_NUM = new Set(["cover", "revision", "appendix"]);
@@ -217,6 +232,9 @@ export default () => {
         const sections = removeNode(data.content.sections, key);
         setSections(sections); dispatch({ activeSectionKey: data.activeSectionKey === key ? sectionKey(sections.find((s: any) => !isCoverSection(s) && !isRevisionSection(s))) : data.activeSectionKey });
     };
+    const moveNode = (key: string, dir: -1 | 1) => {
+        setSections(moveSibling(data.content.sections, key, dir));
+    };
 
     const active = findNode(data.content.sections, data.activeSectionKey);
     const updateTables = (tables: any[]) => patchNode(data.activeSectionKey, { tables });
@@ -309,7 +327,7 @@ export default () => {
     const numbers = computeNumbers(data.content.sections);
 
     const renderNav = (nodes: any[], depth: number) =>
-        (nodes || []).map((n: any) => {
+        (nodes || []).map((n: any, i: number) => {
             const num = numbers[n._key];
             const label = `${num ? num + " " : ""}${stripSectionNo(n.title) || "(未命名)"}`;
             return (
@@ -320,6 +338,10 @@ export default () => {
                         <span className="pdp-nav-title" title={label}>{label}</span>
                         {!isView && (
                             <span className="pdp-nav-ops" onClick={(e) => e.stopPropagation()}>
+                                <span className="pdp-nav-move">
+                                    {i > 0 && <ArrowUpOutlined title="上移" onClick={() => moveNode(n._key, -1)} />}
+                                    {i < (nodes || []).length - 1 && <ArrowDownOutlined title="下移" onClick={() => moveNode(n._key, 1)} />}
+                                </span>
                                 <PlusOutlined title="添加子章节" onClick={() => addChild(n._key)} />
                                 <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
                             </span>

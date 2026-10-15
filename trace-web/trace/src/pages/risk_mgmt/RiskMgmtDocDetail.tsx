@@ -1,5 +1,5 @@
 import { Button, Form, Input, Space, Spin, Upload, message } from "antd";
-import { UploadOutlined, PlusOutlined, DeleteOutlined } from "@ant-design/icons";
+import { UploadOutlined, PlusOutlined, DeleteOutlined, ArrowUpOutlined, ArrowDownOutlined } from "@ant-design/icons";
 import { useEffect, useRef } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -167,6 +167,19 @@ const makeRowKey = () => `${Date.now()}-${Math.random()}`;
 const cloneTemplateContent = () => JSON.parse(JSON.stringify(templateContent));
 
 const sectionKey = (section: any) => section?._key || section?.title || section?.ref_type || "";
+/** 同级交换位置：dir=-1 上移，dir=1 下移；找不到或越界则原样返回 */
+const moveSiblingByKey = (nodes: any[], key: string, dir: -1 | 1): any[] => {
+    const list = nodes || [];
+    const idx = list.findIndex((n: any) => sectionKey(n) === key);
+    if (idx >= 0) {
+        const j = idx + dir;
+        if (j < 0 || j >= list.length) return list;
+        const next = [...list];
+        [next[idx], next[j]] = [next[j], next[idx]];
+        return next;
+    }
+    return list.map((n: any) => ({ ...n, children: moveSiblingByKey(n.children || [], key, dir) }));
+};
 
 const normalizeTitleText = (value: any) => String(value || "").replace(/\s+/g, "");
 
@@ -1094,6 +1107,17 @@ export default () => {
         });
     };
 
+    const moveSection = (targetSection: any, dir: -1 | 1) => {
+        const targetKey = sectionKey(targetSection);
+        const nextSections = moveSiblingByKey(data.content.sections || [], targetKey, dir);
+        dispatch({
+            content: {
+                ...(data.content || emptyContent),
+                sections: nextSections,
+            },
+        });
+    };
+
     const riskText = (row: any, type: "init" | "cur") => {
         const rate = type === "init" ? row.init_rate : row.cur_rate;
         const degree = type === "init" ? row.init_degree : row.cur_degree;
@@ -1582,7 +1606,7 @@ export default () => {
     const coverSection = frontMatterSections.find((section: any) => isCoverSection(section)) || createCoverSection();
     const revisionSection = frontMatterSections.find((section: any) => isRevisionSection(section)) || createRevisionSection();
 
-    const renderNavItems = (nodes: any[], depth: number): any => (nodes || []).map((section: any) => {
+    const renderNavItems = (nodes: any[], depth: number): any => (nodes || []).map((section: any, i: number) => {
         const key = sectionKey(section);
         return (
             <div key={key}>
@@ -1593,6 +1617,10 @@ export default () => {
                     <span className="pdp-nav-title" title={section.title}>{section.title || "(未命名)"}</span>
                     {!isView && (
                         <span className="pdp-nav-ops" onClick={(e) => e.stopPropagation()}>
+                            <span className="pdp-nav-move">
+                                {i > 0 && <ArrowUpOutlined title="上移" onClick={() => moveSection(section, -1)} />}
+                                {i < (nodes || []).length - 1 && <ArrowDownOutlined title="下移" onClick={() => moveSection(section, 1)} />}
+                            </span>
                             <PlusOutlined title="添加子章节" onClick={() => addChildSection(section)} />
                             <DeleteOutlined title="删除章节" onClick={() => deleteSection(section)} />
                         </span>

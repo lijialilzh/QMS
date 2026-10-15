@@ -1,5 +1,5 @@
 import { Button, Input, Modal, Space, Spin, Upload, message } from "antd";
-import { PlusOutlined, DeleteOutlined, FileAddOutlined, UploadOutlined } from "@ant-design/icons";
+import { PlusOutlined, DeleteOutlined, FileAddOutlined, UploadOutlined, ArrowUpOutlined, ArrowDownOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -45,6 +45,20 @@ const mapNode = (nodes: any[], key: string, fn: (n: any) => any): any[] =>
 
 const removeNode = (nodes: any[], key: string): any[] =>
     (nodes || []).filter((n: any) => n._key !== key).map((n: any) => ({ ...n, children: removeNode(n.children || [], key) }));
+
+/** 同级交换位置：dir=-1 上移，dir=1 下移；找不到或越界则原样返回 */
+const moveSibling = (nodes: any[], key: string, dir: -1 | 1): any[] => {
+    const list = nodes || [];
+    const idx = list.findIndex((n: any) => n._key === key);
+    if (idx >= 0) {
+        const j = idx + dir;
+        if (j < 0 || j >= list.length) return list;
+        const next = [...list];
+        [next[idx], next[j]] = [next[j], next[idx]];
+        return next;
+    }
+    return list.map((n: any) => ({ ...n, children: moveSibling(n.children || [], key, dir) }));
+};
 
 const firstKey = (nodes: any[]): string => (nodes && nodes[0] ? nodes[0]._key : "");
 
@@ -155,6 +169,9 @@ export default () => {
     const delNode = (key: string) => {
         const sections = removeNode(data.sections, key);
         dispatch({ sections, activeKey: data.activeKey === key ? firstKey(sections) : data.activeKey });
+    };
+    const moveNode = (key: string, dir: -1 | 1) => {
+        setSections(moveSibling(data.sections, key, dir));
     };
 
     const active = findNode(data.sections, data.activeKey);
@@ -279,7 +296,7 @@ export default () => {
     const isMd5Review = active && active.ref_type === "md5_review";
 
     const renderNav = (nodes: any[], depth: number) =>
-        (nodes || []).map((n: any) => {
+        (nodes || []).map((n: any, i: number) => {
             const num = numbers[n._key];
             const label = `${num ? num + " " : ""}${stripNum(n.title) || "(未命名)"}`;
             return (
@@ -291,8 +308,12 @@ export default () => {
                         <span className="pdp-nav-title" title={label}>{label}</span>
                         {!readonly && (
                             <span className="pdp-nav-ops" onClick={(e) => e.stopPropagation()}>
-                            <PlusOutlined title="添加子章节" onClick={() => addChild(n._key)} />
-                            <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
+                                <span className="pdp-nav-move">
+                                    {i > 0 && <ArrowUpOutlined title="上移" onClick={() => moveNode(n._key, -1)} />}
+                                    {i < (nodes || []).length - 1 && <ArrowDownOutlined title="下移" onClick={() => moveNode(n._key, 1)} />}
+                                </span>
+                                <PlusOutlined title="添加子章节" onClick={() => addChild(n._key)} />
+                                <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
                             </span>
                         )}
                     </div>
