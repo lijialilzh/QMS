@@ -4,13 +4,20 @@ import { useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
-import { splitBodyTables } from "@/common/DocBlocks";
 import * as Api from "@/api/ApiImmDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import ReviewRecordTables from "@/pages/doc_fill/ReviewRecordTables";
 import "../pdp/PdpDocDetail.less";
 import { isRuntimeLockedBody, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
+import {
+    appendBodyLine,
+    buildFreeSegments,
+    ensureMediaPlaceholders,
+    reassembleFreeBody,
+    removeNthPlaceholder,
+    shouldUseFreeInterleave,
+} from "../pdp/freeChapterBlocks";
 import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 let _seq = 0;
@@ -61,115 +68,6 @@ const moveSibling = (nodes: any[], key: string, dir: -1 | 1): any[] => {
 };
 
 const blankChapter = () => ({ _key: genKey(), title: "新章节", body: "", tables: [], images: [], children: [] as any[] });
-
-const appendBodyLine = (body: string, line: string) => {
-    const b = String(body || "");
-    if (!b.trim()) return line;
-    return b.endsWith("\n") ? `${b}${line}` : `${b}\n${line}`;
-};
-
-/** 为图/表补齐 {{IMG}}/{{TBL}} 占位；无占位且同时有图和表时按先图后表，避免默认「表在前」 */
-const ensureMediaPlaceholders = (body: string, tables: any[], images: any[]) => {
-    let b = String(body || "");
-    const nImg = Array.isArray(images) ? images.length : 0;
-    const nTbl = Array.isArray(tables) ? tables.length : 0;
-    const imgPh = (b.match(/\{\{IMG\}\}/g) || []).length;
-    const tblPh = (b.match(/\{\{TBL\}\}/g) || []).length;
-    const hasLegacy = /见下图|如下图|下图|见下表|如下表|下表|见表\s*\d/.test(b);
-    if (imgPh === 0 && tblPh === 0 && !hasLegacy && nImg > 0 && nTbl > 0) {
-        let next = b;
-        for (let i = 0; i < nImg; i++) next = appendBodyLine(next, "{{IMG}}");
-        for (let i = 0; i < nTbl; i++) next = appendBodyLine(next, "{{TBL}}");
-        return next;
-    }
-    for (let i = imgPh; i < nImg; i++) b = appendBodyLine(b, "{{IMG}}");
-    for (let i = tblPh; i < nTbl; i++) b = appendBodyLine(b, "{{TBL}}");
-    return b;
-};
-
-const removeNthPlaceholder = (body: string, kind: "IMG" | "TBL", index: number) => {
-    const token = `{{${kind}}}`;
-    let seen = 0;
-    return String(body || "")
-        .split("\n")
-        .filter((ln) => {
-            if (ln.trim() !== token) return true;
-            if (seen === index) {
-                seen += 1;
-                return false;
-            }
-            seen += 1;
-            return true;
-        })
-        .join("\n");
-};
-
-/** 图/表前与末尾补空正文槽，清空文字后输入框仍保留 */
-const ensureInterleaveTextSlots = (segs: any[]): any[] => {
-    if (!segs.length) return [{ type: "text", text: "" }];
-    const out: any[] = [];
-    for (const seg of segs) {
-        if (seg.type === "image" || seg.type === "table") {
-            if (!out.length || out[out.length - 1].type !== "text") out.push({ type: "text", text: "" });
-            out.push(seg);
-        } else if (seg.type === "text") {
-            out.push({ ...seg, text: seg.text ?? "" });
-        }
-    }
-    if (out.length && (out[out.length - 1].type === "image" || out[out.length - 1].type === "table")) {
-        out.push({ type: "text", text: "" });
-    }
-    return out;
-};
-
-/** {{TXT}} 拆成多段正文，支持连续「添加正文」 */
-const expandTxtMarkers = (segs: any[]): any[] => {
-    const out: any[] = [];
-    for (const seg of segs) {
-        if (seg.type !== "text") {
-            out.push(seg);
-            continue;
-        }
-        const raw = String(seg.text ?? "");
-        if (!raw.includes("{{TXT}}")) {
-            out.push(seg);
-            continue;
-        }
-        raw.split(/\{\{TXT\}\}/).forEach((piece) => {
-            out.push({ type: "text", text: piece.replace(/^\n+|\n+$/g, "") });
-        });
-    }
-    return out;
-};
-
-/** 重组 body：连续正文之间写 {{TXT}}，图/表写静默占位 */
-const reassembleImmBody = (segments: any[], editedIndex?: number, newText?: string): string => {
-    const next =
-        editedIndex === undefined
-            ? segments
-            : segments.map((seg, i) => (seg.type === "text" && i === editedIndex ? { ...seg, text: newText ?? "" } : seg));
-    const parts: string[] = [];
-    let prevWasText = false;
-    for (const seg of next) {
-        if (seg.type === "text") {
-            if (prevWasText) parts.push("{{TXT}}");
-            parts.push(seg.text ?? "");
-            prevWasText = true;
-        } else if (seg.type === "table") {
-            prevWasText = false;
-            parts.push(seg.caption || "{{TBL}}");
-        } else if (seg.type === "image") {
-            prevWasText = false;
-            parts.push(seg.caption || "{{IMG}}");
-        }
-    }
-    return parts.join("\n");
-};
-
-const buildImmSegments = (body: string, tables: any[], images: any[]) => {
-    const normalized = ensureMediaPlaceholders(body, tables, images);
-    return expandTxtMarkers(ensureInterleaveTextSlots(splitBodyTables(normalized, tables, images)));
-};
 
 /** 在同级上方/下方插入；返回新树与新节点 key */
 const insertSibling = (nodes: any[], key: string, where: "before" | "after"): { sections: any[]; newKey: string } | null => {
@@ -363,10 +261,10 @@ export default () => {
         const images = Array.isArray(active.images) ? active.images : [];
         const tables = active.tables || [];
         const body = ensureMediaPlaceholders(String(active.body || ""), tables, images);
-        let segs = buildImmSegments(body, tables, images);
+        let segs = buildFreeSegments(body, tables, images);
         if (!segs.length) segs = [{ type: "text", text: "" }];
         segs = [...segs, { type: "text", text: "" }];
-        patchNode(data.activeKey, { body: reassembleImmBody(segs) });
+        patchNode(data.activeKey, { body: reassembleFreeBody(segs) });
     };
 
     // 正文图片：上传/更换/删除（base64 内嵌）；新增图在 body 末尾追加 {{IMG}} 以保持插入顺序
@@ -575,11 +473,9 @@ export default () => {
                                 {(() => {
                                     const images: string[] = Array.isArray(active.images) ? active.images : [];
                                     const isTopoAuto = stripNum(active.title) === "硬件拓扑";
-                                    const segments = buildImmSegments(String(active.body || ""), active.tables || [], images);
-                                    const hasMedia = segments.some((s) => s.type === "table" || s.type === "image");
-                                    const textCount = segments.filter((s) => s.type === "text").length;
+                                    const segments = buildFreeSegments(String(active.body || ""), active.tables || [], images);
                                     // 有图/表，或多段正文（含 {{TXT}}）时走交错；清空某段正文仍保留输入框
-                                    const hasInterleave = !isMd5Review && (hasMedia || textCount > 1 || /\{\{TXT\}\}/.test(String(active.body || "")));
+                                    const hasInterleave = shouldUseFreeInterleave(String(active.body || ""), segments, { skip: isMd5Review });
                                     const hideBodyBox = isTopoAuto;
                                     // 硬件拓扑：自动取图只读，暂无正文
                                     if (isTopoAuto) {
@@ -610,7 +506,7 @@ export default () => {
                                                             disabled={readonly || isRuntimeLockedBody(active)}
                                                             placeholder="本段正文内容，可多行"
                                                             onChange={(e) => {
-                                                                patchNode(active._key, { body: reassembleImmBody(segments, si, e.target.value) });
+                                                                patchNode(active._key, { body: reassembleFreeBody(segments, si, e.target.value) });
                                                             }}
                                                         />
                                                     </div>

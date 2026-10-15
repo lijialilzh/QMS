@@ -1,5 +1,5 @@
-import { Button, Input, Space, Spin, message } from "antd";
-import { PlusOutlined, DeleteOutlined, FileAddOutlined, ArrowUpOutlined, ArrowDownOutlined} from "@ant-design/icons";
+import { Button, Input, Space, Spin, message, Upload } from "antd";
+import { PlusOutlined, DeleteOutlined, FileAddOutlined, ArrowUpOutlined, ArrowDownOutlined, UploadOutlined} from "@ant-design/icons";
 import { useEffect } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -9,6 +9,17 @@ import * as Api from "@/api/ApiCybersecPlanDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiDocFile from "@/api/ApiDocFile";
 import "../pdp/PdpDocDetail.less";
+import {
+    buildFreeSegments,
+    freeAddBodyBlock,
+    freeAddImage,
+    freeAddTable,
+    freeDelImage,
+    freeDelTable,
+    freeReplaceImage,
+    reassembleFreeBody,
+    shouldUseFreeInterleave,
+} from "../pdp/freeChapterBlocks";
 import { isRuntimeLockedBody, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
 import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
@@ -265,8 +276,51 @@ export default () => {
         const tables = (active?.tables || []).map((tb: any[], i: number) => i !== ti ? tb : tb.map((row: any[]) => row.filter((_: any, cc: number) => cc !== ci)));
         updateTables(tables);
     };
-    const addTable = () => updateTables([...(active?.tables || []), [["", ""], ["", ""]]]);
-    const delTable = (ti: number) => updateTables((active?.tables || []).filter((_: any, i: number) => i !== ti));
+    const chapterState = () => ({
+        body: String(active?.body || ""),
+        tables: active?.tables || [],
+        images: Array.isArray(active?.images) ? active.images : [],
+    });
+    const addTable = () => {
+        if (!active) return;
+        const next = freeAddTable(chapterState());
+        patchNode(data.activeKey, { tables: next.tables, body: next.body, images: next.images });
+    };
+    const delTable = (ti: number) => {
+        if (!active) return;
+        const next = freeDelTable(chapterState(), ti);
+        patchNode(data.activeKey, { tables: next.tables, body: next.body, images: next.images });
+    };
+    const addBodyBlock = () => {
+        if (!active) return;
+        const next = freeAddBodyBlock(chapterState());
+        patchNode(data.activeKey, { body: next.body });
+    };
+    const uploadImage = (file: File, replaceIndex?: number) => {
+        if (!file.type.startsWith("image/")) {
+            message.error("请选择图片文件");
+            return false;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+            if (!active) return;
+            const dataUrl = String(reader.result || "");
+            const next = replaceIndex !== undefined && replaceIndex >= 0
+                ? freeReplaceImage(chapterState(), replaceIndex, dataUrl)
+                : freeAddImage(chapterState(), dataUrl);
+            patchNode(data.activeKey, { images: next.images, body: next.body });
+            message.success("图片已更新，请保存文档");
+        };
+        reader.onerror = () => message.error("图片读取失败");
+        reader.readAsDataURL(file);
+        return false;
+    };
+    const delImage = (index: number) => {
+        if (!active) return;
+        const next = freeDelImage(chapterState(), index);
+        patchNode(data.activeKey, { images: next.images, body: next.body });
+    };
+
 
     // blocks 支持：正文与表格交错展示
     const updateBlocks = (blocks: any[]) => patchNode(data.activeSectionKey, { blocks });

@@ -433,25 +433,38 @@ class Server(object):
         return content
 
     def __read_md5_attachment(self, content):
-        """从 md5_attachment 章节的表格读取 (package_name, md5_value)。
-        表头为 ["安装包名称", "MD5值"]，取第二行。"""
+        """从 md5_attachment 读 (package_name, md5_value)。
+        先读附件根表，没有则读子节「确认安装包信息」表；再兜底 content.md5_value。"""
+        def from_tbl(tbl):
+            if not tbl or not isinstance(tbl[0], list):
+                return None
+            header = [str(c).strip() for c in tbl[0][:2]]
+            if header != ["安装包名称", "MD5值"] or len(tbl) < 2:
+                return None
+            row = tbl[1]
+            if not isinstance(row, list):
+                return None
+            pkg = str(row[0] or "").strip() if len(row) > 0 else ""
+            md5 = str(row[1] or "").strip() if len(row) > 1 else ""
+            return pkg, md5
+
         for s in (content.get("sections") or []):
             if s.get("ref_type") != "md5_attachment":
                 continue
             for tbl in (s.get("tables") or []):
-                if not tbl or not isinstance(tbl[0], list):
+                hit = from_tbl(tbl)
+                if hit and (hit[0] or hit[1]):
+                    return hit
+            for c in (s.get("children") or []):
+                if self.__strip_section_title(str(c.get("title") or "")) != "确认安装包信息":
                     continue
-                header = [str(c).strip() for c in tbl[0][:2]]
-                if header != ["安装包名称", "MD5值"] or len(tbl) < 2:
-                    continue
-                row = tbl[1]
-                if not isinstance(row, list):
-                    continue
-                pkg = str(row[0] or "").strip() if len(row) > 0 else ""
-                md5 = str(row[1] or "").strip() if len(row) > 1 else ""
-                return pkg, md5
+                for tbl in (c.get("tables") or []):
+                    hit = from_tbl(tbl)
+                    if hit and (hit[0] or hit[1]):
+                        return hit
             break
-        return "", ""
+        md5_fallback = str((content or {}).get("md5_value") or "").strip() if isinstance(content, dict) else ""
+        return "", md5_fallback
 
     def __read_attachment_pkg(self, content):
         """从 md5_attachment 下「4.确认安装包信息」子节点表格读取安装包名称（保留模板原值）。"""
@@ -478,7 +491,8 @@ class Server(object):
         if not isinstance(content, dict):
             return content
         type_code = (getattr(product, "type_code", "") or "").strip() if product else ""
-        # 安装包名称从同产品《软件配置管理计划》验证Build 路径取；MD5 仍读附件表（仅空则填）。
+        # 安装包名称从同产品《软件配置管理计划》验证Build 路径取；
+        # MD5 从附件「确认安装包信息」等表读取（仅空则回填），供评审结论使用。
         _, md5_value = self.__read_md5_attachment(content)
         package_name = self.__package_name_from_scm(prod_id, version)
         rev_date = ""
@@ -613,9 +627,10 @@ class Server(object):
                 url = "/" + url
             topo_url = url
 
-        def rebuild(node):
+        def rebuild(node, under_md5=False):
             title = str(node.get("title") or "").strip()
             plain = self.__strip_section_title(title)
+            in_md5 = under_md5 or node.get("ref_type") == "md5_attachment"
             if plain == "软件说明":
                 node["body"] = (
                     "软件标识：\n"
@@ -639,18 +654,22 @@ class Server(object):
                     f"完整版本：{full_version}"
                 )
             elif plain == "概述":
-                node["body"] = (
-                    f"本文档适用于{registrant}正式发布的产品。本软件需要由本公司授权的安装人员进行安装。"
-                    "软件的日常维护也需要由本公司的授权人员进行。\n"
-                    f"本文档第二章介绍了正确安装“{prod_name}”产品的所有步骤，第三章介绍了软件安装完毕后的一些必要的软件配置项，"
-                    f"第四章软件运行前的基本测试流程，第五章介绍了如何检查软件的日志以及软件所在服务器所需的日常维护。"
-                )
+                if in_md5:
+                    # MD5 附件概述：固定模板，勿用主手册概述覆盖
+                    node["body"] = "确保安装包不受“篡改”，获取最终安装包的MD5值，以保证安装包的安全。"
+                else:
+                    node["body"] = (
+                        f"本文档适用于{registrant}正式发布的产品。本软件需要由本公司授权的安装人员进行安装。"
+                        "软件的日常维护也需要由本公司的授权人员进行。\n"
+                        f"本文档第二章介绍了正确安装“{prod_name}”产品的所有步骤，第三章介绍了软件安装完毕后的一些必要的软件配置项，"
+                        f"第四章软件运行前的基本测试流程，第五章介绍了如何检查软件的日志以及软件所在服务器所需的日常维护。"
+                    )
             elif plain == "硬件拓扑":
                 # 物理拓扑图：仅 img_topo；正文暂空（不展示占位字）；无图则清空 images
                 node["body"] = ""
                 node["images"] = [topo_url] if topo_url else []
             for c in (node.get("children") or []):
-                rebuild(c)
+                rebuild(c, in_md5)
 
         for s in (content.get("sections") or []):
             rebuild(s)

@@ -1,10 +1,10 @@
-import { Button, Input, Modal, Space, Spin, message } from "antd";
-import { PlusOutlined, DeleteOutlined, FileAddOutlined, ArrowUpOutlined, ArrowDownOutlined} from "@ant-design/icons";
+import { splitBodyTables, reassembleBodyAll } from "@/common/DocBlocks";
+import { Button, Input, Modal, Space, Spin, message, Upload } from "antd";
+import { PlusOutlined, DeleteOutlined, FileAddOutlined, ArrowUpOutlined, ArrowDownOutlined, UploadOutlined} from "@ant-design/icons";
 import { useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
-import { splitBodyTables, reassembleBody, reassembleBodyAll } from "@/common/DocBlocks";
 import * as Api from "@/api/ApiStpDoc";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiProduct from "@/api/ApiProduct";
@@ -12,6 +12,20 @@ import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import ReviewRecordTables from "@/pages/doc_fill/ReviewRecordTables";
 import "../pdp/PdpDocDetail.less";
+import {
+    buildFreeSegments,
+    freeAddBodyBlock,
+    freeAddImage,
+    freeAddTable,
+    freeDelImage,
+    freeDelTable,
+    freeReplaceImage,
+    reassembleFreeBody,
+    shouldUseFreeInterleave,
+    appendBodyLine,
+    ensureMediaPlaceholders,
+    removeNthPlaceholder,
+} from "../pdp/freeChapterBlocks";
 import { isRuntimeLockedBody, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
 import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
@@ -102,6 +116,7 @@ const ensureKeys = (nodes: any[]): any[] =>
         _key: n._key || genKey(),
         body: n.body ?? "",
         tables: Array.isArray(n.tables) ? n.tables : [],
+        images: Array.isArray(n.images) ? n.images : [],
         children: ensureKeys(n.children || []),
     }));
 
@@ -462,10 +477,17 @@ export default () => {
         const tables = (active.tables || []).map((tb: any[], i: number) => (i !== ti ? tb : tb.map((row: any[]) => row.filter((_: any, cc: number) => cc !== ci))));
         updateTables(tables);
     };
-    const addTable = () => patchNode(active._key, {
-        tables: [...(active.tables || []), [["", ""], ["", ""]]],
-        table_captions: [...(Array.isArray(active.table_captions) ? active.table_captions : []), ""],
-    });
+    const addTable = () => {
+        if (!active) return;
+        const images = Array.isArray(active.images) ? active.images : [];
+        let body = ensureMediaPlaceholders(String(active.body || ""), active.tables || [], images);
+        body = appendBodyLine(body, "{{TBL}}");
+        patchNode(active._key, {
+            tables: [...(active.tables || []), [["", ""], ["", ""]]],
+            table_captions: [...(Array.isArray(active.table_captions) ? active.table_captions : []), ""],
+            body,
+        });
+    };
     const delTable = (ti: number) => {
         const oldTables = active.tables || [];
         const tables = oldTables.filter((_: any, i: number) => i !== ti);
@@ -491,6 +513,41 @@ export default () => {
         while (caps.length <= ti) caps.push("");
         caps[ti] = val;
         patchNode(active._key, { table_captions: caps });
+    };
+
+    const chapterState = () => ({
+        body: String(active?.body || ""),
+        tables: active?.tables || [],
+        images: Array.isArray(active?.images) ? active.images : [],
+    });
+    const addBodyBlock = () => {
+        if (!active) return;
+        const next = freeAddBodyBlock(chapterState());
+        patchNode(data.activeKey, { body: next.body });
+    };
+    const uploadImage = (file: File, replaceIndex?: number) => {
+        if (!file.type.startsWith("image/")) {
+            message.error("请选择图片文件");
+            return false;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+            if (!active) return;
+            const dataUrl = String(reader.result || "");
+            const next = replaceIndex !== undefined && replaceIndex >= 0
+                ? freeReplaceImage(chapterState(), replaceIndex, dataUrl)
+                : freeAddImage(chapterState(), dataUrl);
+            patchNode(data.activeKey, { images: next.images, body: next.body });
+            message.success("图片已更新，请保存文档");
+        };
+        reader.onerror = () => message.error("图片读取失败");
+        reader.readAsDataURL(file);
+        return false;
+    };
+    const delImage = (index: number) => {
+        if (!active) return;
+        const next = freeDelImage(chapterState(), index);
+        patchNode(data.activeKey, { images: next.images, body: next.body });
     };
 
     // 从「产品参与人员」按当前产品拉取全部人员，填入人员资源表（编号/姓名/所属部门/角色）
@@ -665,8 +722,8 @@ export default () => {
                                 {(() => {
                                     const rtBodyLock = readonly || isRuntimeLockedBody(active);
                                     const images: string[] = Array.isArray(active.images) ? active.images : [];
-                                    const segments = splitBodyTables(active.body, active.tables, images);
-                                    const hasInterleave = (segments.some((s) => s.type === "table") || segments.some((s) => s.type === "image")) && segments.some((s) => s.type === "text");
+                                    const segments = buildFreeSegments(String(active.body || ""), active.tables || [], images);
+                                    const hasInterleave = shouldUseFreeInterleave(String(active.body || ""), segments);
                                     if (hasInterleave && active.ref_type !== "review") {
                                         // 交错模式：正文段和表格/图片按顺序展示，正文段可编辑，写回 body
                                         return segments.map((seg, si) => {
@@ -680,7 +737,7 @@ export default () => {
                                                             disabled={rtBodyLock}
                                                             placeholder="本段正文内容，可多行"
                                                             onChange={(e) => {
-                                                                const newBody = reassembleBody(segments, si, e.target.value);
+                                                                const newBody = reassembleFreeBody(segments, si, e.target.value);
                                                                 patchNode(active._key, { body: newBody });
                                                             }}
                                                         />
@@ -694,6 +751,14 @@ export default () => {
                                                 return (
                                                     <div key={si} style={{ margin: "8px 0", textAlign: "center" }}>
                                                         <img src={url} alt="" style={{ maxWidth: "100%", border: "1px solid #eee" }} />
+                                                        {!readonly && (
+                                                            <Space size={4} style={{ marginTop: 4, display: "flex", justifyContent: "center" }}>
+                                                                <Upload accept="image/*" showUploadList={false} beforeUpload={(file) => uploadImage(file as File, ii)}>
+                                                                    <Button size="small" icon={<UploadOutlined />}>更换</Button>
+                                                                </Upload>
+                                                                <Button size="small" danger onClick={() => delImage(ii)}>删除</Button>
+                                                            </Space>
+                                                        )}
                                                     </div>
                                                 );
                                             }
@@ -841,9 +906,17 @@ export default () => {
                                                     );
                                                 })}
                                             {!readonly && active.ref_type !== "review" && (
-                                                <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
+                                                <>
+                                                <Space wrap style={{ margin: "8px 0" }}>
+                                                    <Button size="small" onClick={addBodyBlock}>添加正文</Button>
+                                                    <Upload accept="image/*" showUploadList={false} beforeUpload={(file) => uploadImage(file as File)}>
+                                                        <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
+                                                    </Upload>
+                                                </Space>
+                                            <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
                                                     添加表格
                                                 </Button>
+                                                </>
                                             )}
                                             {active.ref_type !== "review" && (active.tables || []).length > 0 && (
                                                 <div className="pdp-field">
