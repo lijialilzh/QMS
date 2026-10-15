@@ -66,9 +66,16 @@ export const splitBodyTables = (body: string, tables: any[], images?: any[]): an
             tableIdx++;
             continue;
         }
-        // 遇到"见下图/如下图/下图"行，先加入正文再 flush，然后插入图片
+        // 整行图片占位：{{IMG}}/见下图/如下图/下图 → 静默插图，不进入可编辑正文（与见下表一致）
+        if ((s === "{{IMG}}" || /^(见下图|如下图|下图)$/.test(s)) && imgIdx < imagesArr.length) {
+            flushText();
+            segments.push({ type: "image", imageIndex: imgIdx });
+            imgIdx++;
+            continue;
+        }
+        // 正文句子中含「见下图」等：保留该行文字，并在其后插图
         if (/见下图|如下图|下图/.test(s) && imgIdx < imagesArr.length) {
-            buf.push(ln);  // 保留"见下图"行作为正文
+            buf.push(ln);
             flushText();
             segments.push({ type: "image", imageIndex: imgIdx });
             imgIdx++;

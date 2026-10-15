@@ -25,7 +25,7 @@ from ..model.product import Product
 from ..model.imm_doc import ImmDoc
 from ..model.prod_dhf import ProdDhf
 from ..model.project_member import ProjectMember
-from ..model.doc_file import DocFile
+from ..model.scm_doc import ScmDoc
 from ..obj import Page, Resp
 from ..obj.tobj_role import Roles
 from ..obj.vobj_user import UserObj
@@ -36,6 +36,7 @@ from ..utils.sql_ctx import db
 from . import msg_err_db
 from . import serv_review_util
 from .serv_prod_runtime_env import apply_runtime_to_pdp_content
+from .serv_doc_file import pick_doc_image_file_row
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
 
@@ -90,10 +91,10 @@ class Server(object):
                 elif btype == "table" and blk.get("table"):
                     tbl = blk["table"]
                     tbls.append([[str(c) if c is not None else "" for c in (row or [])] for row in tbl if isinstance(row, list)])
-                    parts.append("见下表")
+                    parts.append("{{TBL}}")
                 elif btype == "image" and blk.get("url"):
                     imgs_b.append(str(blk.get("url") or ""))
-                    parts.append("见下图")
+                    parts.append("{{IMG}}")
             if parts:
                 result["body"] = "\n".join(parts)
             if tbls:
@@ -103,11 +104,48 @@ class Server(object):
             result.pop("blocks", None)
         elif "blocks" in result:
             result.pop("blocks", None)
+        # 旧数据：单独一行的「见下图/见下表」改为静默占位，避免无法删除且标准文档无此描述
+        if result["body"]:
+            lines = []
+            for ln in str(result["body"]).split("\n"):
+                s = ln.strip()
+                if s in ("见下图", "如下图", "下图"):
+                    lines.append("{{IMG}}")
+                elif s in ("见下表", "如下表", "下表"):
+                    lines.append("{{TBL}}")
+                else:
+                    lines.append(ln)
+            result["body"] = "\n".join(lines)
         imgs = result.get("images")
         result["images"] = [str(x) for x in imgs if isinstance(x, str) and x] if isinstance(imgs, list) else []
+        # 有多图但正文无占位：按步骤行插入 {{IMG}}，保证「正文→图→正文→图」
+        result["body"] = self.__ensure_step_img_interleave(result.get("body") or "", result["images"])
         children = result.get("children")
         result["children"] = [self.__normalize_node(c) for c in children] if isinstance(children, list) else []
         return result
+
+    @staticmethod
+    def __ensure_step_img_interleave(body, images):
+        """正文尚无插图占位时，在编号步骤行后插入 {{IMG}}，实现一步一图交错。"""
+        imgs = images or []
+        text = str(body or "")
+        if not imgs or not text.strip():
+            return text
+        if "{{IMG}}" in text or re.search(r"见下图|如下图", text):
+            return text
+        step_re = re.compile(r"^\s*\d+\s*[、．.)）]")
+        lines = text.split("\n")
+        out = []
+        inserted = 0
+        for ln in lines:
+            out.append(ln)
+            if inserted < len(imgs) and step_re.match(ln.strip() or ""):
+                out.append("{{IMG}}")
+                inserted += 1
+        while inserted < len(imgs):
+            out.append("{{IMG}}")
+            inserted += 1
+        return "\n".join(out)
 
     def __normalize_content(self, content):
         if not isinstance(content, dict) or not isinstance(content.get("sections"), list):
@@ -139,24 +177,103 @@ class Server(object):
             return
         self.__replace_in_node(node, lambda s: s.replace(base, name) if isinstance(s, str) else s)
 
+    @staticmethod
+    def __model_code(type_code):
+        """型号去头：type_code 可能已含 InferCare / InferCare_，剥净后只留纯型号。"""
+        code = str(type_code or "").strip()
+        while True:
+            nxt = re.sub(r"(?i)^InferCare[_\s]+", "", code).strip()
+            if nxt == code:
+                break
+            code = nxt
+        return code
+
     def __replace_type_code(self, node, type_code):
         if not type_code:
             return
-        # 2.2 MD5校验安装包 / 2.4.1 检查安装包 正文中的安装包名称保留模板原样；
-        # 4.确认安装包信息 表格中的安装包名称也保留模板原样；
         # 软件总体描述 / 适用范围 body 取自产品 overall_desc/scope 原值，不应被型号替换污染。
-        skip_titles = {"2.2 MD5校验安装包", "2.4.1 检查安装包", "4.确认安装包信息", "1.4 软件总体描述", "1.4软件总体描述", "1.5 适用范围", "1.5适用范围"}
+        # 安装包 .zip 名只由 __fill_all_package_names（配置计划）覆盖，此处跳过含 .zip 的串。
+        skip_titles = {"1.4 软件总体描述", "1.4软件总体描述", "1.5 适用范围", "1.5适用范围"}
+        model = self.__model_code(type_code) or type_code
         space_pat = "InferCare RECIST"
         under_pat = "InferCare_RECIST"
-        space_new = f"InferCare {type_code}"
-        under_new = f"InferCare_{type_code}"
+        space_new = f"InferCare {model}"
+        under_new = f"InferCare_{model}"
 
         def repl(s):
             if not isinstance(s, str):
                 return s
+            # 包名留给配置计划覆盖，避免 InferCare_{已含InferCare的型号} 叠前缀
+            if re.search(r"\.zip\b", s, re.I):
+                return s
             return s.replace(space_pat, space_new).replace(under_pat, under_new)
 
         self.__replace_in_node(node, repl, skip_titles=skip_titles)
+
+    def __package_name_from_scm(self, prod_id, version=""):
+        """从同产品《软件配置管理计划》「产品开发部软件构建配置项版本控制」验证Build 路径取 .zip 文件名。
+        优先同文档版本，没有则该产品最新一份；无计划/无包名返回空。"""
+        if not prod_id:
+            return ""
+        rows = db.session.execute(
+            select(ScmDoc).where(ScmDoc.product_id == prod_id).order_by(ScmDoc.id.desc())
+        ).scalars().all()
+        if not rows:
+            return ""
+        ver = str(version or "").strip()
+        scm = next((r for r in rows if str(r.version or "").strip() == ver), None) if ver else None
+        scm = scm or rows[0]
+        scm_content = scm.content if isinstance(scm.content, dict) else {}
+
+        def plain(title):
+            return re.sub(r"^\s*\d+(?:\.\d+)*[\.、\s]*", "", str(title or "")).strip()
+
+        def find_node(sections, pred):
+            for s in sections or []:
+                if not isinstance(s, dict):
+                    continue
+                if pred(str(s.get("title") or "")):
+                    return s
+                hit = find_node(s.get("children") or [], pred)
+                if hit:
+                    return hit
+            return None
+
+        node = find_node(
+            scm_content.get("sections") or [],
+            lambda t: plain(t) == "产品开发部软件构建配置项版本控制",
+        )
+        zip_re = re.compile(r"[^\s/\\]+\.zip", re.I)
+        for tb in ((node.get("tables") if node else None) or []):
+            if not isinstance(tb, list):
+                continue
+            for row in tb[1:]:
+                if not isinstance(row, list) or not row:
+                    continue
+                if str(row[0] or "").strip() != "验证Build":
+                    continue
+                path = str(row[2] or "").strip() if len(row) > 2 else ""
+                found = zip_re.findall(path)
+                if found:
+                    return found[-1].strip()
+        return ""
+
+    def __fill_all_package_names(self, content, package_name):
+        """全文安装包 .zip 名覆盖为配置计划包名（正文/表/content.package_name）。"""
+        if not package_name or not isinstance(content, dict):
+            return content
+        content["package_name"] = package_name
+        # 含中间空格、重复 InferCare_ 等已写坏包名，以及其它 InferXxx_….zip
+        zip_re = re.compile(r"(?:InferCare|Infer[A-Za-z]+)(?:[_\s]+[A-Za-z0-9._-]+)+\.zip", re.I)
+
+        def repl(s):
+            if not isinstance(s, str):
+                return s
+            return zip_re.sub(package_name, s)
+
+        for s in (content.get("sections") or []):
+            self.__replace_in_node(s, repl)
+        return content
 
     def __member_name(self, prod_id, keywords):
         if not prod_id:
@@ -191,15 +308,17 @@ class Server(object):
         return apply_runtime_to_pdp_content(content, prod_id)
 
     def __fill_revision(self, content, prod_id, version, force=False):
-        """文件修订记录首行：修改日期(评审/封面日期)、版本号、首次发布、修订人(TPM)、批准人(研发负责人)。
-        force=True（切换产品）时强制用新产品数据覆盖，无时间线/人员的字段直接置空。"""
+        """文件修订记录首行：修改日期(评审/封面日期)、版本号、首次发布、
+        修订人=测试人员（2025.09 前宋月/之后孙家旭）、批准人=研发负责人。
+        修改日期有时间线则覆盖模板错误旧值；修订人/批准人打开即覆盖。
+        force=True（切换产品）时整行强制用新产品数据覆盖，无时间线/人员的字段直接置空。"""
         rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
         if not rev_date and prod_id:
             rev_date = serv_review_util.review_date(prod_id, DATE_KEYWORDS)
-        reviser = approver = ""
+        reviser = "宋月" if serv_review_util._before_202509(rev_date) else "孙家旭"
+        approver = ""
         if prod_id:
             members = db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == prod_id)).scalars().all()
-            reviser = next((m.name for m in members if "TPM" in str(m.role or "")), "")
             approver = next((m.name for m in members if "研发负责人" in str(m.role or "")), "")
         for s in (content.get("sections") or []):
             if s.get("ref_type") != "revision":
@@ -212,56 +331,64 @@ class Server(object):
                     t.append([""] * cols)
                 if len(t) >= 2 and isinstance(t[1], list) and len(t[1]) >= 3:
                     row = t[1]
-                    if force:
+                    # 修改日期←时间线；有则覆盖模板错误旧日期
+                    if force or rev_date:
+                        row[0] = rev_date or ""
+                    elif not str(row[0] or "").strip():
                         row[0] = rev_date
+                    if force:
                         if len(row) >= 2:
                             row[1] = str(version or "")
                         if len(row) >= 3:
                             row[2] = "首次发布"
-                        if len(row) >= 4:
-                            row[3] = reviser
-                        if len(row) >= 5:
-                            row[4] = approver
                     else:
-                        if not str(row[0] or "").strip():
-                            row[0] = rev_date
                         if version and len(row) >= 2 and not str(row[1] or "").strip():
                             row[1] = str(version)
                         if len(row) >= 3 and not str(row[2] or "").strip():
                             row[2] = "首次发布"
-                        if len(row) >= 4 and reviser and not str(row[3] or "").strip():
-                            row[3] = reviser
-                        if len(row) >= 5 and approver and not str(row[4] or "").strip():
-                            row[4] = approver
+                    if len(row) >= 4:
+                        row[3] = reviser
+                    if len(row) >= 5:
+                        row[4] = approver
             break
         return content
 
     def __fill_md5_attachment(self, content, package_name, md5_value):
+        """安装包名称有生成值则覆盖模板错包名；MD5 仅空则填。含附件主表与「确认安装包信息」子表。"""
+        def fill_pkg_table(tbl):
+            if not tbl or not isinstance(tbl[0], list):
+                return
+            header = [str(c).strip() for c in tbl[0][:2]]
+            if header != ["安装包名称", "MD5值"] or len(tbl) < 2:
+                return
+            row = tbl[1]
+            if not isinstance(row, list):
+                return
+            while len(row) < 2:
+                row.append("")
+            if package_name:
+                row[0] = package_name
+            if md5_value and not str(row[1] or "").strip():
+                row[1] = md5_value
+
         for s in (content.get("sections") or []):
             if s.get("ref_type") != "md5_attachment":
                 continue
             for tbl in (s.get("tables") or []):
-                if not tbl or not isinstance(tbl[0], list):
+                fill_pkg_table(tbl)
+            for c in (s.get("children") or []):
+                if self.__strip_section_title(str(c.get("title") or "")) != "确认安装包信息":
                     continue
-                header = [str(c).strip() for c in tbl[0][:2]]
-                if header != ["安装包名称", "MD5值"] or len(tbl) < 2:
-                    continue
-                row = tbl[1]
-                if not isinstance(row, list):
-                    continue
-                if package_name and not str(row[0] or "").strip():
-                    row[0] = package_name
-                if md5_value and not str(row[1] or "").strip():
-                    row[1] = md5_value
+                for tbl in (c.get("tables") or []):
+                    fill_pkg_table(tbl)
             break
         return content
 
     def __fill_md5_review(self, content, prod_id, product, package_name, md5_value, rev_date):
         prod_name = (getattr(product, "name", "") or "").strip() if product else ""
-        # 评审结论里的安装包名称保留模板原样（从 4.确认安装包信息 表格读取，不自动获取/不型号替换）
-        pkg = self.__read_attachment_pkg(content)
+        # 安装包名称优先用配置计划包名，其次附件表（已覆盖模板）
+        pkg = (package_name or "").strip() or self.__read_attachment_pkg(content)
         md5 = (md5_value or "").strip()
-        test_lead = self.__member_name(prod_id, ("测试负责人", "主测试工程师")) if prod_id else ""
         pm = self.__member_name(prod_id, ("产品经理",)) if prod_id else ""
         for s in (content.get("sections") or []):
             if s.get("ref_type") != "md5_review":
@@ -287,15 +414,21 @@ class Server(object):
                         row[2] = check_mark
             if len(tables) > 1 and isinstance(tables[1], list):
                 ptbl = tables[1]
+                tester = "宋月" if serv_review_util._before_202509(rev_date) else "孙家旭"
                 for row in ptbl:
                     if not isinstance(row, list) or len(row) < 2:
                         continue
                     role = str(row[0] or "").strip()
-                    if role == "测试负责人" and test_lead and not str(row[1] or "").strip():
-                        row[1] = test_lead
+                    if role == "测试负责人":
+                        row[1] = tester
+                        if len(row) >= 3:
+                            row[2] = serv_review_util._sign_by_name(tester) if serv_review_util.sign_mode_enabled() else ""
                     if len(row) >= 5 and str(row[3] or "").strip() == "产品经理" and pm and not str(row[4] or "").strip():
                         row[4] = pm
-                serv_review_util.autofill_review_person_table(ptbl, DOC_KEY, rev_date, prod_id)
+                # 有时间线日期则覆盖模板错误「评审时间」
+                serv_review_util.autofill_review_person_table(
+                    ptbl, DOC_KEY, rev_date, prod_id, force_date=bool(rev_date),
+                )
             break
         return content
 
@@ -345,12 +478,9 @@ class Server(object):
         if not isinstance(content, dict):
             return content
         type_code = (getattr(product, "type_code", "") or "").strip() if product else ""
-        full_version = (getattr(product, "full_version", "") or "").strip() if product else ""
-        # 安装包名称 / MD5 值以 md5_attachment 附件章节的表格为准（用户在附件里维护）。
-        # 附件表格为空时，兜底按产品型号+版本自动生成安装包名称。
-        package_name, md5_value = self.__read_md5_attachment(content)
-        if not package_name and type_code and full_version:
-            package_name = f"InferCare_{type_code}-{full_version}.zip"
+        # 安装包名称从同产品《软件配置管理计划》验证Build 路径取；MD5 仍读附件表（仅空则填）。
+        _, md5_value = self.__read_md5_attachment(content)
+        package_name = self.__package_name_from_scm(prod_id, version)
         rev_date = ""
         if prod_id:
             rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) or serv_review_util.review_date(prod_id, DATE_KEYWORDS)
@@ -363,6 +493,9 @@ class Server(object):
         # 自动获取产品信息（1.1软件说明/1.4总体描述/1.5适用范围/2.确认产品信息/概述）
         if product:
             self.__fill_product_info(content, product)
+        # 全文安装包名（含 2.2/2.4.1 正文与附件表）统一覆盖；无配置计划包名则不改
+        if package_name:
+            self.__fill_all_package_names(content, package_name)
         self.__fill_runtime_env(content, prod_id)
         self.__fill_revision(content, prod_id, version, force=force)
         self.__fill_md5_attachment(content, package_name, md5_value)
@@ -470,11 +603,9 @@ class Server(object):
         scope = (product.scope or "").strip()
         # 型号直接用 type_code 原值（字段本身可能已含/不含 InferCare 前缀，不再额外拼接）
         type_display = type_code
-        # 物理拓扑图：从该产品的 doc_file（img_topo 类别）获取，URL 前缀 /data.trace 供前端静态访问
+        # 物理拓扑图：取产品图示 img_topo 最新一条（与 PTR 等一致，不取体系结构图）
         topo_url = ""
-        topo_row = db.session.execute(
-            select(DocFile).where(DocFile.product_id == product.id, DocFile.category == "img_topo").order_by(DocFile.id)
-        ).scalars().first()
+        topo_row = pick_doc_image_file_row(product.id, "img_topo")
         if topo_row and topo_row.file_url:
             # file_url 形如 data.trace/img_topo/51.png，转为 /data.trace/img_topo/51.png
             url = str(topo_row.file_url).strip()
@@ -515,8 +646,8 @@ class Server(object):
                     f"第四章软件运行前的基本测试流程，第五章介绍了如何检查软件的日志以及软件所在服务器所需的日常维护。"
                 )
             elif plain == "硬件拓扑":
-                # 物理拓扑图：从 doc_file 获取，无则置空
-                node["body"] = "物理拓扑图"
+                # 物理拓扑图：仅 img_topo；正文暂空（不展示占位字）；无图则清空 images
+                node["body"] = ""
                 node["images"] = [topo_url] if topo_url else []
             for c in (node.get("children") or []):
                 rebuild(c)
@@ -775,8 +906,10 @@ class Server(object):
                 if str(cap or "").strip():
                     add_text(cap)
                 add_grid(tables[t_idx])
-            # 按"见下表"/"表N"/"见下图"/"图N"切分 body，交错输出正文段、表格和图片
-            if ((("见下表" in body_text) or re.search(r"(?m)^表\s*\d", body_text)) and tables) or ((("见下图" in body_text) or re.search(r"(?m)^图\s*\d", body_text)) and images):
+            # 按 {{TBL}}/见下表/表N / {{IMG}}/见下图/图N 切分 body，交错输出正文段、表格和图片
+            if ((("{{TBL}}" in body_text) or ("见下表" in body_text) or re.search(r"(?m)^表\s*\d", body_text)) and tables) or (
+                ("{{IMG}}" in body_text) or ("见下图" in body_text) or re.search(r"(?m)^图\s*\d", body_text)
+            ) and images:
                 lines = body_text.split("\n")
                 buf = []
                 tbl_idx = 0
@@ -787,13 +920,22 @@ class Server(object):
                         add_text(t)
                     buf.clear()
                 for ln in lines:
-                    if ("见下表" in ln.strip() or re.match(r"^表\s*\d", ln.strip())) and tbl_idx < len(tables):
-                        buf.append(ln)  # 保留"见下表"/"表N"行作为正文
+                    s = ln.strip()
+                    if (s == "{{TBL}}" or s in ("见下表", "如下表", "下表") or re.match(r"^表\s*\d", s)) and tbl_idx < len(tables):
+                        if s != "{{TBL}}" and s not in ("见下表", "如下表", "下表"):
+                            buf.append(ln)  # 「表N」题注保留
                         flush_text()
                         _emit_table(tbl_idx)
                         tbl_idx += 1
-                    elif ("见下图" in ln.strip() or re.match(r"^图\s*\d", ln.strip())) and img_idx < len(images):
-                        buf.append(ln)  # 保留"见下图"/"图N"行作为正文
+                    elif (s == "{{IMG}}" or s in ("见下图", "如下图", "下图") or re.match(r"^图\s*\d", s)) and img_idx < len(images):
+                        if s != "{{IMG}}" and s not in ("见下图", "如下图", "下图"):
+                            buf.append(ln)  # 「图N」题注保留
+                        flush_text()
+                        add_image(images[img_idx])
+                        img_idx += 1
+                    elif (("见下图" in s) or ("如下图" in s) or ("下图" in s)) and img_idx < len(images) and s not in ("见下图", "如下图", "下图"):
+                        # 句子中含「见下图」：保留该行文字，其后插图
+                        buf.append(ln)
                         flush_text()
                         add_image(images[img_idx])
                         img_idx += 1

@@ -311,7 +311,7 @@
     },
     {
      "title": "2.2 MD5校验安装包",
-     "body": "1、安装MD5校验工具，执行sudo apt-get install md5deep命令，输入密码，开始安装md5deep；\n2、已安装md5deep，打开Terminal，进入安装包所在目录位置\n3、执行命令：md5sum InferCare_RECIST-1.0.0.0.zip\n此压缩加密过的安装包有且只有一个独一无二的MD5信息值，并且如果安装包被修改过，它的MD5值也将随之改变。\n因此，我们可以通过对比同一安装包的MD5值，来校验这个文件是否被“篡改”过，此MD5值不会改变；\n已获取最终安装包的MD5值并进行比对；",
+     "body": "1、安装MD5校验工具，执行sudo apt-get install md5deep命令，输入密码，开始安装md5deep；\n{{IMG}}\n2、已安装md5deep，打开Terminal，进入安装包所在目录位置\n{{IMG}}\n3、执行命令：md5sum InferCare_RECIST-1.0.0.0.zip\n此压缩加密过的安装包有且只有一个独一无二的MD5信息值，并且如果安装包被修改过，它的MD5值也将随之改变。\n因此，我们可以通过对比同一安装包的MD5值，来校验这个文件是否被“篡改”过，此MD5值不会改变；\n已获取最终安装包的MD5值并进行比对；",
      "tables": [],
      "children": [],
      "images": [
@@ -321,7 +321,7 @@
     },
     {
      "title": "2.3 获取序列码",
-     "body": "1.  Ctrl+Alt+T 打开一个Terminal 终端；\n2. cd 进入脚本目录，bash get_message.sh执行命令，生成Infervision.asc文件；\n3. 将Infervision.asc文件发送给推想人员；\n4. 推想人员生成序列码并返还给推想授权的专业技术人员，执行安装。",
+     "body": "1.  Ctrl+Alt+T 打开一个Terminal 终端；\n{{IMG}}\n2. cd 进入脚本目录，bash get_message.sh执行命令，生成Infervision.asc文件；\n{{IMG}}\n3. 将Infervision.asc文件发送给推想人员；\n4. 推想人员生成序列码并返还给推想授权的专业技术人员，执行安装。",
      "tables": [],
      "children": [],
      "images": [
@@ -343,7 +343,7 @@
       },
       {
        "title": "2.4.2 安装过程",
-       "body": "执行安装脚本  Ctrl+Alt+T 打开一个Terminal   执行命令 ：\n1.使用cd命令，进入安装包解压后的文件夹 ；\n2. bash setoffline.sh执行命令；\n3.提示输入序列码后，会自动生成机器编码，将该机器复制后发送至推想人员，推想人员进行授权；(获取序列码步骤见章节2.3)\n4.继续下一步，确认服务器是否有GPU 。\n5.确认GPU完成，开始自动导入镜像，导入完成后，将有ALL Complete 提示。\n6.重启服务器，安装完成。",
+       "body": "执行安装脚本  Ctrl+Alt+T 打开一个Terminal   执行命令 ：\n1.使用cd命令，进入安装包解压后的文件夹 ；\n{{IMG}}\n2. bash setoffline.sh执行命令；\n3.提示输入序列码后，会自动生成机器编码，将该机器复制后发送至推想人员，推想人员进行授权；(获取序列码步骤见章节2.3)\n4.继续下一步，确认服务器是否有GPU 。\n5.确认GPU完成，开始自动导入镜像，导入完成后，将有ALL Complete 提示。\n6.重启服务器，安装完成。",
        "tables": [],
        "children": [],
        "images": [
@@ -462,7 +462,7 @@
      "children": [
       {
        "title": "4.3.1检查系统日志",
-       "body": "Ctrl+Alt+T  打开一个Terminal， 执行命令：\ncat  /var/log/syslog | grep -i error\n输出的为Ubuntu 系统下的系统级别的错误日志，请检查其中的内容，并联系相关服务器维护人员解决问题。\n执行命令：\ncat  /var/log/syslog | grep -i warn\n输出的为Ubuntu 系统下的系统级别的警告日志，请检查其中的内容，并联系相关服务器维护人员解决问题。",
+       "body": "Ctrl+Alt+T  打开一个Terminal， 执行命令：\ncat  /var/log/syslog | grep -i error\n输出的为Ubuntu 系统下的系统级别的错误日志，请检查其中的内容，并联系相关服务器维护人员解决问题。\n执行命令：\ncat  /var/log/syslog | grep -i warn\n输出的为Ubuntu 系统下的系统级别的警告日志，请检查其中的内容，并联系相关服务器维护人员解决问题。\n{{IMG}}",
        "tables": [],
        "children": [],
        "images": [
@@ -489,7 +489,7 @@
    "children": [
     {
      "title": "5.1卸载过程",
-     "body": "Ctrl+Alt+T 打开一个Terminal   执行两个命令 ：\n1. 使用cd命令，进入解压后的文件夹 ；\n2. bash uninstall.sh；\n3. 输入Y(接受卸载)或n(取消卸载)；\n4. 输入当前用户的用户密码，继续下一步\n5. 卸载后，请重启服务器，以保证所有环境依赖卸载完成。",
+     "body": "Ctrl+Alt+T 打开一个Terminal   执行两个命令 ：\n1. 使用cd命令，进入解压后的文件夹 ；\n{{IMG}}\n2. bash uninstall.sh；\n3. 输入Y(接受卸载)或n(取消卸载)；\n4. 输入当前用户的用户密码，继续下一步\n5. 卸载后，请重启服务器，以保证所有环境依赖卸载完成。",
      "tables": [],
      "children": [],
      "images": [

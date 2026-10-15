@@ -166,11 +166,12 @@ def get_runtime_payload(prod_id):
     return out
 
 
+# 子章按标题匹配运行环境表；「网络」须先于「用户端」，避免「服务器及用户端网络条件」误命中表3
 _CHILD_TABLE_KEYS = (
     ("srv_hw", ("表1", "服务器硬件")),
     ("srv_sw", ("表2", "服务器软件")),
-    ("cli", ("表3", "用户端")),
     ("net", ("表4", "网络")),
+    ("cli", ("表3", "用户端配置", "用户端")),
 )
 _RUNTIME_TABLE_KEYS = ("srv_hw", "srv_sw", "cli", "net")
 
@@ -228,8 +229,15 @@ def _runtime_tables_ordered(payload):
 
 
 def _match_child_key(title, plain):
+    text = str(title or "")
+    pl = str(plain or "")
     for key, words in _CHILD_TABLE_KEYS:
-        if any(word in title or word in plain for word in words):
+        for word in words:
+            if word not in text and word not in pl:
+                continue
+            # 「用户端」单独出现才归表3；与「网络」同现时已由 net 先匹配
+            if key == "cli" and word == "用户端" and ("网络" in text or "网络" in pl or "表4" in text or "表4" in pl):
+                continue
             return key
     return None
 

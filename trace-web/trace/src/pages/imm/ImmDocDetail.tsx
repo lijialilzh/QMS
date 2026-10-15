@@ -1,10 +1,10 @@
-import { Button, Input, Modal, Space, Spin, Upload, message } from "antd";
+import { Button, Dropdown, Input, Modal, Space, Spin, Upload, message } from "antd";
 import { PlusOutlined, DeleteOutlined, FileAddOutlined, UploadOutlined, ArrowUpOutlined, ArrowDownOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
-import { splitBodyTables, reassembleBody } from "@/common/DocBlocks";
+import { splitBodyTables } from "@/common/DocBlocks";
 import * as Api from "@/api/ApiImmDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
@@ -58,6 +58,137 @@ const moveSibling = (nodes: any[], key: string, dir: -1 | 1): any[] => {
         return next;
     }
     return list.map((n: any) => ({ ...n, children: moveSibling(n.children || [], key, dir) }));
+};
+
+const blankChapter = () => ({ _key: genKey(), title: "新章节", body: "", tables: [], images: [], children: [] as any[] });
+
+const appendBodyLine = (body: string, line: string) => {
+    const b = String(body || "");
+    if (!b.trim()) return line;
+    return b.endsWith("\n") ? `${b}${line}` : `${b}\n${line}`;
+};
+
+/** 为图/表补齐 {{IMG}}/{{TBL}} 占位；无占位且同时有图和表时按先图后表，避免默认「表在前」 */
+const ensureMediaPlaceholders = (body: string, tables: any[], images: any[]) => {
+    let b = String(body || "");
+    const nImg = Array.isArray(images) ? images.length : 0;
+    const nTbl = Array.isArray(tables) ? tables.length : 0;
+    const imgPh = (b.match(/\{\{IMG\}\}/g) || []).length;
+    const tblPh = (b.match(/\{\{TBL\}\}/g) || []).length;
+    const hasLegacy = /见下图|如下图|下图|见下表|如下表|下表|见表\s*\d/.test(b);
+    if (imgPh === 0 && tblPh === 0 && !hasLegacy && nImg > 0 && nTbl > 0) {
+        let next = b;
+        for (let i = 0; i < nImg; i++) next = appendBodyLine(next, "{{IMG}}");
+        for (let i = 0; i < nTbl; i++) next = appendBodyLine(next, "{{TBL}}");
+        return next;
+    }
+    for (let i = imgPh; i < nImg; i++) b = appendBodyLine(b, "{{IMG}}");
+    for (let i = tblPh; i < nTbl; i++) b = appendBodyLine(b, "{{TBL}}");
+    return b;
+};
+
+const removeNthPlaceholder = (body: string, kind: "IMG" | "TBL", index: number) => {
+    const token = `{{${kind}}}`;
+    let seen = 0;
+    return String(body || "")
+        .split("\n")
+        .filter((ln) => {
+            if (ln.trim() !== token) return true;
+            if (seen === index) {
+                seen += 1;
+                return false;
+            }
+            seen += 1;
+            return true;
+        })
+        .join("\n");
+};
+
+/** 图/表前与末尾补空正文槽，清空文字后输入框仍保留 */
+const ensureInterleaveTextSlots = (segs: any[]): any[] => {
+    if (!segs.length) return [{ type: "text", text: "" }];
+    const out: any[] = [];
+    for (const seg of segs) {
+        if (seg.type === "image" || seg.type === "table") {
+            if (!out.length || out[out.length - 1].type !== "text") out.push({ type: "text", text: "" });
+            out.push(seg);
+        } else if (seg.type === "text") {
+            out.push({ ...seg, text: seg.text ?? "" });
+        }
+    }
+    if (out.length && (out[out.length - 1].type === "image" || out[out.length - 1].type === "table")) {
+        out.push({ type: "text", text: "" });
+    }
+    return out;
+};
+
+/** {{TXT}} 拆成多段正文，支持连续「添加正文」 */
+const expandTxtMarkers = (segs: any[]): any[] => {
+    const out: any[] = [];
+    for (const seg of segs) {
+        if (seg.type !== "text") {
+            out.push(seg);
+            continue;
+        }
+        const raw = String(seg.text ?? "");
+        if (!raw.includes("{{TXT}}")) {
+            out.push(seg);
+            continue;
+        }
+        raw.split(/\{\{TXT\}\}/).forEach((piece) => {
+            out.push({ type: "text", text: piece.replace(/^\n+|\n+$/g, "") });
+        });
+    }
+    return out;
+};
+
+/** 重组 body：连续正文之间写 {{TXT}}，图/表写静默占位 */
+const reassembleImmBody = (segments: any[], editedIndex?: number, newText?: string): string => {
+    const next =
+        editedIndex === undefined
+            ? segments
+            : segments.map((seg, i) => (seg.type === "text" && i === editedIndex ? { ...seg, text: newText ?? "" } : seg));
+    const parts: string[] = [];
+    let prevWasText = false;
+    for (const seg of next) {
+        if (seg.type === "text") {
+            if (prevWasText) parts.push("{{TXT}}");
+            parts.push(seg.text ?? "");
+            prevWasText = true;
+        } else if (seg.type === "table") {
+            prevWasText = false;
+            parts.push(seg.caption || "{{TBL}}");
+        } else if (seg.type === "image") {
+            prevWasText = false;
+            parts.push(seg.caption || "{{IMG}}");
+        }
+    }
+    return parts.join("\n");
+};
+
+const buildImmSegments = (body: string, tables: any[], images: any[]) => {
+    const normalized = ensureMediaPlaceholders(body, tables, images);
+    return expandTxtMarkers(ensureInterleaveTextSlots(splitBodyTables(normalized, tables, images)));
+};
+
+/** 在同级上方/下方插入；返回新树与新节点 key */
+const insertSibling = (nodes: any[], key: string, where: "before" | "after"): { sections: any[]; newKey: string } | null => {
+    const list = nodes || [];
+    const idx = list.findIndex((n: any) => n._key === key);
+    if (idx >= 0) {
+        const child = blankChapter();
+        const next = [...list];
+        next.splice(where === "before" ? idx : idx + 1, 0, child);
+        return { sections: next, newKey: child._key };
+    }
+    for (let i = 0; i < list.length; i++) {
+        const hit = insertSibling(list[i].children || [], key, where);
+        if (!hit) continue;
+        const next = [...list];
+        next[i] = { ...list[i], children: hit.sections };
+        return { sections: next, newKey: hit.newKey };
+    }
+    return null;
 };
 
 const firstKey = (nodes: any[]): string => (nodes && nodes[0] ? nodes[0]._key : "");
@@ -154,12 +285,17 @@ export default () => {
         setSections(mapNode(data.sections, key, (n: any) => ({ ...n, ...patch })));
 
     const addChild = (key: string) => {
-        const child = { _key: genKey(), title: "新章节", body: "", tables: [], images: [], children: [] };
+        const child = blankChapter();
         setSections(mapNode(data.sections, key, (n: any) => ({ ...n, children: [...(n.children || []), child] })));
         dispatch({ activeKey: child._key });
     };
+    const addSiblingAt = (key: string, where: "before" | "after") => {
+        const hit = insertSibling(data.sections, key, where);
+        if (!hit) return;
+        dispatch({ sections: hit.sections, activeKey: hit.newKey });
+    };
     const addRoot = () => {
-        const node = { _key: genKey(), title: "新章节", body: "", tables: [], images: [], children: [] };
+        const node = blankChapter();
         const sections = [...data.sections];
         const reviewAt = sections.findIndex((n: any) => n.ref_type === "review" || String(n.title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").includes("评审记录"));
         if (reviewAt >= 0) sections.splice(reviewAt, 0, node);
@@ -206,10 +342,34 @@ export default () => {
         const tables = (active.tables || []).map((tb: any[], i: number) => (i !== ti ? tb : tb.map((row: any[]) => row.filter((_: any, cc: number) => cc !== ci))));
         updateTables(tables);
     };
-    const addTable = () => updateTables([...(active.tables || []), [["", ""], ["", ""]]]);
-    const delTable = (ti: number) => updateTables((active.tables || []).filter((_: any, i: number) => i !== ti));
+    const addTable = () => {
+        if (!active) return;
+        const tables = [...(active.tables || []), [["", ""], ["", ""]]];
+        const images = Array.isArray(active.images) ? active.images : [];
+        // 先补已有图片占位，再追加本表，保证「先图后表」顺序
+        let body = ensureMediaPlaceholders(String(active.body || ""), active.tables || [], images);
+        body = appendBodyLine(body, "{{TBL}}");
+        patchNode(data.activeKey, { tables, body });
+    };
+    const delTable = (ti: number) => {
+        if (!active) return;
+        const tables = (active.tables || []).filter((_: any, i: number) => i !== ti);
+        const body = removeNthPlaceholder(String(active.body || ""), "TBL", ti);
+        patchNode(data.activeKey, { tables, body });
+    };
 
-    // 正文图片：上传/更换/删除（base64 内嵌）
+    const addBodyBlock = () => {
+        if (!active) return;
+        const images = Array.isArray(active.images) ? active.images : [];
+        const tables = active.tables || [];
+        const body = ensureMediaPlaceholders(String(active.body || ""), tables, images);
+        let segs = buildImmSegments(body, tables, images);
+        if (!segs.length) segs = [{ type: "text", text: "" }];
+        segs = [...segs, { type: "text", text: "" }];
+        patchNode(data.activeKey, { body: reassembleImmBody(segs) });
+    };
+
+    // 正文图片：上传/更换/删除（base64 内嵌）；新增图在 body 末尾追加 {{IMG}} 以保持插入顺序
     const uploadImage = (file: File, replaceIndex?: number) => {
         if (!file.type.startsWith("image/")) {
             message.error("请选择图片文件");
@@ -217,14 +377,18 @@ export default () => {
         }
         const reader = new FileReader();
         reader.onload = () => {
+            if (!active) return;
             const current = Array.isArray(active.images) ? [...active.images] : [];
             const dataUrl = String(reader.result || "");
             if (replaceIndex !== undefined && replaceIndex >= 0 && replaceIndex < current.length) {
                 current[replaceIndex] = dataUrl;
+                patchNode(data.activeKey, { images: current });
             } else {
                 current.push(dataUrl);
+                let body = ensureMediaPlaceholders(String(active.body || ""), active.tables || [], current.slice(0, -1));
+                body = appendBodyLine(body, "{{IMG}}");
+                patchNode(data.activeKey, { images: current, body });
             }
-            patchNode(data.activeKey, { images: current });
             message.success("图片已更新，请保存文档");
         };
         reader.onerror = () => message.error("图片读取失败");
@@ -232,9 +396,11 @@ export default () => {
         return false;
     };
     const delImage = (index: number) => {
+        if (!active) return;
         const current = Array.isArray(active.images) ? [...active.images] : [];
         current.splice(index, 1);
-        patchNode(data.activeKey, { images: current });
+        const body = removeNthPlaceholder(String(active.body || ""), "IMG", index);
+        patchNode(data.activeKey, { images: current, body });
     };
 
     const doSave = () => {
@@ -312,7 +478,17 @@ export default () => {
                                     {i > 0 && <ArrowUpOutlined title="上移" onClick={() => moveNode(n._key, -1)} />}
                                     {i < (nodes || []).length - 1 && <ArrowDownOutlined title="下移" onClick={() => moveNode(n._key, 1)} />}
                                 </span>
-                                <PlusOutlined title="添加子章节" onClick={() => addChild(n._key)} />
+                                <Dropdown
+                                    trigger={["click"]}
+                                    menu={{
+                                        items: [
+                                            { key: "before", label: "上方同级", onClick: () => addSiblingAt(n._key, "before") },
+                                            { key: "after", label: "下方同级", onClick: () => addSiblingAt(n._key, "after") },
+                                            { key: "child", label: "子章节", onClick: () => addChild(n._key) },
+                                        ],
+                                    }}>
+                                    <PlusOutlined title="添加章节" />
+                                </Dropdown>
                                 <DeleteOutlined title="删除章节" onClick={() => delNode(n._key)} />
                             </span>
                         )}
@@ -398,22 +574,43 @@ export default () => {
                                 </div>
                                 {(() => {
                                     const images: string[] = Array.isArray(active.images) ? active.images : [];
-                                    const segments = splitBodyTables(active.body, active.tables, images);
-                                    const hasInterleave = (segments.some((s) => s.type === "table") || segments.some((s) => s.type === "image")) && segments.some((s) => s.type === "text") && !isMd5Review;
+                                    const isTopoAuto = stripNum(active.title) === "硬件拓扑";
+                                    const segments = buildImmSegments(String(active.body || ""), active.tables || [], images);
+                                    const hasMedia = segments.some((s) => s.type === "table" || s.type === "image");
+                                    const textCount = segments.filter((s) => s.type === "text").length;
+                                    // 有图/表，或多段正文（含 {{TXT}}）时走交错；清空某段正文仍保留输入框
+                                    const hasInterleave = !isMd5Review && (hasMedia || textCount > 1 || /\{\{TXT\}\}/.test(String(active.body || "")));
+                                    const hideBodyBox = isTopoAuto;
+                                    // 硬件拓扑：自动取图只读，暂无正文
+                                    if (isTopoAuto) {
+                                        return (
+                                            <div className="pdp-field">
+                                                <div className="pdp-label">物理拓扑图（自动获取，只读）</div>
+                                                {images.length ? images.map((url: string, imgIndex: number) => (
+                                                    <div key={imgIndex} style={{ marginBottom: 8, textAlign: "center" }}>
+                                                        <img src={url} alt="" style={{ maxWidth: "100%", border: "1px solid #eee" }} />
+                                                    </div>
+                                                )) : (
+                                                    <div className="pdp-empty" style={{ padding: 12 }}>该产品暂无物理拓扑图，请先在「产品图示 → 物理拓扑图」上传</div>
+                                                )}
+                                            </div>
+                                        );
+                                    }
                                     if (hasInterleave) {
-                                        return segments.map((seg, si) => {
+                                        return (
+                                        <>
+                                        {segments.map((seg, si) => {
                                             if (seg.type === "text") {
                                                 return (
                                                     <div className="pdp-field" key={si}>
-                                                        <div className="pdp-label">正文 {si + 1}</div>
+                                                        <div className="pdp-label">正文 {segments.slice(0, si + 1).filter((s: any) => s.type === "text").length}</div>
                                                         <Input.TextArea
                                                             autoSize={{ minRows: 3, maxRows: 24 }}
                                                             value={seg.text}
                                                             disabled={readonly || isRuntimeLockedBody(active)}
                                                             placeholder="本段正文内容，可多行"
                                                             onChange={(e) => {
-                                                                const newBody = reassembleBody(segments, si, e.target.value);
-                                                                patchNode(active._key, { body: newBody });
+                                                                patchNode(active._key, { body: reassembleImmBody(segments, si, e.target.value) });
                                                             }}
                                                         />
                                                     </div>
@@ -426,6 +623,17 @@ export default () => {
                                                 return (
                                                     <div key={si} style={{ margin: "8px 0", textAlign: "center" }}>
                                                         <img src={url} alt="" style={{ maxWidth: "100%", border: "1px solid #eee" }} />
+                                                        {!readonly && (
+                                                            <Space size={4} style={{ marginTop: 4, display: "flex", justifyContent: "center" }}>
+                                                                <Upload
+                                                                    accept="image/*"
+                                                                    showUploadList={false}
+                                                                    beforeUpload={(file) => uploadImage(file as File, ii)}>
+                                                                    <Button size="small" icon={<UploadOutlined />}>更换</Button>
+                                                                </Upload>
+                                                                <Button size="small" danger onClick={() => delImage(ii)}>删除</Button>
+                                                            </Space>
+                                                        )}
                                                     </div>
                                                 );
                                             }
@@ -534,10 +742,29 @@ export default () => {
                                                     </table>
                                                 </div>
                                             );
-                                        });
+                                        })}
+                                        {!readonly && (
+                                            <Space wrap style={{ margin: "8px 0" }}>
+                                                <Button size="small" onClick={addBodyBlock}>添加正文</Button>
+                                                <Upload
+                                                    accept="image/*"
+                                                    showUploadList={false}
+                                                    beforeUpload={(file) => uploadImage(file as File)}>
+                                                    <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
+                                                </Upload>
+                                            </Space>
+                                        )}
+                                        {!readonly && !isMd5Review && (
+                                            <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
+                                                添加表格
+                                            </Button>
+                                        )}
+                                        </>
+                                        );
                                     }
                                     return (
                                         <>
+                                            {!hideBodyBox && (
                                             <div className="pdp-field">
                                                 <div className="pdp-label">正文</div>
                                                 <Input.TextArea
@@ -548,6 +775,7 @@ export default () => {
                                                     onChange={(e) => patchNode(active._key, { body: e.target.value })}
                                                 />
                                             </div>
+                                            )}
                                             {isMd5Review
                                                 ? (
                                                     <ReviewRecordTables tables={active.tables || []} readonly={readonly} onChange={updateTables} />
@@ -677,12 +905,15 @@ export default () => {
                                                     </div>
                                                 ))}
                                                 {!readonly && (
-                                                    <Upload
-                                                        accept="image/*"
-                                                        showUploadList={false}
-                                                        beforeUpload={(file) => uploadImage(file as File)}>
-                                                        <Button size="small" icon={<UploadOutlined />} style={{ margin: "4px 0" }}>上传图片</Button>
-                                                    </Upload>
+                                                    <Space wrap style={{ margin: "4px 0" }}>
+                                                        <Button size="small" onClick={addBodyBlock}>添加正文</Button>
+                                                        <Upload
+                                                            accept="image/*"
+                                                            showUploadList={false}
+                                                            beforeUpload={(file) => uploadImage(file as File)}>
+                                                            <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
+                                                        </Upload>
+                                                    </Space>
                                                 )}
                                             </div>
                                             )}

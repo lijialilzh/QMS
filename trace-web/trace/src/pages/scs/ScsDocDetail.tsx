@@ -665,7 +665,7 @@ export default () => {
                                                     if (seg.type === "text") {
                                                         return (
                                                             <div className="pdp-field" key={si}>
-                                                                <div className="pdp-label">正文 {si + 1}</div>
+                                                                <div className="pdp-label">正文 {segments.slice(0, si + 1).filter((s: any) => s.type === "text").length}</div>
                                                                 <Input.TextArea
                                                                     autoSize={{ minRows: 3, maxRows: 20 }}
                                                                     value={seg.text}

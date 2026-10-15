@@ -573,7 +573,7 @@ export default () => {
                                             const textVal = block?.text || "";
                                             return (
                                                 <div className="pdp-field" key={`blk-${bi}`}>
-                                                    <div className="pdp-label">正文 {bi + 1}</div>
+                                                    <div className="pdp-label">正文 {(active.blocks || []).slice(0, bi + 1).filter((b: any) => b?.type !== "table").length}</div>
                                                     <Input.TextArea autoSize={{ minRows: 3, maxRows: 24 }}
                                                         value={textVal} disabled={isView || isRuntimeLockedBody(active)}
                                                         placeholder="本段正文内容，可多行"
