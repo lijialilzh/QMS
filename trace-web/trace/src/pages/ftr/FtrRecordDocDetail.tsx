@@ -1,5 +1,5 @@
 import { syncFileNoVersion } from "@/pages/doc_fill/syncDocVersion";
-import { Button, Input, Modal, Radio, Space, Spin, Table, message } from "antd";
+import { Button, Checkbox, Input, Modal, Space, Spin, Table, message } from "antd";
 import type { CSSProperties } from "react";
 import { useEffect, useMemo } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
@@ -193,10 +193,18 @@ export default () => {
                     </span>;
                 }
                 return (
-                    <Radio.Group size="small" value={val} onChange={(e) => setRecord(idx, "result", formatResult(e.target.value))}>
-                        <Radio value="pass" style={{ fontSize: 12 }}>通过</Radio>
-                        <Radio value="fail" style={{ fontSize: 12 }}>不通过</Radio>
-                    </Radio.Group>
+                    <Space size={12}>
+                        <Checkbox
+                            style={{ fontSize: 12 }}
+                            checked={val === "pass"}
+                            onChange={(e) => setRecord(idx, "result", formatResult(e.target.checked ? "pass" : ""))}
+                        >通过</Checkbox>
+                        <Checkbox
+                            style={{ fontSize: 12 }}
+                            checked={val === "fail"}
+                            onChange={(e) => setRecord(idx, "result", formatResult(e.target.checked ? "fail" : ""))}
+                        >不通过</Checkbox>
+                    </Space>
                 );
             },
         },
@@ -273,6 +281,7 @@ export default () => {
                         {/* 测试记录列表 */}
                         <div style={{ marginBottom: 8, fontSize: 14, fontWeight: 600, color: "#333" }}>测试项目</div>
                         <Table
+                            className="ftr-record-table"
                             columns={columns}
                             dataSource={records}
                             pagination={false}

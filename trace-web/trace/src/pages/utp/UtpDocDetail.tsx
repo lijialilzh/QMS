@@ -31,6 +31,26 @@ import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
 
+/** 「描述」章产品信息行（名称/型号/完整版本）自动获取，编辑页只读展示 */
+const isDescChapter = (node: any): boolean =>
+    String(node?.title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim() === "描述";
+
+const splitDescBody = (body: string): { headerText: string; restText: string } => {
+    const lines = String(body || "").split("\n");
+    const header: string[] = [];
+    let i = 0;
+    while (i < lines.length) {
+        const s = lines[i].trim();
+        if (s.startsWith("产品名称：") || s.startsWith("产品型号：") || s.startsWith("完整版本：")) {
+            header.push(lines[i]);
+            i += 1;
+            continue;
+        }
+        break;
+    }
+    return { headerText: header.join("\n"), restText: lines.slice(i).join("\n") };
+};
+
 // 从「产品时间逻辑线」计算产品开发周期：取输出含「产品开发」活动（排除「产品开发计划」文档）的日期，
 // 最早=开发开始、最晚=开发结束。格式「YYYY年M月~M月」（同年省略后段年份，跨年则完整显示）。
 const computeCycle = (rows: any[]): string => {
@@ -841,6 +861,31 @@ export default () => {
                                     }
                                     return (
                                         <>
+                                            {isDescChapter(active) && !rtBodyLock ? (() => {
+                                                const { headerText, restText } = splitDescBody(active.body ?? "");
+                                                return (
+                                                    <>
+                                                        {headerText ? (
+                                                            <div className="pdp-field">
+                                                                <div className="pdp-label">产品信息（自动获取，只读）</div>
+                                                                <Input.TextArea autoSize={{ minRows: 2, maxRows: 8 }} value={headerText} disabled />
+                                                            </div>
+                                                        ) : null}
+                                                        <div className="pdp-field">
+                                                            <div className="pdp-label">正文</div>
+                                                            <Input.TextArea
+                                                                autoSize={{ minRows: 3, maxRows: 20 }}
+                                                                value={restText}
+                                                                placeholder="本章节正文内容，可多行"
+                                                                onChange={(e) => {
+                                                                    const next = headerText ? `${headerText}\n${e.target.value}` : e.target.value;
+                                                                    patchNode(active._key, { body: next });
+                                                                }}
+                                                            />
+                                                        </div>
+                                                    </>
+                                                );
+                                            })() : (
                                             <div className="pdp-field">
                                                 <div className="pdp-label">正文{rtBodyLock ? "（运行环境自动获取，只读）" : ""}</div>
                                                 <Input.TextArea
@@ -851,6 +896,7 @@ export default () => {
                                                     onChange={(e) => patchNode(active._key, { body: e.target.value })}
                                                 />
                                             </div>
+                                            )}
                                             {(active.ref_type === "personnel" || stripNum(active.title) === "人员资源") && !readonly && (
                                                 <div className="pdp-pull-bar">
                                                     <Button type="primary" ghost loading={data.pulling} onClick={pullPersonnel}>

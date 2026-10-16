@@ -164,7 +164,9 @@ class Server(object):
         return content
 
     def __fill_test_plan(self, content, prod_id):
-        """「测试计划」表：计划完成时间按行「测试活动」匹配时间线；负责人=主测试工程师(2025.09前宋月/之后孙家旭)+其他测试工程师。"""
+        """「测试计划」表：计划完成时间按行「测试活动」匹配时间线。
+        用户测试计划负责人：活动/交付物含「用户测试记录」→用户人员（角色含用户测试）；
+        其余行→测试人员（与修订人相同：2025.09 前宋月/之后孙家旭）。打开即覆盖。"""
         if not prod_id or not isinstance(content, dict):
             return content
         doc_date = serv_review_util.cover_date(prod_id, DOC_KEY) or ""
@@ -173,7 +175,8 @@ class Server(object):
         ).scalars().all()
         is_user = DOC_KEY == "utp"
         if is_user:
-            date_kw = {"报告": ["用户测试报告"], "用例": ["用户测试用例", "用例"],
+            # 「用例」勿用宽关键字，避免命中其它带「用例+评审」的时间线行（误取更早月份）
+            date_kw = {"报告": ["用户测试报告"], "用例": ["用户测试用例"],
                        "计划": ["用户测试计划"], "执行": ["用户测试", "测试"]}
 
             def role_ok(r):
@@ -186,7 +189,7 @@ class Server(object):
 
             def role_ok(r):
                 return ("测试" in r) and ("用户" not in r)
-        # 该产品下的测试人员（软件测试计划=测试工程师；用户测试计划=用户测试），排除固定主测试工程师本身
+        # 用户人员（角色含「用户测试」）；软件测试计划侧仍为其他测试工程师
         others = []
         for m in members:
             if role_ok(str(m.role or "")):
@@ -214,9 +217,16 @@ class Server(object):
                 return serv_review_util.review_date(prod_id, date_kw[kind]) or doc_date
             return doc_date
 
-        def owners(dt, kind):
+        def is_user_record_row(act, deliverable=""):
+            return "用户测试记录" in f"{act or ''} {deliverable or ''}"
+
+        def owners(dt, kind, act="", deliverable=""):
             if is_user:
-                names = list(others)
+                if is_user_record_row(act, deliverable):
+                    names = list(others)
+                else:
+                    # 与修订人同一逻辑：测试人员日期规则
+                    names = ["宋月" if serv_review_util._before_202509(dt or doc_date) else "孙家旭"]
             else:
                 primary = "宋月" if serv_review_util._before_202509(dt or doc_date) else "孙家旭"
                 # 评审计划/测试用例/测试报告：只写主测试工程师一人；其余(执行)：主+其他测试人员
@@ -236,16 +246,18 @@ class Server(object):
                     ci_time = next((i for i, h in enumerate(header) if "计划完成时间" in h), 0)
                     ci_own = next((i for i, h in enumerate(header) if "负责人" in h), 1)
                     ci_act = next((i for i, h in enumerate(header) if "活动" in h), 2)
+                    ci_del = next((i for i, h in enumerate(header) if "交付" in h), -1)
                     for r in tbl[1:]:
                         if not isinstance(r, list):
                             continue
                         act = r[ci_act] if ci_act < len(r) else ""
+                        deliverable = r[ci_del] if ci_del >= 0 and ci_del < len(r) else ""
                         kind = row_kind(act)
                         dt = to_month(row_date(kind))
                         if ci_time < len(r):
                             r[ci_time] = dt
                         if ci_own < len(r):
-                            r[ci_own] = owners(dt, kind)
+                            r[ci_own] = owners(dt, kind, act, deliverable)
             for ch in (node.get("children") or []):
                 walk(ch)
 
@@ -285,7 +297,8 @@ class Server(object):
                             others.append(nm)
                 names = [primary] if kind in ("报告", "用例", "计划") else [primary] + others
                 return "、".join([n for n in names if n])
-            if "用户测试" in label:
+            # 「用户测试」「模拟用户」均取参与人员中角色含「用户测试」者
+            if ("用户测试" in label) or ("模拟用户" in label):
                 names = [(m.name or "").strip() for m in members if "用户测试" in str(m.role or "")]
                 names = [n for n in names if n]
                 return "、".join(names) if names else None
@@ -330,22 +343,87 @@ class Server(object):
         """运行环境表从产品 prod_runtime_env 整表覆盖（含增删行列后的结构）。"""
         return apply_runtime_to_pdp_content(content, prod_id)
 
+    def __clean_plan_captions(self, content):
+        """「测试计划」表名去掉前缀版本号残片（如 .0.0测试计划如下：→ 测试计划如下：）。"""
+        if not isinstance(content, dict):
+            return content
+
+        def walk(node):
+            caps = node.get("table_captions")
+            if isinstance(caps, list) and caps:
+                fixed = []
+                for c in caps:
+                    s = str(c or "")
+                    if "测试计划如下" in s:
+                        s = "测试计划如下："
+                    fixed.append(s)
+                node["table_captions"] = fixed
+            for ch in (node.get("children") or []):
+                walk(ch)
+
+        for s in (content.get("sections") or []):
+            walk(s)
+        return content
+
+    @staticmethod
+    def __strip_title(title):
+        return re.sub(r"^\s*\d+(?:\.\d+)*[、.\s]*", "", str(title or "")).strip()
+
+    def __fill_desc(self, content, product):
+        """「描述」章：产品名称/完整版本自动写入；有产品型号(type_code)则写入，无则隐藏该行；保留其后说明正文。"""
+        if not product:
+            return
+        name = (product.name or "").strip()
+        type_code = (getattr(product, "type_code", None) or "").strip()
+        full_version = (product.full_version or "").strip()
+        if not (name or type_code or full_version):
+            return
+
+        def walk(node):
+            if self.__strip_title(node.get("title")) == "描述":
+                body = str(node.get("body") or "")
+                rest = []
+                for ln in body.split("\n"):
+                    s = ln.strip()
+                    if s.startswith("产品名称：") or s.startswith("产品型号：") or s.startswith("完整版本："):
+                        continue
+                    rest.append(ln)
+                while rest and not str(rest[0]).strip():
+                    rest.pop(0)
+                header = []
+                if name:
+                    header.append(f"产品名称：{name}")
+                if type_code:
+                    header.append(f"产品型号：{type_code}")
+                if full_version:
+                    header.append(f"完整版本：{full_version}")
+                node["body"] = "\n".join(header + rest) if header else "\n".join(rest)
+            for c in (node.get("children") or []):
+                walk(c)
+
+        for s in (content.get("sections") or []):
+            walk(s)
+
     def __autofill(self, content, prod_id, product=None, version="", force=False):
         if not isinstance(content, dict):
             return content
         if product and product.name:
             for s in (content.get("sections") or []):
                 self.__replace_name(s, BASE_NAME, product.name)
-            # 更新完整版本号
+            # 更新完整版本号（「描述」章由 __fill_desc 重建头部）
             new_full_version = (product.full_version or "").strip()
             if new_full_version:
                 def _update_version(node):
-                    if node.get("body") and "完整版本" in str(node.get("body")):
+                    if self.__strip_title(node.get("title")) == "描述":
+                        pass
+                    elif node.get("body") and "完整版本" in str(node.get("body")):
                         node["body"] = re.sub("完整版本：[^\n]*", f"完整版本：{new_full_version}", str(node["body"]))
                     for c in (node.get("children") or []):
                         _update_version(c)
                 for s in (content.get("sections") or []):
                     _update_version(s)
+        self.__fill_desc(content, product)
+        self.__clean_plan_captions(content)
         self.__fill_test_plan(content, prod_id)
         self.__fill_roles(content, prod_id, force=force)
         self.__fill_runtime_env(content, prod_id, force=force)
@@ -478,14 +556,23 @@ class Server(object):
                     reset_fixed(c)
             for s in (content.get("sections") or []):
                 reset_fixed(s)
-            # 完整版本号更新为新产品版本（body + table_captions）
+            # 完整版本号更新为新产品版本（body + table_captions；「测试计划如下」不含版本号）
             new_full_version = (product.full_version or "").strip()
             def update_version(node):
                 if node.get("body") and "完整版本" in str(node.get("body")):
                     node["body"] = re.sub("完整版本：[^\n]*", f"完整版本：{new_full_version}", str(node["body"]))
                 caps = node.get("table_captions") or []
                 if caps:
-                    node["table_captions"] = [re.sub(r"\d+\.\d+\.\d+\.\d+", new_full_version, str(c)) if re.search(r"\d+\.\d+\.\d+\.\d+", str(c)) else c for c in caps]
+                    next_caps = []
+                    for c in caps:
+                        s = str(c or "")
+                        if "测试计划如下" in s:
+                            next_caps.append("测试计划如下：")
+                        elif new_full_version and re.search(r"\d+\.\d+\.\d+\.\d+", s):
+                            next_caps.append(re.sub(r"\d+\.\d+\.\d+\.\d+", new_full_version, s))
+                        else:
+                            next_caps.append(c)
+                    node["table_captions"] = next_caps
                 for c in (node.get("children") or []):
                     update_version(c)
             for s in (content.get("sections") or []):
