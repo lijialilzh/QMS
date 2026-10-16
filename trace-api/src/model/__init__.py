@@ -155,6 +155,8 @@ from .dat_doc import DatDoc  # noqa: E402,F401
 # 软件测试计划 / 用户测试计划 / 用户测试报告 / 软件测试报告（测试文件，PDP 风格章节树）。
 from .stp_doc import StpDoc  # noqa: E402,F401
 from .utp_doc import UtpDoc  # noqa: E402,F401
+from .utp_record_doc import UtpRecordDoc  # noqa: E402,F401
+from .dev_test_record_doc import DevTestRecordDoc  # noqa: E402,F401
 from .utr_doc import UtrDoc  # noqa: E402,F401
 from .str_doc import StrDoc  # noqa: E402,F401
 from .bug_doc import BugDoc  # noqa: E402,F401

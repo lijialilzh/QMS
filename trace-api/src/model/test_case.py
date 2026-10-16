@@ -20,3 +20,4 @@ class TestCase(Model):
     test_step = Column(TEXT, comment="测试步骤")
     expect = Column(TEXT, comment="预期结果")
     note = Column(TEXT, comment="备注")
+    sheet_name = Column(String(128), comment="Excel sheet名（用户测试用例=型号）")

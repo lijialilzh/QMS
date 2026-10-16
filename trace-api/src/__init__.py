@@ -24,7 +24,7 @@ from .api import web_auth, web_session, api_user, api_role, api_project, api_haz
     api_vuh_doc, api_version_rule, api_ptr_doc, api_company_info, api_label_doc, api_release_note, api_pha_doc, \
     api_cyber_cap_doc, api_research_doc, api_nsr_doc, api_acc_doc, api_nsmp_doc, api_rmp_doc, api_sd_doc, \
     api_crr_doc, api_dem_doc, api_deq_doc, api_scm_doc, api_scs_doc, api_dat_doc, api_stp_doc, api_utp_doc, \
-    api_utr_doc, api_str_doc, api_bug_doc, api_teq_doc, api_tem_doc, api_imm_doc, api_hld_doc, api_ftr_doc, api_ftr_record_doc, api_train_record_doc, api_person_sign, \
+    api_utp_record_doc, api_utr_doc, api_str_doc, api_bug_doc, api_teq_doc, api_tem_doc, api_imm_doc, api_hld_doc, api_ftr_doc, api_ftr_record_doc, api_train_record_doc, api_person_sign, \
     api_doc_integrate, api_print_cfg, api_doc_compare, \
     api_cybersec_plan_doc
 from .utils import read_line
@@ -116,6 +116,7 @@ def create_app():
     main_router.include_router(api_dat_doc.router, prefix="/dat_doc", tags=["数据申请单"])
     main_router.include_router(api_stp_doc.router, prefix="/stp_doc", tags=["软件测试计划"])
     main_router.include_router(api_utp_doc.router, prefix="/utp_doc", tags=["用户测试计划"])
+    main_router.include_router(api_utp_record_doc.router, prefix="/utp_record_doc", tags=["用户测试记录"])
     main_router.include_router(api_utr_doc.router, prefix="/utr_doc", tags=["用户测试报告"])
     main_router.include_router(api_str_doc.router, prefix="/str_doc", tags=["软件测试报告"])
     main_router.include_router(api_bug_doc.router, prefix="/bug_doc", tags=["Bug管理及回归测试"])

@@ -1,6 +1,6 @@
 import "./TestCases.less";
-import { Table, message } from "antd";
-import { useEffect } from "react";
+import { Table, Tabs, message } from "antd";
+import { useEffect, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
 import * as Api from "@/api/ApiTestCase";
@@ -9,21 +9,37 @@ import { renderOneLineWithTooltip } from "@/common/tableRenderers";
 export default ({ set_id }: any) => {
     const { t: ts } = useTranslation();
     const [data, dispatch] = useData({
-        rows: [],
+        rows: [] as any[],
         loading: false,
+        activeSheet: "全部",
     });
 
-    const doSearch = (set_id: string) => {
+    const doSearch = (setId: string) => {
         dispatch({ loading: true, rows: [] });
-        Api.list_test_case({ set_id }).then((res: any) => {
+        Api.list_test_case({ set_id: setId }).then((res: any) => {
             if (res.code === Api.C_OK) {
-                dispatch({ loading: false, rows: res.data.rows });
+                const rows = res.data.rows || [];
+                dispatch({ loading: false, rows, activeSheet: "全部" });
             } else {
                 dispatch({ loading: false, rows: [] });
                 message.error(res.msg);
             }
         });
     };
+
+    const sheetTabs = useMemo(() => {
+        const names: string[] = [];
+        (data.rows || []).forEach((r: any) => {
+            const sn = String(r.sheet_name || "").trim();
+            if (sn && !names.includes(sn)) names.push(sn);
+        });
+        return ["全部", ...names];
+    }, [data.rows]);
+
+    const filteredRows = useMemo(() => {
+        if (data.activeSheet === "全部") return data.rows || [];
+        return (data.rows || []).filter((r: any) => String(r.sheet_name || "").trim() === data.activeSheet);
+    }, [data.rows, data.activeSheet]);
 
     const columns = [
         {
@@ -94,6 +110,15 @@ export default ({ set_id }: any) => {
 
     return (
         <div className="div-v table-box">
+            {sheetTabs.length > 1 && (
+                <Tabs
+                    size="small"
+                    activeKey={data.activeSheet}
+                    onChange={(key) => dispatch({ activeSheet: key })}
+                    items={sheetTabs.map((name) => ({ key: name, label: name }))}
+                    style={{ marginBottom: 8 }}
+                />
+            )}
             <Table
                 className="expand"
                 tableLayout="fixed"
@@ -102,7 +127,7 @@ export default ({ set_id }: any) => {
                 pagination={false}
                 columns={columns}
                 rowKey={(item: any) => item.id}
-                dataSource={data.rows}
+                dataSource={filteredRows}
                 loading={data.loading}
             />
         </div>

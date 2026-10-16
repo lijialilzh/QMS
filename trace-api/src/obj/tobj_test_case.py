@@ -18,3 +18,4 @@ class TestCaseForm(BaseModel):
     test_step: Optional[str] = Field(title="测试步骤")
     expect: Optional[str] = Field(title="预期结果")
     note: Optional[str] = Field(title="备注")
+    sheet_name: Optional[str] = Field(title="Excel sheet名（型号）")

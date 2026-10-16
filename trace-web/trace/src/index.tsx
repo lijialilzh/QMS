@@ -96,6 +96,8 @@ import TrainRecordDocDetail from "./pages/train_record/TrainRecordDocDetail";
 import FtrRecordDocDetail from "./pages/ftr/FtrRecordDocDetail";
 import UtpDocs from "./pages/utp/UtpDocs";
 import UtpDocDetail from "./pages/utp/UtpDocDetail";
+import UtpRecordDocs from "./pages/utp_record/UtpRecordDocs";
+import UtpRecordDocDetail from "./pages/utp_record/UtpRecordDocDetail";
 import UtrDocs from "./pages/utr/UtrDocs";
 import UtrDocDetail from "./pages/utr/UtrDocDetail";
 import StrDocs from "./pages/str/StrDocs";
@@ -282,6 +284,9 @@ const router = createRouter([
             { path: "/utp_docs", element: <UtpDocs /> },
             { path: "/utp_docs/edit/:id", element: <UtpDocDetail /> },
             { path: "/utp_docs/view/:id", element: <UtpDocDetail /> },
+            { path: "/utp_record_docs", element: <UtpRecordDocs /> },
+            { path: "/utp_record_docs/edit/:id", element: <UtpRecordDocDetail /> },
+            { path: "/utp_record_docs/view/:id", element: <UtpRecordDocDetail /> },
             { path: "/utr_docs", element: <UtrDocs /> },
             { path: "/utr_docs/edit/:id", element: <UtrDocDetail /> },
             { path: "/utr_docs/view/:id", element: <UtrDocDetail /> },

@@ -513,6 +513,11 @@ export default () => {
                                 perm: "utp_doc_view",
                             },
                             {
+                                key: "/utp_record_docs",
+                                label: ts("menu.utp_record_docs"),
+                                perm: "utp_record_doc_view",
+                            },
+                            {
                                 key: "/utr_docs",
                                 label: ts("menu.utr_docs"),
                                 perm: "utr_doc_view",

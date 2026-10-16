@@ -39,6 +39,7 @@ def create_tables():
                 sql_ctx.db.session.execute(expression.text("ALTER TABLE IF EXISTS prod_hospital ADD COLUMN IF NOT EXISTS province VARCHAR(64)"))
                 sql_ctx.db.session.execute(expression.text("ALTER TABLE IF EXISTS prod_hospital ADD COLUMN IF NOT EXISTS city VARCHAR(128)"))
                 sql_ctx.db.session.execute(expression.text("ALTER TABLE IF EXISTS project_member ADD COLUMN IF NOT EXISTS dept VARCHAR(64)"))
+                sql_ctx.db.session.execute(expression.text("ALTER TABLE IF EXISTS test_case ADD COLUMN IF NOT EXISTS sheet_name VARCHAR(128)"))
                 sql_ctx.db.session.commit()
             Base.metadata.create_all(bind=engine)
 
@@ -79,6 +80,16 @@ def init_data():
                 else:
                     sql = pg_insert(table).values(row).on_conflict_do_nothing()
                 sql_ctx.db.session.execute(sql)
+            sql_ctx.db.session.commit()
+            # 收回不应再持有的默认权限（init 对 role_perm 为 DO NOTHING，需显式删除）
+            # QA：不可导入测试集、用户测试记录只读；开发/RA：无用户测试记录
+            sql_ctx.db.session.execute(expression.text(
+                "DELETE FROM role_perm WHERE role_code = 'qa' AND perm_code IN ('test_set_edit', 'utp_record_doc_edit')"
+            ))
+            sql_ctx.db.session.execute(expression.text(
+                "DELETE FROM role_perm WHERE role_code IN ('developer', 'ra') "
+                "AND perm_code IN ('utp_record_doc', 'utp_record_doc_view', 'utp_record_doc_edit')"
+            ))
             sql_ctx.db.session.commit()
 
 if __name__ == "__main__":

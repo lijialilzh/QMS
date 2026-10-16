@@ -55,6 +55,7 @@
         "dat_docs": "Data Application",
         "stp_docs": "Software Test Plan",
         "utp_docs": "User Test Plan",
+        "utp_record_docs": "User Test Record",
         "utr_docs": "User Test Report",
         "str_docs": "Software Test Report",
         "bug_docs": "Bug Mgmt & Regression",

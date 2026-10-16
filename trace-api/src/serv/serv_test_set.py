@@ -46,74 +46,86 @@ class Server(object):
         return bool(re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$", txt)) and "-" in txt
 
 
+    def __parse_sheet(self, ws, sheet_name: str):
+        """解析单个 sheet；sheet_name 写入用例（用户测试多型号时 sheet 名=型号）。"""
+        test_cases = []
+        header_row_idx = None
+        col_idx = {
+            "code": 0,
+            "srs_code": 1,
+            "test_type": 2,
+            "function": 4,
+            "description": 5,
+            "precondition": 6,
+            "test_step": 7,
+            "expect": 8,
+            "note": 9,
+        }
+
+        max_scan_row = min(ws.max_row or 1, 30)
+        for ridx in range(1, max_scan_row + 1):
+            row_vals = [self.__to_str(v) for v in ws.iter_rows(min_row=ridx, max_row=ridx, values_only=True).__next__()]
+            for cidx, cell_text in enumerate(row_vals):
+                if self.__match_col(cell_text, ["case编号", "用例编号", "测试用例编号", "caseid"]):
+                    col_idx["code"] = cidx
+                    header_row_idx = ridx
+                if self.__match_col(cell_text, ["需求编号", "srscode", "srs编号"]):
+                    col_idx["srs_code"] = cidx
+                    header_row_idx = ridx
+                if self.__match_col(cell_text, ["测试类型", "testtype"]):
+                    col_idx["test_type"] = cidx
+                if self.__match_col(cell_text, ["功能点", "功能", "function"]):
+                    col_idx["function"] = cidx
+                if self.__match_col(cell_text, ["描述", "description"]):
+                    col_idx["description"] = cidx
+                if self.__match_col(cell_text, ["前置条件", "precondition"]):
+                    col_idx["precondition"] = cidx
+                if self.__match_col(cell_text, ["测试步骤", "步骤", "teststep"]):
+                    col_idx["test_step"] = cidx
+                if self.__match_col(cell_text, ["预期结果", "expect"]):
+                    col_idx["expect"] = cidx
+                if self.__match_col(cell_text, ["备注", "note"]):
+                    col_idx["note"] = cidx
+            if header_row_idx is not None:
+                break
+
+        data_start_row = (header_row_idx + 1) if header_row_idx else 2
+        sheet_label = self.__fit_varchar(sheet_name or "", 128)
+        for row in ws.iter_rows(min_row=data_start_row, values_only=True):
+            code_raw = self.__to_str(row[col_idx["code"]] if len(row) > col_idx["code"] else None)
+            if not code_raw:
+                continue
+            # 丢弃标题/说明行，避免导入脏数据导致长度超限
+            if not self.__looks_like_case_code(code_raw):
+                continue
+
+            test_cases.append(TestCase(
+                code=self.__fit_varchar(code_raw, 64),
+                srs_code=self.__fit_varchar(self.__to_str(row[col_idx["srs_code"]] if len(row) > col_idx["srs_code"] else None), 64),
+                test_type=self.__fit_varchar(self.__to_str(row[col_idx["test_type"]] if len(row) > col_idx["test_type"] else None), 64),
+                function=self.__to_str(row[col_idx["function"]] if len(row) > col_idx["function"] else None),
+                description=self.__to_str(row[col_idx["description"]] if len(row) > col_idx["description"] else None),
+                precondition=self.__to_str(row[col_idx["precondition"]] if len(row) > col_idx["precondition"] else None),
+                test_step=self.__to_str(row[col_idx["test_step"]] if len(row) > col_idx["test_step"] else None),
+                expect=self.__to_str(row[col_idx["expect"]] if len(row) > col_idx["expect"] else None),
+                note=self.__to_str(row[col_idx["note"]] if len(row) > col_idx["note"] else None),
+                sheet_name=sheet_label or None,
+            ))
+        logger.info(
+            "read_test_case_excel: sheet=%s, header_row=%s, data_start=%s, parsed_cases=%s",
+            sheet_name, header_row_idx, data_start_row, len(test_cases),
+        )
+        return test_cases
+
     async def __read_excel(self, file):
         try:
             bys = await file.read()
             wb = load_workbook(io.BytesIO(bys))
-            ws = wb[wb.sheetnames[0]]
             test_cases = []
-            header_row_idx = None
-            col_idx = {
-                "code": 0,
-                "srs_code": 1,
-                "test_type": 2,
-                "function": 4,
-                "description": 5,
-                "precondition": 6,
-                "test_step": 7,
-                "expect": 8,
-                "note": 9,
-            }
-
-            max_scan_row = min(ws.max_row, 30)
-            for ridx in range(1, max_scan_row + 1):
-                row_vals = [self.__to_str(v) for v in ws.iter_rows(min_row=ridx, max_row=ridx, values_only=True).__next__()]
-                for cidx, cell_text in enumerate(row_vals):
-                    if self.__match_col(cell_text, ["case编号", "用例编号", "测试用例编号", "caseid"]):
-                        col_idx["code"] = cidx
-                        header_row_idx = ridx
-                    if self.__match_col(cell_text, ["需求编号", "srscode", "srs编号"]):
-                        col_idx["srs_code"] = cidx
-                        header_row_idx = ridx
-                    if self.__match_col(cell_text, ["测试类型", "testtype"]):
-                        col_idx["test_type"] = cidx
-                    if self.__match_col(cell_text, ["功能点", "功能", "function"]):
-                        col_idx["function"] = cidx
-                    if self.__match_col(cell_text, ["描述", "description"]):
-                        col_idx["description"] = cidx
-                    if self.__match_col(cell_text, ["前置条件", "precondition"]):
-                        col_idx["precondition"] = cidx
-                    if self.__match_col(cell_text, ["测试步骤", "步骤", "teststep"]):
-                        col_idx["test_step"] = cidx
-                    if self.__match_col(cell_text, ["预期结果", "expect"]):
-                        col_idx["expect"] = cidx
-                    if self.__match_col(cell_text, ["备注", "note"]):
-                        col_idx["note"] = cidx
-                if header_row_idx is not None:
-                    break
-
-            data_start_row = (header_row_idx + 1) if header_row_idx else 2
-            for row in ws.iter_rows(min_row=data_start_row, values_only=True):
-                code_raw = self.__to_str(row[col_idx["code"]] if len(row) > col_idx["code"] else None)
-                if not code_raw:
-                    continue
-                # 丢弃标题/说明行，避免导入脏数据导致长度超限
-                if not self.__looks_like_case_code(code_raw):
-                    continue
-
-                test_case = TestCase(
-                    code=self.__fit_varchar(code_raw, 64),
-                    srs_code=self.__fit_varchar(self.__to_str(row[col_idx["srs_code"]] if len(row) > col_idx["srs_code"] else None), 64),
-                    test_type=self.__fit_varchar(self.__to_str(row[col_idx["test_type"]] if len(row) > col_idx["test_type"] else None), 64),
-                    function=self.__to_str(row[col_idx["function"]] if len(row) > col_idx["function"] else None),
-                    description=self.__to_str(row[col_idx["description"]] if len(row) > col_idx["description"] else None),
-                    precondition=self.__to_str(row[col_idx["precondition"]] if len(row) > col_idx["precondition"] else None),
-                    test_step=self.__to_str(row[col_idx["test_step"]] if len(row) > col_idx["test_step"] else None),
-                    expect=self.__to_str(row[col_idx["expect"]] if len(row) > col_idx["expect"] else None),
-                    note=self.__to_str(row[col_idx["note"]] if len(row) > col_idx["note"] else None),
-                )
-                test_cases.append(test_case)
-            logger.info("read_test_case_excel: sheet=%s, header_row=%s, data_start=%s, parsed_cases=%s", ws.title, header_row_idx, data_start_row, len(test_cases))
+            # 全部 sheet：用户测试用例多型号时每个 sheet 名=型号
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                test_cases.extend(self.__parse_sheet(ws, sheet_name))
             return None, test_cases
         except IntegrityError:
             logger.exception("")
@@ -154,6 +166,8 @@ class Server(object):
                                 )
                     db.session.add(test_case)
             db.session.commit()
+            if file:
+                await self.__sync_records_after_import(form.product_id, form.stage or "")
             return Resp.resp_ok()
         except Exception:
             logger.exception("")
@@ -165,6 +179,19 @@ class Server(object):
         db.session.execute(delete(TestCase).where(TestCase.set_id == id))
         db.session.commit()
         return Resp.resp_ok()
+
+    async def __sync_records_after_import(self, product_id: int, stage: str):
+        """导入用例后同步测试记录：用户测试→utp_record；单元/集成/系统→dev_test_record。"""
+        stage = stage or ""
+        try:
+            if stage == "用户测试":
+                from .serv_utp_record_doc import Server as UtpRecordServer
+                await UtpRecordServer().ensure_from_user_test_import(product_id)
+            elif stage in ("单元测试", "集成测试", "系统测试"):
+                from .serv_dev_test_record_doc import Server as DevRecordServer
+                await DevRecordServer().ensure_from_case_import(product_id, stage)
+        except Exception:
+            logger.exception("sync test record after import failed product_id=%s stage=%s", product_id, stage)
    
     async def update_test_set(self, form: TestSetForm, file):
         try:
@@ -182,6 +209,7 @@ class Server(object):
                 if key == "id" or value is None:
                     continue
                 setattr(row, key, value)
+            imported = False
             if file:
                 db.session.execute(delete(TestCase).where(TestCase.set_id == row.id))
                 err, test_cases = await self.__read_excel(file)
@@ -190,7 +218,11 @@ class Server(object):
                 for test_case in test_cases:
                     test_case.set_id = row.id
                     db.session.add(test_case)
+                imported = True
             db.session.commit()
+            stage = (form.stage if form.stage is not None else row.stage) or ""
+            if imported:
+                await self.__sync_records_after_import(row.product_id, stage)
             return Resp.resp_ok()
         except Exception:
             logger.exception("")

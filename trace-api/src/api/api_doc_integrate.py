@@ -56,6 +56,7 @@ from ..model.ftr_doc import FtrDoc
 from ..model.ftr_record_doc import FtrRecordDoc
 from ..model.train_record_doc import TrainRecordDoc
 from ..model.utp_doc import UtpDoc
+from ..model.utp_record_doc import UtpRecordDoc
 from ..model.utr_doc import UtrDoc
 from ..model.teq_doc import TeqDoc
 from ..model.cybersec_doc import CybersecDoc
@@ -95,6 +96,7 @@ from ..serv.serv_ftr_doc import Server as SrvFtr
 from ..serv.serv_ftr_record_doc import Server as SrvFtrRecord
 from ..serv.serv_train_record_doc import Server as SrvTrainRecord
 from ..serv.serv_utp_doc import Server as SrvUtp
+from ..serv.serv_utp_record_doc import Server as SrvUtpRecord
 from ..serv.serv_utr_doc import Server as SrvUtr
 from ..serv.serv_teq_doc import Server as SrvTeq
 from ..serv.serv_cybersec_doc import Server as SrvCybersec
@@ -114,7 +116,7 @@ _SERVERS = {
     "scm_doc": SrvScm(), "scs_doc": SrvScs(), "sd_doc": SrvSd(), "sds_doc": SrvSds(),
     "dem_doc": SrvDem(), "crr_doc": SrvCrr(), "dat_doc": SrvDat(), "deq_doc": SrvDeq(),
     "stp_doc": SrvStp(), "str_doc": SrvStr(), "tem_doc": SrvTem(), "imm_doc": SrvImm(),
-    "ftr_doc": SrvFtr(), "ftr_record_doc": SrvFtrRecord(), "train_record_doc": SrvTrainRecord(), "utp_doc": SrvUtp(), "utr_doc": SrvUtr(),
+    "ftr_doc": SrvFtr(), "ftr_record_doc": SrvFtrRecord(), "train_record_doc": SrvTrainRecord(), "utp_doc": SrvUtp(), "utp_record_doc": SrvUtpRecord(), "utr_doc": SrvUtr(),
     "teq_doc": SrvTeq,
     "cybersec_doc": SrvCybersec(), "cybersec_plan_doc": SrvCybersecPlan(),
     "srs_doc_trace": SrvSrs(),
@@ -154,6 +156,7 @@ _DOC_MODULES = [
     ("ftr_doc", "现场测试规程", "test_files", FtrDoc),
     ("ftr_record_doc", "现场测试记录", "test_files", FtrRecordDoc),
     ("utp_doc", "用户测试计划", "test_files", UtpDoc),
+    ("utp_record_doc", "用户测试记录", "test_files", UtpRecordDoc),
     ("utr_doc", "用户测试报告", "test_files", UtrDoc),
     ("teq_doc", "测试设备清单", "test_files", TeqDoc),
     ("cybersec_doc", "网络安全风险管理报告", "cybersec_files", CybersecDoc),

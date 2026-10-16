@@ -44,6 +44,36 @@
             height: auto;
         }
 
+        // 用户测试记录：表头参考网络安全能力分析（浅蓝底）；宽度随父容器与封面表对齐
+        &.utp-record-table {
+            width: 100% !important;
+            max-width: 100%;
+
+            .ant-spin-container,
+            .ant-table,
+            .ant-table-container,
+            .ant-table-content,
+            table {
+                width: 100% !important;
+            }
+
+            .ant-table-thead > tr > th {
+                background: #f0f5ff !important;
+                color: #1d39c4;
+                font-weight: 600;
+            }
+
+            .ant-table-tbody > tr > td {
+                height: auto !important;
+                white-space: normal;
+                vertical-align: middle;
+            }
+
+            .ant-table-cell {
+                overflow: visible;
+            }
+        }
+
         .ant-spin-container {
             display: block;
             height: auto;

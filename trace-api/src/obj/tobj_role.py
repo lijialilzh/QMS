@@ -198,6 +198,10 @@ class Perms(Enum):
     utp_doc_view = PermForm(code="utp_doc_view", name="查看", p_code=utp_doc.code)
     utp_doc_edit = PermForm(code="utp_doc_edit", name="编辑", p_code=utp_doc.code)
 
+    utp_record_doc = PermForm(code="utp_record_doc", name="开发测试文件管理/用户测试记录")
+    utp_record_doc_view = PermForm(code="utp_record_doc_view", name="查看", p_code=utp_record_doc.code)
+    utp_record_doc_edit = PermForm(code="utp_record_doc_edit", name="编辑", p_code=utp_record_doc.code)
+
     utr_doc = PermForm(code="utr_doc", name="开发测试文件管理/用户测试报告")
     utr_doc_view = PermForm(code="utr_doc_view", name="查看", p_code=utr_doc.code)
     utr_doc_edit = PermForm(code="utr_doc_edit", name="编辑", p_code=utr_doc.code)
@@ -348,6 +352,7 @@ def get_default_role_perm_codes():
         "dat_doc", "dat_doc_view", "dat_doc_edit",
         "stp_doc", "stp_doc_view", "stp_doc_edit",
         "utp_doc", "utp_doc_view", "utp_doc_edit",
+        # utp_record_doc* 不按整包发给开发/RA；见下方 tester / qa 单独分配
         "utr_doc", "utr_doc_view", "utr_doc_edit",
         "str_doc", "str_doc_view", "str_doc_edit",
         "bug_doc", "bug_doc_view", "bug_doc_edit",
@@ -425,14 +430,22 @@ def get_default_role_perm_codes():
         "data_doc", "data_doc_view", "data_doc_edit",
     }
 
+    # 用户测试记录：编辑仅 root/dqa/tester；QA 只读查看
+    utp_record_edit = {"utp_record_doc", "utp_record_doc_view", "utp_record_doc_edit"}
+    utp_record_view = {"utp_record_doc", "utp_record_doc_view"}
+    # QA：全权限但不可导入/改删测试集，用户测试记录只读
+    qa_exclude = {"test_set_edit", "utp_record_doc_edit"}
+    qa_perms = (all_perms - qa_exclude) | utp_record_view
+    tester_perms = set(dev_tester_ra_perms) | utp_record_edit
+
     return {
         Roles.root.value.code: sorted(all_perms),
         Roles.dqa.value.code: sorted(all_perms),
-        Roles.qa.value.code: sorted(all_perms),
+        Roles.qa.value.code: sorted(qa_perms),
         Roles.ra.value.code: sorted(dev_tester_ra_perms),
         Roles.product_manager.value.code: sorted(product_manager_perms),
         Roles.developer.value.code: sorted(dev_tester_ra_perms),
-        Roles.tester.value.code: sorted(dev_tester_ra_perms),
+        Roles.tester.value.code: sorted(tester_perms),
         Roles.model_staff.value.code: sorted(model_data_staff_perms),
         Roles.data_staff.value.code: sorted(model_data_staff_perms),
     }
