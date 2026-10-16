@@ -472,8 +472,8 @@
     "test_set": {
         "stage": "测试阶段",
         "test_cases": "数据集",
-        "view_test_cases": "查看数据集",
-        "export_test_cases": "导出数据集"
+        "view_test_cases": "查看",
+        "export_test_cases": "导出测试记录"
     },
     "test_case": {
         "code": "编号",

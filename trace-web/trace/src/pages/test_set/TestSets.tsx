@@ -452,14 +452,14 @@ export default () => {
             render: (_value: any, row: any) => {
                 return (
                     <Space size={0} wrap={false} style={{ flexWrap: "nowrap", whiteSpace: "nowrap" }}>
+                        <Button type="link" size="small" style={{ paddingInline: 4 }} onClick={() => dispatch({ dlgType: DlgTypes.test_cases, targetRow: row })}>
+                            {ts("test_set.view_test_cases")}
+                        </Button>
                         <Button type="link" size="small" style={{ paddingInline: 4 }} onClick={() => dispatch({ dlgType: DlgTypes.edit, targetRow: row })}>
                             {ts("edit")}
                         </Button>
                         <Button type="link" size="small" danger style={{ paddingInline: 4 }} onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
                             {ts("delete")}
-                        </Button>
-                        <Button type="link" size="small" style={{ paddingInline: 4 }} onClick={() => dispatch({ dlgType: DlgTypes.test_cases, targetRow: row })}>
-                            {ts("test_set.view_test_cases")}
                         </Button>
                         <Button
                             loading={data.exportingSet.has(row.id)}
