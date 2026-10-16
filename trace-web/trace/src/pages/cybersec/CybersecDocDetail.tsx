@@ -15,6 +15,17 @@ import * as ApiProdHaz from "@/api/ApiProdHaz";
 import * as ApiDocFile from "@/api/ApiDocFile";
 import * as ApiSrsDoc from "@/api/ApiSrsDoc";
 import "../risk_mgmt/RiskMgmtDocDetail.less";
+import {
+    buildFreeSegments,
+    freeAddBodyBlock,
+    freeAddImage,
+    freeAddTable,
+    freeDelImage,
+    freeDelTable,
+    freeReplaceImage,
+    reassembleFreeBody,
+    shouldUseFreeInterleave,
+} from "../pdp/freeChapterBlocks";
 // 新增页默认内容：与后端 src-res/cybersec_default_content.json 同源（自动获取章节为模板态，其余为编辑页默认正文/表格/图片）
 import cybersecDefaultContent from "./cybersecDefaultContent.json";
 
@@ -75,6 +86,10 @@ const isRevisionSection = (section: any) => section?.ref_type === "revision" || 
 const isStrideSection = (section: any) => section?.ref_type === "stride_threats";
 const isTraceabilitySection = (section: any) => section?.ref_type === "traceability";
 const isFlowDiagramSection = (section: any) => section?.ref_type === "flow_diagram" || normalizeTitleText(section?.title).endsWith("系统总体架构");
+const isProductAutoTextSection = (section: any) => {
+    const key = String(section?.title || "").replace(/^[0-9０-９.．\s、]+/, "").trim();
+    return key === "产品描述" || key === "适用范围";
+};
 
 const RCM_CODE_RE = /RCM\d+/g;
 const buildRcmCodeMap = (prodRcms: any[]): Map<string, string> => {
@@ -507,11 +522,31 @@ export default () => {
                 const detail = res.data || {};
                 let content = syncProductNameInContent(detail.content || emptyContent, detail.product_name);
                 content = syncFileVersionInCover(content, detail.version);
+                const productForFill = {
+                    name: detail.product_name,
+                    type_code: detail.product_type_code,
+                    full_version: detail.product_full_version,
+                    scope: detail.product_scope,
+                };
+                // 产品描述/适用范围：打开即以产品数据覆盖（scope 若详情未带则稍后用产品列表补）
+                content = fillProductTextSections(content, productForFill);
                 const defaultSection = (content.sections || []).find((section: any) => !isCoverSection(section) && !isRevisionSection(section));
                 form.setFieldsValue(detail);
                 dispatch({ loading: false, detail, content, activeSectionKey: sectionKey(defaultSection) });
                 loadReferenceData(detail.product_id);
                 loadMatrixData(detail.id);
+                // 用产品列表补全 scope / 型号（get 接口可能未带回 scope）
+                ApiProduct.list_product({ page_index: 0, page_size: 10000 }).then((pres: any) => {
+                    if (pres.code !== ApiProduct.C_OK) return;
+                    const rows = pres.data?.rows || [];
+                    const hit = rows.find((p: any) => p.id === detail.product_id);
+                    if (!hit) return;
+                    const filled = fillProductTextSections(
+                        syncProductNameInContent(content, hit.name),
+                        hit,
+                    );
+                    dispatch({ content: filled, products: rows });
+                });
             } else {
                 dispatch({ loading: false });
                 message.error(res.msg);
@@ -744,12 +779,17 @@ export default () => {
         updateSections(update);
     };
 
-    const updateSectionImages = (key: string, images: string[]) => {
+    const patchSectionFree = (key: string, patch: { text?: string; tables?: any[]; images?: any[] }) => {
         const update = (sections: any[] = []): any[] => (sections || []).map((section) => (
-            sectionKey(section) === key ? { ...section, images } : { ...section, children: update(section.children || []) }
+            sectionKey(section) === key ? { ...section, ...patch } : { ...section, children: update(section.children || []) }
         ));
         updateSections(update);
     };
+    const sectionFreeState = (section: any) => ({
+        body: String(section?.text || section?.content || ""),
+        tables: Array.isArray(section?.tables) ? section.tables : [],
+        images: Array.isArray(section?.images) ? section.images : [],
+    });
 
     const uploadSectionImage = (section: any, file: File, replaceIndex?: number) => {
         if (!file.type.startsWith("image/")) {
@@ -758,14 +798,12 @@ export default () => {
         }
         const reader = new FileReader();
         reader.onload = () => {
-            const current = Array.isArray(section.images) ? [...section.images] : [];
             const dataUrl = String(reader.result || "");
-            if (replaceIndex !== undefined && replaceIndex >= 0 && replaceIndex < current.length) {
-                current[replaceIndex] = dataUrl;
-            } else {
-                current.push(dataUrl);
-            }
-            updateSectionImages(sectionKey(section), current);
+            const st = sectionFreeState(section);
+            const next = replaceIndex !== undefined && replaceIndex >= 0
+                ? freeReplaceImage(st, replaceIndex, dataUrl)
+                : freeAddImage(st, dataUrl);
+            patchSectionFree(sectionKey(section), { text: next.body, images: next.images, tables: next.tables });
             message.success("图片已更新，请保存文档");
         };
         reader.onerror = () => message.error("图片读取失败");
@@ -774,9 +812,21 @@ export default () => {
     };
 
     const deleteSectionImage = (section: any, index: number) => {
-        const current = Array.isArray(section.images) ? [...section.images] : [];
-        current.splice(index, 1);
-        updateSectionImages(sectionKey(section), current);
+        const next = freeDelImage(sectionFreeState(section), index);
+        patchSectionFree(sectionKey(section), { text: next.body, images: next.images, tables: next.tables });
+    };
+
+    const addFreeTable = (section: any) => {
+        const next = freeAddTable(sectionFreeState(section));
+        patchSectionFree(sectionKey(section), { text: next.body, images: next.images, tables: next.tables });
+    };
+    const addFreeBody = (section: any) => {
+        const next = freeAddBodyBlock(sectionFreeState(section));
+        patchSectionFree(sectionKey(section), { text: next.body });
+    };
+    const delFreeTable = (section: any, ti: number) => {
+        const next = freeDelTable(sectionFreeState(section), ti);
+        patchSectionFree(sectionKey(section), { text: next.body, images: next.images, tables: next.tables });
     };
 
     const parseSectionNumber = (title?: string) => String(title || "").trim().match(/^([0-9０-９]+(?:[.．][0-9０-９]+)*)/)?.[1]?.replace(/．/g, ".") || "";
@@ -1362,68 +1412,215 @@ export default () => {
                 ? (<div className="cybersec-imported-tables"><div className="risk-mgmt-rcm-title">导入的原始表</div>{renderRawTables()}</div>)
                 : renderRawTables())
             : null;
-        return (
-            <div className="risk-mgmt-section-content">
-                {!hasBlocks && (isView ? (sectionText ? <div className="risk-mgmt-section-text">{sectionText}</div> : null) : (
+        const isMatrixLike = isStrideSection(activeSection) || !!kind || isTraceabilitySection(activeSection);
+        const isProdAuto = isProductAutoTextSection(activeSection);
+        const useFreeChapter = !hasBlocks && !isMatrixLike && !isFlowDiagramSection(activeSection) && !isProdAuto;
+        const freeSegs = useFreeChapter ? buildFreeSegments(sectionText, tables, images) : [];
+        const hasFreeInterleave = useFreeChapter && shouldUseFreeInterleave(sectionText, freeSegs);
+        const textReadonly = isView || isProdAuto;
+
+        const freeToolbar = !isView && useFreeChapter ? (
+            <Space wrap style={{ margin: "8px 0" }}>
+                <Button size="small" onClick={() => addFreeBody(activeSection)}>添加正文</Button>
+                <Upload accept="image/*" showUploadList={false} beforeUpload={(file) => uploadSectionImage(activeSection, file as File)}>
+                    <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
+                </Upload>
+                <Button size="small" icon={<PlusOutlined />} onClick={() => addFreeTable(activeSection)}>添加表格</Button>
+            </Space>
+        ) : null;
+
+        const renderFreeInterleave = () => (
+            <>
+                {freeSegs.map((seg: any, si: number) => {
+                    if (seg.type === "text") {
+                        const label = `正文 ${freeSegs.slice(0, si + 1).filter((s: any) => s.type === "text").length}`;
+                        return (
+                            <div key={si} style={{ margin: "8px 0" }}>
+                                <div className="risk-mgmt-rcm-title" style={{ marginBottom: 4 }}>{label}</div>
+                                {isView ? (seg.text ? <div className="risk-mgmt-section-text">{seg.text}</div> : null) : (
+                                    <Input.TextArea
+                                        value={seg.text}
+                                        onChange={(e) => updateSectionText(sectionKey(activeSection), reassembleFreeBody(freeSegs, si, e.target.value))}
+                                        autoSize={{ minRows: 3, maxRows: 18 }}
+                                        placeholder="本段正文内容，可多行"
+                                    />
+                                )}
+                            </div>
+                        );
+                    }
+                    if (seg.type === "image") {
+                        const url = images[seg.imageIndex];
+                        if (!url) return null;
+                        return (
+                            <div key={si} style={{ margin: "8px 0 12px", textAlign: "center" }}>
+                                <img src={url} alt="" style={{ maxWidth: "100%", height: "auto", display: "block", margin: "0 auto" }} />
+                                {seg.caption ? (
+                                    <div style={{ textAlign: "center", fontSize: 13, color: "#444", margin: "4px 0 8px" }}>{seg.caption}</div>
+                                ) : null}
+                                {!isView && (
+                                    <Space style={{ marginTop: 4 }}>
+                                        <Upload accept="image/*" showUploadList={false} beforeUpload={(file) => uploadSectionImage(activeSection, file as File, seg.imageIndex)}>
+                                            <Button size="small" icon={<UploadOutlined />}>更换</Button>
+                                        </Upload>
+                                        <Button size="small" danger onClick={() => deleteSectionImage(activeSection, seg.imageIndex)}>删除</Button>
+                                    </Space>
+                                )}
+                            </div>
+                        );
+                    }
+                    const ti = seg.tableIndex;
+                    const rows = tables[ti] || [];
+                    return (
+                        <div key={si}>
+                            {!isView && (
+                                <div style={{ marginBottom: 4 }}>
+                                    <Button size="small" danger onClick={() => delFreeTable(activeSection, ti)}>删除此表</Button>
+                                </div>
+                            )}
+                            {renderOneTable(rows, `ft${ti}`, {
+                                onCell: (r, c, v) => updateSectionTableCell(sectionKey(activeSection), ti, r, c, v),
+                                onDelRow: (r) => deleteSectionTableRow(sectionKey(activeSection), ti, r),
+                                onAddRow: () => addSectionTableRow(sectionKey(activeSection), ti),
+                            })}
+                        </div>
+                    );
+                })}
+                {freeToolbar}
+            </>
+        );
+
+        const renderPlainText = (readonly: boolean, hint?: string) => (
+            <>
+                {hint ? <div className="risk-mgmt-rcm-title" style={{ marginBottom: 4 }}>{hint}</div> : null}
+                {readonly ? (
+                    sectionText ? <div className="risk-mgmt-section-text">{sectionText}</div> : <div className="empty">暂无自动获取内容</div>
+                ) : (
                     <Input.TextArea
                         value={sectionText}
                         onChange={(e) => updateSectionText(sectionKey(activeSection), e.target.value)}
                         autoSize={{ minRows: 5, maxRows: 18 }}
                         placeholder="请输入章节内容"
                     />
-                ))}
-                {isFlowDiagramSection(activeSection) ? (
-                    <div className="cybersec-section-images">
-                        {data.flowImageUrl ? (
-                            <img
-                                src={data.flowImageUrl}
-                                alt="网络安全流程图"
-                                style={{ maxWidth: "100%", height: "auto", display: "block", margin: "8px 0" }}
+                )}
+            </>
+        );
+
+        return (
+            <div className="risk-mgmt-section-content">
+                {isProdAuto ? (
+                    renderPlainText(true, "（自动获取，只读）")
+                ) : isFlowDiagramSection(activeSection) ? (
+                    <>
+                        {!hasBlocks && (isView ? (sectionText ? <div className="risk-mgmt-section-text">{sectionText}</div> : null) : (
+                            <Input.TextArea
+                                value={sectionText}
+                                onChange={(e) => updateSectionText(sectionKey(activeSection), e.target.value)}
+                                autoSize={{ minRows: 5, maxRows: 18 }}
+                                placeholder="请输入章节内容"
                             />
-                        ) : (
-                            <div className="empty">未获取到网络安全流程图，请先在「图表文件管理 → 网络安全流程图」上传该产品的流程图。</div>
-                        )}
-                    </div>
-                ) : (
-                    <div className="cybersec-section-images">
-                        {images.map((url: string, imgIndex: number) => (
-                            <div key={`img-${imgIndex}`} style={{ margin: "8px 0" }}>
-                                <img
-                                    src={url}
-                                    alt={`${activeSection.title || "章节"}-图${imgIndex + 1}`}
-                                    style={{ maxWidth: "100%", height: "auto", display: "block" }}
-                                />
-                                {!isView && (
-                                    <Space style={{ marginTop: 4 }}>
-                                        <Upload
-                                            accept="image/*"
-                                            showUploadList={false}
-                                            beforeUpload={(file) => uploadSectionImage(activeSection, file as File, imgIndex)}
-                                        >
-                                            <Button size="small" icon={<UploadOutlined />}>更换</Button>
-                                        </Upload>
-                                        <Button size="small" danger onClick={() => deleteSectionImage(activeSection, imgIndex)}>删除</Button>
-                                    </Space>
-                                )}
-                            </div>
                         ))}
-                        {!isView && (
-                            <Upload
-                                accept="image/*"
-                                showUploadList={false}
-                                beforeUpload={(file) => uploadSectionImage(activeSection, file as File)}
-                            >
-                                <Button size="small" icon={<UploadOutlined />} style={{ margin: "8px 0" }}>上传图片</Button>
-                            </Upload>
-                        )}
-                    </div>
+                        <div className="cybersec-section-images" style={{ textAlign: "center" }}>
+                            {data.flowImageUrl ? (
+                                <img
+                                    src={data.flowImageUrl}
+                                    alt="网络安全流程图"
+                                    style={{ maxWidth: "100%", height: "auto", display: "block", margin: "8px auto" }}
+                                />
+                            ) : (
+                                <div className="empty">未获取到网络安全流程图，请先在「图表文件管理 → 网络安全流程图」上传该产品的流程图。</div>
+                            )}
+                            <div style={{ textAlign: "center", fontSize: 13, color: "#444", margin: "4px 0 8px" }}>网络安全流程图（自动获取）</div>
+                        </div>
+                    </>
+                ) : hasFreeInterleave ? (
+                    renderFreeInterleave()
+                ) : useFreeChapter ? (
+                    <>
+                        {!hasBlocks && (isView ? (sectionText ? <div className="risk-mgmt-section-text">{sectionText}</div> : null) : (
+                            <Input.TextArea
+                                value={sectionText}
+                                onChange={(e) => updateSectionText(sectionKey(activeSection), e.target.value)}
+                                autoSize={{ minRows: 5, maxRows: 18 }}
+                                placeholder="请输入章节内容"
+                            />
+                        ))}
+                        <div className="cybersec-section-images">
+                            {images.map((url: string, imgIndex: number) => (
+                                <div key={`img-${imgIndex}`} style={{ margin: "8px 0", textAlign: "center" }}>
+                                    <img
+                                        src={url}
+                                        alt={`${activeSection.title || "章节"}-图${imgIndex + 1}`}
+                                        style={{ maxWidth: "100%", height: "auto", display: "block", margin: "0 auto" }}
+                                    />
+                                    {!isView && (
+                                        <Space style={{ marginTop: 4 }}>
+                                            <Upload
+                                                accept="image/*"
+                                                showUploadList={false}
+                                                beforeUpload={(file) => uploadSectionImage(activeSection, file as File, imgIndex)}
+                                            >
+                                                <Button size="small" icon={<UploadOutlined />}>更换</Button>
+                                            </Upload>
+                                            <Button size="small" danger onClick={() => deleteSectionImage(activeSection, imgIndex)}>删除</Button>
+                                        </Space>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                        {renderRawTables()}
+                        {freeToolbar}
+                    </>
+                ) : (
+                    <>
+                        {!hasBlocks && (isView ? (sectionText ? <div className="risk-mgmt-section-text">{sectionText}</div> : null) : (
+                            <Input.TextArea
+                                value={sectionText}
+                                onChange={(e) => updateSectionText(sectionKey(activeSection), e.target.value)}
+                                autoSize={{ minRows: 5, maxRows: 18 }}
+                                placeholder="请输入章节内容"
+                                disabled={textReadonly}
+                            />
+                        ))}
+                        <div className="cybersec-section-images">
+                            {images.map((url: string, imgIndex: number) => (
+                                <div key={`img-${imgIndex}`} style={{ margin: "8px 0", textAlign: "center" }}>
+                                    <img
+                                        src={url}
+                                        alt={`${activeSection.title || "章节"}-图${imgIndex + 1}`}
+                                        style={{ maxWidth: "100%", height: "auto", display: "block", margin: "0 auto" }}
+                                    />
+                                    {!isView && (
+                                        <Space style={{ marginTop: 4 }}>
+                                            <Upload
+                                                accept="image/*"
+                                                showUploadList={false}
+                                                beforeUpload={(file) => uploadSectionImage(activeSection, file as File, imgIndex)}
+                                            >
+                                                <Button size="small" icon={<UploadOutlined />}>更换</Button>
+                                            </Upload>
+                                            <Button size="small" danger onClick={() => deleteSectionImage(activeSection, imgIndex)}>删除</Button>
+                                        </Space>
+                                    )}
+                                </div>
+                            ))}
+                            {!isView && (
+                                <Upload
+                                    accept="image/*"
+                                    showUploadList={false}
+                                    beforeUpload={(file) => uploadSectionImage(activeSection, file as File)}
+                                >
+                                    <Button size="small" icon={<UploadOutlined />} style={{ margin: "8px 0" }}>上传图片</Button>
+                                </Upload>
+                            )}
+                        </div>
+                    </>
                 )}
                 {/* 自动获取章节（STRIDE、内部/网络安全扫描）只展示最新自动表，不再显示导入的原始表（旧数据残留） */}
                 {isStrideSection(activeSection) ? (<>{showMatrix && renderThreatSection()}</>)
                     : kind ? (<>{showMatrix && renderControlSection(kind)}{kind === "sbom" ? importedTablesBlock : null}</>)
                         : isTraceabilitySection(activeSection) ? renderTraceabilitySection()
                             : hasBlocks ? renderBlocks()
-                                : renderRawTables()}
+                                : null}
             </div>
         );
     };

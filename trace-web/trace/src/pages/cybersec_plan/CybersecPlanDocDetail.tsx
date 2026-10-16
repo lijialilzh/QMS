@@ -41,6 +41,7 @@ const isCoverSection = (s: any) => s?.ref_type === "cover" || normalizeTitleText
 const isRevisionSection = (s: any) => s?.ref_type === "revision" || normalizeTitleText(s?.title) === "文件修订记录";
 const isImgTopoSection = (s: any) => s?.ref_type === "img_topo" || normalizeTitleText(s?.title).includes("物理拓扑图");
 const isImgStructSection = (s: any) => s?.ref_type === "img_struct" || normalizeTitleText(s?.title).includes("系统架构");
+const isProductDefSection = (s: any) => String(s?.title || "").replace(/^[0-9０-９.．\s、]+/, "").trim() === "产品定义";
 
 // 正文图题关键词 -> 图表文件管理分类（参考产品技术要求）
 const CAPTION_CATS: [string, string][] = [
@@ -50,7 +51,7 @@ const CAPTION_CATS: [string, string][] = [
 // 扫描正文中的图题行，返回 [{caption, category}]
 const getImageAnchors = (node: any): { caption: string; category: string; lineIndex: number }[] => {
     const anchors: { caption: string; category: string; lineIndex: number }[] = [];
-    const lines = String(node?.text || "").split("\n");
+    const lines = String(node?.text ?? node?.body ?? "").split("\n");
     lines.forEach((ln, idx) => {
         const s = ln.trim();
         if (/^图\s*\d/.test(s)) {
@@ -62,18 +63,53 @@ const getImageAnchors = (node: any): { caption: string; category: string; lineIn
     });
     return anchors;
 };
-// 按锚点把正文拆成 N+1 段
+// 按锚点把正文拆成 N+1 段（不含图题行；图题单独在图下展示）
 const splitTextByAnchors = (text: string, anchors: { lineIndex: number }[]): string[] => {
     const lines = String(text || "").split("\n");
     const idxs = anchors.map((a) => a.lineIndex).sort((a, b) => a - b);
     const parts: string[] = [];
     let start = 0;
-    idxs.forEach((ai) => { parts.push(lines.slice(start, ai + 1).join("\n")); start = ai + 1; });
+    idxs.forEach((ai) => { parts.push(lines.slice(start, ai).join("\n")); start = ai + 1; });
     parts.push(lines.slice(start).join("\n"));
     return parts;
 };
+/** 把图前/图后正文段与图题行重新拼回 text */
+const joinTextWithCaptions = (parts: string[], captions: string[]): string => {
+    const out: string[] = [];
+    for (let i = 0; i < captions.length; i++) {
+        const p = String(parts[i] ?? "").replace(/\n+$/, "");
+        if (p) out.push(p);
+        out.push(captions[i]);
+    }
+    const last = String(parts[captions.length] ?? "").replace(/^\n+/, "");
+    if (last) out.push(last);
+    return out.join("\n");
+};
+/** 章节正文统一用 text（兼容旧 body） */
+const sectionText = (n: any) => String(n?.text ?? n?.body ?? "");
 
 const stripSectionNo = (title: any) => String(title || "").replace(/^[0-9０-９.．\s、]+/, "").trim();
+const isTimePlanSection = (s: any) => s?.ref_type === "time_plan" || stripSectionNo(s?.title).includes("时间计划");
+
+/** 某列：有文的单元格向下合并连续空行；返回每行 { skip, rowspan }（仅数据行，不含表头） */
+const buildVerticalEmptyMerge = (rows: any[][], colIndex: number) => {
+    const n = (rows || []).length;
+    const meta = Array.from({ length: n }, () => ({ skip: false, rowspan: 1 }));
+    let r = 0;
+    while (r < n) {
+        const val = String((rows[r] || [])[colIndex] ?? "").trim();
+        if (!val) {
+            r += 1;
+            continue;
+        }
+        let span = 1;
+        while (r + span < n && !String((rows[r + span] || [])[colIndex] ?? "").trim()) span += 1;
+        meta[r] = { skip: false, rowspan: span };
+        for (let k = 1; k < span; k++) meta[r + k] = { skip: true, rowspan: 1 };
+        r += span;
+    }
+    return meta;
+};
 
 const makeRowKey = () => `${Date.now()}-${Math.random()}`;
 const ensureKeys = (nodes: any[]): any[] =>
@@ -277,24 +313,29 @@ export default () => {
         updateTables(tables);
     };
     const chapterState = () => ({
-        body: String(active?.body || ""),
+        body: sectionText(active),
         tables: active?.tables || [],
         images: Array.isArray(active?.images) ? active.images : [],
     });
+    const patchFree = (next: { body?: string; tables?: any[]; images?: any[] }) => {
+        if (!active) return;
+        const patch: any = {};
+        if (next.body !== undefined) patch.text = next.body;
+        if (next.tables !== undefined) patch.tables = next.tables;
+        if (next.images !== undefined) patch.images = next.images;
+        patchNode(data.activeSectionKey, patch);
+    };
     const addTable = () => {
         if (!active) return;
-        const next = freeAddTable(chapterState());
-        patchNode(data.activeKey, { tables: next.tables, body: next.body, images: next.images });
+        patchFree(freeAddTable(chapterState()));
     };
     const delTable = (ti: number) => {
         if (!active) return;
-        const next = freeDelTable(chapterState(), ti);
-        patchNode(data.activeKey, { tables: next.tables, body: next.body, images: next.images });
+        patchFree(freeDelTable(chapterState(), ti));
     };
     const addBodyBlock = () => {
         if (!active) return;
-        const next = freeAddBodyBlock(chapterState());
-        patchNode(data.activeKey, { body: next.body });
+        patchFree(freeAddBodyBlock(chapterState()));
     };
     const uploadImage = (file: File, replaceIndex?: number) => {
         if (!file.type.startsWith("image/")) {
@@ -308,7 +349,7 @@ export default () => {
             const next = replaceIndex !== undefined && replaceIndex >= 0
                 ? freeReplaceImage(chapterState(), replaceIndex, dataUrl)
                 : freeAddImage(chapterState(), dataUrl);
-            patchNode(data.activeKey, { images: next.images, body: next.body });
+            patchFree(next);
             message.success("图片已更新，请保存文档");
         };
         reader.onerror = () => message.error("图片读取失败");
@@ -317,8 +358,7 @@ export default () => {
     };
     const delImage = (index: number) => {
         if (!active) return;
-        const next = freeDelImage(chapterState(), index);
-        patchNode(data.activeKey, { images: next.images, body: next.body });
+        patchFree(freeDelImage(chapterState(), index));
     };
 
 
@@ -474,36 +514,38 @@ export default () => {
                                         onChange={(e) => patchNode(active._key, { title: e.target.value })} />
                                 </div>
 
-                                {/* 图片自动获取章节：按锚点拆分正文，图题行后插入图片（参考产品技术要求） */}
+                                {/* 图片自动获取章节：图在正文间交错，图题居中在图下（不进入正文框） */}
                                 {isAutoImgSection ? (
                                     (() => {
                                         const anchors = getImageAnchors(active);
+                                        const rawText = sectionText(active);
                                         if (anchors.length === 0) {
-                                            // 无锚点：正文+图片
+                                            const fallbackCaption = isImgTopoSection(active) ? "物理拓扑图（自动获取）" : "系统架构（自动获取）";
                                             return (
                                                 <>
                                                     <div className="pdp-field">
                                                         <div className="pdp-label">正文</div>
                                                         <Input.TextArea autoSize={{ minRows: 3, maxRows: 24 }}
-                                                            value={active.text ?? ""} disabled={isView || isRuntimeLockedBody(active)}
+                                                            value={rawText} disabled={isView || isRuntimeLockedBody(active)}
                                                             onChange={(e) => patchNode(active._key, { text: e.target.value })} />
                                                     </div>
-                                                    <div className="pdp-field">
-                                                        <div className="pdp-label">{isImgTopoSection(active) ? "物理拓扑图（自动获取）" : "系统架构（自动获取）"}</div>
+                                                    <div style={{ margin: "8px 0 12px", textAlign: "center" }}>
                                                         {autoImageUrl ? (
                                                             <img src={autoImageUrl} alt="" style={{ maxWidth: "100%", border: "1px solid #eee" }} />
                                                         ) : (
                                                             <div style={{ color: "#999", padding: 16 }}>无图，请先在「产品管理 → 产品图示」上传对应图片。</div>
                                                         )}
+                                                        <div style={{ textAlign: "center", fontSize: 13, color: "#444", margin: "4px 0 8px" }}>{fallbackCaption}</div>
                                                     </div>
                                                 </>
                                             );
                                         }
-                                        const parts = splitTextByAnchors(active.text, anchors);
+                                        const parts = splitTextByAnchors(rawText, anchors);
+                                        const captions = anchors.map((a) => a.caption);
                                         const setSegment = (i: number, val: string) => {
                                             const newParts = [...parts];
                                             newParts[i] = val;
-                                            patchNode(active._key, { text: newParts.join("\n") });
+                                            patchNode(active._key, { text: joinTextWithCaptions(newParts, captions) });
                                         };
                                         const segLabel = (i: number) =>
                                             parts.length === 1 ? "正文" : i === 0 ? "正文（图前）" : i === parts.length - 1 ? "正文（图后）" : "正文（图间）";
@@ -517,8 +559,7 @@ export default () => {
                                                         onChange={(e) => setSegment(i, e.target.value)} />
                                                 </div>
                                                 {i < anchors.length && (
-                                                    <div className="pdp-field">
-                                                        <div className="pdp-label">{anchors[i].caption}（取自「图表文件管理」，自动获取）</div>
+                                                    <div style={{ margin: "8px 0 12px", textAlign: "center" }}>
                                                         {data.docImages?.[anchors[i].category] ? (
                                                             <img src={data.docImages[anchors[i].category]} alt="" style={{ maxWidth: "100%", border: "1px solid #eee", borderRadius: 4 }} />
                                                         ) : (
@@ -526,6 +567,9 @@ export default () => {
                                                                 未在「图表文件管理 - {anchors[i].caption}」找到该产品的图片。
                                                             </div>
                                                         )}
+                                                        <div style={{ textAlign: "center", fontSize: 13, color: "#444", margin: "4px 0 8px" }}>
+                                                            {anchors[i].caption}（取自「图表文件管理」，自动获取）
+                                                        </div>
                                                     </div>
                                                 )}
                                             </div>
@@ -643,86 +687,170 @@ export default () => {
                                         )}
                                     </>
                                 ) : (
-                                    <>
-                                        {/* 正文 */}
-                                        <div className="pdp-field">
-                                            <div className="pdp-label">正文</div>
-                                            <Input.TextArea autoSize={{ minRows: 3, maxRows: 24 }}
-                                                value={active.text ?? ""} disabled={isView || isRuntimeLockedBody(active)}
-                                                placeholder="本章节正文内容，可多行"
-                                                onChange={(e) => patchNode(active._key, { text: e.target.value })} />
-                                        </div>
-
-                                        {/* 表格 */}
-                                        {(active.tables || []).map((tb: any[], ti: number) => {
+                                    (() => {
+                                        const rtBodyLock = isView || isRuntimeLockedBody(active) || isProductDefSection(active);
+                                        const autoLockHint = isProductDefSection(active)
+                                            ? "（产品定义自动获取，只读）"
+                                            : isRuntimeLockedBody(active) ? "（运行环境自动获取，只读）" : "";
+                                        const bodyVal = sectionText(active);
+                                        const images: string[] = Array.isArray(active.images) ? active.images : [];
+                                        const segments = buildFreeSegments(bodyVal, active.tables || [], images);
+                                        const hasInterleave = shouldUseFreeInterleave(bodyVal, segments);
+                                        const renderOneTable = (ti: number) => {
+                                            const tb = (active.tables || [])[ti];
+                                            if (!tb) return null;
+                                            const rtLock = isView || isRuntimeLockedTable(active, ti);
+                                            const maxCols = Math.max(...tb.map((rr: any[]) => (rr || []).length), 1);
+                                            const header = Array.isArray(tb[0]) ? tb[0] : [];
+                                            const deliverCol = header.findIndex((c: any) => String(c || "").replace(/\s+/g, "").includes("交付物"));
+                                            const vMerge = isTimePlanSection(active) && deliverCol >= 0
+                                                ? buildVerticalEmptyMerge(tb.slice(1), deliverCol)
+                                                : null;
                                             return (
-                                            <div className="pdp-table-block" key={ti}>
-                                                <div className="pdp-table-bar">
-                                                    <span className="pdp-label">表格 {ti + 1}</span>
-                                                    {!isView && !isRuntimeLockedTable(active, ti) && (
-                                                        <Space size={4}>
-                                                            <Button size="small" onClick={() => addCol(ti)}>＋列</Button>
-                                                            <Button size="small" disabled={(tb[0] || []).length <= 1} onClick={() => delCol(ti, (tb[0] || []).length - 1)}>－列</Button>
-                                                            <Button size="small" danger onClick={() => delTable(ti)}>删除此表</Button>
-                                                        </Space>
-                                                    )}
-                                                </div>
-                                                <table className="pdp-grid" style={{ width: "100%" }}>
-                                                    <tbody>
-                                                        {tb.map((row: any[], r: number) => {
-                                                            const maxCols = Math.max(...tb.map((rr: any[]) => (rr || []).length));
-                                                            const mergeRow = row.length === 1 && String(row[0] ?? "").trim() !== "";
-                                                            const isHeaderRow = !mergeRow && (r === 0 || (r === 1 && tb[0].length === 1));
-                                                            return (
-                                                                <tr key={r}>
-                                                                    {mergeRow ? (
-                                                                        <td colSpan={maxCols} style={{ textAlign: "center", fontWeight: "bold", background: "#f5f8fc" }}>
-                                                                            <Input.TextArea
-                                                                                className="pdp-cell"
-                                                                                autoSize={{ minRows: 1, maxRows: 4 }}
-                                                                                value={row[0] ?? ""}
-                                                                                disabled={isView || isRuntimeLockedTable(active, ti)}
-                                                                                style={{ textAlign: "center", fontWeight: "bold" }}
-                                                                                onChange={(e) => setCell(ti, r, 0, e.target.value)}
-                                                                            />
-                                                                        </td>
-                                                                    ) : (
-                                                                        row.map((cell: any, ci: number) => (
-                                                                            <td key={ci} className={isHeaderRow ? "head" : ""}>
-                                                                                {typeof cell === "string" && cell.startsWith("data:image") ? (
-                                                                                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                                                                                        <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain" }} />
-                                                                                        {!isView && !isRuntimeLockedTable(active, ti) && <DeleteOutlined style={{ color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />}
-                                                                                    </span>
-                                                                                ) : (
-                                                                                    <Input.TextArea className="pdp-cell" autoSize={{ minRows: 1, maxRows: 8 }}
-                                                                                        value={cell ?? ""} disabled={isView || isRuntimeLockedTable(active, ti)}
-                                                                                        onChange={(e) => setCell(ti, r, ci, e.target.value)} />
+                                                <div className="pdp-table-block" key={`tbl-${ti}`}>
+                                                    <div className="pdp-table-bar">
+                                                        <span className="pdp-label">表格 {ti + 1}{rtLock && isRuntimeLockedBody(active) ? "（运行环境自动获取，只读）" : ""}</span>
+                                                        {!rtLock && (
+                                                            <Space size={4}>
+                                                                <Button size="small" onClick={() => addCol(ti)}>＋列</Button>
+                                                                <Button size="small" disabled={(tb[0] || []).length <= 1} onClick={() => delCol(ti, (tb[0] || []).length - 1)}>－列</Button>
+                                                                <Button size="small" danger onClick={() => delTable(ti)}>删除此表</Button>
+                                                            </Space>
+                                                        )}
+                                                    </div>
+                                                    <table className="pdp-grid" style={{ width: "100%" }}>
+                                                        <tbody>
+                                                            {tb.map((row: any[], r: number) => {
+                                                                const mergeRow = row.length === 1 && String(row[0] ?? "").trim() !== "";
+                                                                const isHeaderRow = !mergeRow && (r === 0 || (r === 1 && tb[0].length === 1));
+                                                                const dataMeta = vMerge && r > 0 ? vMerge[r - 1] : null;
+                                                                return (
+                                                                    <tr key={r}>
+                                                                        {mergeRow ? (
+                                                                            <td colSpan={maxCols} style={{ textAlign: "center", fontWeight: "bold", background: "#f5f8fc" }}>
+                                                                                <Input.TextArea className="pdp-cell" autoSize={{ minRows: 1, maxRows: 4 }}
+                                                                                    value={row[0] ?? ""} disabled={rtLock}
+                                                                                    style={{ textAlign: "center", fontWeight: "bold" }}
+                                                                                    onChange={(e) => setCell(ti, r, 0, e.target.value)} />
+                                                                            </td>
+                                                                        ) : (
+                                                                            (row || []).map((cell: any, ci: number) => {
+                                                                                if (dataMeta && ci === deliverCol && dataMeta.skip) return null;
+                                                                                const rs = dataMeta && ci === deliverCol && dataMeta.rowspan > 1 ? dataMeta.rowspan : undefined;
+                                                                                return (
+                                                                                <td key={ci} className={isHeaderRow ? "head" : ""} rowSpan={rs}>
+                                                                                    {typeof cell === "string" && cell.startsWith("data:image") ? (
+                                                                                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                                                                            <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain" }} />
+                                                                                            {!rtLock && <DeleteOutlined style={{ color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />}
+                                                                                        </span>
+                                                                                    ) : (
+                                                                                        <Input.TextArea className="pdp-cell" autoSize={{ minRows: 1, maxRows: 8 }}
+                                                                                            value={cell ?? ""} disabled={rtLock}
+                                                                                            onChange={(e) => setCell(ti, r, ci, e.target.value)} />
+                                                                                    )}
+                                                                                </td>
+                                                                                );
+                                                                            })
+                                                                        )}
+                                                                        {!rtLock && (
+                                                                            <td className="pdp-row-op">
+                                                                                <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
+                                                                                {tb.length > 1 && (
+                                                                                    <Button type="link" danger size="small" onClick={() => delRow(ti, r)}>删除</Button>
                                                                                 )}
                                                                             </td>
-                                                                        ))
-                                                                    )}
-                                                                    {!isView && !isRuntimeLockedTable(active, ti) && (
-                                                                        <td className="pdp-row-op">
-                                                                            <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
-                                                                            {tb.length > 1 && (
-                                                                                <Button type="link" danger size="small" onClick={() => delRow(ti, r)}>删除</Button>
-                                                                            )}
-                                                                        </td>
-                                                                    )}
-                                                                </tr>
-                                                            );
-                                                        })}
-                                                    </tbody>
-                                                </table>
-                                            </div>
+                                                                        )}
+                                                                    </tr>
+                                                                );
+                                                            })}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
                                             );
-                                        })}
-
-                                        {!isView && (
-                                            <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>添加表格</Button>
-                                        )}
-                                    </>
+                                        };
+                                        const freeToolbar = !isView && !rtBodyLock ? (
+                                            <>
+                                                <Space wrap style={{ margin: "8px 0" }}>
+                                                    <Button size="small" onClick={addBodyBlock}>添加正文</Button>
+                                                    <Upload accept="image/*" showUploadList={false} beforeUpload={(file) => uploadImage(file as File)}>
+                                                        <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
+                                                    </Upload>
+                                                </Space>
+                                                <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>添加表格</Button>
+                                            </>
+                                        ) : null;
+                                        if (hasInterleave) {
+                                            return (
+                                                <>
+                                                    {segments.map((seg: any, si: number) => {
+                                                        if (seg.type === "text") {
+                                                            return (
+                                                                <div className="pdp-field" key={si}>
+                                                                    <div className="pdp-label">
+                                                                        正文 {segments.slice(0, si + 1).filter((s: any) => s.type === "text").length}
+                                                                        {autoLockHint}
+                                                                    </div>
+                                                                    <Input.TextArea autoSize={{ minRows: 2, maxRows: 20 }}
+                                                                        value={seg.text} disabled={rtBodyLock}
+                                                                        placeholder="本段正文内容，可多行"
+                                                                        onChange={(e) => patchNode(active._key, { text: reassembleFreeBody(segments, si, e.target.value) })} />
+                                                                </div>
+                                                            );
+                                                        }
+                                                        if (seg.type === "image") {
+                                                            const url = images[seg.imageIndex];
+                                                            if (!url) return null;
+                                                            return (
+                                                                <div key={si} style={{ margin: "8px 0 12px", textAlign: "center" }}>
+                                                                    <img src={url} alt="" style={{ maxWidth: "100%", border: "1px solid #eee" }} />
+                                                                    {seg.caption ? (
+                                                                        <div style={{ textAlign: "center", fontSize: 13, color: "#444", margin: "4px 0 8px" }}>{seg.caption}</div>
+                                                                    ) : null}
+                                                                    {!isView && !rtBodyLock && (
+                                                                        <Space size={4} style={{ marginTop: 4, display: "flex", justifyContent: "center" }}>
+                                                                            <Upload accept="image/*" showUploadList={false} beforeUpload={(file) => uploadImage(file as File, seg.imageIndex)}>
+                                                                                <Button size="small" icon={<UploadOutlined />}>更换</Button>
+                                                                            </Upload>
+                                                                            <Button size="small" danger onClick={() => delImage(seg.imageIndex)}>删除</Button>
+                                                                        </Space>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        }
+                                                        return <div key={si}>{renderOneTable(seg.tableIndex)}</div>;
+                                                    })}
+                                                    {freeToolbar}
+                                                </>
+                                            );
+                                        }
+                                        return (
+                                            <>
+                                                <div className="pdp-field">
+                                                    <div className="pdp-label">正文{autoLockHint}</div>
+                                                    <Input.TextArea autoSize={{ minRows: 3, maxRows: 24 }}
+                                                        value={bodyVal} disabled={rtBodyLock}
+                                                        placeholder="本章节正文内容，可多行"
+                                                        onChange={(e) => patchNode(active._key, { text: e.target.value })} />
+                                                </div>
+                                                {!isProductDefSection(active) && (active.tables || []).map((_: any, ti: number) => renderOneTable(ti))}
+                                                {!isProductDefSection(active) && images.map((url: string, imgIndex: number) => (
+                                                    <div key={`img-${imgIndex}`} style={{ margin: "8px 0 12px", textAlign: "center" }}>
+                                                        <img src={url} alt="" style={{ maxWidth: "100%", border: "1px solid #eee" }} />
+                                                        {!isView && (
+                                                            <Space size={4} style={{ marginTop: 4, display: "flex", justifyContent: "center" }}>
+                                                                <Upload accept="image/*" showUploadList={false} beforeUpload={(file) => uploadImage(file as File, imgIndex)}>
+                                                                    <Button size="small" icon={<UploadOutlined />}>更换</Button>
+                                                                </Upload>
+                                                                <Button size="small" danger onClick={() => delImage(imgIndex)}>删除</Button>
+                                                            </Space>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                                {freeToolbar}
+                                            </>
+                                        );
+                                    })()
                                 )}
                             </>
                         )}

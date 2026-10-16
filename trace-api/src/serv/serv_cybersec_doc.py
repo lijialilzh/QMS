@@ -57,6 +57,7 @@ from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
+from .serv_doc_file import pick_doc_image_file_row
 
 logger = logging.getLogger(__name__)
 
@@ -230,7 +231,7 @@ class Server(object):
         reviser = self.__member_name(product_id, ("DQA",))
         approver = self.__member_name(product_id, ("产品负责人", "研发负责人", "管理者代表"))
         rev_date = serv_review_util.review_date(
-            product_id, ["网络安全风险管理报告", "网络安全风险管理", "风险管理报告"]
+            product_id, ["网络安全风险管理报告"]
         ) if product_id else ""
         rev_date = rev_date or ""
         ver = str(version or "")
@@ -286,49 +287,50 @@ class Server(object):
             )
         return content
 
-    # 「阶段活动」表：各阶段开始/结束时间按关键字匹配项目时间线日期行，取最早=开始、最晚=结束
+    # 「阶段活动」表：各阶段开始/结束时间按关键字匹配项目时间线，取最早=开始、最晚=结束
     def __stage_timeline_dates(self, product_id, keywords):
         if not product_id or not keywords:
             return (None, None)
-        rows = db.session.execute(
-            select(ProjectTimelineRow).where(
-                ProjectTimelineRow.prod_id == product_id,
-                ProjectTimelineRow.row_type == "date",
-            )
+        tl_rows = db.session.execute(
+            select(ProjectTimelineRow).where(ProjectTimelineRow.prod_id == product_id)
         ).scalars().all()
-        if not rows:
+        if not tl_rows:
             return (None, None)
-        row_map = {r.id: r for r in rows}
+        # 与计划一致：年份行向下填充，避免日期行缺年导致串到错误年份
+        dated = serv_review_util._timeline_date_rows_with_year(tl_rows)
+        if not dated:
+            return (None, None)
+        row_ids = [r.id for r, _ in dated]
         cells = db.session.execute(
-            select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_(list(row_map.keys())))
+            select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_(row_ids))
         ).scalars().all()
-        matched_row_ids = set()
+        matched = set()
         for c in cells:
             txt = str(c.output_result or "")
             if any(k in txt for k in keywords):
-                matched_row_ids.add(c.row_id)
+                matched.add(c.row_id)
 
         def to_int(v):
             digits = re.sub(r"[^\d]", "", str(v or ""))
             return int(digits) if digits else None
 
-        def parse_date(r):
-            y, m = to_int(r.year), to_int(r.month)
-            if y is None or m is None:
+        def parse_date(r, year):
+            m = to_int(r.month)
+            if year is None or m is None:
                 return None
             try:
-                return datetime.date(y, m, to_int(r.day) or 1)
+                return datetime.date(int(year), m, to_int(r.day) or 1)
             except Exception:
                 return None
 
-        dates = [d for d in (parse_date(row_map[i]) for i in matched_row_ids) if d]
+        dates = [dd for dd in (parse_date(r, y) for r, y in dated if r.id in matched) if dd]
         if not dates:
             return (None, None)
         fmt = lambda d: f"{d.year}年{d.month}月{d.day}日"
         return (fmt(min(dates)), fmt(max(dates)))
 
     def __autofill_stage_activity(self, content, product_id):
-        if not isinstance(content, dict):
+        if not isinstance(content, dict) or not product_id:
             return content
 
         def find_section(secs):
@@ -361,35 +363,59 @@ class Server(object):
         if c_start < 0 or c_end < 0:
             return content
 
-        # 阶段 -> 时间线关键字（按行文本判定阶段；顺序：扫描→SBOM→报告/控制措施→计划/威胁识别/准备）
+        # 关键字宜具体，避免串到通用《风险管理计划/报告》
         def phase_keywords(row_text):
             t = re.sub(r"\s+", "", row_text)
             if "扫描" in t or "绿盟" in t:
                 return ["网络安全扫描"]
             if "SBOM" in t or "sbom" in t:
-                return ["SBOM"]
-            if "风险管理报告" in t or "控制措施" in t:
+                return ["SBOM信息", "SBOM工具清单", "SBOM"]
+            if "控制措施" in t or "网络安全风险管理报告" in t:
                 return ["网络安全风险管理报告"]
-            if "风险管理计划" in t or "威胁识别" in t or "准备" in t or "风险评估" in t:
+            if "准备" in t or "威胁识别" in t or "网络安全风险管理计划" in t:
                 return ["网络安全风险管理计划"]
             return None
-
-        good_date = re.compile(r"^\d{4}年\d{1,2}月\d{1,2}日$")
-
-        def norm_cell(val, new_val):
-            if new_val:
-                return new_val
-            # 无匹配时清理坏占位符（如「202年0月日」），保留用户已填的规范日期
-            return "" if not good_date.match(str(val or "").strip()) else val
 
         for row in table[1:]:
             if not isinstance(row, list) or len(row) <= max(c_start, c_end):
                 continue
-            row_text = " ".join(str(c or "") for c in row)
-            keywords = phase_keywords(row_text)
+            # 只按「阶段」列判定，避免结果列文案误匹配
+            phase_cell = str(row[0] if len(row) > 0 else "")
+            keywords = phase_keywords(phase_cell)
             start_str, end_str = self.__stage_timeline_dates(product_id, keywords) if keywords else (None, None)
-            row[c_start] = norm_cell(row[c_start], start_str)
-            row[c_end] = norm_cell(row[c_end], end_str)
+            # 有命中覆盖；无命中清空旧日期，避免假日期
+            row[c_start] = start_str or ""
+            row[c_end] = end_str or ""
+        return content
+
+    def __autofill_product_info(self, content, product_id):
+        """产品描述/适用范围：打开覆盖（与前端 fillProductTextSections 一致）。"""
+        if not isinstance(content, dict) or not product_id:
+            return content
+        product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+        if not product:
+            return content
+        pname = (product.name or "").strip()
+        content["productName"] = pname
+        desc = "\n".join([
+            f"产品名称：{pname}",
+            f"产品型号：{(product.type_code or '').strip()}",
+            f"完整版本：{(product.full_version or '').strip()}",
+        ])
+        scope = (product.scope or "").strip()
+
+        def fill_sections(secs):
+            for s in secs or []:
+                if not isinstance(s, dict):
+                    continue
+                key = re.sub(r"^[0-9０-９.．\s、]+", "", str(s.get("title") or "")).strip()
+                if key == "产品描述":
+                    s["text"] = desc
+                elif key == "适用范围":
+                    s["text"] = scope
+                fill_sections(s.get("children"))
+
+        fill_sections(content.get("sections"))
         return content
 
     def __to_obj(self, row: CybersecDoc, product: Product = None):
@@ -398,6 +424,7 @@ class Server(object):
         _pid = product.id if product else row.product_id
         obj.content = self.__autofill_front_matter(obj.content, _pid, row.version)
         obj.content = self.__autofill_stage_activity(obj.content, _pid)
+        obj.content = self.__autofill_product_info(obj.content, _pid)
         if product:
             obj.product_name = product.name
             obj.product_version = product.full_version
@@ -642,6 +669,7 @@ class Server(object):
         content = self.__normalize_content(None)
         content = self.__autofill_front_matter(content, product_id, version)
         content = self.__autofill_stage_activity(content, product_id)
+        content = self.__autofill_product_info(content, product_id)
         return Resp.resp_ok(data=content)
 
     async def get_cybersec_doc(self, id: int):
@@ -1235,10 +1263,18 @@ class Server(object):
                     set_cell_text(merged, value, bold=(r < hn))
             document.add_paragraph()
 
-        def add_section_image(image_url):
+        def write_center_caption(caption):
+            s = str(caption or "").strip()
+            if not s:
+                return
+            p = document.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            docx_util.fonted_txt(p, s, font_size=10.5, bold=False)
+
+        def add_section_image(image_url, caption=None):
             raw_url = str(image_url or "").strip()
             if not raw_url:
-                return
+                return False
             try:
                 if raw_url.startswith("data:image/"):
                     image_data = raw_url.split(",", 1)[1]
@@ -1252,9 +1288,27 @@ class Server(object):
                         ratio = min(max_w / pic.width, max_h / pic.height, 1)
                         pic.width = int(pic.width * ratio)
                         pic.height = int(pic.height * ratio)
-                    document.add_paragraph()
+                else:
+                    path = raw_url[1:] if raw_url.startswith("/") else raw_url
+                    docx_util.save_img2docx(path, document, mw=520, mh=520)
+                if caption:
+                    write_center_caption(caption)
+                return True
             except Exception:
                 logger.exception("导出网络安全图片失败")
+                return False
+
+        def add_flow_diagram_image():
+            try:
+                img_row = pick_doc_image_file_row(
+                    obj.product_id, "img_flow", obj.version or "", getattr(obj, "product_full_version", "") or ""
+                )
+                if img_row and img_row.file_url:
+                    add_section_image(img_row.file_url, caption="网络安全流程图（自动获取）")
+                    return True
+            except Exception:
+                logger.exception("导出网络安全流程图失败")
+            return False
 
         def slim_trace_rcm_cells(rows):
             # 仅用于追溯表导出：含 RCM 编号的单元格（即 RCMID 列）只保留编号，去重并按数字排序、每个一行；
@@ -1279,15 +1333,118 @@ class Server(object):
             else:
                 add_plain_table(slim_trace_rcm_cells(table_rows) if ref_type == "traceability" else table_rows)
 
+        def render_interleaved_body(text, tables=None, images=None):
+            """与编辑页一致：{{TBL}}/{{IMG}}/见下表/表N/见下图/图N 交错；图题在图下；静默占位不写 Word。"""
+            body_text = str(text or "")
+            tables = tables if isinstance(tables, list) else []
+            images = images if isinstance(images, list) else []
+            has_tbl_ph = "{{TBL}}" in body_text
+            has_img_ph = "{{IMG}}" in body_text or re.search(r"(?m)^图\s*\d", body_text) or ("见下图" in body_text)
+            has_media = (
+                has_tbl_ph or has_img_ph
+                or ("见下表" in body_text)
+                or re.search(r"见表\s*\d", body_text)
+                or re.search(r"(?m)^表\s*\d", body_text)
+            ) and (tables or images)
+
+            def emit_table(t_idx):
+                if 0 <= t_idx < len(tables):
+                    add_one_table(tables[t_idx])
+
+            if not has_media:
+                captions = []
+                if body_text.strip():
+                    kept = []
+                    for ln in body_text.split("\n"):
+                        s = ln.strip()
+                        if re.match(r"^图\s*\d", s):
+                            captions.append(s)
+                        elif s not in ("{{TXT}}", "{{EMPTY}}"):
+                            kept.append(ln)
+                    t = "\n".join(kept).strip()
+                    if t:
+                        docx_util.save_txt2docx(t, document)
+                for i, url in enumerate(images):
+                    cap = captions[i] if i < len(captions) else None
+                    add_section_image(url, caption=cap)
+                for i in range(len(images), len(captions)):
+                    write_center_caption(captions[i])
+                for i in range(len(tables)):
+                    emit_table(i)
+                return
+
+            lines = body_text.split("\n")
+            buf = []
+            tbl_idx = 0
+            img_idx = 0
+
+            def flush_text():
+                t = "\n".join(buf).strip()
+                if t:
+                    docx_util.save_txt2docx(t, document)
+                buf.clear()
+
+            for ln in lines:
+                s = ln.strip()
+                if s in ("{{TXT}}", "{{EMPTY}}"):
+                    flush_text()
+                    continue
+                if (s == "{{TBL}}" or s in ("见下表", "如下表", "下表")) and tbl_idx < len(tables):
+                    flush_text()
+                    emit_table(tbl_idx)
+                    tbl_idx += 1
+                    continue
+                if re.search(r"见表\s*\d", s) and tbl_idx < len(tables):
+                    rest = re.sub(r"见表\s*\d+", "", ln).strip()
+                    if rest:
+                        buf.append(rest)
+                    flush_text()
+                    emit_table(tbl_idx)
+                    tbl_idx += 1
+                    continue
+                if re.match(r"^表\s*\d", s) and tbl_idx < len(tables):
+                    flush_text()
+                    emit_table(tbl_idx)
+                    tbl_idx += 1
+                    continue
+                if (s == "{{IMG}}" or s in ("见下图", "如下图", "下图")) and img_idx < len(images):
+                    flush_text()
+                    add_section_image(images[img_idx])
+                    img_idx += 1
+                    continue
+                if re.match(r"^图\s*\d", s):
+                    flush_text()
+                    if img_idx < len(images):
+                        add_section_image(images[img_idx], caption=s)
+                        img_idx += 1
+                    else:
+                        write_center_caption(s)
+                    continue
+                if (
+                    not has_tbl_ph
+                    and re.match(r"^\d+[）)]", s)
+                    and tbl_idx < len(tables)
+                ):
+                    buf.append(ln)
+                    flush_text()
+                    emit_table(tbl_idx)
+                    tbl_idx += 1
+                    continue
+                buf.append(ln)
+            flush_text()
+            for i in range(tbl_idx, len(tables)):
+                emit_table(i)
+            for i in range(img_idx, len(images)):
+                add_section_image(images[i])
+
         def add_section(sec: dict, level: int = 1):
             title = sec.get("title", "")
             if title and not is_cover_section(sec):
                 docx_util.save_title2docx(title, document, level=max(1, min(level, 9)))
+            ref_type = sec.get("ref_type")
             # 有序内容块（text/table 交错）：按块顺序输出，忽略平铺 text/tables
             blocks = sec.get("blocks")
             if isinstance(blocks, list) and blocks:
-                for image_url in sec.get("images", []) or []:
-                    add_section_image(image_url)
                 for block in blocks:
                     if not isinstance(block, dict):
                         continue
@@ -1295,14 +1452,20 @@ class Server(object):
                         add_one_table(block.get("table") or [])
                     elif block.get("text"):
                         docx_util.save_txt2docx(str(block.get("text") or ""), document)
+                for image_url in sec.get("images", []) or []:
+                    add_section_image(image_url)
                 for child in sec.get("children", []) or []:
                     add_section(child, level + 1)
                 return
-            if sec.get("text"):
-                docx_util.save_txt2docx(str(sec.get("text") or ""), document)
-            for image_url in sec.get("images", []) or []:
-                add_section_image(image_url)
-            ref_type = sec.get("ref_type")
+            text = str(sec.get("text") or "")
+            tables = sec.get("tables") or []
+            images = sec.get("images") or []
+            if ref_type == "flow_diagram" or str(title or "").replace(" ", "").endswith("系统总体架构"):
+                if text.strip():
+                    docx_util.save_txt2docx(text, document)
+                add_flow_diagram_image()
+            else:
+                render_interleaved_body(text, tables, images)
             if ref_type == "stride_threats":
                 add_stride_threats()
             elif ref_type == "cybersec_controls_internal":
@@ -1313,8 +1476,13 @@ class Server(object):
                 add_control_table(CybersecControlScan)
             elif ref_type == "traceability":
                 add_traceability(sec)
-            for table_rows in sec.get("tables", []) or []:
-                add_one_table(table_rows, ref_type)
+            # 矩阵章若仍有导入原始表且未走交错（无 text 占位），矩阵后已由 render 输出；有交错时 tables 已在正文中
+            if ref_type in ("stride_threats", "cybersec_controls_internal", "cybersec_controls_sbom",
+                            "cybersec_controls_scan", "traceability", "flow_diagram"):
+                # 矩阵/流程图：导入原始表若未在交错中消耗，追加文末
+                if tables and not ("{{TBL}}" in text or re.search(r"(?m)^表\s*\d", text) or "见下表" in text):
+                    for table_rows in tables:
+                        add_one_table(table_rows, ref_type)
             for child in sec.get("children", []) or []:
                 add_section(child, level + 1)
 

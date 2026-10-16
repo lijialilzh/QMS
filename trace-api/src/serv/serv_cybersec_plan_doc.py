@@ -45,7 +45,7 @@ from .serv_doc_file import pick_doc_image_file_row
 logger = logging.getLogger(__name__)
 
 DOC_TITLE = "网络安全风险管理计划"
-DATE_KEYWORDS = ["网络安全风险管理计划", "网络安全风险管理", "风险管理计划"]
+DATE_KEYWORDS = ["网络安全风险管理计划"]
 
 TEAM_ROLE_KEYWORDS = {
     "网络安全负责人": ["网络安全负责人", "安全负责人"],
@@ -164,38 +164,45 @@ class Server(object):
         fr = min(file_rows, key=date_key)
         return f"{self.__to_int(fr.year)}年{self.__to_int(fr.month)}月{self.__to_int(fr.day)}日"
 
-    def __stage_timeline_dates(self, product_id, keywords):
+    def __stage_timeline_dates(self, product_id, keywords, style="cn"):
+        """style=cn → yyyy年M月d日（阶段活动）；style=ym → yyyy-MM（时间计划）。"""
         if not product_id or not keywords:
             return (None, None)
-        rows = db.session.execute(
-            select(ProjectTimelineRow).where(ProjectTimelineRow.prod_id == product_id, ProjectTimelineRow.row_type == "date")
+        tl_rows = db.session.execute(
+            select(ProjectTimelineRow).where(ProjectTimelineRow.prod_id == product_id)
         ).scalars().all()
-        if not rows:
+        if not tl_rows:
             return (None, None)
-        row_map = {r.id: r for r in rows}
+        dated = serv_review_util._timeline_date_rows_with_year(tl_rows)
+        if not dated:
+            return (None, None)
+        row_ids = [r.id for r, _ in dated]
         cells = db.session.execute(
-            select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_(list(row_map.keys())))
+            select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_(row_ids))
         ).scalars().all()
-        matched_row_ids = set()
+        matched = set()
         for c in cells:
             txt = str(c.output_result or "")
             if any(k in txt for k in keywords):
-                matched_row_ids.add(c.row_id)
+                matched.add(c.row_id)
 
-        def parse_date(r):
-            y, m = self.__to_int(r.year), self.__to_int(r.month)
-            if y is None or m is None:
+        def parse_date(r, year):
+            m = self.__to_int(r.month)
+            if year is None or m is None:
                 return None
             try:
                 from datetime import date as d
-                return d(y, m, self.__to_int(r.day) or 1)
+                return d(int(year), m, self.__to_int(r.day) or 1)
             except Exception:
                 return None
 
-        dates = [dd for dd in (parse_date(row_map[i]) for i in matched_row_ids) if dd]
+        dates = [dd for dd in (parse_date(r, y) for r, y in dated if r.id in matched) if dd]
         if not dates:
             return (None, None)
-        fmt = lambda d: f"{d.year}年{d.month}月{d.day}日"
+        if style == "ym":
+            fmt = lambda d: f"{d.year}-{d.month:02d}"
+        else:
+            fmt = lambda d: f"{d.year}年{d.month}月{d.day}日"
         return (fmt(min(dates)), fmt(max(dates)))
 
     # ---------------- 自动获取：封面/修订记录 ----------------
@@ -410,31 +417,25 @@ class Server(object):
                     return i
             return -1
 
-        good_date = re.compile(r"^\d{4}年\d{1,2}月\d{1,2}日$")
-
-        def norm_cell(val, new_val):
-            if new_val:
-                return new_val
-            return "" if not good_date.match(str(val or "").strip()) else val
-
         def phase_keywords(row_text):
+            # 关键字宜具体，避免串到通用《风险管理计划/报告》
             t = re.sub(r"\s+", "", row_text)
-            if "动态维护" in t or "持续" in t:
-                return None
+            if "动态维护" in t:
+                return "ongoing"
             if "网络安全扫描" in t:
                 return ["网络安全扫描"]
             if "SBOM安全性" in t:
-                return ["SBOM安全性风险评估"]
+                return ["SBOM安全性风险评估", "SBOM安全性"]
             if "SBOM信息" in t:
-                return ["SBOM工具清单", "SBOM"]
+                return ["SBOM工具清单", "SBOM信息", "SBOM"]
             if "控制措施" in t or "制定控制" in t:
-                return ["网络安全风险管理报告", "风险管理报告"]
+                return ["网络安全风险管理报告"]
             if "风险评估" in t:
-                return ["网络安全风险管理报告", "风险评估"]
+                return ["网络安全风险评估"]
             if "威胁识别" in t or "威胁建模" in t:
-                return ["网络安全扫描", "SBOM", "网络安全风险管理计划"]
+                return ["威胁识别", "威胁建模"]
             if "准备" in t:
-                return ["网络安全风险管理计划", "风险管理计划"]
+                return ["网络安全风险管理计划"]
             return None
 
         c_plan = col_of("计划完成时间")
@@ -444,12 +445,15 @@ class Server(object):
                     continue
                 row_text = " ".join(str(c or "") for c in row)
                 keywords = phase_keywords(row_text)
+                if keywords == "ongoing":
+                    row[c_plan] = "持续进行"
+                    continue
                 if not keywords:
                     continue
-                start_str, end_str = self.__stage_timeline_dates(product_id, keywords)
+                start_str, end_str = self.__stage_timeline_dates(product_id, keywords, style="ym")
                 plan_date = end_str or start_str or ""
-                if plan_date:
-                    row[c_plan] = norm_cell(row[c_plan], plan_date)
+                # 有命中覆盖（yyyy-MM）；无命中清空模板旧日期，避免假日期
+                row[c_plan] = plan_date
         return content
 
     # ---------------- 自动获取：运行环境（整表覆盖 tables_json） ----------------
@@ -722,19 +726,41 @@ class Server(object):
             docx_util.fonted_txt(paragraph, s, font_size=10.5, bold=bold)
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
 
-        def add_plain_table(rows):
+        def add_plain_table(rows, merge_empty_cols=None):
+            """merge_empty_cols: 列下标列表；该列有文的单元格向下合并连续空行（时间计划交付物）。"""
             rows = rows or []
             col_count = max([len(r or []) for r in rows] or [0])
             if col_count <= 0:
                 return
-            table = document.add_table(rows=0, cols=col_count)
+            table = document.add_table(rows=len(rows), cols=col_count)
             table.style = "Table Grid"
             table.alignment = WD_TABLE_ALIGNMENT.CENTER
             table.autofit = True
             for ri, rrow in enumerate(rows):
-                cells = table.add_row().cells
                 for idx in range(col_count):
-                    set_cell_text(cells[idx], rrow[idx] if idx < len(rrow or []) else "", bold=(ri == 0))
+                    set_cell_text(table.cell(ri, idx), rrow[idx] if idx < len(rrow or []) else "", bold=(ri == 0))
+            merge_cols = set(merge_empty_cols or [])
+            for ci in merge_cols:
+                if ci < 0 or ci >= col_count or len(rows) < 2:
+                    continue
+                r = 1
+                while r < len(rows):
+                    val = str((rows[r] or [""])[ci] if ci < len(rows[r] or []) else "").strip()
+                    if not val:
+                        r += 1
+                        continue
+                    end = r
+                    while end + 1 < len(rows):
+                        nxt = str((rows[end + 1] or [""])[ci] if ci < len(rows[end + 1] or []) else "").strip()
+                        if nxt:
+                            break
+                        end += 1
+                    if end > r:
+                        try:
+                            table.cell(r, ci).merge(table.cell(end, ci))
+                        except Exception:
+                            logger.exception("cybersec_plan_time_plan_merge_failed")
+                    r = end + 1
             document.add_paragraph()
 
         def set_cell_bg(cell, color_hex):
@@ -809,27 +835,162 @@ class Server(object):
                 logger.exception("cybersec_plan_export_image_failed")
             return False
 
+        def add_section_image_url(image_url):
+            raw_url = str(image_url or "").strip()
+            if not raw_url:
+                return False
+            try:
+                if raw_url.startswith("data:image/"):
+                    image_data = raw_url.split(",", 1)[1]
+                    paragraph = document.add_paragraph()
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    pic = paragraph.add_run().add_picture(io.BytesIO(base64.b64decode(image_data)))
+                    max_w, max_h = Inches(5.5), Inches(7.0)
+                    if pic.width and pic.height:
+                        ratio = min(max_w / pic.width, max_h / pic.height, 1)
+                        pic.width = int(pic.width * ratio)
+                        pic.height = int(pic.height * ratio)
+                    return True
+                path = raw_url[1:] if raw_url.startswith("/") else raw_url
+                docx_util.save_img2docx(path, document, mw=520, mh=520)
+                return True
+            except Exception:
+                logger.exception("cybersec_plan_export_inline_image_failed")
+                return False
+
+        def write_center_caption(caption):
+            s = str(caption or "").strip()
+            if not s:
+                return
+            p = document.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            docx_util.fonted_txt(p, s, font_size=10.5, bold=False)
+
         # 图题关键词 -> 图表文件管理分类
         caption_cats = [("物理拓扑图", "img_topo"), ("体系结构图", "img_struct")]
 
-        def render_text_with_anchors(text):
-            """逐行渲染正文；遇到「图N xxx」图题行且能匹配到分类时，在该行后插入对应图片"""
+        def deliverable_merge_cols(table_rows):
+            header = (table_rows or [None])[0] if table_rows else None
+            if not isinstance(header, list):
+                return None
+            for i, c in enumerate(header):
+                if "交付物" in re.sub(r"\s+", "", str(c or "")):
+                    return [i]
+            return None
+
+        def render_interleaved_body(text, tables=None, images=None, merge_empty_cols=None):
+            """与编辑页一致：按 {{TBL}}/{{IMG}}/见下表/表N/见下图/图N 交错；图题在图下；静默占位不写 Word。"""
+            body_text = str(text or "")
+            tables = tables if isinstance(tables, list) else []
+            images = images if isinstance(images, list) else []
+            has_tbl_ph = "{{TBL}}" in body_text
+            has_img_ph = "{{IMG}}" in body_text or re.search(r"(?m)^图\s*\d", body_text) or ("见下图" in body_text)
+            has_media = (
+                has_tbl_ph or has_img_ph
+                or ("见下表" in body_text)
+                or re.search(r"见表\s*\d", body_text)
+                or re.search(r"(?m)^表\s*\d", body_text)
+            ) and (tables or images)
+
+            def emit_table(t_idx):
+                if 0 <= t_idx < len(tables):
+                    cols = merge_empty_cols if merge_empty_cols is not None else deliverable_merge_cols(tables[t_idx])
+                    add_plain_table(tables[t_idx], merge_empty_cols=cols)
+
+            if not has_media:
+                if body_text.strip():
+                    # 仍处理纯图题锚点（无 {{TBL}} 时）
+                    buf = []
+                    for ln in body_text.split("\n"):
+                        s = ln.strip()
+                        if re.match(r"^图\s*\d", s):
+                            cat = next((c for kw, c in caption_cats if kw in s), None)
+                            if cat:
+                                t = "\n".join(buf).strip()
+                                if t:
+                                    docx_util.save_txt2docx(t, document)
+                                buf.clear()
+                                add_section_image_by_category(cat)
+                                write_center_caption(s)
+                                continue
+                        buf.append(ln)
+                    t = "\n".join(buf).strip()
+                    if t:
+                        docx_util.save_txt2docx(t, document)
+                for i in range(len(tables)):
+                    emit_table(i)
+                for url in images:
+                    add_section_image_url(url)
+                return
+
+            lines = body_text.split("\n")
             buf = []
+            tbl_idx = 0
+            img_idx = 0
 
-            def flush():
-                if buf:
-                    docx_util.save_txt2docx("\n".join(buf), document)
-                    buf.clear()
+            def flush_text():
+                t = "\n".join(buf).strip()
+                if t:
+                    docx_util.save_txt2docx(t, document)
+                buf.clear()
 
-            for ln in str(text or "").split("\n"):
-                buf.append(ln)
+            for ln in lines:
                 s = ln.strip()
+                if s in ("{{TXT}}", "{{EMPTY}}"):
+                    flush_text()
+                    continue
+                if (s == "{{TBL}}" or s in ("见下表", "如下表", "下表")) and tbl_idx < len(tables):
+                    flush_text()
+                    emit_table(tbl_idx)
+                    tbl_idx += 1
+                    continue
+                if re.search(r"见表\s*\d", s) and tbl_idx < len(tables):
+                    rest = re.sub(r"见表\s*\d+", "", ln).strip()
+                    if rest:
+                        buf.append(rest)
+                    flush_text()
+                    emit_table(tbl_idx)
+                    tbl_idx += 1
+                    continue
+                if re.match(r"^表\s*\d", s) and tbl_idx < len(tables):
+                    flush_text()
+                    emit_table(tbl_idx)
+                    tbl_idx += 1
+                    continue
+                if (s == "{{IMG}}" or s in ("见下图", "如下图", "下图")) and img_idx < len(images):
+                    flush_text()
+                    add_section_image_url(images[img_idx])
+                    img_idx += 1
+                    continue
                 if re.match(r"^图\s*\d", s):
                     cat = next((c for kw, c in caption_cats if kw in s), None)
+                    flush_text()
                     if cat:
-                        flush()
                         add_section_image_by_category(cat)
-            flush()
+                        write_center_caption(s)
+                    elif img_idx < len(images):
+                        add_section_image_url(images[img_idx])
+                        write_center_caption(s)
+                        img_idx += 1
+                    else:
+                        write_center_caption(s)
+                    continue
+                if (
+                    not has_tbl_ph
+                    and re.match(r"^\d+[）)]", s)
+                    and tbl_idx < len(tables)
+                ):
+                    buf.append(ln)
+                    flush_text()
+                    emit_table(tbl_idx)
+                    tbl_idx += 1
+                    continue
+                buf.append(ln)
+            flush_text()
+            for i in range(tbl_idx, len(tables)):
+                emit_table(i)
+            for i in range(img_idx, len(images)):
+                add_section_image_url(images[i])
 
         def add_section(sec: dict, level: int = 1):
             title = sec.get("title", "")
@@ -847,17 +1008,16 @@ class Server(object):
                     elif block.get("type") == "text":
                         txt = str(block.get("text") or "")
                         if txt:
-                            render_text_with_anchors(txt)
+                            render_interleaved_body(txt, [], [])
                 for child in sec.get("children", []) or []:
                     add_section(child, level + 1)
                 return
-            # 普通正文（按锚点嵌图）
-            text = str(sec.get("text") or "")
-            if text:
-                render_text_with_anchors(text)
-            # 表格
-            for table_rows in sec.get("tables", []) or []:
-                add_plain_table(table_rows)
+            text = str(sec.get("text") or sec.get("body") or "")
+            tables = sec.get("tables") or []
+            images = sec.get("images") or []
+            is_tp = sec.get("ref_type") == "time_plan" or "时间计划" in str(title or "")
+            merge_cols = deliverable_merge_cols(tables[0]) if is_tp and tables else None
+            render_interleaved_body(text, tables, images, merge_empty_cols=merge_cols)
             for child in sec.get("children", []) or []:
                 add_section(child, level + 1)
 
