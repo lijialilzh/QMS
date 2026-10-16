@@ -360,12 +360,18 @@ def _copy_test_sets(source_prod_id: int, target_prod_id: int) -> int:
     rows = db.session.execute(select(TestSet).where(TestSet.product_id == source_prod_id)).scalars().all()
     copied = 0
     for row in rows:
+        file_no = getattr(row, "file_no", None) or ""
+        file_name = getattr(row, "file_name", None) or ""
         exists = db.session.execute(
-            select(func.count(TestSet.id)).where(TestSet.product_id == target_prod_id, TestSet.stage == row.stage)
+            select(func.count(TestSet.id)).where(
+                TestSet.product_id == target_prod_id,
+                TestSet.file_no == file_no,
+                TestSet.file_name == file_name,
+            )
         ).scalar() or 0
         if exists:
             continue
-        new_set = TestSet(product_id=target_prod_id, stage=row.stage)
+        new_set = TestSet(product_id=target_prod_id, stage=row.stage, file_no=file_no, file_name=file_name)
         db.session.add(new_set)
         db.session.flush()
         cases = db.session.execute(select(TestCase).where(TestCase.set_id == row.id)).scalars().all()

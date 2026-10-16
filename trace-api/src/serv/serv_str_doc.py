@@ -275,13 +275,17 @@ class Server(object):
 
     def __stage_rows(self, prod_id, stage, prev, with_design=False, srs_to_sds=None, sds_to_srs=None, known_srs=None):
         """按阶段(测试集)取用例，按功能点分组：需求编号[/设计编号]/Case编号取段/功能点/用例个数/是否通过/备注。"""
-        set_ids = db.session.execute(
-            select(TestSet.id).where(TestSet.product_id == prod_id, TestSet.stage == stage)
-        ).scalars().all()
-        if not set_ids:
+        # 同阶段多合集时仅取 create_time 最新一份，避免 A1/A2 用例重复汇总
+        latest = db.session.execute(
+            select(TestSet.id)
+            .where(TestSet.product_id == prod_id, TestSet.stage == stage)
+            .order_by(TestSet.create_time.desc(), TestSet.id.desc())
+            .limit(1)
+        ).scalars().first()
+        if not latest:
             return []
         cases = db.session.execute(
-            select(TestCase).where(TestCase.set_id.in_(set_ids)).order_by(TestCase.id)
+            select(TestCase).where(TestCase.set_id == latest).order_by(TestCase.id)
         ).scalars().all()
         order, gmap = [], {}
         for c in cases:

@@ -250,6 +250,25 @@ const firstKey = (nodes: any[]): string => (nodes && nodes[0] ? nodes[0]._key : 
 
 const stripNum = (title: string): string => String(title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();
 
+/** 「描述」章产品信息行自动获取后只读 */
+const isDescChapter = (node: any): boolean => stripNum(node?.title) === "描述";
+
+const splitDescBody = (body: string): { headerText: string; restText: string } => {
+    const lines = String(body || "").split("\n");
+    const header: string[] = [];
+    let i = 0;
+    while (i < lines.length) {
+        const s = lines[i].trim();
+        if (s.startsWith("产品名称：") || s.startsWith("产品型号：") || s.startsWith("完整版本：")) {
+            header.push(lines[i]);
+            i += 1;
+            continue;
+        }
+        break;
+    }
+    return { headerText: header.join("\n"), restText: lines.slice(i).join("\n") };
+};
+
 const computeNumbers = (nodes: any[]): Record<string, string> => {
     const map: Record<string, string> = {};
     let bodyIdx = 0;
@@ -1038,6 +1057,31 @@ export default () => {
                                     }
                                     return (
                                         <>
+                                            {isDescChapter(active) && !readonly ? (() => {
+                                                const { headerText, restText } = splitDescBody(active.body ?? "");
+                                                return (
+                                                    <>
+                                                        {headerText ? (
+                                                            <div className="pdp-field">
+                                                                <div className="pdp-label">产品信息（自动获取，只读）</div>
+                                                                <Input.TextArea autoSize={{ minRows: 2, maxRows: 8 }} value={headerText} disabled />
+                                                            </div>
+                                                        ) : null}
+                                                        <div className="pdp-field">
+                                                            <div className="pdp-label">正文</div>
+                                                            <Input.TextArea
+                                                                autoSize={{ minRows: 3, maxRows: 20 }}
+                                                                value={restText}
+                                                                placeholder="本章节正文内容，可多行"
+                                                                onChange={(e) => {
+                                                                    const next = headerText ? `${headerText}\n${e.target.value}` : e.target.value;
+                                                                    patchNode(active._key, { body: next });
+                                                                }}
+                                                            />
+                                                        </div>
+                                                    </>
+                                                );
+                                            })() : (
                                             <div className="pdp-field">
                                                 <div className="pdp-label">正文</div>
                                                 <Input.TextArea
@@ -1048,6 +1092,7 @@ export default () => {
                                                     onChange={(e) => patchNode(active._key, { body: e.target.value })}
                                                 />
                                             </div>
+                                            )}
                                             {(active.ref_type === "personnel" || stripNum(active.title) === "人员资源") && !readonly && (
                                                 <div className="pdp-pull-bar">
                                                     <Button type="primary" ghost loading={data.pulling} onClick={pullPersonnel}>

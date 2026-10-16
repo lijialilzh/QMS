@@ -44,7 +44,7 @@
             height: auto;
         }
 
-        // 用户测试记录：表头参考网络安全能力分析（浅蓝底）；宽度随父容器与封面表对齐
+        // 用户测试记录：表头/边框对齐评审记录（pdp-grid review-grid）
         &.utp-record-table {
             width: 100% !important;
             max-width: 100%;
@@ -57,16 +57,25 @@
                 width: 100% !important;
             }
 
+            .ant-table-container,
+            .ant-table-thead > tr > th,
+            .ant-table-tbody > tr > td {
+                border-color: #e8edf2 !important;
+            }
+
             .ant-table-thead > tr > th {
-                background: #f0f5ff !important;
-                color: #1d39c4;
+                background: #f5f8fc !important;
+                color: #2b3a4b;
                 font-weight: 600;
+                padding: 6px 8px !important;
+                text-align: left;
             }
 
             .ant-table-tbody > tr > td {
                 height: auto !important;
                 white-space: normal;
                 vertical-align: middle;
+                padding: 6px 8px !important;
             }
 
             .ant-table-cell {

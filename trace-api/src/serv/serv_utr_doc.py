@@ -22,7 +22,6 @@ from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 
 from ..model.product import Product
 from ..model.utr_doc import UtrDoc
-from ..model.doc_file import DocFile
 from ..model.prod_dhf import ProdDhf
 from ..model.project_member import ProjectMember
 from ..model.test_set import TestSet
@@ -169,13 +168,17 @@ class Server(object):
 
     def __stage_rows(self, prod_id, stage, prev):
         """按阶段(测试集)取用例，按功能点分组：需求编号/Case编号取段/功能点/用例个数/是否通过/备注。"""
-        set_ids = db.session.execute(
-            select(TestSet.id).where(TestSet.product_id == prod_id, TestSet.stage == stage)
-        ).scalars().all()
-        if not set_ids:
+        # 同阶段多合集时仅取 create_time 最新一份，避免 A1/A2 用例重复汇总
+        latest = db.session.execute(
+            select(TestSet.id)
+            .where(TestSet.product_id == prod_id, TestSet.stage == stage)
+            .order_by(TestSet.create_time.desc(), TestSet.id.desc())
+            .limit(1)
+        ).scalars().first()
+        if not latest:
             return []
         cases = db.session.execute(
-            select(TestCase).where(TestCase.set_id.in_(set_ids)).order_by(TestCase.id)
+            select(TestCase).where(TestCase.set_id == latest).order_by(TestCase.id)
         ).scalars().all()
         order, gmap = [], {}
         for c in cases:
@@ -302,7 +305,8 @@ class Server(object):
         return content
 
     def __fill_hr(self, content, prod_id, force=False):
-        """人力资源表：按「角色」列自动匹配当前产品参与人员，填「资源数量/具体人员」列(N人/姓名)。
+        """人力资源表：按「具体职责」与用户测试计划负责人同一规则覆盖「角色」与人员。
+        用户培训→产品经理；执行测试/用户测试→用户测试人员；其余→测试人员。
         force=False：匹配不到保留原值；force=True：强制覆盖，无人员则置空。"""
         if not isinstance(content, dict):
             return content
@@ -321,24 +325,14 @@ class Server(object):
                         out.append(nm)
             return out
 
-        def names_for(label, duty):
-            lab, d = str(label or ""), str(duty or "")
-            if "用户" in lab and "测试" in lab:
-                return by_kw(lambda r: "用户测试" in r)
-            if "测试" in lab and "用户" not in lab:
-                others = [n for n in by_kw(lambda r: ("测试" in r) and ("用户" not in r)) if n not in ("宋月", "孙家旭")]
-                return ([primary] + others) if any(k in d for k in ("执行", "记录", "回归", "首轮")) else [primary]
-            if "产品经理" in lab:
-                return by_kw(lambda r: "产品经理" in r)
-            if "开发" in lab and "负责" not in lab:
-                return by_kw(lambda r: "开发人员" in r or "开发工程师" in r)
-            if "QA" in lab:
-                return by_kw(lambda r: "QA" in r or "质量" in r)
-            if "RA" in lab:
-                return by_kw(lambda r: "RA" in r or "法规" in r)
-            if "临床" in lab:
-                return by_kw(lambda r: "临床" in r)
-            return by_kw(lambda r: bool(lab) and (lab in r or r in lab))
+        def role_and_names(duty, old_label=""):
+            d, lab = str(duty or ""), str(old_label or "")
+            if "用户培训" in d:
+                return "产品经理", by_kw(lambda r: "产品经理" in r)
+            if ("执行测试" in d) or ("用户测试" in lab and "测试" in lab):
+                return "用户测试人员", by_kw(lambda r: "用户测试" in r)
+            # 生成测试计划/用例/评估等 → 测试人员
+            return "测试人员", [primary]
 
         def walk(node):
             for tbl in (node.get("tables") or []):
@@ -352,12 +346,17 @@ class Server(object):
                 for r in tbl[1:]:
                     if not isinstance(r, list) or not r:
                         continue
-                    nm = names_for(r[0], r[ci_d] if ci_d < len(r) else "")
+                    role_label, nm = role_and_names(r[ci_d] if ci_d < len(r) else "", r[0])
+                    cell = ("%d人/%s" % (len(nm), "、".join(nm))) if nm else ""
                     if force:
+                        r[0] = role_label
                         if ci_p < len(r):
-                            r[ci_p] = ("%d人/%s" % (len(nm), "、".join(nm))) if nm else ""
-                    elif nm and ci_p < len(r):
-                        r[ci_p] = "%d人/%s" % (len(nm), "、".join(nm))
+                            r[ci_p] = cell
+                    else:
+                        if role_label:
+                            r[0] = role_label
+                        if nm and ci_p < len(r):
+                            r[ci_p] = cell
             for ch in (node.get("children") or []):
                 walk(ch)
 
@@ -421,17 +420,71 @@ class Server(object):
             walk(s)
         return content
 
+    @staticmethod
+    def __strip_title(title):
+        return re.sub(r"^\s*\d+(?:\.\d+)*[、.\s]*", "", str(title or "")).strip()
+
+    def __fill_desc(self, content, product):
+        """「描述」章：产品名称/完整版本自动写入；有型号则写入，无则隐藏；保留其后说明正文。"""
+        if not product:
+            return
+        name = (product.name or "").strip()
+        type_code = (getattr(product, "type_code", None) or "").strip()
+        full_version = (product.full_version or "").strip()
+        if not (name or type_code or full_version):
+            return
+
+        def walk(node):
+            if self.__strip_title(node.get("title")) == "描述":
+                body = str(node.get("body") or "")
+                rest = []
+                for ln in body.split("\n"):
+                    s = ln.strip()
+                    if s.startswith("产品名称：") or s.startswith("产品型号：") or s.startswith("完整版本："):
+                        continue
+                    rest.append(ln)
+                while rest and not str(rest[0]).strip():
+                    rest.pop(0)
+                header = []
+                if name:
+                    header.append(f"产品名称：{name}")
+                if type_code:
+                    header.append(f"产品型号：{type_code}")
+                if full_version:
+                    header.append(f"完整版本：{full_version}")
+                node["body"] = "\n".join(header + rest) if header else "\n".join(rest)
+            for c in (node.get("children") or []):
+                walk(c)
+
+        for s in (content.get("sections") or []):
+            walk(s)
+
+    def __clear_dist_images(self, content):
+        """测试分布图只用 charts，清空误挂的流程图 images。"""
+        def walk(node):
+            if self.__strip_title(node.get("title")) == "测试分布图":
+                node["images"] = []
+            for c in (node.get("children") or []):
+                walk(c)
+        for s in (content.get("sections") or []):
+            walk(s)
+
     def __autofill(self, content, prod_id, product=None, version="", force=False):
         if not isinstance(content, dict):
             return content
+        self.__clear_dist_images(content)
+        if product:
+            self.__fill_desc(content, product)
         if product and product.name:
             for s in (content.get("sections") or []):
                 self.__replace_name(s, BASE_NAME, product.name)
-            # 更新完整版本号
+            # 更新完整版本号（「描述」章由 __fill_desc 重建头部）
             new_full_version = (product.full_version or "").strip()
             if new_full_version:
                 def _update_version(node):
-                    if node.get("body") and "完整版本" in str(node.get("body")):
+                    if self.__strip_title(node.get("title")) == "描述":
+                        pass
+                    elif node.get("body") and "完整版本" in str(node.get("body")):
                         node["body"] = re.sub(r"完整版本：[^\n]*", f"完整版本：{new_full_version}", str(node["body"]))
                     # 表格中的版本号替换（如"测试版本"行的值含 1.1.0.1）
                     for tbl in (node.get("tables") or []):
@@ -595,24 +648,6 @@ class Server(object):
             for s in (content.get("sections") or []):
                 update_version(s)
             row.product_id = product_id
-            # 测试分布图：未获取时从该产品 doc_file（img_flow）获取，已获取的保留
-            def fill_test_chart(nodes):
-                for n in nodes:
-                    if str(n.get("title") or "").strip() == "测试分布图":
-                        imgs = n.get("images") or []
-                        if not imgs:
-                            row_df = db.session.execute(
-                                select(DocFile).where(DocFile.product_id == product_id, DocFile.category == "img_flow").order_by(DocFile.id)
-                            ).scalars().first()
-                            if row_df and row_df.file_url:
-                                url = str(row_df.file_url).strip()
-                                if url.startswith("data.trace/"):
-                                    url = "/" + url
-                                n["images"] = [url]
-                        break
-                    for c in (n.get("children") or []):
-                        fill_test_chart([c])
-            fill_test_chart(content.get("sections") or [])
             content = self.__autofill(content, product_id, product, row.version, force=True)
             row.content = content
             db.session.commit()

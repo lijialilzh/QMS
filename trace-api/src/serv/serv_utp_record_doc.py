@@ -45,6 +45,7 @@ BASE_NAME = "InferOperate Suite"
 # 大表：0~10 为表头区，11 起为测试项
 HEADER_ROWS = 11
 PASS_EMPTY = "□通过 □不通过"
+PASS_DEFAULT = "■通过 □不通过"  # 新建测试项默认通过，可改
 
 _DEFAULT_FILE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "src-res", "utp_record_default_content.json"
@@ -127,8 +128,12 @@ class Server(object):
     def __user_test_cases(self, prod_id) -> List[TestCase]:
         if not prod_id:
             return []
+        # 同阶段可有多份合集：取 create_time 最新
         ts_row = db.session.execute(
-            select(TestSet).where(TestSet.product_id == prod_id, TestSet.stage == "用户测试")
+            select(TestSet)
+            .where(TestSet.product_id == prod_id, TestSet.stage == "用户测试")
+            .order_by(TestSet.create_time.desc(), TestSet.id.desc())
+            .limit(1)
         ).scalars().first()
         if not ts_row:
             return []
@@ -696,11 +701,19 @@ class Server(object):
                     table.cell(rr, 2).text = ""
                 table.cell(group_start, 2).merge(table.cell(rows_total - 1, 2))
 
+        # 文末签名/日期：与表头测试人员、测试日期一致，右对齐
+        sign_name = ""
+        sign_date = ""
+        if len(grid) > 6 and isinstance(grid[6], list):
+            sign_name = str(grid[6][1] or "").strip()
+            sign_date = str(grid[6][6] or "").strip()
         document.add_paragraph()
         p2 = document.add_paragraph()
-        docx_util.fonted_txt(p2, "签名：", font_size=12.0)
+        p2.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        docx_util.fonted_txt(p2, f"签名：{sign_name}", font_size=12.0)
         p3 = document.add_paragraph()
-        docx_util.fonted_txt(p3, "日期：", font_size=12.0)
+        p3.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        docx_util.fonted_txt(p3, f"日期：{sign_date}", font_size=12.0)
         document.save(output)
         output.seek(0)
 

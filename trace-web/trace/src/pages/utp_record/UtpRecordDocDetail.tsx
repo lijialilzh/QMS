@@ -71,7 +71,7 @@ function parseCaseInput(text: string): string {
         .trim();
 }
 
-/** 表头样式对齐网络安全能力分析（#fafafa 标签 / #f0f5ff 分区） */
+/** 封面标签样式；测试项目表对齐评审记录（#f5f8fc / #e8edf2） */
 const tdStyle: CSSProperties = { border: "1px solid #d9d9d9", padding: "6px 10px", fontSize: 13, verticalAlign: "middle" };
 const labelStyle: CSSProperties = { ...tdStyle, background: "#fafafa", fontWeight: 600, color: "#555", width: 110, textAlign: "center", whiteSpace: "nowrap" };
 const valueStyle: CSSProperties = { ...tdStyle, color: "#333", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45 };
@@ -94,7 +94,16 @@ export default () => {
             if (res.code !== Api.C_OK) { dispatch({ loading: false }); message.error(res.msg); return; }
             const doc = res.data || {};
             const sections = doc.content?.sections || [];
-            const bigTable = sections[0]?.tables?.[0] || [];
+            const bigTable = (sections[0]?.tables?.[0] || []).map((r: any[]) => [...(r || [])]);
+            // 未勾选结果时默认「通过」（可改）
+            for (let i = DATA_START; i < bigTable.length; i++) {
+                const row = bigTable[i];
+                if (!row || !Array.isArray(row)) continue;
+                const cur = String(row[4] || "");
+                if (!/■通过|☑通过|√通过|✓通过|■不通过|☑不通过|√不通过|✓不通过/.test(cur)) {
+                    row[4] = row[5] = formatResult("pass");
+                }
+            }
             dispatch({ loading: false, doc, rows: bigTable });
         });
     };
@@ -216,57 +225,58 @@ export default () => {
 
     const columns = [
         {
-            title: "Case编号", dataIndex: "caseRange", width: "28%",
-            onCell: () => ({ style: { background: "#fff", verticalAlign: "middle" } }),
+            title: "Case编号", dataIndex: "caseRange", width: "22%",
+            onCell: () => ({ style: { background: "#fff", verticalAlign: "middle", padding: "6px 8px" } }),
             render: (text: string, _r: any, idx: number) => (
                 readonly
-                    ? <div style={{ whiteSpace: "pre-line", lineHeight: 1.5, fontSize: 12, wordBreak: "break-all" }}>{formatCaseDisplay(text)}</div>
+                    ? <div style={{ whiteSpace: "pre-line", lineHeight: 1.5, fontSize: 13, wordBreak: "break-all" }}>{formatCaseDisplay(text)}</div>
                     : <Input.TextArea
                         variant="borderless"
                         autoSize={{ minRows: 3, maxRows: 4 }}
-                        style={{ padding: 0, fontSize: 12, lineHeight: 1.5, resize: "none", wordBreak: "break-all" }}
+                        style={{ padding: 0, fontSize: 13, lineHeight: 1.5, resize: "none", wordBreak: "break-all" }}
                         value={formatCaseDisplay(text)}
                         onChange={(e) => setRecord(idx, "caseRange", parseCaseInput(e.target.value))}
                     />
             ),
         },
         {
-            title: "功能模块", dataIndex: "module", width: "18%",
+            title: "功能模块", dataIndex: "module", width: "16%",
             onCell: (_r: any, index?: number) => ({
                 rowSpan: moduleSpans[index ?? 0] || 0,
-                style: { fontWeight: 600, background: "#fafafa", verticalAlign: "middle" },
+                style: { background: "#fff", verticalAlign: "middle", padding: "6px 8px", fontSize: 13 },
             }),
             render: (text: string) => text,
         },
         {
-            title: "是否通过", dataIndex: "result", width: "26%",
-            onCell: () => ({ style: { background: "#fff", verticalAlign: "middle" } }),
+            title: "是否通过", dataIndex: "result", width: "28%",
+            onCell: () => ({ style: { background: "#fff", verticalAlign: "middle", padding: "6px 8px" } }),
             render: (text: string, _r: any, idx: number) => {
-                const val = parseResult(text);
+                // 对齐评审结论：黑字 □/☑，无彩色；编辑互斥勾选，存盘仍为 ■/□ 文案
+                const val = parseResult(text) || "pass";
                 if (readonly) {
-                    return <span style={{ color: val === "pass" ? "#52c41a" : val === "fail" ? "#ff4d4f" : "#999", fontWeight: val ? 600 : 400 }}>
-                        {val === "pass" ? "■通过" : val === "fail" ? "■不通过" : "□通过 □不通过"}
-                    </span>;
+                    return (
+                        <span style={{ color: "#333", fontSize: 13, whiteSpace: "pre-wrap" }}>
+                            {val === "pass" ? "☑ 通过    □ 不通过" : "□ 通过    ☑ 不通过"}
+                        </span>
+                    );
                 }
                 return (
-                    <Space size={8}>
+                    <Space size={16}>
                         <Checkbox
-                            style={{ fontSize: 12 }}
                             checked={val === "pass"}
-                            onChange={(e) => setRecord(idx, "result", formatResult(e.target.checked ? "pass" : ""))}
+                            onChange={(e) => setRecord(idx, "result", formatResult(e.target.checked ? "pass" : "fail"))}
                         >通过</Checkbox>
                         <Checkbox
-                            style={{ fontSize: 12 }}
                             checked={val === "fail"}
-                            onChange={(e) => setRecord(idx, "result", formatResult(e.target.checked ? "fail" : ""))}
+                            onChange={(e) => setRecord(idx, "result", formatResult(e.target.checked ? "fail" : "pass"))}
                         >不通过</Checkbox>
                     </Space>
                 );
             },
         },
         {
-            title: "备注", dataIndex: "remark", width: "28%",
-            onCell: () => ({ style: { background: "#fff", verticalAlign: "middle" } }),
+            title: "备注", dataIndex: "remark", width: "34%",
+            onCell: () => ({ style: { background: "#fff", verticalAlign: "middle", padding: "6px 8px" } }),
             render: (text: string, _r: any, idx: number) => editCell(text, (v) => setRecord(idx, "remark", v)),
         },
     ];
@@ -366,7 +376,7 @@ export default () => {
                                 </tbody>
                             </table>
 
-                            <div style={{ marginTop: 16, fontSize: 14, fontWeight: 600, color: "#1d39c4", background: "#f0f5ff", padding: "6px 10px", border: "1px solid #d9d9d9", borderBottom: "none", boxSizing: "border-box" }}>测试项目</div>
+                            <div style={{ marginTop: 16, fontSize: 14, fontWeight: 600, color: "#2b3a4b", background: "#f5f8fc", padding: "6px 8px", border: "1px solid #e8edf2", borderBottom: "none", boxSizing: "border-box" }}>测试项目</div>
                             <Table
                                 className="ftr-record-table utp-record-table"
                                 columns={columns}
@@ -378,9 +388,11 @@ export default () => {
                                 tableLayout="fixed"
                                 style={{ width: "100%" }}
                             />
-                            <div style={{ marginTop: 24, fontSize: 14, lineHeight: 2.2, color: "#333" }}>
-                                <div>签名：</div>
-                                <div>日期：</div>
+                            <div style={{ marginTop: 24, fontSize: 14, lineHeight: 2.2, color: "#333", display: "flex", justifyContent: "flex-end" }}>
+                                <div style={{ textAlign: "left", minWidth: 220 }}>
+                                    <div>签名：{cover["测试人员"] || ""}</div>
+                                    <div>日期：{cover["测试日期"] || ""}</div>
+                                </div>
                             </div>
                         </div>
                     </div>

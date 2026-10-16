@@ -6,12 +6,21 @@ import { useData } from "@/common";
 import * as Api from "@/api/ApiTestCase";
 import { renderOneLineWithTooltip } from "@/common/tableRenderers";
 
+const sheetNamesOf = (rows: any[]) => {
+    const names: string[] = [];
+    (rows || []).forEach((r: any) => {
+        const sn = String(r.sheet_name || "").trim();
+        if (sn && !names.includes(sn)) names.push(sn);
+    });
+    return names;
+};
+
 export default ({ set_id }: any) => {
     const { t: ts } = useTranslation();
     const [data, dispatch] = useData({
         rows: [] as any[],
         loading: false,
-        activeSheet: "全部",
+        activeSheet: "",
     });
 
     const doSearch = (setId: string) => {
@@ -19,7 +28,8 @@ export default ({ set_id }: any) => {
         Api.list_test_case({ set_id: setId }).then((res: any) => {
             if (res.code === Api.C_OK) {
                 const rows = res.data.rows || [];
-                dispatch({ loading: false, rows, activeSheet: "全部" });
+                const names = sheetNamesOf(rows);
+                dispatch({ loading: false, rows, activeSheet: names[0] || "" });
             } else {
                 dispatch({ loading: false, rows: [] });
                 message.error(res.msg);
@@ -27,17 +37,11 @@ export default ({ set_id }: any) => {
         });
     };
 
-    const sheetTabs = useMemo(() => {
-        const names: string[] = [];
-        (data.rows || []).forEach((r: any) => {
-            const sn = String(r.sheet_name || "").trim();
-            if (sn && !names.includes(sn)) names.push(sn);
-        });
-        return ["全部", ...names];
-    }, [data.rows]);
+    // 仅按 Excel sheet 名分 Tab（无「全部」；无 sheet 名时不显示 Tab）
+    const sheetTabs = useMemo(() => sheetNamesOf(data.rows), [data.rows]);
 
     const filteredRows = useMemo(() => {
-        if (data.activeSheet === "全部") return data.rows || [];
+        if (!data.activeSheet) return data.rows || [];
         return (data.rows || []).filter((r: any) => String(r.sheet_name || "").trim() === data.activeSheet);
     }, [data.rows, data.activeSheet]);
 

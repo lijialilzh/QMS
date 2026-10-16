@@ -1,0 +1,21 @@
+// 合集列表：阶段/文件编号等单行完整显示，不截断省略
+.test-set-list-table {
+    .ant-table {
+        overflow-x: auto;
+    }
+
+    .ant-table-thead > tr > th,
+    .ant-table-tbody > tr > td {
+        overflow: visible !important;
+        text-overflow: unset !important;
+    }
+
+    .ant-table-cell-ellipsis {
+        white-space: nowrap;
+    }
+
+    // 产品名称列仍可省略；其它列单行展示全文
+    .ant-table-tbody > tr > td:not(:first-child) {
+        white-space: nowrap;
+    }
+}

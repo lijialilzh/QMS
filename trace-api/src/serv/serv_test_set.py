@@ -45,6 +45,22 @@ class Server(object):
         # 常见用例编号如 TU01-001-0001 / TC-001，过滤标题和说明行
         return bool(re.match(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$", txt)) and "-" in txt
 
+    @staticmethod
+    def __parse_upload_filename(filename: str):
+        """文件名（去扩展名）按「编号 + 空格 + 名称」解析；无空格则编号=整段、名称为空。"""
+        stem = (filename or "").rsplit("/", 1)[-1].rsplit("\\", 1)[-1].strip()
+        lower = stem.lower()
+        if lower.endswith(".xlsx"):
+            stem = stem[:-5]
+        elif lower.endswith(".xls"):
+            stem = stem[:-4]
+        stem = stem.strip()
+        if not stem:
+            return "", ""
+        parts = stem.split(None, 1)
+        file_no = (parts[0] or "")[:256]
+        file_name = (parts[1] if len(parts) > 1 else "")[:256]
+        return file_no, file_name
 
     def __parse_sheet(self, ws, sheet_name: str):
         """解析单个 sheet；sheet_name 写入用例（用户测试多型号时 sheet 名=型号）。"""
@@ -137,12 +153,27 @@ class Server(object):
 
     async def add_test_set(self, form: TestSetForm, file):
         try:
-            sql = select(func.count(TestSet.id)).where(TestSet.product_id == form.product_id, TestSet.stage == form.stage)
-            count = db.session.execute(sql).scalar()
-            if count > 0:
-                return Resp.resp_err(msg=ts("msg_obj_exist"))
-            
-            row = TestSet(**form.dict())
+            file_no, file_name = "", ""
+            if file and getattr(file, "filename", None):
+                file_no, file_name = self.__parse_upload_filename(file.filename)
+            # 有上传文件但解析不出编号时不落空串（避免与旧 legacy 空数据误判）
+            if file and not (file_no or "").strip():
+                return Resp.resp_err(msg="文件名格式无效")
+            # 同产品下文件编号+名称已存在 → 视为已上传（忽略空编号）
+            if (file_no or "").strip():
+                sql = select(func.count(TestSet.id)).where(
+                    TestSet.product_id == form.product_id,
+                    TestSet.file_no == file_no,
+                    TestSet.file_name == (file_name or ""),
+                )
+                if db.session.execute(sql).scalar() > 0:
+                    tip = f"{file_no}{(' ' + file_name) if file_name else ''}".strip()
+                    return Resp.resp_err(msg=f"已存在：{tip}")
+
+            payload = form.dict()
+            payload["file_no"] = file_no or f"tmp-{form.product_id}-{form.stage or ''}"
+            payload["file_name"] = file_name or ""
+            row = TestSet(**{k: v for k, v in payload.items() if k != "id"})
             row.id = None
             db.session.add(row)
             db.session.flush()
@@ -150,7 +181,7 @@ class Server(object):
                 err, test_cases = await self.__read_excel(file)
                 if err:
                     return Resp.resp_err(msg=err)
-                logger.info("test_cases: %s", len(test_cases))
+                logger.info("test_cases: %s file_no=%s file_name=%s", len(test_cases), file_no, file_name)
                 for test_case in test_cases:
                     test_case.set_id = row.id
                     logger.info("test_case: %s %s %s %s %s %s %s %s %s", 
@@ -169,6 +200,10 @@ class Server(object):
             if file:
                 await self.__sync_records_after_import(form.product_id, form.stage or "")
             return Resp.resp_ok()
+        except IntegrityError:
+            logger.exception("")
+            db.session.rollback()
+            return Resp.resp_err(msg="保存冲突")
         except Exception:
             logger.exception("")
             db.session.rollback()
@@ -195,22 +230,34 @@ class Server(object):
    
     async def update_test_set(self, form: TestSetForm, file):
         try:
-            sql = select(func.count(TestSet.id)).where(TestSet.product_id == form.product_id, TestSet.stage == form.stage, TestSet.id != form.id)
-            count = db.session.execute(sql).scalar()
-            if count > 0:
-                return Resp.resp_err(msg=ts("msg_obj_exist"))
-
             sql = select(TestSet).where(TestSet.id == form.id)
-            row:TestSet = db.session.execute(sql).scalars().first()
+            row: TestSet = db.session.execute(sql).scalars().first()
             if not row:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
-            
+
             for key, value in form.dict().items():
                 if key == "id" or value is None:
                     continue
+                if key in ("file_no", "file_name"):
+                    continue
                 setattr(row, key, value)
+
             imported = False
             if file:
+                file_no, file_name = self.__parse_upload_filename(getattr(file, "filename", "") or "")
+                prod_id = form.product_id if form.product_id is not None else row.product_id
+                dup = db.session.execute(
+                    select(func.count(TestSet.id)).where(
+                        TestSet.product_id == prod_id,
+                        TestSet.file_no == file_no,
+                        TestSet.file_name == file_name,
+                        TestSet.id != form.id,
+                    )
+                ).scalar()
+                if dup > 0:
+                    return Resp.resp_err(msg=ts("msg_obj_exist"))
+                row.file_no = file_no
+                row.file_name = file_name
                 db.session.execute(delete(TestCase).where(TestCase.set_id == row.id))
                 err, test_cases = await self.__read_excel(file)
                 if err:
@@ -224,6 +271,10 @@ class Server(object):
             if imported:
                 await self.__sync_records_after_import(row.product_id, stage)
             return Resp.resp_ok()
+        except IntegrityError:
+            logger.exception("")
+            db.session.rollback()
+            return Resp.resp_err(msg=ts("msg_obj_exist"))
         except Exception:
             logger.exception("")
             db.session.rollback()
@@ -256,6 +307,8 @@ class Server(object):
         objs = []
         for row, row_prd in rows:
             obj = TestSetObj(**row.dict())
+            obj.file_no = getattr(row, "file_no", None) or ""
+            obj.file_name = getattr(row, "file_name", None) or ""
             if row_prd:
                 obj.product_name = row_prd.name
                 obj.product_version = row_prd.full_version

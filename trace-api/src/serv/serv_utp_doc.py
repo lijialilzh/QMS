@@ -165,7 +165,7 @@ class Server(object):
 
     def __fill_test_plan(self, content, prod_id):
         """「测试计划」表：计划完成时间按行「测试活动」匹配时间线。
-        用户测试计划负责人：活动/交付物含「用户测试记录」→用户人员（角色含用户测试）；
+        用户测试计划负责人：活动含「用户培训」→产品经理；活动/交付物含「用户测试记录」→用户人员；
         其余行→测试人员（与修订人相同：2025.09 前宋月/之后孙家旭）。打开即覆盖。"""
         if not prod_id or not isinstance(content, dict):
             return content
@@ -191,10 +191,16 @@ class Server(object):
                 return ("测试" in r) and ("用户" not in r)
         # 用户人员（角色含「用户测试」）；软件测试计划侧仍为其他测试工程师
         others = []
+        pms = []  # 产品经理
         for m in members:
-            if role_ok(str(m.role or "")):
-                nm = (m.name or "").strip()
-                if nm and nm not in ("宋月", "孙家旭") and nm not in others:
+            role = str(m.role or "")
+            nm = (m.name or "").strip()
+            if not nm:
+                continue
+            if "产品经理" in role and nm not in pms:
+                pms.append(nm)
+            if role_ok(role):
+                if nm not in ("宋月", "孙家旭") and nm not in others:
                     others.append(nm)
 
         def to_month(d):
@@ -222,7 +228,9 @@ class Server(object):
 
         def owners(dt, kind, act="", deliverable=""):
             if is_user:
-                if is_user_record_row(act, deliverable):
+                if "用户培训" in str(act or ""):
+                    names = list(pms)
+                elif is_user_record_row(act, deliverable):
                     names = list(others)
                 else:
                     # 与修订人同一逻辑：测试人员日期规则
@@ -266,7 +274,8 @@ class Server(object):
         return content
 
     def __fill_roles(self, content, prod_id, force=False):
-        """「角色和职责」表：按行「角色」自动匹配该产品参与人员，填入「人员」列。
+        """「角色和职责」表：按「职责」与测试计划负责人同一规则覆盖「角色」「人员」。
+        用户培训→产品经理；用户测试记录→模拟用户；其余→测试人员。
         force=False：匹配不到则保留原值；force=True：强制覆盖，无人员则置空。"""
         if not isinstance(content, dict):
             return content
@@ -274,42 +283,27 @@ class Server(object):
         members = db.session.execute(
             select(ProjectMember).where(ProjectMember.prod_id == prod_id)
         ).scalars().all() if prod_id else []
+        primary = "宋月" if serv_review_util._before_202509(doc_date) else "孙家旭"
+        pms = []
+        utesters = []
+        for m in members:
+            role = str(m.role or "")
+            nm = (m.name or "").strip()
+            if not nm:
+                continue
+            if "产品经理" in role and nm not in pms:
+                pms.append(nm)
+            if "用户测试" in role and nm not in utesters:
+                utesters.append(nm)
 
-        def kind_of(duty):
+        def role_and_names(duty):
             a = str(duty or "")
-            if any(k in a for k in ("测试记录", "回归", "首轮")):
-                return "执行"
-            for k in ("报告", "用例", "计划"):
-                if k in a:
-                    return k
-            return ""
-
-        def names_for(role_label, kind):
-            label = str(role_label or "")
-            if ("测试" in label) and ("用户" not in label):
-                primary = "宋月" if serv_review_util._before_202509(doc_date) else "孙家旭"
-                others = []
-                for m in members:
-                    r = str(m.role or "")
-                    if ("测试" in r) and ("用户" not in r):
-                        nm = (m.name or "").strip()
-                        if nm and nm not in ("宋月", "孙家旭") and nm not in others:
-                            others.append(nm)
-                names = [primary] if kind in ("报告", "用例", "计划") else [primary] + others
-                return "、".join([n for n in names if n])
-            # 「用户测试」「模拟用户」均取参与人员中角色含「用户测试」者
-            if ("用户测试" in label) or ("模拟用户" in label):
-                names = [(m.name or "").strip() for m in members if "用户测试" in str(m.role or "")]
-                names = [n for n in names if n]
-                return "、".join(names) if names else None
-            hit = []
-            for m in members:
-                r = str(m.role or "")
-                if label and (label in r or r in label):
-                    nm = (m.name or "").strip()
-                    if nm and nm not in hit:
-                        hit.append(nm)
-            return "、".join(hit) if hit else None
+            if "用户培训" in a:
+                return "产品经理", "、".join(pms) if pms else ""
+            if "用户测试记录" in a:
+                return "模拟用户", "、".join(utesters) if utesters else ""
+            # 计划/用例/报告及评审等 → 测试人员（与测试计划负责人一致）
+            return "测试人员", primary
 
         def walk(node):
             for tbl in (node.get("tables") or []):
@@ -324,14 +318,18 @@ class Server(object):
                     for r in tbl[1:]:
                         if not isinstance(r, list):
                             continue
-                        role_label = r[ci_r] if ci_r < len(r) else ""
                         duty = r[ci_d] if ci_d < len(r) else ""
-                        nm = names_for(role_label, kind_of(duty))
+                        role_label, nm = role_and_names(duty)
                         if force:
+                            if ci_r < len(r):
+                                r[ci_r] = role_label
                             if ci_p < len(r):
                                 r[ci_p] = nm or ""
-                        elif nm and ci_p < len(r):
-                            r[ci_p] = nm
+                        else:
+                            if nm and ci_p < len(r):
+                                r[ci_p] = nm
+                            if role_label and ci_r < len(r):
+                                r[ci_r] = role_label
             for ch in (node.get("children") or []):
                 walk(ch)
 
