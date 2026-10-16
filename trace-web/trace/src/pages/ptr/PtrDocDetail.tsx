@@ -11,17 +11,8 @@ import * as ApiRuntime from "@/api/ApiProdRuntimeEnv";
 import * as ApiDocFile from "@/api/ApiDocFile";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
-import {
-    buildFreeSegments,
-    freeAddBodyBlock,
-    freeAddImage,
-    freeAddTable,
-    freeDelImage,
-    freeDelTable,
-    freeReplaceImage,
-    reassembleFreeBody,
-    shouldUseFreeInterleave,
-} from "../pdp/freeChapterBlocks";
+import FreeChapterContent from "../pdp/FreeChapterContent";
+import { freeAddTable, freeDelTable } from "../pdp/freeChapterBlocks";
 import { isRuntimeLockedBody, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
 import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
@@ -477,37 +468,6 @@ export default () => {
         const next = freeDelTable(chapterState(), ti);
         patchNode(data.activeKey, { tables: next.tables, body: next.body, images: next.images });
     };
-    const addBodyBlock = () => {
-        if (!active) return;
-        const next = freeAddBodyBlock(chapterState());
-        patchNode(data.activeKey, { body: next.body });
-    };
-    const uploadImage = (file: File, replaceIndex?: number) => {
-        if (!file.type.startsWith("image/")) {
-            message.error("请选择图片文件");
-            return false;
-        }
-        const reader = new FileReader();
-        reader.onload = () => {
-            if (!active) return;
-            const dataUrl = String(reader.result || "");
-            const next = replaceIndex !== undefined && replaceIndex >= 0
-                ? freeReplaceImage(chapterState(), replaceIndex, dataUrl)
-                : freeAddImage(chapterState(), dataUrl);
-            patchNode(data.activeKey, { images: next.images, body: next.body });
-            message.success("图片已更新，请保存文档");
-        };
-        reader.onerror = () => message.error("图片读取失败");
-        reader.readAsDataURL(file);
-        return false;
-    };
-    const delImage = (index: number) => {
-        if (!active) return;
-        const next = freeDelImage(chapterState(), index);
-        patchNode(data.activeKey, { images: next.images, body: next.body });
-    };
-
-
     // 在文档内上传/替换图片：写回「图表文件管理」对应分类（按产品全局共享）
     const uploadDocImage = (category: string, file: any) => {
         const productId = data.doc.product_id;
@@ -727,43 +687,11 @@ export default () => {
                                 </div>
                                 {(() => {
                                     const anchors = getImageAnchors(active);
-                                    if (anchors.length === 0) {
+                                    const renderTb = (ti: number) => {
+                                        const tb = (active.tables || [])[ti];
+                                        if (!tb) return null;
+                                        const rtLock = readonly || isRuntimeLockedTable(active, ti);
                                         return (
-                                            <div className="pdp-field">
-                                                <div className="pdp-label">正文</div>
-                                                <Input.TextArea
-                                                    autoSize={{ minRows: 3, maxRows: 20 }}
-                                                    value={active.body ?? ""}
-                                                    disabled={readonly || isRuntimeLockedBody(active)}
-                                                    placeholder="本章节正文内容，可多行"
-                                                    onChange={(e) => patchNode(active._key, { body: e.target.value })}
-                                                />
-                                            </div>
-                                        );
-                                    }
-                                    const parts = splitBodyByAnchors(active.body, anchors);
-                                    const segLabel = (i: number) =>
-                                        parts.length === 1 ? "正文" : i === 0 ? "正文（图前）" : i === parts.length - 1 ? "正文（图后）" : "正文（图间）";
-                                    return parts.map((p, i) => (
-                                        <div key={`seg-${i}`}>
-                                            <div className="pdp-field">
-                                                <div className="pdp-label">{segLabel(i)}</div>
-                                                <Input.TextArea
-                                                    autoSize={{ minRows: 2, maxRows: 20 }}
-                                                    value={p}
-                                                    disabled={readonly || isRuntimeLockedBody(active)}
-                                                    placeholder={i === 0 ? "图片前的正文内容，可多行" : "图片后的正文内容，可多行"}
-                                                    onChange={(e) => setSegment(i, e.target.value)}
-                                                />
-                                            </div>
-                                            {i < anchors.length && renderImageBlock(anchors[i])}
-                                        </div>
-                                    ));
-                                })()}
-
-                                {(active.tables || []).map((tb: any[], ti: number) => {
-                                    const rtLock = readonly || isRuntimeLockedTable(active, ti);
-                                    return (
                                     <div className="pdp-table-block" key={ti}>
                                         <div className="pdp-table-bar">
                                             <span className="pdp-label">表格 {ti + 1}{rtLock && !readonly ? "（运行环境自动获取，只读）" : ""}</span>
@@ -803,14 +731,56 @@ export default () => {
                                             </tbody>
                                         </table>
                                     </div>
+                                        );
+                                    };
+                                    if (anchors.length === 0) {
+                                        const bodyLocked = isRuntimeLockedBody(active);
+                                        return (
+                                            <FreeChapterContent
+                                                body={String(active.body || "")}
+                                                tables={active.tables || []}
+                                                images={Array.isArray(active.images) ? active.images : []}
+                                                readonly={readonly || bodyLocked}
+                                                bodyDisabled={bodyLocked}
+                                                onPatch={(patch) => patchNode(active._key, patch)}
+                                                renderTable={renderTb}
+                                                showAddTableSlot={!readonly ? (
+                                                    <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
+                                                        添加表格
+                                                    </Button>
+                                                ) : null}
+                                            />
+                                        );
+                                    }
+                                    const parts = splitBodyByAnchors(active.body, anchors);
+                                    const segLabel = (i: number) =>
+                                        parts.length === 1 ? "正文" : i === 0 ? "正文（图前）" : i === parts.length - 1 ? "正文（图后）" : "正文（图间）";
+                                    return (
+                                        <>
+                                            {parts.map((p, i) => (
+                                                <div key={`seg-${i}`}>
+                                                    <div className="pdp-field">
+                                                        <div className="pdp-label">{segLabel(i)}</div>
+                                                        <Input.TextArea
+                                                            autoSize={{ minRows: 2, maxRows: 20 }}
+                                                            value={p}
+                                                            disabled={readonly || isRuntimeLockedBody(active)}
+                                                            placeholder={i === 0 ? "图片前的正文内容，可多行" : "图片后的正文内容，可多行"}
+                                                            onChange={(e) => setSegment(i, e.target.value)}
+                                                        />
+                                                    </div>
+                                                    {i < anchors.length && renderImageBlock(anchors[i])}
+                                                </div>
+                                            ))}
+                                            {(active.tables || []).map((_: any[], ti: number) => renderTb(ti))}
+                                            {!readonly && (
+                                                <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
+                                                    添加表格
+                                                </Button>
+                                            )}
+                                        </>
                                     );
-                                })}
-
-                                {!readonly && (
-                                    <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
-                                        添加表格
-                                    </Button>
-                                )}
+                                })()}
                             </>
                         )}
                     </div>

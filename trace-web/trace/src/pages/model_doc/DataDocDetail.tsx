@@ -12,19 +12,9 @@ import * as ApiPersonSign from "@/api/ApiPersonSign";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import { getDataDocMeta, DATA_STATS_IMPORT_TYPES, getDataDocListType } from "./DataDocTypes";
 import { computeGridSpans, isReviewRecordGrid } from "./gridSpans";
-import { ChapterBlocks } from "@/common/DocBlocks";
 import "../pdp/PdpDocDetail.less";
-import {
-    buildFreeSegments,
-    freeAddBodyBlock,
-    freeAddImage,
-    freeAddTable,
-    freeDelImage,
-    freeDelTable,
-    freeReplaceImage,
-    reassembleFreeBody,
-    shouldUseFreeInterleave,
-} from "../pdp/freeChapterBlocks";
+import FreeChapterContent from "../pdp/FreeChapterContent";
+import { freeAddTable, freeDelTable } from "../pdp/freeChapterBlocks";
 import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 let _seq = 0;
@@ -517,37 +507,6 @@ export default () => {
         const next = freeDelTable(chapterState(), ti);
         patchNode(data.activeKey, { tables: next.tables, body: next.body, images: next.images });
     };
-    const addBodyBlock = () => {
-        if (!active) return;
-        const next = freeAddBodyBlock(chapterState());
-        patchNode(data.activeKey, { body: next.body });
-    };
-    const uploadImage = (file: File, replaceIndex?: number) => {
-        if (!file.type.startsWith("image/")) {
-            message.error("请选择图片文件");
-            return false;
-        }
-        const reader = new FileReader();
-        reader.onload = () => {
-            if (!active) return;
-            const dataUrl = String(reader.result || "");
-            const next = replaceIndex !== undefined && replaceIndex >= 0
-                ? freeReplaceImage(chapterState(), replaceIndex, dataUrl)
-                : freeAddImage(chapterState(), dataUrl);
-            patchNode(data.activeKey, { images: next.images, body: next.body });
-            message.success("图片已更新，请保存文档");
-        };
-        reader.onerror = () => message.error("图片读取失败");
-        reader.readAsDataURL(file);
-        return false;
-    };
-    const delImage = (index: number) => {
-        if (!active) return;
-        const next = freeDelImage(chapterState(), index);
-        patchNode(data.activeKey, { images: next.images, body: next.body });
-    };
-
-
     const doSave = () => {
         if (!id) return;
         dispatch({ saving: true });
@@ -709,12 +668,12 @@ export default () => {
                                         onChange={(e) => patchNode(active._key, { title: e.target.value })}
                                     />
                                 </div>
-                                <ChapterBlocks
-                                    body={active.body ?? ""}
+                                <FreeChapterContent
+                                    body={String(active.body || "")}
                                     tables={active.tables || []}
-                                    images={active.images}
+                                    images={Array.isArray(active.images) ? active.images : []}
                                     readonly={readonly}
-                                    onBodyChange={(body) => patchNode(active._key, { body })}
+                                    onPatch={(patch) => patchNode(active._key, patch)}
                                     renderTable={(ti: number) => {
                                         const tb = (active.tables || [])[ti];
                                         if (!tb) return null;
@@ -787,13 +746,12 @@ export default () => {
                                     </div>
                                         );
                                     }}
+                                    showAddTableSlot={!readonly ? (
+                                        <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
+                                            添加表格
+                                        </Button>
+                                    ) : null}
                                 />
-
-                                {!readonly && (
-                                    <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
-                                        添加表格
-                                    </Button>
-                                )}
                             </>
                         )}
                     </div>

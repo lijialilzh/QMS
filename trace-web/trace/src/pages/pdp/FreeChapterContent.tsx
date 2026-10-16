@@ -93,8 +93,11 @@ export default function FreeChapterContent(props: Props) {
                         const url = images[ii];
                         if (!url) return null;
                         return (
-                            <div key={si} style={{ margin: "8px 0", textAlign: "center" }}>
+                            <div key={si} style={{ margin: "8px 0 12px", textAlign: "center" }}>
                                 <img src={url} alt="" style={{ maxWidth: "100%", border: "1px solid #eee" }} />
+                                {seg.caption ? (
+                                    <div style={{ textAlign: "center", fontSize: 13, color: "#444", margin: "4px 0 8px" }}>{seg.caption}</div>
+                                ) : null}
                                 {!props.readonly && (
                                     <Space size={4} style={{ marginTop: 4, display: "flex", justifyContent: "center" }}>
                                         <Upload accept="image/*" showUploadList={false} beforeUpload={(file) => uploadImage(file as File, ii)}>
