@@ -314,4 +314,102 @@ class Server(object):
                 obj.product_version = row_prd.full_version
             objs.append(obj)
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
-             
+
+    @staticmethod
+    def __dhf_test_case_file_no(product_id: int, kind: str) -> str:
+        """从 DHF 取测试用例/用户测试用例文件编号。"""
+        from sqlalchemy import select
+        from ..model.prod_dhf import ProdDhf
+        if not product_id:
+            return ""
+        rows = db.session.execute(
+            select(ProdDhf).where(ProdDhf.prod_id == product_id).order_by(ProdDhf.id.asc())
+        ).scalars().all()
+        if kind == "用户测试":
+            prefer = [r for r in rows if "用户测试用例" in str(r.name or "")]
+            if not prefer:
+                prefer = [
+                    r for r in rows
+                    if "用户测试" in str(r.name or "") and "用例" in str(r.name or "")
+                ]
+        else:
+            prefer = [
+                r for r in rows
+                if "测试用例" in str(r.name or "") and "用户" not in str(r.name or "")
+            ]
+        for r in prefer:
+            code = (r.code or "").strip()
+            if code:
+                return code
+        return ""
+
+    def export_test_case_review(self, output, product_id: int, kind: str):
+        """导出测试用例评审记录 Word：软件测试（tc_sw）或用户测试（tc_user）。"""
+        import base64
+        from io import BytesIO
+        from docx import Document
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
+        from docx.shared import Pt, Inches
+        from . import serv_review_util
+        from .serv_utils import docx_util
+
+        kind = (kind or "").strip()
+        if kind == "软件测试":
+            key, title = "tc_sw", "测试用例-评审记录"
+        elif kind == "用户测试":
+            key, title = "tc_user", "用户测试用例-评审记录"
+        else:
+            raise ValueError("kind must be 软件测试 or 用户测试")
+        if not product_id:
+            raise ValueError("product_id required")
+
+        rev_date = serv_review_util.review_date(
+            product_id, (serv_review_util.REVIEW_DEFS.get(key) or {}).get("name_keywords") or [title]
+        ) or ""
+        sec = serv_review_util.build_review_section(key, rev_date, product_id)
+        if not sec:
+            raise ValueError("review template missing")
+        file_no = self.__dhf_test_case_file_no(product_id, kind)
+
+        document = Document()
+        section = document.sections[0]
+        section.top_margin = Inches(0.8)
+        section.bottom_margin = Inches(0.8)
+        section.left_margin = Inches(0.7)
+        section.right_margin = Inches(0.7)
+        header_para = section.header.add_paragraph()
+        header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        docx_util.fonted_txt(header_para, file_no or "")
+        p_title = document.add_paragraph()
+        p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        docx_util.fonted_txt(p_title, f"附件一 评审结论（{title}）", font_size=14, bold=True)
+
+        def set_cell(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
+            s = str(text or "")
+            if s.startswith("data:image"):
+                try:
+                    b64 = s.split(",", 1)[1] if "," in s else ""
+                    cell.text = ""
+                    para = cell.paragraphs[0]
+                    para.alignment = align
+                    para.add_run().add_picture(BytesIO(base64.b64decode(b64)), height=Pt(28))
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    return
+                except Exception:
+                    pass
+            cell.text = ""
+            for i, line in enumerate(s.split("\n")):
+                para = cell.paragraphs[0] if i == 0 else cell.add_paragraph()
+                para.alignment = align
+                docx_util.fonted_txt(para, line, font_size=10.5, bold=bold)
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
+        for t_idx, table in enumerate(sec.get("tables") or []):
+            serv_review_util.render_review_grid(
+                document, table, set_cell, merge_col0=(t_idx == 0), merge_full=True
+            )
+            document.add_paragraph("")
+        document.save(output)
+        output.seek(0)
+        return title

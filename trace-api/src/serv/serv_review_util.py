@@ -366,6 +366,56 @@ REVIEW_DEFS = {
         ),
         "persons": [
             ["产品经理", "吴福乐", "", "产品部经理", "夏晨", ""],
+            ["QA", "林金贵", "", "测试负责人", "宋月", ""],
+            ["其他参评人员", "", "", "", "", ""],
+            ["批准人员签字/日期", "", "", "", "", ""],
+        ],
+    },
+    # 测试用例合集导出：软件测试=单元/集成/系统共用；用户测试单独（版本暂 A0）
+    "tc_sw": {
+        "name_keywords": ["测试用例", "软件测试用例"],
+        "items": [
+            ["", "用例设计的结构安排是否清晰合理"],
+            ["文档完整程度", "是否覆盖需求内全部预期功能及功能点"],
+            ["文档完整程度", "是否具备接口、性能测试用例"],
+            ["文档完整程度", "是否有清晰的用例编号"],
+            ["文档完整程度", "是否有明确的测试步骤、预期结果"],
+            ["文档完整程度", "是否有良好的可执行性"],
+            ["文档完整程度", "无冗余、无容错测试用例"],
+            ["文档完整程度", "不存在的过时的、需要删除的用例"],
+            ["文档完整程度", "测试用例包含单元/集成/系统全部测试用例"],
+            ["文档完整程度", "是否简洁、复用性强"],
+            ["文档完整程度", "是否易于管理"],
+            ["文档完整程度", "是否可追溯"],
+        ],
+        "conclusion": (
+            "评审结论：\n通过，覆盖全部预期功能，具备接口测试用例，包含清晰的用例编号、"
+            "明确了预期结果和测试步骤，并已经可追溯。"
+        ),
+        "persons": [
+            ["产品经理", "杨静", "", "产品开发部经理", "沈宏", ""],
+            ["开发负责人", "宁随军", "", "QA", "林金贵", ""],
+            ["其他参评人员", "", "", "", "", ""],
+            ["批准人员签字/日期", "", "", "", "", ""],
+        ],
+    },
+    "tc_user": {
+        "name_keywords": ["用户测试用例", "用户测试"],
+        "items": [
+            ["文档完整程度", "是否覆盖全部预期功能"],
+            ["文档完整程度", "是否有清晰的用例编号"],
+            ["文档完整程度", "所有用例必须有明确的预期结果"],
+            ["文档完整程度", "所有用例必须有明确的测试步骤"],
+            ["文档完整程度", "用例具备良好的可读性"],
+            ["文档完整程度", "无冗余测试用例"],
+            ["文档完整程度", "不存在的过时的、需要删除的用例"],
+            ["文档完整程度", "是否可追溯"],
+        ],
+        "conclusion": (
+            "评审结论：\n通过，覆盖全部预期功能，包含清晰的用例编号、明确了预期结果及测试步骤。"
+        ),
+        "persons": [
+            ["产品经理", "杨静", "", "产品部经理", "夏晨", ""],
             ["QA", "林金贵", "", "", "", ""],
             ["其他参评人员", "", "", "", "", ""],
             ["批准人员签字/日期", "", "", "", "", ""],
@@ -462,6 +512,12 @@ DEPT_SIGNERS = {
         "审核人": ("member_role", "模型"),
         "批准人": ("member_role", "研发负责人"),
     },
+    # 网络安全风险管理计划/报告：编制人=DQA，审核/批准=研发负责人
+    "cybersec_dqa": {
+        "编制人": ("member_role", "DQA"),
+        "审核人": ("member_role", "研发负责人"),
+        "批准人": ("member_role", "研发负责人"),
+    },
 }
 DEFAULT_DEPT = "product"
 
@@ -472,12 +528,13 @@ DOC_DEPT = {
     "release_note": "product", "vuh": "product", "research": "product",
     "srs": "product", "ptr": "product", "acc": "product", "cyber_cap": "product",
     "risk": "product", "rmp": "product", "pha": "product",
-    # 开发文件：编制人=TPM，审核/批准=研发负责人
-    "sd": "dev", "sds": "dev", "hld": "dev", "cybersec": "dev",
+    # 开发文件：编制人=TPM，审核/批准=研发负责人；网络安全风险管理计划/报告编制人=DQA
+    "sd": "dev", "sds": "dev", "hld": "dev", "cybersec": "cybersec_dqa",
     "nsmp": "product", "nsr": "product", "crr": "dev",
     "scm": "dev", "scs": "dev",
     # 测试文件：编制人=测试人员，审核/批准=研发负责人
     "stp": "test", "utp": "test", "utr": "test", "str": "test", "bug": "test", "imm": "test",
+    "tc_sw": "test", "tc_user": "test",
     # 模型文件：编制人=模型部负责人（无则模型负责人/角色含模型），审核人=算法（无则研发负责人），批准人=研发负责人（无匹配则空）
     "md_001": "model",
     "md_004": "model", "md_005": "model", "md_006": "model", "md_007": "model",
@@ -1132,7 +1189,7 @@ def build_review_section(key, rev_date="", prod_id=None):
     # 「签字」列按「姓名」列自动取签名图（第2列姓名→第3列签字；第5列姓名→第6列签字），仅填空
     old_test = _before_202509(rev_date)
     # 测试文件：评审记录按「人员角色」获取当前产品参与人员姓名（其余模块保持模板名+宋月规则）
-    role_based = key in ("stp", "utp", "utr", "str", "sds", "srs", "hld", "imm", "ftr")
+    role_based = key in ("stp", "utp", "utr", "str", "sds", "srs", "hld", "imm", "ftr", "tc_sw", "tc_user")
     rb_members = []
     if role_based and prod_id:
         rb_members = db.session.execute(
@@ -1207,13 +1264,34 @@ def autofill_review_person_table(tbl, key="", rev_date="", prod_id=None, force_d
                 break
     old_test = _before_202509(rev_date)
     approver = review_approver(key, prod_id, rev_date) if key else ""
-    # 含现场测试规程 ftr：测试角色按宋月/孙家旭日期规则
-    role_based = key in ("stp", "utp", "utr", "str", "sds", "srs", "hld", "imm", "ftr")
+    # 含现场测试规程 ftr、测试用例评审 tc_sw/tc_user：测试角色按宋月/孙家旭日期规则
+    role_based = key in ("stp", "utp", "utr", "str", "sds", "srs", "hld", "imm", "ftr", "tc_sw", "tc_user")
     rb_members = []
     if role_based and prod_id:
         rb_members = db.session.execute(
             select(ProjectMember).where(ProjectMember.prod_id == prod_id)
         ).scalars().all()
+    # 用户测试报告：已有参评表若缺「测试负责人」，补到 QA 行右侧空位
+    if key == "utr":
+        has_lead = any(
+            isinstance(r, list) and (
+                "测试负责人" in str(r[0] or "") or (len(r) > 3 and "测试负责人" in str(r[3] or ""))
+            )
+            for r in tbl
+        )
+        if not has_lead:
+            for row in tbl:
+                if not isinstance(row, list):
+                    continue
+                if str(row[0] or "").strip() != "QA":
+                    continue
+                while len(row) < 6:
+                    row.append("")
+                if not str(row[3] or "").strip():
+                    row[3] = "测试负责人"
+                    row[4] = ""
+                    row[5] = ""
+                break
     for row in tbl:
         if not isinstance(row, list) or not row:
             continue

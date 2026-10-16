@@ -1,4 +1,4 @@
-import { Form, Input, Button, Table, message, Row, Col, Modal, Select, Upload, Space } from "antd";
+import { Form, Input, Button, Table, message, Row, Col, Modal, Select, Upload, Space, Radio } from "antd";
 import { SearchOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect, useMemo } from "react";
 import { sprintf } from "sprintf-js";
@@ -20,6 +20,7 @@ enum DlgTypes {
     delete = "delete",
     test_cases = "test_cases",
     batch_add = "batch_add",
+    export_review = "export_review",
 }
 
 const STAGES = ["单元测试", "集成测试", "系统测试", "用户测试"];
@@ -379,6 +380,9 @@ export default () => {
         batchRows: emptyBatchRows(),
         batchExistingKeys: [] as string[],
         exportingSet: new Set(),
+        exportingReview: false,
+        reviewKind: "软件测试",
+        reviewProductId: undefined as number | undefined,
     });
 
     const doSearch = (params: any, pageIndex: any, pageSize: any) => {
@@ -528,6 +532,17 @@ export default () => {
                         <Button type="primary" onClick={() => dispatch({ dlgType: DlgTypes.add, targetRow: {} })}>
                             {ts("add")}
                         </Button>
+                        <Button
+                            loading={data.exportingReview}
+                            onClick={() =>
+                                dispatch({
+                                    dlgType: DlgTypes.export_review,
+                                    reviewKind: "软件测试",
+                                    reviewProductId: queryForm.getFieldValue("product_id") || undefined,
+                                })
+                            }>
+                            导出评审记录
+                        </Button>
                     </Space>
                 </div>
             </div>
@@ -592,6 +607,54 @@ export default () => {
                 destroyOnClose
                 onCancel={() => dispatch({ dlgType: null })}>
                 <TestCases set_id={data.targetRow.id} />
+            </Modal>
+            <Modal
+                centered
+                title="导出评审记录"
+                open={data.dlgType === DlgTypes.export_review}
+                maskClosable={false}
+                confirmLoading={data.exportingReview}
+                okText="导出"
+                destroyOnClose
+                onOk={() => {
+                    const pid = data.reviewProductId;
+                    if (!pid) {
+                        message.warning("请选择产品与版本");
+                        return;
+                    }
+                    const kind = data.reviewKind || "软件测试";
+                    dispatch({ exportingReview: true });
+                    Api.export_test_case_review({ product_id: pid, kind }).then((res: any) => {
+                        dispatch({ exportingReview: false });
+                        if (res.code !== Api.C_OK) {
+                            message.error(res.msg || "导出失败");
+                            return;
+                        }
+                        dispatch({ dlgType: null });
+                    }).catch(() => {
+                        dispatch({ exportingReview: false });
+                        message.error("导出失败");
+                    });
+                }}
+                onCancel={() => dispatch({ dlgType: null })}>
+                <div style={{ marginBottom: 8 }}>产品 / 版本：</div>
+                <ProductVersionSelect
+                    products={data.products}
+                    value={data.reviewProductId}
+                    namePlaceholder={ts("product.name")}
+                    versionPlaceholder={ts("product.full_version")}
+                    onChange={(value) => dispatch({ reviewProductId: value })}
+                />
+                <div style={{ margin: "16px 0 8px" }}>选择阶段：</div>
+                <Radio.Group
+                    value={data.reviewKind}
+                    onChange={(e) => dispatch({ reviewKind: e.target.value })}
+                    options={[
+                        { label: "软件测试（单元/集成/系统共用）", value: "软件测试" },
+                        { label: "用户测试", value: "用户测试" },
+                    ]}
+                />
+                <div style={{ marginTop: 12, color: "#888", fontSize: 12 }}>导出对应评审记录 Word，页眉文件编号取自 DHF。</div>
             </Modal>
         </div>
     );

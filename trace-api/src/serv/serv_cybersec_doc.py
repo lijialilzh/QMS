@@ -224,11 +224,10 @@ class Server(object):
         return ""
 
     def __autofill_front_matter(self, content, product_id, version):
-        # 封面（编制部门=研发部、编制/审核/批准人、日期、文件版本）与文件修订记录自动填充（仅填空，不覆盖已填）
+        # 编制人/修订人 ← DQA；日期 ← 时间逻辑线（打开覆盖）
         if not isinstance(content, dict):
             return content
-        reviser = self.__member_name(product_id, ("产品经理", "项目经理"))
-        auditor = self.__member_name(product_id, ("QA负责人", "质量负责人", "QA"))
+        reviser = self.__member_name(product_id, ("DQA",))
         approver = self.__member_name(product_id, ("产品负责人", "研发负责人", "管理者代表"))
         rev_date = serv_review_util.review_date(
             product_id, ["网络安全风险管理报告", "网络安全风险管理", "风险管理报告"]
@@ -243,22 +242,21 @@ class Server(object):
                             continue
                         label = str(row[0]).strip()
 
-                        def set_name(val):
-                            if val and len(row) >= 2 and not str(row[1] or "").strip():
+                        def set_name(val, force=False):
+                            if val and len(row) >= 2 and (force or not str(row[1] or "").strip()):
                                 row[1] = val
 
-                        def set_date(val):
-                            if val and len(row) >= 4 and not str(row[3] or "").strip():
+                        def set_date(val, force=False):
+                            if val and len(row) >= 4 and (force or not str(row[3] or "").strip()):
                                 row[3] = val
                         if len(row) >= 4 and str(row[2]).strip() == "文件版本" and ver and not str(row[3] or "").strip():
                             row[3] = ver
                         if label == "编制部门":
                             set_name("研发部")
-                        # 编制/审核/批准人「姓名」列由签名规则统一填充（见文末 fill_cover_signers），此处仅填日期
                         elif label in ("编制人", "审核人", "批准人"):
-                            set_date(rev_date)
+                            set_date(rev_date, force=True)
                         elif label == "生效日期":
-                            set_name(rev_date)
+                            set_name(rev_date, force=True)
             elif self.__is_revision_section(section):
                 for table in (section.get("tables") or []):
                     if not isinstance(table, list) or not table:
@@ -266,20 +264,26 @@ class Server(object):
                     if len(table) >= 2 and isinstance(table[1], list) and len(table[1]) >= 5:
                         row = table[1]
 
-                        def set_if(i, val):
-                            if val and not str(row[i] if i < len(row) else "").strip():
+                        def set_force(i, val):
+                            if val and i < len(row):
                                 row[i] = val
-                        set_if(0, rev_date)
-                        set_if(1, ver)
+                        if rev_date:
+                            set_force(0, rev_date)
+                        if ver and not str(row[1] or "").strip():
+                            row[1] = ver
                         if not str(row[2] or "").strip():
                             row[2] = "首次发布"
-                        set_if(3, reviser)
-                        set_if(4, approver)
+                        if reviser:
+                            set_force(3, reviser)
+                        if approver and not str(row[4] or "").strip():
+                            row[4] = approver
                     col = len(table[0]) if isinstance(table[0], list) and table[0] else 5
                     while len(table) < 6:
                         table.append(["" for _ in range(col)])
-        # 封面「编制/审核/批准人」按部门签名规则填充签名图（仅填空）
-        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(product_id, "cybersec"))
+        if product_id:
+            serv_review_util.fill_cover_signers(
+                content, serv_review_util.cover_signers(product_id, "cybersec"), force=True
+            )
         return content
 
     # 「阶段活动」表：各阶段开始/结束时间按关键字匹配项目时间线日期行，取最早=开始、最晚=结束

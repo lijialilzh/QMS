@@ -202,8 +202,8 @@ class Server(object):
     def __autofill_front_matter(self, content, product_id, version):
         if not isinstance(content, dict):
             return content
-        reviser = self.__member_name(product_id, ("网络安全负责人", "产品经理", "项目经理")) if product_id else ""
-        auditor = self.__member_name(product_id, ("QA负责人", "质量负责人", "QA")) if product_id else ""
+        # 编制人/修订人 ← DQA；日期 ← 时间逻辑线（打开覆盖）
+        reviser = self.__member_name(product_id, ("DQA",)) if product_id else ""
         approver = self.__member_name(product_id, ("产品负责人", "研发负责人", "管理者代表")) if product_id else ""
         rev_date = serv_review_util.review_date(product_id, DATE_KEYWORDS) if product_id else ""
         rev_date = rev_date or ""
@@ -216,21 +216,21 @@ class Server(object):
                             continue
                         label = str(row[0]).strip()
 
-                        def set_name(val):
-                            if val and len(row) >= 2 and not str(row[1] or "").strip():
+                        def set_name(val, force=False):
+                            if val and len(row) >= 2 and (force or not str(row[1] or "").strip()):
                                 row[1] = val
 
-                        def set_date(val):
-                            if val and len(row) >= 4 and not str(row[3] or "").strip():
+                        def set_date(val, force=False):
+                            if val and len(row) >= 4 and (force or not str(row[3] or "").strip()):
                                 row[3] = val
                         if len(row) >= 4 and str(row[2]).strip() == "文件版本" and ver and not str(row[3] or "").strip():
                             row[3] = ver
                         if label == "编制部门":
                             set_name("研发部")
                         elif label in ("编制人", "审核人", "批准人"):
-                            set_date(rev_date)
+                            set_date(rev_date, force=True)
                         elif label == "生效日期":
-                            set_name(rev_date)
+                            set_name(rev_date, force=True)
             elif self.__is_revision_section(section):
                 for table in (section.get("tables") or []):
                     if not isinstance(table, list) or not table:
@@ -238,16 +238,23 @@ class Server(object):
                     if len(table) >= 2 and isinstance(table[1], list) and len(table[1]) >= 5:
                         row = table[1]
 
-                        def set_if(i, val):
-                            if val and not str(row[i] if i < len(row) else "").strip():
+                        def set_force(i, val):
+                            if val and i < len(row):
                                 row[i] = val
-                        set_if(0, rev_date)
-                        set_if(1, ver)
+                        if rev_date:
+                            set_force(0, rev_date)
+                        if ver and not str(row[1] or "").strip():
+                            row[1] = ver
                         if not str(row[2] or "").strip():
                             row[2] = "首次发布"
-                        set_if(3, reviser)
-                        set_if(4, approver)
-        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(product_id, "cybersec")) if product_id else None
+                        if reviser:
+                            set_force(3, reviser)
+                        if approver and not str(row[4] or "").strip():
+                            row[4] = approver
+        if product_id:
+            serv_review_util.fill_cover_signers(
+                content, serv_review_util.cover_signers(product_id, "cybersec"), force=True
+            )
         return content
 
     # ---------------- 自动获取：阶段活动时间 ----------------

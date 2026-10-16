@@ -13,6 +13,7 @@ const ROLES = [
     "产品负责人",
     "RA",
     "QA",
+    "DQA",
     "TPM",
     "产品经理",
     "开发人员",
@@ -29,6 +30,9 @@ const ROLES = [
     "数据采集人员",
     "脱敏+清洗人员",
 ];
+
+const DQA_ROLE = "DQA";
+const DEFAULT_DQA = "李佳励";
 
 const ANNOTATOR_ROLE = "标注人员";
 const DEFAULT_ANNOTATORS = [
@@ -126,6 +130,11 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
                         sort += 1;
                         adds.push({ role: CLEANER_ROLE, name, sort_order: sort });
                     });
+                }
+                const hasDqa = rows.some((r: any) => (r.role || "").trim() === DQA_ROLE);
+                if (!hasDqa && DEFAULT_DQA) {
+                    sort += 1;
+                    adds.push({ role: DQA_ROLE, name: DEFAULT_DQA, sort_order: sort });
                 }
                 const existingRoles = new Set(rows.map((r: any) => String(r.role || "").trim()));
                 const head = rows.find((r: any) => {

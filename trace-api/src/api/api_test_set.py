@@ -3,6 +3,8 @@
 # @author: ZengLei
 
 
+import io
+import urllib.parse
 from typing import Any
 from fastapi import APIRouter, Form, File, UploadFile
 from fastapi.responses import StreamingResponse
@@ -49,3 +51,17 @@ async def list_test_set(product_id: int = None, stage: str = None, page_index: i
 @try_log(perm=Perms.test_set_view)
 async def get_test_set(id: int):
     return await server.get_test_set(id)
+
+
+@router.get("/export_test_case_review", summary="导出测试用例评审记录")
+@try_log(perm=Perms.test_set_view)
+async def export_test_case_review(product_id: int, kind: str):
+    """kind=软件测试|用户测试；导出 Word，版本暂 A0。"""
+    output = io.BytesIO()
+    title = server.export_test_case_review(output, product_id=product_id, kind=kind)
+    filename = urllib.parse.quote(f"{title}.docx")
+    return StreamingResponse(
+        content=output,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )

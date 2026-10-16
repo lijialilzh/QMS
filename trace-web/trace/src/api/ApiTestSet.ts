@@ -21,3 +21,7 @@ export const list_test_set = async (params: any) => {
 export const get_test_set = async (params: any) => {
     return await httpGet("/trace-api/test_set/get_test_set", params);
 };
+
+export const export_test_case_review = async (params: any) => {
+    return await httpGet("/trace-api/test_set/export_test_case_review", params);
+};
