@@ -785,6 +785,30 @@ class Server(object):
             p.paragraph_format.space_after = Pt(0)
             docx_util.fonted_txt(p, title, font_size=size, bold=True)
 
+        def add_image(image_url):
+            s = str(image_url or "")
+            if not s.startswith("data:image"):
+                return
+            try:
+                b64 = s.split(",", 1)[1] if "," in s else ""
+                raw = base64.b64decode(b64)
+                p = document.add_paragraph()
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p.add_run().add_picture(BytesIO(raw), width=Inches(4.5))
+                document.add_paragraph("")
+            except Exception:
+                logger.exception("导出章节图片失败")
+
+        def clean_export_text(text):
+            """去掉编辑页静默占位，避免 Word 露出 {{TBL}}/{{TXT}} 等。"""
+            lines = []
+            for ln in str(text or "").split("\n"):
+                s = ln.strip()
+                if s in ("{{TBL}}", "{{IMG}}", "{{EMPTY}}", "{{TXT}}"):
+                    continue
+                lines.append(ln)
+            return "\n".join(lines).strip()
+
         def render_body_section(node, level, number=""):
             name = strip_num(node.get("title"))
             heading = f"{number} {name}".strip() if number else name
@@ -796,45 +820,74 @@ class Server(object):
                 body_text = str(node.get("body") or "")
                 tables = node.get("tables") or []
                 caps = node.get("table_captions") or []
+                images = [x for x in (node.get("images") or []) if isinstance(x, str) and x]
+
                 def _emit_table(t_idx):
+                    if t_idx < 0 or t_idx >= len(tables):
+                        return
                     cap = caps[t_idx] if t_idx < len(caps) else ""
                     if str(cap or "").strip():
                         add_text(cap)
                     add_grid(tables[t_idx])
-                # 按"见下表"/"见表N"/"表N"切分 body，交错输出正文段和表格
-                if (("见下表" in body_text) or re.search(r"见表\s*\d", body_text) or re.search(r"(?m)^表\s*\d", body_text)) and tables:
+
+                # 与编辑页交错一致：{{TBL}}/{{IMG}}/见下表/表N；静默占位不写入正文
+                has_tbl_ph = "{{TBL}}" in body_text
+                has_img_ph = "{{IMG}}" in body_text
+                if (has_tbl_ph or has_img_ph or ("见下表" in body_text)
+                        or re.search(r"见表\s*\d", body_text) or re.search(r"(?m)^表\s*\d", body_text)
+                        or tables or images):
                     lines = body_text.split("\n")
                     buf = []
                     tbl_idx = 0
+                    img_idx = 0
+
                     def flush_text():
-                        t = "\n".join(buf).strip()
+                        t = clean_export_text("\n".join(buf))
                         if t:
                             add_text(t)
                         buf.clear()
+
                     for ln in lines:
                         s = ln.strip()
-                        if (("见下表" in s or re.match(r"^表\s*\d", s)) and tbl_idx < len(tables)):
-                            buf.append(ln)  # 保留"见下表"/"表N"行作为正文
+                        if (s == "{{TBL}}" or s in ("见下表", "如下表", "下表") or re.match(r"^表\s*\d", s)) and tbl_idx < len(tables):
                             flush_text()
                             _emit_table(tbl_idx)
                             tbl_idx += 1
                         elif re.search(r"见表\s*\d", s) and tbl_idx < len(tables):
-                            buf.append(re.sub(r"见表\s*\d+", "见下表", ln))  # "见表N"→"见下表"
+                            rest = re.sub(r"见表\s*\d+", "", ln).strip()
+                            if rest:
+                                buf.append(rest)
                             flush_text()
                             _emit_table(tbl_idx)
                             tbl_idx += 1
+                        elif (s == "{{IMG}}" or s in ("见下图", "如下图", "下图") or re.match(r"^图\s*\d", s)) and img_idx < len(images):
+                            flush_text()
+                            add_image(images[img_idx])
+                            img_idx += 1
+                        elif (
+                            not has_tbl_ph
+                            and re.match(r"^\d+[）)]", s)
+                            and tbl_idx < len(tables)
+                        ):
+                            buf.append(ln)
+                            flush_text()
+                            _emit_table(tbl_idx)
+                            tbl_idx += 1
+                        elif s in ("{{TBL}}", "{{IMG}}", "{{EMPTY}}", "{{TXT}}"):
+                            continue
                         else:
                             buf.append(ln)
                     flush_text()
                     for i in range(tbl_idx, len(tables)):
                         _emit_table(i)
+                    for i in range(img_idx, len(images)):
+                        add_image(images[i])
                 else:
-                    if body_text.strip():
-                        add_text(body_text)
-                    for t_idx in range(len(tables)):
-                        _emit_table(t_idx)
+                    cleaned = clean_export_text(body_text)
+                    if cleaned:
+                        add_text(cleaned)
                 if str(node.get("body_tail") or "").strip():
-                    add_text(node.get("body_tail"))
+                    add_text(clean_export_text(node.get("body_tail")))
             idx = 0
             for child in (node.get("children") or []):
                 idx += 1
