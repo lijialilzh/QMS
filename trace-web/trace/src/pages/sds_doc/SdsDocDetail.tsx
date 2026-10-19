@@ -1,5 +1,5 @@
 import "./SdsDocDetail.less";
-import { ConfigProvider, Form, Input, Button, message, Select, Modal, Space, Table, Spin } from "antd";
+import { Alert, ConfigProvider, Form, Input, Button, message, Select, Modal, Space, Table, Spin } from "antd";
 import { ArrowLeftOutlined, EditOutlined, DownloadOutlined, FileAddOutlined } from "@ant-design/icons";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
@@ -756,6 +756,7 @@ export default () => {
         docSrsdocId: undefined as number | undefined,
         docVersion: "" as string,
         requireRebindSrs: false,
+        showInitTemplateTip: false,
     });
 
     // 加载产品列表
@@ -2755,21 +2756,15 @@ export default () => {
 
                     // 解析树状结构数据
                     const parsedTreeRaw = (targetRow.content || []).map((node: any) => parseTreeNode(node));
-                    let ensuredContent = await applyLoadedDocTree(targetRow);
-                    let shouldInitStandard = false;
-                    if (!isReadOnly && needsStandardTemplate(ensuredContent)) {
-                        const product = await resolveProductById(targetRow.product_id);
-                        ensuredContent = await buildStandardTreeForDoc(
-                            targetRow.product_id,
-                            targetRow.version,
-                            product,
-                        );
-                        shouldInitStandard = true;
+                    const cleanNewDoc = !isReadOnly && needsStandardTemplate(parsedTreeRaw);
+                    let ensuredContent = parsedTreeRaw as TreeNode[];
+                    if (!cleanNewDoc) {
+                        ensuredContent = await applyLoadedDocTree(targetRow);
                     }
                     const shouldPersistSyncedContent =
                         !isReadOnly &&
-                        (shouldInitStandard ||
-                            JSON.stringify(parsedTreeRaw || []) !== JSON.stringify(ensuredContent || []));
+                        !cleanNewDoc &&
+                        JSON.stringify(parsedTreeRaw || []) !== JSON.stringify(ensuredContent || []);
 
                     dispatch({
                         loading: false,
@@ -2780,6 +2775,7 @@ export default () => {
                         docProductId: targetRow.product_id,
                         docSrsdocId: targetRow.srsdoc_id || undefined,
                         docVersion: targetRow.version ?? "",
+                        showInitTemplateTip: cleanNewDoc,
                     });
                     treeStructureRef.current = ensuredContent;
                     initialEditTreeRef.current = cloneTree(ensuredContent as TreeNode[]);
@@ -2801,7 +2797,7 @@ export default () => {
                     }
                     // 进入/刷新页面自动同步功能设计：仅对内容为空的章节从 SRS 补全，
                     // 已有内容一律不动（以详细设计为准），不重排结构/编号/标题。
-                    if (!isReadOnly && !needRebindSrs && targetRow.srsdoc_id) {
+                    if (!isReadOnly && !cleanNewDoc && !needRebindSrs && targetRow.srsdoc_id) {
                         const syncDocId = targetRow.id || (params.id ? parseInt(params.id) : 0);
                         if (syncDocId) {
                             Api.sync_design_text_only({ doc_id: syncDocId })
@@ -2830,10 +2826,9 @@ export default () => {
         } else {
             // 新增模式
             editForm.resetFields();
-            const initialTree = buildStandardNodesWithIds();
             initialEditTreeRef.current = [];
-            dispatch({ isEdit: false, requireRebindSrs: false, treeStructure: initialTree });
-            treeStructureRef.current = initialTree;
+            dispatch({ isEdit: false, requireRebindSrs: false, treeStructure: [], showInitTemplateTip: true });
+            treeStructureRef.current = [];
         }
     }, [params.id]);
 
@@ -3541,7 +3536,7 @@ export default () => {
         nodesWithIds = normalizeImageRefTypes(nodesWithIds);
         nodesWithIds = await remapRefTypeImagesByProduct(nodesWithIds, productId, version);
         treeStructureRef.current = nodesWithIds;
-        dispatch({ treeStructure: nodesWithIds, traceTreeRefreshKey: Date.now() });
+        dispatch({ treeStructure: nodesWithIds, traceTreeRefreshKey: Date.now(), showInitTemplateTip: false });
         message.success(ts("sds_doc.load_standard_structure_success"));
         doSaveTreeStructure();
     };
@@ -4370,6 +4365,17 @@ export default () => {
                     </Space>
                 </div>
             </Form>
+            {!isReadOnly && data.showInitTemplateTip && (
+                <Alert
+                    type="warning"
+                    showIcon
+                    closable
+                    banner
+                    message="如需要标准模版，请点击初始化模版后进行编辑操作"
+                    style={{ margin: "0 16px 8px" }}
+                    onClose={() => dispatch({ showInitTemplateTip: false })}
+                />
+            )}
             <div className="div-v detail-content">
                 <div className="doc-section doc-section-flex">
                     {!isReadOnly && (
