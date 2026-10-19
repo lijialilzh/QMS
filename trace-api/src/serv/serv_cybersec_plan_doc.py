@@ -37,6 +37,7 @@ from ..obj.vobj_cybersec_plan_doc import CybersecPlanDocObj
 from ..utils.i18n import ts
 from ..utils.sql_ctx import db
 from . import msg_err_db
+from .serv_cybersec_doc import replace_product_identity
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version, docx_util
 from .serv_prod_runtime_env import apply_runtime_to_pdp_content
@@ -468,10 +469,15 @@ class Server(object):
         if not product:
             return content
         pname = (product.name or "").strip()
-        content["productName"] = pname
+        content = replace_product_identity(content, product)
 
         def build_desc():
-            return f"本文件适用的产品为的软件产品：\n产品名称：{pname}\n完整版本：{product.full_version or ''}"
+            return (
+                "本文件适用的产品为的软件产品：\n"
+                f"产品名称：{pname}\n"
+                f"产品型号：{(product.type_code or '').strip()}\n"
+                f"完整版本：{(product.full_version or '').strip()}"
+            )
 
         def fill_sections(secs):
             for s in secs or []:
@@ -892,10 +898,21 @@ class Server(object):
                 or re.search(r"(?m)^表\s*\d", body_text)
             ) and (tables or images)
 
+            def split_table_caption(table_rows):
+                rows = table_rows or []
+                if rows and isinstance(rows[0], list) and len(rows[0]) == 1 and len(rows) > 1:
+                    cap = str(rows[0][0] or "").strip()
+                    if re.match(r"^表\s*\d", cap):
+                        return cap, rows[1:]
+                return "", rows
+
             def emit_table(t_idx):
                 if 0 <= t_idx < len(tables):
-                    cols = merge_empty_cols if merge_empty_cols is not None else deliverable_merge_cols(tables[t_idx])
-                    add_plain_table(tables[t_idx], merge_empty_cols=cols)
+                    cap, body = split_table_caption(tables[t_idx])
+                    if cap:
+                        write_center_caption(cap)
+                    cols = merge_empty_cols if merge_empty_cols is not None else deliverable_merge_cols(body)
+                    add_plain_table(body, merge_empty_cols=cols)
 
             if not has_media:
                 if body_text.strip():

@@ -700,8 +700,11 @@ export default () => {
                                             const tb = (active.tables || [])[ti];
                                             if (!tb) return null;
                                             const rtLock = isView || isRuntimeLockedTable(active, ti);
-                                            const maxCols = Math.max(...tb.map((rr: any[]) => (rr || []).length), 1);
-                                            const header = Array.isArray(tb[0]) ? tb[0] : [];
+                                            const titleText = String(tb[0]?.[0] ?? "").trim();
+                                            const peelTitle = rtLock && tb[0]?.length === 1 && /^表\s*\d/.test(titleText);
+                                            const viewRows = peelTitle ? tb.slice(1) : tb;
+                                            const maxCols = Math.max(...viewRows.map((rr: any[]) => (rr || []).length), 1);
+                                            const header = Array.isArray(viewRows[0]) ? viewRows[0] : [];
                                             const deliverCol = header.findIndex((c: any) => String(c || "").replace(/\s+/g, "").includes("交付物"));
                                             const vMerge = isTimePlanSection(active) && deliverCol >= 0
                                                 ? buildVerticalEmptyMerge(tb.slice(1), deliverCol)
@@ -718,11 +721,15 @@ export default () => {
                                                             </Space>
                                                         )}
                                                     </div>
+                                                    {peelTitle && (
+                                                        <div style={{ textAlign: "center", fontWeight: 600, margin: "4px 0 8px" }}>{titleText}</div>
+                                                    )}
                                                     <table className="pdp-grid" style={{ width: "100%" }}>
                                                         <tbody>
-                                                            {tb.map((row: any[], r: number) => {
+                                                            {viewRows.map((row: any[], r: number) => {
+                                                                const srcR = peelTitle ? r + 1 : r;
                                                                 const mergeRow = row.length === 1 && String(row[0] ?? "").trim() !== "";
-                                                                const isHeaderRow = !mergeRow && (r === 0 || (r === 1 && tb[0].length === 1));
+                                                                const isHeaderRow = !mergeRow && r === 0;
                                                                 const dataMeta = vMerge && r > 0 ? vMerge[r - 1] : null;
                                                                 return (
                                                                     <tr key={r}>
@@ -731,7 +738,7 @@ export default () => {
                                                                                 <Input.TextArea className="pdp-cell" autoSize={{ minRows: 1, maxRows: 4 }}
                                                                                     value={row[0] ?? ""} disabled={rtLock}
                                                                                     style={{ textAlign: "center", fontWeight: "bold" }}
-                                                                                    onChange={(e) => setCell(ti, r, 0, e.target.value)} />
+                                                                                    onChange={(e) => setCell(ti, srcR, 0, e.target.value)} />
                                                                             </td>
                                                                         ) : (
                                                                             (row || []).map((cell: any, ci: number) => {
@@ -742,12 +749,12 @@ export default () => {
                                                                                     {typeof cell === "string" && cell.startsWith("data:image") ? (
                                                                                         <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                                                                                             <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain" }} />
-                                                                                            {!rtLock && <DeleteOutlined style={{ color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, r, ci, "")} />}
+                                                                                            {!rtLock && <DeleteOutlined style={{ color: "#c00", cursor: "pointer" }} onClick={() => setCell(ti, srcR, ci, "")} />}
                                                                                         </span>
                                                                                     ) : (
                                                                                         <Input.TextArea className="pdp-cell" autoSize={{ minRows: 1, maxRows: 8 }}
                                                                                             value={cell ?? ""} disabled={rtLock}
-                                                                                            onChange={(e) => setCell(ti, r, ci, e.target.value)} />
+                                                                                            onChange={(e) => setCell(ti, srcR, ci, e.target.value)} />
                                                                                     )}
                                                                                 </td>
                                                                                 );
@@ -755,9 +762,9 @@ export default () => {
                                                                         )}
                                                                         {!rtLock && (
                                                                             <td className="pdp-row-op">
-                                                                                <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
+                                                                                <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, srcR)} />
                                                                                 {tb.length > 1 && (
-                                                                                    <Button type="link" danger size="small" onClick={() => delRow(ti, r)}>删除</Button>
+                                                                                    <Button type="link" danger size="small" onClick={() => delRow(ti, srcR)}>删除</Button>
                                                                                 )}
                                                                             </td>
                                                                         )}

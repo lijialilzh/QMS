@@ -178,6 +178,96 @@ try:
 except Exception:
     logging.getLogger(__name__).exception("加载网络安全默认内容资源失败，使用内联默认模版")
 
+_TEMPLATE_PRODUCT_NAME = "InferCare RECIST"
+_TEMPLATE_PRODUCT_VERSION = "1.0.0.0"
+
+
+def replace_product_identity(content, product):
+    """正文里的产品名称、型号、完整版本换成当前产品。封面/修订的文件版本不动。"""
+    if not isinstance(content, dict) or product is None:
+        return content
+    new_name = str(getattr(product, "name", "") or "").strip()
+    new_model = str(getattr(product, "type_code", "") or "").strip()
+    new_version = str(getattr(product, "full_version", "") or "").strip()
+    old_name = str(content.get("productName") or "").strip()
+    old_model = str(content.get("productTypeCode") or "").strip()
+    old_version = str(content.get("productFullVersion") or "").strip()
+
+    def replace_text(text, allow_version_token):
+        if not isinstance(text, str) or not text or text.startswith("data:image"):
+            return text
+        text = re.sub(r"(产品名称\s*[:：]\s*)([^\n]*)", lambda m: m.group(1) + new_name, text)
+        text = re.sub(r"(产品型号\s*[:：]\s*)([^\n]*)", lambda m: m.group(1) + new_model, text)
+        text = re.sub(r"(完整版本\s*[:：]\s*)([^\n]*)", lambda m: m.group(1) + new_version, text)
+        names = []
+        for item in (old_name, _TEMPLATE_PRODUCT_NAME):
+            item = str(item or "").strip()
+            if item and item != new_name and item not in names:
+                names.append(item)
+        for item in sorted(names, key=len, reverse=True):
+            text = text.replace(item, new_name)
+        if _TEMPLATE_PRODUCT_NAME != new_name:
+            text = re.sub(r"InferCare\s*RECIST", new_name, text)
+        if old_model and old_model != new_model and len(old_model) >= 4:
+            text = text.replace(old_model, new_model)
+        if allow_version_token:
+            versions = []
+            for item in (old_version, _TEMPLATE_PRODUCT_VERSION if not old_version else ""):
+                item = str(item or "").strip()
+                if item and item != new_version and re.fullmatch(r"\d+(?:\.\d+)+", item) and item not in versions:
+                    versions.append(item)
+            for item in versions:
+                text = re.sub(rf"(?<![\d.]){re.escape(item)}(?![\d.])", new_version, text)
+        return text
+
+    def walk_table(table, allow_version_token):
+        if not isinstance(table, list):
+            return
+        for row in table:
+            if not isinstance(row, list):
+                continue
+            for idx, cell in enumerate(row):
+                if isinstance(cell, str):
+                    row[idx] = replace_text(cell, allow_version_token)
+
+    def is_front(sec):
+        title = re.sub(r"\s+", "", str(sec.get("title") or ""))
+        ref = str(sec.get("ref_type") or "")
+        return ref in ("cover", "revision") or title in ("网络安全风险管理报告", "网络安全风险管理计划", "文件修订记录")
+
+    def walk_section(sec):
+        if not isinstance(sec, dict):
+            return
+        allow_version_token = not is_front(sec)
+        for field in ("text", "body", "content"):
+            if isinstance(sec.get(field), str):
+                sec[field] = replace_text(sec[field], allow_version_token)
+        blocks = sec.get("blocks")
+        if isinstance(blocks, list):
+            for block in blocks:
+                if not isinstance(block, dict):
+                    continue
+                if isinstance(block.get("text"), str):
+                    block["text"] = replace_text(block["text"], allow_version_token)
+                walk_table(block.get("table"), allow_version_token)
+        tables = sec.get("tables")
+        if isinstance(tables, list):
+            for table in tables:
+                walk_table(table, allow_version_token)
+        for cap_key in ("table_captions", "table_titles"):
+            caps = sec.get(cap_key)
+            if isinstance(caps, list):
+                sec[cap_key] = [replace_text(item, allow_version_token) if isinstance(item, str) else item for item in caps]
+        for child in sec.get("children") or []:
+            walk_section(child)
+
+    for sec in content.get("sections") or []:
+        walk_section(sec)
+    content["productName"] = new_name
+    content["productTypeCode"] = new_model
+    content["productFullVersion"] = new_version
+    return content
+
 
 class Server(object):
     def __normalize_title_text(self, value):
@@ -396,7 +486,7 @@ class Server(object):
         if not product:
             return content
         pname = (product.name or "").strip()
-        content["productName"] = pname
+        content = replace_product_identity(content, product)
         desc = "\n".join([
             f"产品名称：{pname}",
             f"产品型号：{(product.type_code or '').strip()}",

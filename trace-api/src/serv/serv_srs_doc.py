@@ -5578,13 +5578,17 @@ class Server(object):
             if len(major) < 2:
                 return None
             if_code = major[-2:]
-            minor_int = str(int(minor)) if minor.isdigit() else minor
+            minor_int = int(minor) if minor.isdigit() else 0
+            major_int = int(major) if major.isdigit() else 0
+            # 接口编号是数值拼接：300*10+5=3005（RCN3005），300*10+10=3010（RCN3010）。
+            # 不能按字符串把主号和次号直接粘在一起，否则 010 会变成 RCN30010，对不上外部连接。
+            body_num = major_int * 10 + minor_int
             minor3 = minor.zfill(3)
             return {
                 "if_code": if_code,  # IF00 / IF06
-                "unit_group": minor3,  # 005 / 003
-                "sis_prefix": f"SDS-IF{if_code}-{prefix}{major}{minor_int}-",  # SDS-IF00-RCN3005-
-                "unit_prefix": f"TU{if_code}-{minor3}-",  # TU00-005-
+                "unit_group": minor3,  # 005 / 010
+                "sis_prefix": f"SDS-IF{if_code}-{prefix}{body_num}-",  # SDS-IF00-RCN3005- / SDS-IF00-RCN3010-
+                "unit_prefix": f"TU{if_code}-{minor3}-",  # TU00-005- / TU00-010-
             }
 
         def __query_rcms(srs_ids: list[int]):
@@ -5725,7 +5729,7 @@ class Server(object):
                 matched2 = re.match(r"SDS-IF\d+-([A-Z0-9]+-\d+)$", code)
                 if matched2:
                     candidates.append(f"SRS-{matched2.group(1)}")
-                    # 兼容压缩段：SDS-IF00-RCN3005-001 -> SRS-RCN300-005
+                    # 兼容压缩段：SDS-IF00-RCN3005-001 -> SRS-RCN300-005（次号一位）
                     seg = matched2.group(1)
                     seg_parts = seg.split("-")
                     if len(seg_parts) == 2:
@@ -5734,6 +5738,27 @@ class Server(object):
                         if m3:
                             req_group = str(m3.group(3) or "").zfill(3)
                             candidates.append(f"SRS-{m3.group(1)}{m3.group(2)}-{req_group}")
+                # 数值压缩还原：body = 主号*10+次号，且主号末两位等于 IF 号。
+                # SDS-IF00-RCN3010-001 -> SRS-RCN300-010；SDS-IF00-RCN3005-001 -> SRS-RCN300-005。
+                matched_num = re.match(r"^SDS-IF(\d+)-([A-Z]+)(\d+)-\d+$", code)
+                if matched_num:
+                    if_int = int(matched_num.group(1))
+                    pref = matched_num.group(2)
+                    compressed = int(matched_num.group(3))
+                    for minor in range(1, 1000):
+                        if compressed < minor:
+                            break
+                        if (compressed - minor) % 10 != 0:
+                            continue
+                        major = (compressed - minor) // 10
+                        if major % 100 != if_int:
+                            continue
+                        candidates.append(f"SRS-{pref}{major}-{str(minor).zfill(3)}")
+                        break
+                # 设计编号直接对应同号需求：SDS-RCN300-010 -> SRS-RCN300-010
+                matched_sds = re.match(r"^SDS-([A-Z]+\d+-\d+)$", code)
+                if matched_sds and not code.startswith("SDS-IF"):
+                    candidates.append(f"SRS-{matched_sds.group(1)}")
                 # 若本身已是 SRS 编号也接受
                 if code.startswith("SRS-"):
                     candidates.append(code)
@@ -5888,15 +5913,31 @@ class Server(object):
         default_type_names = {"1": "标准需求", "2": "文档需求"}
         product_code = str(getattr(row_product, "product_code", "") or "").strip()
         fixed_note_text = self.__build_trace_fixed_note_text(product_code)
+
+        def __rcm_sort_key(code: str):
+            matched_num = re.search(r"(\d+)\s*$", str(code or ""))
+            return (int(matched_num.group(1)) if matched_num else 0, str(code or ""))
+
+        def __req_text_blob(req_row) -> str:
+            return " ".join([
+                str(getattr(req_row, "module", "") or ""),
+                str(getattr(req_row, "function", "") or ""),
+                str(getattr(req_row, "sub_function", "") or ""),
+            ])
+
+        def __is_document_requirement(req_row) -> bool:
+            return "文档需求" in __req_text_blob(req_row)
+
         results = []
         for row_trace, _, row in rows:
             rcms: List[Rcm] = req_rcms.get(row.id) or []
             relation_rcm_codes = [rcm.code for rcm in rcms]
             text_rcm_codes = reqd_text_rcm_codes.get(int(row.id)) or []
             node_rcm_fallback = node_rcm_codes.get(str(row.code or "").strip().upper()) or []
-            rcm_codes = list(dict.fromkeys(relation_rcm_codes + text_rcm_codes + node_rcm_fallback))
-            if not rcm_codes:
-                rcm_codes = []
+            rcm_codes = sorted(
+                list(dict.fromkeys(relation_rcm_codes + text_rcm_codes + node_rcm_fallback)),
+                key=__rcm_sort_key,
+            )
             rcm_flag = True if rcm_codes else False
             # 组件名（源代码名称）按 SDS 编号逐个解析，与编号顺序对齐：多编号→多行组件，单编号→单个。
             sds_codes_list = [x.strip().upper() for x in re.split(r"[,，\s]+", str(row_trace.sds_code or "").strip()) if x.strip()]
@@ -5925,7 +5966,15 @@ class Server(object):
                     chapter = NAME_DICT.get(chapter) or chapter
                     chapter = chapter if row.type_code == "2" else "NeoViewer"
 
-            test_data = req_tests.get(row.code) or {}
+            test_data = dict(req_tests.get(row.code) or {})
+            sds_alias = str(row.code or "").strip().upper().replace("SRS-", "SDS-", 1)
+            if sds_alias and sds_alias != str(row.code or "").strip().upper():
+                for stage, codes in (req_tests.get(sds_alias) or {}).items():
+                    merged = list(test_data.get(stage) or [])
+                    for code in codes or []:
+                        if code not in merged:
+                            merged.append(code)
+                    test_data[stage] = merged
 
             tests_unit = test_data.get("单元测试") or []
             tests_integ = test_data.get("集成测试") or []
@@ -5972,13 +6021,15 @@ class Server(object):
 
             row_srs_code = str(row.code or "").strip().upper()
             note = fixed_note_text if row_srs_code == self.TRACE_FIXED_NOTE_CODE else None
+            # 文档需求不追溯设计编号。安装包打开/安装/卸载仍按其顶层组件写 NeoViewer。
+            sds_code_out = "" if __is_document_requirement(row) else row_trace.sds_code
             result = dict(
                 srs_code=row.code,
                 type_code=row.type_code,
                 type_name=type_names.get(str(row.type_code or "")) or default_type_names.get(str(row.type_code or "")) or row.type_code,
                 rcm_flag=rcm_flag,
 
-                sds_code=row_trace.sds_code,
+                sds_code=sds_code_out,
 
                 sis_codes=sis_codes,
                 test_codes=test_codes,
