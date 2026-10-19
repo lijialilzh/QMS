@@ -1534,7 +1534,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         if (tablesForSplit.some((child) => isReviewStyleTable(child.table))) return null;
         const raw = String(textSrc || "");
         const idx = raw.search(/[（(]\s*2\s*[）)]\s*输出/);
-        if (idx > 0) {
+        // idx 为 0：正文 1 已删光，文本从「（2）输出」开始。仍拆成空的前段和输出段，输入框留着。
+        if (idx >= 0) {
             return {
                 before: raw.slice(0, idx).trimEnd(),
                 after: raw.slice(idx).trimStart(),

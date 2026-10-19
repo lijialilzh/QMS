@@ -1426,9 +1426,8 @@ class SdsSrsTraceSyncMixin:
                     continue
                 if self._node_subtree_has_active_trace_code(node, active_codes):
                     kept.append(node)
-                elif self._node_subtree_has_image(node):
-                    # 含程序逻辑图等图片内容的分支随所属功能保留，不当作残留删除
-                    kept.append(node)
+                # 标准模版里多出来的功能章即使带程序逻辑图，只要当前追溯没有对应设计编号就删掉。
+                # 有设计编号的功能章不进这个分支，其下程序逻辑图仍留在该章。
             return kept
 
         return prune(roots or [])
@@ -4456,12 +4455,16 @@ class SdsSrsTraceSyncMixin:
 
             regular = [child for child in sortable_children if not is_stopper(child)]
             stoppers = [child for child in sortable_children if is_stopper(child)]
-            regular = [
-                child for child in regular
-                if self._subtree_min_sds_code(child)
-                or (getattr(child, "children", None) or [])
-                or self._node_subtree_has_image(child)
-            ]
+            if fixed_product_level:
+                # 产品章下只留追溯覆盖到的功能分支；模版里没有设计编号的历史功能章不保留
+                regular = [child for child in regular if self._subtree_min_sds_code(child)]
+            else:
+                regular = [
+                    child for child in regular
+                    if self._subtree_min_sds_code(child)
+                    or (getattr(child, "children", None) or [])
+                    or self._node_subtree_has_image(child)
+                ]
             regular.sort(key=sort_key)
             ordered = fixed_children + regular + stoppers
             parent.children = ordered

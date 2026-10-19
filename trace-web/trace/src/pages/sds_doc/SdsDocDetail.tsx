@@ -3543,6 +3543,7 @@ export default () => {
         treeStructureRef.current = nodesWithIds;
         dispatch({ treeStructure: nodesWithIds, traceTreeRefreshKey: Date.now() });
         message.success(ts("sds_doc.load_standard_structure_success"));
+        doSaveTreeStructure();
     };
 
     // 删除节点

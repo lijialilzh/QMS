@@ -2908,8 +2908,15 @@ class Server(SdsSrsTraceSyncMixin, object):
                 p = docx.add_paragraph()
             p.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.LEFT
             if not is_bullet:
-                # 详细设计正文统一左对齐且不首行缩进
-                p.paragraph_format.first_line_indent = Pt(0)
+                # 普通正文首行缩进两个汉字；小节标题、设计编号、JSON、表题图题不缩进
+                indent_body = (
+                    not is_json
+                    and not re.match(r"^[（(]\s*\d+\s*[）)]", render_txt)
+                    and not render_txt.startswith("设计编号")
+                    and not __is_table_caption_line(render_txt)
+                    and not __is_image_caption_line(render_txt)
+                )
+                p.paragraph_format.first_line_indent = Pt(font_size * 2) if indent_body else Pt(0)
                 # JSON 使用固定段落缩进表达层级，避免不同字体下空格缩进显示不稳定
                 p.paragraph_format.left_indent = Pt(json_level * 10) if is_json else Pt(0)
             p.paragraph_format.right_indent = Pt(0)
@@ -3215,9 +3222,12 @@ finally:
             p.paragraph_format.space_after = Pt(0)
             docx_util.fonted_txt(p, txt, font_size)
 
-        def __save_table_caption_txt(docx: Document, text: str, font_size: float = 10.5):
-            # 原模版：表题（表 N … / ××表）居中
-            __save_caption_txt(docx, text, font_size, align="center")
+        def __save_table_caption_txt(docx: Document, text: str, font_size: float = 10.5, align: str = "center"):
+            # 原模版：表题（表 N … / ××表）居中。库表名（字段表）与表左缘对齐。
+            txt = (text or "").strip()
+            if re.match(r"^[A-Za-z][A-Za-z0-9_]{1,64}\s*[:：]", txt):
+                align = "left"
+            __save_caption_txt(docx, text, font_size, align=align)
 
         def __save_image_caption_txt(docx: Document, text: str, font_size: float = 10.5):
             __save_caption_txt(docx, text, font_size, align="center")
@@ -3311,8 +3321,9 @@ finally:
             label = __norm_title(getattr(node, "label", "") or "")
             text = __norm_title(getattr(node, "text", "") or "")
             is_ch6 = re.match(r"^6(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))", title) is not None
+            is_sec_32 = re.match(r"^3\.2(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))", title) is not None
             is_func_logic = ("程序逻辑" in title) or ("程序逻辑" in label) or ("程序逻辑" in text)
-            return is_ch6 or is_func_logic
+            return is_ch6 or is_sec_32 or is_func_logic
 
         async def __writenodes(
             nodes: List[SdsNodeForm],
@@ -3335,6 +3346,9 @@ finally:
                 img_min_w = IMG_MIN_W_FUNC if node_compact_img else IMG_MIN_W
                 img_min_h = IMG_MIN_H_FUNC if node_compact_img else IMG_MIN_H
                 img_target_long = IMG_TARGET_LONG_FUNC if node_compact_img else IMG_TARGET_LONG
+                # 3.2、第6章流程图比整页再收一圈，避免一图占满版心
+                img_width_ratio = 0.52 if node_compact_img else 0
+                img_height_ratio = 0.24 if node_compact_img else 0
                 written_child_ids = set()
                 table_written = False
                 image_written = False
@@ -3415,13 +3429,52 @@ finally:
                         mh=img_max_h,
                         min_w=img_min_w,
                         min_h=img_min_h,
-                        target_long=img_target_long, page_fit=True,
+                        target_long=img_target_long,
+                        page_fit=True,
+                        width_ratio=img_width_ratio,
+                        height_ratio=img_height_ratio,
                     )
                     caption = __image_caption_from_node(matched)
                     if caption:
                         __save_image_caption_txt(docx, caption, font_def)
                     written_child_ids.add(builtins.id(matched))
                     program_logic_image_written = True
+
+                interface_images_written = False
+
+                def __write_interface_detail_images():
+                    nonlocal image_written, interface_images_written
+                    if interface_images_written or not is_interface_io_context:
+                        return
+                    interface_images_written = True
+                    for child in imported_image_children:
+                        if builtins.id(child) in written_child_ids:
+                            continue
+                        if not getattr(child, "img_url", None):
+                            continue
+                        if re.search(r"程序逻辑|逻辑图", __image_caption_from_node(child)):
+                            continue
+                        docx_util.save_img2docx(
+                            child.img_url,
+                            docx,
+                            mw=img_max_w,
+                            mh=img_max_h,
+                            min_w=img_min_w,
+                            min_h=img_min_h,
+                            target_long=img_target_long,
+                            page_fit=True,
+                            width_ratio=img_width_ratio,
+                            height_ratio=img_height_ratio,
+                        )
+                        caption = __image_caption_from_node(child)
+                        if caption:
+                            __save_image_caption_txt(docx, caption, font_def)
+                        written_child_ids.add(builtins.id(child))
+                        image_written = True
+
+                def __line_is_input_heading(line: str):
+                    txt = str(line or "").strip()
+                    return re.search(r"[（(]\s*1\s*[）)]\s*输入", txt) is not None or txt.startswith("输入项")
 
                 # 子节点中若存在“仅 JSON 键值标题（如 "version":4,）”，并入父节点正文，
                 # 这样导出顺序可与编辑页保持一致，且不会单独漂移到后段。
@@ -3465,7 +3518,7 @@ finally:
                         # 表题放在表前，避免连续多张表时表题落到下一张表或下一章前面。
                         cap = __strip_chapter_prefix(norm_title)
                         if node.table and node.table.headers:
-                            __save_table_caption_txt(docx, cap, font_def)
+                            __save_table_caption_txt(docx, cap, font_def, align="left")
                             docx_util.save_tab2docx(node.table, docx)
                             table_written = True
                         else:
@@ -3562,7 +3615,10 @@ finally:
                                 mh=img_max_h,
                                 min_w=img_min_w,
                                 min_h=img_min_h,
-                                target_long=img_target_long, page_fit=True,
+                                target_long=img_target_long,
+                                page_fit=True,
+                                width_ratio=img_width_ratio,
+                                height_ratio=img_height_ratio,
                             )
                             __flush_image_caption(docx, font_def)
                             image_written = True
@@ -3579,7 +3635,10 @@ finally:
                                         mh=img_max_h,
                                         min_w=img_min_w,
                                         min_h=img_min_h,
-                                        target_long=img_target_long, page_fit=True,
+                                        target_long=img_target_long,
+                                        page_fit=True,
+                                        width_ratio=img_width_ratio,
+                                        height_ratio=img_height_ratio,
                                     )
                                     __flush_image_caption(docx, font_def)
                                     image_written = True
@@ -3604,6 +3663,12 @@ finally:
                                     continue
                                 if imported_db_children and __is_database_heading_title(line):
                                     continue
+                                if (
+                                    is_interface_io_context
+                                    and not interface_images_written
+                                    and re.search(r"[（(]\s*2\s*[）)]\s*输出", line)
+                                ):
+                                    __write_interface_detail_images()
                                 if __is_table_caption_line(line):
                                     pending_table_captions.append(line)
                                 elif __is_image_caption_line(line):
@@ -3618,6 +3683,10 @@ finally:
                                         allow_bullet=not current_plain_context,
                                     )
                                     __try_write_program_logic_image_after_line(line)
+                                if __line_is_input_heading(line):
+                                    __write_interface_detail_images()
+                            if not interface_images_written:
+                                __write_interface_detail_images()
 
                             if has_own_table:
                                 docx_util.save_tab2docx(node.table, docx)
@@ -3668,6 +3737,12 @@ finally:
                                     continue
                                 if imported_db_children and __is_database_heading_title(line):
                                     continue
+                                if (
+                                    is_interface_io_context
+                                    and not interface_images_written
+                                    and re.search(r"[（(]\s*2\s*[）)]\s*输出", line)
+                                ):
+                                    __write_interface_detail_images()
                                 if __is_table_caption_line(line):
                                     if (node.table and node.table.headers) or imported_table_children:
                                         pending_table_captions.append(line)
@@ -3688,6 +3763,8 @@ finally:
                                         allow_bullet=not current_plain_context,
                                     )
                                     __try_write_program_logic_image_after_line(line)
+                                    if __line_is_input_heading(line):
+                                        __write_interface_detail_images()
                                     if tcp_anchor_table_children:
                                         if (not first_tcp_table_written) and re.search(r"提供下列\s*TCP\s*服务", line, re.I):
                                             first_tab_node = tcp_anchor_table_children[0]
@@ -3716,7 +3793,10 @@ finally:
                         mh=img_max_h,
                         min_w=img_min_w,
                         min_h=img_min_h,
-                        target_long=img_target_long, page_fit=True,
+                        target_long=img_target_long,
+                        page_fit=True,
+                        width_ratio=img_width_ratio,
+                        height_ratio=img_height_ratio,
                     )
                     __flush_image_caption(docx, font_def)
                     image_written = True
