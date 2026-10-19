@@ -5711,6 +5711,13 @@ class Server(object):
             matched = re.match(r"^SRS-[A-Z]+(\d+)-\d+$", txt)
             return matched.group(1) if matched else ""
 
+        def __req_number_key(code: str) -> str:
+            txt = re.sub(r"\s+", "", str(code or "").strip().upper())
+            matched = re.match(r"^SRS-[A-Z]+(\d+)-(\d+)$", txt)
+            if not matched:
+                return ""
+            return f"{int(matched.group(1))}-{int(matched.group(2))}"
+
         def __collapse_case_codes(items: list) -> list:
             tests = list({item.code: item.code for item in items}.keys())
             return [tests[0], tests[len(tests) - 1]] if len(tests) > 1 else tests[:1]
@@ -5794,6 +5801,11 @@ class Server(object):
             # 单元测试用例编号 -> 接口编号(SDS-IF...) 映射
             unit_case_to_sis = dict()
             allowed = {str(code or "").strip().upper() for code in (req_codes or set()) if str(code or "").strip()}
+            number_to_req = {}
+            for code in allowed:
+                number_key = __req_number_key(code)
+                if number_key and number_key not in number_to_req:
+                    number_to_req[number_key] = code
             for row_test, row_set in rows:
                 norm_stage = __normalize_stage(row_set.stage)
                 all_tests.setdefault(row_test.srs_code, {}).setdefault(norm_stage, []).append(row_test)
@@ -5801,11 +5813,15 @@ class Server(object):
                 if code:
                     stage_code_index.setdefault(norm_stage, []).append(code)
                 srs_code_raw = str(row_test.srs_code or "").strip().upper()
+                # 用例字母可能还是旧代号。同一主段和序号只对应一条需求时，挂到现编号上。
+                linked_code = srs_code_raw if srs_code_raw in allowed else number_to_req.get(__req_number_key(srs_code_raw), "")
+                if linked_code and linked_code != srs_code_raw:
+                    all_tests.setdefault(linked_code, {}).setdefault(norm_stage, []).append(row_test)
                 func_name = __norm_point(getattr(row_test, "function", "") or "")
                 if code and func_name:
                     code_funcs.setdefault(code, set()).add(func_name)
-                series = __req_series(srs_code_raw)
-                if func_name and series and srs_code_raw in allowed:
+                series = __req_series(linked_code or srs_code_raw)
+                if func_name and series and linked_code:
                     func_items.setdefault((series, func_name), {}).setdefault(norm_stage, []).append(row_test)
                 if code and srs_code_raw.startswith("SDS-IF"):
                     unit_case_to_sis.setdefault(code, set()).add(srs_code_raw)
@@ -6270,7 +6286,8 @@ class Server(object):
         ws = wb[wb.sheetnames[0]]
         rows = resp.data or []
         normal_rows = [obj for obj in rows if not __is_change_trace_row(obj)]
-        change_rows = [obj for obj in rows if __is_change_trace_row(obj)]
+        # 有新增变更表时，变更追溯列出这一版仍在的全部需求，不只列新增行。
+        change_rows = list(rows) if any(__is_change_trace_row(obj) for obj in rows) else []
         ws_change = wb.copy_worksheet(ws) if change_rows else None
         __write_trace_rows(ws, normal_rows)
 
@@ -6622,7 +6639,7 @@ class Server(object):
 
         rows = resp.data or []
         normal_rows = [obj for obj in rows if not __is_change_trace_row(obj)]
-        change_rows = [obj for obj in rows if __is_change_trace_row(obj)]
+        change_rows = list(rows) if any(__is_change_trace_row(obj) for obj in rows) else []
 
         temp_path = os.path.join(os.path.dirname(__file__), "temp_doc_trace_word.docx")
         docx = Document(temp_path) if os.path.exists(temp_path) else Document()

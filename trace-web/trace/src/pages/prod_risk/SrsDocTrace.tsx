@@ -60,7 +60,8 @@ const DetailDlg = ({ data, dispatch }: any) => {
         }));
     });
     const normalTraceRows = (data.traceRows || []).filter((row: any) => !isChangeTraceRow(row));
-    const changeTraceRows = (data.traceRows || []).filter((row: any) => isChangeTraceRow(row));
+    const hasChangeTrace = (data.traceRows || []).some((row: any) => isChangeTraceRow(row));
+    const changeTraceRows = hasChangeTrace ? (data.traceRows || []) : [];
     const expandedTraceRows = expandTraceRows(normalTraceRows, "normal");
     const expandedChangeTraceRows = expandTraceRows(changeTraceRows, "change");
     const productFullVersion = String(data.targetRow?.product_version || "").trim();
