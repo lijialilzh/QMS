@@ -10,6 +10,7 @@ import standardNodes from "./data/standard_nodes.json";
 import * as Api from "@/api/ApiSdsDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiSrsDoc from "@/api/ApiSrsDoc";
+import * as ApiSrsReq from "@/api/ApiSrsReq";
 import * as ApiSdsReqd from "@/api/ApiSdsReqd";
 import * as ApiSdsTrace from "@/api/ApiSdsTrace";
 import * as ApiDocFile from "@/api/ApiDocFile";
@@ -19,6 +20,149 @@ import * as ApiPersonSign from "@/api/ApiPersonSign";
 import TreeStructure, { computeNavChapterNumberMap, isLockedSdsFunctionChapter, stripNavChapterPrefix, TreeNode } from "./components/TreeStructure";
 
 const SDS_COVER_DATE_KEYWORDS = ["软件详细设计"];
+
+function compareOtherReqCode(left?: string, right?: string) {
+    const parse = (code?: string) => {
+        const matched = String(code || "").replace(/\s+/g, "").toUpperCase().match(/^SRS-([A-Z]+?)(\d+)-(\d+)$/);
+        return matched ? { group: parseInt(matched[2], 10), index: parseInt(matched[3], 10) } : null;
+    };
+    const leftOrder = parse(left);
+    const rightOrder = parse(right);
+    if (leftOrder && rightOrder) {
+        if (leftOrder.group !== rightOrder.group) return leftOrder.group - rightOrder.group;
+        return leftOrder.index - rightOrder.index;
+    }
+    const leftText = String(left || "").replace(/\s+/g, "").toUpperCase();
+    const rightText = String(right || "").replace(/\s+/g, "").toUpperCase();
+    if (!leftText && !rightText) return 0;
+    if (!leftText) return 1;
+    if (!rightText) return -1;
+    return leftText.localeCompare(rightText);
+}
+
+function isPresetRcn300OtherReq(code?: string) {
+    const matched = String(code || "").replace(/\s+/g, "").toUpperCase().match(/^SRS-RCN300-(\d+)$/);
+    if (!matched) return false;
+    const index = parseInt(matched[1], 10);
+    return index >= 1 && index <= 10;
+}
+
+function isSdsFrontMatterTitle(title?: string) {
+    const compact = String(title || "").replace(/\s+/g, "");
+    if (!compact) return false;
+    if (compact.includes("目录")) return true;
+    if (compact.includes("软件详细设计")) return true;
+    if (compact.includes("文件修订记录")) return true;
+    return false;
+}
+
+function isSdsAppendixTitle(title?: string, refType?: string) {
+    const compact = String(title || "").replace(/\s+/g, "");
+    return refType === "review" || compact === "评审记录" || compact.startsWith("附件一") || compact.includes("评审记录");
+}
+
+function sdsTitleMatchesModule(title: string, module: string) {
+    const name = stripNavChapterPrefix(title).replace(/\s+/g, "");
+    const mod = String(module || "").replace(/\s+/g, "");
+    if (!name || !mod) return false;
+    if (name === mod) return true;
+    const shorter = Math.min(name.length, mod.length);
+    if (shorter >= 4 && (name.includes(mod) || mod.includes(name))) return true;
+    const norm = (value: string) => value.replace(/(性需求|需求|要求)$/g, "");
+    const left = norm(mod);
+    const right = norm(name);
+    if (left && right && left === right) return true;
+    const shorterNorm = Math.min(left.length, right.length);
+    return !!left && !!right && shorterNorm >= 4 && (left.includes(right) || right.includes(left));
+}
+
+function sdsOtherReqChapterExists(nodes: TreeNode[], module: string, sdsCode: string) {
+    let found = false;
+    const walk = (list: TreeNode[]) => {
+        (list || []).forEach((node) => {
+            if (found) return;
+            const code = String(node.sds_code || "").replace(/\s+/g, "").toUpperCase();
+            if (sdsCode && code.split(/[\n,，]/).includes(sdsCode)) {
+                found = true;
+                return;
+            }
+            if (sdsTitleMatchesModule(node.title || "", module)) {
+                found = true;
+                return;
+            }
+            walk(node.children || []);
+        });
+    };
+    walk(nodes || []);
+    return found;
+}
+
+function isNumberedSdsRoot(node: TreeNode) {
+    const title = String(node.title || "").trim();
+    if (!title) return false;
+    if (/^导入(?:表格|图片)\d*$/.test(title) || /^\s*图\s*\d+/.test(title)) return false;
+    if (node.ref_type === "sds_reqds" || node.ref_type === "sds_traces") return false;
+    if (isSdsFrontMatterTitle(title) || isSdsAppendixTitle(title, node.ref_type)) return false;
+    if (/^\s*表\d+([、.\s　]|$)/.test(title)) return false;
+    return true;
+}
+
+let sdsOtherReqChapterSeq = 0;
+
+function ensureSdsOtherReqChapterNodes(nodes: TreeNode[], otherRows: any[]): TreeNode[] {
+    const roots = nodes || [];
+    const seenCodes = new Set<string>();
+    const pending = (otherRows || [])
+        .map((row) => ({
+            code: String(row?.code || row?.srs_code || "").replace(/\s+/g, "").toUpperCase(),
+            module: String(row?.module || "").trim(),
+        }))
+        .filter((row) => {
+            if (!row.code || !row.module || !row.code.startsWith("SRS-") || seenCodes.has(row.code)) return false;
+            seenCodes.add(row.code);
+            return true;
+        })
+        .filter((row) => !isPresetRcn300OtherReq(row.code) && !row.module.replace(/\s+/g, "").includes("法规符合"))
+        .filter((row) => !sdsOtherReqChapterExists(roots, row.module, row.code.replace(/^SRS/, "SDS")))
+        .sort((left, right) => compareOtherReqCode(left.code, right.code));
+    if (!pending.length) return roots;
+    const nextRoots = [...roots];
+    const insertAt = nextRoots.findIndex((node) => isSdsAppendixTitle(node.title, node.ref_type));
+    let cursor = insertAt >= 0 ? insertAt : nextRoots.length;
+    const startNo = nextRoots.slice(0, cursor).filter(isNumberedSdsRoot).length + 1;
+    pending.forEach((row, index) => {
+        sdsOtherReqChapterSeq += 1;
+        const chapterNo = String(startNo + index);
+        nextRoots.splice(cursor, 0, {
+            id: Date.now() * 1000 + sdsOtherReqChapterSeq,
+            n_id: 0,
+            title: `${chapterNo} ${row.module}`,
+            sds_code: row.code.replace(/^SRS/, "SDS"),
+            text: "",
+            children: [],
+        });
+        cursor += 1;
+    });
+    return nextRoots;
+}
+
+async function ensureSdsOtherReqChapters(nodes: TreeNode[], srsDocId?: number): Promise<TreeNode[]> {
+    const docId = Number(srsDocId || 0);
+    if (!docId) return nodes || [];
+    try {
+        const res: any = await ApiSrsReq.list_srs_req({
+            doc_id: docId,
+            page_index: 0,
+            page_size: 10000,
+        });
+        if (res?.code !== ApiSrsReq.C_OK) return nodes || [];
+        const otherRows = (res.data?.rows || []).filter((row: any) => String(row?.type_code || "") === "2");
+        return ensureSdsOtherReqChapterNodes(nodes || [], otherRows);
+    } catch (error) {
+        console.error("补详细设计其他需求章节失败:", error);
+        return nodes || [];
+    }
+}
 
 const SDS_APPROVAL_HEADERS = [
     { code: "label1", name: "" },
@@ -2428,7 +2572,11 @@ export default () => {
                 docIdForSync
             ) as TreeNode[]
             : ensuredReqdContent as TreeNode[];
-        return alignTailChapterSdsCodes(syncedContent);
+        const withOtherReqChapters = await ensureSdsOtherReqChapters(
+            syncedContent,
+            targetRow.srsdoc_id,
+        );
+        return alignTailChapterSdsCodes(withOtherReqChapters);
     };
 
     const refreshSdsDocTree = async (docId: number) => {
@@ -2825,7 +2973,7 @@ export default () => {
     };
 
     const traceRowSortKey = (code?: string) => {
-        const matched = String(code || "").toUpperCase().match(/RCN(\d+)-(\d+)/);
+        const matched = String(code || "").toUpperCase().replace(/\s+/g, "").match(/^SRS-[A-Z]+?(\d+)-(\d+)$/);
         if (!matched) return [9999, 9999, String(code || "")];
         const seriesRaw = matched[1];
         const series = seriesRaw.startsWith("3") && seriesRaw.length > 1
@@ -2842,7 +2990,7 @@ export default () => {
         return String(ka[2]).localeCompare(String(kb[2]));
     };
 
-    const isFixedRcn300Row = (row: any) => /^SRS-RCN300-0(0[1-9]|10)$/i.test(String(row?.srs_code || "").replace(/\s+/g, ""));
+    const isFixedRcn300Row = (row: any) => /^SRS-[A-Z]+?300-0(0[1-9]|10)$/i.test(String(row?.srs_code || "").replace(/\s+/g, ""));
 
     const rcn300TailNameKey = (chapter: string) => {
         const text = String(chapter || "");
@@ -2913,7 +3061,7 @@ export default () => {
         };
         const visibleRows = (rows || []).filter((row: any) => {
             const code = String(row?.srs_code || "").replace(/\s+/g, "").toUpperCase();
-            if (code !== "SRS-RCN300-008" || !liveTailChapterByName) return true;
+            if (!/300-008$/.test(code) || !liveTailChapterByName) return true;
             return liveTailChapterByName.has("文档需求");
         });
         return {
@@ -2963,7 +3111,12 @@ export default () => {
         });
         return groups.map((group) => ({
             title: group.title,
-            table: buildTraceTableFromRows(group.rows, locationBySdsCode, navChapterBySdsCode, liveTailChapterByName),
+            table: buildTraceTableFromRows(
+                [...group.rows].sort(compareTraceRow),
+                locationBySdsCode,
+                navChapterBySdsCode,
+                liveTailChapterByName,
+            ),
         }));
     };
 
@@ -2985,7 +3138,7 @@ export default () => {
             const liveTailChapterByName = buildLiveTailChapterByName(roots);
             const rows = res.data?.rows || [];
             const normalRows = rows.filter((row: any) => !isChangeTraceRow(row)).sort(compareTraceRow);
-            const changeRows = rows.filter((row: any) => isChangeTraceRow(row));
+            const changeRows = rows.filter((row: any) => isChangeTraceRow(row)).sort(compareTraceRow);
             const table = buildTraceTableFromRows(normalRows, locationBySdsCode, navChapterBySdsCode, liveTailChapterByName);
             const changeExtraTables = buildTraceChangeExtraTables(changeRows, locationBySdsCode, navChapterBySdsCode, liveTailChapterByName);
             let traceTableApplied = false;

@@ -1359,12 +1359,154 @@ export function syncEmbeddedOtherReqTableInTree(items: TreeNode[], otherRows: an
     return walk(items || []);
 }
 
+function isSrsFrontMatterRoot(node: TreeNode): boolean {
+    const title = String(node.title || "").replace(/\s+/g, "");
+    if (!title) return false;
+    if (title.includes("目录")) return true;
+    if (title.includes("需求规格说明")) return true;
+    if (title.includes("文件修订记录")) return true;
+    return /^导入正文$/.test(String(node.title || "").trim());
+}
+
+function isSrsAppendixRoot(node: TreeNode): boolean {
+    const title = String(node.title || "").replace(/\s+/g, "");
+    return node.ref_type === "review"
+        || title === "评审记录"
+        || title.startsWith("附件一")
+        || title.includes("评审记录");
+}
+
+function isNumberedSrsRoot(node: TreeNode): boolean {
+    if (!isNavChapterNodeForMap(node)) return false;
+    if (isSrsFrontMatterRoot(node) || isSrsAppendixRoot(node) || isNavUnnumberedNode(node)) return false;
+    return true;
+}
+
+function collectHeadingNumbers(nodes: TreeNode[]): Set<string> {
+    const headings = new Set<string>();
+    const walk = (list: TreeNode[]) => {
+        (list || []).forEach((node) => {
+            const heading = getHeadingNumberFromTitle(node.title);
+            if (heading) headings.add(heading);
+            walk(node.children || []);
+        });
+    };
+    walk(nodes || []);
+    return headings;
+}
+
+function collectNodeSrsCodes(nodes: TreeNode[]): Set<string> {
+    const codes = new Set<string>();
+    const walk = (list: TreeNode[]) => {
+        (list || []).forEach((node) => {
+            const code = normalizeSrsCodeValue(node.srs_code || extractSrsCodeFromText(node.text) || "");
+            if (code) codes.add(code);
+            walk(node.children || []);
+        });
+    };
+    walk(nodes || []);
+    return codes;
+}
+
+function collectChapterNames(nodes: TreeNode[]): Set<string> {
+    const names = new Set<string>();
+    const walk = (list: TreeNode[]) => {
+        (list || []).forEach((node) => {
+            const name = normalizeReqDisplayText(String(node.title || "").replace(/^\d+(?:\.\d+)*\s*/, ""));
+            if (name) names.add(name.replace(/\s+/g, ""));
+            walk(node.children || []);
+        });
+    };
+    walk(nodes || []);
+    return names;
+}
+
+function otherReqInsertIndex(roots: TreeNode[]): number {
+    const index = (roots || []).findIndex((node) => isSrsAppendixRoot(node));
+    return index >= 0 ? index : (roots || []).length;
+}
+
+function countNumberedSrsRootsBefore(roots: TreeNode[], insertAt: number): number {
+    let count = 0;
+    for (let index = 0; index < insertAt; index += 1) {
+        if (isNumberedSrsRoot(roots[index])) count += 1;
+    }
+    return count;
+}
+
+let otherReqChapterSeq = 0;
+
+export function planMissingOtherReqChapters(nodes: TreeNode[], otherRows: any[] = []) {
+    const roots = nodes || [];
+    const headings = collectHeadingNumbers(roots);
+    const codes = collectNodeSrsCodes(roots);
+    const names = collectChapterNames(roots);
+    const seenCodes = new Set<string>();
+    const pending = (otherRows || [])
+        .map(normalizeOtherReqSyncRow)
+        .filter((row) => {
+            if (!row.code || !row.module) return false;
+            if (row.module.replace(/\s+/g, "").includes("法规符合")) return false;
+            if (row.type_code && row.type_code !== "2") return false;
+            if (seenCodes.has(row.code)) return false;
+            seenCodes.add(row.code);
+            if (codes.has(row.code)) return false;
+            if (names.has(row.module.replace(/\s+/g, ""))) return false;
+            const token = getOtherReqSyncLocationToken(row.location);
+            if (token && headings.has(token)) return false;
+            return true;
+        })
+        .sort((left, right) => compareSrsReqCodeValues(left.code, right.code));
+    const insertAt = otherReqInsertIndex(roots);
+    const startNo = countNumberedSrsRootsBefore(roots, insertAt) + 1;
+    return pending.map((row, index) => ({
+        code: row.code,
+        module: row.module,
+        chapterNo: String(startNo + index),
+    }));
+}
+
+export function ensureMissingOtherReqChapters(nodes: TreeNode[], otherRows: any[] = []): {
+    nodes: TreeNode[];
+    changed: boolean;
+    filled: any[];
+} {
+    const plan = planMissingOtherReqChapters(nodes, otherRows);
+    if (!plan.length) return { nodes: nodes || [], changed: false, filled: [] };
+    const filled: any[] = [];
+    const planByCode = new Map(plan.map((item) => [item.code, item.chapterNo]));
+    (otherRows || []).forEach((row) => {
+        const code = normalizeSrsCodeValue(row?.code || row?.srs_code || "");
+        const chapterNo = planByCode.get(code);
+        if (!chapterNo || getOtherReqSyncLocationToken(row?.location)) return;
+        row.location = chapterNo;
+        filled.push(row);
+    });
+    const roots = [...(nodes || [])];
+    let insertAt = otherReqInsertIndex(roots);
+    plan.forEach((item) => {
+        otherReqChapterSeq += 1;
+        const node: TreeNode = {
+            id: Date.now() * 1000 + otherReqChapterSeq,
+            n_id: 0,
+            title: `${item.chapterNo} ${item.module}`,
+            srs_code: item.code,
+            text: `需求编号：${item.code}`,
+            children: [],
+        };
+        roots.splice(insertAt, 0, node);
+        insertAt += 1;
+    });
+    return { nodes: roots, changed: true, filled };
+}
+
 export function syncTreeWithOtherReqState(
     items: TreeNode[],
     otherRows: any[] = [],
     options?: Parameters<typeof syncOtherReqCodesToChaptersFromRows>[2],
 ): TreeNode[] {
-    const withEmbeddedTable = syncEmbeddedOtherReqTableInTree(items || [], otherRows);
+    const ensured = ensureMissingOtherReqChapters(items || [], otherRows);
+    const withEmbeddedTable = syncEmbeddedOtherReqTableInTree(ensured.nodes, otherRows);
     const normalizedOtherRows = (otherRows || [])
         .map(normalizeOtherReqSyncRow)
         .filter((row) => row.code)
@@ -3188,7 +3330,7 @@ const TreeNodeItem = ({
                                   { title: ts("srs_doc.function") || "功能", dataIndex: "function", key: "function", render: (t: string) => t ? <span style={{ whiteSpace: "pre-line", wordBreak: "break-word" }}>{t}</span> : "-" },
                                   { title: ts("srs_doc.sub_function") || "子功能", dataIndex: "sub_function", key: "sub_function", render: (t: string) => t ? <span style={{ whiteSpace: "pre-line", wordBreak: "break-word" }}>{t}</span> : "-" },
                               ]}
-                              dataSource={table.data || []}
+                              dataSource={sortSrsPreviewRowsByCode(table.data || [])}
                               pagination={false}
                               size="small"
                               bordered
@@ -3318,7 +3460,7 @@ const TreeNodeItem = ({
                                   rowKey="key"
                                   loading={!!srsReqLoading}
                                   locale={{ emptyText: "暂无数据" }}
-                                  dataSource={table.data || []}
+                                  dataSource={sortSrsPreviewRowsByCode(table.data || [])}
                                   columns={[
                                       { title: ts("srs_doc.srs_code") || "需求编号", dataIndex: "srs_code", width: 180 },
                                       { title: ts("srs_doc.module") || "模块", dataIndex: "module", width: 180 },

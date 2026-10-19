@@ -13,6 +13,45 @@
     vertical-align: top !important;
 }
 
+/* 接口表按页面宽度排开：编号、名称、URL、参数、备注都在一页内换行显示，不再裁切 */
+.sds-doc-detail .iface-list-table.ant-table-wrapper,
+.hld-doc-detail .iface-list-table.ant-table-wrapper {
+    width: 100%;
+    max-width: 100%;
+
+    .ant-table,
+    .ant-table-container,
+    .ant-table-content,
+    table {
+        width: 100% !important;
+        max-width: 100% !important;
+        table-layout: fixed !important;
+    }
+
+    .ant-table-content {
+        overflow: visible !important;
+    }
+
+    .ant-table-thead > tr > th.ant-table-cell,
+    .ant-table-tbody > tr > td.ant-table-cell {
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: unset !important;
+        height: auto !important;
+        max-height: none !important;
+        line-height: 1.5 !important;
+        word-break: break-word !important;
+        overflow-wrap: anywhere !important;
+        vertical-align: top !important;
+    }
+
+    .ant-table-tbody > tr > td.ant-table-cell.iface-code-cell,
+    .ant-table-thead > tr > th.ant-table-cell.iface-code-cell {
+        white-space: nowrap !important;
+        word-break: keep-all !important;
+    }
+}
+
 .sds-doc-detail .tree-structure-container,
 .hld-doc-detail .tree-structure-container {
     background-color: #ffffff;
@@ -1206,4 +1245,13 @@
             }
         }
     }
+}
+
+.sds-doc-detail .tree-structure-container .iface-list-table .ant-table-tbody > tr > td.ant-table-cell.iface-code-cell,
+.hld-doc-detail .tree-structure-container .iface-list-table .ant-table-tbody > tr > td.ant-table-cell.iface-code-cell,
+.sds-doc-detail .tree-structure-container .iface-list-table .ant-table-thead > tr > th.ant-table-cell.iface-code-cell,
+.hld-doc-detail .tree-structure-container .iface-list-table .ant-table-thead > tr > th.ant-table-cell.iface-code-cell {
+    white-space: nowrap !important;
+    word-break: keep-all !important;
+    overflow: visible !important;
 }

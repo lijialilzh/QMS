@@ -527,9 +527,23 @@ class Server(object):
                 node.table = table
 
     def __sync_sds_codes_from_req_code(self, req_row: SrsReq, old_code: str = None):
+        from .serv_sds_trace import fixed_rcn300_trace_for_code
         new_sds_code = self.__to_sds_code(req_row.code)
         old_sds_code = self.__to_sds_code(old_code)
         if not new_sds_code or new_sds_code == old_sds_code:
+            return
+        fixed_trace = fixed_rcn300_trace_for_code(req_row.code)
+        if fixed_trace:
+            traces: List[SdsTrace] = db.session.execute(
+                select(SdsTrace).where(SdsTrace.req_id == req_row.id)
+            ).scalars().all()
+            sds_code = "\n".join(item[0] for item in fixed_trace)
+            chapter = "\n".join(item[1] for item in fixed_trace)
+            location = "\n".join(item[2] for item in fixed_trace)
+            for trace in traces:
+                trace.sds_code = sds_code
+                trace.chapter = chapter
+                trace.location = location
             return
         display_name = self.__pick_req_name(req_row)
         traces: List[SdsTrace] = db.session.execute(

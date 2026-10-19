@@ -1005,6 +1005,17 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         const headerNames = (table.headers || []).map((header) => String(header?.name || "").replace(/\s/g, ""));
         const isIfaceList = headerNames.includes("接口设计编号")
             && (headerNames.includes("接口名称") || headerNames.includes("接口URL") || headerNames.includes("涉及模块") || headerNames.includes("功能"));
+        const ifaceColWeight = (name: string) => {
+            if (name === "接口设计编号") return 24;
+            if (name === "接口名称") return 14;
+            if (name === "涉及模块") return 16;
+            if (name === "功能") return 22;
+            if (name === "接口URL" || name === "URL") return 30;
+            if (name === "接口参数" || name === "参数") return 16;
+            if (name === "备注") return 14;
+            return 12;
+        };
+        const ifaceWeightSum = headerNames.reduce((sum, name) => sum + ifaceColWeight(name), 0) || 1;
         const wrapCell = headerNames.some((name) => name === "设计编号" || name === "需求/代码" || name === "需求代码");
         const renderWrapped = (value: string) => {
             const lines = String(value || "").split("\n");
@@ -1020,20 +1031,19 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
             const headerName = String(header?.name || "").replace(/\s/g, "");
             const isUrlCol = headerName === "接口URL" || headerName === "URL";
             const isIfaceCodeCol = headerName === "接口设计编号";
-            const isIfaceNameCol = headerName === "接口名称" || headerName === "功能";
             const col: any = {
                 title: header.name,
                 dataIndex: header.code,
                 key: `col_${index}`,
             };
-            if (isIfaceList && isUrlCol) {
-                col.width = "46%";
-                col.onCell = () => ({ className: "iface-url-cell" });
-                col.onHeaderCell = () => ({ className: "iface-url-cell" });
-            } else if (isIfaceList && isIfaceCodeCol) {
-                col.width = "24%";
-            } else if (isIfaceList && isIfaceNameCol) {
-                col.width = "18%";
+            const ifaceWrapCol = isUrlCol || headerName === "接口参数" || headerName === "参数" || headerName === "备注" || headerName === "功能";
+            if (isIfaceList) {
+                col.width = `${((ifaceColWeight(headerName) / ifaceWeightSum) * 100).toFixed(2)}%`;
+                const cellClass = isIfaceCodeCol ? "iface-code-cell" : (ifaceWrapCol ? "iface-url-cell" : undefined);
+                if (cellClass) {
+                    col.onCell = () => ({ className: cellClass });
+                    col.onHeaderCell = () => ({ className: cellClass });
+                }
             } else if (headerName === "Name" || headerName === "名称" || headerName === "参数名") {
                 col.width = "28%";
             } else if (headerName === "Value" || headerName === "值" || headerName === "参数值") {
@@ -1067,7 +1077,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         props: {
                             rowSpan,
                             colSpan,
-                            className: isUrlCol ? "iface-url-cell" : undefined,
+                            className: isIfaceCodeCol ? "iface-code-cell" : (isUrlCol || headerName === "接口参数" || headerName === "参数" || headerName === "备注" || headerName === "功能" ? "iface-url-cell" : undefined),
                             style: { textAlign: hAlign, verticalAlign: vAlign },
                         },
                     };
@@ -1174,7 +1184,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         const compactTitle = String(node.title || "").replace(/\s+/g, "");
         return node.ref_type === "review" || compactTitle === "评审记录" || compactTitle === "附件一评审结论" || compactTitle.startsWith("附件一");
     })();
-    const navInlineTableChildren = (!readOnly && renderChildren === false)
+    // 查看页与编辑页同一章：内嵌「导入表格」（含接口列表）都挂在本章展示
+    const navInlineTableChildren = (renderChildren === false)
         ? (node.children || []).filter((child) => (
             hasRenderableTable(child.table)
             && isEmbeddedTableNode(child)
@@ -1231,6 +1242,13 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const inlineTableChildIdSet = new Set(
         inlineTableChildren.flatMap((child) => [String(child.id), String(child.n_id || "")])
     );
+    // 查看页里已经按接口/法规切开的表不再从内嵌区重复画一遍
+    const navInlineTablesForBody = readOnly
+        ? navInlineTableChildren.filter((child) => (
+            !inlineTableChildIdSet.has(String(child.id))
+            && !inlineTableChildIdSet.has(String(child.n_id || ""))
+        ))
+        : navInlineTableChildren;
     const tableTargetCount = (!isInterfaceSubSection) ? ((hasTable ? 1 : 0) + tableChildren.length) : 0;
     const tableCaptionPack = pickTableCaptions(node.text, tableTargetCount);
     const ownTableCaption = hasTable
@@ -2020,6 +2038,16 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                       />
                   )}
                   {
+                    ('sds_code' in node) && readOnly && resolvedSdsCode ? (
+                        <span
+                            className="node-sds-code"
+                            style={{ flex: "0 0 auto", maxWidth: "none", overflow: "visible" }}
+                        >
+                            {resolvedSdsCode}
+                        </span>
+                    ) : null
+                  }
+                  {
                     ('sds_code' in node) && !readOnly && (
                         <input
                             className="node-sds-code node-input-native"
@@ -2490,12 +2518,13 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                               ? renderReviewGridTable(node.table)
                               : (
                           <Table
+                              className={isInterfaceListTable(node) ? "iface-list-table" : undefined}
                               columns={buildTableColumns(node.table)}
                               dataSource={buildTableDataSource(node.table)}
                               pagination={false}
                               size="small"
                               bordered
-                              tableLayout="auto"
+                              tableLayout={isInterfaceListTable(node) ? "fixed" : "auto"}
                           />
                               )}
                           </div>
@@ -2590,6 +2619,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           <div className="node-table-header">
                               <div className="node-table-scroll">
                                   <Table
+                                      className={isInterfaceListTable(child) ? "iface-list-table" : undefined}
                                       columns={buildTableColumns(child.table)}
                                       dataSource={buildTableDataSource(child.table)}
                                       pagination={false}
@@ -2685,6 +2715,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           <div className="node-table-header">
                               <div className="node-table-scroll">
                                   <Table
+                                      className={isInterfaceListTable(child) ? "iface-list-table" : undefined}
                                       columns={buildTableColumns(child.table)}
                                       dataSource={buildTableDataSource(child.table)}
                                       pagination={false}
@@ -2769,6 +2800,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                       <div className="node-table-header">
                           <div className="node-table-scroll">
                               <Table
+                                  className={isInterfaceListTable(node) ? "iface-list-table" : undefined}
                                   columns={buildTableColumns(node.table)}
                                   dataSource={buildTableDataSource(node.table)}
                                   pagination={false}
@@ -2816,6 +2848,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           <div className="node-table-header">
                               <div className="node-table-scroll">
                                   <Table
+                                      className={isInterfaceListTable(child) ? "iface-list-table" : undefined}
                                       columns={buildTableColumns(child.table)}
                                       dataSource={buildTableDataSource(child.table)}
                                       pagination={false}
@@ -2883,12 +2916,13 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                 <div key={`nav-parent-inline-table-${child.id}`} className="node-table" style={{ marginTop: idx === 0 ? 8 : 12 }}>
                     <div className="node-table-scroll">
                         <Table
+                            className={isInterfaceListTable(child) ? "iface-list-table" : undefined}
                             columns={buildTableColumns(child.table)}
                             dataSource={buildTableDataSource(child.table)}
                             pagination={false}
                             size="small"
                             bordered
-                            tableLayout="auto"
+                            tableLayout={isInterfaceListTable(child) ? "fixed" : "auto"}
                         />
                     </div>
                     {!readOnly && !isChildRuntimeLocked(child) && (
@@ -2912,7 +2946,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                     )}
                 </div>
             ))}
-            {showExpandedBody && renderChildren === false && !showSplitInlineInEdit && navInlineTableChildren.map((child, idx) => {
+            {showExpandedBody && renderChildren === false && !showSplitInlineInEdit && navInlineTablesForBody.map((child, idx) => {
                 const storedCaption = String(child.title || child.label || child.table?.name || "").trim();
                 const tableCaption = inlineTableCaptionByIndex[idx] || storedCaption;
                 const showStoredCaption = !!storedCaption && !isSyntheticTableCaption(storedCaption) && !isNumberedChapterTitle(storedCaption);
@@ -2937,17 +2971,18 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                             {renderNameEditor(resolveEditableTableCaption(child) || tableCaption || storedCaption, child.id, { placeholder: "请输入表名", forceShow: true, style: { textAlign: "left", marginBottom: 0, flex: 1 } })}
                             <Button size="small" type="link" onClick={() => setOpenInlineTableId(null)}>收起</Button>
                         </div>
-                    ) : (showStoredCaption || !readOnly) ? (
+                    ) : (showStoredCaption || !readOnly || !!resolveEditableTableCaption(child)) ? (
                         renderNameEditor(resolveEditableTableCaption(child) || storedCaption, child.id, { placeholder: "请输入表名", forceShow: !readOnly })
                     ) : null}
                     <div className="node-table-scroll">
                         <Table
+                            className={isInterfaceListTable(child) ? "iface-list-table" : undefined}
                             columns={buildTableColumns(child.table)}
                             dataSource={buildTableDataSource(child.table)}
                             pagination={false}
                             size="small"
                             bordered
-                            tableLayout="auto"
+                            tableLayout={isInterfaceListTable(child) ? "fixed" : "auto"}
                         />
                     </div>
                     {!readOnly && !isChildRuntimeLocked(child) && (

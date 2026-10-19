@@ -29,15 +29,13 @@ export interface SdsTraceSectionActionsProps {
     ts: (key: string) => string;
 }
 
-/** SDS 图2 追溯区操作按钮：获取 SRS 追溯 / 打开需求追溯表 */
+/** SDS 图2 追溯区：未同步时仅「获取SRS追溯」。已同步后表在本章展示，不再放「设计需求追溯」按钮。 */
 export function SdsTraceSectionActions({
     node,
     readOnly,
     traceSynced,
     onFetchSrsTrace,
-    onOpenTraceList,
     compactStyle,
-    ts,
 }: SdsTraceSectionActionsProps) {
     if (!isSdsTraceSectionNode(node)) {
         return null;
@@ -53,19 +51,6 @@ export function SdsTraceSectionActions({
                 style={compactStyle}
             >
                 获取SRS追溯
-            </Button>
-        );
-    }
-    if (onOpenTraceList && synced) {
-        return (
-            <Button
-                type="primary"
-                size="small"
-                className="node-srsreq-btn"
-                onClick={onOpenTraceList}
-                style={compactStyle}
-            >
-                {ts("menu.sds_traces") || "需求追溯表"}
             </Button>
         );
     }

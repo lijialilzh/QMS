@@ -26,6 +26,7 @@ import TreeStructure, {
     validateStandardSrsHierarchyDuplicates,
     validateChangeReqDataRows,
     applyEffectiveSrsPreviewRows,
+    ensureMissingOtherReqChapters,
 } from "./components/TreeStructure";
 import EditableTableGenerator, { TableDataWithHeaders } from "./components/EditableTableGenerator";
 
@@ -957,7 +958,7 @@ export default () => {
     const filteredSrsChangeTables = useMemo(() => (
         sortSrsChangeTables(data.srsChangeTables || []).map((table: any) => ({
             ...table,
-            data: table.data || [],
+            data: sortSrsReqRowsByCode(table.data || []),
         }))
     ), [data.srsChangeTables]);
     // 传给 <TreeStructure> 的 srsReqPreview 也需要稳定引用，否则它的 useEffect 会把
@@ -3224,9 +3225,9 @@ export default () => {
             const code = String(item.type_code || "");
             if (!code || seenTypeCodes.has(code)) return result;
             seenTypeCodes.add(code);
-            const tableRows = (groupedByType.get(code) || []).map((reqItem: any, reqIndex: number) =>
+            const tableRows = sortSrsReqRowsByCode((groupedByType.get(code) || []).map((reqItem: any, reqIndex: number) =>
                 toChangeRow(reqItem, `change_${code || index}`, reqIndex)
-            );
+            ));
             result.push({
                 id: item.id || `change_${code || index}`,
                 title: item.type_name || `变更表${index + 1}`,
@@ -3248,9 +3249,9 @@ export default () => {
         orphanTypeCodes.forEach((code) => {
             seenTypeCodes.add(code);
             const reqItems = groupedByType.get(code) || [];
-            const tableRows = reqItems.map((reqItem: any, reqIndex: number) =>
+            const tableRows = sortSrsReqRowsByCode(reqItems.map((reqItem: any, reqIndex: number) =>
                 toChangeRow(reqItem, `change_${code}`, reqIndex)
-            );
+            ));
             changeTablesData.push({
                 id: `change_${code}`,
                 title: "变更需求",
@@ -3616,8 +3617,12 @@ export default () => {
                             }
                         }
                     }
+                    const otherChapterEnsured = ensureMissingOtherReqChapters(
+                        remappedContent,
+                        srsTableState.srsOtherReqData || [],
+                    );
                     const parsedContent = dedupeChangeTableNodesInTree(
-                        syncTreeWithSrsTableStateForDisplay(remappedContent, srsTableState),
+                        syncTreeWithSrsTableStateForDisplay(otherChapterEnsured.nodes, srsTableState),
                     );
                     const derivedCoverTitle = extractCoverTitleFromTree(parsedContent);
                     const derivedFileNo = extractFileNoFromTree(parsedContent);
@@ -3642,15 +3647,33 @@ export default () => {
                         srsOtherReqData: srsTableState.srsOtherReqData,
                         srsChangeTables: srsTableState.srsChangeTables,
                         srsTableLoading: false,
-                        treeRefreshKey: (shouldInitStandard || shouldPatchTemplate || shouldAppendReview || shouldRedistributeDocReq || shouldSeedOtherReqs) ? Date.now() : data.treeRefreshKey,
+                        treeRefreshKey: (shouldInitStandard || shouldPatchTemplate || shouldAppendReview || shouldRedistributeDocReq || shouldSeedOtherReqs || otherChapterEnsured.changed) ? Date.now() : data.treeRefreshKey,
                     });
                     treeStructureRef.current = parsedContent;
                     initialEditTreeRef.current = cloneTree(parsedContent);
                     if (!(srsTableState.srsTableData || []).length && !isReadOnly) {
                         window.setTimeout(() => loadSrsTableData(true), 600);
                     }
-                    if ((shouldInitStandard || shouldPatchTemplate || shouldAppendReview || shouldRedistributeDocReq || shouldSeedOtherReqs) && !isReadOnly) {
+                    if ((shouldInitStandard || shouldPatchTemplate || shouldAppendReview || shouldRedistributeDocReq || shouldSeedOtherReqs || otherChapterEnsured.changed) && !isReadOnly) {
                         const docId = targetRow.id || parseInt(String(id), 10);
+                        if (otherChapterEnsured.changed) {
+                            otherChapterEnsured.filled.forEach((row: any) => {
+                                if (!row?.id) return;
+                                ApiSrsReq.update_srs_req({
+                                    id: row.id,
+                                    doc_id: docId,
+                                    code: row.srs_code || row.code,
+                                    module: row.module || "",
+                                    function: "",
+                                    sub_function: "",
+                                    location: row.location || "",
+                                    type_code: "2",
+                                    rcm_ids: row.rcm_ids || [],
+                                }).catch((error: any) => {
+                                    console.error("回写其他需求章节号失败:", error);
+                                });
+                            });
+                        }
                         const cleanedContent = parsedContent.map((node: any) => cleanTreeNode(node, docId, 0));
                         Api.update_srs_doc({
                             id: docId,
@@ -4859,6 +4882,16 @@ export default () => {
                 location: normalizeReqText(row?.[locationCol]),
             }))
             .filter((row: any) => row.code);
+        const currentTree = ((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) as TreeNode[];
+        const chapterPlan = ensureMissingOtherReqChapters(currentTree, rows.map((row: any) => ({ ...row, type_code: "2" })));
+        const chapterNoByCode = new Map(chapterPlan.filled.map((row: any) => [
+            String(row.code || "").replace(/\s+/g, "").toUpperCase(),
+            String(row.location || ""),
+        ]));
+        rows.forEach((row: any) => {
+            const chapterNo = chapterNoByCode.get(String(row.code || "").replace(/\s+/g, "").toUpperCase());
+            if (chapterNo && !parseOtherReqLocation(row.location)) row.location = chapterNo;
+        });
 
         try {
             dispatch({ srsTableLoading: true });
@@ -4899,6 +4932,24 @@ export default () => {
             };
             const changedAssignments = assignments.filter(isChangedAssignment);
             const deletedOldRows = oldRows.filter((oldRow: any) => oldRow?.id && !usedOldIds.has(oldRow.id));
+            const persistOtherReqChapters = async (tree: TreeNode[]) => {
+                if (!chapterPlan.changed) return;
+                const cleanedContent = (tree || []).map((node: any) => cleanTreeNode(node, docId, 0));
+                if (!cleanedContent.length) return;
+                const saveRes: any = await Api.update_srs_doc({
+                    id: docId,
+                    product_id: editForm.getFieldValue("product_id"),
+                    version: editForm.getFieldValue("version"),
+                    folder_name: editForm.getFieldValue("folder_name") || "",
+                    file_no: editForm.getFieldValue("file_no") || "",
+                    change_log: data.changeDescription || "",
+                    content: cleanedContent,
+                    n_id: data.docNId || 0,
+                });
+                if (saveRes.code !== Api.C_OK) {
+                    console.error(saveRes.msg || "保存其他需求章节失败");
+                }
+            };
             if (changedAssignments.length === 0 && deletedOldRows.length === 0) {
                 const syncedTree = dedupeChangeTableNodesInTree(
                     syncTreeWithSrsTableState(
@@ -4906,6 +4957,7 @@ export default () => {
                         latestBeforeSave,
                     ),
                 );
+                await persistOtherReqChapters(syncedTree);
                 treeStructureRef.current = syncedTree;
                 dispatch({
                     srsTableData: latestBeforeSave.srsTableData,
@@ -5012,6 +5064,7 @@ export default () => {
                     { ...srsTableState, srsOtherReqData: orderedOther },
                 ),
             );
+            await persistOtherReqChapters(syncedTree);
             treeStructureRef.current = syncedTree;
             dispatch({
                 srsTableData: srsTableState.srsTableData,

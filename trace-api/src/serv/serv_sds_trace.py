@@ -4,7 +4,7 @@ import sys
 import json
 import hashlib
 from typing import Dict, List, Optional, Tuple, Union
-from sqlalchemy import select, or_, and_
+from sqlalchemy import select, or_, and_, case
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import desc
 from ..obj.vobj_user import UserObj
@@ -79,6 +79,33 @@ FIXED_RCN300_TRACES = {
         ("SDS-RCN300-010", "外部连接", "10"),
     ],
 }
+
+_REQ_CODE_RE = re.compile(r"^SRS-([A-Z]+?)(\d+)-(\d+)$", re.I)
+
+
+def fixed_rcn300_trace_for_code(code: str):
+    """300-001～010 按固定对照取设计编号和模块。代号字母变了只改设计编号里的同样字母，模块名和行内顺序不动。"""
+    normalized = re.sub(r"\s+", "", str(code or "")).upper()
+    exact = FIXED_RCN300_TRACES.get(normalized)
+    if exact:
+        return list(exact)
+    matched = _REQ_CODE_RE.match(normalized)
+    if not matched:
+        return None
+    prefix, series, seq = matched.group(1), matched.group(2), int(matched.group(3))
+    if series != "300" or seq < 1 or seq > 10:
+        return None
+    template = FIXED_RCN300_TRACES.get(f"SRS-RCN300-{seq:03d}")
+    if not template:
+        return None
+    if prefix == "RCN":
+        return list(template)
+    rewritten = []
+    for sds_code, chapter, location in template:
+        new_code = re.sub(r"^SDS-RCN", f"SDS-{prefix}", str(sds_code), count=1, flags=re.I)
+        rewritten.append((new_code, chapter, location))
+    return rewritten
+
 
 RCN300_TAIL_NAME_KEYS = ("文档需求", "法规符合", "外部连接")
 RCN300_TAIL_SDS_CODE = {
@@ -600,7 +627,7 @@ class Server(object):
         """展示用章节名：优先按 SRS 层级字段实时计算，仅固定映射/多行追溯保留库内值。"""
         req_code = srs_code or (getattr(row_req, "code", None) if row_req is not None else None)
         code = (req_code or "").strip().upper()
-        fixed = FIXED_RCN300_TRACES.get(code)
+        fixed = fixed_rcn300_trace_for_code(code)
         if fixed:
             return "\n".join(item[1] for item in fixed)
         composed = cls.compose_srs_req_chapter(row_req, hierarchy_map=hierarchy_map, code=req_code, **fields)
@@ -622,7 +649,7 @@ class Server(object):
         """追溯表「需求/代码」列：单行需求用层级字段，固定多行映射保留各行原文。"""
         req_code = srs_code or (getattr(row_req, "code", None) if row_req is not None else None)
         code = (req_code or "").strip().upper()
-        fixed = FIXED_RCN300_TRACES.get(code)
+        fixed = fixed_rcn300_trace_for_code(code)
         if fixed:
             return [item[1] for item in fixed]
         composed = cls.compose_srs_req_chapter(row_req, hierarchy_map=hierarchy_map, code=req_code, **fields)
@@ -659,7 +686,7 @@ class Server(object):
                     fields = self.hierarchy_for_req(None, hierarchy_map, code=code)
                     if not fields.get("module") and not fields.get("function") and not fields.get("sub_function"):
                         fields = {"module": module, "function": function, "sub_function": sub_function}
-                    fixed_trace = FIXED_RCN300_TRACES.get((code or "").strip().upper())
+                    fixed_trace = fixed_rcn300_trace_for_code(code)
                     if fixed_trace:
                         fixed_values.append(
                             dict(
@@ -689,11 +716,25 @@ class Server(object):
                     )
                 if values:
                     insert_stmt = pg_insert(SdsTrace).values(values)
+                    stored_code = SdsTrace.sds_code
+                    multi_code = or_(
+                        stored_code.contains("\n"),
+                        stored_code.contains(","),
+                        stored_code.contains("，"),
+                    )
                     db.session.execute(
                         insert_stmt.on_conflict_do_update(
                             index_elements=["doc_id", "req_id"],
                             set_=dict(
                                 chapter=insert_stmt.excluded.chapter,
+                                # 单行设计编号跟当前需求编号走；多行手写编号保留
+                                sds_code=case(
+                                    (
+                                        or_(stored_code.is_(None), stored_code == "", ~multi_code),
+                                        insert_stmt.excluded.sds_code,
+                                    ),
+                                    else_=stored_code,
+                                ),
                             ),
                         )
                     )
@@ -1583,7 +1624,7 @@ class Server(object):
                 obj.product_version = row_product.full_version
             obj.type_code = row_req.type_code
             obj.type_name = type_names.get(row_req.id) or default_types.get(row_req.type_code) or row_req.type_code
-            fixed_trace = FIXED_RCN300_TRACES.get((row_req.code or "").strip().upper())
+            fixed_trace = fixed_rcn300_trace_for_code(row_req.code)
             if fixed_trace:
                 obj.sds_code = "\n".join(item[0] for item in fixed_trace)
                 obj.chapter = "\n".join(item[1] for item in fixed_trace)
@@ -1601,6 +1642,10 @@ class Server(object):
                 obj.name = obj.chapter
                 objs.append(obj)
                 continue
+            derived_sds_code = (row_req.code or "").replace("SRS", "SDS").strip()
+            stored_sds_code = str(obj.sds_code or "")
+            if derived_sds_code and "\n" not in stored_sds_code and "," not in stored_sds_code and "，" not in stored_sds_code:
+                obj.sds_code = derived_sds_code
             req_chapter = self.resolve_trace_chapter(
                 row_reqd.chapter, row_req, srs_code=row_req.code, hierarchy_map=hierarchy_map, **req_fields
             )

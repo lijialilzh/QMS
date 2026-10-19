@@ -19,7 +19,7 @@ from ..obj.vobj_sds_trace import SdsTraceObj
 from ..obj import Resp
 from ..utils.sql_ctx import db
 from ..utils.i18n import ts
-from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, FIXED_RCN300_TRACES, fixed_rcn300_sds_codes, align_rcn300_tail_locations, rcn300_tail_name_key, live_rcn300_tail_chapters
+from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, FIXED_RCN300_TRACES, fixed_rcn300_sds_codes, fixed_rcn300_trace_for_code, align_rcn300_tail_locations, rcn300_tail_name_key, live_rcn300_tail_chapters
 from .serv_sds_reqd import Server as ServSdsReqd
 
 logger = logging.getLogger(__name__)
@@ -94,7 +94,7 @@ class SdsSrsTraceSyncMixin:
             row for row in rows
             if str(getattr(row, "type_code", "") or "").strip() in ["", "1", "2"]
             and not (
-                re.sub(r"\s+", "", str(getattr(row, "srs_code", "") or "")).upper() == "SRS-RCN300-008"
+                re.search(r"300-008$", re.sub(r"\s+", "", str(getattr(row, "srs_code", "") or "")).upper())
                 and "文档需求" not in live_tail
             )
         ]
@@ -2171,7 +2171,7 @@ class SdsSrsTraceSyncMixin:
         self._restore_product_root_headings(roots)
         strict_location_map = self._build_strict_srs_trace_location_map(rows, hierarchy_map, roots)
         for trace, req in rows:
-            fixed_trace = FIXED_RCN300_TRACES.get(str(getattr(req, "code", "") or "").strip().upper())
+            fixed_trace = fixed_rcn300_trace_for_code(getattr(req, "code", "") or "")
             if fixed_trace:
                 trace.sds_code = "\n".join(item[0] for item in fixed_trace)
                 trace.chapter = "\n".join(item[1] for item in fixed_trace)
@@ -4319,7 +4319,7 @@ class SdsSrsTraceSyncMixin:
     def _rcn_series_seq_sort_pair(code: str):
         """RCN301-001 → (1, 1)；代号首位 3 不参与排序，按 01-001 段依次排列。"""
         text = str(code or "").strip().upper()
-        matched = re.search(r"RCN(\d+)-(\d+)", text)
+        matched = re.search(r"[A-Z]+?(\d+)-(\d+)", text)
         if not matched:
             return None
         series_raw = matched.group(1)
