@@ -225,20 +225,9 @@ export default () => {
                                 perm: "prod_device_view",
                             },
                             {
-                                key: "prod_algo_mgmt",
+                                key: "/prod_algo_chapters",
                                 label: ts("menu.prod_algo_mgmt"),
-                                children: [
-                                    {
-                                        key: "/prod_algo_modules",
-                                        label: ts("menu.prod_algo_modules"),
-                                        perm: "prod_algo_module_view",
-                                    },
-                                    {
-                                        key: "/prod_algo_chapters",
-                                        label: ts("menu.prod_algo_chapters"),
-                                        perm: "prod_algo_chapter_view",
-                                    },
-                                ],
+                                perm: "prod_algo_chapter_view",
                             },
                             {
                                 key: "/prod_dhfs",
@@ -669,13 +658,18 @@ export default () => {
             : isDataDoc
             ? getDataDocMenuKey(rawTypeKey)
             : rawTypeKey;
-        const menuSelectedKey = isTypedDoc
+        const menuSelectedKey = path === "/prod_algo_modules"
+            ? "/prod_algo_chapters"
+            : isTypedDoc
             ? `/${pathParts[0]}/${typeKey}`
             : (isDetailPage ? `/${pathParts[0]}` : path);
 
         let pageKey = path.replace(/\//, "").replace("-", "_");
         if (isDetailPage) {
             pageKey = pathParts[0].replace("-", "_");
+        }
+        if (pageKey === "prod_algo_chapters" || pageKey === "prod_algo_modules") {
+            pageKey = "prod_algo_mgmt";
         }
         const pageName = isModelDoc && pathParts[1]
             ? (MODEL_DOC_TYPES[pathParts[1]] ? MODEL_DOC_TYPES[pathParts[1]].title : getModelDocNavTitle(pathParts[1]))

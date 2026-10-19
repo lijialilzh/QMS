@@ -28,7 +28,6 @@ import ProdRuntimeEnv from "./pages/syscfg/ProdRuntimeEnv";
 import PrintServiceCfg from "./pages/syscfg/PrintServiceCfg";
 import ProdDeviceRes from "./pages/syscfg/ProdDeviceRes";
 import ProdHospitals from "./pages/syscfg/ProdHospitals";
-import ProdAlgoModules from "./pages/syscfg/ProdAlgoModules";
 import ProdAlgoChapters from "./pages/syscfg/ProdAlgoChapters";
 import Hazs from "./pages/basedata/Hazs";
 import Rcms from "./pages/basedata/Rcms";
@@ -172,7 +171,7 @@ const router = createRouter([
             { path: "/print_service_cfg", element: <PrintServiceCfg /> },
             { path: "/prod_device_res", element: <ProdDeviceRes /> },
             { path: "/prod_hospitals", element: <ProdHospitals /> },
-            { path: "/prod_algo_modules", element: <ProdAlgoModules /> },
+            { path: "/prod_algo_modules", element: <ProdAlgoChapters /> },
             { path: "/prod_algo_chapters", element: <ProdAlgoChapters /> },
 
             { path: "/hazs", element: <Hazs /> },

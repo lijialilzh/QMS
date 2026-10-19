@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { renderOneLineWithTooltip, useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProdAlgoChapter";
+import * as ApiModule from "@/api/ApiProdAlgoModule";
 import * as ApiProduct from "@/api/ApiProduct";
 import ProdAlgoChapterDetail from "./ProdAlgoChapterDetail";
 import "../risk_mgmt/RiskMgmtParticipants.less";
@@ -17,12 +18,37 @@ enum DlgTypes {
     delete = "delete",
 }
 
-const buildCountMap = (rows: any[] = []) => {
-    const map = new Map<number, number>();
-    rows.forEach((row) => {
+const normName = (name: any) => String(name ?? "").trim();
+
+const buildCountMap = (chapters: any[] = [], modules: any[] = []) => {
+    const byProd = new Map<number, { ch: any[]; mo: any[] }>();
+    const ensure = (pid: number) => {
+        if (!byProd.has(pid)) byProd.set(pid, { ch: [], mo: [] });
+        return byProd.get(pid)!;
+    };
+    chapters.forEach((row) => {
         const pid = Number(row.prod_id);
-        if (!pid) return;
-        map.set(pid, (map.get(pid) || 0) + 1);
+        if (pid) ensure(pid).ch.push(row);
+    });
+    modules.forEach((row) => {
+        const pid = Number(row.prod_id);
+        if (pid) ensure(pid).mo.push(row);
+    });
+    const map = new Map<number, number>();
+    byProd.forEach((group, pid) => {
+        const used = new Set<number>();
+        let n = 0;
+        group.ch.forEach((c) => {
+            n += 1;
+            const key = normName(c.name);
+            if (!key) return;
+            const mod = group.mo.find((m) => !used.has(m.id) && normName(m.name) === key);
+            if (mod) used.add(mod.id);
+        });
+        group.mo.forEach((m) => {
+            if (!used.has(m.id)) n += 1;
+        });
+        map.set(pid, n);
     });
     return map;
 };
@@ -48,9 +74,12 @@ export default () => {
     });
 
     const loadCounts = () => {
-        return Api.list_prod_algo_chapter({ page_index: 0, page_size: 100000 }).then((res: any) => {
-            if (res.code === Api.C_OK) {
-                const map = buildCountMap(res.data?.rows || []);
+        return Promise.all([
+            Api.list_prod_algo_chapter({ page_index: 0, page_size: 100000 }),
+            ApiModule.list_prod_algo_module({ page_index: 0, page_size: 100000 }),
+        ]).then(([chRes, moRes]: any[]) => {
+            if (chRes.code === Api.C_OK && moRes.code === ApiModule.C_OK) {
+                const map = buildCountMap(chRes.data?.rows || [], moRes.data?.rows || []);
                 dispatch({ countMap: map });
                 return map;
             }
@@ -127,22 +156,30 @@ export default () => {
         const row = data.targetRow || {};
         if (!row.id) return;
         dispatch({ loading: true });
-        Api.list_prod_algo_chapter({ prod_id: row.id, page_index: 0, page_size: 10000 }).then((res: any) => {
-            const ids = ((res && res.data && res.data.rows) || []).map((r: any) => r.id).filter(Boolean);
+        Promise.all([
+            Api.list_prod_algo_chapter({ prod_id: row.id, page_index: 0, page_size: 10000 }),
+            ApiModule.list_prod_algo_module({ prod_id: row.id, page_index: 0, page_size: 10000 }),
+        ]).then(([chRes, moRes]: any[]) => {
+            const chIds = ((chRes && chRes.data && chRes.data.rows) || []).map((r: any) => r.id).filter(Boolean);
+            const moIds = ((moRes && moRes.data && moRes.data.rows) || []).map((r: any) => r.id).filter(Boolean);
             const finish = () => {
                 dispatch({ loading: false, dlgType: null, expandedKeys: (data.expandedKeys || []).filter((id: number) => id !== row.id) });
                 message.success(ts("save_success"));
                 doSearch({ product_id: data.filterProductId, product_name: data.filterProductName }, data.pageIndex, data.pageSize);
             };
-            if (!ids.length) {
+            const jobs: Promise<any>[] = [];
+            if (chIds.length) jobs.push(Api.delete_prod_algo_chapters({ id: chIds.join(",") }));
+            if (moIds.length) jobs.push(ApiModule.delete_prod_algo_modules({ id: moIds.join(",") }));
+            if (!jobs.length) {
                 finish();
                 return;
             }
-            Api.delete_prod_algo_chapters({ id: ids.join(",") }).then((del: any) => {
-                if (del.code === Api.C_OK) finish();
+            Promise.all(jobs).then((results: any[]) => {
+                const failed = results.find((del) => del.code !== Api.C_OK);
+                if (!failed) finish();
                 else {
                     dispatch({ loading: false });
-                    message.error(del.msg);
+                    message.error(failed.msg);
                 }
             });
         }).catch(() => {
@@ -282,7 +319,7 @@ export default () => {
             <Modal
                 centered
                 width={520}
-                title="新增章节模块"
+                title="新增算法模块"
                 open={data.dlgType === DlgTypes.add}
                 maskClosable={false}
                 onOk={doAddNavigate}
@@ -303,7 +340,7 @@ export default () => {
                             }}
                         />
                     </Form.Item>
-                    <div style={{ color: "#888" }}>选择产品后在本页展开该产品章节模块；若该产品还没有模块，将写入默认模块。</div>
+                    <div style={{ color: "#888" }}>选择产品后在本页展开该产品算法模块；若该产品还没有模块，将写入默认模块。</div>
                 </Form>
             </Modal>
             <Modal
@@ -317,7 +354,7 @@ export default () => {
                 <div>
                     确定删除产品「{data.targetRow?.name || "-"}」
                     {data.targetRow?.full_version ? `（${data.targetRow.full_version}）` : ""}
-                    的全部章节模块（共 {data.countMap.get(data.targetRow?.id) || 0} 条）吗？
+                    的全部算法模块（共 {data.countMap.get(data.targetRow?.id) || 0} 条）吗？
                 </div>
             </Modal>
         </div>

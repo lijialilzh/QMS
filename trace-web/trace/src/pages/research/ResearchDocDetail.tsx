@@ -1,5 +1,5 @@
 import { Button, Input, Space, Spin, Tag, Upload, message } from "antd";
-import { PlusOutlined, DeleteOutlined, UploadOutlined, ArrowUpOutlined, ArrowDownOutlined } from "@ant-design/icons";
+import { PlusOutlined, DeleteOutlined, UploadOutlined, ArrowUpOutlined, ArrowDownOutlined, FileAddOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -9,6 +9,8 @@ import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiDocFile from "@/api/ApiDocFile";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
+import FreeChapterContent from "../pdp/FreeChapterContent";
+import { freeAddTable, freeDelTable } from "../pdp/freeChapterBlocks";
 import { isRuntimeLockedBody, isRuntimeLockedNode, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
 import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
@@ -345,6 +347,33 @@ export default () => {
         titles[ti] = val;
         n.table_titles = titles;
     });
+    const freeState = () => ({
+        body: String(active?.text || ""),
+        tables: active?.tables || [],
+        images: Array.isArray(active?.images) ? active.images : [],
+    });
+    const applyFreePatch = (patch: { body?: string; tables?: any[]; images?: any[] }) => {
+        if (!active) return;
+        updateNode(active._key, (n) => {
+            if (patch.body !== undefined) n.text = patch.body;
+            if (patch.tables) n.tables = patch.tables;
+            if (patch.images) n.images = patch.images;
+        });
+    };
+    const addTable = () => {
+        if (!active) return;
+        applyFreePatch(freeAddTable(freeState()));
+    };
+    const delTable = (ti: number) => {
+        if (!active) return;
+        const next = freeDelTable(freeState(), ti);
+        updateNode(active._key, (n) => {
+            n.text = next.body;
+            n.tables = next.tables;
+            n.images = next.images;
+            if (Array.isArray(n.table_titles)) n.table_titles = n.table_titles.filter((_: any, i: number) => i !== ti);
+        });
+    };
 
     const renderEditableTable = (rows: any[][], ti: number) => {
         const cols = Math.max(...(rows || []).map((r) => (r || []).length), 0);
@@ -485,7 +514,40 @@ export default () => {
                     </div>
                 </div>
 
-                {blocks.length > 0 ? (
+                {editable && !rtContentLock ? (
+                    <FreeChapterContent
+                        body={String(active.text || "")}
+                        tables={active.tables || []}
+                        images={Array.isArray(active.images) ? active.images : []}
+                        onPatch={applyFreePatch}
+                        renderTable={(ti: number) => {
+                            const rows = (active.tables || [])[ti];
+                            if (!rows) return null;
+                            const title = (active.table_titles && active.table_titles[ti]) || "";
+                            const isDev = title.includes("开发量");
+                            const locked = isRuntimeLockedTable(active, ti);
+                            return (
+                                <div className="pdp-table-block" key={ti}>
+                                    {isDev
+                                        ? renderDevAmountTable(rows, ti, title)
+                                        : locked
+                                            ? renderReadonlyTable(rows, title)
+                                            : renderEditableTable(rows, ti)}
+                                    {!locked && !isDev && (
+                                        <div style={{ textAlign: "right", marginTop: 4 }}>
+                                            <Button size="small" danger onClick={() => delTable(ti)}>删除此表</Button>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        }}
+                        showAddTableSlot={(
+                            <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
+                                添加表格
+                            </Button>
+                        )}
+                    />
+                ) : blocks.length > 0 ? (
                     blocks.map((b: any, bi: number) => {
                         if (b?.type === "image") {
                             const isHome = b.img_category === "img_home";

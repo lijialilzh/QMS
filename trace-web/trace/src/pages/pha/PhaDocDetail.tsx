@@ -1,5 +1,5 @@
-import { Button, Input, Popconfirm, Space, Spin, message, Upload } from "antd";
-import { PlusOutlined, DeleteOutlined, EditOutlined, FileAddOutlined, ArrowUpOutlined, ArrowDownOutlined, UploadOutlined} from "@ant-design/icons";
+import { Button, Input, Popconfirm, Space, Spin, message } from "antd";
+import { PlusOutlined, DeleteOutlined, EditOutlined, FileAddOutlined, ArrowUpOutlined, ArrowDownOutlined} from "@ant-design/icons";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -13,17 +13,8 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import ReviewTable from "@/common/ReviewTable";
 import EditableTableGenerator from "@/pages/srs_doc/components/EditableTableGenerator";
 import "../pdp/PdpDocDetail.less";
-import {
-    buildFreeSegments,
-    freeAddBodyBlock,
-    freeAddImage,
-    freeAddTable,
-    freeDelImage,
-    freeDelTable,
-    freeReplaceImage,
-    reassembleFreeBody,
-    shouldUseFreeInterleave,
-} from "../pdp/freeChapterBlocks";
+import FreeChapterContent from "../pdp/FreeChapterContent";
+import { freeAddTable, freeDelTable } from "../pdp/freeChapterBlocks";
 import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 let _seq = 0;
@@ -479,36 +470,6 @@ export default () => {
         const next = freeDelTable(chapterState(), ti);
         patchNode(data.activeKey, { tables: next.tables, body: next.body, images: next.images });
     };
-    const addBodyBlock = () => {
-        if (!active) return;
-        const next = freeAddBodyBlock(chapterState());
-        patchNode(data.activeKey, { body: next.body });
-    };
-    const uploadImage = (file: File, replaceIndex?: number) => {
-        if (!file.type.startsWith("image/")) {
-            message.error("请选择图片文件");
-            return false;
-        }
-        const reader = new FileReader();
-        reader.onload = () => {
-            if (!active) return;
-            const dataUrl = String(reader.result || "");
-            const next = replaceIndex !== undefined && replaceIndex >= 0
-                ? freeReplaceImage(chapterState(), replaceIndex, dataUrl)
-                : freeAddImage(chapterState(), dataUrl);
-            patchNode(data.activeKey, { images: next.images, body: next.body });
-            message.success("图片已更新，请保存文档");
-        };
-        reader.onerror = () => message.error("图片读取失败");
-        reader.readAsDataURL(file);
-        return false;
-    };
-    const delImage = (index: number) => {
-        if (!active) return;
-        const next = freeDelImage(chapterState(), index);
-        patchNode(data.activeKey, { images: next.images, body: next.body });
-    };
-
 
     const doSave = () => {
         if (!id) return;
@@ -636,40 +597,37 @@ export default () => {
                                         onChange={(e) => patchNode(active._key, { title: e.target.value })}
                                     />
                                 </div>
-                                <div className="pdp-field">
-                                    <div className="pdp-label">正文</div>
-                                    <Input.TextArea
-                                        autoSize={{ minRows: 3, maxRows: 20 }}
-                                        value={active.body ?? ""}
-                                        disabled={readonly}
-                                        placeholder="本章节正文内容，可多行"
-                                        onChange={(e) => patchNode(active._key, { body: e.target.value })}
-                                    />
-                                </div>
-
-                                {(active.tables || []).map((tb: any[], ti: number) => {
-                                    if (isReviewNode(active)) {
-                                        return (
-                                            <div className="pdp-table-block" key={ti}>
-                                                <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-                                                    <div style={{ flex: 1, minWidth: 0, overflowX: "auto" }}>
-                                                        <ReviewTable grid={reviewDisplayGrid(tb)} headerRows={isReviewHeaderRow(tb) ? 1 : 0} />
+                                <FreeChapterContent
+                                    body={String(active.body || "")}
+                                    tables={active.tables || []}
+                                    images={Array.isArray(active.images) ? active.images : []}
+                                    readonly={readonly}
+                                    onPatch={(patch) => patchNode(active._key, patch)}
+                                    renderTable={(ti: number) => {
+                                        const tb = (active.tables || [])[ti];
+                                        if (!tb) return null;
+                                        if (isReviewNode(active)) {
+                                            return (
+                                                <div className="pdp-table-block" key={ti}>
+                                                    <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                                                        <div style={{ flex: 1, minWidth: 0, overflowX: "auto" }}>
+                                                            <ReviewTable grid={reviewDisplayGrid(tb)} headerRows={isReviewHeaderRow(tb) ? 1 : 0} />
+                                                        </div>
+                                                        {!readonly && (
+                                                            <Space size={8} style={{ flexShrink: 0, marginTop: 8 }}>
+                                                                <Button size="small" icon={<EditOutlined />} onClick={() => openReviewEdit(ti, tb)}>编辑</Button>
+                                                                <Popconfirm title="确定删除此表？" okText="确定" cancelText="取消" onConfirm={() => delTable(ti)}>
+                                                                    <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
+                                                                </Popconfirm>
+                                                            </Space>
+                                                        )}
                                                     </div>
-                                                    {!readonly && (
-                                                        <Space size={8} style={{ flexShrink: 0, marginTop: 8 }}>
-                                                            <Button size="small" icon={<EditOutlined />} onClick={() => openReviewEdit(ti, tb)}>编辑</Button>
-                                                            <Popconfirm title="确定删除此表？" okText="确定" cancelText="取消" onConfirm={() => delTable(ti)}>
-                                                                <Button size="small" danger icon={<DeleteOutlined />}>删除</Button>
-                                                            </Popconfirm>
-                                                        </Space>
-                                                    )}
                                                 </div>
-                                            </div>
-                                        );
-                                    }
-                                    const review = false;
-                                    const col0 = null as { rowspan: number[]; skip: boolean[] } | null;
-                                    return (
+                                            );
+                                        }
+                                        const review = false;
+                                        const col0 = null as { rowspan: number[]; skip: boolean[] } | null;
+                                        return (
                                     <div className="pdp-table-block" key={ti}>
                                         <div className="pdp-table-bar">
                                             <span className="pdp-label">表格 {ti + 1}</span>
@@ -749,14 +707,14 @@ export default () => {
                                             </tbody>
                                         </table>
                                     </div>
-                                    );
-                                })}
-
-                                {!readonly && (
-                                    <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
-                                        添加表格
-                                    </Button>
-                                )}
+                                        );
+                                    }}
+                                    showAddTableSlot={!readonly ? (
+                                        <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
+                                            添加表格
+                                        </Button>
+                                    ) : null}
+                                />
                             </>
                         )}
                     </div>

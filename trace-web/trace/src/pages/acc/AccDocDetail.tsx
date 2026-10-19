@@ -1,5 +1,5 @@
 import { Button, Input, Space, Spin, Tag, message } from "antd";
-import { PlusOutlined, DeleteOutlined } from "@ant-design/icons";
+import { PlusOutlined, DeleteOutlined, FileAddOutlined } from "@ant-design/icons";
 import { useEffect, CSSProperties } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -8,6 +8,8 @@ import * as Api from "@/api/ApiAccDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
+import FreeChapterContent from "../pdp/FreeChapterContent";
+import { freeAddTable, freeDelTable } from "../pdp/freeChapterBlocks";
 import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 const emptyContent = { sections: [], productName: "" };
@@ -307,17 +309,86 @@ export default () => {
                                 {concSec && (
                                     <tr>
                                         <td colSpan={6} style={{ ...tdBase, color: "#333" }}>
-                                            {readonly ? (
-                                                <div style={{ whiteSpace: "pre-wrap", lineHeight: 1.7 }}>{concSec.text ?? ""}</div>
-                                            ) : (
-                                                <Input.TextArea
-                                                    variant="borderless"
-                                                    style={{ padding: 0 }}
-                                                    autoSize={{ minRows: 4, maxRows: 20 }}
-                                                    value={concSec.text ?? ""}
-                                                    onChange={(e) => concIdx >= 0 && updateSection(concIdx, (n) => { n.text = e.target.value; })}
-                                                />
-                                            )}
+                                            <FreeChapterContent
+                                                body={String(concSec.text || "")}
+                                                tables={Array.isArray(concSec.extra_tables) ? concSec.extra_tables : []}
+                                                images={Array.isArray(concSec.images) ? concSec.images : []}
+                                                readonly={readonly}
+                                                bodyLabel="验收结论"
+                                                onPatch={(patch) => {
+                                                    if (concIdx < 0) return;
+                                                    updateSection(concIdx, (n) => {
+                                                        if (patch.body !== undefined) n.text = patch.body;
+                                                        if (patch.tables) n.extra_tables = patch.tables;
+                                                        if (patch.images) n.images = patch.images;
+                                                    });
+                                                }}
+                                                renderTable={(ti: number) => {
+                                                    const tb = (concSec.extra_tables || [])[ti];
+                                                    if (!tb) return null;
+                                                    const setCell = (r: number, ci: number, val: string) => updateSection(concIdx, (n) => {
+                                                        const tables = (n.extra_tables || []).map((t: any[]) => t.map((row: any[]) => [...row]));
+                                                        tables[ti][r][ci] = val;
+                                                        n.extra_tables = tables;
+                                                    });
+                                                    return (
+                                                        <div className="pdp-table-block" key={ti}>
+                                                            <div className="pdp-table-bar">
+                                                                <span className="pdp-label">表格 {ti + 1}</span>
+                                                                {!readonly && (
+                                                                    <Button size="small" danger onClick={() => {
+                                                                        const next = freeDelTable({
+                                                                            body: String(concSec.text || ""),
+                                                                            tables: concSec.extra_tables || [],
+                                                                            images: concSec.images || [],
+                                                                        }, ti);
+                                                                        updateSection(concIdx, (n) => {
+                                                                            n.text = next.body;
+                                                                            n.extra_tables = next.tables;
+                                                                            n.images = next.images;
+                                                                        });
+                                                                    }}>删除此表</Button>
+                                                                )}
+                                                            </div>
+                                                            <table className="pdp-grid">
+                                                                <tbody>
+                                                                    {tb.map((row: any[], r: number) => (
+                                                                        <tr key={r}>
+                                                                            {row.map((cell: any, ci: number) => (
+                                                                                <td key={ci} className={r === 0 ? "head" : ""}>
+                                                                                    <Input.TextArea
+                                                                                        className="pdp-cell"
+                                                                                        autoSize={{ minRows: 1, maxRows: 6 }}
+                                                                                        value={cell ?? ""}
+                                                                                        disabled={readonly}
+                                                                                        onChange={(e) => setCell(r, ci, e.target.value)}
+                                                                                    />
+                                                                                </td>
+                                                                            ))}
+                                                                        </tr>
+                                                                    ))}
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
+                                                    );
+                                                }}
+                                                showAddTableSlot={!readonly ? (
+                                                    <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={() => {
+                                                        const next = freeAddTable({
+                                                            body: String(concSec.text || ""),
+                                                            tables: concSec.extra_tables || [],
+                                                            images: Array.isArray(concSec.images) ? concSec.images : [],
+                                                        });
+                                                        updateSection(concIdx, (n) => {
+                                                            n.text = next.body;
+                                                            n.extra_tables = next.tables;
+                                                            n.images = next.images;
+                                                        });
+                                                    }}>
+                                                        添加表格
+                                                    </Button>
+                                                ) : null}
+                                            />
                                         </td>
                                     </tr>
                                 )}

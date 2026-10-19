@@ -12,7 +12,7 @@ import * as ApiDocFile from "@/api/ApiDocFile";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
 import FreeChapterContent from "../pdp/FreeChapterContent";
-import { freeAddTable, freeDelTable } from "../pdp/freeChapterBlocks";
+import { freeAddBodyBlock, freeAddImage, freeAddTable, freeDelImage, freeDelTable, freeReplaceImage } from "../pdp/freeChapterBlocks";
 import { isRuntimeLockedBody, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
 import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
@@ -468,6 +468,38 @@ export default () => {
         const next = freeDelTable(chapterState(), ti);
         patchNode(data.activeKey, { tables: next.tables, body: next.body, images: next.images });
     };
+    const addBodyBlock = () => {
+        if (!active) return;
+        const next = freeAddBodyBlock(chapterState());
+        patchNode(data.activeKey, { body: next.body });
+    };
+    const uploadFreeImage = (file: File, replaceIndex?: number) => {
+        if (!file.type.startsWith("image/")) {
+            message.error("请选择图片文件");
+            return false;
+        }
+        const reader = new FileReader();
+        reader.onload = () => {
+            if (!active) return;
+            const dataUrl = String(reader.result || "");
+            const next = replaceIndex !== undefined && replaceIndex >= 0
+                ? freeReplaceImage(chapterState(), replaceIndex, dataUrl)
+                : freeAddImage(chapterState(), dataUrl);
+            patchNode(data.activeKey, { images: next.images, body: next.body });
+        };
+        reader.readAsDataURL(file);
+        return false;
+    };
+    const delFreeImage = (index: number) => {
+        if (!active) return;
+        const next = freeDelImage(chapterState(), index);
+        patchNode(data.activeKey, { images: next.images, body: next.body });
+    };
+    const hidePlaceholder = (text: string) => String(text || "").split("\n").filter((ln) => !/^\{\{(IMG|TBL|TXT|EMPTY)\}\}$/.test(ln.trim())).join("\n");
+    const keepPlaceholder = (original: string, edited: string) => {
+        const ph = String(original || "").split("\n").filter((ln) => /^\{\{(IMG|TBL|TXT|EMPTY)\}\}$/.test(ln.trim()));
+        return ph.length ? `${String(edited || "").replace(/\n+$/, "")}\n${ph.join("\n")}` : edited;
+    };
     // 在文档内上传/替换图片：写回「图表文件管理」对应分类（按产品全局共享）
     const uploadDocImage = (category: string, file: any) => {
         const productId = data.doc.product_id;
@@ -763,15 +795,36 @@ export default () => {
                                                         <div className="pdp-label">{segLabel(i)}</div>
                                                         <Input.TextArea
                                                             autoSize={{ minRows: 2, maxRows: 20 }}
-                                                            value={p}
+                                                            value={hidePlaceholder(p)}
                                                             disabled={readonly || isRuntimeLockedBody(active)}
                                                             placeholder={i === 0 ? "图片前的正文内容，可多行" : "图片后的正文内容，可多行"}
-                                                            onChange={(e) => setSegment(i, e.target.value)}
+                                                            onChange={(e) => setSegment(i, keepPlaceholder(p, e.target.value))}
                                                         />
                                                     </div>
                                                     {i < anchors.length && renderImageBlock(anchors[i])}
                                                 </div>
                                             ))}
+                                            {(Array.isArray(active.images) ? active.images : []).map((url: string, ii: number) => (
+                                                <div key={`free-img-${ii}`} style={{ margin: "8px 0 12px", textAlign: "center" }}>
+                                                    <img src={url} alt="" style={{ maxWidth: "100%", border: "1px solid #eee" }} />
+                                                    {!readonly && (
+                                                        <Space size={4} style={{ marginTop: 4, display: "flex", justifyContent: "center" }}>
+                                                            <Upload accept="image/*" showUploadList={false} beforeUpload={(file) => uploadFreeImage(file as File, ii)}>
+                                                                <Button size="small" icon={<UploadOutlined />}>更换</Button>
+                                                            </Upload>
+                                                            <Button size="small" danger onClick={() => delFreeImage(ii)}>删除</Button>
+                                                        </Space>
+                                                    )}
+                                                </div>
+                                            ))}
+                                            {!readonly && !isRuntimeLockedBody(active) && (
+                                                <Space wrap style={{ margin: "8px 0" }}>
+                                                    <Button size="small" onClick={addBodyBlock}>添加正文</Button>
+                                                    <Upload accept="image/*" showUploadList={false} beforeUpload={(file) => uploadFreeImage(file as File)}>
+                                                        <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
+                                                    </Upload>
+                                                </Space>
+                                            )}
                                             {(active.tables || []).map((_: any[], ti: number) => renderTb(ti))}
                                             {!readonly && (
                                                 <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>

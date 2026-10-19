@@ -11,6 +11,8 @@ import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiProdDhf from "@/api/ApiProdDhf";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
+import FreeChapterContent from "../pdp/FreeChapterContent";
+import { freeAddTable, freeDelTable } from "../pdp/freeChapterBlocks";
 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
@@ -447,8 +449,21 @@ export default () => {
         const tables = (active.tables || []).map((tb: any[], i: number) => (i !== ti ? tb : tb.map((row: any[]) => row.filter((_: any, cc: number) => cc !== ci))));
         updateTables(tables);
     };
-    const addTable = () => updateTables([...(active.tables || []), [["", ""], ["", ""]]]);
-    const delTable = (ti: number) => updateTables((active.tables || []).filter((_: any, i: number) => i !== ti));
+    const chapterState = () => ({
+        body: String(active?.body || ""),
+        tables: active?.tables || [],
+        images: Array.isArray(active?.images) ? active.images : [],
+    });
+    const addTable = () => {
+        if (!active) return;
+        const next = freeAddTable(chapterState());
+        patchNode(data.activeKey, { tables: next.tables, body: next.body, images: next.images });
+    };
+    const delTable = (ti: number) => {
+        if (!active) return;
+        const next = freeDelTable(chapterState(), ti);
+        patchNode(data.activeKey, { tables: next.tables, body: next.body, images: next.images });
+    };
 
     const doSave = () => {
         if (!id) return;
@@ -575,18 +590,16 @@ export default () => {
                                         onChange={(e) => patchNode(active._key, { title: e.target.value })}
                                     />
                                 </div>
-                                <div className="pdp-field">
-                                    <div className="pdp-label">正文</div>
-                                    <Input.TextArea
-                                        autoSize={{ minRows: 3, maxRows: 20 }}
-                                        value={active.body ?? ""}
-                                        disabled={readonly}
-                                        placeholder="本章节正文内容，可多行"
-                                        onChange={(e) => patchNode(active._key, { body: e.target.value })}
-                                    />
-                                </div>
-
-                                {(active.tables || []).map((tb: any[], ti: number) => (
+                                <FreeChapterContent
+                                    body={String(active.body || "")}
+                                    tables={active.tables || []}
+                                    images={Array.isArray(active.images) ? active.images : []}
+                                    readonly={readonly}
+                                    onPatch={(patch) => patchNode(active._key, patch)}
+                                    renderTable={(ti: number) => {
+                                        const tb = (active.tables || [])[ti];
+                                        if (!tb) return null;
+                                        return (
                                     <div className="pdp-table-block" key={ti}>
                                         <div className="pdp-table-bar">
                                             <span className="pdp-label">表格 {ti + 1}</span>
@@ -635,13 +648,14 @@ export default () => {
                                             </tbody>
                                         </table>
                                     </div>
-                                ))}
-
-                                {!readonly && (
-                                    <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
-                                        添加表格
-                                    </Button>
-                                )}
+                                        );
+                                    }}
+                                    showAddTableSlot={!readonly ? (
+                                        <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
+                                            添加表格
+                                        </Button>
+                                    ) : null}
+                                />
                             </>
                         )}
                     </div>

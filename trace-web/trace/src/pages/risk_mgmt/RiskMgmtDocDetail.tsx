@@ -1,5 +1,5 @@
 import { Button, Form, Input, Space, Spin, Upload, message } from "antd";
-import { UploadOutlined, PlusOutlined, DeleteOutlined, ArrowUpOutlined, ArrowDownOutlined } from "@ant-design/icons";
+import { UploadOutlined, PlusOutlined, DeleteOutlined, ArrowUpOutlined, ArrowDownOutlined, FileAddOutlined } from "@ant-design/icons";
 import { useEffect, useRef } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -15,6 +15,8 @@ import * as ApiHaz from "@/api/ApiHaz";
 import * as ApiProdHaz from "@/api/ApiProdHaz";
 import { HAZDICT_DEGREES, HAZDICT_LEVELS, HAZDICT_RATES } from "@/pages/basedata/Hazs";
 import "../pdp/PdpDocDetail.less";
+import FreeChapterContent from "../pdp/FreeChapterContent";
+import { freeAddTable } from "../pdp/freeChapterBlocks";
 import "./RiskMgmtDocDetail.less";
 
 const emptyContent = {
@@ -873,6 +875,26 @@ export default () => {
         }, 0);
     };
 
+    const patchRiskSection = (key: string, patch: { body?: string; tables?: any[]; images?: any[] }) => {
+        const update = (sections: any[] = []): any[] => (sections || []).map((section) => {
+            if (sectionKey(section) === key) {
+                return {
+                    ...section,
+                    ...(patch.body !== undefined ? { text: patch.body } : {}),
+                    ...(patch.tables ? { tables: patch.tables } : {}),
+                    ...(patch.images ? { images: patch.images } : {}),
+                };
+            }
+            return { ...section, children: update(section.children || []) };
+        });
+        dispatch({
+            content: {
+                ...(data.content || emptyContent),
+                sections: update(data.content.sections || []),
+            },
+        });
+    };
+
     const updateSectionText = (key: string, value: string) => {
         const update = (sections: any[] = []): any[] => (sections || []).map((section) => {
             if (sectionKey(section) === key) {
@@ -1462,22 +1484,84 @@ export default () => {
         const rcmIntroducedTable = isRcmIntroducedHazSection ? buildRcmIntroducedHazRows(activeSection) : null;
         const rcmIntroducedHazRows = rcmIntroducedTable?.displayRows || [];
         const sectionText = activeSection.text || activeSection.content || deriveTextFromParentSection(activeSection);
+        const isSpecialVisual = isAppendixBRiskMatrixSection || isRcmIntroducedHazSection || shouldShowProductRcms || isRiskDistSection;
+        const sectionImages = Array.isArray(activeSection.images) ? activeSection.images : [];
+        const riskKey = sectionKey(activeSection);
         return (
             <div className="risk-mgmt-section-content">
-                {isView ? (
-                    sectionText ? (
-                        <div className="risk-mgmt-section-text">{sectionText}</div>
-                    ) : null
+                {isSpecialVisual ? (
+                    isView ? (
+                        sectionText ? (
+                            <div className="risk-mgmt-section-text">{sectionText}</div>
+                        ) : null
+                    ) : (
+                        <Input.TextArea
+                            value={sectionText}
+                            onChange={(e) => updateSectionText(riskKey, e.target.value)}
+                            onBlur={(e) => {
+                                const next = showExponent(e.target.value);
+                                if (next !== sectionText) updateSectionText(riskKey, next);
+                            }}
+                            autoSize={{ minRows: 5, maxRows: 18 }}
+                            placeholder="请输入章节内容"
+                        />
+                    )
                 ) : (
-                    <Input.TextArea
-                        value={sectionText}
-                        onChange={(e) => updateSectionText(sectionKey(activeSection), e.target.value)}
-                        onBlur={(e) => {
-                            const next = showExponent(e.target.value);
-                            if (next !== sectionText) updateSectionText(sectionKey(activeSection), next);
+                    <FreeChapterContent
+                        body={String(sectionText || "")}
+                        tables={tables}
+                        images={sectionImages}
+                        readonly={isView}
+                        onPatch={(patch) => {
+                            const next = { ...patch };
+                            if (typeof next.body === "string") next.body = showExponent(next.body);
+                            patchRiskSection(riskKey, next);
                         }}
-                        autoSize={{ minRows: 5, maxRows: 18 }}
-                        placeholder="请输入章节内容"
+                        renderTable={(tableIndex: number) => {
+                            const rows = tables[tableIndex];
+                            if (!rows) return null;
+                            return (
+                                <table className="risk-mgmt-section-table" key={`table-${tableIndex}`}>
+                                    <tbody>
+                                        {(rows || []).map((row: any[], rowIndex: number) => (
+                                            <tr key={`row-${rowIndex}`}>
+                                                {(row || []).map((cell: any, cellIndex: number) => (
+                                                    <td key={`cell-${cellIndex}`}>
+                                                        {isView ? cell : (
+                                                            <Input.TextArea
+                                                                autoSize={{ minRows: 1, maxRows: 8 }}
+                                                                value={cell}
+                                                                onChange={(e) => updateSectionTableCell(riskKey, tableIndex, rowIndex, cellIndex, e.target.value)}
+                                                                onBlur={(e) => {
+                                                                    const next = showExponent(e.target.value);
+                                                                    if (next !== cell) updateSectionTableCell(riskKey, tableIndex, rowIndex, cellIndex, next);
+                                                                }}
+                                                            />
+                                                        )}
+                                                    </td>
+                                                ))}
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            );
+                        }}
+                        showAddTableSlot={!isView ? (
+                            <Button
+                                className="pdp-add-table"
+                                type="dashed"
+                                icon={<FileAddOutlined />}
+                                onClick={() => {
+                                    const next = freeAddTable({
+                                        body: String(sectionText || ""),
+                                        tables,
+                                        images: sectionImages,
+                                    });
+                                    patchRiskSection(riskKey, { body: showExponent(next.body), tables: next.tables, images: next.images });
+                                }}>
+                                添加表格
+                            </Button>
+                        ) : null}
                     />
                 )}
                 {isAppendixBRiskMatrixSection ? (
@@ -1573,32 +1657,7 @@ export default () => {
                         const caption = titles[tableIndex] || `表${tableIndex + 3} ${(grid[0] && grid[0][0]) || ""}`.trim();
                         return renderRiskDistMatrix(grid, caption, `dist-${tableIndex}`);
                     })
-                ) : tables.map((rows: any[], tableIndex: number) => (
-                    <table className="risk-mgmt-section-table" key={`table-${tableIndex}`}>
-                        <tbody>
-                            {(rows || []).map((row: any[], rowIndex: number) => (
-                                <tr key={`row-${rowIndex}`}>
-                                    {(row || []).map((cell: any, cellIndex: number) => (
-                                        <td key={`cell-${cellIndex}`}>
-                                            {isView ? cell : (
-                                                <Input.TextArea
-                                                    autoSize={{ minRows: 1, maxRows: 8 }}
-                                                    value={cell}
-                                                    onChange={(e) => updateSectionTableCell(sectionKey(activeSection), tableIndex, rowIndex, cellIndex, e.target.value)}
-                                                    onBlur={(e) => {
-                                                        const next = showExponent(e.target.value);
-                                                        if (next !== cell) updateSectionTableCell(sectionKey(activeSection), tableIndex, rowIndex, cellIndex, next);
-                                                    }}
-                                                />
-                                            )}
-                                        </td>
-                                    ))}
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                ))}
-                {!sectionText && tables.length === 0 && !shouldShowProductRcms && !isRcmIntroducedHazSection && !isAppendixBRiskMatrixSection ? "当前章节暂无可展示内容" : null}
+                ) : null}
             </div>
         );
     };

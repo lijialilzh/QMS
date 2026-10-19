@@ -1,5 +1,5 @@
-import { Button, Input, Space, Spin, message, Upload } from "antd";
-import { PlusOutlined, DeleteOutlined, FileAddOutlined, ArrowUpOutlined, ArrowDownOutlined, UploadOutlined} from "@ant-design/icons";
+import { Button, Input, Space, Spin, message } from "antd";
+import { PlusOutlined, DeleteOutlined, FileAddOutlined, ArrowUpOutlined, ArrowDownOutlined} from "@ant-design/icons";
 import { useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
@@ -11,17 +11,8 @@ import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiVersionRule from "@/api/ApiVersionRule";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
-import {
-    buildFreeSegments,
-    freeAddBodyBlock,
-    freeAddImage,
-    freeAddTable,
-    freeDelImage,
-    freeDelTable,
-    freeReplaceImage,
-    reassembleFreeBody,
-    shouldUseFreeInterleave,
-} from "../pdp/freeChapterBlocks";
+import FreeChapterContent from "../pdp/FreeChapterContent";
+import { freeAddTable, freeDelTable } from "../pdp/freeChapterBlocks";
 import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 // 由「基础数据-版本命名规则」全局配置生成「软件版本命名规则」章节正文
@@ -417,37 +408,6 @@ export default () => {
         const next = freeDelTable(chapterState(), ti);
         patchNode(data.activeKey, { tables: next.tables, body: next.body, images: next.images });
     };
-    const addBodyBlock = () => {
-        if (!active) return;
-        const next = freeAddBodyBlock(chapterState());
-        patchNode(data.activeKey, { body: next.body });
-    };
-    const uploadImage = (file: File, replaceIndex?: number) => {
-        if (!file.type.startsWith("image/")) {
-            message.error("请选择图片文件");
-            return false;
-        }
-        const reader = new FileReader();
-        reader.onload = () => {
-            if (!active) return;
-            const dataUrl = String(reader.result || "");
-            const next = replaceIndex !== undefined && replaceIndex >= 0
-                ? freeReplaceImage(chapterState(), replaceIndex, dataUrl)
-                : freeAddImage(chapterState(), dataUrl);
-            patchNode(data.activeKey, { images: next.images, body: next.body });
-            message.success("图片已更新，请保存文档");
-        };
-        reader.onerror = () => message.error("图片读取失败");
-        reader.readAsDataURL(file);
-        return false;
-    };
-    const delImage = (index: number) => {
-        if (!active) return;
-        const next = freeDelImage(chapterState(), index);
-        patchNode(data.activeKey, { images: next.images, body: next.body });
-    };
-
-
     const doSave = () => {
         if (!id) return;
         dispatch({ saving: true });
@@ -575,25 +535,22 @@ export default () => {
                                         onChange={(e) => patchNode(active._key, { title: e.target.value })}
                                     />
                                 </div>
-                                <div className="pdp-field">
-                                    <div className="pdp-label">正文</div>
-                                    <Input.TextArea
-                                        autoSize={{ minRows: 3, maxRows: 20 }}
-                                        value={active.body ?? ""}
-                                        disabled={readonly}
-                                        placeholder="本章节正文内容，可多行"
-                                        onChange={(e) => patchNode(active._key, { body: e.target.value })}
-                                    />
-                                </div>
-
-                                {stripNum(active.title) === "软件版本命名规则" && (
-                                    <div className="pdp-field">
-                                        <div className="pdp-label">软件完整版本及说明（示意图，导出自动包含）</div>
-                                        <NamingRuleDiagram />
-                                    </div>
-                                )}
-
-                                {(active.tables || []).map((tb: any[], ti: number) => (
+                                <FreeChapterContent
+                                    body={String(active.body || "")}
+                                    tables={active.tables || []}
+                                    images={Array.isArray(active.images) ? active.images : []}
+                                    readonly={readonly}
+                                    onPatch={(patch) => patchNode(active._key, patch)}
+                                    extraTop={stripNum(active.title) === "软件版本命名规则" ? (
+                                        <div className="pdp-field">
+                                            <div className="pdp-label">软件完整版本及说明（示意图，导出自动包含）</div>
+                                            <NamingRuleDiagram />
+                                        </div>
+                                    ) : null}
+                                    renderTable={(ti: number) => {
+                                        const tb = (active.tables || [])[ti];
+                                        if (!tb) return null;
+                                        return (
                                     <div className="pdp-table-block" key={ti}>
                                         <div className="pdp-table-bar">
                                             <span className="pdp-label">表格 {ti + 1}</span>
@@ -642,13 +599,14 @@ export default () => {
                                             </tbody>
                                         </table>
                                     </div>
-                                ))}
-
-                                {!readonly && (
-                                    <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
-                                        添加表格
-                                    </Button>
-                                )}
+                                        );
+                                    }}
+                                    showAddTableSlot={!readonly ? (
+                                        <Button className="pdp-add-table" type="dashed" icon={<FileAddOutlined />} onClick={addTable}>
+                                            添加表格
+                                        </Button>
+                                    ) : null}
+                                />
                             </>
                         )}
                     </div>
