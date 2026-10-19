@@ -2983,7 +2983,7 @@ const TreeNodeItem = ({
                       </div>
                   )}
                   {!isSrsReqRefNode && !useImageSplitLayout &&
-                    !(!String((canEditNodeContent ? editableNodeText : displayNodeText) || "").trim() && displayNormalTables.length > 0) && (
+                    !( !canEditNodeContent && !String(displayNodeText || "").trim() && displayNormalTables.length > 0) && (
                       canEditNodeContent ? (
                           <Input.TextArea
                               className="node-content node-text-area"
@@ -3136,6 +3136,30 @@ const TreeNodeItem = ({
                           </Button>
                       </Popconfirm>
                   </Space>
+                  )}
+                  {useNavChapterEditor && canEditNodeContent && !isSrsReqRefNode && !isRuntimeLocked && (
+                      <Space className="node-free-add" size={8}>
+                          <Button
+                              size="small"
+                              onClick={() => onContentChange(node.id, `${editableNodeText || ""}\n`, isLockedOtherReqChapter)}
+                          >
+                              添加正文
+                          </Button>
+                          {!isProductBoundDocImageNode && !isGenericImgRefNode && !(node.ref_type === "srs_reqs" || node.ref_type === "srs_reqs_2") && (
+                              <Upload {...uploadProps}>
+                                  <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
+                              </Upload>
+                          )}
+                          {!(node.ref_type === "srs_reqs" || node.ref_type === "srs_reqs_2") && (
+                              <Button
+                                  size="small"
+                                  icon={<TableOutlined />}
+                                  onClick={() => onAddTable(node.id)}
+                              >
+                                  添加表格
+                              </Button>
+                          )}
+                      </Space>
                   )}
               </div>
 

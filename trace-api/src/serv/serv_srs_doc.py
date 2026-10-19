@@ -5703,7 +5703,14 @@ class Server(object):
                 result[srs_code] = merged
             return result
         
-        def __query_tests(product_id: int) -> dict:
+        def __norm_point(value: str) -> str:
+            return re.sub(r"\s+", "", str(value or ""))
+
+        def __collapse_case_codes(items: list) -> list:
+            tests = list({item.code: item.code for item in items}.keys())
+            return [tests[0], tests[len(tests) - 1]] if len(tests) > 1 else tests[:1]
+
+        def __query_tests(product_id: int, req_codes: set = None):
             def __normalize_stage(stage: str) -> str:
                 txt = str(stage or "").strip()
                 if "单元" in txt:
@@ -5775,25 +5782,36 @@ class Server(object):
             rows: List[Tuple[TestCase, TestSet]] = db.session.execute(sql).all()
             all_tests = dict()
             stage_code_index = dict()
+            # 功能点 -> 阶段 -> 用例。只收本文档需求编号上的用例。
+            func_items = dict()
+            # 用例编号 -> 功能点。旧编号若已指向别的功能，就不再挂到新插入的需求上。
+            code_funcs = dict()
             # 单元测试用例编号 -> 接口编号(SDS-IF...) 映射
             unit_case_to_sis = dict()
+            allowed = {str(code or "").strip().upper() for code in (req_codes or set()) if str(code or "").strip()}
             for row_test, row_set in rows:
                 norm_stage = __normalize_stage(row_set.stage)
                 all_tests.setdefault(row_test.srs_code, {}).setdefault(norm_stage, []).append(row_test)
                 code = str(row_test.code or "").strip().upper()
                 if code:
                     stage_code_index.setdefault(norm_stage, []).append(code)
-                code = str(row_test.code or "").strip().upper()
                 srs_code_raw = str(row_test.srs_code or "").strip().upper()
+                func_name = __norm_point(getattr(row_test, "function", "") or "")
+                if code and func_name:
+                    code_funcs.setdefault(code, set()).add(func_name)
+                if func_name and srs_code_raw in allowed:
+                    func_items.setdefault(func_name, {}).setdefault(norm_stage, []).append(row_test)
                 if code and srs_code_raw.startswith("SDS-IF"):
                     unit_case_to_sis.setdefault(code, set()).add(srs_code_raw)
             
             test_codes = dict()
             for srs_code, test_data in all_tests.items():
                 for stage, items in test_data.items():
-                    tests = list({item.code: item.code for item in items}.keys())
-                    tests = [tests[0], tests[len(tests)-1]] if len(tests) > 1 else tests[:1]
-                    test_codes.setdefault(srs_code, {}).setdefault(stage, []).extend(tests)
+                    test_codes.setdefault(srs_code, {}).setdefault(stage, []).extend(__collapse_case_codes(items))
+            func_codes = dict()
+            for func_name, stage_map in func_items.items():
+                for stage, items in stage_map.items():
+                    func_codes.setdefault(func_name, {})[stage] = __collapse_case_codes(items)
 
             req_pairs = dict()
             sds_uset = dict()
@@ -5840,11 +5858,34 @@ class Server(object):
             for _, codes in stage_code_index.items():
                 all_stage_codes.extend(codes)
             stage_code_index["__all__"] = list(dict.fromkeys(all_stage_codes))
-            return test_codes, req_pairs, stage_code_index
+            return test_codes, req_pairs, stage_code_index, func_codes, code_funcs
         
+        def __trace_req_sort_key(code: str, type_code: str = ""):
+            txt = re.sub(r"\s+", "", str(code or "").strip().upper())
+            matched = re.match(r"^SRS-[A-Z]+(\d+)-(\d+)$", txt)
+            if matched:
+                num = (int(matched.group(1)), int(matched.group(2)), txt)
+            else:
+                num = (sys.maxsize, sys.maxsize, txt)
+            kind = str(type_code or "").strip()
+            # 标准需求在上，其他需求整组在下。变更需求单独成表，不插进这两段中间。
+            if kind == "2":
+                group = 1
+            elif kind not in ("", "1"):
+                group = 2
+            else:
+                group = 0
+            return (group, *num)
+
         def __resort_rows(rows: List[Tuple[SdsTrace, SdsDoc, SrsReq]], srsdoc_id: int):
-            # 按 SRS 导入后的原始顺序（req_id 升序）返回，确保“从安装包打开SRS第一个开始”
-            sortable_rows = sorted(rows, key=lambda row: (getattr(row[2], "id", 0) or 0))
+            # 标准需求按编号排在上面；其他需求整组留在下面，组内按编号。不看代号字母，也不按入库先后。
+            sortable_rows = sorted(
+                rows,
+                key=lambda row: __trace_req_sort_key(
+                    getattr(row[2], "code", "") or "",
+                    getattr(row[2], "type_code", "") or "",
+                ),
+            )
             results = []
             exist_codes = set()
             for row in sortable_rows:
@@ -5906,7 +5947,14 @@ class Server(object):
         req_rcms = __query_rcms(req_ids)
         reqd_text_rcm_codes = __query_reqd_text_rcm_codes(req_ids)
         node_rcm_codes = __query_node_rcm_codes(row_srsdoc.id, [str(row.code or "").strip().upper() for _, _, row in rows])
-        req_tests, req_pairs, stage_code_index = __query_tests(row_srsdoc.product_id)
+        req_code_set = {str(row.code or "").strip().upper() for _, _, row in rows if str(row.code or "").strip()}
+        req_tests, req_pairs, stage_code_index, func_tests, code_funcs = __query_tests(row_srsdoc.product_id, req_code_set)
+        req_points = set()
+        for _, _, req_row in rows:
+            for point in (req_row.sub_function, req_row.function):
+                point_name = __norm_point(point)
+                if point_name:
+                    req_points.add(point_name)
         row_product = db.session.execute(select(Product).where(Product.id == row_srsdoc.product_id)).scalars().first()
         type_rows: List[SrsType] = db.session.execute(select(SrsType).where(SrsType.doc_id == row_srsdoc.id)).scalars().all()
         type_names = {str(row.type_code or ""): row.type_name for row in type_rows}
@@ -5966,15 +6014,37 @@ class Server(object):
                     chapter = NAME_DICT.get(chapter) or chapter
                     chapter = chapter if row.type_code == "2" else "NeoViewer"
 
-            test_data = dict(req_tests.get(row.code) or {})
-            sds_alias = str(row.code or "").strip().upper().replace("SRS-", "SDS-", 1)
-            if sds_alias and sds_alias != str(row.code or "").strip().upper():
-                for stage, codes in (req_tests.get(sds_alias) or {}).items():
-                    merged = list(test_data.get(stage) or [])
-                    for code in codes or []:
-                        if code not in merged:
-                            merged.append(code)
-                    test_data[stage] = merged
+            sub_point = __norm_point(row.sub_function)
+            func_point = __norm_point(row.function)
+            # 子功能优先，对不上再用功能。中间插入把编号顺延后，用例仍挂在功能点上。
+            matched_point = sub_point if sub_point and sub_point in func_tests else (func_point if func_point and func_point in func_tests else "")
+            function_matched = bool(matched_point)
+            if function_matched:
+                test_data = {stage: list(codes) for stage, codes in (func_tests.get(matched_point) or {}).items()}
+            else:
+                test_data = dict(req_tests.get(row.code) or {})
+                own_points = {name for name in (sub_point, func_point) if name}
+
+                def __keep_by_point(code: str) -> bool:
+                    funcs = code_funcs.get(str(code or "").strip().upper()) or set()
+                    if not funcs or funcs & own_points:
+                        return True
+                    # 功能点已经是本文档另一条需求的，不再按旧编号挂到新插入的需求上。
+                    return not bool(funcs & req_points)
+
+                test_data = {
+                    stage: [code for code in (codes or []) if __keep_by_point(code)]
+                    for stage, codes in test_data.items()
+                }
+            if not function_matched:
+                sds_alias = str(row.code or "").strip().upper().replace("SRS-", "SDS-", 1)
+                if sds_alias and sds_alias != str(row.code or "").strip().upper():
+                    for stage, codes in (req_tests.get(sds_alias) or {}).items():
+                        merged = list(test_data.get(stage) or [])
+                        for code in codes or []:
+                            if code not in merged and __keep_by_point(code):
+                                merged.append(code)
+                        test_data[stage] = merged
 
             tests_unit = test_data.get("单元测试") or []
             tests_integ = test_data.get("集成测试") or []
@@ -5997,6 +6067,8 @@ class Server(object):
                 sis_codes = [item[0] for item in pair_filtered]
                 test_codes = [item[1] for item in pair_filtered]
 
+            # 功能点已经对上时，不再用编号前缀把用例滤回旧号。
+            if trace_rule and not function_matched:
                 # 单元测试记录按 TU{IF}-{group}- 严格过滤
                 unit_filtered = [
                     str(code or "")

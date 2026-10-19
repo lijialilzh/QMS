@@ -107,13 +107,71 @@ def fixed_rcn300_trace_for_code(code: str):
     return rewritten
 
 
+def requirement_number_key(code: str) -> str:
+    """SRS/SDS 编号只取数字段，字母不同视为同一条。例如 ACN300-004 与 RCN300-004 都是 300-004。"""
+    normalized = re.sub(r"\s+", "", str(code or "")).upper()
+    normalized = re.sub(r"^(SDS|SRS)-", "SRS-", normalized, count=1)
+    matched = _REQ_CODE_RE.match(normalized)
+    if not matched:
+        return ""
+    return f"{matched.group(2)}-{int(matched.group(3)):03d}"
+
+
+def split_design_code_lines(value: str) -> list:
+    return [re.sub(r"\s+", "", line).upper() for line in re.split(r"[\r\n]+", str(value or "")) if re.sub(r"\s+", "", line)]
+
+
+def design_code_number_keys(value: str) -> list:
+    return [requirement_number_key(line) for line in split_design_code_lines(value) if requirement_number_key(line)]
+
+
+def _design_code_keys(lines) -> list:
+    keys = []
+    for line in lines or []:
+        key = requirement_number_key(line)
+        if key:
+            keys.append(key)
+    return keys
+
+
+def design_codes_are_manual(stored: str, auto_lines, also_auto=None) -> bool:
+    """其他需求的设计编号若和自动结果不是同一组数字，就视为手改。字母不同不算手改。"""
+    stored_keys = design_code_number_keys(stored)
+    if not stored_keys:
+        return False
+    for lines in (auto_lines, also_auto):
+        if lines is None:
+            continue
+        if stored_keys == _design_code_keys(lines):
+            return False
+    return True
+
+
+def filter_fixed_trace_to_living(trace, living_codes):
+    """其他需求删掉后，同号设计编号不再出现在追溯表。删掉 300-004，各行里的 SDS-*-300-004 都去掉。"""
+    if not trace:
+        return [] if trace is not None else trace
+    living = {requirement_number_key(code) for code in (living_codes or [])}
+    living.discard("")
+    if not living:
+        return list(trace)
+    kept = []
+    for item in trace:
+        key = requirement_number_key(item[0])
+        if key and key not in living:
+            continue
+        kept.append(item)
+    return kept
+
+
 RCN300_TAIL_NAME_KEYS = ("文档需求", "法规符合", "外部连接")
-RCN300_TAIL_SDS_CODE = {
-    "文档需求": "SDS-RCN300-008",
-    "法规符合": "SDS-RCN300-009",
-    "外部连接": "SDS-RCN300-010",
+RCN300_TAIL_SDS_SUFFIX = {
+    "文档需求": "008",
+    "法规符合": "009",
+    "外部连接": "010",
 }
-_STANDALONE_SDS_CODE_RE = re.compile(r"^\s*(?:设计编号\s*[:：]\s*)?SDS-RCN300-\d+\s*$", re.I)
+_STANDALONE_SDS_CODE_RE = re.compile(r"^\s*(?:设计编号\s*[:：]\s*)?SDS-[A-Z]+300-\d+\s*$", re.I)
+_TAIL_DESIGN_CODE_RE = re.compile(r"^SDS-([A-Z]+)300-(\d+)$")
 
 
 def rcn300_tail_name_key(chapter: str) -> str:
@@ -179,9 +237,36 @@ def live_rcn300_tail_chapters(nodes) -> dict:
     return found
 
 
+def design_letter_for_tail(nodes) -> str:
+    """300 系列里，008/009/010 以外的设计编号用哪个字母，法规符合和外部连接就用哪个字母。"""
+    counts = {}
+
+    def walk(items):
+        for node in items or []:
+            code = re.sub(r"\s+", "", str(getattr(node, "sds_code", "") or "")).upper()
+            matched = _TAIL_DESIGN_CODE_RE.match(code)
+            if matched and int(matched.group(2)) not in (8, 9, 10):
+                letter = matched.group(1)
+                counts[letter] = counts.get(letter, 0) + 1
+            walk(getattr(node, "children", None) or [])
+
+    walk(nodes or [])
+    if not counts:
+        return "RCN"
+    return max(counts.items(), key=lambda item: (item[1], item[0] != "RCN"))[0]
+
+
+def tail_sds_code(name_key: str, letter: str) -> str:
+    suffix = RCN300_TAIL_SDS_SUFFIX.get(name_key or "")
+    if not suffix:
+        return ""
+    return f"SDS-{letter or 'RCN'}300-{suffix}"
+
+
 def align_rcn300_tail_node_codes(nodes) -> bool:
-    """法规符合 / 外部连接 / 文档需求的设计编号与追溯表一致，正文不再重复写编号。"""
+    """法规符合 / 外部连接 / 文档需求的设计编号与追溯表一致，字母跟着同套 300 编号，正文不再重复写编号。"""
     changed = False
+    letter = design_letter_for_tail(nodes)
 
     def strip_code_lines(text: str) -> str:
         lines = str(text or "").replace("\r", "").split("\n")
@@ -197,7 +282,7 @@ def align_rcn300_tail_node_codes(nodes) -> bool:
                 "",
                 title,
             ).strip()
-            code = RCN300_TAIL_SDS_CODE.get(rcn300_tail_name_key(name) or "")
+            code = tail_sds_code(rcn300_tail_name_key(name), letter)
             if code:
                 current = re.sub(r"\s+", "", str(getattr(node, "sds_code", "") or "")).upper()
                 if current != code:
@@ -672,7 +757,7 @@ class Server(object):
                 hierarchy_map = self.__load_srs_req_hierarchy_map(srs_doc_id)
                 self.__ensure_reqs_from_imported_srs_tables(srs_doc_id)
                 reqs = db.session.execute(
-                    select(SrsReq.id, SrsReq.code, SrsReq.module, SrsReq.function, SrsReq.sub_function)
+                    select(SrsReq.id, SrsReq.code, SrsReq.module, SrsReq.function, SrsReq.sub_function, SrsReq.type_code)
                     .where(SrsReq.doc_id == srs_doc_id)
                     .where(SrsReq.type_code != "reqd")
                 ).all()
@@ -682,19 +767,36 @@ class Server(object):
                     continue
                 values = []
                 fixed_values = []
-                for req_id, code, module, function, sub_function in reqs:
+                living_codes = [code for _req_id, code, _module, _function, _sub_function, _type_code in reqs]
+                existing_codes = dict(db.session.execute(
+                    select(SdsTrace.req_id, SdsTrace.sds_code).where(SdsTrace.doc_id == sds_doc_id)
+                ).all())
+                for req_id, code, module, function, sub_function, type_code in reqs:
                     fields = self.hierarchy_for_req(None, hierarchy_map, code=code)
                     if not fields.get("module") and not fields.get("function") and not fields.get("sub_function"):
                         fields = {"module": module, "function": function, "sub_function": sub_function}
                     fixed_trace = fixed_rcn300_trace_for_code(code)
-                    if fixed_trace:
+                    filtered_trace = filter_fixed_trace_to_living(fixed_trace, living_codes) if fixed_trace is not None else None
+                    if str(type_code) == "2":
+                        if fixed_trace is not None:
+                            kept = filtered_trace or []
+                            if design_codes_are_manual(
+                                existing_codes.get(req_id),
+                                [item[0] for item in kept],
+                                [item[0] for item in fixed_trace],
+                            ):
+                                continue
+                        elif design_codes_are_manual(existing_codes.get(req_id), [(code or "").replace("SRS", "SDS")]):
+                            continue
+                    if fixed_trace is not None:
+                        kept = filtered_trace or []
                         fixed_values.append(
                             dict(
                                 doc_id=sds_doc_id,
                                 req_id=req_id,
-                                sds_code="\n".join([item[0] for item in fixed_trace]),
-                                chapter="\n".join([item[1] for item in fixed_trace]),
-                                location="\n".join([item[2] for item in fixed_trace]),
+                                sds_code="\n".join([item[0] for item in kept]),
+                                chapter="\n".join([item[1] for item in kept]),
+                                location="\n".join([item[2] for item in kept]),
                             )
                         )
                         continue
@@ -1598,6 +1700,12 @@ class Server(object):
         total = len(rows)
         rows = rows[page_size * page_index: page_size * (page_index + 1)]
         req_ids = [row_req.id for row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product in rows]
+        srs_doc_ids = list({row_srsdoc.id for _row_reqd, _row_req, _row_type, _row_sdsdoc, row_srsdoc, _row_product in rows if row_srsdoc})
+        living_codes = []
+        if srs_doc_ids:
+            living_codes = db.session.execute(
+                select(SrsReq.code).where(SrsReq.doc_id.in_(srs_doc_ids)).where(SrsReq.type_code != "reqd")
+            ).scalars().all()
         type_names = self.__query_srs_types(req_ids)
         doc_ids = list(set([row_sdsdoc.id for row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product in rows]))
         doc_trees = self.__query_doc_tree(doc_ids)
@@ -1624,11 +1732,29 @@ class Server(object):
                 obj.product_version = row_product.full_version
             obj.type_code = row_req.type_code
             obj.type_name = type_names.get(row_req.id) or default_types.get(row_req.type_code) or row_req.type_code
-            fixed_trace = fixed_rcn300_trace_for_code(row_req.code)
-            if fixed_trace:
-                obj.sds_code = "\n".join(item[0] for item in fixed_trace)
-                obj.chapter = "\n".join(item[1] for item in fixed_trace)
-                obj.location = "\n".join(item[2] for item in fixed_trace)
+            if str(row_req.type_code) == "2":
+                stored_sds_code = str(obj.sds_code or "")
+                fixed_for_manual = fixed_rcn300_trace_for_code(row_req.code)
+                if fixed_for_manual is not None:
+                    kept_for_manual = filter_fixed_trace_to_living(fixed_for_manual, living_codes) or []
+                    manual = design_codes_are_manual(
+                        stored_sds_code,
+                        [item[0] for item in kept_for_manual],
+                        [item[0] for item in fixed_for_manual],
+                    )
+                else:
+                    manual = design_codes_are_manual(stored_sds_code, [(row_req.code or "").replace("SRS", "SDS").strip()])
+                if manual:
+                    obj.design_manual = True
+                    obj.sds_code = stored_sds_code
+                    obj.name = obj.chapter
+                    objs.append(obj)
+                    continue
+            fixed_full = fixed_rcn300_trace_for_code(row_req.code)
+            fixed_trace = filter_fixed_trace_to_living(fixed_full, living_codes) if fixed_full is not None else None
+            if fixed_full is not None:
+                obj.sds_code = "\n".join(item[0] for item in (fixed_trace or []))
+                obj.chapter = "\n".join(item[1] for item in (fixed_trace or []))
                 tree = doc_trees.get(row_sdsdoc.id) if row_sdsdoc else None
                 if tree is not None:
                     live_tail = doc_tail_chapters.get(row_sdsdoc.id) or {}

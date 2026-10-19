@@ -111,6 +111,7 @@ interface TreeNodeItemProps {
     onSdsCodeChange: (id: number, value: string) => void;
     onImageChange: (id: number, imgUrl: string) => void;
     onAttachProgramLogicImage?: (parentId: number, imgUrl: string) => void;
+    onAttachExtraImage?: (parentId: number, imgUrl: string) => void;
     pendingProgramLogicCaption?: string;
     onContentChange: (id: number, content: string) => void;
     onAddTable: (id: number) => void;
@@ -122,6 +123,7 @@ interface TreeNodeItemProps {
     onOpenReqdList?: () => void;   // 打开设计列表弹框（ref_type=sds_reqds）
     onOpenTraceList?: () => void;  // 打开需求追溯表弹框（ref_type=sds_traces）
     onFetchSrsTrace?: () => void;  // 获取SRS追溯
+    onCommitOtherReqDesignCode?: (traceId: number, sdsCode: string) => void;
     traceSynced?: boolean;
     readOnlyChapterOffset?: number;
     /** 左目录单章编辑：不在右侧重复渲染子章节（子章节由目录切换） */
@@ -618,17 +620,40 @@ function normalizeSdsCodeValue(code?: string): string {
     return String(code || "").replace(/\s+/g, "").toUpperCase();
 }
 
-const TAIL_CHAPTER_SDS_CODE: Record<string, string> = {
-    文档需求: "SDS-RCN300-008",
-    法规符合: "SDS-RCN300-009",
-    外部连接: "SDS-RCN300-010",
-};
+/** 300 系列里，尾号 008/009/010 以外的设计编号用哪个字母，法规符合和外部连接就用哪个字母。 */
+export function designLetterForTail(nodes: TreeNode[]): string {
+    const counts = new Map<string, number>();
+    const walk = (items: TreeNode[]) => {
+        (items || []).forEach((node) => {
+            const code = String(node.sds_code || "").replace(/\s+/g, "").toUpperCase();
+            const matched = code.match(/^SDS-([A-Z]+)300-(\d+)$/);
+            if (matched) {
+                const seq = parseInt(matched[2], 10);
+                if (seq !== 8 && seq !== 9 && seq !== 10) {
+                    counts.set(matched[1], (counts.get(matched[1]) || 0) + 1);
+                }
+            }
+            walk(node.children || []);
+        });
+    };
+    walk(nodes || []);
+    let best = "RCN";
+    let bestCount = 0;
+    counts.forEach((count, letter) => {
+        if (count > bestCount || (count === bestCount && best === "RCN" && letter !== "RCN")) {
+            best = letter;
+            bestCount = count;
+        }
+    });
+    return best;
+}
 
-function tailChapterSdsCode(title?: string): string {
+function tailChapterSdsCode(title?: string, letter = "RCN"): string {
     const name = stripNavChapterPrefix(String(title || "")).replace(/\s+/g, "");
-    if (name.includes("文档需求")) return TAIL_CHAPTER_SDS_CODE["文档需求"];
-    if (name.includes("法规符合")) return TAIL_CHAPTER_SDS_CODE["法规符合"];
-    if (name.includes("外部连接")) return TAIL_CHAPTER_SDS_CODE["外部连接"];
+    const prefix = `SDS-${letter || "RCN"}300-`;
+    if (name.includes("文档需求")) return `${prefix}008`;
+    if (name.includes("法规符合")) return `${prefix}009`;
+    if (name.includes("外部连接")) return `${prefix}010`;
     return "";
 }
 
@@ -666,7 +691,8 @@ function assignExternalInterfaceCodes(nodeList: TreeNode[], inExternal = false, 
                     return assignExternalInterfaceCodes([child], nowExternal, nextDesign)[0];
                 }
                 seq += 1;
-                const numbered = { ...child, sds_code: `${prefix}${String(seq).padStart(3, "0")}` };
+                const currentCode = String(child.sds_code || "").trim();
+                const numbered = { ...child, sds_code: currentCode || `${prefix}${String(seq).padStart(3, "0")}` };
                 return { ...numbered, children: assignExternalInterfaceCodes(child.children || [], nowExternal, nextDesign) };
             });
             return { ...node, children: nextChildren };
@@ -679,7 +705,7 @@ function stripStandaloneSdsCodeLines(text?: string): string {
     return String(text || "")
         .replace(/\r/g, "")
         .split("\n")
-        .filter((line) => !/^\s*(?:设计编号\s*[：:]\s*)?SDS-RCN300-\d+\s*$/i.test(line))
+        .filter((line) => !/^\s*(?:设计编号\s*[：:]\s*)?SDS-[A-Z]+300-\d+\s*$/i.test(line))
         .join("\n")
         .replace(/^\n+/, "");
 }
@@ -865,6 +891,29 @@ function fitChapterBodyTextArea(el: HTMLTextAreaElement) {
     el.style.resize = "none";
 }
 
+function normalizeOtherReqDesignCode(value?: string) {
+    return String(value || "").replace(/\r/g, "").split("\n").map((line) => line.trim()).filter(Boolean).join("\n");
+}
+
+function OtherReqDesignCodeInput({ value, onCommit }: { value: string; onCommit: (next: string) => void }) {
+    const [text, setText] = useState(value);
+    useEffect(() => {
+        setText(value);
+    }, [value]);
+    return (
+        <Input.TextArea
+            className="trace-design-code-input"
+            autoSize={{ minRows: 1, maxRows: 8 }}
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            onBlur={() => {
+                const next = normalizeOtherReqDesignCode(text);
+                if (next !== normalizeOtherReqDesignCode(value)) onCommit(next);
+            }}
+        />
+    );
+}
+
 function ChapterBodyTextArea(props: React.ComponentProps<typeof Input.TextArea>) {
     const { autoSize, onChange, ...rest } = props;
     void autoSize;
@@ -888,7 +937,7 @@ function ChapterBodyTextArea(props: React.ComponentProps<typeof Input.TextArea>)
     );
 }
 
-const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onSdsCodeChange, onImageChange, onAttachProgramLogicImage, pendingProgramLogicCaption = "", onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onEditExtraTable, onDeleteExtraTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, uploadDocFile, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [], useNavChapterEditor = false, autoNavChapterNo = "", lockScopeChapter = false, lockRuntimeEnv = false, runtimeLockedIds, sdsSyncLockedIds, splitInterfaceIO = false }: TreeNodeItemProps) => {
+const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onSdsCodeChange, onImageChange, onAttachProgramLogicImage, onAttachExtraImage, pendingProgramLogicCaption = "", onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onEditExtraTable, onDeleteExtraTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, onCommitOtherReqDesignCode, traceSynced, uploadDocFile, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [], useNavChapterEditor = false, autoNavChapterNo = "", lockScopeChapter = false, lockRuntimeEnv = false, runtimeLockedIds, sdsSyncLockedIds, splitInterfaceIO = false }: TreeNodeItemProps) => {
     const { t: ts } = useTranslation();
     const [fileList, setFileList] = useState<UploadFile[]>([]);
     const [uploadLoading, setUploadLoading] = useState(false);
@@ -956,6 +1005,20 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         fileList: fileList,
         disabled: uploadLoading,
         beforeUpload: async (file) => {
+            const productAutoImage = node.ref_type === "img_topo" || node.ref_type === "img_struct";
+            if (productAutoImage && onAttachExtraImage) {
+                try {
+                    setUploadLoading(true);
+                    const imgUrl = await uploadImageFile(file);
+                    if (imgUrl) onAttachExtraImage(node.id, imgUrl);
+                } catch (error) {
+                    console.error("图片上传失败:", error);
+                    message.error(ts("upload_failed"));
+                } finally {
+                    setUploadLoading(false);
+                }
+                return false;
+            }
             const captionChildren = (node.children || []).filter((c) => isEmbeddedImageCaptionNode(c));
             const logicFig = captionChildren.find((c) => /程序逻辑/.test(String(c.title || c.label || "")));
             const bodyHasLogic = !!splitProgramLogicText(String(node.text || ""));
@@ -1083,7 +1146,23 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                     };
                 };
             } else {
-                col.render = (val: any) => renderWrapped(formatTraceTableCell(header.name, val));
+                col.render = (val: any, row: any) => {
+                    if (
+                        headerName === "设计编号"
+                        && !readOnly
+                        && String(row?.type_code || "") === "2"
+                        && row?.trace_id
+                        && onCommitOtherReqDesignCode
+                    ) {
+                        return (
+                            <OtherReqDesignCodeInput
+                                value={String(val || "")}
+                                onCommit={(next) => onCommitOtherReqDesignCode(Number(row.trace_id), next)}
+                            />
+                        );
+                    }
+                    return renderWrapped(formatTraceTableCell(header.name, val));
+                };
             }
             return col;
         });
@@ -1180,6 +1259,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const navEmbeddedFigureChild = navEmbeddedFigureChildren[0];
     const multiEmbeddedFigures = navEmbeddedFigureChildren.length > 1;
     const parentGlossaryReady = /术语/.test(String(node.title || "")) && isGlossaryTable(node.table);
+    const glossaryContentAfterTable = parentGlossaryReady && (useNavChapterEditor || readOnly);
     const nodeIsReviewAppendix = (() => {
         const compactTitle = String(node.title || "").replace(/\s+/g, "");
         return node.ref_type === "review" || compactTitle === "评审记录" || compactTitle === "附件一评审结论" || compactTitle.startsWith("附件一");
@@ -1602,9 +1682,9 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const wantsProgramLogicSlot = !!bodyLogicSplit && (hasLogicFigure || navEmbeddedFigureChildren.length === 0);
     const programLogicSplit = wantsProgramLogicSlot ? bodyLogicSplit : null;
     const programLogicCaption = editFigureCaption || pendingProgramLogicCaption;
-    const figuresInBody = multiEmbeddedFigures
+    const figuresInBody = (isAutoOnlyImage ? navEmbeddedFigureChildren : (multiEmbeddedFigures
         ? navEmbeddedFigureChildren.filter((child) => !(programLogicSplit && /程序逻辑/.test(String(child.title || child.label || ""))))
-        : [];
+        : []));
     const editTextBetweenTables = showComplianceInlineInEdit ? (chapter7TableSplit?.middle || "") : "";
     const editTextAfterTable = showComplianceInlineInEdit
         ? (chapter7TableSplit?.after || "")
@@ -2276,6 +2356,26 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                       )}
                   </Space>
                   )}
+                  {useNavChapterEditor && !glossaryContentAfterTable && !readOnly && !runtimeContentLocked && !scopeChapterLocked && showNodeTableActions && (
+                      <Space className="node-free-add" size={8}>
+                          <Button
+                              size="small"
+                              onClick={() => onContentChange(node.id, `${String(node.text || "")}\n`)}
+                          >
+                              添加正文
+                          </Button>
+                          <Upload {...uploadProps}>
+                              <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
+                          </Upload>
+                          <Button
+                              size="small"
+                              icon={<TableOutlined />}
+                              onClick={() => onAddTable(node.id)}
+                          >
+                              添加表格
+                          </Button>
+                      </Space>
+                  )}
               </div>
               )}
 
@@ -2349,7 +2449,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   </div>
               )}
 
-              {showExpandedBody && stackContentBelowTitle && (
+              {showExpandedBody && stackContentBelowTitle && !glossaryContentAfterTable && (
                   <div className="node-row node-row-follow node-row-content-below">
                       <span className="node-expand-placeholder" />
                       {readOnly ? (
@@ -2502,7 +2602,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
               )}
               
               {/* 显示表格数据（ref_type 节点不展示表格；接口章本节点表放到输入/输出之后） */}
-              {showExpandedBody && hasTable && !showInterfaceTopImageSlot && !hideMisplacedReviewTable && !isDocImageRefType(node.ref_type) && node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces' && (
+              {showExpandedBody && hasTable && !showInterfaceTopImageSlot && !hideMisplacedReviewTable && node.ref_type !== 'img_flow' && node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces' && (
                   wrapReadOnlyAlignedTable(
                   <div className={`node-table${flushOwnTableTop ? " node-table--flush-top" : ""}${isInterfaceListTable(node) ? " node-table--fit-window" : ""}`}>
                       {!readOnly
@@ -2600,6 +2700,51 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   </div>,
                   `own-table-${node.id}`
                   )
+              )}
+              {glossaryContentAfterTable && showExpandedBody && (
+                  <div className="node-row node-row-follow node-row-content-below">
+                      <div className="node-content-below-title">
+                          {readOnly ? (
+                              String(editTextBeforeTable || "").trim()
+                                  ? renderReadOnlyText(editTextBeforeTable)
+                                  : null
+                          ) : (
+                              <>
+                                  {!runtimeContentLocked && !scopeChapterLocked && showNodeTableActions && (
+                                      <Space className="node-free-add" size={8}>
+                                          <Button
+                                              size="small"
+                                              onClick={() => onContentChange(node.id, `${String(node.text || "")}\n`)}
+                                          >
+                                              添加正文
+                                          </Button>
+                                          <Upload {...uploadProps}>
+                                              <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
+                                          </Upload>
+                                          <Button
+                                              size="small"
+                                              icon={<TableOutlined />}
+                                              onClick={() => onAddTable(node.id)}
+                                          >
+                                              添加表格
+                                          </Button>
+                                      </Space>
+                                  )}
+                                  <ChapterBodyTextArea
+                                      className="node-content node-text-area"
+                                      styles={{ textarea: chapterTextStyle }}
+                                      value={editTextBeforeTable}
+                                      onChange={(e) => onContentChange(node.id, e.target.value)}
+                                      placeholder={ts('srs_doc.please_input_content')}
+                                      size="small"
+                                      rows={1}
+                                      autoSize={{ minRows: 1, maxRows: 20 }}
+                                      disabled={scopeChapterLocked || runtimeContentLocked}
+                                  />
+                              </>
+                          )}
+                      </div>
+                  </div>
               )}
               {showExpandedBody && (readOnly || showSplitInlineInEdit) && anchoredInlineTables.map((child, idx) => {
                   const caption = normalizeInlineTableCaption(
@@ -2793,7 +2938,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                       )
                   )
               )}
-              {showExpandedBody && showInterfaceTopImageSlot && hasTable && !hideMisplacedReviewTable && !isDocImageRefType(node.ref_type) && node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces' && (
+              {showExpandedBody && showInterfaceTopImageSlot && hasTable && !hideMisplacedReviewTable && node.ref_type !== 'img_flow' && node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces' && (
                   wrapReadOnlyAlignedTable(
                   <div className={`node-table node-table--fit-window${flushOwnTableTop ? " node-table--flush-top" : ""}`}>
                       {renderNameEditor(editableOwnTableName, node.id, { placeholder: "请输入表名", forceShow: hasTable, style: { marginBottom: 8, fontSize: 13 } })}
@@ -3008,7 +3153,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                 );
             })}
             {showExpandedBody && renderChildren === false && !showSplitInlineInEdit && figuresInBody.map((child) => (
-                <div key={`nav-inline-figure-${child.id}`} className={`node-pic-block node-pic-block--figure-list${!isAutoOnlyImage ? " node-pic-block--reupload-side" : ""}`}>
+                <div key={`nav-inline-figure-${child.id}`} className="node-pic-block node-pic-block--figure-list node-pic-block--reupload-side">
                     <div className="node-pic-reupload-row">
                         <div className="node-pic-reupload-figure">
                             <div className="node-pic node-pic-readonly node-pic-inline">
@@ -3020,22 +3165,20 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                             </div>
                             {renderNameEditor(String(child.title || ""), child.id, { placeholder: "请输入图题", forceShow: true })}
                         </div>
-                        {!isAutoOnlyImage ? (
-                            <Upload
-                                maxCount={1}
-                                showUploadList={false}
-                                accept="image/*"
-                                disabled={uploadLoading}
-                                beforeUpload={(file) => {
-                                    void uploadImageTo(file, child.id);
-                                    return false;
-                                }}
-                            >
-                                <Button size="small" icon={<UploadOutlined />}>
-                                    重新上传
-                                </Button>
-                            </Upload>
-                        ) : null}
+                        <Upload
+                            maxCount={1}
+                            showUploadList={false}
+                            accept="image/*"
+                            disabled={uploadLoading}
+                            beforeUpload={(file) => {
+                                void uploadImageTo(file, child.id);
+                                return false;
+                            }}
+                        >
+                            <Button size="small" icon={<UploadOutlined />}>
+                                重新上传
+                            </Button>
+                        </Upload>
                     </div>
                 </div>
             ))}
@@ -3085,6 +3228,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         onOpenReqdList={onOpenReqdList}
                         onOpenTraceList={onOpenTraceList}
                         onFetchSrsTrace={onFetchSrsTrace}
+                        onCommitOtherReqDesignCode={onCommitOtherReqDesignCode}
                         traceSynced={traceSynced}
                         uploadDocFile={uploadDocFile}
                         readOnlyChapterOffset={readOnlyChapterOffset}
@@ -3122,6 +3266,7 @@ interface TreeStructureProps {
     onOpenReqdList?: () => void;   // 打开设计列表弹框
     onOpenTraceList?: () => void;  // 打开需求追溯表弹框
     onFetchSrsTrace?: () => void;
+    onCommitOtherReqDesignCode?: (traceId: number, sdsCode: string) => void;
     traceSynced?: boolean;
     extraNavSections?: { key: string; title: string; content: ReactNode }[];
     onAddRoot?: () => void;
@@ -3133,7 +3278,7 @@ interface TreeStructureProps {
     splitInterfaceIO?: boolean;
 }
 
-export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = [], onNodeDelete, readOnly, readOnlyRootWrapper = true, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, traceSynced, extraNavSections = [], onAddRoot, uploadDocFile, lockScopeChapter = false, lockRuntimeEnv = false, splitInterfaceIO = false }: TreeStructureProps) => {
+export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = [], onNodeDelete, readOnly, readOnlyRootWrapper = true, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, onCommitOtherReqDesignCode, traceSynced, extraNavSections = [], onAddRoot, uploadDocFile, lockScopeChapter = false, lockRuntimeEnv = false, splitInterfaceIO = false }: TreeStructureProps) => {
     const { t: ts } = useTranslation();
     const [nodes, setNodes] = useState<TreeNode[]>(value);
     const [tableModalVisible, setTableModalVisible] = useState(false);
@@ -3169,10 +3314,11 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
         });
     };
     const hydrateSdsCodeFallback = (nodeList: TreeNode[]): TreeNode[] => {
-        return (nodeList || []).map((node) => {
-            const nextChildren = hydrateSdsCodeFallback(node.children || []);
+        const letter = designLetterForTail(nodeList);
+        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+            const nextChildren = walk(node.children || []);
             let nextNode: TreeNode = { ...node, children: nextChildren };
-            const tailCode = tailChapterSdsCode(nextNode.title);
+            const tailCode = tailChapterSdsCode(nextNode.title, letter);
             if (tailCode) {
                 nextNode = {
                     ...nextNode,
@@ -3210,6 +3356,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
             }
             return nextNode;
         });
+        return walk(nodeList);
     };
 
     // 同步外部传入的 value 到内部状态
@@ -3442,6 +3589,29 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                 children: [],
             };
             return { ...item, children: [...children, figure] };
+        });
+        updateNodes(attach(nodes));
+    };
+
+    const handleAttachExtraImage = (parentId: number, imgUrl: string) => {
+        const figureNo = maxFigureNo(nodes) + 1;
+        const attach = (list: TreeNode[]): TreeNode[] => (list || []).map((item) => {
+            if (String(item.id) !== String(parentId)) {
+                return { ...item, children: attach(item.children || []) };
+            }
+            const name = stripNavChapterPrefix(item.title) || "附图";
+            const figure: TreeNode = {
+                id: generateId(),
+                doc_id: item.doc_id || 0,
+                n_id: 0,
+                p_id: item.n_id || 0,
+                title: `图 ${figureNo} ${name}`,
+                img_url: imgUrl,
+                text: "",
+                table: {},
+                children: [],
+            };
+            return { ...item, children: [...(item.children || []), figure] };
         });
         updateNodes(attach(nodes));
     };
@@ -3717,6 +3887,20 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
         }
         if (currentNodeId === null) return;
 
+        const findGlossaryHost = (list: TreeNode[]): TreeNode | undefined => {
+            for (const item of list || []) {
+                if (String(item.id) === String(currentNodeId)) return item;
+                const hit = findGlossaryHost(item.children || []);
+                if (hit) return hit;
+            }
+            return undefined;
+        };
+        const glossaryHost = findGlossaryHost(nodes);
+        const keepGlossaryTable = !!glossaryHost
+            && /术语/.test(String(glossaryHost.title || ""))
+            && isGlossaryTable(glossaryHost.table)
+            && hasRenderableTable(glossaryHost.table);
+
         const rebuildMergedCells = () => {
             const cells = tableCellsBackup;
             if (!cells || !Array.isArray(cells) || cells.length < 2) return undefined;
@@ -3775,6 +3959,19 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
         }
 
         const captionName = stripChapterPrefixForTableCaption(String(tableData.tableName || "").trim());
+        if (keepGlossaryTable && tableFormat && Object.keys(tableFormat).length > 0) {
+            const appended = findNodeAndUpdate(nodes, currentNodeId, (node) => {
+                const extras = [...(node.table?.extra_tables || [])];
+                extras.push({ title: captionName, table: tableFormat as TableData });
+                return { ...node, table: { ...(node.table || {}), extra_tables: extras } };
+            });
+            updateNodes(appended);
+            setTableCellsBackup(undefined);
+            setTableModalVisible(false);
+            setCurrentNodeId(null);
+            setInitialTableData(undefined);
+            return;
+        }
         const newNodes = findNodeAndUpdate(nodes, currentNodeId, (node) => {
             const keepImportTitle = /^导入表格\d*$/.test(String(node.title || "").trim());
             const nextTable = tableFormat && Object.keys(tableFormat).length > 0
@@ -3986,6 +4183,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                 onOpenReqdList,
                 onOpenTraceList,
                 onFetchSrsTrace,
+                onCommitOtherReqDesignCode,
                 traceSynced,
                 uploadDocFile,
                 readOnlyChapterOffset: effectiveReadOnlyChapterOffset,
@@ -4082,6 +4280,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                                             onSdsCodeChange={handleSdsCodeChange}
                                             onImageChange={handleImageChange}
                                             onAttachProgramLogicImage={handleAttachProgramLogicImage}
+                                            onAttachExtraImage={handleAttachExtraImage}
                                             pendingProgramLogicCaption={effectiveNode ? `图 ${maxFigureNo(nodes) + 1} ${stripNavChapterPrefix(effectiveNode.title) || ""}程序逻辑`.replace(/\s+/g, " ").trim() : ""}
                                             onContentChange={handleContentChange}
                                             onAddTable={handleAddTable}
@@ -4093,6 +4292,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                                             onOpenReqdList={onOpenReqdList}
                                             onOpenTraceList={onOpenTraceList}
                                             onFetchSrsTrace={onFetchSrsTrace}
+                                            onCommitOtherReqDesignCode={onCommitOtherReqDesignCode}
                                             traceSynced={traceSynced}
                                             uploadDocFile={uploadDocFile}
                                             readOnlyChapterOffset={effectiveReadOnlyChapterOffset}

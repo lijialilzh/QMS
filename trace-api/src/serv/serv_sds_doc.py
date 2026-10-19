@@ -1707,7 +1707,9 @@ class Server(SdsSrsTraceSyncMixin, object):
                     for child in children:
                         if is_detail(child):
                             seq += 1
-                            child.sds_code = f"{prefix}{seq:03d}"
+                            current = re.sub(r"\s+", "", str(getattr(child, "sds_code", "") or ""))
+                            if not current:
+                                child.sds_code = f"{prefix}{seq:03d}"
                         walk(getattr(child, "children", None) or [], now_ext, next_design)
                 else:
                     walk(children, now_ext, next_design)

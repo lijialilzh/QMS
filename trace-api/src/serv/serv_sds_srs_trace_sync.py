@@ -19,7 +19,7 @@ from ..obj.vobj_sds_trace import SdsTraceObj
 from ..obj import Resp
 from ..utils.sql_ctx import db
 from ..utils.i18n import ts
-from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, FIXED_RCN300_TRACES, fixed_rcn300_sds_codes, fixed_rcn300_trace_for_code, align_rcn300_tail_locations, rcn300_tail_name_key, live_rcn300_tail_chapters
+from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, FIXED_RCN300_TRACES, fixed_rcn300_sds_codes, fixed_rcn300_trace_for_code, filter_fixed_trace_to_living, design_codes_are_manual, align_rcn300_tail_locations, rcn300_tail_name_key, live_rcn300_tail_chapters
 from .serv_sds_reqd import Server as ServSdsReqd
 
 logger = logging.getLogger(__name__)
@@ -2170,9 +2170,24 @@ class SdsSrsTraceSyncMixin:
         hierarchy_map = _trace_load_srs_req_hierarchy_map(srs_doc_id)
         self._restore_product_root_headings(roots)
         strict_location_map = self._build_strict_srs_trace_location_map(rows, hierarchy_map, roots)
+        living_codes = [getattr(req, "code", "") or "" for _trace, req in rows]
         for trace, req in rows:
-            fixed_trace = fixed_rcn300_trace_for_code(getattr(req, "code", "") or "")
-            if fixed_trace:
+            fixed_full = fixed_rcn300_trace_for_code(getattr(req, "code", "") or "")
+            fixed_trace = filter_fixed_trace_to_living(fixed_full, living_codes) if fixed_full is not None else None
+            if str(getattr(req, "type_code", "") or "") == "2":
+                if fixed_full is not None:
+                    if design_codes_are_manual(
+                        getattr(trace, "sds_code", ""),
+                        [item[0] for item in (fixed_trace or [])],
+                        [item[0] for item in fixed_full],
+                    ):
+                        continue
+                elif design_codes_are_manual(
+                    getattr(trace, "sds_code", ""),
+                    [(getattr(req, "code", "") or "").replace("SRS", "SDS")],
+                ):
+                    continue
+            if fixed_full is not None:
                 trace.sds_code = "\n".join(item[0] for item in fixed_trace)
                 trace.chapter = "\n".join(item[1] for item in fixed_trace)
                 trace.location = align_rcn300_tail_locations(

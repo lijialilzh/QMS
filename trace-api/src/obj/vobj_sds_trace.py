@@ -20,6 +20,7 @@ class SdsTraceObj(SdsTraceForm):
 
     type_code: Optional[str] = Field(title="需求类型")
     type_name: Optional[str] = Field(title="需求类型名称")
+    design_manual: Optional[bool] = Field(default=False, title="其他需求设计编号已手改")
 
     module: Optional[str] = Field(title="模块")
     function: Optional[str] = Field(title="功能")

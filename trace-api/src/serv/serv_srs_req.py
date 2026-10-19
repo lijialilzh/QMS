@@ -526,17 +526,37 @@ class Server(object):
             if changed:
                 node.table = table
 
+    @staticmethod
+    def __is_sds_front_or_appendix(title: str) -> bool:
+        compact = re.sub(r"\s+", "", str(title or ""))
+        if not compact:
+            return False
+        if compact.startswith("附件") or "评审结论" in compact or "评审记录" in compact:
+            return True
+        return compact in ("目录", "软件详细设计", "文件修订记录") or "软件详细设计" in compact
+
     def __sync_sds_codes_from_req_code(self, req_row: SrsReq, old_code: str = None):
-        from .serv_sds_trace import fixed_rcn300_trace_for_code
+        from .serv_sds_trace import design_codes_are_manual, filter_fixed_trace_to_living, fixed_rcn300_trace_for_code
         new_sds_code = self.__to_sds_code(req_row.code)
         old_sds_code = self.__to_sds_code(old_code)
         if not new_sds_code or new_sds_code == old_sds_code:
             return
         fixed_trace = fixed_rcn300_trace_for_code(req_row.code)
-        if fixed_trace:
+        if fixed_trace is not None:
+            living_codes = db.session.execute(
+                select(SrsReq.code).where(SrsReq.doc_id == req_row.doc_id).where(SrsReq.type_code != "reqd")
+            ).scalars().all()
+            fixed_trace = filter_fixed_trace_to_living(fixed_trace, living_codes)
+        if fixed_trace is not None:
             traces: List[SdsTrace] = db.session.execute(
                 select(SdsTrace).where(SdsTrace.req_id == req_row.id)
             ).scalars().all()
+            auto_lines = [item[0] for item in fixed_trace]
+            full_lines = [item[0] for item in (fixed_rcn300_trace_for_code(req_row.code) or [])]
+            if str(req_row.type_code or "") == "2" and any(
+                design_codes_are_manual(trace.sds_code, auto_lines, full_lines) for trace in traces
+            ):
+                return
             sds_code = "\n".join(item[0] for item in fixed_trace)
             chapter = "\n".join(item[1] for item in fixed_trace)
             location = "\n".join(item[2] for item in fixed_trace)
@@ -551,6 +571,8 @@ class Server(object):
         ).scalars().all()
         for trace in traces:
             previous_code = str(trace.sds_code or "").strip()
+            if str(req_row.type_code or "") == "2" and design_codes_are_manual(previous_code, [old_sds_code or previous_code]):
+                continue
             previous_norm = self.__to_sds_code(previous_code)
             if not previous_code:
                 trace.sds_code = new_sds_code
@@ -570,18 +592,20 @@ class Server(object):
                 node_code = self.__to_sds_code(getattr(node, "sds_code", "") or "")
                 if node_code not in old_node_codes and node_code != new_sds_code:
                     continue
+                if self.__is_sds_front_or_appendix(getattr(node, "title", "")):
+                    continue
                 node.sds_code = new_sds_code
-                if display_name and getattr(trace, "location", None):
-                    node.title = f"{trace.location} {display_name}"
                 matched = True
             if not matched and getattr(trace, "location", None):
                 heading = str(trace.location or "").strip()
+                if "\n" in heading:
+                    continue
                 for node in nodes:
                     title = str(getattr(node, "title", "") or "").strip()
+                    if self.__is_sds_front_or_appendix(title):
+                        continue
                     if re.match(rf"^{re.escape(heading)}(?:\s|$)", title):
                         node.sds_code = new_sds_code
-                        if display_name:
-                            node.title = f"{heading} {display_name}"
 
     async def add_srs_req(self, form: SrsReqForm):
         try:
