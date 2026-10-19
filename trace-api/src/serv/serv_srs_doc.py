@@ -5706,6 +5706,11 @@ class Server(object):
         def __norm_point(value: str) -> str:
             return re.sub(r"\s+", "", str(value or ""))
 
+        def __req_series(code: str) -> str:
+            txt = re.sub(r"\s+", "", str(code or "").strip().upper())
+            matched = re.match(r"^SRS-[A-Z]+(\d+)-\d+$", txt)
+            return matched.group(1) if matched else ""
+
         def __collapse_case_codes(items: list) -> list:
             tests = list({item.code: item.code for item in items}.keys())
             return [tests[0], tests[len(tests) - 1]] if len(tests) > 1 else tests[:1]
@@ -5799,8 +5804,9 @@ class Server(object):
                 func_name = __norm_point(getattr(row_test, "function", "") or "")
                 if code and func_name:
                     code_funcs.setdefault(code, set()).add(func_name)
-                if func_name and srs_code_raw in allowed:
-                    func_items.setdefault(func_name, {}).setdefault(norm_stage, []).append(row_test)
+                series = __req_series(srs_code_raw)
+                if func_name and series and srs_code_raw in allowed:
+                    func_items.setdefault((series, func_name), {}).setdefault(norm_stage, []).append(row_test)
                 if code and srs_code_raw.startswith("SDS-IF"):
                     unit_case_to_sis.setdefault(code, set()).add(srs_code_raw)
             
@@ -5809,9 +5815,9 @@ class Server(object):
                 for stage, items in test_data.items():
                     test_codes.setdefault(srs_code, {}).setdefault(stage, []).extend(__collapse_case_codes(items))
             func_codes = dict()
-            for func_name, stage_map in func_items.items():
+            for func_key, stage_map in func_items.items():
                 for stage, items in stage_map.items():
-                    func_codes.setdefault(func_name, {})[stage] = __collapse_case_codes(items)
+                    func_codes.setdefault(func_key, {})[stage] = __collapse_case_codes(items)
 
             req_pairs = dict()
             sds_uset = dict()
@@ -5949,12 +5955,13 @@ class Server(object):
         node_rcm_codes = __query_node_rcm_codes(row_srsdoc.id, [str(row.code or "").strip().upper() for _, _, row in rows])
         req_code_set = {str(row.code or "").strip().upper() for _, _, row in rows if str(row.code or "").strip()}
         req_tests, req_pairs, stage_code_index, func_tests, code_funcs = __query_tests(row_srsdoc.product_id, req_code_set)
-        req_points = set()
+        req_points_by_series = dict()
         for _, _, req_row in rows:
+            series = __req_series(getattr(req_row, "code", "") or "")
             for point in (req_row.sub_function, req_row.function):
                 point_name = __norm_point(point)
                 if point_name:
-                    req_points.add(point_name)
+                    req_points_by_series.setdefault(series, set()).add(point_name)
         row_product = db.session.execute(select(Product).where(Product.id == row_srsdoc.product_id)).scalars().first()
         type_rows: List[SrsType] = db.session.execute(select(SrsType).where(SrsType.doc_id == row_srsdoc.id)).scalars().all()
         type_names = {str(row.type_code or ""): row.type_name for row in type_rows}
@@ -6016,21 +6023,25 @@ class Server(object):
 
             sub_point = __norm_point(row.sub_function)
             func_point = __norm_point(row.function)
-            # 子功能优先，对不上再用功能。中间插入把编号顺延后，用例仍挂在功能点上。
-            matched_point = sub_point if sub_point and sub_point in func_tests else (func_point if func_point and func_point in func_tests else "")
+            series = __req_series(row.code)
+            # 子功能优先，对不上再用功能。只在同一编号主段内按功能点改挂，避免变更需求被别的主段抢走。
+            matched_point = sub_point if sub_point and (series, sub_point) in func_tests else (
+                func_point if func_point and (series, func_point) in func_tests else ""
+            )
             function_matched = bool(matched_point)
             if function_matched:
-                test_data = {stage: list(codes) for stage, codes in (func_tests.get(matched_point) or {}).items()}
+                test_data = {stage: list(codes) for stage, codes in (func_tests.get((series, matched_point)) or {}).items()}
             else:
                 test_data = dict(req_tests.get(row.code) or {})
                 own_points = {name for name in (sub_point, func_point) if name}
+                same_series_points = req_points_by_series.get(series) or set()
 
                 def __keep_by_point(code: str) -> bool:
                     funcs = code_funcs.get(str(code or "").strip().upper()) or set()
                     if not funcs or funcs & own_points:
                         return True
-                    # 功能点已经是本文档另一条需求的，不再按旧编号挂到新插入的需求上。
-                    return not bool(funcs & req_points)
+                    # 同一主段里功能点已经指向另一条需求时，不再按旧编号挂过来。别的主段不抢。
+                    return not bool(funcs & same_series_points)
 
                 test_data = {
                     stage: [code for code in (codes or []) if __keep_by_point(code)]
