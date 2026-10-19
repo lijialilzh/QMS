@@ -108,6 +108,7 @@ interface TreeNodeItemProps {
     onAddSibling: (nodeId: number, position: 'before' | 'after', defaultTitle: string) => void;
     onDelete: (id: number) => Promise<void>;
     onTitleChange: (id: number, title: string) => void;
+    onTableNameChange?: (id: number, name: string) => void;
     onSdsCodeChange: (id: number, value: string) => void;
     onImageChange: (id: number, imgUrl: string) => void;
     onAttachProgramLogicImage?: (parentId: number, imgUrl: string) => void;
@@ -268,8 +269,18 @@ function resolveEditableTableCaption(node: TreeNode): string {
     const fromLabel = String(node.label || "").trim();
     if (fromLabel && !isSyntheticTableCaption(fromLabel) && !isJsonLikeKeyValueLine(fromLabel)) return fromLabel;
     const fromTitle = String(node.title || "").trim();
-    if (fromTitle && !isSyntheticTableCaption(fromTitle) && !isSystemPlaceholderTitle(fromTitle)) return fromTitle;
+    // 章节标题和「导入表格N」都不是表名。
+    if (isNumberedChapterTitle(fromTitle) || isSyntheticTableCaption(fromTitle)) return fromName || "";
+    if (fromTitle && !isSystemPlaceholderTitle(fromTitle) && isLikelyTableCaptionLine(fromTitle) && !/^导入表格\d*$/.test(fromTitle)) {
+        return fromTitle;
+    }
     return fromName || "";
+}
+
+function visibleTableCaption(node: TreeNode): string {
+    const name = resolveEditableTableCaption(node);
+    if (!name || isSyntheticTableCaption(name) || /^导入表格\d*$/.test(name)) return "";
+    return name;
 }
 
 function isGlossaryTable(table?: { headers?: Array<{ name?: string }> } | null): boolean {
@@ -937,7 +948,7 @@ function ChapterBodyTextArea(props: React.ComponentProps<typeof Input.TextArea>)
     );
 }
 
-const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onSdsCodeChange, onImageChange, onAttachProgramLogicImage, onAttachExtraImage, pendingProgramLogicCaption = "", onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onEditExtraTable, onDeleteExtraTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, onCommitOtherReqDesignCode, traceSynced, uploadDocFile, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [], useNavChapterEditor = false, autoNavChapterNo = "", lockScopeChapter = false, lockRuntimeEnv = false, runtimeLockedIds, sdsSyncLockedIds, splitInterfaceIO = false }: TreeNodeItemProps) => {
+const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onTableNameChange, onSdsCodeChange, onImageChange, onAttachProgramLogicImage, onAttachExtraImage, pendingProgramLogicCaption = "", onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onEditExtraTable, onDeleteExtraTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, onCommitOtherReqDesignCode, traceSynced, uploadDocFile, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [], useNavChapterEditor = false, autoNavChapterNo = "", lockScopeChapter = false, lockRuntimeEnv = false, runtimeLockedIds, sdsSyncLockedIds, splitInterfaceIO = false }: TreeNodeItemProps) => {
     const { t: ts } = useTranslation();
     const [fileList, setFileList] = useState<UploadFile[]>([]);
     const [uploadLoading, setUploadLoading] = useState(false);
@@ -1132,8 +1143,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                     const cell = bodyCells[rowIndex]?.[index];
                     const rowSpan = cell?.row_span ?? 1;
                     const colSpan = cell?.col_span ?? 1;
-                    const hAlign = (cell?.h_align || "left") as "left" | "center" | "right";
-                    const vAlign = (cell?.v_align || "top") as "top" | "middle" | "bottom";
+                    const hAlign = (isIfaceList ? "left" : (cell?.h_align || "left")) as "left" | "center" | "right";
+                    const vAlign = (isIfaceList ? "top" : (cell?.v_align || "top")) as "top" | "middle" | "bottom";
                     const cellValue = formatTraceTableCell(header.name, cell?.value);
                     return {
                         children: renderWrapped(cellValue),
@@ -1801,21 +1812,35 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         )
         : "";
     const sanitizedEditTableCaption = isSyntheticTableCaption(editFinalTableCaption) ? "" : editFinalTableCaption;
-    const editableOwnTableName = String(
-        resolveEditableTableCaption(node)
-        || (isLikelyTableCaptionLine(titleWithoutChapter || title)
-            ? stripChapterPrefixForTableCaption(titleWithoutChapter || title)
-            : "")
-        || normalizeInlineTableCaption(node.table?.name)
-        || sanitizedEditTableCaption
-        || "",
+    const storedTableName = normalizeInlineTableCaption(node.table?.name);
+    const captionOnChapterTitle = isLikelyTableCaptionLine(titleWithoutChapter || title)
+        ? stripChapterPrefixForTableCaption(titleWithoutChapter || title)
+        : "";
+    // 左侧正在编的是章节。表名写在表格自己的名称上，可以和章节名相同。
+    const chapterOwnsTable = hasTable && !isEmbeddedTableNode(node) && (
+        useNavChapterEditor || isNumberedChapterTitle(title) || !isLikelyTableCaptionLine(String(title || ""))
     );
+    const editableOwnTableName = chapterOwnsTable
+        ? (
+            storedTableName && !isSyntheticTableCaption(storedTableName)
+                ? storedTableName
+                : (captionOnChapterTitle && !isSyntheticTableCaption(captionOnChapterTitle) ? captionOnChapterTitle : "")
+        )
+        : String(
+            resolveEditableTableCaption(node)
+            || (isLikelyTableCaptionLine(titleWithoutChapter || title)
+                ? stripChapterPrefixForTableCaption(titleWithoutChapter || title)
+                : "")
+            || storedTableName
+            || sanitizedEditTableCaption
+            || "",
+        );
     const editFigureCaptionNodeId = navEmbeddedFigureChild?.id || navEmbeddedDocImageChild?.id || undefined;
     /** 编辑态表名/图题可改；只读仍纯文本。运行环境锁定时不可改。 */
     const renderNameEditor = (
         value: string,
         targetId?: number | null,
-        opts?: { placeholder?: string; style?: CSSProperties; forceShow?: boolean },
+        opts?: { placeholder?: string; style?: CSSProperties; forceShow?: boolean; asTableName?: boolean },
     ) => {
         const text = String(value || "");
         const trimmed = text.trim();
@@ -1839,7 +1864,10 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                 className="node-caption-input"
                 size="small"
                 value={text}
-                onChange={(e) => onTitleChange(targetId, e.target.value)}
+                onChange={(e) => {
+                    if (opts?.asTableName && onTableNameChange) onTableNameChange(targetId, e.target.value);
+                    else onTitleChange(targetId, e.target.value);
+                }}
                 placeholder={opts?.placeholder || "请输入名称"}
                 style={{
                     textAlign: "center",
@@ -2606,10 +2634,10 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   wrapReadOnlyAlignedTable(
                   <div className={`node-table${flushOwnTableTop ? " node-table--flush-top" : ""}${isInterfaceListTable(node) ? " node-table--fit-window" : ""}`}>
                       {!readOnly
-                          ? renderNameEditor(editableOwnTableName, node.id, { placeholder: "请输入表名", forceShow: hasTable, style: { marginBottom: 8, fontSize: 13 } })
-                          : (!!sanitizedFinalTableCaption && (
+                          ? renderNameEditor(editableOwnTableName, node.id, { placeholder: "请输入表名", forceShow: hasTable, asTableName: chapterOwnsTable, style: { marginBottom: 8, fontSize: 13 } })
+                          : (!!(chapterOwnsTable ? editableOwnTableName : sanitizedFinalTableCaption) && (
                           <div className="node-content" style={{ marginBottom: 8, textAlign: "center", fontSize: 13, fontWeight: 400 }}>
-                              {sanitizedFinalTableCaption}
+                              {chapterOwnsTable ? editableOwnTableName : sanitizedFinalTableCaption}
                           </div>
                       ))}
                       <div className="node-table-header">
@@ -2760,7 +2788,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           className={`node-table node-table--fit-window${flushFirstInlineTableTop && idx === 0 ? " node-table--flush-top" : ""}`}
                           key={`anchored-inline-table-${child.id}-${idx}`}
                       >
-                          {renderNameEditor(resolveEditableTableCaption(child) || sanitizedCaption, child.id, { placeholder: "请输入表名", forceShow: !readOnly, style: { marginBottom: 8, fontSize: 13 } })}
+                          {renderNameEditor(visibleTableCaption(child), child.id, { placeholder: "请输入表名", forceShow: !readOnly, asTableName: true, style: { marginBottom: 8, fontSize: 13 } })}
                           <div className="node-table-header">
                               <div className="node-table-scroll">
                                   <Table
@@ -2856,7 +2884,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           className="node-table"
                           key={`middle-inline-table-${child.id}-${idx}`}
                       >
-                          {renderNameEditor(resolveEditableTableCaption(child) || sanitizedCaption, child.id, { placeholder: "请输入表名", forceShow: !readOnly, style: { marginBottom: 8, fontSize: 13 } })}
+                          {renderNameEditor(visibleTableCaption(child), child.id, { placeholder: "请输入表名", forceShow: !readOnly, asTableName: true, style: { marginBottom: 8, fontSize: 13 } })}
                           <div className="node-table-header">
                               <div className="node-table-scroll">
                                   <Table
@@ -2941,7 +2969,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
               {showExpandedBody && showInterfaceTopImageSlot && hasTable && !hideMisplacedReviewTable && node.ref_type !== 'img_flow' && node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces' && (
                   wrapReadOnlyAlignedTable(
                   <div className={`node-table node-table--fit-window${flushOwnTableTop ? " node-table--flush-top" : ""}`}>
-                      {renderNameEditor(editableOwnTableName, node.id, { placeholder: "请输入表名", forceShow: hasTable, style: { marginBottom: 8, fontSize: 13 } })}
+                      {renderNameEditor(editableOwnTableName, node.id, { placeholder: "请输入表名", forceShow: hasTable, asTableName: chapterOwnsTable, style: { marginBottom: 8, fontSize: 13 } })}
                       <div className="node-table-header">
                           <div className="node-table-scroll">
                               <Table
@@ -2989,7 +3017,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           className={`node-table node-table--fit-window${flushFirstInlineTableTop && idx === 0 ? " node-table--flush-top" : ""}`}
                           key={`inline-table-${child.id}-${idx}`}
                       >
-                          {renderNameEditor(resolveEditableTableCaption(child) || sanitizedCaption, child.id, { placeholder: "请输入表名", forceShow: !readOnly, style: { marginBottom: 8, fontSize: 13 } })}
+                          {renderNameEditor(visibleTableCaption(child), child.id, { placeholder: "请输入表名", forceShow: !readOnly, asTableName: true, style: { marginBottom: 8, fontSize: 13 } })}
                           <div className="node-table-header">
                               <div className="node-table-scroll">
                                   <Table
@@ -3104,7 +3132,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                 style={{ textAlign: "left", cursor: "pointer", marginBottom: 0, lineHeight: 1.7 }}
                                 onClick={() => setOpenInlineTableId(child.id)}
                             >
-                                {tableCaption || storedCaption}
+                                {visibleTableCaption(child) || (isSyntheticTableCaption(tableCaption) ? "" : tableCaption)}
                             </div>
                         </div>
                     );
@@ -3113,11 +3141,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                 <div key={`nav-inline-table-${child.id}`} className="node-table" style={{ marginTop: idx === 0 ? 8 : 12 }}>
                     {manyInlineTables ? (
                         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                            {renderNameEditor(resolveEditableTableCaption(child) || tableCaption || storedCaption, child.id, { placeholder: "请输入表名", forceShow: true, style: { textAlign: "left", marginBottom: 0, flex: 1 } })}
+                            {renderNameEditor(visibleTableCaption(child), child.id, { placeholder: "请输入表名", forceShow: true, asTableName: true, style: { textAlign: "left", marginBottom: 0, flex: 1 } })}
                             <Button size="small" type="link" onClick={() => setOpenInlineTableId(null)}>收起</Button>
                         </div>
                     ) : (showStoredCaption || !readOnly || !!resolveEditableTableCaption(child)) ? (
-                        renderNameEditor(resolveEditableTableCaption(child) || storedCaption, child.id, { placeholder: "请输入表名", forceShow: !readOnly })
+                        renderNameEditor(visibleTableCaption(child), child.id, { placeholder: "请输入表名", forceShow: !readOnly, asTableName: true })
                     ) : null}
                     <div className="node-table-scroll">
                         <Table
@@ -3216,6 +3244,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         onAddSibling={onAddSibling}
                         onDelete={onDelete}
                         onTitleChange={onTitleChange}
+                        onTableNameChange={onTableNameChange}
                         onSdsCodeChange={onSdsCodeChange}
                         onImageChange={onImageChange}
                         onContentChange={onContentChange}
@@ -3524,6 +3553,13 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                     table: node.table ? { ...node.table, name: title } : { name: title },
                 };
             }
+            const hasChildTable = (node.children || []).some((child) => hasRenderableTable(child.table));
+            const chapterTitle = isNumberedChapterTitle(String(node.title || "")) || hasChildTable || (
+                !isEmbeddedTableNode(node)
+                && !/^导入表格\d*$/.test(String(node.title || "").trim())
+                && !isLikelyTableCaptionLine(String(node.title || ""))
+            );
+            if (chapterTitle) return { ...node, title };
             const next: TreeNode = { ...node, title };
             // 字段表等：表名写在 title，同步 table.name / 同名 label，导出与输入框一致
             if (node.table && (hasRenderableTable(node.table) || String(node.table.name || "").trim() || isLikelyTableCaptionLine(title))) {
@@ -3534,6 +3570,14 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
             }
             return next;
         });
+        updateNodes(newNodes);
+    };
+
+    const handleTableNameChange = (id: number, name: string) => {
+        const newNodes = findNodeAndUpdate(nodes, id, (node) => ({
+            ...node,
+            table: { ...(node.table || {}), name },
+        }));
         updateNodes(newNodes);
     };
 
@@ -4171,6 +4215,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                 onAddSibling: handleAddSibling,
                 onDelete: handleDelete,
                 onTitleChange: handleTitleChange,
+                onTableNameChange: handleTableNameChange,
                 onSdsCodeChange: handleSdsCodeChange,
                 onImageChange: handleImageChange,
                 onContentChange: handleContentChange,
@@ -4277,6 +4322,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                                             onAddSibling={handleAddSibling}
                                             onDelete={handleDelete}
                                             onTitleChange={handleTitleChange}
+                                            onTableNameChange={handleTableNameChange}
                                             onSdsCodeChange={handleSdsCodeChange}
                                             onImageChange={handleImageChange}
                                             onAttachProgramLogicImage={handleAttachProgramLogicImage}

@@ -1576,6 +1576,52 @@ class SdsSrsTraceSyncMixin:
 
         return dedupe_children(roots or [])
 
+    def _dedupe_same_code_title_siblings(self, roots: List[SdsNodeForm]) -> List[SdsNodeForm]:
+        """同一父级下，标题和设计编号都相同的章节只留一节。"""
+        def score(node: SdsNodeForm) -> tuple:
+            text_len = len(str(getattr(node, "text", "") or ""))
+            child_len = len(getattr(node, "children", None) or [])
+            img_len = len(str(getattr(node, "img_url", "") or ""))
+            return (child_len, text_len, img_len)
+
+        def merge(keeper: SdsNodeForm, duplicate: SdsNodeForm):
+            if not (getattr(keeper, "text", "") or "").strip() and (getattr(duplicate, "text", "") or "").strip():
+                keeper.text = duplicate.text
+            if not (getattr(keeper, "img_url", "") or "").strip() and (getattr(duplicate, "img_url", "") or "").strip():
+                keeper.img_url = duplicate.img_url
+            if not getattr(keeper, "table", None) and getattr(duplicate, "table", None):
+                keeper.table = duplicate.table
+            keeper.children = list(getattr(keeper, "children", None) or [])
+            for child in getattr(duplicate, "children", None) or []:
+                if child not in keeper.children:
+                    keeper.children.append(child)
+
+        def walk(nodes: List[SdsNodeForm]) -> List[SdsNodeForm]:
+            kept: List[SdsNodeForm] = []
+            index: Dict[tuple, SdsNodeForm] = {}
+            for node in nodes or []:
+                node.children = walk(getattr(node, "children", None) or [])
+                title = self._normalize_sds_node_title(
+                    self._strip_sds_heading_text(getattr(node, "title", "") or "")
+                )
+                code = re.sub(r"\s+", "", str(getattr(node, "sds_code", "") or "").strip().upper())
+                key = (title, code) if title and code else None
+                prev = index.get(key) if key else None
+                if prev is None:
+                    if key:
+                        index[key] = node
+                    kept.append(node)
+                    continue
+                if score(node) > score(prev):
+                    merge(node, prev)
+                    kept[kept.index(prev)] = node
+                    index[key] = node
+                else:
+                    merge(prev, node)
+            return kept
+
+        return walk(roots or [])
+
     def _is_change_requirement(self, code: str, type_code: str) -> bool:
         series_num = self._rcn_series_num(code)
         type_code = str(type_code or "").strip()
@@ -3808,7 +3854,9 @@ class SdsSrsTraceSyncMixin:
                     if title_norm and title_norm != root_title:
                         existing = None
                 if existing is not None and self._is_in_fixed_template_zone(roots, existing, parent_map, design_roots):
-                    existing = None
+                    existing_code = re.sub(r"\s+", "", str(getattr(existing, "sds_code", "") or "").strip().upper())
+                    if existing_code != code:
+                        existing = None
                 if existing is not None and self._rcn_series_num(code) == 307:
                     self._detach_node(roots, existing)
                     by_code.pop(code, None)
@@ -3981,7 +4029,12 @@ class SdsSrsTraceSyncMixin:
             raw_code = getattr(_trace, "sds_code", "") or str(getattr(req, "code", "") or "").replace("SRS", "SDS")
             for code_token in re.split(r"[\r\n,，;；]+", str(raw_code)):
                 code = normalize_code(code_token)
-                if not code or code in by_code or code in fixed_rcn300_sds_codes():
+                if (
+                    not code
+                    or code in by_code
+                    or code in fixed_rcn300_sds_codes()
+                    or self._find_node_by_code_in_tree(roots, code) is not None
+                ):
                     continue
                 fields = sdstrace_serv.hierarchy_for_req(req, hierarchy_map)
                 if is_algorithm_requirement(req, fields):
@@ -4057,6 +4110,7 @@ class SdsSrsTraceSyncMixin:
         roots = self._prune_sync_branches_without_active_trace(roots, trace_rows)
         roots = cleanup_unmatched_generated_leaves(roots)
         roots = self._dedupe_sync_area_siblings_by_title(roots)
+        roots = self._dedupe_same_code_title_siblings(roots)
         roots = self._dedupe_requirement_nodes(roots)
         self._reparent_misplaced_sync_leaves(roots, trace_rows, hierarchy_map, hierarchy_titles)
         roots = self._remove_empty_duplicate_sync_containers(roots)

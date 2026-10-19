@@ -130,10 +130,60 @@ function isNumberedSdsRoot(node: TreeNode) {
 
 let sdsOtherReqChapterSeq = 0;
 
+function isTemporarySdsCode(code?: string) {
+    return /^TMP/i.test(String(code || "").replace(/\s+/g, ""));
+}
+
+function clearTemporarySdsCodes(nodes: TreeNode[]): TreeNode[] {
+    return (nodes || []).map((node) => {
+        const next: TreeNode = {
+            ...node,
+            children: clearTemporarySdsCodes((node.children || []) as TreeNode[]),
+        };
+        if (isTemporarySdsCode((next as any).sds_code)) {
+            delete (next as any).sds_code;
+        }
+        return next;
+    });
+}
+
+function isPlaceholderReqText(text?: string) {
+    const labels = ["(1) 总体描述", "(2) 功能", "(3) 程序逻辑", "(4) 输入项", "(5) 输出项", "(6) 接口"];
+    const lines = String(text || "").replace(/\r/g, "").split("\n").map((line) => line.trim()).filter(Boolean);
+    if (!lines.length || lines.length !== labels.length * 2) return false;
+    return labels.every((label) => lines.includes(label)) && lines.every((line) => line === "无" || labels.includes(line));
+}
+
+function dropSameTitlePlaceholderChildren(nodes: TreeNode[]): TreeNode[] {
+    return (nodes || []).map((node) => {
+        const parentName = stripNavChapterPrefix(node.title || "");
+        const children = ((node.children || []) as TreeNode[]).filter((child) => {
+            const sameTitle = sdsTitleMatchesModule(child.title || "", parentName);
+            const emptyBranch = !((child.children || []) as TreeNode[]).length && !String(child.img_url || "").trim();
+            const tableRows = (child.table as any)?.rows;
+            const noTable = !tableRows || !tableRows.length;
+            return !(sameTitle && emptyBranch && noTable && isPlaceholderReqText(child.text));
+        });
+        return { ...node, children: dropSameTitlePlaceholderChildren(children) };
+    });
+}
+
+function fixedModuleForSrsCode(code?: string) {
+    return fixedSds300ModuleName(String(code || "").replace(/^SRS/i, "SDS"));
+}
+
+function rootHasModule(roots: TreeNode[], module: string) {
+    return (roots || []).some((node) =>
+        !isSdsFrontMatterTitle(node.title) &&
+        !isSdsAppendixTitle(node.title, node.ref_type) &&
+        sdsTitleMatchesModule(node.title || "", module)
+    );
+}
+
 function ensureSdsOtherReqChapterNodes(nodes: TreeNode[], otherRows: any[]): TreeNode[] {
-    const roots = nodes || [];
+    let roots = dropSameTitlePlaceholderChildren(clearTemporarySdsCodes(nodes || []));
     const seenCodes = new Set<string>();
-    const pending = (otherRows || [])
+    const rows = (otherRows || [])
         .map((row) => ({
             code: String(row?.code || row?.srs_code || "").replace(/\s+/g, "").toUpperCase(),
             module: String(row?.module || "").trim(),
@@ -142,27 +192,55 @@ function ensureSdsOtherReqChapterNodes(nodes: TreeNode[], otherRows: any[]): Tre
             if (!row.code || !row.module || !row.code.startsWith("SRS-") || seenCodes.has(row.code)) return false;
             seenCodes.add(row.code);
             return true;
+        });
+    const moduleOrder = Object.values(FIXED_SDS300_MODULE_NAME);
+    roots = roots.map((node) => {
+        if (!isTemporarySdsCode((node as any).sds_code) && String((node as any).sds_code || "").trim()) return node;
+        const matched = rows.find((row) => {
+            const fixedName = fixedModuleForSrsCode(row.code);
+            return [fixedName, row.module].filter(Boolean).some((name) => sdsTitleMatchesModule(node.title || "", name));
+        });
+        if (!matched) return node;
+        return { ...node, sds_code: matched.code.replace(/^SRS/, "SDS") };
+    });
+    const pending = rows
+        .map((row) => {
+            const fixedName = fixedModuleForSrsCode(row.code);
+            const preset = isPresetRcn300OtherReq(row.code);
+            return { ...row, chapterName: preset ? fixedName : row.module, preset };
         })
-        .filter((row) => !isPresetRcn300OtherReq(row.code) && !row.module.replace(/\s+/g, "").includes("法规符合"))
-        .filter((row) => !sdsOtherReqChapterExists(roots, row.module, row.code.replace(/^SRS/, "SDS")))
+        .filter((row) => {
+            if (row.module.replace(/\s+/g, "").includes("法规符合")) return false;
+            if (row.preset && !row.chapterName) return false;
+            return true;
+        })
+        .filter((row) => {
+            if (row.preset) {
+                return !rootHasModule(roots, row.chapterName) && !rootHasModule(roots, row.module);
+            }
+            return !sdsOtherReqChapterExists(roots, row.module, row.code.replace(/^SRS/, "SDS"));
+        })
         .sort((left, right) => compareOtherReqCode(left.code, right.code));
     if (!pending.length) return roots;
     const nextRoots = [...roots];
-    const insertAt = nextRoots.findIndex((node) => isSdsAppendixTitle(node.title, node.ref_type));
-    let cursor = insertAt >= 0 ? insertAt : nextRoots.length;
-    const startNo = nextRoots.slice(0, cursor).filter(isNumberedSdsRoot).length + 1;
-    pending.forEach((row, index) => {
+    pending.forEach((row) => {
+        const orderIndex = moduleOrder.indexOf(row.chapterName);
+        const laterNames = orderIndex >= 0 ? moduleOrder.slice(orderIndex + 1) : [];
+        const moduleAt = laterNames.length
+            ? nextRoots.findIndex((node) => laterNames.some((name) => sdsTitleMatchesModule(node.title || "", name)))
+            : -1;
+        const appendixAt = nextRoots.findIndex((node) => isSdsAppendixTitle(node.title, node.ref_type));
+        const insertAt = moduleAt >= 0 ? moduleAt : (appendixAt >= 0 ? appendixAt : nextRoots.length);
         sdsOtherReqChapterSeq += 1;
-        const chapterNo = String(startNo + index);
-        nextRoots.splice(cursor, 0, {
+        const chapterNo = String(nextRoots.slice(0, insertAt).filter(isNumberedSdsRoot).length + 1);
+        nextRoots.splice(insertAt, 0, {
             id: Date.now() * 1000 + sdsOtherReqChapterSeq,
             n_id: 0,
-            title: `${chapterNo} ${row.module}`,
+            title: `${chapterNo} ${row.chapterName}`,
             sds_code: row.code.replace(/^SRS/, "SDS"),
             text: "",
             children: [],
         });
-        cursor += 1;
     });
     return nextRoots;
 }
@@ -2004,7 +2082,8 @@ export default () => {
         if (composed) return composed;
         return normalizeReqNamePart(String(row?.chapter || ""));
     };
-    const syncMissingReqdNodes = async (roots: TreeNode[], docId?: number): Promise<TreeNode[]> => {
+    const syncMissingReqdNodes = async (inputRoots: TreeNode[], docId?: number): Promise<TreeNode[]> => {
+        const roots = dropSameTitlePlaceholderChildren(inputRoots);
         if (isReadOnly || !docId || !Array.isArray(roots) || roots.length === 0) return roots;
         try {
             const res: any = await ApiSdsReqd.list_sds_reqd({
@@ -2017,7 +2096,10 @@ export default () => {
             const rows = res?.data?.rows || [];
             if (!rows.length) return roots;
 
-            const getDesignCode = (row: any) => normalizeReqCode(row?.sds_code) || toSdsCode(row?.srs_code || row?.req_id);
+            const getDesignCode = (row: any) => {
+                const code = normalizeReqCode(row?.sds_code) || toSdsCode(row?.srs_code || row?.req_id);
+                return code.startsWith("SDS-") ? code : "";
+            };
             const rowBySdsCode = new Map<string, any>();
             rows.forEach((row: any) => {
                 const code = getDesignCode(row);
@@ -2176,7 +2258,7 @@ export default () => {
                     })
                     .filter((node) => {
                         const code = normalizeReqCode((node as any).sds_code);
-                        if (code && !rowByCode.has(code) && !rowBySdsCode.has(code)) {
+                        if (code.startsWith("SDS-") && !rowByCode.has(code) && !rowBySdsCode.has(code)) {
                             return false;
                         }
                         const normalizedTitle = normalizeReqTitle(stripHeadingNumber(node.title));
@@ -2274,6 +2356,7 @@ export default () => {
             if (anchors.length === 0) return rootsWithCodes;
             const maxExistingMajor = Math.max(...anchors.map((anchor) => codeMajor(anchor.code) || 0));
             const shouldInsertRow = (code: string, row: any) => {
+                if (String(row?.type_code || "") === "2") return false;
                 if (existingCodes.has(code)) return false;
                 const title = normalizeReqTitle(getReqSubFunctionTitle(row));
                 if (title && existingTitles.has(title)) return false;
@@ -2577,11 +2660,11 @@ export default () => {
         const parsedContent = isReadOnly
             ? bindTableCaptionsForPersist(normalizedRefTree)
             : normalizedRefTree;
-        const remappedContent = await remapRefTypeImagesByProduct(
+        const remappedContent = restoreStoredTableNames(await remapRefTypeImagesByProduct(
             parsedContent,
             targetRow.product_id,
             targetRow.version
-        );
+        ) as TreeNode[]);
         const docIdForSync = targetRow.id || (params.id ? parseInt(params.id) : undefined);
         const ensuredReqdContent = ensureFrontMatterTables(remappedContent as TreeNode[]);
         const withOtherReqChapters = await ensureSdsOtherReqChapters(
@@ -2824,9 +2907,13 @@ export default () => {
                     const parsedContent = isReadOnly
                         ? bindTableCaptionsForPersist(normalizedRefTree)
                         : normalizedRefTree;
-                    const remappedContent = await remapRefTypeImagesByProduct(parsedContent, latestRow.product_id, latestRow.version);
-                    const ensuredReqdContent = await syncMissingReqdNodes(
+                    const remappedContent = restoreStoredTableNames(await remapRefTypeImagesByProduct(parsedContent, latestRow.product_id, latestRow.version) as TreeNode[]);
+                    const withOtherReqChapters = await ensureSdsOtherReqChapters(
                         ensureFrontMatterTables(remappedContent as TreeNode[]),
+                        latestRow.srsdoc_id,
+                    );
+                    const ensuredReqdContent = await syncMissingReqdNodes(
+                        withOtherReqChapters,
                         latestRow.id || docId
                     );
                     const ensuredContent = isTraceSyncedOnTree(ensuredReqdContent as TreeNode[])
@@ -3526,6 +3613,23 @@ export default () => {
             return false;
         }
         return false;
+    };
+    const restoreStoredTableNames = (roots: TreeNode[]): TreeNode[] => {
+        const walk = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
+            const children = walk((node.children || []) as TreeNode[]);
+            const table = (node as any).table;
+            if (!hasRenderableTable(table)) return { ...node, children };
+            const current = String(table?.name || "").trim();
+            if (current && !isImportedTablePlaceholderTitle(current)) return { ...node, children };
+            const rawTitle = String(node.title || "").trim();
+            if (!rawTitle || isImportedTablePlaceholderTitle(rawTitle)) return { ...node, children };
+            const stripped = rawTitle.replace(/^(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "").trim();
+            if (!stripped || isImportedTablePlaceholderTitle(stripped) || !isLikelyTableCaptionLineForPersist(stripped)) {
+                return { ...node, children };
+            }
+            return { ...node, children, table: { ...table, name: stripped } };
+        });
+        return walk(roots || []);
     };
     const bindTableCaptionsForPersist = (roots: TreeNode[]): TreeNode[] => {
         const walk = (nodes: TreeNode[]): TreeNode[] => {
