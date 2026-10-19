@@ -632,6 +632,49 @@ function tailChapterSdsCode(title?: string): string {
     return "";
 }
 
+function externalInterfacePrefix(designCode?: string): string {
+    const code = String(designCode || "").replace(/\s+/g, "").toUpperCase();
+    const matched = code.match(/^SDS-([A-Z]+)(\d+)-(\d+)$/);
+    if (!matched || code.startsWith("SDS-IF")) return "SDS-IF00-RCN3010-";
+    const major = parseInt(matched[2], 10);
+    const minor = parseInt(matched[3], 10);
+    const ifCode = String(major).slice(-2).padStart(2, "0");
+    return `SDS-IF${ifCode}-${matched[1]}${major * 10 + minor}-`;
+}
+
+function isExternalInterfaceDetail(node: TreeNode): boolean {
+    const title = String(node.title || "").trim();
+    if (/^\s*图\s*\d+/.test(title) || /^\s*导入表格/.test(title)) return false;
+    if (["img_flow", "review", "sds_reqds", "sds_traces"].includes(String(node.ref_type || ""))) return false;
+    const name = stripNavChapterPrefix(title).replace(/\s+/g, "");
+    return !!name && name !== "接口" && !name.includes("外部连接");
+}
+
+/** 外部连接下的接口详情，编号规则与 5.7 接口列表一致：SDS-IF00-RCN3010-001 起。 */
+function assignExternalInterfaceCodes(nodeList: TreeNode[], inExternal = false, designCode = ""): TreeNode[] {
+    return (nodeList || []).map((node) => {
+        const name = stripNavChapterPrefix(String(node.title || "")).replace(/\s+/g, "");
+        const code = String(node.sds_code || "").replace(/\s+/g, "").toUpperCase();
+        const nowExternal = inExternal || name.includes("外部连接");
+        const nextDesign = nowExternal && /^SDS-[A-Z]+\d+-\d+$/.test(code) && !code.startsWith("SDS-IF") ? code : designCode;
+        const children = node.children || [];
+        if (nowExternal && name === "接口") {
+            const prefix = externalInterfacePrefix(nextDesign);
+            let seq = 0;
+            const nextChildren = children.map((child) => {
+                if (!isExternalInterfaceDetail(child)) {
+                    return assignExternalInterfaceCodes([child], nowExternal, nextDesign)[0];
+                }
+                seq += 1;
+                const numbered = { ...child, sds_code: `${prefix}${String(seq).padStart(3, "0")}` };
+                return { ...numbered, children: assignExternalInterfaceCodes(child.children || [], nowExternal, nextDesign) };
+            });
+            return { ...node, children: nextChildren };
+        }
+        return { ...node, children: assignExternalInterfaceCodes(children, nowExternal, nextDesign) };
+    });
+}
+
 function stripStandaloneSdsCodeLines(text?: string): string {
     return String(text || "")
         .replace(/\r/g, "")
@@ -3136,14 +3179,14 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
 
     // 同步外部传入的 value 到内部状态
     useEffect(() => {
-        setNodes(hydrateSdsCodeFallback(value));
+        setNodes(assignExternalInterfaceCodes(hydrateSdsCodeFallback(value)));
     }, [value]);
     useEffect(() => {
         onNodesSnapshot?.(nodes);
     }, [nodes, onNodesSnapshot]);
 
     const updateNodes = (newNodes: TreeNode[]) => {
-        const normalizedNodes = hydrateSdsCodeFallback(newNodes);
+        const normalizedNodes = assignExternalInterfaceCodes(hydrateSdsCodeFallback(newNodes));
         onNodesSnapshot?.(normalizedNodes);
         setNodes(normalizedNodes);
         onChange?.(normalizedNodes);

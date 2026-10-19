@@ -1668,6 +1668,52 @@ class Server(SdsSrsTraceSyncMixin, object):
         walk(roots or [])
         return changed
 
+    def _assign_external_interface_codes(self, roots: List[SdsNodeForm]):
+        """外部连接下的接口详情，按与 5.7 接口列表相同的规则生成接口编号。"""
+        def biz(title: str) -> str:
+            return re.sub(
+                r"^\s*\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))",
+                "",
+                str(title or ""),
+            ).strip()
+
+        def iface_prefix(design_code: str) -> str:
+            matched = re.match(r"^SDS-([A-Z]+)(\d+)-(\d+)$", re.sub(r"\s+", "", str(design_code or "").upper()))
+            if not matched:
+                return "SDS-IF00-RCN3010-"
+            prefix, major, minor = matched.group(1), int(matched.group(2)), int(matched.group(3))
+            if_code = str(major)[-2:].zfill(2)
+            return f"SDS-IF{if_code}-{prefix}{major * 10 + minor}-"
+
+        def is_detail(node: SdsNodeForm) -> bool:
+            title = str(getattr(node, "title", "") or "").strip()
+            if re.match(r"^\s*图\s*\d+", title) or re.match(r"^\s*导入表格", title):
+                return False
+            if str(getattr(node, "ref_type", "") or "") in ("img_flow", "review", "sds_reqds", "sds_traces"):
+                return False
+            name = biz(title)
+            return bool(name) and name not in ("接口", "外部连接") and "外部连接" not in name
+
+        def walk(items, in_external: bool, design_code: str):
+            for node in items or []:
+                name = biz(getattr(node, "title", "") or "")
+                code = re.sub(r"\s+", "", str(getattr(node, "sds_code", "") or "").upper())
+                now_ext = in_external or ("外部连接" in name)
+                next_design = code if now_ext and re.match(r"^SDS-[A-Z]+\d+-\d+$", code) and not code.startswith("SDS-IF") else design_code
+                children = getattr(node, "children", None) or []
+                if now_ext and name == "接口":
+                    prefix = iface_prefix(next_design)
+                    seq = 0
+                    for child in children:
+                        if is_detail(child):
+                            seq += 1
+                            child.sds_code = f"{prefix}{seq:03d}"
+                        walk(getattr(child, "children", None) or [], now_ext, next_design)
+                else:
+                    walk(children, now_ext, next_design)
+
+        walk(roots or [], False, "")
+
     def _load_sds_tree(self, doc_id: int) -> List[SdsNodeForm]:
         nodes: list[SdsNode] = db.session.execute(
             select(SdsNode).where(SdsNode.doc_id == doc_id).order_by(SdsNode.priority)
@@ -1799,6 +1845,7 @@ class Server(SdsSrsTraceSyncMixin, object):
         if with_tree:
             tree = self._load_sds_tree(row.id)
             align_rcn300_tail_node_codes(tree)
+            self._assign_external_interface_codes(tree)
             prod_imgs = self.__query_imgs(row.product_id) if row.product_id else (self.__query_imgs(row_srs.product_id) if row_srs else {})
             def hydrate_imgs(nodes: List[SdsNodeForm]):
                 for obj in nodes or []:
