@@ -362,6 +362,8 @@ def save_img2docx(
     min_h: int = 0,
     target_long: int = 0,
     page_fit: bool = False,
+    width_ratio: float = 0,
+    height_ratio: float = 0,
 ):
     PIXELS_PER_INCH = 96
     SPACE_VALUE = Pt(6) if page_fit else Pt(20)
@@ -404,7 +406,12 @@ def save_img2docx(
             margin_b_in = float(section.bottom_margin) / 914400.0
             avail_w_px = max(120.0, (page_w_in - margin_l_in - margin_r_in) * PIXELS_PER_INCH)
             avail_h_px = max(120.0, (page_h_in - margin_t_in - margin_b_in) * PIXELS_PER_INCH)
-            if page_fit:
+            if width_ratio > 0 or height_ratio > 0:
+                wr = width_ratio if width_ratio > 0 else 0.60
+                hr = height_ratio if height_ratio > 0 else 0.32
+                mw = int(min(float(mw), avail_w_px * wr))
+                mh = int(min(float(mh), avail_h_px * hr))
+            elif page_fit:
                 # 比正文区再收一圈：边上的字不被页边裁掉，整图连题注停在一页里
                 mw = int(min(float(mw), avail_w_px * 0.72))
                 mh = int(min(float(mh), avail_h_px * 0.36))

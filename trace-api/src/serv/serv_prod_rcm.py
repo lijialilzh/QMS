@@ -627,7 +627,7 @@ class Server(object):
             results.extend(self.__format_test_code_ranges(tests))
         return results
 
-    async def list_prod_rcm(self, op_user: UserObj, export = False, prod_id: int = None, page_index: int = 0, page_size: int = 10):
+    async def list_prod_rcm(self, op_user: UserObj, export = False, prod_id: int = None, page_index: int = 0, page_size: int = 10, brief: bool = False):
         page_index = page_index if page_index >= 0 else 0
         page_size = page_size if page_size > 0 else 10 
 
@@ -644,6 +644,16 @@ class Server(object):
         sql = sql.order_by(Rcm.code)
         rows: list[ProdRcm, Product, Rcm] = db.session.execute(sql).all()
         objs = []
+        if brief:
+            for row, row_prd, row_rcm in rows:
+                obj = ProdRcmObj(**row_rcm.dict()) if row_rcm else ProdRcmObj()
+                obj.id = row.id
+                obj.prod_id = row.prod_id
+                obj.rcm_id = row.rcm_id
+                obj.product_name = row_prd.name
+                obj.product_version = row_prd.full_version
+                objs.append(obj)
+            return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
         self.__repair_req_rcms_from_srs_nodes([row_prd.id for _, row_prd, _ in rows])
         all_srs_codes, reqs_dict = self.__query_srs_reqs([prod_rcm.rcm_id for prod_rcm, _, _ in rows])
         tests_dict = self.__query_tests([row_prd.id for _, row_prd, _ in rows], all_srs_codes)

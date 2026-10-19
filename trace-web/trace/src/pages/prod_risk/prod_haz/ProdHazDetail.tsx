@@ -23,11 +23,13 @@ enum DlgTypes {
     delete = "delete",
 }
 
-export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChanged }: {
+export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChanged, products: productsProp, onProductChange }: {
     prodId?: number;
     readOnly?: boolean;
     embedded?: boolean;
     onChanged?: () => void;
+    products?: any[];
+    onProductChange?: (prodId: number) => void;
 } = {}) => {
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
@@ -602,8 +604,26 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
                     </Button>
                 </Space>
                 )}
-                {!readOnly && (
+                {(embedded || !readOnly) && (
                     <div className="div-h hspace">
+                        {embedded && (
+                            <div className="prod-dhf-product-select">
+                                <ProductVersionSelect
+                                    products={productsProp || []}
+                                    value={prodId}
+                                    allowClear={false}
+                                    deferChangeUntilVersionSelect
+                                    namePlaceholder={ts("product.name")}
+                                    versionPlaceholder={ts("product.full_version")}
+                                    onChange={(value?: number) => {
+                                        if (!value || Number(value) === Number(prodId)) return;
+                                        onProductChange?.(Number(value));
+                                    }}
+                                />
+                            </div>
+                        )}
+                        {!readOnly && (
+                            <>
                         <Button
                             type="primary"
                             loading={data.exporting}
@@ -624,6 +644,8 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
                         <Button disabled={!(data.selectedRowKeys || []).length} danger onClick={doBatchDelete}>
                             {ts("batch_delete")}
                         </Button>
+                            </>
+                        )}
                     </div>
                 )}
             </div>

@@ -131,6 +131,17 @@ export default ({
         });
     };
 
+    const switchExpandedProduct = (prodId: number) => {
+        const id = Number(prodId);
+        if (!id) return;
+        const exists = (data.rows || []).some((row: any) => Number(row.id) === id);
+        const hit = (data.products || []).find((row: any) => Number(row.id) === id);
+        dispatch({
+            expandedKeys: [id],
+            rows: exists || !hit ? data.rows : [hit, ...(data.rows || [])],
+        });
+    };
+
     const toggleExpand = (prodId: number, readOnly: boolean) => {
         if (!prodId) return;
         const keys = data.expandedKeys || [];
@@ -340,7 +351,14 @@ export default ({
                     expandedRowKeys: data.expandedKeys || [],
                     showExpandColumn: false,
                     expandedRowRender: (row) => (
-                        <Detail prodId={row.id} readOnly={data.expandReadOnly} embedded onChanged={refreshAfterChange} />
+                        <Detail
+                            prodId={row.id}
+                            products={data.products}
+                            readOnly={data.expandReadOnly}
+                            embedded
+                            onChanged={refreshAfterChange}
+                            onProductChange={switchExpandedProduct}
+                        />
                     ),
                 }}
             />

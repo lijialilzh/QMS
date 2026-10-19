@@ -83,7 +83,88 @@ const normalizeTitleText = (value: any) => String(value || "").replace(/\s+/g, "
 
 const isCoverSection = (section: any) => section?.ref_type === "cover" || normalizeTitleText(section?.title) === "网络安全风险管理报告";
 const isRevisionSection = (section: any) => section?.ref_type === "revision" || normalizeTitleText(section?.title) === "文件修订记录";
-const isStrideSection = (section: any) => section?.ref_type === "stride_threats";
+const isStrideSection = (section: any) => section?.ref_type === "stride_threats" || String(section?.title || "").replace(/\s+/g, "").includes("4.5.2");
+const threatSerial = (code: any) => {
+    const matched = String(code || "").match(/THREAT-(\d+)/i);
+    return matched ? parseInt(matched[1], 10) : 0;
+};
+type ThreatChapter = "view" | "class" | "stride";
+const threatChapterOf = (section: any): ThreatChapter | "" => {
+    const title = String(section?.title || "").replace(/\s+/g, "");
+    if (section?.ref_type === "stride_threats" || title.includes("4.5.2")) return "stride";
+    if (title.includes("4.1.6")) return "view";
+    if (title.includes("4.2.5")) return "class";
+    return "";
+};
+const THREAT_CHAPTER_SPEC: Record<ThreatChapter, { headers: string[]; fields: string[] }> = {
+    view: { headers: ["威胁编号", "模块对象", "通信方式", "威胁描述", "可能后果"], fields: ["code", "module", "connection", "description", "harm"] },
+    class: { headers: ["威胁编号", "模块对象", "风险类别", "威胁描述", "可能后果"], fields: ["code", "module", "category", "description", "harm"] },
+    stride: { headers: ["威胁编号", "类别", "模块对象", "威胁描述", "可能后果"], fields: ["code", "category", "module", "description", "harm"] },
+};
+const sortedThreats = (rows: any[]) => [...(rows || [])]
+    .filter((row) => threatSerial(row?.code))
+    .sort((a, b) => threatSerial(a.code) - threatSerial(b.code) || String(a.code).localeCompare(String(b.code)));
+const readSavedThreatCodes = (sections: any[], kind: ThreatChapter): string[] | null => {
+    let found: string[] | null = null;
+    const walk = (nodes: any[]) => {
+        (nodes || []).forEach((node) => {
+            if (threatChapterOf(node) === kind && Array.isArray(node.threat_codes)) found = node.threat_codes.map((item: any) => String(item || "").trim()).filter(Boolean);
+            walk(node?.children || []);
+        });
+    };
+    walk(sections || []);
+    return found;
+};
+const assignThreatCodes = (sections: any[], prodCsts: any[]) => {
+    const codes = sortedThreats(prodCsts).map((row) => String(row.code));
+    const known = new Set(codes);
+    const clean = (saved: string[] | null) => {
+        if (!saved) return null;
+        const out: string[] = [];
+        saved.forEach((code) => { if (known.has(code) && !out.includes(code)) out.push(code); });
+        return out;
+    };
+    const savedView = clean(readSavedThreatCodes(sections, "view"));
+    const savedClass = clean(readSavedThreatCodes(sections, "class"));
+    const savedStride = clean(readSavedThreatCodes(sections, "stride"));
+    if (!savedView && !savedClass && !savedStride) {
+        return { view: codes.slice(0, 16), class: codes.slice(16, 26), stride: codes.slice(26) };
+    }
+    const used = new Set<string>();
+    const take = (saved: string[] | null, limit: number) => {
+        const out: string[] = [];
+        (saved || []).forEach((code) => {
+            if (!used.has(code) && out.length < limit) { out.push(code); used.add(code); }
+        });
+        return out;
+    };
+    const view = take(savedView, 16);
+    const klass = take(savedClass, 10);
+    codes.forEach((code) => {
+        if (used.has(code)) return;
+        if (view.length < 16) { view.push(code); used.add(code); }
+        else if (klass.length < 10) { klass.push(code); used.add(code); }
+    });
+    const stride: string[] = [];
+    (savedStride || []).forEach((code) => { if (!used.has(code)) { stride.push(code); used.add(code); } });
+    codes.forEach((code) => { if (!used.has(code)) stride.push(code); });
+    return { view, class: klass, stride };
+};
+const swapThreatCode = (assign: { view: string[]; class: string[]; stride: string[] }, kind: ThreatChapter, index: number, nextCode: string) => {
+    const lists: Record<ThreatChapter, string[]> = {
+        view: [...assign.view], class: [...assign.class], stride: [...assign.stride],
+    };
+    const prev = lists[kind][index];
+    if (!prev || prev === nextCode) return lists;
+    (["view", "class", "stride"] as ThreatChapter[]).some((key) => {
+        const at = lists[key].indexOf(nextCode);
+        if (at < 0) return false;
+        lists[key][at] = prev;
+        return true;
+    });
+    lists[kind][index] = nextCode;
+    return lists;
+};
 const isTraceabilitySection = (section: any) => section?.ref_type === "traceability";
 const isFlowDiagramSection = (section: any) => section?.ref_type === "flow_diagram" || normalizeTitleText(section?.title).endsWith("系统总体架构");
 const isProductAutoTextSection = (section: any) => {
@@ -342,13 +423,19 @@ const refreshRcmInSections = (sections: any[], map: Map<string, string>): { sect
     return { sections: result, changed };
 };
 const controlKindOf = (section: any): "internal" | "sbom" | "scan" | "" => {
+    const title = String(section?.title || "").replace(/\s+/g, "");
     switch (section?.ref_type) {
         case "cybersec_controls_internal": return "internal";
         case "cybersec_controls_sbom": return "sbom";
         case "cybersec_controls_scan": return "scan";
-        default: return "";
+        default:
+            if (title.includes("5.2.1") || title.includes("内部风险评估")) return "internal";
+            if (title.includes("5.2.2") || /sbom/i.test(title)) return "sbom";
+            if (title.includes("5.2.3") || title.includes("网络安全扫描")) return "scan";
+            return "";
     }
 };
+const isSbomThreatRow = (row: any) => /sbom/i.test(`${row?.category || ""} ${row?.module || ""}`);
 
 const ensureFrontMatterSections = (content: any) => {
     const nextContent = JSON.parse(JSON.stringify({ ...emptyContent, ...(content || {}) }));
@@ -660,6 +747,16 @@ export default () => {
         setTimeout(() => contentCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
     };
 
+    const persistThreatAssign = (next: { view: string[]; class: string[]; stride: string[] }) => {
+        const update = (sections: any[] = []): any[] => (sections || []).map((section) => {
+            const kind = threatChapterOf(section);
+            const children = update(section.children || []);
+            if (!kind) return children === section.children ? section : { ...section, children };
+            return { ...section, threat_codes: next[kind], children };
+        });
+        updateSections(update);
+    };
+
     const updateSections = (updater: (sections: any[]) => any[]) => {
         dispatch({ content: { ...(data.content || emptyContent), sections: updater(data.content.sections || []) } });
     };
@@ -965,29 +1062,66 @@ export default () => {
     // ---------------- 渲染 ----------------
     const matrixTip = null;
 
-    const renderThreatSection = () => {
-        if (!docId) {
-            return (
-                <div className="risk-mgmt-rcm-block">
-                    {matrixTip}
-                    <div className="risk-mgmt-rcm-title">产品 CST（网络安全威胁库）参考</div>
-                    <table className="risk-mgmt-rcm-native-table">
-                        <thead><tr><th>编号</th><th>类别</th><th>描述</th><th>关联RCM</th></tr></thead>
-                        <tbody>
-                            {(data.prodCsts || []).map((row: any) => (
-                                <tr key={row.id || row.code}><td>{row.code}</td><td>{row.category}</td><td>{row.description}</td><td>{row.rcm_codes}</td></tr>
+    const renderThreatPick = (kind: ThreatChapter) => {
+        const assign = assignThreatCodes(data.content?.sections || [], data.prodCsts || []);
+        const codes = assign[kind];
+        const spec = THREAT_CHAPTER_SPEC[kind];
+        const byCode = new Map<string, any>();
+        (data.prodCsts || []).forEach((row: any) => {
+            const code = String(row?.code || "").trim();
+            if (code) byCode.set(code, row);
+        });
+        const options = sortedThreats(data.prodCsts || []).map((row: any) => ({
+            value: String(row.code),
+            label: String(row.code),
+        }));
+        return (
+            <div className="cybersec-section-table-wrap">
+                <table className="risk-mgmt-section-table cybersec-section-table">
+                    <tbody>
+                        <tr>
+                            {spec.headers.map((header, headerIndex) => (
+                                <td key={header} className="cybersec-table-th" style={headerIndex === 0 ? { width: 148, minWidth: 148, maxWidth: 148 } : undefined}>{header}</td>
                             ))}
-                            {!(data.prodCsts || []).length && <tr><td colSpan={4}>当前产品暂无 CST 数据。</td></tr>}
-                        </tbody>
-                    </table>
-                </div>
-            );
-        }
+                        </tr>
+                        {codes.map((code, index) => {
+                            const row = byCode.get(code) || {};
+                            return (
+                                <tr key={`${kind}-${code}-${index}`}>
+                                    <td style={{ width: 148, minWidth: 148, maxWidth: 148, whiteSpace: "nowrap" }}>
+                                        {isView ? code : (
+                                            <Select
+                                                size="small"
+                                                style={{ width: 128 }}
+                                                showSearch
+                                                optionFilterProp="label"
+                                                getPopupContainer={() => document.body}
+                                                value={code}
+                                                options={options}
+                                                onChange={(value) => persistThreatAssign(swapThreatCode(assign, kind, index, value))}
+                                            />
+                                        )}
+                                    </td>
+                                    {spec.fields.slice(1).map((field) => <td key={field}>{row[field] ?? ""}</td>)}
+                                </tr>
+                            );
+                        })}
+                        {!codes.length && <tr><td colSpan={spec.headers.length}>当前产品暂无对应 THREAT</td></tr>}
+                    </tbody>
+                </table>
+            </div>
+        );
+    };
+
+    const renderThreatSection = () => {
         const hasThreats = (data.threats || []).length > 0;
         return (
             <div className="risk-mgmt-rcm-block">
-                {!isView && <Button size="small" className="risk-mgmt-add-rcm-row" onClick={() => openMatrixEdit("threat")}>新增威胁</Button>}
-                {hasThreats && (
+                {matrixTip}
+                <div className="risk-mgmt-rcm-title">产品 THREAT</div>
+                {renderThreatPick("stride")}
+                {docId && !isView && <Button size="small" className="risk-mgmt-add-rcm-row" onClick={() => openMatrixEdit("threat")}>新增威胁</Button>}
+                {docId && hasThreats && (
                     <table className="risk-mgmt-rcm-native-table">
                         <thead>
                             <tr>
@@ -1015,28 +1149,20 @@ export default () => {
     };
 
     const renderControlSection = (kind: "internal" | "sbom" | "scan") => {
-        // 5.2.2 SBOM：新增页不自动获取，保持默认模版；已有文档仍可手动维护 RCM
-        if (kind === "sbom") {
-            if (!docId) {
-                return (
-                    <div className="risk-mgmt-rcm-block">
-                        {matrixTip}
-                        <div className="risk-mgmt-rcm-title">SBOM 风险评估及控制措施（默认模版，不自动获取）</div>
-                    </div>
-                );
-            }
-        } else {
-            // 5.2.1 内部 / 5.2.3 网络安全扫描：新增页与编辑页均展示产品 THREAT 参考表（名单外/名单内）
+        if (kind === "internal" || kind === "scan" || kind === "sbom") {
             const scanSet = new Set(CYBERSEC_SCAN_THREAT_CODES);
             const csts = (data.prodCsts || []).filter((row: any) => {
                 const isScan = scanSet.has(String(row?.code || "").trim());
-                return kind === "scan" ? isScan : !isScan;
+                const isSbom = isSbomThreatRow(row);
+                if (kind === "scan") return isScan;
+                if (kind === "sbom") return isSbom && !isScan;
+                return !isScan && !isSbom;
             });
             const refRcmDescMap = buildRcmCodeMap(data.prodRcms || []);
             return (
                 <div className="risk-mgmt-rcm-block">
                     {matrixTip}
-                    <div className="risk-mgmt-rcm-title">{kind === "scan" ? "网络安全扫描 THREAT 参考" : "内部 THREAT 参考"}</div>
+                    <div className="risk-mgmt-rcm-title">{kind === "scan" ? "网络安全扫描 THREAT 参考" : kind === "sbom" ? "SBOM THREAT 参考" : "内部 THREAT 参考"}</div>
                     <div className="cybersec-section-table-wrap">
                         <table className="risk-mgmt-section-table cybersec-section-table">
                             <tbody>
@@ -1123,12 +1249,14 @@ export default () => {
         const headerRows: any[][] = headerCount > 0 ? importedTable.slice(0, headerCount) : TRACE_HEADER_ROWS;
         const merge = computeAllHeaderMerge(headerRows);
         const colCount = merge.width || 10;
-        // 仅保留「威胁编号↔RCM」有对应关系的行：既有 RCM 编号、又能反推出威胁编号（只有 RCM 号但无对应威胁的不纳入）
+        // 行仍来自 SRS 追溯（拿 SRS / 测试用例）。RCM 列只留能在产品 THREAT 上反查到威胁的编号，不把该 SRS 上其余 RCM 一并列出。
         const bodyRows = rows
             .map((row: any) => {
                 const numOf = (code: string) => { const m = String(code).match(/(\d+)\s*$/); return m ? parseInt(m[1], 10) : 0; };
                 const byNum = (a: string, b: string) => numOf(a) - numOf(b) || String(a).localeCompare(String(b));
-                const rcmList = Array.from(new Set(normalizeRcmCodeList(row.rcm_codes))).sort(byNum);
+                const rcmList = Array.from(new Set(normalizeRcmCodeList(row.rcm_codes)))
+                    .filter((code) => (rcmThreatMap.get(code) || []).length > 0)
+                    .sort(byNum);
                 const threats = Array.from(new Set(rcmList.flatMap((c) => rcmThreatMap.get(c) || []))).sort(byNum);
                 return { row, rcmList, threats };
             })
@@ -1398,21 +1526,24 @@ export default () => {
             const scanSet = new Set(CYBERSEC_SCAN_THREAT_CODES);
             return (data.prodCsts || []).filter((r: any) => {
                 const isScan = scanSet.has(String(r?.code || "").trim());
-                return k === "scan" ? isScan : !isScan;
+                const isSbom = isSbomThreatRow(r);
+                if (k === "scan") return isScan;
+                return !isScan && !isSbom;
             }).length;
         };
-        const matrixRowCount = isStrideSection(activeSection) ? (data.threats || []).length
+        const pickKind = threatChapterOf(activeSection);
+        const matrixRowCount = pickKind
+            ? assignThreatCodes(data.content?.sections || [], data.prodCsts || [])[pickKind].length
             : (kind === "internal" || kind === "scan") ? controlThreatCount(kind)
-                : kind ? ((controlApi[kind]?.list) || []).length
+                : kind ? (data.prodCsts || []).filter((row: any) => isSbomThreatRow(row)).length
                     : isTraceabilitySection(activeSection) ? traceabilityRows.length : 0;
-        // 有导入原始表且矩阵为空时，隐藏空矩阵（避免冗余）；矩阵有数据或无导入表时仍展示
-        const showMatrix = matrixRowCount > 0 || !hasRawTables;
+        const showMatrix = !!pickKind || !!kind || matrixRowCount > 0 || !hasRawTables;
         const importedTablesBlock = hasRawTables
             ? (showMatrix
                 ? (<div className="cybersec-imported-tables"><div className="risk-mgmt-rcm-title">导入的原始表</div>{renderRawTables()}</div>)
                 : renderRawTables())
             : null;
-        const isMatrixLike = isStrideSection(activeSection) || !!kind || isTraceabilitySection(activeSection);
+        const isMatrixLike = !!pickKind || !!kind || isTraceabilitySection(activeSection);
         const isProdAuto = isProductAutoTextSection(activeSection);
         const useFreeChapter = !hasBlocks && !isMatrixLike && !isFlowDiagramSection(activeSection) && !isProdAuto;
         const freeSegs = useFreeChapter ? buildFreeSegments(sectionText, tables, images) : [];
@@ -1616,8 +1747,9 @@ export default () => {
                     </>
                 )}
                 {/* 自动获取章节（STRIDE、内部/网络安全扫描）只展示最新自动表，不再显示导入的原始表（旧数据残留） */}
-                {isStrideSection(activeSection) ? (<>{showMatrix && renderThreatSection()}</>)
-                    : kind ? (<>{showMatrix && renderControlSection(kind)}{kind === "sbom" ? importedTablesBlock : null}</>)
+                {pickKind === "view" || pickKind === "class" ? renderThreatPick(pickKind)
+                    : pickKind === "stride" ? (<>{showMatrix && renderThreatSection()}</>)
+                    : kind ? (<>{showMatrix && renderControlSection(kind)}</>)
                         : isTraceabilitySection(activeSection) ? renderTraceabilitySection()
                             : hasBlocks ? renderBlocks()
                                 : null}
@@ -1712,6 +1844,7 @@ export default () => {
                                                 const selectedProduct = (data.products || []).find((p: any) => p.id === value);
                                                 const productName = selectedProduct?.name || "";
                                                 dispatch({ selectedProductId: value });
+                                                loadReferenceData(value);
                                                 if (!isAdd) {
                                                     dispatch({
                                                         detail: {

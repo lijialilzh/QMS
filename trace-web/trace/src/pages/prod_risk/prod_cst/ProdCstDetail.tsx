@@ -1,6 +1,6 @@
 import { Button, Table, message, Modal, Select, InputNumber, Tag, Space } from "antd";
 import { ArrowLeftOutlined } from "@ant-design/icons";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
@@ -9,7 +9,7 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import ProdPrevNext from "@/pages/prod_risk/ProdPrevNext";
 import * as Api from "@/api/ApiProdCst";
 import * as ApiProduct from "@/api/ApiProduct";
-import { doSearchRcms } from "../util";
+import * as ApiProdRcm from "@/api/ApiProdRcm";
 import EditDlg from "./EditDlg";
 import "./index.less";
 import "../ProdDhfDetail.less";
@@ -23,11 +23,13 @@ enum DlgTypes {
 
 const ACCEPTS = ["可接受", "不可接受", "可忽略"];
 
-export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChanged }: {
+export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChanged, products: productsProp, onProductChange }: {
     prodId?: number;
     readOnly?: boolean;
     embedded?: boolean;
     onChanged?: () => void;
+    products?: any[];
+    onProductChange?: (prodId: number) => void;
 } = {}) => {
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
@@ -35,6 +37,9 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
     const { prodId: prodIdParam } = useParams();
     const prodId = Number(prodIdProp ?? prodIdParam);
     const readOnly = readOnlyProp ?? location.pathname.includes("/view/");
+    const rcmDraft = useRef("");
+    const editDraft = useRef<Record<string, any>>({});
+    const openedAt = useRef(0);
     const [data, dispatch] = useData({
         total: 0,
         pageIndex: 1,
@@ -46,6 +51,7 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
         targetEdit: {},
         editingField: null,
         rcms: [],
+        rcmsLoaded: false,
         selectedRowKeys: [],
     });
 
@@ -114,13 +120,15 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
     const startEdit = (row: any, field: string) => {
         if (readOnly) return;
         if (data.targetEdit.id === row.id && data.editingField === field) return;
+        openedAt.current = Date.now();
+        editDraft.current = { [field]: row[field] };
         dispatch({ targetEdit: { ...row }, editingField: field });
-        if (field === "rcm_codes") doSearchRcms(row.prod_id, data, dispatch);
+        if (field === "rcm_codes") rcmDraft.current = row.rcm_codes || "";
     };
 
     // 该格失焦时实时保存（保存后本地更新该行，避免整表刷新闪烁）
     const saveCell = (override?: any) => {
-        const edit = { ...data.targetEdit, ...(override || {}) };
+        const edit = { id: data.targetEdit?.id, ...(override || {}) };
         if (!edit?.id || data.updating) return;
         dispatch({ updating: true });
         Api.update_prod_cst({ ...edit }).then((res: any) => {
@@ -137,8 +145,27 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
 
     const isEditing = (row: any, field: string) => data.targetEdit.id === row.id && data.editingField === field;
 
+    const commitNumber = (field: string, force = false) => {
+        if (!force && Date.now() - openedAt.current < 300) return;
+        saveCell({ [field]: editDraft.current[field] });
+    };
+
+    const numberCell = (field: string) => (value: any, row: any) => {
+        if (!isEditing(row, field)) return clickToEdit(row, field, value);
+        return (
+            <InputNumber
+                autoFocus
+                style={{ width: "100%" }}
+                defaultValue={row[field]}
+                onChange={(v: any) => { editDraft.current[field] = v; }}
+                onBlur={() => commitNumber(field)}
+                onPressEnter={() => commitNumber(field, true)}
+            />
+        );
+    };
+
     const clickToEdit = (row: any, field: string, value: any) => (
-        <div style={{ cursor: "pointer", minHeight: 22 }} title="点击编辑" onClick={() => startEdit(row, field)}>
+        <div style={{ cursor: "pointer", minHeight: 22 }} title="点击编辑" onMouseDown={(e) => e.preventDefault()} onClick={() => startEdit(row, field)}>
             {value !== null && value !== undefined && String(value) !== "" ? value : <span style={{ color: "#d9d9d9" }}>—</span>}
         </div>
     );
@@ -159,50 +186,17 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
         {
             title: ts("cst.prev_score"),
             dataIndex: "prev_score",
-            render: (value: any, row: any) => {
-                if (!isEditing(row, "prev_score")) return clickToEdit(row, "prev_score", value);
-                return (
-                    <InputNumber
-                        autoFocus
-                        value={data.targetEdit.prev_score}
-                        onBlur={saveCell}
-                        onPressEnter={saveCell}
-                        onChange={(v: any) => dispatch({ targetEdit: { ...data.targetEdit, prev_score: v } })}
-                    />
-                );
-            },
+            render: numberCell("prev_score"),
         },
         {
             title: ts("cst.prev_severity"),
             dataIndex: "prev_severity",
-            render: (value: any, row: any) => {
-                if (!isEditing(row, "prev_severity")) return clickToEdit(row, "prev_severity", value);
-                return (
-                    <InputNumber
-                        autoFocus
-                        value={data.targetEdit.prev_severity}
-                        onBlur={saveCell}
-                        onPressEnter={saveCell}
-                        onChange={(v: any) => dispatch({ targetEdit: { ...data.targetEdit, prev_severity: v } })}
-                    />
-                );
-            },
+            render: numberCell("prev_severity"),
         },
         {
             title: ts("cst.prev_level"),
             dataIndex: "prev_level",
-            render: (value: any, row: any) => {
-                if (!isEditing(row, "prev_level")) return clickToEdit(row, "prev_level", value);
-                return (
-                    <InputNumber
-                        autoFocus
-                        value={data.targetEdit.prev_level}
-                        onBlur={saveCell}
-                        onPressEnter={saveCell}
-                        onChange={(v: any) => dispatch({ targetEdit: { ...data.targetEdit, prev_level: v } })}
-                    />
-                );
-            },
+            render: numberCell("prev_level"),
         },
         {
             title: ts("cst.prev_accept"),
@@ -215,60 +209,28 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
                         defaultOpen
                         allowClear
                         style={{ minWidth: "100px" }}
+                        getPopupContainer={() => document.body}
                         value={data.targetEdit.prev_accept}
                         options={ACCEPTS.map((item) => ({ label: item, value: item }))}
                         onChange={(v: any) => saveCell({ prev_accept: v || "" })}
-                        onBlur={() => dispatch({ targetEdit: {}, editingField: null })}></Select>
+                        onDropdownVisibleChange={(open) => { if (!open) dispatch({ targetEdit: {}, editingField: null }); }}></Select>
                 );
             },
         },
         {
             title: ts("cst.cur_score"),
             dataIndex: "cur_score",
-            render: (value: any, row: any) => {
-                if (!isEditing(row, "cur_score")) return clickToEdit(row, "cur_score", value);
-                return (
-                    <InputNumber
-                        autoFocus
-                        value={data.targetEdit.cur_score}
-                        onBlur={saveCell}
-                        onPressEnter={saveCell}
-                        onChange={(v: any) => dispatch({ targetEdit: { ...data.targetEdit, cur_score: v } })}
-                    />
-                );
-            },
+            render: numberCell("cur_score"),
         },
         {
             title: ts("cst.cur_severity"),
             dataIndex: "cur_severity",
-            render: (value: any, row: any) => {
-                if (!isEditing(row, "cur_severity")) return clickToEdit(row, "cur_severity", value);
-                return (
-                    <InputNumber
-                        autoFocus
-                        value={data.targetEdit.cur_severity}
-                        onBlur={saveCell}
-                        onPressEnter={saveCell}
-                        onChange={(v: any) => dispatch({ targetEdit: { ...data.targetEdit, cur_severity: v } })}
-                    />
-                );
-            },
+            render: numberCell("cur_severity"),
         },
         {
             title: ts("cst.cur_level"),
             dataIndex: "cur_level",
-            render: (value: any, row: any) => {
-                if (!isEditing(row, "cur_level")) return clickToEdit(row, "cur_level", value);
-                return (
-                    <InputNumber
-                        autoFocus
-                        value={data.targetEdit.cur_level}
-                        onBlur={saveCell}
-                        onPressEnter={saveCell}
-                        onChange={(v: any) => dispatch({ targetEdit: { ...data.targetEdit, cur_level: v } })}
-                    />
-                );
-            },
+            render: numberCell("cur_level"),
         },
         {
             title: ts("cst.cur_accept"),
@@ -281,10 +243,11 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
                         defaultOpen
                         allowClear
                         style={{ minWidth: "100px" }}
+                        getPopupContainer={() => document.body}
                         value={data.targetEdit.cur_accept}
                         options={ACCEPTS.map((item) => ({ label: item, value: item }))}
                         onChange={(v: any) => saveCell({ cur_accept: v || "" })}
-                        onBlur={() => dispatch({ targetEdit: {}, editingField: null })}></Select>
+                        onDropdownVisibleChange={(open) => { if (!open) dispatch({ targetEdit: {}, editingField: null }); }}></Select>
                 );
             },
         },
@@ -293,22 +256,35 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
             dataIndex: "rcm_codes",
             render: (value: any, row: any) => {
                 if (!isEditing(row, "rcm_codes")) return clickToEdit(row, "rcm_codes", value);
+                const rcmOptions = (data.rcms || []).filter((item: any) => item?.code).map((item: any) => {
+                    const code = String(item.code).trim();
+                    const description = String(item.description || "").trim();
+                    const label = description.startsWith(code) ? description : (description ? `${code} ${description}` : code);
+                    return { label, value: code };
+                });
                 return (
                     <Select
                         autoFocus
                         defaultOpen
                         showSearch
+                        optionFilterProp="label"
                         style={{ minWidth: "300px" }}
+                        getPopupContainer={() => document.body}
                         tagRender={(item: any) => {
                             return <Tag color="blue">{item.value}</Tag>;
                         }}
                         mode="multiple"
-                        options={data.rcms.map((item: any) => ({ label: item.description, value: item.code }))}
-                        value={(data.targetEdit.rcm_codes || "").split(",").filter((item: any) => item !== "")}
+                        options={rcmOptions}
+                        notFoundContent={data.rcmsLoaded ? "该产品暂无 RCM" : "正在加载该产品 RCM…"}
+                        value={(data.targetEdit.rcm_codes || "").split(/[,，]/).filter((item: any) => item !== "")}
                         onChange={(values: any) => {
-                            dispatch({ targetEdit: { ...data.targetEdit, rcm_codes: values.join(",") } });
+                            const rcm_codes = (values || []).join(",");
+                            rcmDraft.current = rcm_codes;
+                            dispatch({ targetEdit: { ...data.targetEdit, rcm_codes } });
                         }}
-                        onBlur={() => saveCell()}
+                        onDropdownVisibleChange={(open) => {
+                            if (!open) saveCell({ rcm_codes: rcmDraft.current });
+                        }}
                     />
                 );
             },
@@ -333,6 +309,19 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
         if (!embedded) {
             ApiProduct.list_product({ page_size: 10000 }).then((res: any) => {
                 if (res.code === ApiProduct.C_OK) dispatch({ products: res.data.rows || [] });
+            });
+        }
+        if (prodId && !readOnly) {
+            dispatch({ rcmsLoaded: false, rcms: [] });
+            ApiProdRcm.list_prod_rcm({ prod_id: prodId, page_index: 0, page_size: 10000, brief: 1 }).then((res: any) => {
+                if (res.code === ApiProdRcm.C_OK) dispatch({ rcms: res.data?.rows || [], rcmsLoaded: true });
+                else {
+                    dispatch({ rcmsLoaded: true });
+                    message.error(res.msg);
+                }
+            }).catch(() => {
+                dispatch({ rcmsLoaded: true });
+                message.error("加载产品 RCM 失败");
             });
         }
         doSearch(data.pageIndex, data.pageSize);
@@ -368,8 +357,26 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
                     </Button>
                 </Space>
                 )}
-                {!readOnly && (
+                {(embedded || !readOnly) && (
                     <div className="div-h hspace">
+                        {embedded && (
+                            <div className="prod-dhf-product-select">
+                                <ProductVersionSelect
+                                    products={productsProp || []}
+                                    value={prodId}
+                                    allowClear={false}
+                                    deferChangeUntilVersionSelect
+                                    namePlaceholder={ts("product.name")}
+                                    versionPlaceholder={ts("product.full_version")}
+                                    onChange={(value?: number) => {
+                                        if (!value || Number(value) === Number(prodId)) return;
+                                        onProductChange?.(Number(value));
+                                    }}
+                                />
+                            </div>
+                        )}
+                        {!readOnly && (
+                            <>
                         <Button
                             type="primary"
                             loading={data.exporting}
@@ -390,6 +397,8 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
                         <Button disabled={!(data.selectedRowKeys || []).length} danger onClick={doBatchDelete}>
                             {ts("batch_delete")}
                         </Button>
+                            </>
+                        )}
                     </div>
                 )}
             </div>

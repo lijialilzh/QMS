@@ -35,9 +35,9 @@ async def delete_prod_rcms(id: str):
 
 @router.get("/list_prod_rcm", summary="查询RCM列表", response_model=Resp[Page[ProdRcmObj]])
 @try_log(perm=Perms.prod_rcm_view)
-async def list_prod_rcm(prod_id: int = None, page_index: int = 0, page_size: int = 10):
+async def list_prod_rcm(prod_id: int = None, page_index: int = 0, page_size: int = 10, brief: int = 0):
     op_user = CtxUser.get()
-    return await server.list_prod_rcm(op_user, prod_id=prod_id, page_index=page_index, page_size=page_size)
+    return await server.list_prod_rcm(op_user, prod_id=prod_id, page_index=page_index, page_size=page_size, brief=bool(brief))
 
 
 @router.get("/export_prod_rcms", summary="导出RCM列表", response_model=Resp[Any])

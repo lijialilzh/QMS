@@ -892,7 +892,7 @@ class Server(object):
     async def __cyber_trace_body(self, product_id):
         # 7 威胁缓解措施追溯（导出）：与编辑页同一套数据来源与列序，保证导出=编辑页。
         # 数据 = 产品最新 SRS 文档的逐需求追溯（list_doc_trace，含 SDS / 各级测试用例 / RCM），
-        #        并用产品 CST 的 rcm_codes 反推「RCM 编号 → 威胁编号」，仅保留同时有 RCM 与威胁的行。
+        #        RCM 列只留能用产品 CST 的 rcm_codes 反查到威胁的编号，不输出该 SRS 上其余 RCM。
         if not product_id:
             return []
         from .serv_srs_doc import Server as SrsDocServer
@@ -942,7 +942,10 @@ class Server(object):
 
         rows = []
         for tr in trace_rows:
-            rcm_list = sorted(dict.fromkeys(norm_rcm(tr.get("rcm_codes"))), key=num)
+            rcm_list = sorted(
+                {code for code in dict.fromkeys(norm_rcm(tr.get("rcm_codes"))) if rcm_threat.get(code)},
+                key=num,
+            )
             threats = []
             for c in rcm_list:
                 for t in rcm_threat.get(c, []):
@@ -1050,7 +1053,12 @@ class Server(object):
             paragraph = cell.paragraphs[0]
             paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
             paragraph.paragraph_format.line_spacing = 1.5
-            docx_util.fonted_txt(paragraph, s, font_size=10.5, bold=bold)
+            lines = s.split("\n")
+            for idx, line in enumerate(lines):
+                if idx:
+                    paragraph.add_run().add_break()
+                if line:
+                    docx_util.fonted_txt(paragraph, line, font_size=10.5, bold=bold)
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
 
         def add_plain_table(rows):
@@ -1179,10 +1187,173 @@ class Server(object):
                     set_cell_text(cells[idx], value_row[idx] if idx < len(value_row) else "")
             document.add_paragraph()
 
+        from ..model.prod_cst import ProdCst
+        from ..model.cst import Cst
+        SCAN_THREAT_CODES = {"THREAT-040"}
+        THREAT_SPEC = {
+            "view": (["威胁编号", "模块对象", "通信方式", "威胁描述", "可能后果"], ["code", "module", "connection", "description", "harm"]),
+            "class": (["威胁编号", "模块对象", "风险类别", "威胁描述", "可能后果"], ["code", "module", "category", "description", "harm"]),
+            "stride": (["威胁编号", "类别", "模块对象", "威胁描述", "可能后果"], ["code", "category", "module", "description", "harm"]),
+        }
+        _cst_pairs = {"rows": None}
+
+        def threat_serial(code):
+            matched = re.search(r"THREAT-(\d+)", str(code or ""), re.I)
+            return int(matched.group(1)) if matched else 0
+
+        def chapter_of(sec):
+            title_key = re.sub(r"\s+", "", str((sec or {}).get("title") or ""))
+            if (sec or {}).get("ref_type") == "stride_threats" or "4.5.2" in title_key:
+                return "stride"
+            if "4.1.6" in title_key:
+                return "view"
+            if "4.2.5" in title_key:
+                return "class"
+            return ""
+
+        def control_kind_of(sec):
+            ref = (sec or {}).get("ref_type")
+            title_key = re.sub(r"\s+", "", str((sec or {}).get("title") or ""))
+            if ref == "cybersec_controls_internal" or "5.2.1" in title_key or "内部风险评估" in title_key:
+                return "internal"
+            if ref == "cybersec_controls_sbom" or "5.2.2" in title_key or re.search(r"sbom", title_key, re.I):
+                return "sbom"
+            if ref == "cybersec_controls_scan" or "5.2.3" in title_key or "网络安全扫描" in title_key:
+                return "scan"
+            return ""
+
+        def cst_pairs():
+            if _cst_pairs["rows"] is None:
+                if not obj.product_id:
+                    _cst_pairs["rows"] = []
+                else:
+                    _cst_pairs["rows"] = db.session.execute(
+                        select(ProdCst, Cst).outerjoin(Cst, ProdCst.cst_id == Cst.id)
+                        .where(ProdCst.prod_id == obj.product_id)
+                    ).all()
+            return _cst_pairs["rows"]
+
+        def ordered_csts():
+            rows = []
+            for pc, cst in cst_pairs():
+                code = getattr(cst, "code", "") or ""
+                serial = threat_serial(code)
+                if serial:
+                    rows.append((serial, code, pc, cst))
+            rows.sort(key=lambda item: (item[0], item[1]))
+            return rows
+
+        def read_saved_codes(kind):
+            found = {"value": None}
+            content = export_content if isinstance(export_content, dict) else (obj.content or {})
+
+            def walk(nodes):
+                for node in nodes or []:
+                    if chapter_of(node) == kind and isinstance(node.get("threat_codes"), list):
+                        found["value"] = [str(item or "").strip() for item in node.get("threat_codes") if str(item or "").strip()]
+                    walk(node.get("children"))
+
+            walk((content or {}).get("sections"))
+            return found["value"]
+
+        def assign_threat_codes():
+            codes = [code for _serial, code, _pc, _cst in ordered_csts()]
+            known = set(codes)
+
+            def clean(saved):
+                if saved is None:
+                    return None
+                out = []
+                for code in saved:
+                    if code in known and code not in out:
+                        out.append(code)
+                return out
+
+            saved = {key: clean(read_saved_codes(key)) for key in ("view", "class", "stride")}
+            if saved["view"] is None and saved["class"] is None and saved["stride"] is None:
+                return {"view": codes[:16], "class": codes[16:26], "stride": codes[26:]}
+            used = set()
+
+            def take(saved_codes, limit):
+                out = []
+                for code in saved_codes or []:
+                    if code not in used and len(out) < limit:
+                        out.append(code)
+                        used.add(code)
+                return out
+
+            view = take(saved["view"], 16)
+            klass = take(saved["class"], 10)
+            for code in codes:
+                if code in used:
+                    continue
+                if len(view) < 16:
+                    view.append(code)
+                    used.add(code)
+                elif len(klass) < 10:
+                    klass.append(code)
+                    used.add(code)
+            stride = []
+            for code in saved["stride"] or []:
+                if code not in used:
+                    stride.append(code)
+                    used.add(code)
+            for code in codes:
+                if code not in used:
+                    stride.append(code)
+            return {"view": view, "class": klass, "stride": stride}
+
+        def add_assigned_table(kind):
+            headers, fields = THREAT_SPEC[kind]
+            by_code = {((getattr(cst, "code", "") or "")): cst for _pc, cst in cst_pairs() if getattr(cst, "code", None)}
+            value_rows = []
+            for code in assign_threat_codes()[kind]:
+                cst = by_code.get(code)
+                value_rows.append([
+                    (getattr(cst, field, "") or "") if cst else (code if field == "code" else "")
+                    for field in fields
+                ])
+            if not value_rows:
+                value_rows = [["当前产品暂无对应 THREAT"] + [""] * (len(headers) - 1)]
+            add_header_table(headers, value_rows)
+
+        def is_sbom_cst(cst):
+            text = f"{getattr(cst, 'category', '') or ''} {getattr(cst, 'module', '') or ''}"
+            return re.search(r"sbom", text, re.I) is not None
+
+        def add_score_table(kind):
+            headers = ["威胁编号", "分类", "威胁描述", "缓解前CVSS", "缓解前可利用性", "缓解前严重度", "缓解前接受度", "缓解后CVSS", "缓解后可利用性", "缓解后严重度", "缓解后接受度", "缓解措施"]
+            value_rows = []
+            for _serial, code, pc, cst in ordered_csts():
+                is_scan = str(code).strip() in SCAN_THREAT_CODES
+                is_sbom = is_sbom_cst(cst)
+                if kind == "scan" and not is_scan:
+                    continue
+                if kind == "sbom" and not (is_sbom and not is_scan):
+                    continue
+                if kind == "internal" and (is_scan or is_sbom):
+                    continue
+
+                def cell(value):
+                    return "" if value is None else str(value)
+
+                value_rows.append([
+                    code, getattr(cst, "category", "") or "", getattr(cst, "description", "") or "",
+                    cell(pc.prev_score), cell(pc.prev_severity), cell(pc.prev_level), pc.prev_accept or "",
+                    cell(pc.cur_score), cell(pc.cur_severity), cell(pc.cur_level), pc.cur_accept or "",
+                    "\n".join(dict.fromkeys(re.findall(r"RCM\d+", str(pc.rcm_codes or "")))),
+                ])
+            if not value_rows:
+                value_rows = [["当前产品暂无对应 THREAT 数据。"] + [""] * (len(headers) - 1)]
+            add_header_table(headers, value_rows)
+
         def add_stride_threats():
+            add_assigned_table("stride")
             rows = db.session.execute(
                 select(CybersecThreat).where(CybersecThreat.doc_id == id, CybersecThreat.view_type == "STRIDE").order_by(CybersecThreat.id)
             ).scalars().all()
+            if not rows:
+                return
             headers = ["威胁编号", "STRIDE类别", "资产/对象", "威胁描述", "攻击路径", "影响", "可能性", "严重度", "风险水平", "控制措施"]
             value_rows = [[
                 r.threat_code or "", r.stride_category or "", r.asset or "", r.description or "", r.attack_path or "",
@@ -1304,7 +1475,12 @@ class Server(object):
                     obj.product_id, "img_flow", obj.version or "", getattr(obj, "product_full_version", "") or ""
                 )
                 if img_row and img_row.file_url:
-                    add_section_image(img_row.file_url, caption="网络安全流程图（自动获取）")
+                    path = img_row.file_url[1:] if str(img_row.file_url).startswith("/") else img_row.file_url
+                    docx_util.save_img2docx(
+                        path, document, mw=2000, mh=2000, target_long=2000,
+                        width_ratio=0.98, height_ratio=0.78,
+                    )
+                    write_center_caption("网络安全流程图")
                     return True
             except Exception:
                 logger.exception("导出网络安全流程图失败")
@@ -1445,15 +1621,24 @@ class Server(object):
             # 有序内容块（text/table 交错）：按块顺序输出，忽略平铺 text/tables
             blocks = sec.get("blocks")
             if isinstance(blocks, list) and blocks:
+                ch = chapter_of(sec)
                 for block in blocks:
                     if not isinstance(block, dict):
                         continue
                     if block.get("type") == "table":
-                        add_one_table(block.get("table") or [])
+                        if ch not in ("view", "class", "stride"):
+                            add_one_table(block.get("table") or [])
                     elif block.get("text"):
                         docx_util.save_txt2docx(str(block.get("text") or ""), document)
                 for image_url in sec.get("images", []) or []:
                     add_section_image(image_url)
+                if ch == "stride":
+                    add_stride_threats()
+                elif ch in ("view", "class"):
+                    add_assigned_table(ch)
+                ck = control_kind_of(sec)
+                if ck:
+                    add_score_table(ck)
                 for child in sec.get("children", []) or []:
                     add_section(child, level + 1)
                 return
@@ -1464,21 +1649,39 @@ class Server(object):
                 if text.strip():
                     docx_util.save_txt2docx(text, document)
                 add_flow_diagram_image()
+            elif chapter_of(sec) == "stride":
+                if text.strip():
+                    docx_util.save_txt2docx(text, document)
+                for image_url in images:
+                    add_section_image(image_url)
+                add_stride_threats()
+            elif chapter_of(sec) in ("view", "class"):
+                if text.strip():
+                    docx_util.save_txt2docx(text, document)
+                for image_url in images:
+                    add_section_image(image_url)
+                add_assigned_table(chapter_of(sec))
+            elif control_kind_of(sec):
+                if text.strip():
+                    docx_util.save_txt2docx(text, document)
+                for image_url in images:
+                    add_section_image(image_url)
             else:
                 render_interleaved_body(text, tables, images)
-            if ref_type == "stride_threats":
-                add_stride_threats()
-            elif ref_type == "cybersec_controls_internal":
+            ck = control_kind_of(sec)
+            if ck == "internal":
+                add_score_table("internal")
                 add_control_table(CybersecControlInternal)
-            elif ref_type == "cybersec_controls_sbom":
+            elif ck == "sbom":
+                add_score_table("sbom")
                 add_control_table(CybersecControlSbom)
-            elif ref_type == "cybersec_controls_scan":
+            elif ck == "scan":
+                add_score_table("scan")
                 add_control_table(CybersecControlScan)
             elif ref_type == "traceability":
                 add_traceability(sec)
             # 矩阵章若仍有导入原始表且未走交错（无 text 占位），矩阵后已由 render 输出；有交错时 tables 已在正文中
-            if ref_type in ("stride_threats", "cybersec_controls_internal", "cybersec_controls_sbom",
-                            "cybersec_controls_scan", "traceability", "flow_diagram"):
+            if ref_type in ("traceability", "flow_diagram"):
                 # 矩阵/流程图：导入原始表若未在交错中消耗，追加文末
                 if tables and not ("{{TBL}}" in text or re.search(r"(?m)^表\s*\d", text) or "见下表" in text):
                     for table_rows in tables:
