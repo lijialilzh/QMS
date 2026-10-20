@@ -3352,7 +3352,10 @@ finally:
                 written_child_ids = set()
                 table_written = False
                 image_written = False
-                node_text_effective = str(node.text or "")
+                _raw_node_text = str(node.text or "")
+                _below_parts = _raw_node_text.split("{{BELOW}}", 1)
+                node_text_effective = _below_parts[0]
+                node_text_after_table = _below_parts[1].strip("\n") if len(_below_parts) > 1 else ""
                 pending_table_captions: List[str] = []
                 pending_image_captions: List[str] = []
                 imported_table_children = [
@@ -3659,7 +3662,7 @@ finally:
                             for raw_line in before_lines:
                                 line_raw = str(raw_line or "")
                                 line = line_raw.strip()
-                                if not line:
+                                if not line or line in ("{{TXT}}", "{{EMPTY}}", "{{BELOW}}"):
                                     continue
                                 if imported_db_children and __is_database_heading_title(line):
                                     continue
@@ -3704,7 +3707,7 @@ finally:
                             for raw_line in after_lines:
                                 line_raw = str(raw_line or "")
                                 line = line_raw.strip()
-                                if not line:
+                                if not line or line in ("{{TXT}}", "{{EMPTY}}", "{{BELOW}}"):
                                     continue
                                 if __is_table_caption_line(line):
                                     export_state["pending_table_caps"].append(line)
@@ -3733,7 +3736,7 @@ finally:
                             for raw_line in normalized_lines:
                                 line_raw = str(raw_line or "")
                                 line = line_raw.strip()
-                                if not line:
+                                if not line or line in ("{{TXT}}", "{{EMPTY}}", "{{BELOW}}"):
                                     continue
                                 if imported_db_children and __is_database_heading_title(line):
                                     continue
@@ -3826,6 +3829,14 @@ finally:
                         for cap in pending_table_captions:
                             __save_table_caption_txt(docx, cap, font_def)
                         pending_table_captions = []
+
+                if node_text_after_table:
+                    _after_export = "\n".join(
+                        ln for ln in str(node_text_after_table).splitlines()
+                        if ln.strip() not in ("{{TXT}}", "{{EMPTY}}", "{{BELOW}}")
+                    ).strip()
+                    if _after_export:
+                        docx_util.save_txt2docx(_after_export, docx, font_def)
                         
                 if node.children:
                     next_children = [child for child in node.children if builtins.id(child) not in written_child_ids]

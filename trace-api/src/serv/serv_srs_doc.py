@@ -4245,7 +4245,7 @@ class Server(object):
         def __strip_imported_catalog_lines(value: str):
             lines = [
                 line for line in str(value or "").splitlines()
-                if not __is_imported_catalog_line(line) and line.strip() not in ("{{TXT}}", "{{EMPTY}}")
+                if not __is_imported_catalog_line(line) and line.strip() not in ("{{TXT}}", "{{EMPTY}}", "{{BELOW}}")
             ]
             return "\n".join(lines).strip()
 
@@ -5206,7 +5206,10 @@ class Server(object):
                     # 变更需求表仅从数据库导出，跳过快照中的独立变更表节点。
                     # 仅限需求列表表格：功能描述 KV 表的表名可能是带「变更需求」的章节名，不能跳过。
                     continue
-                node_text_for_export = __strip_imported_catalog_lines(node.text)
+                _raw_node_text = str(node.text or "")
+                _below_parts = _raw_node_text.split("{{BELOW}}", 1)
+                node_text_for_export = __strip_imported_catalog_lines(_below_parts[0])
+                node_text_after_table = __strip_imported_catalog_lines(_below_parts[1]) if len(_below_parts) > 1 else ""
                 imported_table_children = [
                     child for child in (node.children or [])
                     if __is_imported_table_title(child.title) and child.table and child.table.headers
@@ -5437,6 +5440,9 @@ class Server(object):
                             await __export_db_req_list_table(kind, docx, font_def, is_other=(kind == "other"))
                         else:
                             __save_tab2docx(node.table, docx, font_def)
+
+                if node_text_after_table:
+                    docx_util.save_txt2docx(node_text_after_table, docx, font_def)
 
                 if node.children:
                     next_children = [child for child in node.children if id(child) not in written_child_ids]

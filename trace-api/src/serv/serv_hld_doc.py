@@ -1117,9 +1117,13 @@ class Server(object):
                         other_children.append(child)
                 pending_reviews.extend(review_children)
                 consumed = 0
-                for raw_line in __strip_review_tail(getattr(node, "text", "") or "").replace("\r", "").split("\n"):
+                _body_lines = __strip_review_tail(getattr(node, "text", "") or "").replace("\r", "").split("\n")
+                _below_at = next((i for i, raw in enumerate(_body_lines) if str(raw or "").strip() == "{{BELOW}}"), -1)
+                _head_lines = _body_lines if _below_at < 0 else _body_lines[:_below_at]
+                _tail_lines = [] if _below_at < 0 else _body_lines[_below_at + 1:]
+                for raw_line in _head_lines:
                     line = str(raw_line or "").strip()
-                    if not line or re.sub(r"\s+", "", line) in ("附件一评审结论", "评审记录"):
+                    if not line or line in ("{{TXT}}", "{{EMPTY}}", "{{BELOW}}") or re.sub(r"\s+", "", line) in ("附件一评审结论", "评审记录"):
                         continue
                     if __is_data_table_caption(line) and consumed < len(table_children):
                         __write_imported_table(table_children[consumed], line)
@@ -1133,6 +1137,11 @@ class Server(object):
                     __write_imported_table(node)
                 elif __has_table(node) and __is_misplaced_review_table(node.table):
                     pending_reviews.append(node)
+                for raw_line in _tail_lines:
+                    line = str(raw_line or "").strip()
+                    if not line or line in ("{{TXT}}", "{{EMPTY}}", "{{BELOW}}"):
+                        continue
+                    docx_util.save_txt2docx(line, docx)
                 if img_url and not self.__child_owns_figure(node):
                     __save_fitted_image(img_url)
                     if docx.paragraphs:
@@ -1142,26 +1151,6 @@ class Server(object):
         def __is_iface_summary(table) -> bool:
             names = [re.sub(r"\s+", "", str(getattr(h, "name", "") or "")) for h in (getattr(table, "headers", None) or [])]
             return "接口设计编号" in names and any(key in names for key in ("功能", "接口名称", "涉及模块"))
-
-        def __write_outline(nodes, depth=0):
-            from docx.shared import Pt
-            for node in nodes or []:
-                title = str(getattr(node, "title", "") or "").strip()
-                if not title or __is_cover_title(title) or __is_revision_title(title) or __is_review_title(title):
-                    __write_outline(getattr(node, "children", None), depth)
-                    continue
-                if self._is_imported_table_title(title) or self._is_imported_image_title(title) or self._is_field_table_node(node):
-                    continue
-                if re.match(r"^\d", title):
-                    p = docx.add_paragraph()
-                    p.paragraph_format.left_indent = Pt(14 * depth)
-                    p.paragraph_format.space_before = Pt(0)
-                    p.paragraph_format.space_after = Pt(0)
-                    p.paragraph_format.line_spacing = 1.5
-                    docx_util.fonted_txt(p, title, font_size=10.5)
-                    __write_outline(getattr(node, "children", None), depth + 1)
-                else:
-                    __write_outline(getattr(node, "children", None), depth)
 
         def __cover_signers():
             rev_date = ""
@@ -1265,11 +1254,24 @@ class Server(object):
                 if not cells:
                     continue
                 label = re.sub(r"\s+", "", cells[0].text or "")
-                if label != "生效日期" or len(cells) <= 2:
+                if label != "生效日期" or len(cells) < 2:
                     continue
                 merged = cells[1]
                 for cell in cells[2:]:
-                    merged = merged.merge(cell)
+                    if cell._tc is merged._tc:
+                        continue
+                    try:
+                        merged = merged.merge(cell)
+                    except Exception:
+                        break
+                # 合并会把后面空格的段落拼进来，生效日期下面就多出空行
+                for para in list(merged.paragraphs)[1:]:
+                    if str(para.text or "").strip():
+                        continue
+                    element = para._element
+                    parent = element.getparent()
+                    if parent is not None:
+                        parent.remove(element)
                 break
 
         def __fill_revision_dates(table):
@@ -1356,8 +1358,7 @@ class Server(object):
         __add_blank_lines(9)
         if __has_table(cover_node):
             docx_util.save_tab2docx(cover_node.table, docx)
-            if not (getattr(cover_node.table, "cells", None) or []):
-                __merge_effective_date_row()
+            __merge_effective_date_row()
         __start_next_page()
         __write_front_title("文件修订记录")
         __add_blank_lines(2)
@@ -1372,13 +1373,8 @@ class Server(object):
         __start_next_page()
         __write_front_title("目录")
         __add_blank_lines(1)
-        __write_outline(body_roots)
-        from docx.shared import Pt as _toc_pt
-        tail = docx.add_paragraph()
-        tail.paragraph_format.left_indent = _toc_pt(0)
-        tail.paragraph_format.space_before = _toc_pt(0)
-        tail.paragraph_format.space_after = _toc_pt(0)
-        docx_util.fonted_txt(tail, "附件一 评审结论", font_size=10.5)
+        # 与详细设计相同：目录域按标题生成，带前导点和页码；附件一是文末标题，会排在目录末行
+        docx_util.insert_toc_field(docx, "1-4")
         __start_next_page()
         __write_nodes(body_roots)
         __flush_pending_reviews()
@@ -1405,7 +1401,9 @@ class Server(object):
                     run.text = ""
                 docx_util.fonted_txt(header_para, file_no)
         docx_util.add_page_number_footer(docx.sections[0], file_no=file_no, skip_first=True)
+        docx_util.fill_toc_cache(docx)
         docx.save(output)
+        docx_util.refresh_docx_toc_with_libreoffice(output)
 
     @staticmethod
     def __table_header_name(table, idx: int = 0) -> str:
