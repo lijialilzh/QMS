@@ -18,7 +18,7 @@ import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
 import TreeStructure, { computeNavChapterNumberMap, designLetterForTail, stripNavChapterPrefix, TreeNode } from "./components/TreeStructure";
-import { ensureRevisionObjectRows } from "@/pages/doc_fill/syncDocVersion";
+import { ensureRevisionObjectRows, revisionVersionSeries } from "@/pages/doc_fill/syncDocVersion";
 
 const SDS_COVER_DATE_KEYWORDS = ["软件详细设计"];
 
@@ -774,7 +774,11 @@ export default () => {
     const productId = Form.useWatch("product_id", editForm);
     const docVersion = Form.useWatch("version", editForm);
     const displayProductId = (data.isEdit || isReadOnly) ? (data.docProductId ?? productId) : productId;
-    const displayDocVersion = (data.isEdit || isReadOnly) ? (data.docVersion ?? docVersion) : docVersion;
+    const watchedDocVersion = String(docVersion ?? "").trim();
+    // 编辑页版本框改成 A1 后要立刻写封面和修订记录。只打到「A」还不是完整版本，继续用已保存的版本，避免修订表多出一行 A。
+    const displayDocVersion = revisionVersionSeries(watchedDocVersion)
+        ? watchedDocVersion
+        : ((data.isEdit || isReadOnly) ? (String(data.docVersion ?? "").trim() || watchedDocVersion) : watchedDocVersion);
     const currentProduct = (data.products as any[]).find((p: any) => p.id === displayProductId);
     const normalizeScopeTitle = (title?: string) => String(title || "")
         .replace(/^(\d+(?:\.\d+)*\.?)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
