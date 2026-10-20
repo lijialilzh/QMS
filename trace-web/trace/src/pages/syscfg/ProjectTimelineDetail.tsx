@@ -5,6 +5,8 @@ import { useEffect } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
+import { Root, useSelector } from "@/store";
+import { canWriteProduct } from "../productWrite";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import ProdPrevNext from "@/pages/prod_risk/ProdPrevNext";
 import * as Api from "@/api/ApiProjectTimeline";
@@ -22,7 +24,8 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
     const navigate = useNavigate();
     const location = useLocation();
     const prodId = Number(prodIdProp ?? useParams().prodId);
-    const readOnly = readOnlyProp ?? location.pathname.includes("/view/");
+    const user = useSelector((state: Root) => state.user);
+    const readOnly = !canWriteProduct(user?.role_code, user?.id, "baseInfo") || (readOnlyProp ?? location.pathname.includes("/view/"));
     const [data, dispatch] = useData({
         depts: [],
         rows: [],

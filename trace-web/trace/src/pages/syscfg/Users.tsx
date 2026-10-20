@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
-import { buildAppMenus, scopeModulesFromMenu } from "../navMenu";
+import { buildAppMenus, moduleIsGranted, scopeModulesFromMenu } from "../navMenu";
 import * as Api from "@/api/ApiUser";
 import * as ApiRole from "@/api/ApiRole";
 
@@ -48,8 +48,7 @@ const collectPermLabels = (nodes: any[] = [], dict: any = {}) => {
 const buildPermPreview = (codes: string[] = [], ts: (key: string) => string) => {
     if (!codes.length) return "-";
     const menus = buildAppMenus(ts, { role: "root", userId: 1 });
-    const has = (base: string) => codes.some((code) => code === base || code.startsWith(`${base}_`));
-    const picked = scopeModulesFromMenu(menus).filter((item) => item.bases.some(has)).map((item) => item.moduleName);
+    const picked = scopeModulesFromMenu(menus).filter((item) => moduleIsGranted(item, codes)).map((item) => item.moduleName);
     return picked.length > 0 ? picked.join("、") : "-";
 };
 

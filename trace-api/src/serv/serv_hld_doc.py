@@ -35,6 +35,7 @@ from . import msg_err_db
 from . import serv_review_util
 from .serv_srs_doc import Server as ServSrsDoc
 from .serv_utils import new_version, sync_file_no_version
+from .serv_product import product_scope_filter
 
 logger = logging.getLogger(__name__)
 srsdoc_serv = ServSrsDoc()
@@ -534,8 +535,9 @@ class Server(object):
             sql = sql.where(HldDoc.product_id == product_id)
         if version:
             sql = sql.where(HldDoc.version.like(f"%{version}%"))
-        if op_user and op_user.id != 1 and getattr(op_user, "role_code", None) == Roles.product_manager.value.code:
-            sql = sql.where(Product.create_user_id == op_user.id)
+        scope = product_scope_filter(op_user)
+        if scope is not None:
+            sql = sql.where(scope)
         total = db.session.execute(select(func.count()).select_from(sql)).scalars().first()
         rows = db.session.execute(
             sql.offset(page_size * page_index).limit(page_size).order_by(desc(HldDoc.create_time))

@@ -17,5 +17,6 @@ export default () => (
         hint="选择产品及完整版本后，在下方主数据中全选或勾选 THREAT，确定即添加到该产品。"
         countLabel="THREAT条数"
         itemLabel="THREAT"
+        writeScope="threat"
     />
 );

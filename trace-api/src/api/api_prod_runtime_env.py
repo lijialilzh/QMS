@@ -10,7 +10,7 @@ from ..obj.vobj_prod_runtime_env import ProdRuntimeEnvObj
 from ..obj.tobj_role import Perms
 from ..obj import Resp
 from ..serv.serv_prod_runtime_env import Server
-from . import try_log
+from . import try_log, ROLES_BASE_WRITE
 
 router = APIRouter()
 server = Server()
@@ -23,12 +23,12 @@ async def get_prod_runtime_env(prod_id: int = None):
 
 
 @router.post("/save_prod_runtime_env", summary="保存产品运行环境", response_model=Resp[Any])
-@try_log(perm=Perms.prod_runtime_edit)
+@try_log(perm=Perms.prod_runtime_edit, roles=ROLES_BASE_WRITE)
 async def save_prod_runtime_env(form: ProdRuntimeEnvForm):
     return await server.save_prod_runtime_env(form)
 
 
 @router.delete("/delete_prod_runtime_env", summary="删除产品运行环境", response_model=Resp[Any])
-@try_log(perm=Perms.prod_runtime_edit)
+@try_log(perm=Perms.prod_runtime_edit, roles=ROLES_BASE_WRITE)
 async def delete_prod_runtime_env(prod_id: int):
     return await server.delete_prod_runtime_env(prod_id)

@@ -50,18 +50,37 @@ def is_srs_unrestricted_user(op_user: UserObj) -> bool:
     return op_user.role_code == Roles.dqa.value.code
 
 
+def product_scope_ids(op_user: UserObj):
+    """除超级管理员、DQA 外，可见产品 = 产品可见范围勾选。产品经理另外包含本人创建。None=不限制。"""
+    if not op_user or is_srs_unrestricted_user(op_user):
+        return None
+    return srs_visible_product_ids(op_user)
+
+
+def product_scope_filter(op_user: UserObj):
+    """文件列表用的产品条件。None=不限制。"""
+    ids = product_scope_ids(op_user)
+    if ids is None:
+        return None
+    return Product.id.in_(ids or [-1])
+
+
 def srs_visible_product_ids(op_user: UserObj):
-    """需求规格说明可见产品。None=全部（超级管理员、DQA）；否则为产品 id 列表（prod_user ∪ 本人创建）。"""
+    """可见产品。None=全部（超级管理员、DQA）。其他人只看产品可见范围；产品经理再加本人创建。"""
     if is_srs_unrestricted_user(op_user):
         return None
     if not op_user or not op_user.id:
         return []
     assigned = db.session.execute(select(UserProd.product_id).where(UserProd.user_id == op_user.id)).scalars().all()
-    created = db.session.execute(select(Product.id).where(Product.create_user_id == op_user.id)).scalars().all()
     ids = set()
-    for x in list(assigned or []) + list(created or []):
+    for x in assigned or []:
         if x:
             ids.add(int(x))
+    if op_user.role_code == Roles.product_manager.value.code:
+        created = db.session.execute(select(Product.id).where(Product.create_user_id == op_user.id)).scalars().all()
+        for x in created or []:
+            if x:
+                ids.add(int(x))
     return list(ids)
 
 
@@ -430,9 +449,13 @@ class Server(object):
                 if not ids:
                     return Resp.resp_ok(data=Page(total=0, rows=[], page_index=page_index, page_size=page_size))
                 sql = sql.where(Product.id.in_(ids))
-        # 其它列表：产品经理只看自己创建的产品；超管及其它角色查看全部产品
-        elif op_user.id != 1 and op_user.role_code == Roles.product_manager.value.code:
-            sql = sql.where(Product.create_user_id == op_user.id)
+        # 产品管理等列表：QA/RA/开发/测试/模型/数据按勾选范围；产品经理看勾选范围（含本人创建）
+        else:
+            ids = product_scope_ids(op_user)
+            if ids is not None:
+                if not ids:
+                    return Resp.resp_ok(data=Page(total=0, rows=[], page_index=page_index, page_size=page_size))
+                sql = sql.where(Product.id.in_(ids))
         
         total = 0
         if not export:
@@ -505,7 +528,7 @@ class Server(object):
         data = []
         for uid in user_ids:
             created_ids = created_mp.get(uid) or []
-            pids = list(dict.fromkeys((mp.get(uid) or []) + created_ids))
+            pids = list(dict.fromkeys(mp.get(uid) or []))
             data.append({"user_id": uid, "product_ids": pids, "created_product_ids": created_ids})
         return Resp.resp_ok(data=data)
 
@@ -527,10 +550,11 @@ class Server(object):
                 continue
             if n > 0:
                 ids.append(n)
-        created = db.session.execute(select(Product.id).where(Product.create_user_id == user_id)).scalars().all()
-        for x in created or []:
-            if x:
-                ids.append(int(x))
+        if (target.role_code or "") == Roles.product_manager.value.code:
+            created = db.session.execute(select(Product.id).where(Product.create_user_id == user_id)).scalars().all()
+            for x in created or []:
+                if x:
+                    ids.append(int(x))
         ids = list(dict.fromkeys(ids))
         try:
             db.session.execute(delete(UserProd).where(UserProd.user_id == user_id))

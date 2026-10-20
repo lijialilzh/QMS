@@ -7,7 +7,7 @@ import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
 import { Root, useSelector } from "@/store";
 import * as Api from "@/api/ApiRole";
-import { buildAppMenus, codesForBases, scopeModulesFromMenu } from "../navMenu";
+import { buildAppMenus, codesForBases, moduleIsGranted, scopeModulesFromMenu } from "../navMenu";
 
 const pageSizeOptions = [20, 50, 100];
 
@@ -137,10 +137,8 @@ const RoleDlg = ({ data, dispatch, onSaved }: any) => {
                         </Checkbox>
                         <div className="perm_scope_grid">
                             {moduleRows.map((item) => {
-                                const hasBase = (codes: string[], base: string) => codes.some((code) => code === base || code.startsWith(`${base}_`));
-                                const controlBases = item.exclusiveBases.length ? item.exclusiveBases : item.bases;
                                 const rolePerms = data.targetRow.role_perms || [];
-                                const checked = controlBases.length > 0 && controlBases.every((base: string) => hasBase(rolePerms, base));
+                                const checked = moduleIsGranted(item, rolePerms);
                                 const disabled = data.targetRow.code === ROOT || item.codes.length === 0;
                                 return (
                                     <div key={item.moduleName} className="perm_scope_card">
@@ -162,8 +160,7 @@ const RoleDlg = ({ data, dispatch, onSaved }: any) => {
                                                         });
                                                         moduleRows.forEach((row) => {
                                                             if (turningOff.has(row.moduleName)) return;
-                                                            const control = row.exclusiveBases.length ? row.exclusiveBases : row.bases;
-                                                            const wasOn = control.length > 0 && control.every((base: string) => hasBase(before, base));
+                                                            const wasOn = moduleIsGranted(row, before);
                                                             if (wasOn) row.codes.forEach((code: string) => next.add(code));
                                                         });
                                                     }

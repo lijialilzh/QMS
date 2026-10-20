@@ -49,6 +49,7 @@ from .model_doc_build_templates import BUILD_DOC_TYPES, BUILD_DEFAULTS
 from .model_doc_train_templates import TRAIN_DOC_TYPES, TRAIN_DEFAULTS
 from .model_doc_test_templates import TEST_DOC_TYPES, TEST_DEFAULTS
 from .model_doc_pkg_templates import PKG_DOC_TYPES, PKG_REQ_TYPES, PKG_REC_TYPES, PKG_SUBMIT_TYPES, PKG_DEFAULTS
+from .serv_product import product_scope_filter
 
 DOC_META = {**WORD_META, **XLSX_META}
 DEFAULT_CONTENTS = {**WORD_CONTENTS, **XLSX_CONTENTS}
@@ -4179,8 +4180,9 @@ class Server(object):
             wheres.append(ModelDoc.product_id == product_id)
         if version:
             wheres.append(ModelDoc.version.like(f"%{version}%"))
-        if op_user and op_user.id != 1 and op_user.role_code == Roles.product_manager.value.code:
-            wheres.append(Product.create_user_id == op_user.id)
+        scope = product_scope_filter(op_user)
+        if scope is not None:
+            wheres.append(scope)
         sql_total = select(func.count(ModelDoc.id)).join(Product, ModelDoc.product_id == Product.id).where(*wheres)
         total = db.session.execute(sql_total).scalar() or 0
         sql = (

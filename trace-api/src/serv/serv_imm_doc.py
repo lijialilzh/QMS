@@ -40,6 +40,7 @@ from .serv_prod_runtime_env import apply_runtime_to_pdp_content
 from .serv_doc_file import pick_doc_image_file_row
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
+from .serv_product import product_scope_filter
 
 logger = logging.getLogger(__name__)
 
@@ -807,8 +808,9 @@ class Server(object):
             wheres.append(ImmDoc.product_id == product_id)
         if version:
             wheres.append(ImmDoc.version.like(f"%{version}%"))
-        if op_user and op_user.id != 1 and op_user.role_code == Roles.product_manager.value.code:
-            wheres.append(Product.create_user_id == op_user.id)
+        scope = product_scope_filter(op_user)
+        if scope is not None:
+            wheres.append(scope)
         sql_total = select(func.count(ImmDoc.id)).join(Product, ImmDoc.product_id == Product.id).where(*wheres)
         total = db.session.execute(sql_total).scalar() or 0
         sql = (select(ImmDoc, Product).join(Product, ImmDoc.product_id == Product.id).where(*wheres)

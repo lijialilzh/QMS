@@ -10,7 +10,7 @@
         "syscfg": "System Config",
         "roles": "Roles",
         "users": "Users",
-        "srs_viewers": "SRS Visibility",
+        "srs_viewers": "Product Visibility",
         "projects": "Product Lines",
         "project_members": "Members",
         "project_timeline": "Timeline",

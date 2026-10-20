@@ -48,6 +48,7 @@ from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version, docx_util
 from .serv_prod_runtime_env import DEFAULT_RUNTIME_ENV, get_runtime_payload
+from .serv_product import product_scope_filter
 
 logger = logging.getLogger(__name__)
 
@@ -906,8 +907,9 @@ class Server(object):
             wheres.append(ResearchDoc.product_id == product_id)
         if version:
             wheres.append(ResearchDoc.version.like(f"%{version}%"))
-        if op_user and op_user.id != 1 and op_user.role_code == Roles.product_manager.value.code:
-            wheres.append(Product.create_user_id == op_user.id)
+        scope = product_scope_filter(op_user)
+        if scope is not None:
+            wheres.append(scope)
         total = db.session.execute(
             select(func.count(ResearchDoc.id)).join(Product, ResearchDoc.product_id == Product.id).where(*wheres)
         ).scalar() or 0

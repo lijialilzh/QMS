@@ -13,7 +13,7 @@ from ..obj.tobj_project_timeline import TimelineRowForm, TimelineCellForm
 from ..obj.tobj_role import Perms
 from ..obj import Resp
 from ..serv.serv_project_timeline import Server
-from . import try_log
+from . import try_log, ROLES_BASE_WRITE
 from ..utils.i18n import ts
 
 router = APIRouter()
@@ -27,31 +27,31 @@ async def list_timeline(prod_id: int = None):
 
 
 @router.post("/add_timeline_row", summary="新增时间线行", response_model=Resp[Any])
-@try_log(perm=Perms.project_timeline_edit)
+@try_log(perm=Perms.project_timeline_edit, roles=ROLES_BASE_WRITE)
 async def add_timeline_row(form: TimelineRowForm):
     return await server.add_timeline_row(form)
 
 
 @router.post("/update_timeline_row", summary="更新时间线行", response_model=Resp[Any])
-@try_log(perm=Perms.project_timeline_edit)
+@try_log(perm=Perms.project_timeline_edit, roles=ROLES_BASE_WRITE)
 async def update_timeline_row(form: TimelineRowForm):
     return await server.update_timeline_row(form)
 
 
 @router.delete("/delete_timeline_row", summary="删除时间线行（支持逗号多 id）", response_model=Resp[Any])
-@try_log(perm=Perms.project_timeline_edit)
+@try_log(perm=Perms.project_timeline_edit, roles=ROLES_BASE_WRITE)
 async def delete_timeline_row(id: str):
     return await server.delete_timeline_row((id or "").split(","))
 
 
 @router.post("/update_timeline_cell", summary="更新时间线单元格", response_model=Resp[Any])
-@try_log(perm=Perms.project_timeline_edit)
+@try_log(perm=Perms.project_timeline_edit, roles=ROLES_BASE_WRITE)
 async def update_timeline_cell(form: TimelineCellForm):
     return await server.update_timeline_cell(form)
 
 
 @router.post("/import_timeline", summary="导入时间线模板", response_model=Resp[Any])
-@try_log(perm=Perms.project_timeline_edit)
+@try_log(perm=Perms.project_timeline_edit, roles=ROLES_BASE_WRITE)
 async def import_timeline(prod_id: int = Form(...), replace: bool = Form(True), file: UploadFile = File(...)):
     content = await file.read()
     return await server.import_timeline(prod_id, content, replace)

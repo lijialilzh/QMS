@@ -4,6 +4,8 @@ import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { renderOneLineWithTooltip, useData } from "@/common";
+import { Root, useSelector } from "@/store";
+import { canWriteProduct } from "../productWrite";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProdDeviceRes";
 import * as ApiProduct from "@/api/ApiProduct";
@@ -19,6 +21,8 @@ enum DlgTypes {
 
 export default () => {
     const { t: ts } = useTranslation();
+    const user = useSelector((state: Root) => state.user);
+    const canWrite = canWriteProduct(user?.role_code, user?.id, "baseInfo");
     const [queryForm] = Form.useForm();
     const [addForm] = Form.useForm();
     const [data, dispatch] = useData({
@@ -184,8 +188,9 @@ export default () => {
             render: (_: any, row: any) => (
                 <Space size={4} className="risk-part-list-row-actions" onClick={(e) => e.stopPropagation()}>
                     <Button type="link" size="small" onClick={() => toggleExpand(row.id)}>
-                        {(data.expandedKeys || []).includes(row.id) ? "收起" : ts("edit")}
+                        {(data.expandedKeys || []).includes(row.id) ? "收起" : (canWrite ? ts("edit") : ts("view"))}
                     </Button>
+                    {canWrite ? (
                     <Button
                         type="link"
                         size="small"
@@ -193,6 +198,7 @@ export default () => {
                         onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
                         {ts("delete")}
                     </Button>
+                    ) : null}
                 </Space>
             ),
         },
@@ -233,9 +239,11 @@ export default () => {
                         </Col>
                     </Row>
                 </Form>
+                {canWrite ? (
                 <Button type="primary" onClick={() => { addForm.resetFields(); dispatch({ dlgType: DlgTypes.add, addProductId: undefined }); }}>
                     {ts("add")}
                 </Button>
+                ) : null}
             </div>
             <Table
                 className="expand risk-part-list-table"
@@ -260,7 +268,7 @@ export default () => {
                     expandedRowKeys: data.expandedKeys || [],
                     showExpandColumn: false,
                     expandedRowRender: (row) => (
-                        <ProdDeviceResDetail prodId={row.id} onChanged={refreshAfterChange} />
+                        <ProdDeviceResDetail prodId={row.id} readOnly={!canWrite} onChanged={refreshAfterChange} />
                     ),
                 }}
             />

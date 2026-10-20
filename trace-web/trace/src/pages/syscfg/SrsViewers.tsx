@@ -65,11 +65,15 @@ export default () => {
         }
     }, [canConfig]);
 
-    const applyUser = (userId: number, viewerMap = data.viewerMap, products = data.products) => {
+    const applyUser = (userId: number, viewerMap = data.viewerMap, products = data.products, users = data.users) => {
         const item = viewerMap[userId] || { product_ids: [], created_product_ids: [] };
-        const createdIds = (item.created_product_ids || []).length
-            ? item.created_product_ids
-            : (products || []).filter((p: any) => p.create_user_id === userId).map((p: any) => p.id);
+        const userRow = (users || []).find((row: any) => row.id === userId);
+        const isProductManager = userRow?.role_code === "product_manager";
+        const createdIds = isProductManager
+            ? ((item.created_product_ids || []).length
+                ? item.created_product_ids
+                : (products || []).filter((p: any) => p.create_user_id === userId).map((p: any) => p.id))
+            : [];
         const checkedIds = Array.from(new Set([...(item.product_ids || []), ...createdIds]));
         dispatch({ selectedUserId: userId, createdIds, checkedIds });
     };
@@ -120,7 +124,7 @@ export default () => {
     return (
         <div className="page div-v">
             <div style={{ marginBottom: 12, color: "#666", lineHeight: 1.8 }}>
-                从左侧选择用户，勾选该用户可查看需求规格说明的产品。未勾选的产品，该用户在需求规格说明中看不到。超级管理员与 DQA 默认可见全部产品，不在此列表中配置。
+                从左侧选择用户，勾选该用户可见的产品。未勾选的产品，该用户在产品管理和各文件中都看不到。产品经理自己添加的产品默认勾选且不能取消，其他账号可以取消。超级管理员与 DQA 默认可见全部产品，不在此列表中配置。
             </div>
             <div className="div-h expand" style={{ gap: 16, minHeight: 0 }}>
                 <div className="div-v" style={{ width: 420 }}>

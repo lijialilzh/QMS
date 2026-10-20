@@ -16,7 +16,7 @@ type MenuCtx = { role?: string; userId?: number };
 export function buildAppMenus(ts: (key: string) => string, ctx: MenuCtx = {}): NavNode[] {
     const role = String(ctx.role || "");
     const user = { id: ctx.userId, role_code: role };
-    const seeBaseMasters = ["root", "dqa", "qa", "product_manager"].includes(role);
+    const seeBaseMasters = ["root", "dqa", "qa"].includes(role);
     const seeFullGeneralCfg = ["root", "dqa", "qa"].includes(role);
     return [
         {
@@ -110,6 +110,7 @@ export function buildAppMenus(ts: (key: string) => string, ctx: MenuCtx = {}): N
                     key: "/prod_hospitals",
                     label: ts("menu.prod_hospitals"),
                     perm: "prod_hospital_view",
+                    hidden: !seeBaseMasters,
                 },
             ],
         },
@@ -589,7 +590,8 @@ export function scopeModulesFromMenu(menus: NavNode[]): { moduleName: string; ba
         if (menu.hidden) continue;
         const found: string[] = [];
         collectBases([menu], found);
-        const unique = [...new Set(found.filter(Boolean))];
+        // 合规医院权限留在产品角色上供数据回传使用，不因此点亮「基础数据」卡片。
+        const unique = [...new Set(found.filter((base) => base && base !== "prod_hospital"))];
         const exclusive = unique.filter((base) => !claimed.has(base));
         exclusive.forEach((base) => {
             claimed.add(base);
@@ -609,4 +611,15 @@ export function codesForBases(bases: string[], items: { code: string }[]): strin
     if (!bases.length) return [];
     const want = new Set(bases);
     return [...new Set(items.map((item) => item.code).filter((code) => want.has(permBase(code)) || want.has(code)))];
+}
+
+/** 按权限码本体比较。project 不能算上 project_member。 */
+export function hasPermBase(codes: string[], base: string): boolean {
+    return codes.some((code) => permBase(code) === base);
+}
+
+/** 与角色权限卡片同一规则：这个一级菜单里，只要有一项属于它的权限，就算拥有该模块。 */
+export function moduleIsGranted(row: { bases: string[]; exclusiveBases: string[] }, codes: string[]): boolean {
+    const control = row.exclusiveBases.length ? row.exclusiveBases : row.bases;
+    return control.length > 0 && control.some((base) => hasPermBase(codes, base));
 }

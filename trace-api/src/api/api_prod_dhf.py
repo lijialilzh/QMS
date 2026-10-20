@@ -14,44 +14,44 @@ from ..obj.vobj_prod_dhf import ProdDhfObj
 from ..obj.tobj_role import Perms
 from ..obj import Resp, Page
 from ..serv.serv_prod_dhf import Server
-from . import CtxUser, try_log
+from . import CtxUser, try_log, ROLES_BASE_WRITE
 
 router = APIRouter()
 server = Server()
 
 
 @router.post("/add_prod_dhf", summary="添加DHF", response_model=Resp[Any])
-@try_log(perm=Perms.prod_dhf_edit)
+@try_log(perm=Perms.prod_dhf_edit, roles=ROLES_BASE_WRITE)
 async def add_prod_dhf(form: ProdDhfForm):
     return await server.add_prod_dhf(form) 
 
 
 @router.post("/update_prod_dhf", summary="更新DHF", response_model=Resp[Any])
-@try_log(perm=Perms.prod_dhf_edit)
+@try_log(perm=Perms.prod_dhf_edit, roles=ROLES_BASE_WRITE)
 async def update_prod_dhf(form: ProdDhfForm):
     return await server.update_prod_dhf(form) 
 
 
 @router.delete("/delete_prod_dhf", summary="删除DHF", response_model=Resp[Any])
-@try_log(perm=Perms.prod_dhf_edit)
+@try_log(perm=Perms.prod_dhf_edit, roles=ROLES_BASE_WRITE)
 async def delete_prod_dhfs(id: int):
     return await server.delete_prod_dhf(id)  
 
 
 @router.post("/delete_prod_dhfs", summary="批量删除DHF", response_model=Resp[Any])
-@try_log(perm=Perms.prod_dhf_edit)
+@try_log(perm=Perms.prod_dhf_edit, roles=ROLES_BASE_WRITE)
 async def delete_prod_dhfs_batch(form: ProdDhfBatchDeleteForm):
     return await server.delete_prod_dhfs(form.ids or [])
 
 
 @router.post("/copy_prod_dhfs", summary="复制产品DHF清单", response_model=Resp[Any])
-@try_log(perm=Perms.prod_dhf_edit)
+@try_log(perm=Perms.prod_dhf_edit, roles=ROLES_BASE_WRITE)
 async def copy_prod_dhfs(form: ProdDhfCopyForm):
     return await server.copy_prod_dhfs(form.source_prod_id, form.target_product_id)
 
 
 @router.post("/delete_prod_dhfs_by_prod_id", summary="删除产品全部DHF", response_model=Resp[Any])
-@try_log(perm=Perms.prod_dhf_edit)
+@try_log(perm=Perms.prod_dhf_edit, roles=ROLES_BASE_WRITE)
 async def delete_prod_dhfs_by_prod_id(form: ProdDhfProdDeleteForm):
     return await server.delete_prod_dhfs_by_prod_id(form.prod_id)
 
@@ -84,6 +84,6 @@ async def export_prod_dhfs(prod_id: int = None, page_index: int = 0, page_size: 
 
 
 @router.post("/import_prod_dhfs", summary="导入DHF", response_model=Resp[Any])
-@try_log(perm=Perms.prod_dhf_edit)
+@try_log(perm=Perms.prod_dhf_edit, roles=ROLES_BASE_WRITE)
 async def import_prod_dhfs(prod_id: int = Form(...), file: UploadFile = File(...)):
     return await server.import_prod_dhfs(prod_id, file)

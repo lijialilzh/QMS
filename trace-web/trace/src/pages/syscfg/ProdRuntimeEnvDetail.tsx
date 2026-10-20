@@ -17,7 +17,7 @@ const FIELDS = [
 
 const cloneTables = (tables: any[]) => JSON.parse(JSON.stringify(tables || []));
 
-export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void }) => {
+export default ({ prodId, readOnly, onChanged }: { prodId: number; readOnly?: boolean; onChanged?: () => void }) => {
     const { t: ts } = useTranslation();
     const [data, dispatch] = useData({
         form: {} as any,
@@ -45,7 +45,7 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
     };
 
     const saveForm = (next: any) => {
-        if (!prodId) return;
+        if (readOnly || !prodId) return;
         dispatch({ saving: true, form: next });
         const payload: any = { prod_id: prodId, tables: next.tables || [] };
         FIELDS.forEach((k) => (payload[k] = next[k] ?? ""));
@@ -95,6 +95,7 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
     };
 
     const insertRowAfter = (ti: number, r: number) => {
+        if (readOnly) return;
         const tables = cloneTables(data.form.tables || []);
         const cells = tables[ti]?.cells || [];
         const cols = cells[0] ? cells[0].length : 1;
@@ -105,6 +106,7 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
     };
 
     const delRow = (ti: number, r: number) => {
+        if (readOnly) return;
         const tables = cloneTables(data.form.tables || []);
         const cells = tables[ti]?.cells || [];
         if (cells.length <= 1) return;
@@ -129,6 +131,7 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
                             className="env-input env-arch-input"
                             autoSize={{ minRows: 1, maxRows: 4 }}
                             value={data.form.arch ?? ""}
+                            readOnly={!!readOnly}
                             onChange={(e) => onChange("arch", e.target.value)}
                             onBlur={() => saveField("arch")}
                             placeholder="例如：软件为B/S架构"
@@ -143,6 +146,7 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
                                     <Input
                                         className="env-cap-input"
                                         value={tb.title || ""}
+                                        readOnly={!!readOnly}
                                         onChange={(e) => setTitle(ti, e.target.value)}
                                         onBlur={() => saveIfTablesChanged(data.form.tables || [])}
                                     />
@@ -157,11 +161,13 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
                                                             className="env-input"
                                                             autoSize={{ minRows: 1, maxRows: 8 }}
                                                             value={cell ?? ""}
+                                                            readOnly={!!readOnly}
                                                             onChange={(e) => setCell(ti, r, ci, e.target.value)}
                                                             onBlur={() => saveIfTablesChanged(data.form.tables || [])}
                                                         />
                                                     </td>
                                                 ))}
+                                                {readOnly ? null : (
                                                 <td className={r === 0 ? "lbl env-row-op" : "env-row-op"}>
                                                     {r === 0 ? (
                                                         "操作"
@@ -189,6 +195,7 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
                                                         </span>
                                                     )}
                                                 </td>
+                                                )}
                                             </tr>
                                         ))}
                                     </tbody>

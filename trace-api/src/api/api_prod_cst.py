@@ -14,7 +14,7 @@ from ..obj.vobj_prod_cst import ProdCstObj
 from ..obj.tobj_role import Perms
 from ..obj import Resp, Page
 from ..serv.serv_prod_cst import Server
-from . import CtxUser, try_log
+from . import CtxUser, try_log, ROLES_THREAT_WRITE
 from ..utils.i18n import ts
 
 router = APIRouter()
@@ -22,19 +22,19 @@ server = Server()
 
 
 @router.post("/add_prod_csts", summary="添加CST", response_model=Resp[Any])
-@try_log(perm=Perms.prod_cst_edit)
+@try_log(perm=Perms.prod_cst_edit, roles=ROLES_THREAT_WRITE)
 async def add_prod_csts(form: ProdCstsForm):
     return await server.add_prod_csts(form) 
 
 
 @router.post("/update_prod_cst", summary="更新CST", response_model=Resp[Any])
-@try_log(perm=Perms.prod_cst_edit)
+@try_log(perm=Perms.prod_cst_edit, roles=ROLES_THREAT_WRITE)
 async def update_prod_cst(form: ProdCstForm):
     return await server.update_prod_cst(form) 
 
 
 @router.delete("/delete_prod_csts", summary="删除CST", response_model=Resp[Any])
-@try_log(perm=Perms.prod_cst_edit)
+@try_log(perm=Perms.prod_cst_edit, roles=ROLES_THREAT_WRITE)
 async def delete_prod_csts(id: str):
     return await server.delete_prod_csts((id or "").split(","))  
 

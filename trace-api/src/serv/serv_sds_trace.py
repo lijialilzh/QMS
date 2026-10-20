@@ -24,6 +24,7 @@ from ..utils.i18n import ts
 from .serv_utils.tree_util import find_parent, fix_chapter
 from ..obj import Page, Resp
 from . import msg_err_db
+from .serv_product import product_scope_filter
 
 logger = logging.getLogger(__name__)
 
@@ -1691,8 +1692,9 @@ class Server(object):
             sql = sql.where(SdsDoc.id == doc_id)
         if type_code:
             sql = sql.where(SrsReq.type_code == type_code)
-        if op_user and op_user.id != 1 and getattr(op_user, "role_code", None) == Roles.product_manager.value.code:
-            sql = sql.where(Product.create_user_id == op_user.id)
+        scope = product_scope_filter(op_user)
+        if scope is not None:
+            sql = sql.where(scope)
 
         sql = sql.order_by(desc(Product.id), desc(SdsDoc.id), SrsReq.code)
         rows: List[Tuple[SdsTrace, SrsReq, SrsType, SdsDoc, SrsDoc, Product]] = db.session.execute(sql).all()

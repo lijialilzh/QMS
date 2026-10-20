@@ -16,6 +16,7 @@ from ..utils.sql_ctx import db
 from ..utils.i18n import ts
 from ..obj import Page, Resp
 from . import msg_err_db
+from .serv_product import product_scope_filter
 
 logger = logging.getLogger(__name__)
 
@@ -296,8 +297,9 @@ class Server(object):
             sql = sql.where(TestSet.product_id == product_id)
         if stage:
             sql = sql.where(TestSet.stage == stage)
-        if op_user and op_user.id != 1 and getattr(op_user, "role_code", None) == Roles.product_manager.value.code:
-            sql = sql.where(Product.create_user_id == op_user.id)
+        scope = product_scope_filter(op_user)
+        if scope is not None:
+            sql = sql.where(scope)
 
         sql_count = select(func.count()).select_from(sql)
         total = db.session.execute(sql_count).scalars().first()

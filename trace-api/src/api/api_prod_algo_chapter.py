@@ -9,26 +9,26 @@ from ..obj.vobj_prod_algo_chapter import ProdAlgoChapterObj
 from ..obj.tobj_role import Perms
 from ..obj import Resp, Page
 from ..serv.serv_prod_algo_chapter import Server
-from . import try_log
+from . import try_log, ROLES_ALGO_WRITE
 
 router = APIRouter()
 server = Server()
 
 
 @router.post("/add_prod_algo_chapter", summary="添加章节模块", response_model=Resp[Any])
-@try_log(perm=Perms.prod_algo_chapter_edit)
+@try_log(perm=Perms.prod_algo_chapter_edit, roles=ROLES_ALGO_WRITE)
 async def add_prod_algo_chapter(form: ProdAlgoChapterForm):
     return await server.add_prod_algo_chapter(form)
 
 
 @router.post("/update_prod_algo_chapter", summary="更新章节模块", response_model=Resp[Any])
-@try_log(perm=Perms.prod_algo_chapter_edit)
+@try_log(perm=Perms.prod_algo_chapter_edit, roles=ROLES_ALGO_WRITE)
 async def update_prod_algo_chapter(form: ProdAlgoChapterForm):
     return await server.update_prod_algo_chapter(form)
 
 
 @router.delete("/delete_prod_algo_chapters", summary="删除章节模块", response_model=Resp[Any])
-@try_log(perm=Perms.prod_algo_chapter_edit)
+@try_log(perm=Perms.prod_algo_chapter_edit, roles=ROLES_ALGO_WRITE)
 async def delete_prod_algo_chapters(id: str):
     return await server.delete_prod_algo_chapters((id or "").split(","))
 

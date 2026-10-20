@@ -9,7 +9,7 @@ import "../risk_mgmt/RiskMgmtParticipants.less";
 
 const DEFAULT_MODULES = ["肺栓塞分割", "肺叶分割"];
 
-export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void }) => {
+export default ({ prodId, readOnly, onChanged }: { prodId: number; readOnly?: boolean; onChanged?: () => void }) => {
     const { t: ts } = useTranslation();
     const [data, dispatch] = useData({
         rows: [],
@@ -45,6 +45,7 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
     };
 
     const doAdd = (afterRow?: any) => {
+        if (readOnly) return;
         if (!prodId) {
             message.warning("请先选择产品");
             return;
@@ -76,6 +77,7 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
     };
 
     const doDelete = (row: any) => {
+        if (readOnly) return;
         Modal.confirm({
             title: ts("action"),
             content: ts("confirm_delete"),
@@ -94,11 +96,13 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
     };
 
     const startEdit = (row: any, field: string) => {
+        if (readOnly) return;
         if (data.targetEdit.id === row.id && data.editingField === field) return;
         dispatch({ targetEdit: { ...row }, editingField: field });
     };
 
     const moveRow = (row: any, dir: "up" | "down") => {
+        if (readOnly) return;
         const rows = data.rows || [];
         const idx = rows.findIndex((r: any) => r.id === row.id);
         if (idx < 0) return;
@@ -128,6 +132,7 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
     };
 
     const saveCell = () => {
+        if (readOnly) return;
         const edit = { ...data.targetEdit };
         if (!edit?.id || data.updating) return;
         dispatch({ updating: true });
@@ -146,7 +151,7 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
     const isEditing = (row: any, field: string) => data.targetEdit.id === row.id && data.editingField === field;
 
     const clickToEdit = (row: any, field: string, value: any) => (
-        <div style={{ cursor: "pointer", minHeight: 22 }} title="点击编辑" onClick={() => startEdit(row, field)}>
+        <div style={{ cursor: readOnly ? "default" : "pointer", minHeight: 22 }} title={readOnly ? undefined : "点击编辑"} onClick={() => startEdit(row, field)}>
             {value !== null && value !== undefined && String(value) !== "" ? value : <span style={{ color: "#d9d9d9" }}>—</span>}
         </div>
     );
@@ -202,15 +207,17 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
         },
     ];
 
+    const shownColumns = readOnly ? columns.filter((col: any) => col.title !== ts("action")) : columns;
+
     useEffect(() => {
-        if (prodId) loadModules(prodId, true);
+        if (prodId) loadModules(prodId, !readOnly);
     }, [prodId]);
 
     return (
         <div className="risk-part-nested">
             <Table
                 size="small"
-                columns={columns}
+                columns={shownColumns}
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}
                 loading={data.loading}
@@ -219,7 +226,7 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
                     emptyText: (
                         <div>
                             <div style={{ marginBottom: 8 }}>暂无数据</div>
-                            <Button type="link" icon={<PlusOutlined />} onClick={() => doAdd()}>添加一行</Button>
+                            {readOnly ? null : <Button type="link" icon={<PlusOutlined />} onClick={() => doAdd()}>添加一行</Button>}
                         </div>
                     ),
                 }}

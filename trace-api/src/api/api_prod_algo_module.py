@@ -9,26 +9,26 @@ from ..obj.vobj_prod_algo_module import ProdAlgoModuleObj
 from ..obj.tobj_role import Perms
 from ..obj import Resp, Page
 from ..serv.serv_prod_algo_module import Server
-from . import try_log
+from . import try_log, ROLES_ALGO_WRITE
 
 router = APIRouter()
 server = Server()
 
 
 @router.post("/add_prod_algo_module", summary="添加算法模块", response_model=Resp[Any])
-@try_log(perm=Perms.prod_algo_module_edit)
+@try_log(perm=Perms.prod_algo_module_edit, roles=ROLES_ALGO_WRITE)
 async def add_prod_algo_module(form: ProdAlgoModuleForm):
     return await server.add_prod_algo_module(form)
 
 
 @router.post("/update_prod_algo_module", summary="更新算法模块", response_model=Resp[Any])
-@try_log(perm=Perms.prod_algo_module_edit)
+@try_log(perm=Perms.prod_algo_module_edit, roles=ROLES_ALGO_WRITE)
 async def update_prod_algo_module(form: ProdAlgoModuleForm):
     return await server.update_prod_algo_module(form)
 
 
 @router.delete("/delete_prod_algo_modules", summary="删除算法模块", response_model=Resp[Any])
-@try_log(perm=Perms.prod_algo_module_edit)
+@try_log(perm=Perms.prod_algo_module_edit, roles=ROLES_ALGO_WRITE)
 async def delete_prod_algo_modules(id: str):
     return await server.delete_prod_algo_modules((id or "").split(","))
 

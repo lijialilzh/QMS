@@ -5,6 +5,8 @@ import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { useData, renderOneLineWithTooltip } from "@/common";
+import { Root, useSelector } from "@/store";
+import { canWriteProduct } from "../../productWrite";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import ProdPrevNext from "@/pages/prod_risk/ProdPrevNext";
 import { HAZ_RATES, HAZ_DEGREES, HAZ_LEVELS, HAZDICT_RATES, HAZDICT_DEGREES, HAZDICT_LEVELS } from "@/pages/basedata/Hazs";
@@ -36,7 +38,8 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
     const location = useLocation();
     const { prodId: prodIdParam } = useParams();
     const prodId = Number(prodIdProp ?? prodIdParam);
-    const readOnly = readOnlyProp ?? location.pathname.includes("/view/");
+    const user = useSelector((state: Root) => state.user);
+    const readOnly = !canWriteProduct(user?.role_code, user?.id, "risk") || (readOnlyProp ?? location.pathname.includes("/view/"));
     const [data, dispatch] = useData({
         total: 0,
         pageIndex: 1,

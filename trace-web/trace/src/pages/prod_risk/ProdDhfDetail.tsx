@@ -5,6 +5,8 @@ import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
+import { Root, useSelector } from "@/store";
+import { canWriteProduct } from "../productWrite";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import ProdPrevNext from "./ProdPrevNext";
 import * as Api from "@/api/ApiProdDhf";
@@ -99,7 +101,8 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
     const location = useLocation();
     const { prodId: prodIdParam } = useParams();
     const prodId = Number(prodIdProp ?? prodIdParam);
-    const readOnly = readOnlyProp ?? location.pathname.includes("/view/");
+    const user = useSelector((state: Root) => state.user);
+    const readOnly = !canWriteProduct(user?.role_code, user?.id, "baseInfo") || (readOnlyProp ?? location.pathname.includes("/view/"));
 
     const [importForm] = Form.useForm();
     const [data, dispatch] = useData({

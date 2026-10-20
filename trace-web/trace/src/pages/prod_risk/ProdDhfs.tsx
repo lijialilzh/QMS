@@ -4,6 +4,8 @@ import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { renderOneLineWithTooltip, useData } from "@/common";
+import { Root, useSelector } from "@/store";
+import { canWriteProduct } from "../productWrite";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiProdDhf";
 import * as ApiProduct from "@/api/ApiProduct";
@@ -42,6 +44,8 @@ const loadProducts = (data: any, dispatch: any) => {
 
 export default () => {
     const { t: ts } = useTranslation();
+    const user = useSelector((state: Root) => state.user);
+    const canWrite = canWriteProduct(user?.role_code, user?.id, "baseInfo");
     const [queryForm] = Form.useForm();
     const [addForm] = Form.useForm();
     const [data, dispatch] = useData({
@@ -308,9 +312,12 @@ export default () => {
                     <Button type="link" size="small" onClick={() => toggleExpand(row.id, true)}>
                         {expanded && data.expandReadOnly ? "收起" : ts("view")}
                     </Button>
+                    {canWrite ? (
                     <Button type="link" size="small" onClick={() => toggleExpand(row.id, false)}>
                         {expanded && !data.expandReadOnly ? "收起" : ts("edit")}
                     </Button>
+                    ) : null}
+                    {canWrite ? (
                     <Button
                         type="link"
                         size="small"
@@ -320,6 +327,8 @@ export default () => {
                         }}>
                         复制
                     </Button>
+                    ) : null}
+                    {canWrite ? (
                     <Button
                         type="link"
                         size="small"
@@ -328,6 +337,7 @@ export default () => {
                         onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
                         {ts("delete")}
                     </Button>
+                    ) : null}
                 </Space>
                 );
             },
@@ -369,9 +379,11 @@ export default () => {
                         </Col>
                     </Row>
                 </Form>
+                {canWrite ? (
                 <Button type="primary" onClick={openAddModal}>
                     {ts("add")}
                 </Button>
+                ) : null}
             </div>
             <Table
                 className="expand prod-dhfs-list-table risk-part-list-table"

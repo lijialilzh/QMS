@@ -64,6 +64,7 @@ from .serv_sds_srs_trace_sync import SdsSrsTraceSyncMixin
 
 from ..obj import Page, Resp
 from . import msg_err_db, save_file, serv_review_util
+from .serv_product import product_scope_filter
 
 logger = logging.getLogger(__name__)
 
@@ -1878,8 +1879,9 @@ class Server(SdsSrsTraceSyncMixin, object):
             sql = sql.where(SdsDoc.product_id == product_id)
         if version:
             sql = sql.where(SdsDoc.version.like(f"%{version}%"))
-        if op_user and op_user.id != 1 and getattr(op_user, "role_code", None) == Roles.product_manager.value.code:
-            sql = sql.where(Product.create_user_id == op_user.id)
+        scope = product_scope_filter(op_user)
+        if scope is not None:
+            sql = sql.where(scope)
         
         sql_count = select(func.count()).select_from(sql)
         total = db.session.execute(sql_count).scalars().first()

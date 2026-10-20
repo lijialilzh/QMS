@@ -15,7 +15,7 @@ from ..obj.tobj_product import ProductForm, SrsViewerForm
 from ..obj.tobj_role import Perms
 from ..obj import Resp, Page
 from ..serv.serv_product import Server
-from . import CtxUser, try_log
+from . import CtxUser, try_log, ROLES_VERSION_WRITE
 from ..utils.i18n import ts
 
 router = APIRouter()
@@ -23,27 +23,27 @@ server = Server()
 
 
 @router.post("/add_product", summary="添加产品", response_model=Resp[Any])
-@try_log(perm=Perms.product_edit)
+@try_log(perm=Perms.product_edit, roles=ROLES_VERSION_WRITE)
 async def add_product(form: ProductForm):
     op_user: UserObj = CtxUser.get()
     return await server.add_product(op_user, form) 
 
 
 @router.delete("/delete_product", summary="删除产品", response_model=Resp[Any])
-@try_log(perm=Perms.product_edit)
+@try_log(perm=Perms.product_edit, roles=ROLES_VERSION_WRITE)
 async def delete_product(id: int):
     return await server.delete_product(id)  
 
 
 @router.post("/update_product", summary="更新产品", response_model=Resp[Any])
-@try_log(perm=Perms.product_edit)
+@try_log(perm=Perms.product_edit, roles=ROLES_VERSION_WRITE)
 async def update_product(form: ProductForm):
     op_user: UserObj = CtxUser.get()
     return await server.update_product(op_user, form)
 
 
 @router.get("/duplicate_product", summary="复制产品", response_model=Resp[ProductForm])
-@try_log(perm=Perms.product_edit)
+@try_log(perm=Perms.product_edit, roles=ROLES_VERSION_WRITE)
 async def duplicate_product(id: int, product_id: int = None, name: str = None, full_version: str = None, dhf_ids: str = None):
     op_user: UserObj = CtxUser.get()
     parsed_dhf_ids = []
@@ -62,14 +62,14 @@ async def list_product(fuzzy: str = None, with_trace:int = 0, page_index: int = 
     return await server.list_product(op_user, fuzzy=fuzzy, with_trace=with_trace, page_index=page_index, page_size=page_size, for_srs=for_srs)
 
 
-@router.get("/list_srs_viewer_map", summary="需求可见范围：用户-产品对照")
+@router.get("/list_srs_viewer_map", summary="产品可见范围：用户-产品对照")
 @try_log(perm=Perms.user_view)
 async def list_srs_viewer_map():
     op_user: UserObj = CtxUser.get()
     return await server.list_srs_viewer_map(op_user)
 
 
-@router.post("/save_srs_viewers", summary="需求可见范围：保存某用户可见产品")
+@router.post("/save_srs_viewers", summary="产品可见范围：保存某用户可见产品")
 @try_log(perm=Perms.user_edit)
 async def save_srs_viewers(form: SrsViewerForm):
     op_user: UserObj = CtxUser.get()

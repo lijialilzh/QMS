@@ -40,6 +40,7 @@ from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version, docx_util
 from .serv_utils.doc_blocks import emit_free_body, has_free_body_markers, write_body_image
+from .serv_product import product_scope_filter
 
 logger = logging.getLogger(__name__)
 
@@ -409,8 +410,9 @@ class Server(object):
             wheres.append(RmpDoc.product_id == product_id)
         if version:
             wheres.append(RmpDoc.version.like(f"%{version}%"))
-        if op_user and op_user.id != 1 and op_user.role_code == Roles.product_manager.value.code:
-            wheres.append(Product.create_user_id == op_user.id)
+        scope = product_scope_filter(op_user)
+        if scope is not None:
+            wheres.append(scope)
         total = db.session.execute(
             select(func.count(RmpDoc.id)).join(Product, RmpDoc.product_id == Product.id).where(*wheres)
         ).scalar() or 0

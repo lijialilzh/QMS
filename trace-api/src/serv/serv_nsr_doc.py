@@ -44,6 +44,7 @@ from .serv_doc_file import pick_doc_image_file_row
 from .serv_prod_haz import Server as ProdHazServer
 from .serv_prod_rcm import Server as ProdRcmServer
 from .serv_srs_doc import Server as SrsDocServer
+from .serv_product import product_scope_filter
 
 logger = logging.getLogger(__name__)
 
@@ -913,8 +914,9 @@ class Server(object):
             wheres.append(NsrDoc.product_id == product_id)
         if version:
             wheres.append(NsrDoc.version.like(f"%{version}%"))
-        if op_user and op_user.id != 1 and op_user.role_code == Roles.product_manager.value.code:
-            wheres.append(Product.create_user_id == op_user.id)
+        scope = product_scope_filter(op_user)
+        if scope is not None:
+            wheres.append(scope)
         total = db.session.execute(
             select(func.count(NsrDoc.id)).join(Product, NsrDoc.product_id == Product.id).where(*wheres)
         ).scalar() or 0

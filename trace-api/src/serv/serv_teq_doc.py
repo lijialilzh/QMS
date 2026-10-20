@@ -29,6 +29,7 @@ from ..utils.sql_ctx import db
 from . import msg_err_db
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
+from .serv_product import product_scope_filter
 
 logger = logging.getLogger(__name__)
 
@@ -171,8 +172,9 @@ class Server(object):
             wheres.append(TeqDoc.product_id == product_id)
         if version:
             wheres.append(TeqDoc.version.like(f"%{version}%"))
-        if op_user and op_user.id != 1 and op_user.role_code == Roles.product_manager.value.code:
-            wheres.append(Product.create_user_id == op_user.id)
+        scope = product_scope_filter(op_user)
+        if scope is not None:
+            wheres.append(scope)
         sql_total = select(func.count(TeqDoc.id)).join(Product, TeqDoc.product_id == Product.id).where(*wheres)
         total = db.session.execute(sql_total).scalar() or 0
         sql = (

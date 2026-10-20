@@ -693,11 +693,11 @@ class Server(object):
                 patterns.append(f"%_{doc_token}_{category}%")
             if patterns:
                 sql = sql.where(or_(*[DocFile.file_name.like(pattern) for pattern in patterns]))
-        # 数据可见范围（与产品列表口径一致）：
-        # - 产品经理：仅自己创建的产品对应的图
-        # - 其它非超管：五类图表页面未选产品时显示全部；其余按用户产品关系限制
-        if op_user and op_user.id != 1 and op_user.role_code == Roles.product_manager.value.code:
-            sql = sql.where(Product.create_user_id == op_user.id)
+        # 与产品列表同一范围：QA/RA/开发/测试/模型/数据/产品经理只看勾选或本人创建的产品图
+        from .serv_product import product_scope_ids
+        scope_ids = product_scope_ids(op_user) if op_user else None
+        if scope_ids is not None:
+            sql = sql.where(Product.id.in_(scope_ids or [-1]))
         elif category not in self.CHART_FILE_CATEGORIES and not product_id and op_user and op_user.id != 1:
             subquery = select(UserProd.product_id).where(UserProd.user_id == op_user.id).scalar_subquery()
             sql = sql.where(Product.id.in_(subquery))

@@ -42,6 +42,7 @@ from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
 from .serv_utils.doc_blocks import clean_export_text, emit_free_body, has_free_body_markers, write_body_image
 from . import serv_review_util
+from .serv_product import product_scope_filter
 
 logger = logging.getLogger(__name__)
 
@@ -1129,8 +1130,9 @@ class Server(object):
         if version:
             wheres.append(RiskMgmtDoc.version.like(f"%{version}%"))
         # 数据可见范围（与产品列表口径一致）：产品经理只看自己创建的产品对应的风险管理报告
-        if op_user and op_user.id != 1 and op_user.role_code == Roles.product_manager.value.code:
-            wheres.append(Product.create_user_id == op_user.id)
+        scope = product_scope_filter(op_user)
+        if scope is not None:
+            wheres.append(scope)
         sql_total = select(func.count(RiskMgmtDoc.id)).join(Product, RiskMgmtDoc.product_id == Product.id).where(*wheres)
         total = db.session.execute(sql_total).scalar() or 0
         sql = (

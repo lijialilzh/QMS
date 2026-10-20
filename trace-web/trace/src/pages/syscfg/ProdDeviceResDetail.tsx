@@ -36,7 +36,7 @@ const withAutoQty = (items: any[], members: any[]) =>
         return String(it.qty ?? "") === String(qty) ? it : { ...it, qty };
     });
 
-export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void }) => {
+export default ({ prodId, readOnly, onChanged }: { prodId: number; readOnly?: boolean; onChanged?: () => void }) => {
     const { t: ts } = useTranslation();
     const [data, dispatch] = useData({
         items: [] as any[],
@@ -59,7 +59,7 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
                 const items = withAutoQty(raw, members);
                 const snapshot = JSON.stringify(raw);
                 dispatch({ loading: false, items, snapshot, members });
-                if (JSON.stringify(items) !== snapshot) {
+                if (!readOnly && JSON.stringify(items) !== snapshot) {
                     Api.save_prod_device_res({ prod_id: id, items }).then((sv: any) => {
                         if (sv.code === Api.C_OK) {
                             dispatch({ snapshot: JSON.stringify(items) });
@@ -91,6 +91,7 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
     };
 
     const persistItems = (items: any[]) => {
+        if (readOnly) return;
         if (!prodId) {
             dispatch({ items });
             return;
@@ -109,7 +110,7 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
     };
 
     const saveAll = () => {
-        if (!prodId) return;
+        if (readOnly || !prodId) return;
         const cur = JSON.stringify(data.items);
         if (cur === data.snapshot) return;
         persistItems(data.items);
@@ -138,7 +139,8 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
             className="env-input"
             autoSize={{ minRows: 1, maxRows: 6 }}
             value={data.items[idx]?.[field] ?? ""}
-            disabled={!prodId || autoQty}
+            readOnly={!!readOnly}
+            disabled={!prodId || autoQty || !!readOnly}
             style={single ? { textAlign: "center" } : undefined}
             onChange={(e) => onChange(idx, field, e.target.value)}
             onBlur={saveAll}
@@ -156,14 +158,14 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
                             <col style={{ width: 160 }} />
                             <col />
                             <col style={{ width: 88 }} />
-                            <col style={{ width: 80 }} />
+                            {readOnly ? null : <col style={{ width: 80 }} />}
                         </colgroup>
                         <thead>
                             <tr>
                                 <th>设备及用途</th>
                                 <th>设备名称</th>
                                 <th>数量</th>
-                                <th>操作</th>
+                                {readOnly ? null : <th>操作</th>}
                             </tr>
                         </thead>
                         <tbody>
@@ -172,6 +174,7 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
                                     <td className="lbl">{cell(idx, "use")}</td>
                                     <td>{cell(idx, "name")}</td>
                                     <td>{cell(idx, "qty", true)}</td>
+                                    {readOnly ? null : (
                                     <td className="env-row-op">
                                         <span className="risk-part-row-actions">
                                             <Button
@@ -195,6 +198,7 @@ export default ({ prodId, onChanged }: { prodId: number; onChanged?: () => void 
                                             ) : null}
                                         </span>
                                     </td>
+                                    )}
                                 </tr>
                             ))}
                         </tbody>

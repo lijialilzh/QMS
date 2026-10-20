@@ -6,6 +6,7 @@ import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { renderOneLineWithTooltip, useData } from "@/common";
 import { Root, useSelector } from "@/store";
+import { canWriteProduct } from "../productWrite";
 import * as Api from "@/api/ApiProduct";
 import * as ApiProdDhf from "@/api/ApiProdDhf";
 import * as ApiProject from "@/api/ApiProject";
@@ -267,7 +268,7 @@ const DetailDlg = ({ data, dispatch, onSaved }: any) => {
 export default () => {
     const { t: ts } = useTranslation();
     const user = useSelector((state: Root) => state.user);
-    const canEdit = (user?.role_perms || []).includes("product_edit");
+    const canEdit = canWriteProduct(user?.role_code, user?.id, "version");
     const [queryForm] = Form.useForm();
     const [data, dispatch] = useData({
         total: 0,

@@ -10,7 +10,7 @@ from ..obj.vobj_prod_device_res import ProdDeviceResObj
 from ..obj.tobj_role import Perms
 from ..obj import Resp
 from ..serv.serv_prod_device_res import Server
-from . import try_log
+from . import try_log, ROLES_BASE_WRITE
 
 router = APIRouter()
 server = Server()
@@ -23,12 +23,12 @@ async def get_prod_device_res(prod_id: int = None):
 
 
 @router.post("/save_prod_device_res", summary="保存产品设备资源", response_model=Resp[Any])
-@try_log(perm=Perms.prod_device_edit)
+@try_log(perm=Perms.prod_device_edit, roles=ROLES_BASE_WRITE)
 async def save_prod_device_res(form: ProdDeviceResForm):
     return await server.save_prod_device_res(form)
 
 
 @router.delete("/delete_prod_device_res", summary="删除产品设备资源", response_model=Resp[Any])
-@try_log(perm=Perms.prod_device_edit)
+@try_log(perm=Perms.prod_device_edit, roles=ROLES_BASE_WRITE)
 async def delete_prod_device_res(prod_id: int):
     return await server.delete_prod_device_res(prod_id)

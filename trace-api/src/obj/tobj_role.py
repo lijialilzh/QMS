@@ -417,10 +417,9 @@ def get_default_role_perm_codes():
     # 开发人员/测试人员/RA：可以看到产品（仅查看）、开发、测试文件（+ 图表文件 + 网络安全 + 风险追溯）
     dev_tester_ra_perms = product_mgmt_perms_view | product_file_perms | dev_test_file_perms | doc_file_perms | cybersec_perms | risk_trace_perms
 
-    # 已有固定角色保留「版本命名规则」菜单。产品经理另可查看基础数据总表（HAZ/RCM/THREAT）
+    # 已有固定角色保留「版本命名规则」菜单。基础数据总表仅 root/dqa/qa 可见，不发给产品经理。
     version_rule_view_perm = {"version_rule", "version_rule_view"}
-    base_master_view = {"haz", "haz_view", "rcm", "rcm_view", "cst", "cst_view"}
-    product_manager_perms = product_manager_perms | version_rule_view_perm | base_master_view
+    product_manager_perms = product_manager_perms | version_rule_view_perm
     dev_tester_ra_perms = dev_tester_ra_perms | version_rule_view_perm
 
     # 模型人员 / 数据人员：基本信息只读、SRS 只读；模型文件/数据文件/数据统计/数据自查可读写；一键导出/打印仅模型和数据文件
@@ -429,6 +428,8 @@ def get_default_role_perm_codes():
         "srs_doc", "srs_doc_view",
         "model_doc", "model_doc_view", "model_doc_edit",
         "data_doc", "data_doc_view", "data_doc_edit",
+        "prod_algo_module", "prod_algo_module_view", "prod_algo_module_edit",
+        "prod_algo_chapter", "prod_algo_chapter_view", "prod_algo_chapter_edit",
     }
 
     # 用户测试记录：编辑仅 root/dqa/tester；QA 只读查看

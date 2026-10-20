@@ -14,7 +14,7 @@ from ..obj.vobj_prod_haz import ProdHazObj
 from ..obj.tobj_role import Perms
 from ..obj import Resp, Page
 from ..serv.serv_prod_haz import Server
-from . import CtxUser, try_log
+from . import CtxUser, try_log, ROLES_RISK_WRITE
 from ..utils.i18n import ts
 
 router = APIRouter()
@@ -22,19 +22,19 @@ server = Server()
 
 
 @router.post("/add_prod_hazs", summary="添加HAZ", response_model=Resp[Any])
-@try_log(perm=Perms.prod_haz_edit)
+@try_log(perm=Perms.prod_haz_edit, roles=ROLES_RISK_WRITE)
 async def add_prod_hazs(form: ProdHazsForm):
     return await server.add_prod_hazs(form) 
 
 
 @router.post("/update_prod_haz", summary="更新HAZ", response_model=Resp[Any])
-@try_log(perm=Perms.prod_haz_edit)
+@try_log(perm=Perms.prod_haz_edit, roles=ROLES_RISK_WRITE)
 async def update_prod_haz(form: ProdHazForm):
     return await server.update_prod_haz(form) 
 
 
 @router.delete("/delete_prod_hazs", summary="删除HAZ", response_model=Resp[Any])
-@try_log(perm=Perms.prod_haz_edit)
+@try_log(perm=Perms.prod_haz_edit, roles=ROLES_RISK_WRITE)
 async def delete_prod_hazs(id: str):
     return await server.delete_prod_hazs((id or "").split(","))  
 

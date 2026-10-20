@@ -14,7 +14,7 @@ from ..obj.vobj_prod_rcm import ProdRcmObj
 from ..obj.tobj_role import Perms
 from ..obj import Resp, Page
 from ..serv.serv_prod_rcm import Server
-from . import CtxUser, try_log
+from . import CtxUser, try_log, ROLES_RISK_WRITE
 from ..utils.i18n import ts
 
 router = APIRouter()
@@ -22,13 +22,13 @@ server = Server()
 
 
 @router.post("/add_prod_rcms", summary="添加RCM", response_model=Resp[Any])
-@try_log(perm=Perms.prod_rcm_edit)
+@try_log(perm=Perms.prod_rcm_edit, roles=ROLES_RISK_WRITE)
 async def add_prod_rcms(form: ProdRcmsForm):
     return await server.add_prod_rcms(form) 
 
 
 @router.delete("/delete_prod_rcms", summary="删除RCM", response_model=Resp[Any])
-@try_log(perm=Perms.prod_rcm_edit)
+@try_log(perm=Perms.prod_rcm_edit, roles=ROLES_RISK_WRITE)
 async def delete_prod_rcms(id: str):
     return await server.delete_prod_rcms((id or "").split(","))  
 

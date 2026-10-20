@@ -24,6 +24,7 @@ from ..utils.sql_ctx import db
 from ..utils.i18n import ts
 from ..obj import Page, Resp
 from . import msg_err_db
+from .serv_product import product_scope_filter
 
 logger = logging.getLogger(__name__)
 
@@ -634,9 +635,10 @@ class Server(object):
         sql = select(ProdRcm, Product, Rcm).join(Product, ProdRcm.prod_id == Product.id).outerjoin(Rcm, ProdRcm.rcm_id == Rcm.id)
         if prod_id:
             sql = sql.where(ProdRcm.prod_id == prod_id)
-        elif op_user and op_user.id != 1 and getattr(op_user, "role_code", None) == Roles.product_manager.value.code:
-            subquery = select(UserProd.product_id).where(UserProd.user_id == op_user.id).scalar_subquery()
-            sql = sql.where(or_(Product.id.in_(subquery), Product.create_user_id == op_user.id))
+        else:
+            scope = product_scope_filter(op_user)
+            if scope is not None:
+                sql = sql.where(scope)
         total = 0
         if not export:
             sql_count = select(func.count()).select_from(sql)
