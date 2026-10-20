@@ -34,6 +34,7 @@ from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
+from .serv_utils.doc_blocks import emit_free_body, has_free_body_markers, write_body_image
 
 logger = logging.getLogger(__name__)
 
@@ -646,11 +647,21 @@ class Server(object):
             name = self.__strip_num(node.get("title"))
             heading = f"{number} {name}".strip() if number else name
             add_body_heading(heading, level=max(1, min(level, 9)))
-            if (node.get("body") or "").strip():
-                add_text(node.get("body"))
+            body_text = str(node.get("body") or "")
+            tables = node.get("tables") or []
+            images = [x for x in (node.get("images") or []) if isinstance(x, str) and str(x).strip()]
             is_prod_rec = node.get("ref_type") == "rn_transfer_product" or self.__strip_num(node.get("title")) == "产品移交记录"
-            for table in (node.get("tables") or []):
-                add_grid(table, merge_col0=is_prod_rec, has_header=not is_prod_rec)
+            if has_free_body_markers(body_text) or images:
+                emit_free_body(
+                    body_text, tables, images, add_text,
+                    lambda grid: add_grid(grid, merge_col0=is_prod_rec, has_header=not is_prod_rec),
+                    lambda url, caption="": write_body_image(document, url, caption, add_text),
+                )
+            else:
+                if body_text.strip():
+                    add_text(body_text)
+                for table in tables:
+                    add_grid(table, merge_col0=is_prod_rec, has_header=not is_prod_rec)
             idx = 0
             for child in (node.get("children") or []):
                 idx += 1

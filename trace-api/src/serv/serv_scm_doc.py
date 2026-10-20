@@ -35,6 +35,7 @@ from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
+from .serv_utils.doc_blocks import emit_free_body, has_free_body_markers, write_body_image
 
 logger = logging.getLogger(__name__)
 
@@ -598,13 +599,20 @@ class Server(object):
             else:
                 body_text = str(node.get("body") or "")
                 tables = node.get("tables") or []
+                images = [x for x in (node.get("images") or []) if isinstance(x, str) and str(x).strip()]
                 merge_dup = name in DUP_MERGE_TITLES
 
                 def add_section_grid(grid):
                     add_grid(grid, merge_dup=merge_dup)
 
+                # 添加正文/上传图片/添加表格：按编辑页顺序写出，不把占位符写进 Word
+                if has_free_body_markers(body_text) or images:
+                    emit_free_body(
+                        body_text, tables, images, add_text, add_section_grid,
+                        lambda url, caption="": write_body_image(document, url, caption, add_text),
+                    )
                 # 按"见下表"/"表N"切分 body，交错输出正文段和表格
-                if (("见下表" in body_text) or re.search(r"(?m)^表\s*\d", body_text)) and tables:
+                elif (("见下表" in body_text) or re.search(r"(?m)^表\s*\d", body_text)) and tables:
                     lines = body_text.split("\n")
                     buf = []
                     tbl_idx = 0

@@ -40,6 +40,7 @@ from ..utils.sql_ctx import db
 from . import msg_err_db
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
+from .serv_utils.doc_blocks import clean_export_text, emit_free_body, has_free_body_markers, write_body_image
 from . import serv_review_util
 
 logger = logging.getLogger(__name__)
@@ -1939,10 +1940,29 @@ class Server(object):
             title = section.get("title", "")
             if title and not is_cover_section(section):
                 docx_util.save_title2docx(title, document, level=max(1, min(level, 9)))
-            if section.get("text"):
-                docx_util.save_txt2docx(str(section.get("text") or ""), document)
-            elif section.get("content"):
-                docx_util.save_txt2docx(str(section.get("content") or ""), document)
+            raw_body = section.get("body") or section.get("text") or section.get("content") or ""
+            images = [x for x in (section.get("images") or []) if isinstance(x, str) and str(x).strip()]
+            special = (
+                section.get("ref_type") in ("participants", "review", "risk_analysis", "risk_control")
+                or is_appendix_b(section)
+                or is_acceptance_standard_section(section)
+                or "风险分布" in normalized_title(section.get("title") or "")
+            )
+            free_written = False
+            if (not special) and (has_free_body_markers(raw_body) or images):
+                emit_free_body(
+                    raw_body, section.get("tables") or [], images,
+                    lambda text: docx_util.save_txt2docx(str(text or ""), document),
+                    lambda grid: add_plain_table(grid),
+                    lambda url, caption="": write_body_image(document, url, caption, lambda text: docx_util.save_txt2docx(str(text or ""), document)),
+                )
+                free_written = True
+            else:
+                cleaned = clean_export_text(raw_body)
+                if cleaned:
+                    docx_util.save_txt2docx(cleaned, document)
+                for image_url in images:
+                    write_body_image(document, image_url)
             image_added = add_section_image(section.get("image_url") or section.get("img_url"))
             if section.get("ref_type") == "participants":
                 table = document.add_table(rows=1, cols=2)
@@ -1995,8 +2015,9 @@ class Server(object):
                         values = [row.rcm_code or "", row.description or "", row.hazard_codes or "", row.verification_evidence or "", "是" if row.new_risk_flag else "否"]
                         for idx, value in enumerate(values):
                             set_cell_text(cells[idx], value)
-                for table_rows in section.get("tables", []) or []:
-                    add_plain_table(table_rows)
+                if not free_written:
+                    for table_rows in section.get("tables", []) or []:
+                        add_plain_table(table_rows)
             elif "由风险控制措施产生的风险" in re.sub(r"\s+", "", str(section.get("title") or "")) \
                     or "RCM带来的危害" in re.sub(r"\s+", "", str(section.get("title") or "")):
                 rcm_rows = self.__rcm_introduced_rows(section, obj.product_id)
@@ -2018,8 +2039,9 @@ class Server(object):
                     caption = (titles[t_idx] if t_idx < len(titles) and titles[t_idx] else f"表{t_idx + 3} {label}").strip()
                     add_risk_dist_matrix(table_rows, caption)
             else:
-                for table_rows in section.get("tables", []) or []:
-                    add_plain_table(table_rows)
+                if not free_written:
+                    for table_rows in section.get("tables", []) or []:
+                        add_plain_table(table_rows)
             for child in section.get("children", []) or []:
                 add_section(child, level + 1)
 

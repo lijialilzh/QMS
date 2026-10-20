@@ -79,6 +79,51 @@ def fill_chapter_images(content, doc_type):
     walk(content.get("sections") or [], [])
 
 
+_SILENT_LINES = ("{{TXT}}", "{{EMPTY}}", "{{TBL}}", "{{IMG}}")
+
+
+def has_free_body_markers(body) -> bool:
+    text = str(body or "")
+    return any(tok in text for tok in _SILENT_LINES)
+
+
+def clean_export_text(text) -> str:
+    lines = [ln for ln in str(text or "").split("\n") if ln.strip() not in _SILENT_LINES]
+    return "\n".join(lines).strip()
+
+
+def write_body_image(document, url, caption="", add_text=None):
+    raw = str(url or "").strip()
+    if raw:
+        try:
+            from . import docx_util
+            docx_util.save_img2docx(raw, document, mw=620, mh=480, page_fit=True)
+        except Exception:
+            pass
+    cap = str(caption or "").strip()
+    if cap and add_text:
+        add_text(cap)
+
+
+def emit_free_body(body, tables, images, add_text, add_table, add_image):
+    """按编辑页顺序写出正文/图/表。{{TXT}}/{{EMPTY}}/{{TBL}}/{{IMG}} 不写入 Word。"""
+    for block in split_body_blocks(body, tables, images):
+        kind = block.get("type")
+        if kind == "text":
+            text = clean_export_text(block.get("text") or "")
+            if text:
+                add_text(text)
+        elif kind == "image":
+            add_image(block.get("url") or "", block.get("caption") or "")
+        elif kind == "table":
+            cap = str(block.get("caption") or "").strip()
+            if cap:
+                add_text(cap)
+            table = block.get("table")
+            if table is not None:
+                add_table(table)
+
+
 def split_body_blocks(body, tables=None, images=None):
     text = str(body or "")
     tables_arr = tables if isinstance(tables, list) else []
@@ -92,17 +137,29 @@ def split_body_blocks(body, tables=None, images=None):
     buf = []
 
     def flush():
-        t = "\n".join(buf).strip()
+        t = clean_export_text("\n".join(buf))
         if t:
             segs.append({"type": "text", "text": t})
         buf.clear()
 
     for ln in lines:
         s = ln.strip()
+        if s in ("{{TXT}}", "{{EMPTY}}"):
+            flush()
+            continue
         if s == "{{IMG}}" and img_idx < len(images_arr):
             flush()
             segs.append({"type": "image", "url": images_arr[img_idx]})
             img_idx += 1
+            continue
+        if s == "{{IMG}}":
+            continue
+        if s == "{{TBL}}" and table_idx < len(tables_arr):
+            flush()
+            segs.append({"type": "table", "tableIndex": table_idx, "table": tables_arr[table_idx]})
+            table_idx += 1
+            continue
+        if s == "{{TBL}}":
             continue
         if re.search(r"见下表|如下表|下表", s) and table_idx < len(tables_arr):
             buf.append(ln)

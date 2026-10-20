@@ -3930,6 +3930,10 @@ finally:
                 if design_root:
                     cover_node = SdsNodeForm(title="软件详细设计", children=[])
                     cover_table_picked = False
+                    own_cover_table = getattr(design_root, "table", None)
+                    if own_cover_table and getattr(own_cover_table, "headers", None) and not __is_revision_table(own_cover_table):
+                        cover_node.table = own_cover_table
+                        cover_table_picked = True
                     rev_nodes_from_design = []
                     for child in (design_root.children or []):
                         if __node_has_revision_marker(child) or __is_revision_table(getattr(child, "table", None)):

@@ -39,6 +39,7 @@ from ..utils.sql_ctx import db
 from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version, docx_util
+from .serv_utils.doc_blocks import emit_free_body, has_free_body_markers, write_body_image
 
 logger = logging.getLogger(__name__)
 
@@ -731,13 +732,26 @@ class Server(object):
             name = self.__strip_num(node.get("title"))
             heading = f"{number} {name}".strip() if number else name
             add_heading(heading, level)
-            add_text(node.get("body"))
+            body_text = str(node.get("body") or "")
+            tables = node.get("tables") or []
+            images = [x for x in (node.get("images") or []) if isinstance(x, str) and str(x).strip()]
             merge_full_rows = node.get("ref_type") == "appendix"
-            for table in (node.get("tables") or []):
-                header = [str(c).strip() for c in (table[0][:3] if table and isinstance(table[0], list) else [])]
-                add_grid(table, merge_full_rows=merge_full_rows, skip_duplicate=(header == ["项目角色", "姓名", "职责"]))
-            for image_url in (node.get("images") or []):
-                add_image(image_url)
+
+            def add_section_grid(grid):
+                header = [str(c).strip() for c in (grid[0][:3] if grid and isinstance(grid[0], list) else [])]
+                add_grid(grid, merge_full_rows=merge_full_rows, skip_duplicate=(header == ["项目角色", "姓名", "职责"]))
+
+            if has_free_body_markers(body_text) or images:
+                emit_free_body(
+                    body_text, tables, images, add_text, add_section_grid,
+                    lambda url, caption="": write_body_image(document, url, caption, add_text),
+                )
+            else:
+                add_text(body_text)
+                for table in tables:
+                    add_section_grid(table)
+                for image_url in images:
+                    add_image(image_url)
             add_text(node.get("body_after"))
             idx = 0
             for child in (node.get("children") or []):

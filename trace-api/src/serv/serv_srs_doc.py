@@ -4245,7 +4245,7 @@ class Server(object):
         def __strip_imported_catalog_lines(value: str):
             lines = [
                 line for line in str(value or "").splitlines()
-                if not __is_imported_catalog_line(line)
+                if not __is_imported_catalog_line(line) and line.strip() not in ("{{TXT}}", "{{EMPTY}}")
             ]
             return "\n".join(lines).strip()
 

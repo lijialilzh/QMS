@@ -37,6 +37,7 @@ from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
+from .serv_utils.doc_blocks import emit_free_body, has_free_body_markers, write_body_image
 
 logger = logging.getLogger(__name__)
 
@@ -547,6 +548,19 @@ class Server(object):
             heading = f"{number} {name}".strip() if number else name
             add_body_heading(heading, level=max(1, min(level, 9)))
             body = node.get("body") or ""
+            tables = node.get("tables") or []
+            images = [x for x in (node.get("images") or []) if isinstance(x, str) and str(x).strip()]
+            if name != "软件版本命名规则" and (has_free_body_markers(body) or images):
+                emit_free_body(
+                    body, tables, images, add_text, add_grid,
+                    lambda url, caption="": write_body_image(document, url, caption, add_text),
+                )
+                idx = 0
+                for child in (node.get("children") or []):
+                    idx += 1
+                    child_num = f"{number}.{idx}" if number else str(idx)
+                    render_body_section(child, level + 1, child_num)
+                return
             if name == "软件版本命名规则":
                 # 示意图紧跟在「软件完整版本及说明：」行之后，再接剩余正文
                 lines = body.split("\n")

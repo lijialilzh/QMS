@@ -36,6 +36,7 @@ from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
+from .serv_utils.doc_blocks import emit_free_body, has_free_body_markers, write_body_image
 
 logger = logging.getLogger(__name__)
 
@@ -752,6 +753,7 @@ class Server(object):
             else:
                 body_text = str(node.get("body") or "")
                 tables = node.get("tables") or []
+                images = [x for x in (node.get("images") or []) if isinstance(x, str) and str(x).strip()]
                 caps = node.get("table_captions") or []
 
                 def _emit_table(t_idx):
@@ -763,7 +765,19 @@ class Server(object):
                 # 按 {{TBL}}/见下表/见表N/表N 切分，交错输出；静默占位不写入正文。
                 # 旧运行环境正文仅首行有「见表1」、其后 2）3）4）无占位：编号小节行后紧跟下一张表。
                 has_tbl_ph = "{{TBL}}" in body_text
-                if (has_tbl_ph or ("见下表" in body_text)
+                if has_free_body_markers(body_text) or images:
+                    state = {"i": 0}
+
+                    def add_marked_table(_grid):
+                        i = state["i"]
+                        state["i"] += 1
+                        _emit_table(i)
+
+                    emit_free_body(
+                        body_text, tables, images, add_text, add_marked_table,
+                        lambda url, caption="": write_body_image(document, url, caption, add_text),
+                    )
+                elif (has_tbl_ph or ("见下表" in body_text)
                         or re.search(r"见表\s*\d", body_text) or re.search(r"(?m)^表\s*\d", body_text)) and tables:
                     lines = body_text.split("\n")
                     buf = []

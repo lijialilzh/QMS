@@ -32,6 +32,7 @@ from ..utils.sql_ctx import db
 from . import msg_err_db
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
+from .serv_utils.doc_blocks import emit_free_body, has_free_body_markers, write_body_image
 from . import serv_review_util
 
 logger = logging.getLogger(__name__)
@@ -584,13 +585,23 @@ class Server(object):
             name = strip_num(node.get("title"))
             heading = f"{number} {name}".strip() if number else name
             add_body_heading(heading, level=max(1, min(level, 9)))
-            if (node.get("body") or "").strip():
-                add_text(node.get("body"))
+            body_text = str(node.get("body") or "")
+            tables = node.get("tables") or []
+            images = [x for x in (node.get("images") or []) if isinstance(x, str) and str(x).strip()]
             if node.get("ref_type") == "review":
-                for t_idx, table in enumerate(node.get("tables") or []):
+                if body_text.strip():
+                    add_text(body_text)
+                for t_idx, table in enumerate(tables):
                     serv_review_util.render_review_grid(document, table, set_cell, merge_col0=(t_idx == 0), merge_full=True)
+            elif has_free_body_markers(body_text) or images:
+                emit_free_body(
+                    body_text, tables, images, add_text, add_grid,
+                    lambda url, caption="": write_body_image(document, url, caption, add_text),
+                )
             else:
-                for table in (node.get("tables") or []):
+                if body_text.strip():
+                    add_text(body_text)
+                for table in tables:
                     add_grid(table)
             idx = 0
             for child in (node.get("children") or []):

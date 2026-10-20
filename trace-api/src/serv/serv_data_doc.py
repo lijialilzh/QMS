@@ -2401,11 +2401,11 @@ class Server(object):
                     add_text(node.get("body"))
                 for table in (node.get("tables") or []):
                     add_grid(table)
-                idx = 0
-                for child in (node.get("children") or []):
-                    idx += 1
-                    child_num = f"{number}.{idx}" if number else f"{idx}"
-                    render_body_section(child, level + 1, child_num)
+            idx = 0
+            for child in (node.get("children") or []):
+                idx += 1
+                child_num = f"{number}.{idx}" if number else f"{idx}"
+                render_body_section(child, level + 1, child_num)
 
         cover = next((s for s in sections if s.get("ref_type") == "cover"), None)
         revision = next((s for s in sections if s.get("ref_type") == "revision"), None)

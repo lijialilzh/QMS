@@ -462,12 +462,29 @@ class Server(object):
                 return b
             return None
 
-        has_ph = any(ln.strip() == "{{IMG}}" or cls._TABLE_PH_RE.match(ln.strip())
-                     or cls._RISK_PH_RE.match(ln.strip()) for ln in lines)
+        has_ph = any(
+            ln.strip() in ("{{IMG}}", "{{TBL}}", "{{TXT}}", "{{EMPTY}}")
+            or cls._TABLE_PH_RE.match(ln.strip())
+            or cls._RISK_PH_RE.match(ln.strip())
+            for ln in lines
+        )
         if has_ph:
             ui = 0
+            ti = 0
+            saw_tbl = False
             for ln in lines:
                 s = ln.strip()
+                if s in ("{{TXT}}", "{{EMPTY}}"):
+                    flush()
+                    continue
+                if s == "{{TBL}}":
+                    flush()
+                    saw_tbl = True
+                    tb = table_block(ti)
+                    if tb:
+                        blocks.append(tb)
+                    ti += 1
+                    continue
                 if s == "{{IMG}}":
                     flush()
                     if ui < len(urls):
@@ -491,6 +508,11 @@ class Server(object):
             flush()
             for u in urls[ui:]:
                 blocks.append({"type": "image", "url": u})
+            if saw_tbl:
+                for j in range(ti, len(tables)):
+                    tb = table_block(j)
+                    if tb:
+                        blocks.append(tb)
             return blocks
 
         # 兜底（旧档无占位符）：按"图N"题注行定位，将每张图插到其题注前，
@@ -722,7 +744,7 @@ class Server(object):
                 # 正文/表/图按原 Word 顺序还原为有序 blocks（cover/revision 走导出专用逻辑，不重排）
                 if rt not in ("cover", "revision"):
                     txt = str(node.get("text") or "")
-                    has_ph = "{{IMG}}" in txt or re.search(r"\{\{(TABLE|RISK):\d+\}\}", txt)
+                    has_ph = any(tok in txt for tok in ("{{IMG}}", "{{TBL}}", "{{TXT}}", "{{EMPTY}}")) or re.search(r"\{\{(TABLE|RISK):\d+\}\}", txt)
                     if has_ph or node.get("images") or node.get("tables"):
                         # 附录A(逐行HAZ)、附录C(逐行追溯)为独立行数据，禁止重复项纵向合并
                         no_merge = (rt in ("cyber_haz", "risk_matrix") or title.startswith("附录C")

@@ -37,6 +37,7 @@ from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
+from .serv_utils.doc_blocks import emit_free_body, has_free_body_markers, write_body_image
 
 logger = logging.getLogger(__name__)
 
@@ -496,10 +497,19 @@ class Server(object):
             header = node.get("ref_type") in ("revision",) or not node.get("ref_type")
             add_heading(name, level=level)
             body = node.get("body") or ""
-            if body.strip():
-                add_text(body)
-            for table in (node.get("tables") or []):
-                add_grid(table, header=header)
+            tables = node.get("tables") or []
+            images = [x for x in (node.get("images") or []) if isinstance(x, str) and str(x).strip()]
+            if has_free_body_markers(body) or images:
+                emit_free_body(
+                    body, tables, images, add_text,
+                    lambda grid: add_grid(grid, header=header),
+                    lambda url, caption="": write_body_image(document, url, caption, add_text),
+                )
+            else:
+                if body.strip():
+                    add_text(body)
+                for table in tables:
+                    add_grid(table, header=header)
             for child in (node.get("children") or []):
                 render_section(child, level + 1)
 

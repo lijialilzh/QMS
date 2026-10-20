@@ -523,7 +523,7 @@ class Server(object):
         }
 
     @staticmethod
-    def __split_image_blocks(text, image_urls, img_category=None):
+    def __split_image_blocks(text, image_urls, img_category=None, tables=None, table_titles=None):
         # 统一图文版式，使图与正文位置和原 Word 一致：
         #   1) 正文中含占位符行「{{IMG}}」时，图片按占位符出现的位置插入（精确锚定）；
         #   2) 否则按「图N …」图题行定位：文字 → 图片 → 图题(图下居中) → 文字；
@@ -539,10 +539,19 @@ class Server(object):
                 blocks.append({"text": t})
             buf.clear()
 
-        if any(ln.strip() == "{{IMG}}" for ln in lines):
+        tbls = tables or []
+        titles = table_titles or []
+        ti = 0
+        if any(ln.strip() in ("{{IMG}}", "{{TBL}}", "{{TXT}}", "{{EMPTY}}") for ln in lines):
             ui = 0
             for ln in lines:
                 s = ln.strip()
+                if s in ("{{TXT}}", "{{EMPTY}}", "{{TBL}}"):
+                    flush()
+                    if s == "{{TBL}}" and ti < len(tbls):
+                        blocks.append({"type": "table", "table": tbls[ti], "title": titles[ti] if ti < len(titles) else ""})
+                        ti += 1
+                    continue
                 if s == "{{IMG}}":
                     flush()
                     if ui < len(urls):
@@ -556,6 +565,8 @@ class Server(object):
             flush()
             for u in urls[ui:]:
                 blocks.append({"type": "image", "url": u, "img_category": img_category})
+            for j in range(ti, len(tbls)):
+                blocks.append({"type": "table", "table": tbls[j], "title": titles[j] if j < len(titles) else ""})
             return blocks
 
         cap_i = next((i for i, ln in enumerate(lines) if re.match(r"^图\s*\d", ln.strip())), None)
@@ -665,8 +676,13 @@ class Server(object):
                     # 自动获取图类章节：图片来自图表文件管理，按图题切分排版（保留原 text 以幂等重算）
                     node["blocks"] = self.__split_image_blocks(node.get("text"), [img_url(cat)], cat)
                 # 通用：模板内嵌固定图（base64 存于 images）的章节也统一为「正文 → 图 → 图题 → 正文」
-                if not node.get("blocks") and (node.get("images") or []):
-                    node["blocks"] = self.__split_image_blocks(node.get("text"), node.get("images") or [], None)
+                text_now = str(node.get("text") or "")
+                if not node.get("blocks") and (
+                    node.get("images") or any(tok in text_now for tok in ("{{TXT}}", "{{IMG}}", "{{TBL}}", "{{EMPTY}}"))
+                ):
+                    node["blocks"] = self.__split_image_blocks(
+                        text_now, node.get("images") or [], None, node.get("tables"), node.get("table_titles"),
+                    )
                 # 表5 开发量：按表名定位（含「开发量」），仅重算「软件名称/开发人员数量/开发时间/工作量」列，保留代码总行数
                 titles = node.get("table_titles") or []
                 da_idx = next((i for i, t in enumerate(titles) if "开发量" in str(t)), None)

@@ -33,6 +33,7 @@ from ..utils.sql_ctx import db
 from . import msg_err_db
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
+from .serv_utils.doc_blocks import emit_free_body, has_free_body_markers, write_body_image
 from . import serv_review_util
 from .serv_prod_runtime_env import apply_runtime_to_pdp_content
 
@@ -545,6 +546,7 @@ class Server(object):
                 add_body_heading(heading, level=max(1, min(level, 9)))
             body_text = str(node.get("body") or "")
             tables = node.get("tables") or []
+            images = [x for x in (node.get("images") or []) if isinstance(x, str) and str(x).strip()]
             caps = node.get("table_captions") or []
 
             def _emit_table(t_idx):
@@ -557,7 +559,19 @@ class Server(object):
 
             # 与编辑页交错一致：{{TBL}}/见下表/表N 切分；静默占位不写入正文
             has_tbl_ph = "{{TBL}}" in body_text
-            if (has_tbl_ph or ("见下表" in body_text) or re.search(r"(?m)^表\s*\d", body_text)) and tables:
+            if has_free_body_markers(body_text) or images:
+                state = {"i": 0}
+
+                def add_marked_table(_grid):
+                    i = state["i"]
+                    state["i"] += 1
+                    _emit_table(i)
+
+                emit_free_body(
+                    body_text, tables, images, add_text, add_marked_table,
+                    lambda url, caption="": write_body_image(document, url, caption, add_text),
+                )
+            elif (has_tbl_ph or ("见下表" in body_text) or re.search(r"(?m)^表\s*\d", body_text)) and tables:
                 lines = body_text.split("\n")
                 buf = []
                 tbl_idx = 0

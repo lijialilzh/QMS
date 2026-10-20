@@ -33,6 +33,7 @@ from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
+from .serv_utils.doc_blocks import clean_export_text, emit_free_body, has_free_body_markers, write_body_image
 from .serv_version_rule import DEFAULT_VERSION_RULE
 from .serv_prod_runtime_env import get_runtime_payload
 from .serv_doc_file import pick_doc_image_file_row
@@ -523,6 +524,19 @@ class Server(object):
             heading = name if (is_appendix or not number) else f"{number} {name}".strip()
             add_body_heading(heading, level=max(1, min(level, 9)))
             body = node.get("body") or ""
+            tables = node.get("tables") or []
+            images = [x for x in (node.get("images") or []) if isinstance(x, str) and str(x).strip()]
+            if (not is_appendix) and ref != "naming_rule" and name != "版本命名规则" and (has_free_body_markers(body) or images):
+                emit_free_body(
+                    body, tables, images, add_text, add_grid,
+                    lambda url, caption="": write_body_image(document, url, caption, add_text),
+                )
+                idx = 0
+                for child in (node.get("children") or []):
+                    idx += 1
+                    child_num = f"{number}.{idx}" if number else str(idx)
+                    render_section(child, level + 1, child_num)
+                return
             if is_appendix:
                 if body.strip():
                     render_appendix_body(body)
@@ -532,8 +546,8 @@ class Server(object):
                 lines = body.split("\n")
                 cut = next((i for i, ln in enumerate(lines) if ln.strip().startswith("软件完整版本及说明")), -1)
                 if cut >= 0:
-                    before = "\n".join(lines[:cut + 1])
-                    after = "\n".join(lines[cut + 1:])
+                    before = clean_export_text("\n".join(lines[:cut + 1]))
+                    after = clean_export_text("\n".join(lines[cut + 1:]))
                     if before.strip():
                         add_text(before)
                     add_naming_diagram()

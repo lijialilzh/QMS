@@ -80,6 +80,45 @@
             text-align: center;
         }
 
+        .node-row > .node-pic-side-row {
+            flex: 1 1 100%;
+            order: 15;
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            margin-top: 8px;
+
+            > .node-pic-block {
+                flex: 0 1 auto;
+                margin-top: 0;
+                text-align: center;
+                max-width: calc(100% - 120px);
+
+                .node-pic-readonly {
+                    max-width: 100%;
+                    max-height: none;
+                    width: auto;
+                    height: auto;
+                    overflow: visible;
+
+                    .ant-image,
+                    .ant-image-img {
+                        width: auto;
+                        height: auto;
+                        max-width: 100%;
+                        max-height: none;
+                        object-fit: contain;
+                    }
+                }
+            }
+
+            > .ant-upload-wrapper {
+                flex: 0 0 auto;
+            }
+        }
+
         .node-row > .node-pic {
             flex: 1 1 100%;
             order: 16;
@@ -249,7 +288,9 @@
             }
 
             .node-text-area,
-            .node-free-add {
+            .node-free-add,
+            .node-free-body-block,
+            .node-free-body-label {
                 order: 20 !important;
                 flex: 1 1 100% !important;
                 width: 100% !important;
@@ -258,6 +299,13 @@
                 margin: 8px 0 0 0 !important;
                 margin-left: 0 !important;
                 align-self: stretch !important;
+            }
+
+            .node-free-body-label {
+                margin-bottom: 0 !important;
+                color: rgba(0, 0, 0, 0.65);
+                font-size: 13px;
+                line-height: 1.5;
             }
         }
     }
@@ -456,11 +504,21 @@
             // NOTE: 不在这里覆盖 antd 的 .ant-select-selector 等内部样式
 
             // 正文框仿研究报告：独占整行、加大高度
-            .node-text-area {
+            .node-text-area,
+            .node-free-body-block {
                 flex: 1 1 100%;
                 order: 20;
                 margin: 8px 0 0;
                 min-width: 0;
+            }
+
+            .node-free-body-label {
+                flex: 1 1 100%;
+                order: 20;
+                margin: 8px 0 0;
+                color: rgba(0, 0, 0, 0.65);
+                font-size: 13px;
+                line-height: 1.5;
             }
 
             &.has-rcm-text .node-text-area {

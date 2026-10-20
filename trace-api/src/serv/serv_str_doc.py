@@ -42,6 +42,7 @@ from . import msg_err_db
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version
 from .serv_utils import docx_util
+from .serv_utils.doc_blocks import emit_free_body, has_free_body_markers, write_body_image
 
 logger = logging.getLogger(__name__)
 
@@ -1470,6 +1471,7 @@ class Server(object):
             else:
                 body_text = str(node.get("body") or "")
                 tables = node.get("tables") or []
+                images = [x for x in (node.get("images") or []) if isinstance(x, str) and str(x).strip()]
                 caps = node.get("table_captions") or []
                 def _emit_table(t_idx):
                     cap = caps[t_idx] if t_idx < len(caps) else ""
@@ -1477,8 +1479,20 @@ class Server(object):
                     if str(cap or "").strip():
                         add_text(cap)
                     add_grid(tables[t_idx])
+                if has_free_body_markers(body_text) or images:
+                    state = {"i": 0}
+
+                    def add_marked_table(_grid):
+                        i = state["i"]
+                        state["i"] += 1
+                        _emit_table(i)
+
+                    emit_free_body(
+                        body_text, tables, images, add_text, add_marked_table,
+                        lambda url, caption="": write_body_image(document, url, caption, add_text),
+                    )
                 # 按"见下表"/"表N"切分 body，交错输出正文段和表格
-                if (("见下表" in body_text) or re.search(r"(?m)^表\s*\d", body_text)) and tables:
+                elif (("见下表" in body_text) or re.search(r"(?m)^表\s*\d", body_text)) and tables:
                     lines = body_text.split("\n")
                     buf = []
                     tbl_idx = 0

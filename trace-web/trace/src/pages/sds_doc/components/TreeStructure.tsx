@@ -1403,7 +1403,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         || (isChapter7ComplianceContext && !!navEmbeddedDocImageChild?.img_url)
     ) ? 'node-pic-block--embedded-flow' : 'node-pic-block--embedded-figure';
     const compactWithImage = !readOnly && hasDisplayImage && !navFullSizeImageMode && !isNavEditComplianceCandidate && !isNavSingleChapterEdit;
-    // 物理拓扑图(img_topo)、系统结构图(img_struct)只能自动获取，禁止删除/重新上传
+    // 物理拓扑图、系统结构图不能删；标题旁可重新上传，替换当前这一张
     const isAutoOnlyImage = node.ref_type === 'img_topo' || node.ref_type === 'img_struct'
         || navEmbeddedDocImageChild?.ref_type === 'img_topo' || navEmbeddedDocImageChild?.ref_type === 'img_struct';
     const showNodeTableActions = node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces';
@@ -1694,9 +1694,14 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const wantsProgramLogicSlot = !!bodyLogicSplit && (hasLogicFigure || navEmbeddedFigureChildren.length === 0);
     const programLogicSplit = wantsProgramLogicSlot ? bodyLogicSplit : null;
     const programLogicCaption = editFigureCaption || pendingProgramLogicCaption;
+    const headerShownImageUrl = navImageInHeaderRow ? String(displayImageUrl || "").trim() : "";
     const figuresInBody = (isAutoOnlyImage ? navEmbeddedFigureChildren : (multiEmbeddedFigures
         ? navEmbeddedFigureChildren.filter((child) => !(programLogicSplit && /程序逻辑/.test(String(child.title || child.label || ""))))
-        : []));
+        : []))
+        .filter((child) => {
+            const childUrl = String(child.img_url || "").trim();
+            return !(headerShownImageUrl && childUrl && childUrl === headerShownImageUrl);
+        });
     const editTextBetweenTables = showComplianceInlineInEdit ? (chapter7TableSplit?.middle || "") : "";
     const editTextAfterTable = showComplianceInlineInEdit
         ? (chapter7TableSplit?.after || "")
@@ -2170,15 +2175,33 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                     )
                   }
                   {navImageInHeaderRow && displayImageUrl && (
-                      <div className="node-pic-block node-pic-block--header-auto-image" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-                          <div className="node-pic node-pic-readonly node-pic-inline">
-                              <Image
-                                  src={resolveImageSrc(displayImageUrl)}
-                                  alt={editFigureCaption || displayTitle || 'image'}
-                                  preview={true}
-                              />
+                      <div className="node-pic-header-with-reupload">
+                          <div className="node-pic-block node-pic-block--header-auto-image" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                              <div className="node-pic node-pic-readonly node-pic-inline">
+                                  <Image
+                                      src={resolveImageSrc(displayImageUrl)}
+                                      alt={editFigureCaption || displayTitle || 'image'}
+                                      preview={true}
+                                  />
+                              </div>
+                              {renderNameEditor(editFigureCaption, editFigureCaptionNodeId, { placeholder: "请输入图题", style: { marginTop: 6 }, forceShow: !!editFigureCaptionNodeId })}
                           </div>
-                          {renderNameEditor(editFigureCaption, editFigureCaptionNodeId, { placeholder: "请输入图题", style: { marginTop: 6 }, forceShow: !!editFigureCaptionNodeId })}
+                          {!readOnly && isAutoOnlyImage && (
+                              <Upload
+                                  maxCount={1}
+                                  showUploadList={false}
+                                  accept="image/*"
+                                  disabled={uploadLoading}
+                                  beforeUpload={(file) => {
+                                      void uploadImageTo(file, imageSourceNodeId);
+                                      return false;
+                                  }}
+                              >
+                                  <Button size="small" icon={<UploadOutlined />}>
+                                      重新上传
+                                  </Button>
+                              </Upload>
+                          )}
                       </div>
                   )}
                   {isDocImageRefType(node.ref_type) && !readOnly && imageChildrenAll.length === 0 && !hasDisplayImage && (

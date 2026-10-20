@@ -13,6 +13,7 @@ import * as Api from "@/api/ApiSrsDoc";
 import * as ApiDocFile from "@/api/ApiDocFile";
 import ReviewTable from "@/common/ReviewTable";
 import { isRuntimeLockedNode } from "../../pdp/runtimeEnvLock";
+import { expandTxtMarkers, reassembleFreeBody } from "../../pdp/freeChapterBlocks";
 
 // 表格数据结构（匹配后端接口，允许空对象表示无表格数据）
 interface TableData {
@@ -2014,6 +2015,16 @@ function extractImageTextParts(rawText: string | undefined): { intro: string; ca
     return { intro, caption, body };
 }
 
+function splitFreeBodyBlocks(raw?: string): string[] {
+    const segs = expandTxtMarkers([{ type: "text", text: String(raw ?? "") }]).filter((seg) => seg.type === "text");
+    return segs.length ? segs.map((seg) => String(seg.text ?? "")) : [""];
+}
+
+function joinFreeBodyBlocks(blocks: string[]): string {
+    if (blocks.length <= 1) return blocks[0] ?? "";
+    return reassembleFreeBody(blocks.map((text) => ({ type: "text", text })));
+}
+
 function joinImageTextParts(intro: string, caption: string, body: string): string {
     return [intro, caption, body]
         .map((s) => String(s ?? "").replace(/\s+$/g, ""))
@@ -2323,6 +2334,12 @@ const TreeNodeItem = ({
         ? normalizeSrsCodeValue(node.srs_code || extractSrsCodeFromText(node.text) || "")
         : "";
     const editableNodeText = isLockedOtherReqChapter ? stripOtherReqCodeLineFromText(node.text) : (node.text || "");
+    const freeBodyBlocks = splitFreeBodyBlocks(editableNodeText);
+    const primaryBodyText = freeBodyBlocks[0] ?? "";
+    const extraBodyBlocks = freeBodyBlocks.slice(1);
+    const commitFreeBody = (primary: string, extras: string[]) => {
+        onContentChange(node.id, joinFreeBodyBlocks([primary, ...extras]), isLockedOtherReqChapter);
+    };
     const hasRcm = Array.isArray(node.rcm_codes);
     const hasRcmText = readOnly && /RCM\d+/i.test(String(node.text || ""));
     const isSrsMainReqRefNode = node.ref_type === "srs_reqs";
@@ -2479,7 +2496,7 @@ const TreeNodeItem = ({
         })
         : orderedNormalTables;
     const shouldSplitTextForTables = readOnly && !isSrsReqRefNode && displayNormalTables.length > 1 && embeddedTableNodes.length > 0;
-    const splitText = splitTextByTables(node.text, displayNormalTables.length);
+    const splitText = splitTextByTables(primaryBodyText, displayNormalTables.length);
     const hasOtherReqMarker = /其他需求列表[:：]?/.test(String(node.text || ""));
     const otherReqTableIndex = displayNormalTables.findIndex((tbl) => isReqOtherTable(tbl.table));
     const hasNormalOtherReqTable = otherReqTableIndex >= 0;
@@ -2533,12 +2550,12 @@ const TreeNodeItem = ({
         !hasChangeReqTableInSubtree(node.children || [])
     );
     const shouldMoveOtherReqMarker = readOnly && hasOtherReqMarker && otherReqTableIndex >= 0;
-    const imageTextParts = extractImageTextParts(node.text);
+    const imageTextParts = extractImageTextParts(primaryBodyText);
     const hasDisplayedImage = !!displayImageUrl;
     // 有图且能识别「图N …」图题时，按 Word 版式拆分：图上 intro / 图下 caption / 图下 body
     const useImageSplitLayout = hasDisplayedImage && !!imageTextParts.caption;
     const displayNodeText = (() => {
-        let text = shouldMoveOtherReqMarker ? removeOtherReqMarker(node.text) : (node.text || "");
+        let text = shouldMoveOtherReqMarker ? removeOtherReqMarker(primaryBodyText) : primaryBodyText;
         if (useImageSplitLayout) {
             text = [imageTextParts.intro, imageTextParts.body].filter(Boolean).join("\n");
         }
@@ -2551,7 +2568,7 @@ const TreeNodeItem = ({
             body: imageTextParts.body,
             [part]: value,
         };
-        onContentChange(node.id, joinImageTextParts(next.intro, next.caption, next.body), isLockedOtherReqChapter);
+        commitFreeBody(joinImageTextParts(next.intro, next.caption, next.body), extraBodyBlocks);
     };
     const buildSafeSrsMainCells = (table?: TableData | null): TableData["cells"] | undefined => {
         // 标准需求表展示禁止走 Word cells/row_span，一律按行渲染。
@@ -2985,21 +3002,24 @@ const TreeNodeItem = ({
                   {!isSrsReqRefNode && !useImageSplitLayout &&
                     !( !canEditNodeContent && !String(displayNodeText || "").trim() && displayNormalTables.length > 0) && (
                       canEditNodeContent ? (
-                          <Input.TextArea
-                              className="node-content node-text-area"
-                              value={editableNodeText}
-                              onChange={(e) => onContentChange(node.id, e.target.value, isLockedOtherReqChapter)}
-                              placeholder={ts('srs_doc.please_input_content')}
-                              size="small"
-                              rows={3}
-                              autoSize={{ minRows: 3, maxRows: 20 }}
-                              disabled={readOnly}
-                          />
+                          <>
+                              {extraBodyBlocks.length > 0 && <div className="node-free-body-label">正文 1</div>}
+                              <Input.TextArea
+                                  className="node-content node-text-area"
+                                  value={primaryBodyText}
+                                  onChange={(e) => commitFreeBody(e.target.value, extraBodyBlocks)}
+                                  placeholder={ts('srs_doc.please_input_content')}
+                                  size="small"
+                                  rows={3}
+                                  autoSize={{ minRows: 3, maxRows: 20 }}
+                                  disabled={readOnly}
+                              />
+                          </>
                       ) : (
                           <div className="node-content node-text-area">
                               {shouldSplitTextForTables
                                   ? removeOtherReqMarker(splitText.intro || "")
-                                  : (isLockedOtherReqChapter ? editableNodeText : displayNodeText)}
+                                  : (isLockedOtherReqChapter ? primaryBodyText : displayNodeText)}
                           </div>
                       )
                   )}
@@ -3040,25 +3060,29 @@ const TreeNodeItem = ({
                           )}
                       </div>
                   )}
-                  {level <= 2 && displayImageUrl && (
-                      <div className="node-pic-block">
-                          <div className="node-pic node-pic-readonly">
-                              <Image
-                                  key={displayImageUrl}
-                                  src={resolveFileUrl(displayImageUrl)}
-                                  alt={node.title || "image"}
-                                  preview={true}
-                              />
-                          </div>
+                  {(level <= 2 && displayImageUrl) || (isProductBoundDocImageNode && !readOnly) ? (
+                      <div className="node-pic-side-row">
+                          {level <= 2 && displayImageUrl && (
+                              <div className="node-pic-block">
+                                  <div className="node-pic node-pic-readonly">
+                                      <Image
+                                          key={displayImageUrl}
+                                          src={resolveFileUrl(displayImageUrl)}
+                                          alt={node.title || "image"}
+                                          preview={true}
+                                      />
+                                  </div>
+                              </div>
+                          )}
+                          {isProductBoundDocImageNode && !readOnly && (
+                              <Upload {...productBoundUploadProps}>
+                                  <Button size="small" icon={<UploadOutlined />}>
+                                      {hasDisplayImage ? "重新上传" : ts("select_file")}
+                                  </Button>
+                              </Upload>
+                          )}
                       </div>
-                  )}
-                  {isProductBoundDocImageNode && !readOnly && (
-                      <Upload {...productBoundUploadProps} className="node-pic">
-                          <Button size="small" icon={<UploadOutlined />}>
-                              {hasDisplayImage ? "重新上传" : ts("select_file")}
-                          </Button>
-                      </Upload>
-                  )}
+                  ) : null}
                   {isGenericImgRefNode && !readOnly && (
                       <Upload {...uploadProps} className="node-pic">
                           <Button size="small" icon={<UploadOutlined />}>
@@ -3137,11 +3161,35 @@ const TreeNodeItem = ({
                       </Popconfirm>
                   </Space>
                   )}
+                  {extraBodyBlocks.map((block, index) => (
+                      canEditNodeContent && !readOnly ? (
+                          <div key={`free-body-${index}`} className="node-free-body-block">
+                              <div className="node-free-body-label">正文 {index + 2}</div>
+                              <Input.TextArea
+                                  className="node-content node-text-area"
+                                  value={block}
+                                  onChange={(e) => {
+                                      const next = extraBodyBlocks.slice();
+                                      next[index] = e.target.value;
+                                      commitFreeBody(primaryBodyText, next);
+                                  }}
+                                  placeholder={ts('srs_doc.please_input_content')}
+                                  size="small"
+                                  rows={3}
+                                  autoSize={{ minRows: 3, maxRows: 20 }}
+                              />
+                          </div>
+                      ) : (
+                          block.trim() ? (
+                              <div key={`free-body-${index}`} className="node-content node-text-area">{block}</div>
+                          ) : null
+                      )
+                  ))}
                   {useNavChapterEditor && canEditNodeContent && !isSrsReqRefNode && !isRuntimeLocked && (
                       <Space className="node-free-add" size={8}>
                           <Button
                               size="small"
-                              onClick={() => onContentChange(node.id, `${editableNodeText || ""}\n`, isLockedOtherReqChapter)}
+                              onClick={() => commitFreeBody(primaryBodyText, [...extraBodyBlocks, ""])}
                           >
                               添加正文
                           </Button>
