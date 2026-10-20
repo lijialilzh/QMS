@@ -732,6 +732,7 @@ export default () => {
     const treeStructureRef = useRef<TreeNode[]>([]);
     const initialEditTreeRef = useRef<TreeNode[]>([]);
     const [timelineCoverDate, setTimelineCoverDate] = useState("");
+    const [versionInput, setVersionInput] = useState("");
     const [data, dispatch] = useData({
         loading: false,
         isEdit: false,
@@ -774,11 +775,17 @@ export default () => {
     const productId = Form.useWatch("product_id", editForm);
     const docVersion = Form.useWatch("version", editForm);
     const displayProductId = (data.isEdit || isReadOnly) ? (data.docProductId ?? productId) : productId;
-    const watchedDocVersion = String(docVersion ?? "").trim();
+    const formDocVersion = String(editForm.getFieldValue("version") ?? "").trim();
+    const typedDocVersion = String(versionInput ?? "").trim();
+    const watchedDocVersion = revisionVersionSeries(typedDocVersion)
+        ? typedDocVersion
+        : (revisionVersionSeries(formDocVersion) ? formDocVersion : String(docVersion ?? "").trim());
     // 编辑页版本框改成 A1 后要立刻写封面和修订记录。只打到「A」还不是完整版本，继续用已保存的版本，避免修订表多出一行 A。
     const displayDocVersion = revisionVersionSeries(watchedDocVersion)
         ? watchedDocVersion
         : ((data.isEdit || isReadOnly) ? (String(data.docVersion ?? "").trim() || watchedDocVersion) : watchedDocVersion);
+    const liveDocVersionRef = useRef(displayDocVersion);
+    liveDocVersionRef.current = displayDocVersion;
     const currentProduct = (data.products as any[]).find((p: any) => p.id === displayProductId);
     const normalizeScopeTitle = (title?: string) => String(title || "")
         .replace(/^(\d+(?:\.\d+)*\.?)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
@@ -2767,6 +2774,7 @@ export default () => {
                         version: targetRow.version, // 后端 version -> 前端 full_version
                         file_no: targetRow.file_no,
                     });
+                    setVersionInput(String(targetRow.version ?? ""));
 
                     // 如果有产品ID，加载需求文档列表
                     if (targetRow.product_id) {
@@ -3812,6 +3820,7 @@ export default () => {
                                 version: targetRow.version,
                                 file_no: targetRow.file_no,
                             });
+                            setVersionInput(String(targetRow.version ?? ""));
 
                             // 如果有产品ID，加载需求文档列表
                             if (targetRow.product_id) {
@@ -3824,6 +3833,7 @@ export default () => {
                                 changeDescription: targetRow.change_log || "",
                                 docNId: targetRow.n_id || 0,
                                 treeStructure: ensuredContent,
+                                docVersion: targetRow.version ?? "",
                                 requireRebindSrs: !targetRow.srsdoc_id,
                                 traceTreeRefreshKey: Date.now(),
                             });
@@ -4018,14 +4028,33 @@ export default () => {
         });
         return { nodes: walk(nodes), changed };
     };
+    const applyRevisionSeriesToChangeLog = (nodes: TreeNode[], version: string): { nodes: TreeNode[]; changed: boolean } => {
+        if (!revisionVersionSeries(version)) return { nodes, changed: false };
+        let changed = false;
+        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+            const children = walk((node.children || []) as TreeNode[]);
+            let nextNode: TreeNode = { ...node, children };
+            if (nextNode.table && isChangeLogTable(nextNode)) {
+                const rows = [...((nextNode.table as any).rows || [])].map((row: any) => ({ ...(row || {}) }));
+                const revisionRows = ensureRevisionObjectRows(rows, version);
+                if (JSON.stringify(revisionRows) !== JSON.stringify(rows)) {
+                    nextNode = { ...nextNode, table: { ...nextNode.table, rows: revisionRows } as any };
+                    changed = true;
+                }
+            }
+            return nextNode;
+        });
+        return { nodes: walk(nodes), changed };
+    };
     useEffect(() => {
         if (!(data.treeStructure as TreeNode[] || []).length) return;
         const verResult = applyVersionToCoverTable(data.treeStructure as TreeNode[], displayDocVersion);
         const deptResult = applyDeptToCoverTable(verResult.nodes, "研发部");
         const logResult = ensureChangeLogMinRows(deptResult.nodes, 5);
-        if (verResult.changed || deptResult.changed || logResult.changed) {
-            treeStructureRef.current = logResult.nodes;
-            dispatch({ treeStructure: logResult.nodes });
+        const revisionResult = applyRevisionSeriesToChangeLog(logResult.nodes, displayDocVersion);
+        if (verResult.changed || deptResult.changed || logResult.changed || revisionResult.changed) {
+            treeStructureRef.current = revisionResult.nodes;
+            dispatch({ treeStructure: revisionResult.nodes });
         }
     }, [displayDocVersion, data.treeStructure]);
 
@@ -4065,9 +4094,10 @@ export default () => {
             };
             const timelineDate = computeSdsCoverDate(tlRows);
             setTimelineCoverDate(timelineDate);
+            const versionNow = String(liveDocVersionRef.current || displayDocVersion || "");
             const coverResult = applySdsCoverRevisionAutofill(data.treeStructure as TreeNode[], {
                 coverDate: timelineDate,
-                version: String(displayDocVersion || ""),
+                version: versionNow,
                 resolveSigner,
                 reviser: tpm,
                 approver: devLead,
@@ -4134,7 +4164,10 @@ export default () => {
             return renderApprovalTable(node, keyPrefix);
         }
         const isChangeRecordTable = isChangeLogTable(node);
-        const normalizedRows = [...(node.table.rows || [])];
+        let normalizedRows = [...(node.table.rows || [])];
+        if (isChangeRecordTable && revisionVersionSeries(displayDocVersion)) {
+            normalizedRows = ensureRevisionObjectRows(normalizedRows, displayDocVersion);
+        }
         if (isChangeRecordTable) {
             while (normalizedRows.length < 5) {
                 normalizedRows.push({});
@@ -4249,6 +4282,11 @@ export default () => {
                 className="sds-toolbar-form"
                 form={editForm}
                 onFinish={doSave}
+                onValuesChange={(changed) => {
+                    if (changed && Object.prototype.hasOwnProperty.call(changed, "version")) {
+                        setVersionInput(String(changed.version ?? ""));
+                    }
+                }}
                 layout="inline">
                 <div className="div-h center-v sds-toolbar">
                     <Form.Item hidden name="id">
