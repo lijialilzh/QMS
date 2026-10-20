@@ -15,7 +15,8 @@ import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
 import TreeStructure, { HLD_SDS_LOCK_REF, TreeNode } from "../sds_doc/components/TreeStructure";
-import { applySdsSyncToTree, hasMisplacedHldPhysicalChapter, hasSdsSyncData, needsLegacyInterfaceRepair, promoteHldFieldTables, splitHldInternalInterfaces, stripLegacyInterfaceText, tidyHldFieldChapters } from "./hldSdsSync";
+import { ensureRevisionObjectRows } from "@/pages/doc_fill/syncDocVersion";
+import { applySdsSyncToTree, dropDuplicateChapter3InterfaceList, hasMisplacedHldPhysicalChapter, hasSdsSyncData, needsLegacyInterfaceRepair, promoteHldFieldTables, splitHldInternalInterfaces, stripLegacyInterfaceText, tidyHldFieldChapters } from "./hldSdsSync";
 
 const SDS_SYNC_TIP = "尚未从详细设计同步接口与库表，请点击「从详细设计同步」";
 
@@ -256,7 +257,9 @@ const applyHldCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAut
             setIf(row, "changer", info.reviser);
             setIf(row, "approver", info.approver);
             rows[0] = row;
-            nextNode = { ...nextNode, table: { ...nextNode.table, rows } };
+            const revisionRows = ensureRevisionObjectRows(rows, info.version || "");
+            if (JSON.stringify(revisionRows) !== JSON.stringify(rows)) changed = true;
+            nextNode = { ...nextNode, table: { ...nextNode.table, rows: revisionRows } };
         }
         return nextNode;
     });
@@ -323,7 +326,7 @@ const applyHldReviewAutofill = (
                     row.name1 = approverVal;
                     changed = true;
                 }
-                if (info.coverDate && !String(row.sign1 || "").trim()) {
+                if (info.coverDate && !isSign(row.sign1) && String(row.sign1 || "").trim() !== info.coverDate) {
                     row.sign1 = info.coverDate;
                     changed = true;
                 }
@@ -1385,6 +1388,8 @@ export default () => {
         if (fields.changed) remappedContent = fields.nodes;
         const tidied = tidyHldFieldChapters(remappedContent as TreeNode[]);
         if (tidied.changed) remappedContent = tidied.nodes;
+        const dedupedIface = dropDuplicateChapter3InterfaceList(remappedContent as TreeNode[]);
+        if (dedupedIface.changed) remappedContent = dedupedIface.nodes;
         const autoRepaired = !isReadOnly && beforeRepair !== JSON.stringify(remappedContent);
         if (autoRepaired && split.changed) message.info(ts("hld_doc.auto_sync_interface_layout"));
         return { nodes: remappedContent as TreeNode[], autoRepaired };

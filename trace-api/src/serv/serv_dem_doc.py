@@ -3,7 +3,7 @@
 
 # 开发环境维护说明服务层（开发文件）。
 # 结构：说明正文(固定模板) + 资产表(固定模板，产品名称/完整版本自动获取) + 各资产周检查表。
-# 周检查表：日期行按产品时间线「产品开发开始~产品开发结束」按周生成（跳过周末与法定节假日，调休上班日计入）；每格 是/否 复选框。
+# 周检查表：日期行按产品时间线「产品开发开始~用户测试结束」按周生成（跳过周末与法定节假日，调休上班日计入）；每格 是/否 复选框。
 
 import base64
 import copy
@@ -223,9 +223,9 @@ class Server(object):
             base["checks"] = content["checks"]
         return base
 
-    # ---------------- 时间线：产品开发开始 ~ 产品开发结束 ----------------
+    # ---------------- 时间线：产品开发开始 ~ 用户测试结束 ----------------
     def __dev_range(self, prod_id):
-        """取时间线中「产品开发」（不含计划）最早～最晚日期。"""
+        """起点取「产品开发」（不含计划）最早一天；终点取「用户测试」最晚一天，没有则仍用产品开发结束。"""
         if not prod_id:
             return (None, None)
         rows = db.session.execute(
@@ -253,6 +253,7 @@ class Server(object):
                 return None
 
         dev_dates = []
+        user_test_dates = []
         for r in rows:
             if (r.row_type or "date") != "date":
                 continue
@@ -262,12 +263,17 @@ class Server(object):
             vals = cell_map.get(r.id, [])
             if any(("产品开发" in str(v)) and ("计划" not in str(v)) for v in vals):
                 dev_dates.append(dt)
+            if any("用户测试" in str(v) for v in vals):
+                user_test_dates.append(dt)
         if not dev_dates:
             return (None, None)
-        return (min(dev_dates), max(dev_dates))
+        end_d = max(user_test_dates) if user_test_dates else max(dev_dates)
+        if end_d < min(dev_dates):
+            end_d = max(dev_dates)
+        return (min(dev_dates), end_d)
 
     def __week_ranges(self, prod_id):
-        """按周拆分产品开发区间；周末/法定假日不计入，调休上班日记入；整周无工作日则跳过。"""
+        """按周拆分产品开发开始到用户测试结束；周末/法定假日不计入，调休上班日记入；整周无工作日则跳过。"""
         start_d, end_d = self.__dev_range(prod_id)
         if not start_d or not end_d or start_d > end_d:
             return []

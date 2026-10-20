@@ -418,6 +418,37 @@ const applySdsFieldTablesToTree = (
     return ensureChapter4Structure(nextTree);
 };
 
+const isImportedInterfaceSummary = (node?: TreeNode | null) => {
+    const title = String(node?.title || "").trim();
+    if (!/^导入表格\d*$/.test(title)) return false;
+    const names = (node?.table?.headers || []).map((header) => String(header?.name || "").replace(/\s/g, ""));
+    return names.includes("接口设计编号") && (names.includes("功能") || names.includes("接口名称") || names.includes("涉及模块"));
+};
+
+const isInterfaceSummaryHeaders = (node?: TreeNode | null) => {
+    const names = (node?.table?.headers || []).map((header) => String(header?.name || "").replace(/\s/g, ""));
+    return names.includes("接口设计编号") && (names.includes("功能") || names.includes("接口名称") || names.includes("涉及模块"));
+};
+
+/** 「3 接口设计」已有总表时，去掉其下「导入表格」里的第二张总表。 */
+export const dropDuplicateChapter3InterfaceList = (tree: TreeNode[]): { nodes: TreeNode[]; changed: boolean } => {
+    let changed = false;
+    const walk = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
+        const title = String(node.title || "");
+        const isChapter3 = /^3[\s.．、]/.test(title) && title.includes("接口") && !/^3\.[0-9]/.test(title.replace(/\s/g, ""));
+        let children = walk((node.children || []) as TreeNode[]);
+        if (isChapter3 && isInterfaceSummaryHeaders(node)) {
+            const next = children.filter((child) => !isImportedInterfaceSummary(child));
+            if (next.length !== children.length) {
+                changed = true;
+                children = next;
+            }
+        }
+        return { ...node, children };
+    });
+    return { nodes: walk(tree), changed };
+};
+
 export const applySdsSyncToTree = (tree: TreeNode[], payload?: HldSdsSyncPayload | null): TreeNode[] => {
     if (!payload) return tree;
     tempNodeSeed = 0;
@@ -429,7 +460,8 @@ export const applySdsSyncToTree = (tree: TreeNode[], payload?: HldSdsSyncPayload
         nextTree = walkTree(nextTree, (node) => {
             const title = String(node.title || "");
             if (/^3[\s.．、]/.test(title) && title.includes("接口") && !/^3\.[0-9]/.test(title.replace(/\s/g, ""))) {
-                return { ...node, table: cloneTable(summaryTable) as TreeNode["table"] };
+                const children = ((node.children || []) as TreeNode[]).filter((child) => !isImportedInterfaceSummary(child));
+                return { ...node, table: cloneTable(summaryTable) as TreeNode["table"], children };
             }
             const section = SECTION_RANGES.find((item) => normalizeTitle(title).startsWith(normalizeTitle(item.prefix)));
             const isLegacyGroup = /DataProcessing|DLServer|RePACS|NeoViewer|与/.test(title);

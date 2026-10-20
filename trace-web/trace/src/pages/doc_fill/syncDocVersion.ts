@@ -1,10 +1,115 @@
 /**
  * 文档版本同步规则（全模块统一）：
  * - 封面「文件版本」：随文档版本始终更新（A0→A1）
- * - 文件修订记录「版本号」：已有值不覆盖；升版时最多只给一个空行写入当前版本（不刷满所有空行）
+ * - 文件修订记录：版本形如 A0、A1 时，保留已有版本行，并补齐从 A0 到当前版本的每一行（A0 修订说明空则写「首次发布」）。已有行的日期、说明、人员不改。
  */
 
 const cell = (v: any) => String(v ?? "").trim();
+
+/** A0、A1… 补到当前版本；不是「字母+数字」则不拆。 */
+export const revisionVersionSeries = (version: string): string[] | null => {
+    const text = String(version || "").trim();
+    const matched = text.match(/^([A-Za-z]+)(\d+)$/);
+    if (!matched) return null;
+    const prefix = matched[1];
+    const current = parseInt(matched[2], 10);
+    if (!Number.isFinite(current) || current < 0) return null;
+    const series: string[] = [];
+    for (let i = 0; i <= current; i++) series.push(`${prefix}${i}`);
+    return series;
+};
+
+const blankRevisionRow = (cols: number) => Array.from({ length: cols }, () => "");
+
+/** 修订表补齐 A0…当前版本。表须含表头。 */
+export const ensureRevisionGrid = (tb: any[], version: string): any[] => {
+    const series = revisionVersionSeries(version);
+    if (!series || !Array.isArray(tb) || !tb.length) return tb;
+    const header = (tb[0] || []).map(cell);
+    const verIdx = header.indexOf("版本号");
+    const descIdx = header.indexOf("修订说明");
+    if (verIdx < 0 || descIdx < 0) return tb;
+    const cols = Math.max(header.length, verIdx + 1, descIdx + 1);
+    const nextTb = tb.map((row) => (Array.isArray(row) ? [...row] : row));
+    const pad = (row: any[]) => {
+        while (row.length < cols) row.push("");
+        return row;
+    };
+    const verOf = (row: any[]) => cell(row[verIdx]);
+    const dateIdx = header.indexOf("修改日期");
+    const changerIdx = header.indexOf("修订人");
+    const approverIdx = header.indexOf("批准人");
+    const inSeries = new Set(series);
+    // 改版本时先打出「A」会占一行；其余列都空、又不是 A0/A1 的版本号清掉
+    nextTb.forEach((row, index) => {
+        if (index < 1 || !Array.isArray(row)) return;
+        pad(row);
+        const ver = verOf(row);
+        if (!ver || inSeries.has(ver)) return;
+        const rest = [dateIdx, descIdx, changerIdx, approverIdx].filter((i) => i >= 0);
+        if (rest.every((i) => !cell(row[i]))) row[verIdx] = "";
+    });
+    const hasVer = (ver: string) => nextTb.slice(1).some((row) => Array.isArray(row) && verOf(pad(row)) === ver);
+    const zero = series[0];
+    const current = series[series.length - 1];
+    if (zero !== current && !hasVer(zero)) {
+        const firstRelease = nextTb.findIndex((row, index) => (
+            index >= 1 && Array.isArray(row) && cell(pad(row)[descIdx]) === "首次发布"
+            && (verOf(row) === current || verOf(row) === "")
+        ));
+        if (firstRelease >= 0) nextTb[firstRelease][verIdx] = zero;
+    }
+    series.forEach((ver) => {
+        if (hasVer(ver)) return;
+        let target = nextTb.findIndex((row, index) => index >= 1 && Array.isArray(row) && !verOf(pad(row)) && !cell(row[descIdx]));
+        if (target < 0) {
+            target = nextTb.findIndex((row, index) => index >= 1 && Array.isArray(row) && !verOf(pad(row)));
+        }
+        if (target < 0) {
+            nextTb.push(blankRevisionRow(cols));
+            target = nextTb.length - 1;
+        }
+        pad(nextTb[target]);
+        nextTb[target][verIdx] = ver;
+        if (ver === zero && !cell(nextTb[target][descIdx])) nextTb[target][descIdx] = "首次发布";
+    });
+    return nextTb;
+};
+
+/** 详细设计 / 需求 / 概要设计这类对象行修订表，同样补齐 A0…当前版本。 */
+export const ensureRevisionObjectRows = (rows: any[], version: string): any[] => {
+    const series = revisionVersionSeries(version);
+    const next = (rows || []).map((row) => ({ ...(row || {}) }));
+    if (!series) return next;
+    const verOf = (row: any) => cell(row?.version_no);
+    const inSeries = new Set(series);
+    next.forEach((row) => {
+        const ver = verOf(row);
+        if (!ver || inSeries.has(ver)) return;
+        if (!cell(row?.change_desc) && !cell(row?.change_date) && !cell(row?.changer) && !cell(row?.approver)) {
+            row.version_no = "";
+        }
+    });
+    const hasVer = (ver: string) => next.some((row) => verOf(row) === ver);
+    const zero = series[0];
+    const current = series[series.length - 1];
+    if (zero !== current && !hasVer(zero)) {
+        const firstRelease = next.find((row) => cell(row?.change_desc) === "首次发布" && (verOf(row) === current || verOf(row) === ""));
+        if (firstRelease) firstRelease.version_no = zero;
+    }
+    series.forEach((ver) => {
+        if (hasVer(ver)) return;
+        let target = next.find((row) => !verOf(row) && !cell(row?.change_desc) && !cell(row?.change_date) && !cell(row?.changer) && !cell(row?.approver));
+        if (!target) target = next.find((row) => !verOf(row));
+        if (!target) {
+            target = { change_date: "", version_no: "", change_desc: "", changer: "", approver: "" };
+            next.push(target);
+        }
+        target.version_no = ver;
+        if (ver === zero && !cell(target.change_desc)) target.change_desc = "首次发布";
+    });
+    return next;
+};
 
 const patchTable = (tb: any[], ver: string): any[] => {
     if (!Array.isArray(tb) || !tb.length) return tb;
@@ -21,28 +126,9 @@ const patchTable = (tb: any[], ver: string): any[] => {
     }
 
     if (isRev && ver && verIdx >= 0) {
-        const isBlankRow = (row: any[]) => {
-            if (!Array.isArray(row)) return false;
-            return row.every((c, i) => i === verIdx || !cell(c));
-        };
-        // 清掉「只填了版本号」的空行上的多余版本，避免升版刷出多个 A1
-        for (let ri = 1; ri < nextTb.length; ri++) {
-            const row = nextTb[ri];
-            if (!Array.isArray(row)) continue;
-            while (row.length <= verIdx) row.push("");
-            if (isBlankRow(row) && cell(row[verIdx])) row[verIdx] = "";
-        }
-        const hasVer = nextTb.slice(1).some((r) => Array.isArray(r) && cell(r[verIdx]) === ver);
-        if (!hasVer) {
-            let target = nextTb.findIndex((r, ri) => ri >= 1 && Array.isArray(r) && isBlankRow(r));
-            if (target < 0 && nextTb.length > 1 && Array.isArray(nextTb[1]) && !cell(nextTb[1][verIdx])) {
-                target = 1;
-            }
-            if (target >= 0) {
-                while (nextTb[target].length <= verIdx) nextTb[target].push("");
-                nextTb[target][verIdx] = ver;
-            }
-        }
+        if (revisionVersionSeries(ver)) return ensureRevisionGrid(nextTb, ver);
+        // 只打了「A」、数字还没输入时不往修订表写版本
+        return nextTb;
     }
     return nextTb;
 };

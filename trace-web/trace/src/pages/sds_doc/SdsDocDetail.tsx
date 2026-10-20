@@ -18,6 +18,7 @@ import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
 import TreeStructure, { computeNavChapterNumberMap, designLetterForTail, stripNavChapterPrefix, TreeNode } from "./components/TreeStructure";
+import { ensureRevisionObjectRows } from "@/pages/doc_fill/syncDocVersion";
 
 const SDS_COVER_DATE_KEYWORDS = ["软件详细设计"];
 
@@ -442,7 +443,9 @@ const applySdsCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAut
             setIf(row, "approver", info.approver);
             const rowIndex = Math.max(0, rows.indexOf(row));
             rows[rowIndex] = row;
-            nextNode = { ...nextNode, table: { ...nextNode.table, rows } };
+            const revisionRows = ensureRevisionObjectRows(rows, info.version || "");
+            if (JSON.stringify(revisionRows) !== JSON.stringify(rows)) changed = true;
+            nextNode = { ...nextNode, table: { ...nextNode.table, rows: revisionRows } };
         }
         return nextNode;
     });

@@ -495,6 +495,11 @@ class Server(object):
                 logger.exception("概要设计字段表目录整理失败")
                 db.session.rollback()
             if row.product_id:
+                try:
+                    from .serv_prod_runtime_env import apply_runtime_to_hld_tree
+                    apply_runtime_to_hld_tree(tree, row.product_id)
+                except Exception:
+                    logger.exception("概要设计运行环境覆盖失败")
                 prod_imgs = self.__query_imgs(row.product_id)
                 self.__hydrate_tree_product_images(tree, prod_imgs)
                 try:
@@ -843,8 +848,17 @@ class Server(object):
                 return
             doc_obj = resp.data
             file_no = (doc_obj.file_no or "").strip()
+        if getattr(doc_obj, "product_id", None) and getattr(doc_obj, "content", None):
+            try:
+                from .serv_prod_runtime_env import apply_runtime_to_hld_tree
+                apply_runtime_to_hld_tree(doc_obj.content, doc_obj.product_id)
+            except Exception:
+                logger.exception("概要设计导出运行环境覆盖失败")
 
         docx = Document()
+        export_rev_date = ""
+        if getattr(doc_obj, "product_id", None):
+            export_rev_date = serv_review_util.cover_date(doc_obj.product_id, "hld") or ""
         wrote_review = {"ok": False}
         pending_reviews: List[HldNodeForm] = []
 
@@ -931,6 +945,26 @@ class Server(object):
             title.alignment = WD_ALIGN_PARAGRAPH.CENTER
             title.paragraph_format.first_line_indent = Pt(0)
             docx_util.fonted_txt(title, "附件一 评审结论", font_size=16.0, bold=True)
+            try:
+                title.style = docx.styles["Heading 1"]
+            except Exception:
+                pass
+            title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            __drop_list_number(title)
+
+        def __align_review_grid(grid):
+            """批准日期、评审时间与封面同一天，覆盖模板旧日期。"""
+            if not export_rev_date:
+                return grid
+            for row in grid or []:
+                if not isinstance(row, list) or not row:
+                    continue
+                cell0 = str(row[0] or "")
+                if cell0.startswith("评审时间"):
+                    row[0] = f"评审时间：{export_rev_date}"
+                elif cell0.startswith("批准人员签字") and len(row) >= 3 and not str(row[2] or "").startswith("data:image"):
+                    row[2] = export_rev_date
+            return grid
 
         def __write_review_tables(node):
             table = getattr(node, "table", None)
@@ -938,14 +972,14 @@ class Server(object):
                 names = __table_header_names(table)
                 with_header = "评审内容" in names and ("评审项" in names or "评审结论" in names)
                 serv_review_util.render_review_grid(
-                    docx, __grid_from_table(table, with_header), __set_review_cell,
+                    docx, __align_review_grid(__grid_from_table(table, with_header)), __set_review_cell,
                     merge_col0=with_header, merge_full=True,
                 )
                 for extra in getattr(table, "extra_tables", None) or []:
                     extra_table = getattr(extra, "table", None) if not isinstance(extra, dict) else extra.get("table")
                     if extra_table:
                         serv_review_util.render_review_grid(
-                            docx, __grid_from_table(extra_table, False), __set_review_cell,
+                            docx, __align_review_grid(__grid_from_table(extra_table, False)), __set_review_cell,
                             merge_col0=False, merge_full=True,
                         )
             # 子评审表已在遍历正文时单独收集进 pending_reviews，这里不再递归整棵子树
@@ -1076,6 +1110,8 @@ class Server(object):
                         review_children.append(child)
                         continue
                     if self._is_imported_table_title(child_title) and __has_table(child):
+                        if __is_iface_summary(getattr(node, "table", None)) and __is_iface_summary(child.table):
+                            continue
                         table_children.append(child)
                     else:
                         other_children.append(child)
@@ -1102,6 +1138,30 @@ class Server(object):
                     if docx.paragraphs:
                         __drop_list_number(docx.paragraphs[-1])
                 __write_nodes(other_children, default_level + 1)
+
+        def __is_iface_summary(table) -> bool:
+            names = [re.sub(r"\s+", "", str(getattr(h, "name", "") or "")) for h in (getattr(table, "headers", None) or [])]
+            return "接口设计编号" in names and any(key in names for key in ("功能", "接口名称", "涉及模块"))
+
+        def __write_outline(nodes, depth=0):
+            from docx.shared import Pt
+            for node in nodes or []:
+                title = str(getattr(node, "title", "") or "").strip()
+                if not title or __is_cover_title(title) or __is_revision_title(title) or __is_review_title(title):
+                    __write_outline(getattr(node, "children", None), depth)
+                    continue
+                if self._is_imported_table_title(title) or self._is_imported_image_title(title) or self._is_field_table_node(node):
+                    continue
+                if re.match(r"^\d", title):
+                    p = docx.add_paragraph()
+                    p.paragraph_format.left_indent = Pt(14 * depth)
+                    p.paragraph_format.space_before = Pt(0)
+                    p.paragraph_format.space_after = Pt(0)
+                    p.paragraph_format.line_spacing = 1.5
+                    docx_util.fonted_txt(p, title, font_size=10.5)
+                    __write_outline(getattr(node, "children", None), depth + 1)
+                else:
+                    __write_outline(getattr(node, "children", None), depth)
 
         def __cover_signers():
             rev_date = ""
@@ -1150,6 +1210,67 @@ class Server(object):
                     row["value2"] = rev_date
                 if label == "生效日期" and rev_date:
                     row["value1"] = rev_date
+            __sync_cover_cells(table, rev_date)
+
+        def __cell_text(cell):
+            if cell is None:
+                return ""
+            if isinstance(cell, dict):
+                return str(cell.get("value") or "")
+            return str(getattr(cell, "value", "") or "")
+
+        def __set_cell_text(cell, value):
+            if cell is None:
+                return
+            if isinstance(cell, dict):
+                cell["value"] = value or ""
+            else:
+                cell.value = value or ""
+
+        def __set_col_span(cell, span):
+            if cell is None:
+                return
+            if isinstance(cell, dict):
+                cell["col_span"] = span
+            else:
+                cell.col_span = span
+
+        def __sync_cover_cells(table, rev_date):
+            """cells 优先导出：编审批日期、生效日期写进单元格，生效日期跨满本行。"""
+            if not table or not rev_date:
+                return
+            for line in getattr(table, "cells", None) or []:
+                if not line:
+                    continue
+                for index, cell in enumerate(line):
+                    label = re.sub(r"\s+", "", __cell_text(cell))
+                    if label in ("编制人", "审核人", "批准人") and index + 3 < len(line):
+                        date_label = re.sub(r"\s+", "", __cell_text(line[index + 2]))
+                        if date_label == "日期":
+                            __set_cell_text(line[index + 3], rev_date)
+                    if label == "生效日期" and index + 1 < len(line):
+                        __set_cell_text(line[index + 1], rev_date)
+                        remain = len(line) - (index + 1)
+                        if remain > 1:
+                            __set_col_span(line[index + 1], remain)
+                            for follow in line[index + 2:]:
+                                __set_col_span(follow, 0)
+
+        def __merge_effective_date_row():
+            if not docx.tables:
+                return
+            table = docx.tables[-1]
+            for row in table.rows:
+                cells = row.cells
+                if not cells:
+                    continue
+                label = re.sub(r"\s+", "", cells[0].text or "")
+                if label != "生效日期" or len(cells) <= 2:
+                    continue
+                merged = cells[1]
+                for cell in cells[2:]:
+                    merged = merged.merge(cell)
+                break
 
         def __fill_revision_dates(table):
             if not table:
@@ -1165,6 +1286,15 @@ class Server(object):
             first = rows[0] if isinstance(rows[0], dict) else None
             if first is not None:
                 first["change_date"] = rev_date
+            cells = getattr(table, "cells", None) or []
+            if len(cells) > 1:
+                header = cells[0] or []
+                col_idx = next((
+                    idx for idx, cell in enumerate(header)
+                    if re.sub(r"\s+", "", __cell_text(cell)) == "修改日期"
+                ), -1)
+                if col_idx >= 0 and col_idx < len(cells[1] or []):
+                    __set_cell_text(cells[1][col_idx], rev_date)
 
         def __blank_revision_table():
             version = str(getattr(doc_obj, "version", "") or "")
@@ -1226,18 +1356,30 @@ class Server(object):
         __add_blank_lines(9)
         if __has_table(cover_node):
             docx_util.save_tab2docx(cover_node.table, docx)
+            if not (getattr(cover_node.table, "cells", None) or []):
+                __merge_effective_date_row()
         __start_next_page()
         __write_front_title("文件修订记录")
         __add_blank_lines(2)
         if __has_table(revision_node):
             docx_util.save_tab2docx(revision_node.table, docx)
-        __start_next_page()
         body_roots = [
             node for node in roots
             if node is not cover_node and node is not revision_node
             and not __is_cover_title(getattr(node, "title", ""))
             and not __is_revision_title(getattr(node, "title", ""))
         ]
+        __start_next_page()
+        __write_front_title("目录")
+        __add_blank_lines(1)
+        __write_outline(body_roots)
+        from docx.shared import Pt as _toc_pt
+        tail = docx.add_paragraph()
+        tail.paragraph_format.left_indent = _toc_pt(0)
+        tail.paragraph_format.space_before = _toc_pt(0)
+        tail.paragraph_format.space_after = _toc_pt(0)
+        docx_util.fonted_txt(tail, "附件一 评审结论", font_size=10.5)
+        __start_next_page()
         __write_nodes(body_roots)
         __flush_pending_reviews()
         if not wrote_review["ok"] and getattr(doc_obj, "product_id", None):

@@ -531,6 +531,51 @@ def _assign_runtime_tables(collected):
     return tables
 
 
+def _hld_table_holder(node):
+    """运行环境子章的表在「导入表格」上；没有该子节点时写到本章。"""
+    for child in _nget(node, "children") or []:
+        title = str(_nget(child, "title") or "").strip()
+        if re.match(r"^导入表格\d*$", title):
+            return child
+        nested = _hld_table_holder(child)
+        if nested is not None:
+            return nested
+    return node
+
+
+def apply_runtime_to_hld_tree(nodes, prod_id):
+    """打开/导出概要设计时，用产品运行环境覆盖「2.3 运行环境」。"""
+    if not prod_id:
+        return nodes
+    node = find_srs_runtime_node(nodes)
+    if not node:
+        return nodes
+    payload = get_runtime_payload(prod_id)
+    if not payload:
+        return nodes
+    arch = payload.get("arch") or ""
+    if arch:
+        text = str(_nget(node, "text") or "")
+        if text.strip():
+            _nset(node, "text", _patch_arch_text(text, arch))
+        else:
+            arch_text = str(arch)
+            if not arch_text.endswith(("。", ".", "！", "？")):
+                arch_text += "。"
+            _nset(node, "text", arch_text)
+    by_key = {t.get("key"): t for t in _runtime_tables_ordered(payload) if t.get("key")}
+    for child in _nget(node, "children") or []:
+        title = _nget(child, "title") or ""
+        key = _match_child_key(title, _plain_title(title))
+        item = by_key.get(key) if key else None
+        if not item or not item.get("cells"):
+            continue
+        table = cells_to_srs_table(item.get("cells"), item.get("title") or "")
+        if table:
+            _nset(_hld_table_holder(child), "table", table)
+    return nodes
+
+
 def apply_runtime_to_srs_tree(nodes, payload):
     """打开/导出需求文档时，用运行环境覆盖 2.4。"""
     node = find_srs_runtime_node(nodes)

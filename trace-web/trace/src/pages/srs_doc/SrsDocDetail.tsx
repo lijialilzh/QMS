@@ -16,6 +16,7 @@ import * as ApiSrsType from "@/api/ApiSrsType";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
+import { ensureRevisionObjectRows } from "@/pages/doc_fill/syncDocVersion";
 import TreeStructure, {
     TreeNode,
     syncTreeWithOtherReqState,
@@ -307,7 +308,9 @@ const applyCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAutofi
             setIf(row, "changer", info.reviser);
             setIf(row, "approver", info.approver);
             rows[0] = row;
-            nextNode = { ...nextNode, table: { ...nextNode.table, rows } };
+            const revisionRows = ensureRevisionObjectRows(rows, info.version || "");
+            if (JSON.stringify(revisionRows) !== JSON.stringify(rows)) changed = true;
+            nextNode = { ...nextNode, table: { ...nextNode.table, rows: revisionRows } };
         }
         return nextNode;
     });

@@ -13,6 +13,7 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
 import FreeChapterContent from "../pdp/FreeChapterContent";
 import { freeAddTable, freeDelTable } from "../pdp/freeChapterBlocks";
+import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
@@ -225,7 +226,7 @@ export default () => {
         return (nodes || []).map(fix);
     };
 
-    // 文件修订记录首行：日期/版本/修订说明/人仅填空，不随文档升版覆盖
+    // 文件修订记录首行日期/说明/人仅填空。版本行由 syncDocVersionFields 保留 A0 并补 A1、A2。
     const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; pm?: string; approver?: string }): any[] => {
         const fix = (n: any): any => {
             const isRev = n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
@@ -354,7 +355,7 @@ export default () => {
                     approver: findRole((r) => r.includes("负责人") && r.includes("产品")),
                 });
                 out = fillTransferFiles(out, dhfMap, acceptanceDate);
-                resolve(out);
+                resolve(syncDocVersionFields(out, version));
             }).catch(() => resolve(secs));
         });
 
@@ -548,7 +549,7 @@ export default () => {
                                     const version = e.target.value;
                                     dispatch({
                                         doc: { ...data.doc, version },
-                                        sections: fillRevision(fillCoverVersion(data.sections, version), { version }),
+                                        sections: syncDocVersionFields(fillRevision(fillCoverVersion(data.sections, version), { version }), version),
                                     });
                                 }}
                             />
