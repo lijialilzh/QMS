@@ -57,8 +57,9 @@ def _archive_text(name, type_code="", full_version=""):
     name = str(name or "").strip()
     type_code = str(type_code or "").strip()
     full_version = str(full_version or "").strip()
+    head = f"{name}({type_code})" if type_code else name
     return (
-        f"通过评审，{name}({type_code}) {full_version}版本"
+        f"通过评审，{head} {full_version}版本"
         "的全套设计开发历史文档（DHF）和全套器械主记录（DMR）已完成归档。"
     )
 
@@ -66,9 +67,10 @@ def _archive_text(name, type_code="", full_version=""):
 def _overview_text(name, type_code, release_version, full_version, func_desc):
     """组装产品概述：名称/型号/发布版本/完整版本(自动) + 交付形式/存储媒介(固定) + 产品功能概述(总体描述)。"""
     func_desc = str(func_desc or "").strip()
+    model = str(type_code or "").strip()
     lines = [
         f"产品名称：{str(name or '').strip()}",
-        f"产品型号：{str(type_code or '').strip()}",
+        f"产品型号：{model}" if model else "",
         f"发布版本：{str(release_version or '').strip()}",
         f"完整版本：{str(full_version or '').strip()}",
         "交付形式：物理交付",
@@ -77,7 +79,7 @@ def _overview_text(name, type_code, release_version, full_version, func_desc):
     ]
     if func_desc:
         lines.append(func_desc)
-    return "\n".join(lines)
+    return "\n".join([ln for ln in lines if ln])
 
 
 DEFAULT_RELEASE_NOTE_CONTENT = {

@@ -472,10 +472,12 @@ class Server(object):
         content = replace_product_identity(content, product)
 
         def build_desc():
+            model = (product.type_code or "").strip()
+            model_line = f"产品型号：{model}\n" if model else ""
             return (
                 "本文件适用的产品为的软件产品：\n"
                 f"产品名称：{pname}\n"
-                f"产品型号：{(product.type_code or '').strip()}\n"
+                f"{model_line}"
                 f"完整版本：{(product.full_version or '').strip()}"
             )
 

@@ -152,7 +152,7 @@ const latestDateFor = (rows: any[], keys: string[]): string => {
 };
 
 // 里程碑阶段日期：以产品开发周期（开始~结束）按比例拆分
-// 基础代码开发=开始+1/4、模块开发=开始+3/4、整体联调=结束日、封装安装包=结束日+1天
+// 基础代码开发=开始+1/4、模块开发=开始+3/4、整体联调=结束日、生成安装包=结束日（不超出产品开发结束日）
 const computeDevPhases = (rows: any[]): { base: string; module: string; integ: string; pkg: string } => {
     const empty = { base: "", module: "", integ: "", pkg: "" };
     const m = (rows || []).filter((r: any) => (r.row_type || "date") === "date" && isDevRow(r)
@@ -173,7 +173,7 @@ const computeDevPhases = (rows: any[]): { base: string; module: string; integ: s
         base: fmt(addDays(ds, Math.round(total * 0.25))),
         module: fmt(addDays(ds, Math.round(total * 0.75))),
         integ: fmt(de),
-        pkg: fmt(addDays(de, 1)),
+        pkg: fmt(de),
     };
 };
 
@@ -350,7 +350,7 @@ export default () => {
                     const rowText = row.map((c: any) => String(c || "")).join(" ");
                     const lower = rowText.toLowerCase();
                     const isReview = rowText.includes("评审") && rowText.includes("开发计划");
-                    // 计划完成时间（可判定则覆盖）：评审→评审日；基础代码/模块/联调按周期比例；封装安装包→结束日+1天
+                    // 计划完成时间（可判定则覆盖）：评审→评审日；基础代码/模块/联调按周期比例；生成安装包→结束日
                     if (cTime >= 0 && cTime < row.length) {
                         const stage = cStage >= 0 && cStage < row.length ? String(row[cStage] || "") : rowText;
                         let dt = "";
@@ -386,18 +386,20 @@ export default () => {
         return (nodes || []).map(fix);
     };
 
-    // 人员资源：产品开发负责人（研发负责人）+ 前后端开发人员，所属部门为产品开发部
+    // 人员资源：产品开发负责人（研发负责人）、TPM、前后端开发人员，所属部门为产品开发部
     const pickDevMembers = (members: any[]) => {
         const isLead = (m: any) => /研发负责人|产品开发负责人/.test(String(m.role || ""));
+        const isTpm = (m: any) => /TPM/i.test(String(m.role || ""));
         const isDev = (m: any) => {
             const role = String(m.role || "").trim();
             const note = String(m.note || "");
-            if (isLead(m)) return false;
+            if (isLead(m) || isTpm(m)) return false;
             return note.includes("前端") || note.includes("后端") || role === "开发人员" || role === "开发工程师";
         };
+        const rank = (m: any) => (isLead(m) ? 0 : isTpm(m) ? 1 : 2);
         return [...(members || [])]
-            .filter((m: any) => isLead(m) || isDev(m))
-            .sort((a: any, b: any) => (isLead(a) === isLead(b) ? (a.sort_order ?? 0) - (b.sort_order ?? 0) : isLead(a) ? -1 : 1));
+            .filter((m: any) => isLead(m) || isTpm(m) || isDev(m))
+            .sort((a: any, b: any) => (rank(a) - rank(b)) || ((a.sort_order ?? 0) - (b.sort_order ?? 0)));
     };
     const fillPersonnel = (nodes: any[], members: any[]): any[] => {
         const picked = pickDevMembers(members);

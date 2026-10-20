@@ -717,11 +717,13 @@ class Server(object):
         def product_desc():
             if not product:
                 return ""
-            return (
-                f"产品名称：{getattr(product, 'name', '') or ''}\n"
-                f"产品型号：{getattr(product, 'type_code', '') or ''}\n"
-                f"完整版本：{getattr(product, 'full_version', '') or ''}"
-            )
+            model = str(getattr(product, "type_code", "") or "").strip()
+            lines = [
+                f"产品名称：{getattr(product, 'name', '') or ''}",
+                f"产品型号：{model}" if model else "",
+                f"完整版本：{getattr(product, 'full_version', '') or ''}",
+            ]
+            return "\n".join([ln for ln in lines if ln])
 
         def walk(node):
             title = self.__strip_no(node.get("title"))

@@ -6644,12 +6644,18 @@ class Server(object):
         temp_path = os.path.join(os.path.dirname(__file__), "temp_doc_trace_word.docx")
         docx = Document(temp_path) if os.path.exists(temp_path) else Document()
         __update_header_file_no(docx, getattr(row_srsdoc, "file_no", "") if row_srsdoc else "")
-        for paragraph in docx.paragraphs:
+        for paragraph in list(docx.paragraphs):
             raw = str(paragraph.text or "").strip()
             if raw.startswith("产品名称："):
                 __set_paragraph_text(paragraph, f"产品名称：{product_name}", font_size=10.5)
             elif raw.startswith("产品型号："):
-                __set_paragraph_text(paragraph, f"产品型号：{product_type_code or '/'}", font_size=10.5)
+                if product_type_code:
+                    __set_paragraph_text(paragraph, f"产品型号：{product_type_code}", font_size=10.5)
+                else:
+                    element = paragraph._element
+                    parent = element.getparent()
+                    if parent is not None:
+                        parent.remove(element)
             elif raw.startswith("产品版本："):
                 __set_paragraph_text(paragraph, f"产品版本：{product_full_version or '/'}", font_size=10.5)
             elif raw.startswith("版本号："):

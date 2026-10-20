@@ -283,7 +283,13 @@ export default () => {
             if (ref === "cover") {
                 if (name) body = name;
             } else if (ref === "prod_version" || t === "产品版本") {
-                if (typeCode || full || release) body = `产品型号：${typeCode}\n软件完整版本：${full}\n软件发布版本：${release}`;
+                if (typeCode || full || release) {
+                    body = [
+                        typeCode ? `产品型号：${typeCode}` : "",
+                        `软件完整版本：${full}`,
+                        `软件发布版本：${release}`,
+                    ].filter(Boolean).join("\n");
+                }
             } else if ((ref === "naming_rule" || t === "版本命名规则") && info.namingBody) {
                 body = info.namingBody;
             } else if (ref === "ui_relation" || t.includes("用户界面关系图")) {

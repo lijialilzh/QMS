@@ -449,11 +449,14 @@ const ensureFrontMatterSections = (content: any) => {
 
 const stripSectionNo = (title: any) => String(title || "").replace(/^[0-9０-９.．\s、]+/, "").trim();
 
-const buildProductDescription = (product: any) => [
-    `产品名称：${product?.name || ""}`,
-    `产品型号：${product?.type_code || ""}`,
-    `完整版本：${product?.full_version || ""}`,
-].join("\n");
+const buildProductDescription = (product: any) => {
+    const model = String(product?.type_code || "").trim();
+    return [
+        `产品名称：${product?.name || ""}`,
+        model ? `产品型号：${model}` : "",
+        `完整版本：${product?.full_version || ""}`,
+    ].filter(Boolean).join("\n");
+};
 
 const buildDefaultSectionTextMap = (product: any): Record<string, string> => {
     const pname = product?.name || "";

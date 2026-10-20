@@ -197,7 +197,10 @@ def replace_product_identity(content, product):
         if not isinstance(text, str) or not text or text.startswith("data:image"):
             return text
         text = re.sub(r"(产品名称\s*[:：]\s*)([^\n]*)", lambda m: m.group(1) + new_name, text)
-        text = re.sub(r"(产品型号\s*[:：]\s*)([^\n]*)", lambda m: m.group(1) + new_model, text)
+        if new_model:
+            text = re.sub(r"(产品型号\s*[:：]\s*)([^\n]*)", lambda m: m.group(1) + new_model, text)
+        else:
+            text = re.sub(r"^[ \t]*产品型号\s*[:：].*(?:\n)?", "", text, flags=re.M)
         text = re.sub(r"(完整版本\s*[:：]\s*)([^\n]*)", lambda m: m.group(1) + new_version, text)
         names = []
         for item in (old_name, _TEMPLATE_PRODUCT_NAME):
@@ -208,7 +211,7 @@ def replace_product_identity(content, product):
             text = text.replace(item, new_name)
         if _TEMPLATE_PRODUCT_NAME != new_name:
             text = re.sub(r"InferCare\s*RECIST", new_name, text)
-        if old_model and old_model != new_model and len(old_model) >= 4:
+        if old_model and new_model and old_model != new_model and len(old_model) >= 4:
             text = text.replace(old_model, new_model)
         if allow_version_token:
             versions = []
@@ -487,11 +490,12 @@ class Server(object):
             return content
         pname = (product.name or "").strip()
         content = replace_product_identity(content, product)
-        desc = "\n".join([
+        model = (product.type_code or "").strip()
+        desc = "\n".join([ln for ln in [
             f"产品名称：{pname}",
-            f"产品型号：{(product.type_code or '').strip()}",
+            f"产品型号：{model}" if model else "",
             f"完整版本：{(product.full_version or '').strip()}",
-        ])
+        ] if ln])
         scope = (product.scope or "").strip()
 
         def fill_sections(secs):

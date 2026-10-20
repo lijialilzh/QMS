@@ -253,13 +253,15 @@ class Server(object):
             if (not str(node.get("body") or "").strip()) and (
                 info["full_version"] or info["release_version"] or info["prod_name"] or info.get("type_code")
             ):
-                node["body"] = (
-                    f"本次软件为首次注册，软件完整版本为{info['full_version']}，发布版本为{info['release_version']}。\n"
-                    f"产品名称：{info['prod_name']}\n"
-                    f"产品型号：{info.get('type_code', '')}\n"
-                    f"发布版本：{info['release_version']}\n"
-                    f"完整版本：{info['full_version']}"
-                )
+                type_code = str(info.get("type_code") or "").strip()
+                lines = [
+                    f"本次软件为首次注册，软件完整版本为{info['full_version']}，发布版本为{info['release_version']}。",
+                    f"产品名称：{info['prod_name']}",
+                    f"产品型号：{type_code}" if type_code else "",
+                    f"发布版本：{info['release_version']}",
+                    f"完整版本：{info['full_version']}",
+                ]
+                node["body"] = "\n".join([ln for ln in lines if ln])
         elif title == "软件版本命名规则":
             if info.get("naming_body") and not str(node.get("body") or "").strip():
                 node["body"] = info["naming_body"]

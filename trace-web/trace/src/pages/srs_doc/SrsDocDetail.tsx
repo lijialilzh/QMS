@@ -2872,7 +2872,9 @@ export default () => {
             let text = String(nextNode.text || "");
             const afterName = replaceLabeledLineInText(text, "产品名称", name);
             if (afterName !== text) { text = afterName; changed = true; }
-            const afterModel = replaceLabeledLineInText(text, "产品型号", model);
+            const afterModel = model
+                ? replaceLabeledLineInText(text, "产品型号", model)
+                : text.replace(/\r/g, "").split("\n").filter((line) => !/^\s*产品型号\s*[：:]/.test(line)).join("\n");
             if (afterModel !== text) { text = afterModel; changed = true; }
             nextNode.text = text;
             return nextNode;

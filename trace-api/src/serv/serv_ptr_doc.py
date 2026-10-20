@@ -180,11 +180,13 @@ class Server(object):
                 node["body"] = info["prod_name"]
         elif ref == "prod_version" or title == "产品版本":
             if info.get("type_code") or info["full_version"] or info["release_version"]:
-                node["body"] = (
-                    f"产品型号：{info.get('type_code', '')}\n"
-                    f"软件完整版本：{info['full_version']}\n"
-                    f"软件发布版本：{info['release_version']}"
-                )
+                model = str(info.get("type_code") or "").strip()
+                lines = [
+                    f"产品型号：{model}" if model else "",
+                    f"软件完整版本：{info['full_version']}",
+                    f"软件发布版本：{info['release_version']}",
+                ]
+                node["body"] = "\n".join([ln for ln in lines if ln])
         elif ref == "naming_rule" or title == "版本命名规则":
             if info.get("naming_body"):
                 node["body"] = info["naming_body"]

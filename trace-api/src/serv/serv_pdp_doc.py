@@ -281,6 +281,8 @@ class Server(object):
                         other.append(line)
                 auto = []
                 for lb in labels:
+                    if lb == "产品型号" and not str(vals.get(lb) or "").strip():
+                        continue
                     v = found[lb] if found.get(lb) else vals.get(lb, "")
                     auto.append(f"{lb}：{v}")
                 node["body"] = "\n".join(auto + other)

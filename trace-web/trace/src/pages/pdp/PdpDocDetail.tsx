@@ -221,7 +221,10 @@ export default () => {
             if (found[lb]) return found[lb];
             return val || "";
         };
-        const auto = INTRO_LABELS.map((lb) => `${lb}：${pick(lb, vals[lb] || "")}`);
+        const auto = INTRO_LABELS.flatMap((lb) => {
+            if (lb === "产品型号" && !String(vals[lb] || "").trim()) return [];
+            return [`${lb}：${pick(lb, vals[lb] || "")}`];
+        });
         return [...auto, ...other].join("\n");
     };
     const autoFillProduct = (nodes: any[], info: { name?: string; typeCode?: string; pm?: string; desc?: string; cycle?: string }, overwrite = false): any[] => {

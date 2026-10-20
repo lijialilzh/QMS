@@ -555,10 +555,14 @@ class Server(object):
             key = ln.replace("\t", "").strip()
             replaced = False
             for label, value in mapping:
-                if key.startswith(label) and value:
-                    out.append(f"{label}：{value}")
-                    replaced = True
-                    break
+                if key.startswith(label):
+                    if label == "产品型号" and not str(value or "").strip():
+                        replaced = True
+                        break
+                    if value:
+                        out.append(f"{label}：{value}")
+                        replaced = True
+                        break
             if not replaced:
                 out.append(ln)
         return "\n".join(out)

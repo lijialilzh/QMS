@@ -710,10 +710,11 @@ class Server(object):
             plain = self.__strip_section_title(title)
             in_md5 = under_md5 or node.get("ref_type") == "md5_attachment"
             if plain == "软件说明":
+                model_line = f"产品型号：{type_display}\n" if str(type_display or "").strip() else ""
                 node["body"] = (
                     "软件标识：\n"
                     f"产品名称：{prod_name}\n"
-                    f"产品型号：{type_display}\n"
+                    f"{model_line}"
                     f"发布版本：{release_version}\n"
                     f"完整版本：{full_version}\n"
                     f"制造商：{registrant}"
@@ -731,9 +732,10 @@ class Server(object):
                     f"电话：{co_phone}"
                 )
             elif plain == "确认产品信息":
+                model_line = f"产品型号：{type_display}\n" if str(type_display or "").strip() else ""
                 node["body"] = (
                     f"产品名称：{prod_name}\n"
-                    f"产品型号：{type_display}\n"
+                    f"{model_line}"
                     f"发布版本：{release_version}\n"
                     f"完整版本：{full_version}"
                 )

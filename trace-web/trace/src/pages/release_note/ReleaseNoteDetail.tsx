@@ -62,13 +62,18 @@ const computeReleaseDate = (rows: any[], keyword = "发布说明"): string => {
     return `${best.y}年${best.m}月${isNaN(best.d) ? 1 : best.d}日`;
 };
 
-const archiveText = (name: string, typeCode: string, full: string) =>
-    `通过评审，${String(name || "").trim()}(${String(typeCode || "").trim()}) ${String(full || "").trim()}版本的全套设计开发历史文档（DHF）和全套器械主记录（DMR）已完成归档。`;
+const archiveText = (name: string, typeCode: string, full: string) => {
+    const productName = String(name || "").trim();
+    const model = String(typeCode || "").trim();
+    const head = model ? `${productName}(${model})` : productName;
+    return `通过评审，${head} ${String(full || "").trim()}版本的全套设计开发历史文档（DHF）和全套器械主记录（DMR）已完成归档。`;
+};
 
 const overviewText = (name: string, typeCode: string, release: string, full: string, funcDesc: string) => {
+    const model = String(typeCode || "").trim();
     const lines = [
         `产品名称：${String(name || "").trim()}`,
-        `产品型号：${String(typeCode || "").trim()}`,
+        model ? `产品型号：${model}` : "",
         `发布版本：${String(release || "").trim()}`,
         `完整版本：${String(full || "").trim()}`,
         "交付形式：物理交付",
@@ -77,7 +82,7 @@ const overviewText = (name: string, typeCode: string, release: string, full: str
     ];
     const desc = String(funcDesc || "").trim();
     if (desc) lines.push(desc);
-    return lines.join("\n");
+    return lines.filter(Boolean).join("\n");
 };
 
 const ensureKeys = (nodes: any[]): any[] =>

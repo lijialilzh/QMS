@@ -193,7 +193,13 @@ export default () => {
         const rel = String(info.releaseVersion || "").trim();
         const full = String(info.fullVersion || "").trim();
         const isBlank = (s: any) => !String(s || "").trim();
-        const built = `本次软件为首次注册，软件完整版本为${full}，发布版本为${rel}。\n产品名称：${name}\n产品型号：${typeCode}\n发布版本：${rel}\n完整版本：${full}`;
+        const built = [
+            `本次软件为首次注册，软件完整版本为${full}，发布版本为${rel}。`,
+            `产品名称：${name}`,
+            typeCode ? `产品型号：${typeCode}` : "",
+            `发布版本：${rel}`,
+            `完整版本：${full}`,
+        ].filter(Boolean).join("\n");
         const fix = (n: any): any => {
             let body = n.body;
             const t = stripNum(n.title);

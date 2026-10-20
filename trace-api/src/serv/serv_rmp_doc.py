@@ -219,10 +219,12 @@ class Server(object):
         title = self.__strip_num(node.get("title"))
         self.__fill_team_table(node, info.get("prod_id"))
         if ref == "scope" or title == "范围":
+            model = str(info.get("type_code") or "").strip()
+            model_line = f"产品型号：{model}\n" if model else ""
             node["body"] = (
                 "本文件适用的产品为的软件产品：\n"
                 f"产品名称：{info.get('prod_name', '')}\n"
-                f"产品型号：{info.get('type_code', '')}\n"
+                f"{model_line}"
                 f"完整版本：{info.get('full_version', '')}\n"
                 "寿命周期内产品需要开展的风险管理活动的范围包括：\n"
                 "从实施过程的角度包括：设计和研发；采购；制造；包装；检查和测试等。\n"

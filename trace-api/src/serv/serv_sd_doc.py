@@ -343,16 +343,26 @@ class Server(object):
         if not dev_lead:
             dev_lead = find_member(lambda r: "TPM" in r.upper())
         approver = find_member(lambda r: "研发负责人" in r) or find_member(lambda r: "负责人" in r)
-        # 人员资源只取产品开发负责人（研发负责人）和前后端开发人员
+        # 人员资源：产品开发负责人（研发负责人）、TPM、前后端开发人员
+        def _is_lead(m):
+            role = str(m.role or "")
+            return "研发负责人" in role or "产品开发负责人" in role
+        def _is_tpm(m):
+            return "TPM" in str(m.role or "").upper()
         def _is_front_back(m):
             role = str(m.role or "").strip()
             note = str(m.note or "")
-            if "研发负责人" in role or "产品开发负责人" in role:
+            if _is_lead(m) or _is_tpm(m):
                 return False
             return "前端" in note or "后端" in note or role in ("开发人员", "开发工程师")
-        personnel_rows = [m for m in members if "研发负责人" in str(m.role or "") or "产品开发负责人" in str(m.role or "")]
-        personnel_rows += [m for m in members if _is_front_back(m)]
-        personnel_rows.sort(key=lambda m: (0 if ("研发负责人" in str(m.role or "") or "产品开发负责人" in str(m.role or "")) else 1, m.sort_order or 0, m.id or 0))
+        def _person_rank(m):
+            if _is_lead(m):
+                return 0
+            if _is_tpm(m):
+                return 1
+            return 2
+        personnel_rows = [m for m in members if _is_lead(m) or _is_tpm(m) or _is_front_back(m)]
+        personnel_rows.sort(key=lambda m: (_person_rank(m), m.sort_order or 0, m.id or 0))
         # 备注模块映射：备注 前端-NeoViewer / 后端-DP 等 → 取"-"后模块名(小写) → 参与人员姓名
         module_map = {}
         for m in members:
@@ -372,7 +382,7 @@ class Server(object):
         dev_end = fmt_date(max(dev_rows, key=date_key)) if dev_rows else ""
 
         # 里程碑阶段日期：以产品开发周期(开始~结束)按比例拆分
-        # 基础代码开发=开始+1/4、模块开发=开始+3/4、整体联调=结束日、封装安装包=结束日+1天
+        # 基础代码开发=开始+1/4、模块开发=开始+3/4、整体联调=结束日、生成安装包=结束日（不超出产品开发结束日）
         ph_base = ph_module = ph_integ = ph_pkg = ""
         if dev_rows:
             s_row = min(dev_rows, key=date_key)
@@ -388,7 +398,7 @@ class Server(object):
             ph_base = fmt_d(ds + timedelta(days=int(total * 0.25 + 0.5)))
             ph_module = fmt_d(ds + timedelta(days=int(total * 0.75 + 0.5)))
             ph_integ = fmt_d(de)
-            ph_pkg = fmt_d(de + timedelta(days=1))
+            ph_pkg = fmt_d(de)
 
         def latest_date_for(keys):
             matched = [r for r in date_rows if any(any(k in str(v or "") for k in keys) for v in cell_map.get(r.id, []))]
@@ -418,7 +428,7 @@ class Server(object):
                     continue
                 row_text = " ".join(str(c or "") for c in row)
                 is_review = "评审" in row_text and "开发计划" in row_text
-                # 计划完成时间（可判定则覆盖）：评审→评审日；基础/模块/联调按周期比例；封装安装包→结束日+1天
+                # 计划完成时间（可判定则覆盖）：评审→评审日；基础/模块/联调按周期比例；生成安装包→结束日
                 if c_time >= 0 and c_time < len(row):
                     stage = str(row[c_stage]) if 0 <= c_stage < len(row) else row_text
                     dt = ""
@@ -471,8 +481,8 @@ class Server(object):
                 lines = []
                 if prod_name or force:
                     lines.append(f"产品名称：{prod_name}" if prod_name else "")
-                if type_code or force:
-                    lines.append(f"产品型号：{type_code}" if type_code else "")
+                if type_code:
+                    lines.append(f"产品型号：{type_code}")
                 if full_version or force:
                     lines.append(f"完整版本：{full_version}" if full_version else "")
                 node["body"] = "\n".join([x for x in lines if x or force])
