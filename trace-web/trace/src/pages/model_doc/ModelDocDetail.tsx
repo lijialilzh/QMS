@@ -22,7 +22,7 @@ import {
 } from "./envMaintCheck";
 import "../pdp/PdpDocDetail.less";
 import FreeChapterContent from "../pdp/FreeChapterContent";
-import { freeAddTable, freeDelTable } from "../pdp/freeChapterBlocks";
+import { chapterAllowsAboveTable, freeAddTable, freeDelTable } from "../pdp/freeChapterBlocks";
 import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 let _seq = 0;
@@ -1182,6 +1182,7 @@ export default () => {
                                     tables={active.tables || []}
                                     images={Array.isArray(active.images) ? active.images : []}
                                     readonly={readonly}
+                                    allowAboveTable={chapterAllowsAboveTable(active) && !(active.tables || []).some((tb: any[]) => isEnvCheckGrid(tb))}
                                     onPatch={(patch) => patchNode(active._key, patch)}
                                     renderTable={(ti: number) => {
                                         const tb = (active.tables || [])[ti];

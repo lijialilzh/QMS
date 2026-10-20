@@ -185,6 +185,105 @@ export const freeDelImage = (s: FreeChapterState, index: number): FreeChapterSta
     return { body, tables: s.tables || [], images };
 };
 
+/** 图题/表名写回正文占位行（图 N / 表 N），编辑框只改名称本身 */
+export const freeMediaCaptionName = (raw?: string): string => {
+    const s = String(raw || "").trim();
+    const matched = s.match(/^(?:图|表)\s*\d+\s*(.*)$/);
+    return matched ? matched[1] : s;
+};
+
+export const freeSetMediaCaption = (
+    s: FreeChapterState,
+    kind: "image" | "table",
+    index: number,
+    name: string,
+): FreeChapterState => {
+    const images = Array.isArray(s.images) ? s.images : [];
+    const tables = s.tables || [];
+    const segs = buildFreeSegments(String(s.body || ""), tables, images);
+    let seen = 0;
+    const prefix = kind === "image" ? "图" : "表";
+    const next = segs.map((seg) => {
+        if (seg.type !== kind) return seg;
+        const current = seen;
+        seen += 1;
+        if (current !== index) return seg;
+        const typed = String(name || "").trim();
+        if (!typed) return { ...seg, caption: "" };
+        if (/^(?:图|表)\s*\d+/.test(typed)) return { ...seg, caption: typed };
+        return { ...seg, caption: `${prefix} ${index + 1} ${typed}` };
+    });
+    return { body: reassembleFreeBody(next), tables, images };
+};
+
+const insertSegBeforeFirstTable = (segs: any[], seg: any): any[] => {
+    const tableAt = segs.findIndex((item) => item.type === "table");
+    if (tableAt < 0) return [...segs, seg];
+    return [...segs.slice(0, tableAt), seg, ...segs.slice(tableAt)];
+};
+
+/** 在第一张表之前插入图片，图片数组顺序与占位一致 */
+export const freeInsertImageBeforeFirstTable = (s: FreeChapterState, dataUrl: string): FreeChapterState => {
+    const images = [...(Array.isArray(s.images) ? s.images : [])];
+    const tables = s.tables || [];
+    const body0 = ensureMediaPlaceholders(String(s.body || ""), tables, images);
+    const segs = buildFreeSegments(body0, tables, images);
+    const tableAt = segs.findIndex((seg) => seg.type === "table");
+    let imgBefore = 0;
+    const limit = tableAt < 0 ? segs.length : tableAt;
+    for (let i = 0; i < limit; i++) if (segs[i].type === "image") imgBefore += 1;
+    images.splice(imgBefore, 0, dataUrl);
+    const next = insertSegBeforeFirstTable(segs.length ? segs : [{ type: "text", text: "" }], { type: "image" });
+    return { body: reassembleFreeBody(next), tables, images };
+};
+
+/** 在第一张表之前插入空表 */
+export const freeInsertTableBeforeFirstTable = (s: FreeChapterState): FreeChapterState => {
+    const images = Array.isArray(s.images) ? s.images : [];
+    const tables = [...(s.tables || [])];
+    const body0 = ensureMediaPlaceholders(String(s.body || ""), s.tables || [], images);
+    const segs = buildFreeSegments(body0, s.tables || [], images);
+    const tableAt = segs.findIndex((seg) => seg.type === "table");
+    let tblBefore = 0;
+    const limit = tableAt < 0 ? segs.length : tableAt;
+    for (let i = 0; i < limit; i++) if (segs[i].type === "table") tblBefore += 1;
+    tables.splice(tblBefore, 0, [["", ""], ["", ""]]);
+    const next = insertSegBeforeFirstTable(segs.length ? segs : [{ type: "text", text: "" }], { type: "table" });
+    return { body: reassembleFreeBody(next), tables, images };
+};
+
+/** 封面、修订、评审、运行环境、硬件拓扑等自动章不在表前插入，避免打乱原表。 */
+const ABOVE_BLOCK_REFS = new Set(["cover", "revision", "review", "basic_info", "prod_cycle", "md5_review", "runtime", "runtime_env"]);
+const ABOVE_BLOCK_TITLES = new Set(["产品信息", "文件修订记录", "硬件拓扑", "运行环境", "适用范围", "范围", "软件总体描述", "联系信息", "确认产品信息"]);
+
+export function chapterAllowsAboveTable(node: any): boolean {
+    const ref = String(node?.ref_type || "");
+    if (ABOVE_BLOCK_REFS.has(ref) || ref === "personnel" || ref === "milestone") return false;
+    const title = String(node?.title || "").replace(/^\s*\d+(?:\.\d+)*[\.、\s]*/, "").trim();
+    if (ABOVE_BLOCK_TITLES.has(title) || title.includes("运行环境") || title === "人员资源" || title.includes("里程碑")) return false;
+    return true;
+}
+
+/** 在第一张表之前插入正文、图片或空表 */
+export function freePlaceAbove(s: FreeChapterState, kind: "body" | "image" | "table", dataUrl?: string): FreeChapterState {
+    if (kind === "image") return freeInsertImageBeforeFirstTable(s, dataUrl || "");
+    if (kind === "table") return freeInsertTableBeforeFirstTable(s);
+    return freeInsertBodyAboveTable(s);
+}
+
+/** 在第一张表之前插入空正文；没有表时仍加在末尾 */
+export const freeInsertBodyAboveTable = (s: FreeChapterState): FreeChapterState => {
+    const images = Array.isArray(s.images) ? s.images : [];
+    const tables = s.tables || [];
+    const body0 = ensureMediaPlaceholders(String(s.body || ""), tables, images);
+    let segs = buildFreeSegments(body0, tables, images);
+    if (!segs.length) segs = [{ type: "text", text: "" }];
+    const tableAt = segs.findIndex((seg) => seg.type === "table");
+    if (tableAt < 0) segs = [...segs, { type: "text", text: "" }];
+    else segs = [...segs.slice(0, tableAt), { type: "text", text: "" }, ...segs.slice(tableAt)];
+    return { body: reassembleFreeBody(segs), tables, images };
+};
+
 export const freeAddBodyBlock = (s: FreeChapterState): FreeChapterState => {
     const images = Array.isArray(s.images) ? s.images : [];
     const tables = s.tables || [];

@@ -13,7 +13,9 @@ import ReviewRecordTables from "@/pages/doc_fill/ReviewRecordTables";
 import "../pdp/PdpDocDetail.less";
 import {
     buildFreeSegments,
+    chapterAllowsAboveTable,
     freeAddBodyBlock,
+    freePlaceAbove,
     freeAddImage,
     freeAddTable,
     freeDelImage,
@@ -25,6 +27,7 @@ import {
     ensureMediaPlaceholders,
     removeNthPlaceholder,
 } from "../pdp/freeChapterBlocks";
+import { FreeSideActions } from "../pdp/FreeChapterContent";
 import { isRuntimeLockedBody, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
 import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
@@ -520,6 +523,20 @@ export default () => {
         const next = freeAddBodyBlock(chapterState());
         patchNode(data.activeKey, { body: next.body });
     };
+    const placeAbove = (kind: "body" | "image" | "table", dataUrl?: string) => {
+        if (!active) return;
+        const next = freePlaceAbove(chapterState(), kind, dataUrl);
+        patchNode(data.activeKey, { tables: next.tables, body: next.body, images: next.images });
+        if (kind === "image") message.success("图片已更新，请保存文档");
+    };
+    const aboveBar = active && !readonly && chapterAllowsAboveTable(active) && (active.tables || []).length > 0 ? (
+        <FreeSideActions
+            label="上方添加正文"
+            onBody={() => placeAbove("body")}
+            onImageData={(url) => placeAbove("image", url)}
+            onTable={() => placeAbove("table")}
+        />
+    ) : null;
     const uploadImage = (file: File, replaceIndex?: number) => {
         if (!file.type.startsWith("image/")) {
             message.error("请选择图片文件");
@@ -774,6 +791,7 @@ export default () => {
                                                     const rtLock = readonly || isRuntimeLockedTable(active, ti);
                                                     return (
                                                         <div className="pdp-table-block" key={si}>
+                                                    {si === segments.findIndex((s: any) => s.type === "table") ? aboveBar : null}
                                                             <div className="pdp-table-bar">
                                                                 <span className="pdp-label">表格 {ti + 1}{rtLock ? "（运行环境自动获取，只读）" : ""}</span>
                                                                 {!rtLock && (
@@ -846,7 +864,7 @@ export default () => {
                                                 {!readonly && active.ref_type !== "review" && (
                                                     <>
                                                         <Space wrap style={{ margin: "8px 0" }}>
-                                                            <Button size="small" onClick={addBodyBlock}>添加正文</Button>
+                                                            <Button size="small" onClick={addBodyBlock}>{(active.tables || []).length ? "下方添加正文" : "添加正文"}</Button>
                                                             <Upload accept="image/*" showUploadList={false} beforeUpload={(file) => uploadImage(file as File)}>
                                                                 <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
                                                             </Upload>
@@ -907,6 +925,7 @@ export default () => {
                                                     </span>
                                                 </div>
                                             )}
+                                            {aboveBar}
                                             {active.ref_type === "review"
                                                 ? (
                                                     <ReviewRecordTables tables={active.tables || []} readonly={readonly} onChange={updateTables} />
@@ -975,7 +994,7 @@ export default () => {
                                             {!readonly && active.ref_type !== "review" && (
                                                 <>
                                                 <Space wrap style={{ margin: "8px 0" }}>
-                                                    <Button size="small" onClick={addBodyBlock}>添加正文</Button>
+                                                    <Button size="small" onClick={addBodyBlock}>{(active.tables || []).length ? "下方添加正文" : "添加正文"}</Button>
                                                     <Upload accept="image/*" showUploadList={false} beforeUpload={(file) => uploadImage(file as File)}>
                                                         <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
                                                     </Upload>

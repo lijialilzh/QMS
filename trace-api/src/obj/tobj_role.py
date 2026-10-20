@@ -70,19 +70,19 @@ class Perms(Enum):
     cst_view = PermForm(code="cst_view", name="查看", p_code=cst.code)
     cst_edit = PermForm(code="cst_edit", name="编辑", p_code=cst.code)
 
-    version_rule = PermForm(code="version_rule", name="基础配置/版本命名规则")
+    version_rule = PermForm(code="version_rule", name="通用配置/版本命名规则")
     version_rule_view = PermForm(code="version_rule_view", name="查看", p_code=version_rule.code)
     version_rule_edit = PermForm(code="version_rule_edit", name="编辑", p_code=version_rule.code)
 
-    company_info = PermForm(code="company_info", name="基础配置/公司基本信息")
+    company_info = PermForm(code="company_info", name="通用配置/公司基本信息")
     company_info_view = PermForm(code="company_info_view", name="查看", p_code=company_info.code)
     company_info_edit = PermForm(code="company_info_edit", name="编辑", p_code=company_info.code)
 
-    person_sign = PermForm(code="person_sign", name="基础配置/人员签名管理")
+    person_sign = PermForm(code="person_sign", name="通用配置/人员签名管理")
     person_sign_view = PermForm(code="person_sign_view", name="查看", p_code=person_sign.code)
     person_sign_edit = PermForm(code="person_sign_edit", name="编辑", p_code=person_sign.code)
 
-    print_cfg = PermForm(code="print_cfg", name="基础配置/打印服务配置")
+    print_cfg = PermForm(code="print_cfg", name="通用配置/打印服务配置")
     print_cfg_view = PermForm(code="print_cfg_view", name="查看", p_code=print_cfg.code)
     print_cfg_edit = PermForm(code="print_cfg_edit", name="编辑", p_code=print_cfg.code)
 
@@ -417,9 +417,10 @@ def get_default_role_perm_codes():
     # 开发人员/测试人员/RA：可以看到产品（仅查看）、开发、测试文件（+ 图表文件 + 网络安全 + 风险追溯）
     dev_tester_ra_perms = product_mgmt_perms_view | product_file_perms | dev_test_file_perms | doc_file_perms | cybersec_perms | risk_trace_perms
 
-    # 已有固定角色保留「版本命名规则」菜单
+    # 已有固定角色保留「版本命名规则」菜单。产品经理另可查看基础数据总表（HAZ/RCM/THREAT）
     version_rule_view_perm = {"version_rule", "version_rule_view"}
-    product_manager_perms = product_manager_perms | version_rule_view_perm
+    base_master_view = {"haz", "haz_view", "rcm", "rcm_view", "cst", "cst_view"}
+    product_manager_perms = product_manager_perms | version_rule_view_perm | base_master_view
     dev_tester_ra_perms = dev_tester_ra_perms | version_rule_view_perm
 
     # 模型人员 / 数据人员：基本信息只读、SRS 只读；模型文件/数据文件/数据统计/数据自查可读写；一键导出/打印仅模型和数据文件

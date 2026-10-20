@@ -241,7 +241,7 @@ async def ipp_print_doc(module_key: str, doc_id: int, with_sign: bool = True):
         return Resp.resp_err(msg=f"模块 {module_key} 无导出方法")
     cfg = db.session.execute(select(PrintServiceCfg).where(PrintServiceCfg.is_default == 1)).scalars().first()
     if not cfg:
-        return Resp.resp_err(msg="未配置默认打印机，请先在基础配置中设置")
+        return Resp.resp_err(msg="未配置默认打印机，请先在通用配置中设置")
     # 设置签名模式（contextvar，仅影响本次打印请求）
     from ..serv.serv_review_util import set_export_sign_mode
     set_export_sign_mode(with_sign)

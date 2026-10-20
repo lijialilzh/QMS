@@ -2025,6 +2025,25 @@ function joinFreeBodyBlocks(blocks: string[]): string {
     return reassembleFreeBody(blocks.map((text) => ({ type: "text", text })));
 }
 
+const BODY_BELOW_MARK = "{{BELOW}}";
+
+function splitBodySides(raw?: string): { before: string[]; after: string[] } {
+    const text = String(raw ?? "");
+    const lines = text.split("\n");
+    const mark = lines.findIndex((line) => line.trim() === BODY_BELOW_MARK);
+    if (mark < 0) return { before: splitFreeBodyBlocks(text), after: [] };
+    const before = splitFreeBodyBlocks(lines.slice(0, mark).join("\n"));
+    const afterRaw = lines.slice(mark + 1).join("\n");
+    if (!afterRaw.trim() && !afterRaw.includes("{{")) return { before, after: [""] };
+    return { before, after: splitFreeBodyBlocks(afterRaw) };
+}
+
+function joinBodySides(before: string[], after: string[]): string {
+    const head = joinFreeBodyBlocks(before.length ? before : [""]);
+    if (!after.length) return head;
+    return `${head}\n${BODY_BELOW_MARK}\n${joinFreeBodyBlocks(after)}`;
+}
+
 function joinImageTextParts(intro: string, caption: string, body: string): string {
     return [intro, caption, body]
         .map((s) => String(s ?? "").replace(/\s+$/g, ""))
@@ -2334,11 +2353,16 @@ const TreeNodeItem = ({
         ? normalizeSrsCodeValue(node.srs_code || extractSrsCodeFromText(node.text) || "")
         : "";
     const editableNodeText = isLockedOtherReqChapter ? stripOtherReqCodeLineFromText(node.text) : (node.text || "");
-    const freeBodyBlocks = splitFreeBodyBlocks(editableNodeText);
-    const primaryBodyText = freeBodyBlocks[0] ?? "";
-    const extraBodyBlocks = freeBodyBlocks.slice(1);
+    const bodySides = splitBodySides(editableNodeText);
+    const beforeBlocks = bodySides.before;
+    const afterBlocks = bodySides.after;
+    const primaryBodyText = beforeBlocks[0] ?? "";
+    const extraBodyBlocks = beforeBlocks.slice(1);
     const commitFreeBody = (primary: string, extras: string[]) => {
-        onContentChange(node.id, joinFreeBodyBlocks([primary, ...extras]), isLockedOtherReqChapter);
+        onContentChange(node.id, joinBodySides([primary, ...extras], afterBlocks), isLockedOtherReqChapter);
+    };
+    const commitBelowBody = (blocks: string[]) => {
+        onContentChange(node.id, joinBodySides(beforeBlocks.length ? beforeBlocks : [primaryBodyText], blocks), isLockedOtherReqChapter);
     };
     const hasRcm = Array.isArray(node.rcm_codes);
     const hasRcmText = readOnly && /RCM\d+/i.test(String(node.text || ""));
@@ -3342,6 +3366,54 @@ const TreeNodeItem = ({
                         </div>
                     );
                 })}
+              {((displayNormalTables.length > 0 && canEditNodeContent && !isSrsReqRefNode && !isRuntimeLocked) || afterBlocks.length > 0) && (
+                  <div className="node-below-table" style={{ marginTop: 16 }}>
+                      {afterBlocks.map((block, index) => (
+                          canEditNodeContent && !readOnly ? (
+                              <div key={`below-body-${index}`} className="node-free-body-block">
+                                  <div className="node-free-body-label">正文 {beforeBlocks.length + index + 1}</div>
+                                  <Input.TextArea
+                                      className="node-content node-text-area"
+                                      value={block}
+                                      onChange={(e) => {
+                                          const next = afterBlocks.slice();
+                                          next[index] = e.target.value;
+                                          commitBelowBody(next);
+                                      }}
+                                      placeholder={ts("srs_doc.please_input_content")}
+                                      size="small"
+                                      rows={3}
+                                      autoSize={{ minRows: 3, maxRows: 20 }}
+                                  />
+                              </div>
+                          ) : (
+                              block.trim() ? (
+                                  <div key={`below-body-${index}`} className="node-content node-text-area">{block}</div>
+                              ) : null
+                          )
+                      ))}
+                      {useNavChapterEditor && canEditNodeContent && !isSrsReqRefNode && !isRuntimeLocked && (
+                          <Space className="node-free-add" size={8} style={{ marginTop: 12 }}>
+                              <Button
+                                  size="small"
+                                  onClick={() => commitBelowBody([...afterBlocks, ""])}
+                              >
+                                  添加正文
+                              </Button>
+                              {!isProductBoundDocImageNode && !isGenericImgRefNode && !(node.ref_type === "srs_reqs" || node.ref_type === "srs_reqs_2") && (
+                                  <Upload {...uploadProps}>
+                                      <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
+                                  </Upload>
+                              )}
+                              {!(node.ref_type === "srs_reqs" || node.ref_type === "srs_reqs_2") && (
+                                  <Button size="small" icon={<TableOutlined />} onClick={() => onAddTable(node.id)}>
+                                      添加表格
+                                  </Button>
+                              )}
+                          </Space>
+                      )}
+                  </div>
+              )}
               {showReqExtraTables && embeddedOtherReqTableNodes.map((subNode, idx) => (
                   <div className="node-table" key={`embedded_sub_table_${subNode.id || idx}`}>
                       <div style={{ marginBottom: 8, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between" }}>

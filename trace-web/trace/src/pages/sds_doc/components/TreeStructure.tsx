@@ -13,6 +13,7 @@ import * as Api from "@/api/ApiSdsDoc";
 import { isSdsTraceSectionNode, SdsTraceSectionActions } from "./SdsTraceSection";
 import ReviewTable from "@/common/ReviewTable";
 import { collectRuntimeLockedContentIds, isRuntimeEnvSection, isRuntimeTableNode } from "@/pages/pdp/runtimeEnvLock";
+import { expandTxtMarkers, reassembleFreeBody } from "../../pdp/freeChapterBlocks";
 
 // 表格数据结构（匹配后端接口，允许空对象表示无表格数据）
 interface TableData {
@@ -121,6 +122,8 @@ interface TreeNodeItemProps {
     onDeleteTable: (id: number) => void;
     onEditExtraTable?: (nodeId: number, index: number) => void;
     onDeleteExtraTable?: (nodeId: number, index: number) => void;
+    onExtraTableTitleChange?: (nodeId: number, index: number, title: string) => void;
+    onNameLooseImage?: (parentId: number, caption: string) => void;
     onOpenReqdList?: () => void;   // 打开设计列表弹框（ref_type=sds_reqds）
     onOpenTraceList?: () => void;  // 打开需求追溯表弹框（ref_type=sds_traces）
     onFetchSrsTrace?: () => void;  // 获取SRS追溯
@@ -281,6 +284,31 @@ function visibleTableCaption(node: TreeNode): string {
     const name = resolveEditableTableCaption(node);
     if (!name || isSyntheticTableCaption(name) || /^导入表格\d*$/.test(name)) return "";
     return name;
+}
+
+const CHAPTER_BELOW_MARK = "{{BELOW}}";
+
+function splitChapterBelow(raw?: string): { before: string; after: string | null } {
+    const text = String(raw ?? "");
+    const lines = text.split("\n");
+    const mark = lines.findIndex((line) => line.trim() === CHAPTER_BELOW_MARK);
+    if (mark < 0) return { before: text, after: null };
+    return { before: lines.slice(0, mark).join("\n"), after: lines.slice(mark + 1).join("\n") };
+}
+
+function joinChapterBelow(before: string, after: string | null): string {
+    if (after === null) return before;
+    return `${before}\n${CHAPTER_BELOW_MARK}\n${after}`;
+}
+
+function splitSdsBodyBlocks(raw?: string): string[] {
+    const segs = expandTxtMarkers([{ type: "text", text: String(raw ?? "") }]).filter((seg) => seg.type === "text");
+    return segs.length ? segs.map((seg) => String(seg.text ?? "")) : [""];
+}
+
+function joinSdsBodyBlocks(blocks: string[]): string {
+    if (blocks.length <= 1) return blocks[0] ?? "";
+    return reassembleFreeBody(blocks.map((text) => ({ type: "text", text })));
 }
 
 function isGlossaryTable(table?: { headers?: Array<{ name?: string }> } | null): boolean {
@@ -948,7 +976,7 @@ function ChapterBodyTextArea(props: React.ComponentProps<typeof Input.TextArea>)
     );
 }
 
-const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onTableNameChange, onSdsCodeChange, onImageChange, onAttachProgramLogicImage, onAttachExtraImage, pendingProgramLogicCaption = "", onContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onEditExtraTable, onDeleteExtraTable, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, onCommitOtherReqDesignCode, traceSynced, uploadDocFile, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [], useNavChapterEditor = false, autoNavChapterNo = "", lockScopeChapter = false, lockRuntimeEnv = false, runtimeLockedIds, sdsSyncLockedIds, splitInterfaceIO = false }: TreeNodeItemProps) => {
+const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onTableNameChange, onSdsCodeChange, onImageChange, onAttachProgramLogicImage, onAttachExtraImage, pendingProgramLogicCaption = "", onContentChange: emitContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onEditExtraTable, onDeleteExtraTable, onExtraTableTitleChange, onNameLooseImage, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, onCommitOtherReqDesignCode, traceSynced, uploadDocFile, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [], useNavChapterEditor = false, autoNavChapterNo = "", lockScopeChapter = false, lockRuntimeEnv = false, runtimeLockedIds, sdsSyncLockedIds, splitInterfaceIO = false }: TreeNodeItemProps) => {
     const { t: ts } = useTranslation();
     const [fileList, setFileList] = useState<UploadFile[]>([]);
     const [uploadLoading, setUploadLoading] = useState(false);
@@ -1057,6 +1085,31 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         },
         accept: "image/*",
         showUploadList: false,
+    };
+
+    // 「上传图片」另起一条图题，不写到章节 img_url（术语章不展示章节图，写上去等于看不见）
+    const freeAddUploadProps: UploadProps = {
+        maxCount: 1,
+        showUploadList: false,
+        accept: "image/*",
+        disabled: uploadLoading,
+        beforeUpload: async (file) => {
+            if (!onAttachExtraImage) {
+                await uploadImageTo(file, node.id);
+                return false;
+            }
+            try {
+                setUploadLoading(true);
+                const imgUrl = await uploadImageFile(file);
+                if (imgUrl) onAttachExtraImage(node.id, imgUrl);
+            } catch (error) {
+                console.error("图片上传失败:", error);
+                message.error(ts("upload_failed"));
+            } finally {
+                setUploadLoading(false);
+            }
+            return false;
+        },
     };
 
     const tableImportProps: UploadProps = {
@@ -1341,7 +1394,14 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         ))
         : navInlineTableChildren;
     const tableTargetCount = (!isInterfaceSubSection) ? ((hasTable ? 1 : 0) + tableChildren.length) : 0;
-    const tableCaptionPack = pickTableCaptions(node.text, tableTargetCount);
+    const chapterBelow = splitChapterBelow(String(node.text || ""));
+    const onContentChange = (id: number, content: string) => {
+        const next = String(id) === String(node.id) && chapterBelow.after !== null && !String(content).includes(CHAPTER_BELOW_MARK)
+            ? joinChapterBelow(content, chapterBelow.after)
+            : content;
+        emitContentChange(id, next);
+    };
+    const tableCaptionPack = pickTableCaptions(chapterBelow.before, tableTargetCount);
     const ownTableCaption = hasTable
         ? (tableCaptionPack.captions[0] || tableCaptionFromParent || "")
         : "";
@@ -1494,8 +1554,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         ? (dbHeadingCandidates.length > 0 ? dbHeadingCandidates[dbHeadingCandidates.length - 1] : "")
         : "";
     const baseNodeText = resolvedSdsCode
-        ? stripRedundantSdsCodeFromText(node.text, resolvedSdsCode)
-        : (node.text || "");
+        ? stripRedundantSdsCodeFromText(chapterBelow.before, resolvedSdsCode)
+        : (chapterBelow.before || "");
     const displayNodeText = readOnly
         ? (tableTargetCount > 0
             ? tableBodyLines
@@ -1695,7 +1755,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const programLogicSplit = wantsProgramLogicSlot ? bodyLogicSplit : null;
     const programLogicCaption = editFigureCaption || pendingProgramLogicCaption;
     const headerShownImageUrl = navImageInHeaderRow ? String(displayImageUrl || "").trim() : "";
-    const figuresInBody = (isAutoOnlyImage ? navEmbeddedFigureChildren : (multiEmbeddedFigures
+    const figuresInBody = ((isAutoOnlyImage || glossaryContentAfterTable) ? navEmbeddedFigureChildren : (multiEmbeddedFigures
         ? navEmbeddedFigureChildren.filter((child) => !(programLogicSplit && /程序逻辑/.test(String(child.title || child.label || ""))))
         : []))
         .filter((child) => {
@@ -2412,11 +2472,21 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                       <Space className="node-free-add" size={8}>
                           <Button
                               size="small"
-                              onClick={() => onContentChange(node.id, `${String(node.text || "")}\n`)}
+                              onClick={() => {
+                                  if (showSplitInlineInEdit) {
+                                      onContentChange(node.id, mergeComplianceText(`${editTextBeforeTable}\n`, editTextBetweenTables, editTextAfterTable));
+                                      return;
+                                  }
+                                  if (programLogicSplit) {
+                                      onContentChange(node.id, joinProgramLogicText(`${programLogicSplit.before}\n`, programLogicSplit.after));
+                                      return;
+                                  }
+                                  onContentChange(node.id, joinSdsBodyBlocks([...splitSdsBodyBlocks(editTextBeforeTable), ""]));
+                              }}
                           >
                               添加正文
                           </Button>
-                          <Upload {...uploadProps}>
+                          <Upload {...freeAddUploadProps}>
                               <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
                           </Upload>
                           <Button
@@ -2531,18 +2601,15 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       autoSize={{ minRows: 1, maxRows: 20 }}
                                       disabled={scopeChapterLocked || runtimeContentLocked}
                                   />
-                              ) : (
+                              ) : showSplitInlineInEdit ? (
                               <ChapterBodyTextArea
                                   className="node-content node-text-area"
                                   styles={{ textarea: chapterTextStyle }}
                                   value={editTextBeforeTable}
                                   onChange={(e) => {
-                                      const nextBefore = e.target.value;
                                       onContentChange(
                                           node.id,
-                                          showSplitInlineInEdit
-                                              ? mergeComplianceText(nextBefore, editTextBetweenTables, editTextAfterTable)
-                                              : nextBefore
+                                          mergeComplianceText(e.target.value, editTextBetweenTables, editTextAfterTable)
                                       );
                                   }}
                                   placeholder={ts('srs_doc.please_input_content')}
@@ -2551,6 +2618,27 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                   autoSize={{ minRows: 1, maxRows: 20 }}
                                   disabled={scopeChapterLocked || runtimeContentLocked}
                               />
+                              ) : (
+                              splitSdsBodyBlocks(editTextBeforeTable).map((block, index, blocks) => (
+                                  <div key={`sds-body-${index}`}>
+                                      {blocks.length > 1 && <div className="node-free-body-label">正文 {index + 1}</div>}
+                                      <ChapterBodyTextArea
+                                          className="node-content node-text-area"
+                                          styles={{ textarea: chapterTextStyle }}
+                                          value={block}
+                                          onChange={(e) => {
+                                              const next = blocks.slice();
+                                              next[index] = e.target.value;
+                                              onContentChange(node.id, joinSdsBodyBlocks(next));
+                                          }}
+                                          placeholder={ts('srs_doc.please_input_content')}
+                                          size="small"
+                                          rows={1}
+                                          autoSize={{ minRows: 1, maxRows: 20 }}
+                                          disabled={scopeChapterLocked || runtimeContentLocked}
+                                      />
+                                  </div>
+                              ))
                               )}
                               {!navImageInHeaderRow && isNavSingleChapterEdit && !showSplitInlineInEdit && (!!programLogicSplit || (navFullSizeImageMode && !multiEmbeddedFigures)) && (displayImageUrl || programLogicSplit) && (
                                   <div className={`node-pic-block ${navEmbeddedImageBlockClass}${!isAutoOnlyImage ? " node-pic-block--reupload-side" : ""}`}>
@@ -2599,6 +2687,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                   />
                               ) : null}
                               {!navImageInHeaderRow && isNavSingleChapterEdit && !showSplitInlineInEdit && !navFullSizeImageMode && displayImageUrl && (
+                                  <div style={{ marginTop: 8 }}>
                                   <div
                                       className="node-pic node-pic-readonly node-pic-editable node-pic-inline"
                                       style={{
@@ -2608,7 +2697,6 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                           minHeight: 128,
                                           maxWidth: 128,
                                           maxHeight: 128,
-                                          marginTop: 8,
                                       }}
                                   >
                                       <Image
@@ -2647,6 +2735,20 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       />
                                       )}
                                   </div>
+                                  {!readOnly && !isAutoOnlyImage && (
+                                      <Input
+                                          className="node-caption-input"
+                                          size="small"
+                                          placeholder="请输入图题"
+                                          onBlur={(e) => {
+                                              const caption = e.target.value.trim();
+                                              if (caption) onNameLooseImage?.(node.id, caption);
+                                          }}
+                                          onPressEnter={(e) => (e.target as HTMLInputElement).blur()}
+                                          style={{ marginTop: 8, textAlign: "center", maxWidth: 420 }}
+                                      />
+                                  )}
+                                  </div>
                               )}
                           </div>
                       )}
@@ -2658,7 +2760,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   wrapReadOnlyAlignedTable(
                   <div className={`node-table${flushOwnTableTop ? " node-table--flush-top" : ""}${isInterfaceListTable(node) ? " node-table--fit-window" : ""}`}>
                       {!readOnly
-                          ? renderNameEditor(editableOwnTableName, node.id, { placeholder: "请输入表名", forceShow: hasTable, asTableName: chapterOwnsTable, style: { marginBottom: 8, fontSize: 13 } })
+                          ? renderNameEditor(editableOwnTableName, node.id, { placeholder: "请输入表名", forceShow: hasTable, asTableName: true, style: { marginBottom: 8, fontSize: 13 } })
                           : (!!(chapterOwnsTable ? editableOwnTableName : sanitizedFinalTableCaption) && (
                           <div className="node-content" style={{ marginBottom: 8, textAlign: "center", fontSize: 13, fontWeight: 400 }}>
                               {chapterOwnsTable ? editableOwnTableName : sanitizedFinalTableCaption}
@@ -2709,10 +2811,21 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           if (!extraTable || !hasRenderableTable(extraTable)) return null;
                           return (
                               <div className="node-extra-table" key={`extra-table-${node.id}-${idx}`} style={{ marginTop: 24 }}>
-                                  {!!extraTitle && extraTitle !== "参评人员签字" && (
-                                      <div className="node-content" style={{ marginBottom: 8, textAlign: "left", fontSize: 13, fontWeight: 600 }}>
-                                          {extraTitle}
-                                      </div>
+                                  {!readOnly && !runtimeContentLocked && extraTitle !== "参评人员签字" ? (
+                                      <Input
+                                          className="node-caption-input"
+                                          size="small"
+                                          value={extraTitle}
+                                          placeholder="请输入表名"
+                                          onChange={(e) => onExtraTableTitleChange?.(Number(node.id), idx, e.target.value)}
+                                          style={{ marginBottom: 8, textAlign: "center", fontSize: 13 }}
+                                      />
+                                  ) : (
+                                      !!extraTitle && extraTitle !== "参评人员签字" && (
+                                          <div className="node-content" style={{ marginBottom: 8, textAlign: "left", fontSize: 13, fontWeight: 600 }}>
+                                              {extraTitle}
+                                          </div>
+                                      )
                                   )}
                                   <div className="node-table-header" style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
                                       <div className="node-table-scroll" style={{ flex: 1, minWidth: 0 }}>
@@ -2753,6 +2866,59 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   `own-table-${node.id}`
                   )
               )}
+              {showExpandedBody && hasTable && !glossaryContentAfterTable && !isTraceSectionTitle && node.ref_type !== "sds_reqds" && node.ref_type !== "sds_traces" && (chapterBelow.after !== null || (!readOnly && useNavChapterEditor && !runtimeContentLocked && !scopeChapterLocked)) && (
+                  <div className="node-row node-row-follow node-row-content-below" style={{ marginTop: 16 }}>
+                      <div className="node-content-below-title">
+                          {chapterBelow.after !== null && (
+                              readOnly ? (
+                                  String(chapterBelow.after || "").trim()
+                                      ? <div className="node-content node-text-area">{chapterBelow.after}</div>
+                                      : null
+                              ) : (
+                                  splitSdsBodyBlocks(chapterBelow.after).map((block, index, blocks) => (
+                                      <div key={`sds-below-${index}`}>
+                                          {blocks.length > 1 && <div className="node-free-body-label">正文 {index + 1}</div>}
+                                          <ChapterBodyTextArea
+                                              className="node-content node-text-area"
+                                              styles={{ textarea: chapterTextStyle }}
+                                              value={block}
+                                              onChange={(e) => {
+                                                  const next = blocks.slice();
+                                                  next[index] = e.target.value;
+                                                  onContentChange(node.id, joinChapterBelow(chapterBelow.before, joinSdsBodyBlocks(next)));
+                                              }}
+                                              placeholder={ts("srs_doc.please_input_content")}
+                                              size="small"
+                                              rows={1}
+                                              autoSize={{ minRows: 1, maxRows: 20 }}
+                                              disabled={scopeChapterLocked || runtimeContentLocked}
+                                          />
+                                      </div>
+                                  ))
+                              )
+                          )}
+                          {!readOnly && !runtimeContentLocked && !scopeChapterLocked && useNavChapterEditor && (
+                              <Space className="node-free-add" size={8}>
+                                  <Button
+                                      size="small"
+                                      onClick={() => {
+                                          const blocks = chapterBelow.after === null ? [] : splitSdsBodyBlocks(chapterBelow.after);
+                                          onContentChange(node.id, joinChapterBelow(chapterBelow.before, joinSdsBodyBlocks([...blocks, ""])));
+                                      }}
+                                  >
+                                      添加正文
+                                  </Button>
+                                  <Upload {...freeAddUploadProps}>
+                                      <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
+                                  </Upload>
+                                  <Button size="small" icon={<TableOutlined />} onClick={() => onAddTable(node.id)}>
+                                      添加表格
+                                  </Button>
+                              </Space>
+                          )}
+                      </div>
+                  </div>
+              )}
               {glossaryContentAfterTable && showExpandedBody && (
                   <div className="node-row node-row-follow node-row-content-below">
                       <div className="node-content-below-title">
@@ -2766,11 +2932,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                       <Space className="node-free-add" size={8}>
                                           <Button
                                               size="small"
-                                              onClick={() => onContentChange(node.id, `${String(node.text || "")}\n`)}
+                                              onClick={() => onContentChange(node.id, joinSdsBodyBlocks([...splitSdsBodyBlocks(editTextBeforeTable), ""]))}
                                           >
                                               添加正文
                                           </Button>
-                                          <Upload {...uploadProps}>
+                                          <Upload {...freeAddUploadProps}>
                                               <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
                                           </Upload>
                                           <Button
@@ -2782,17 +2948,80 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                           </Button>
                                       </Space>
                                   )}
-                                  <ChapterBodyTextArea
-                                      className="node-content node-text-area"
-                                      styles={{ textarea: chapterTextStyle }}
-                                      value={editTextBeforeTable}
-                                      onChange={(e) => onContentChange(node.id, e.target.value)}
-                                      placeholder={ts('srs_doc.please_input_content')}
-                                      size="small"
-                                      rows={1}
-                                      autoSize={{ minRows: 1, maxRows: 20 }}
-                                      disabled={scopeChapterLocked || runtimeContentLocked}
-                                  />
+                                  {figuresInBody.map((child) => (
+                                      <div key={`glossary-figure-${child.id}`} className="node-pic-block node-pic-block--figure-list node-pic-block--reupload-side" style={{ marginTop: 16 }}>
+                                          <div className="node-pic-reupload-row">
+                                              <div className="node-pic-reupload-figure">
+                                                  {String(child.img_url || "").trim() ? (
+                                                      <div className="node-pic node-pic-readonly node-pic-inline">
+                                                          <Image
+                                                              src={resolveImageSrc(String(child.img_url || ""))}
+                                                              alt={String(child.title || "image")}
+                                                              preview={true}
+                                                          />
+                                                      </div>
+                                                  ) : null}
+                                                  {renderNameEditor(String(child.title || ""), child.id, { placeholder: "请输入图题", forceShow: true })}
+                                              </div>
+                                              <Upload
+                                                  maxCount={1}
+                                                  showUploadList={false}
+                                                  accept="image/*"
+                                                  disabled={uploadLoading}
+                                                  beforeUpload={(file) => {
+                                                      void uploadImageTo(file, child.id);
+                                                      return false;
+                                                  }}
+                                              >
+                                                  <Button size="small" icon={<UploadOutlined />}>重新上传</Button>
+                                              </Upload>
+                                          </div>
+                                      </div>
+                                  ))}
+                                  {!!String(node.img_url || "").trim() && (
+                                      <div style={{ marginTop: 16 }}>
+                                          <div className="node-pic node-pic-readonly node-pic-inline" style={{ width: 280, maxWidth: "100%" }}>
+                                              <Image
+                                                  src={resolveImageSrc(String(node.img_url || ""))}
+                                                  alt={displayTitle || "image"}
+                                                  preview={true}
+                                              />
+                                          </div>
+                                          {!readOnly && (
+                                              <Input
+                                                  className="node-caption-input"
+                                                  size="small"
+                                                  placeholder="请输入图题"
+                                                  onBlur={(e) => {
+                                                      const caption = e.target.value.trim();
+                                                      if (caption) onNameLooseImage?.(node.id, caption);
+                                                  }}
+                                                  onPressEnter={(e) => (e.target as HTMLInputElement).blur()}
+                                                  style={{ marginTop: 8, textAlign: "center" }}
+                                              />
+                                          )}
+                                      </div>
+                                  )}
+                                  {splitSdsBodyBlocks(editTextBeforeTable).map((block, index, blocks) => (
+                                      <div key={`glossary-body-${index}`}>
+                                          {blocks.length > 1 && <div className="node-free-body-label">正文 {index + 1}</div>}
+                                          <ChapterBodyTextArea
+                                              className="node-content node-text-area"
+                                              styles={{ textarea: chapterTextStyle }}
+                                              value={block}
+                                              onChange={(e) => {
+                                                  const next = blocks.slice();
+                                                  next[index] = e.target.value;
+                                                  onContentChange(node.id, joinSdsBodyBlocks(next));
+                                              }}
+                                              placeholder={ts('srs_doc.please_input_content')}
+                                              size="small"
+                                              rows={1}
+                                              autoSize={{ minRows: 1, maxRows: 20 }}
+                                              disabled={scopeChapterLocked || runtimeContentLocked}
+                                          />
+                                      </div>
+                                  ))}
                               </>
                           )}
                       </div>
@@ -2993,7 +3222,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
               {showExpandedBody && showInterfaceTopImageSlot && hasTable && !hideMisplacedReviewTable && node.ref_type !== 'img_flow' && node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces' && (
                   wrapReadOnlyAlignedTable(
                   <div className={`node-table node-table--fit-window${flushOwnTableTop ? " node-table--flush-top" : ""}`}>
-                      {renderNameEditor(editableOwnTableName, node.id, { placeholder: "请输入表名", forceShow: hasTable, asTableName: chapterOwnsTable, style: { marginBottom: 8, fontSize: 13 } })}
+                      {renderNameEditor(editableOwnTableName, node.id, { placeholder: "请输入表名", forceShow: hasTable, asTableName: true, style: { marginBottom: 8, fontSize: 13 } })}
                       <div className="node-table-header">
                           <div className="node-table-scroll">
                               <Table
@@ -3204,7 +3433,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                 </div>
                 );
             })}
-            {showExpandedBody && renderChildren === false && !showSplitInlineInEdit && figuresInBody.map((child) => (
+            {showExpandedBody && renderChildren === false && !showSplitInlineInEdit && !glossaryContentAfterTable && figuresInBody.map((child) => (
                 <div key={`nav-inline-figure-${child.id}`} className="node-pic-block node-pic-block--figure-list node-pic-block--reupload-side">
                     <div className="node-pic-reupload-row">
                         <div className="node-pic-reupload-figure">
@@ -3278,6 +3507,8 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         onDeleteTable={onDeleteTable}
                         onEditExtraTable={onEditExtraTable}
                         onDeleteExtraTable={onDeleteExtraTable}
+                        onExtraTableTitleChange={onExtraTableTitleChange}
+                        onNameLooseImage={onNameLooseImage}
                         onOpenReqdList={onOpenReqdList}
                         onOpenTraceList={onOpenTraceList}
                         onFetchSrsTrace={onFetchSrsTrace}
@@ -3907,6 +4138,43 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
         setTableModalVisible(true);
     };
 
+    const handleExtraTableTitleChange = (nodeId: number, index: number, title: string) => {
+        const newNodes = findNodeAndUpdate(nodes, nodeId, (node) => {
+            const extras = [...(node.table?.extra_tables || [])];
+            const prev = extras[index] || {};
+            extras[index] = { ...prev, title };
+            return { ...node, table: { ...(node.table || {}), extra_tables: extras } };
+        });
+        updateNodes(newNodes);
+    };
+
+    const handleNameLooseImage = (parentId: number, caption: string) => {
+        const typed = String(caption || "").trim();
+        if (!typed) return;
+        const figureNo = maxFigureNo(nodes) + 1;
+        const title = /^图\s*\d+/.test(typed) ? typed : `图 ${figureNo} ${typed}`;
+        const attach = (list: TreeNode[]): TreeNode[] => (list || []).map((item) => {
+            if (String(item.id) !== String(parentId)) {
+                return { ...item, children: attach(item.children || []) };
+            }
+            const imgUrl = String(item.img_url || "").trim();
+            if (!imgUrl) return item;
+            const figure: TreeNode = {
+                id: generateId(),
+                doc_id: item.doc_id || 0,
+                n_id: 0,
+                p_id: item.n_id || 0,
+                title,
+                img_url: imgUrl,
+                text: "",
+                table: {},
+                children: [],
+            };
+            return { ...item, img_url: "", children: [...(item.children || []), figure] };
+        });
+        updateNodes(attach(nodes));
+    };
+
     const handleDeleteExtraTable = (nodeId: number, index: number) => {
         const newNodes = findNodeAndUpdate(nodes, nodeId, (node) => {
             const extras = [...(node.table?.extra_tables || [])];
@@ -4249,6 +4517,8 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                 onDeleteTable: handleDeleteTable,
                 onEditExtraTable: handleEditExtraTable,
                 onDeleteExtraTable: handleDeleteExtraTable,
+                onExtraTableTitleChange: handleExtraTableTitleChange,
+                onNameLooseImage: handleNameLooseImage,
                 onOpenReqdList,
                 onOpenTraceList,
                 onFetchSrsTrace,
@@ -4359,6 +4629,8 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                                             onDeleteTable={handleDeleteTable}
                                             onEditExtraTable={handleEditExtraTable}
                                             onDeleteExtraTable={handleDeleteExtraTable}
+                                            onExtraTableTitleChange={handleExtraTableTitleChange}
+                                            onNameLooseImage={handleNameLooseImage}
                                             onOpenReqdList={onOpenReqdList}
                                             onOpenTraceList={onOpenTraceList}
                                             onFetchSrsTrace={onFetchSrsTrace}

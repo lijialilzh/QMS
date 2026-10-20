@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
+import { buildAppMenus, scopeModulesFromMenu } from "../navMenu";
 import * as Api from "@/api/ApiUser";
 import * as ApiRole from "@/api/ApiRole";
 
@@ -44,23 +45,11 @@ const collectPermLabels = (nodes: any[] = [], dict: any = {}) => {
     return dict;
 };
 
-const PREVIEW_MODULES = [
-    { name: "仪表盘", match: (code: string) => code === "dashboard" || code.startsWith("dashboard_") },
-    { name: "系统配置", match: (code: string) => ["role", "user", "project"].some((k) => code === k || code.startsWith(`${k}_`)) },
-    { name: "基础配置", match: (code: string) => code.startsWith("print_cfg") || ["version_rule", "company_info", "person_sign"].some((k) => code === k || code.startsWith(`${k}_`)) },
-    { name: "基础数据", match: (code: string) => ["haz", "rcm", "cst"].some((k) => code === k || code.startsWith(`${k}_`)) },
-    { name: "产品管理", match: (code: string) => code.startsWith("product") || code.startsWith("prod_haz") || code.startsWith("prod_rcm") || code.startsWith("prod_cst") || code.startsWith("prod_dhf") || ["project_member", "project_timeline", "prod_runtime", "prod_device"].some((k) => code.startsWith(k)) },
-    { name: "产品文件管理", match: (code: string) => code.startsWith("srs_doc") || code.startsWith("pdp_doc") || code.startsWith("pir_doc") || code.startsWith("acc_doc") || code.startsWith("release_note") || code.startsWith("vuh_doc") || code.startsWith("ptr_doc") || code.startsWith("research_doc") || code.startsWith("rmp_doc") || code.startsWith("pha_doc") || code.startsWith("nsr_doc") || code.startsWith("cyber_cap_doc") || code.startsWith("label_doc") || code.startsWith("nsmp_doc") || code.startsWith("risk_mgmt_doc") || code.startsWith("ftr_record_doc") },
-    { name: "开发测试文件管理", match: (code: string) => code.startsWith("sds_doc") || code.startsWith("sd_doc") || code.startsWith("crr_doc") || code.startsWith("dem_doc") || code.startsWith("deq_doc") || code.startsWith("scm_doc") || code.startsWith("scs_doc") || code.startsWith("dat_doc") || code.startsWith("stp_doc") || code.startsWith("utp_doc") || code.startsWith("utp_record_doc") || code.startsWith("utr_doc") || code.startsWith("str_doc") || code.startsWith("bug_doc") || code.startsWith("teq_doc") || code.startsWith("tem_doc") || code.startsWith("imm_doc") || code.startsWith("ftr_doc") || code.startsWith("test_set") || code.startsWith("test_case") || code.startsWith("cybersec_doc") || code.startsWith("cybersec_plan_doc") },
-    { name: "模型文件", match: (code: string) => code.startsWith("model_doc") },
-    { name: "数据文件", match: (code: string) => code.startsWith("data_doc") },
-    { name: "产品图示", match: (code: string) => code.startsWith("doc_file_") },
-    { name: "全局视图", match: (code: string) => code === "overview" || code.startsWith("overview_") },
-];
-
-const buildPermPreview = (codes: string[] = []) => {
+const buildPermPreview = (codes: string[] = [], ts: (key: string) => string) => {
     if (!codes.length) return "-";
-    const picked = PREVIEW_MODULES.filter((item) => codes.some((code) => item.match(code))).map((item) => item.name);
+    const menus = buildAppMenus(ts, { role: "root", userId: 1 });
+    const has = (base: string) => codes.some((code) => code === base || code.startsWith(`${base}_`));
+    const picked = scopeModulesFromMenu(menus).filter((item) => item.bases.some(has)).map((item) => item.moduleName);
     return picked.length > 0 ? picked.join("、") : "-";
 };
 
@@ -168,7 +157,7 @@ const DetailDlg = ({ data, dispatch, onSaved }: any) => {
                     </Form.Item>
                     <Form.Item label="权限预览">
                         <div>
-                            {buildPermPreview(data.selectedRolePerms || [])}
+                            {buildPermPreview(data.selectedRolePerms || [], ts)}
                         </div>
                     </Form.Item>
                 </Form>

@@ -13,11 +13,14 @@ import { isRuntimeLockedBody, isRuntimeLockedTable } from "../pdp/runtimeEnvLock
 import {
     appendBodyLine,
     buildFreeSegments,
+    chapterAllowsAboveTable,
+    freePlaceAbove,
     ensureMediaPlaceholders,
     reassembleFreeBody,
     removeNthPlaceholder,
     shouldUseFreeInterleave,
 } from "../pdp/freeChapterBlocks";
+import { FreeSideActions } from "../pdp/FreeChapterContent";
 import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
 let _seq = 0;
@@ -252,6 +255,25 @@ export default () => {
         segs = [...segs, { type: "text", text: "" }];
         patchNode(data.activeKey, { body: reassembleFreeBody(segs) });
     };
+    const placeAbove = (kind: "body" | "image" | "table", dataUrl?: string) => {
+        if (!active) return;
+        const st = {
+            body: String(active.body || ""),
+            tables: active.tables || [],
+            images: Array.isArray(active.images) ? active.images : [],
+        };
+        const next = freePlaceAbove(st, kind, dataUrl);
+        patchNode(data.activeKey, { tables: next.tables, body: next.body, images: next.images });
+        if (kind === "image") message.success("图片已更新，请保存文档");
+    };
+    const aboveBar = active && !readonly && !isImmAutofillLockedBody(active) && !isRuntimeLockedBody(active) && chapterAllowsAboveTable(active) && (active.tables || []).length > 0 ? (
+        <FreeSideActions
+            label="上方添加正文"
+            onBody={() => placeAbove("body")}
+            onImageData={(url) => placeAbove("image", url)}
+            onTable={() => placeAbove("table")}
+        />
+    ) : null;
 
     // 正文图片：上传/更换/删除（base64 内嵌）；新增图在 body 末尾追加 {{IMG}} 以保持插入顺序
     const uploadImage = (file: File, replaceIndex?: number) => {
@@ -613,6 +635,7 @@ export default () => {
                                             }
                                             return (
                                                 <div className="pdp-table-block" key={si}>
+                                                    {si === segments.findIndex((s: any) => s.type === "table") ? aboveBar : null}
                                                     <div className="pdp-table-bar">
                                                         <span className="pdp-label">表格 {ti + 1}{rtLock ? "（运行环境自动获取，只读）" : ""}</span>
                                                         {!rtLock && (
@@ -681,7 +704,7 @@ export default () => {
                                         })}
                                         {!readonly && !autofillBodyLock && (
                                             <Space wrap style={{ margin: "8px 0" }}>
-                                                <Button size="small" onClick={addBodyBlock}>添加正文</Button>
+                                                <Button size="small" onClick={addBodyBlock}>{(active.tables || []).length ? "下方添加正文" : "添加正文"}</Button>
                                                 <Upload
                                                     accept="image/*"
                                                     showUploadList={false}
@@ -712,6 +735,7 @@ export default () => {
                                                 />
                                             </div>
                                             )}
+                                            {aboveBar}
                                             {isMd5Review
                                                 ? (
                                                     <ReviewRecordTables tables={active.tables || []} readonly={readonly} onChange={updateTables} />
@@ -827,7 +851,7 @@ export default () => {
                                                 ))}
                                                 {!readonly && !autofillBodyLock && (
                                                     <Space wrap style={{ margin: "4px 0" }}>
-                                                        <Button size="small" onClick={addBodyBlock}>添加正文</Button>
+                                                        <Button size="small" onClick={addBodyBlock}>{(active.tables || []).length ? "下方添加正文" : "添加正文"}</Button>
                                                         <Upload
                                                             accept="image/*"
                                                             showUploadList={false}

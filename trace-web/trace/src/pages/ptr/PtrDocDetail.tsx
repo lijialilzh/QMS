@@ -12,7 +12,7 @@ import * as ApiDocFile from "@/api/ApiDocFile";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
 import FreeChapterContent from "../pdp/FreeChapterContent";
-import { freeAddBodyBlock, freeAddImage, freeAddTable, freeDelImage, freeDelTable, freeReplaceImage } from "../pdp/freeChapterBlocks";
+import { chapterAllowsAboveTable, freeAddBodyBlock, freeAddImage, freeAddTable, freeDelImage, freeDelTable, freeReplaceImage } from "../pdp/freeChapterBlocks";
 import { isRuntimeLockedBody, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
 import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
 
@@ -780,6 +780,7 @@ export default () => {
                                                 images={Array.isArray(active.images) ? active.images : []}
                                                 readonly={readonly || bodyLocked}
                                                 bodyDisabled={bodyLocked}
+                                                allowAboveTable={chapterAllowsAboveTable(active)}
                                                 onPatch={(patch) => patchNode(active._key, patch)}
                                                 renderTable={renderTb}
                                                 showAddTableSlot={!readonly ? (

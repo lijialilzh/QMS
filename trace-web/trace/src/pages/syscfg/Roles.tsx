@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
 import { Root, useSelector } from "@/store";
 import * as Api from "@/api/ApiRole";
+import { buildAppMenus, codesForBases, scopeModulesFromMenu } from "../navMenu";
 
 const pageSizeOptions = [20, 50, 100];
 
@@ -17,20 +18,6 @@ enum DlgTypes {
     edit = "edit",
     delete = "delete",
 }
-
-const SCOPE_MODULES = [
-    "仪表盘",
-    "系统配置",
-    "基础配置",
-    "基础数据",
-    "产品管理",
-    "产品文件管理",
-    "开发测试文件管理",
-    "模型文件",
-    "数据文件",
-    "产品图示",
-    "全局视图",
-];
 
 const flattenPermTree = (nodes: any[] = []): Array<{ code: string; name: string }> => {
     const results: Array<{ code: string; name: string }> = [];
@@ -48,62 +35,9 @@ const flattenPermTree = (nodes: any[] = []): Array<{ code: string; name: string 
     return results;
 };
 
-const matchModuleCodes = (moduleName: string, items: Array<{ code: string; name: string }>) => {
-    const hit = (item: { code: string; name: string }) => {
-        const name = item.name || "";
-        const code = item.code || "";
-        if (moduleName === "仪表盘") return name.startsWith("仪表盘") || code.startsWith("dashboard");
-        if (moduleName === "系统配置")
-            return (
-                code.startsWith("role") ||
-                code.startsWith("user") ||
-                (code.startsWith("project") && !code.startsWith("project_member") && !code.startsWith("project_timeline"))
-            );
-        if (moduleName === "基础配置")
-            return code.startsWith("print_cfg") || ["version_rule", "company_info", "person_sign"].some((k) => code.startsWith(k));
-        if (moduleName === "基础数据") return name.startsWith("基础数据/") || ["haz", "rcm", "cst", "prod_hospital"].some((k) => code.startsWith(k));
-        if (moduleName === "产品管理")
-            return (
-                code.startsWith("product") ||
-                code.startsWith("prod_haz") ||
-                code.startsWith("prod_rcm") ||
-                code.startsWith("prod_cst") ||
-                code.startsWith("prod_dhf") ||
-                ["project_member", "project_timeline", "prod_runtime", "prod_device", "prod_algo_module", "prod_algo_chapter"].some((k) => code.startsWith(k))
-            );
-        if (moduleName === "产品文件管理")
-            return (
-                code.startsWith("srs_doc") ||
-                code.startsWith("pdp_doc") ||
-                code.startsWith("pir_doc") ||
-                code.startsWith("acc_doc") ||
-                code.startsWith("release_note") ||
-                code.startsWith("vuh_doc") ||
-                code.startsWith("ptr_doc") ||
-                code.startsWith("research_doc") ||
-                code.startsWith("rmp_doc") ||
-                code.startsWith("pha_doc") ||
-                code.startsWith("nsr_doc") ||
-                code.startsWith("cyber_cap_doc") ||
-                code.startsWith("label_doc") ||
-                code.startsWith("nsmp_doc") ||
-                code.startsWith("risk_mgmt_doc") ||
-                code.startsWith("ftr_record_doc")
-            );
-        if (moduleName === "开发测试文件管理")
-            return code === "sds_doc" || code.startsWith("sds_doc_") || code.startsWith("sd_doc") || code.startsWith("crr_doc") || code.startsWith("dem_doc") || code.startsWith("deq_doc") || code.startsWith("scm_doc") || code.startsWith("scs_doc") || code.startsWith("dat_doc") || code.startsWith("stp_doc") || code.startsWith("utp_doc") || code.startsWith("utp_record_doc") || code.startsWith("utr_doc") || code.startsWith("str_doc") || code.startsWith("bug_doc") || code.startsWith("teq_doc") || code.startsWith("tem_doc") || code.startsWith("imm_doc") || code.startsWith("ftr_doc") || code.startsWith("test_set") || code.startsWith("test_case") || code.startsWith("cybersec_doc") || code.startsWith("cybersec_plan_doc");
-        if (moduleName === "模型文件") return code.startsWith("model_doc");
-        if (moduleName === "数据文件") return code.startsWith("data_doc");
-        if (moduleName === "产品图示") return name.startsWith("产品图示/") || code.startsWith("doc_file_");
-        if (moduleName === "全局视图") return code.startsWith("overview") || name.includes("全局视图");
-        return false;
-    };
-    return Array.from(new Set(items.filter(hit).map((item) => item.code)));
-};
-
 const RoleDlg = ({ data, dispatch, onSaved }: any) => {
     const user = useSelector((state: Root) => state.user);
-    const { t: ts } = useTranslation();
+    const { t: ts, i18n } = useTranslation();
     const [editForm] = Form.useForm();
 
     const doEdit = () => {
@@ -153,13 +87,14 @@ const RoleDlg = ({ data, dispatch, onSaved }: any) => {
 
     const moduleRows = useMemo(() => {
         const flatPerms = flattenPermTree(data.targetRow.perm_tree || []);
-        return SCOPE_MODULES.map((moduleName) => {
-            return {
-                moduleName,
-                codes: matchModuleCodes(moduleName, flatPerms),
-            };
-        });
-    }, [data.targetRow.perm_tree]);
+        const menus = buildAppMenus(ts, { role: "root", userId: 1 });
+        return scopeModulesFromMenu(menus).map((row) => ({
+            moduleName: row.moduleName,
+            bases: row.bases,
+            exclusiveBases: row.exclusiveBases,
+            codes: codesForBases(row.bases, flatPerms),
+        }));
+    }, [data.targetRow.perm_tree, i18n.language]);
 
     const allChecked = useMemo(() => {
         const role_perms = new Set(data.targetRow.role_perms || []);
@@ -202,7 +137,10 @@ const RoleDlg = ({ data, dispatch, onSaved }: any) => {
                         </Checkbox>
                         <div className="perm_scope_grid">
                             {moduleRows.map((item) => {
-                                const checked = item.codes.length > 0 && item.codes.some((code) => (data.targetRow.role_perms || []).includes(code));
+                                const hasBase = (codes: string[], base: string) => codes.some((code) => code === base || code.startsWith(`${base}_`));
+                                const controlBases = item.exclusiveBases.length ? item.exclusiveBases : item.bases;
+                                const rolePerms = data.targetRow.role_perms || [];
+                                const checked = controlBases.length > 0 && controlBases.every((base: string) => hasBase(rolePerms, base));
                                 const disabled = data.targetRow.code === ROOT || item.codes.length === 0;
                                 return (
                                     <div key={item.moduleName} className="perm_scope_card">
@@ -212,13 +150,24 @@ const RoleDlg = ({ data, dispatch, onSaved }: any) => {
                                                 checked={checked}
                                                 disabled={disabled}
                                                 onChange={(e) => {
-                                                    const current = new Set(data.targetRow.role_perms || []);
+                                                    const before = Array.from(data.targetRow.role_perms || []) as string[];
+                                                    const next = new Set<string>(before);
+                                                    const sameSet = (row: any) => row.codes.length > 0 && row.codes.every((code: string) => item.codes.includes(code)) && item.codes.every((code: string) => row.codes.includes(code));
                                                     if (e.target.checked) {
-                                                        item.codes.forEach((code) => current.add(code));
+                                                        item.codes.forEach((code: string) => next.add(code));
                                                     } else {
-                                                        item.codes.forEach((code) => current.delete(code));
+                                                        const turningOff = new Set(moduleRows.filter((row) => row.moduleName === item.moduleName || sameSet(row)).map((row) => row.moduleName));
+                                                        moduleRows.forEach((row) => {
+                                                            if (turningOff.has(row.moduleName)) row.codes.forEach((code: string) => next.delete(code));
+                                                        });
+                                                        moduleRows.forEach((row) => {
+                                                            if (turningOff.has(row.moduleName)) return;
+                                                            const control = row.exclusiveBases.length ? row.exclusiveBases : row.bases;
+                                                            const wasOn = control.length > 0 && control.every((base: string) => hasBase(before, base));
+                                                            if (wasOn) row.codes.forEach((code: string) => next.add(code));
+                                                        });
                                                     }
-                                                    dispatch({ targetRow: { ...data.targetRow, role_perms: Array.from(current) } });
+                                                    dispatch({ targetRow: { ...data.targetRow, role_perms: Array.from(next) } });
                                                 }}
                                             />
                                         </div>

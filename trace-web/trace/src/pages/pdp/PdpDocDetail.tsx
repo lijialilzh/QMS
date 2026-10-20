@@ -14,6 +14,7 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import ReviewTable from "@/common/ReviewTable";
 import "./PdpDocDetail.less";
 import {
+    chapterAllowsAboveTable,
     freeAddBodyBlock,
     freeAddImage,
     freeAddTable,
@@ -726,6 +727,7 @@ export default () => {
                                         tables={active.tables || []}
                                         images={Array.isArray(active.images) ? active.images : []}
                                         readonly={readonly}
+                                        allowAboveTable={chapterAllowsAboveTable(active)}
                                         onPatch={(patch) => patchNode(active._key, patch)}
                                         renderTable={(ti) => {
                                             const tb = (active.tables || [])[ti];
