@@ -810,6 +810,10 @@ export default () => {
         const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
             const title = normalizeScopeTitle(node.title);
             const children = walk((node.children || []) as TreeNode[]);
+            // 范围章整段由 applyScopeChapterFromProduct 写入。这里再按「1）」截断会和整段写入来回覆盖，初始化模版后页面卡死。
+            if (title === "范围" || title === "适用范围") {
+                return children === node.children ? node : { ...node, children };
+            }
             const nextNode = { ...node, children };
             const replacedText = replaceScopeInText(String(nextNode.text || ""), scope);
             if (replacedText !== String(nextNode.text || "")) {
@@ -848,6 +852,9 @@ export default () => {
         let changed = false;
         const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
             const children = walk((node.children || []) as TreeNode[]);
+            if (normalizeScopeTitle(node.title) === "范围" || normalizeScopeTitle(node.title) === "适用范围") {
+                return children === node.children ? node : { ...node, children };
+            }
             const nextNode = { ...node, children };
             let text = String(nextNode.text || "");
             const afterName = replaceLabeledLineInText(text, "产品名称", name);
@@ -892,6 +899,9 @@ export default () => {
         let changed = false;
         const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
             const children = walk((node.children || []) as TreeNode[]);
+            if (normalizeScopeTitle(node.title) === "范围" || normalizeScopeTitle(node.title) === "适用范围") {
+                return children === node.children ? node : { ...node, children };
+            }
             const nextNode = { ...node, children };
             const text = String(nextNode.text || "");
             if (text) {
