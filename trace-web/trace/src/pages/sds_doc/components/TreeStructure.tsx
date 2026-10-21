@@ -1463,9 +1463,9 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         || (isChapter7ComplianceContext && !!navEmbeddedDocImageChild?.img_url)
     ) ? 'node-pic-block--embedded-flow' : 'node-pic-block--embedded-figure';
     const compactWithImage = !readOnly && hasDisplayImage && !navFullSizeImageMode && !isNavEditComplianceCandidate && !isNavSingleChapterEdit;
-    // 物理拓扑图、系统结构图这一章的自动图不能重新上传、不能删图。其下编号子章节仍按普通章节编辑。
+    // 物理拓扑图、系统结构图这一章的自动图不能重新上传、不能删图。概要设计章节名是「物理拓扑」「系统结构」。其下编号子章节仍按普通章节编辑。
     const diagramName = stripNavChapterPrefix(String(node.title || "")).replace(/\s+/g, "");
-    const isDiagramChapter = /^(物理拓扑图|拓扑图|系统结构图|体系结构图)$/.test(diagramName);
+    const isDiagramChapter = /^(物理拓扑图?|拓扑图|系统结构图?|体系结构图)$/.test(diagramName);
     const isAutoOnlyImage = isDiagramChapter && (
         node.ref_type === 'img_topo' || node.ref_type === 'img_struct'
         || navEmbeddedDocImageChild?.ref_type === 'img_topo' || navEmbeddedDocImageChild?.ref_type === 'img_struct'
@@ -1769,6 +1769,16 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const editTextAfterTable = showComplianceInlineInEdit
         ? (chapter7TableSplit?.after || "")
         : (showInterfaceInlineInEdit ? (interfaceOutputSplit?.after || "") : "");
+    // 运行环境子章没有正文时，不在表上方留空的正文框
+    const hideEmptyRuntimeBody = !!(
+        (runtimeSectionLocked || runtimeTableLocked || runtimeDescendantLocked)
+        && !programLogicSplit
+        && !String(displayImageUrl || "").trim()
+        && !String(editTextBeforeTable || "").trim()
+        && !String(cleanedDisplayTextBeforeTable || "").trim()
+        && !String(editTextBetweenTables || "").trim()
+        && !String(editTextAfterTable || "").trim()
+    );
     const mergeComplianceText = (before: string, middle: string, after: string): string => {
         const parts = [before, middle, after].filter((part) => String(part ?? "").trim());
         return parts.join("\n");
@@ -2560,7 +2570,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                   </div>
               )}
 
-              {showExpandedBody && stackContentBelowTitle && !glossaryContentAfterTable && (
+              {showExpandedBody && stackContentBelowTitle && !glossaryContentAfterTable && !hideEmptyRuntimeBody && (
                   <div className="node-row node-row-follow node-row-content-below">
                       <span className="node-expand-placeholder" />
                       {readOnly ? (
@@ -2956,6 +2966,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                                   ) : null}
                                                   {renderNameEditor(String(child.title || ""), child.id, { placeholder: "请输入图题", forceShow: true })}
                                               </div>
+                                              {!(isAutoOnlyImage && (
+                                                  child.ref_type === "img_topo"
+                                                  || child.ref_type === "img_struct"
+                                                  || /物理拓扑|系统结构|体系结构/.test(`${child.title || ""} ${child.label || ""}`)
+                                              )) && (
                                               <Upload
                                                   maxCount={1}
                                                   showUploadList={false}
@@ -2968,6 +2983,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                               >
                                                   <Button size="small" icon={<UploadOutlined />}>重新上传</Button>
                                               </Upload>
+                                              )}
                                           </div>
                                       </div>
                                   ))}
@@ -3439,6 +3455,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                             </div>
                             {renderNameEditor(String(child.title || ""), child.id, { placeholder: "请输入图题", forceShow: true })}
                         </div>
+                        {!(isAutoOnlyImage && (
+                            child.ref_type === "img_topo"
+                            || child.ref_type === "img_struct"
+                            || /物理拓扑|系统结构|体系结构/.test(`${child.title || ""} ${child.label || ""}`)
+                        )) && (
                         <Upload
                             maxCount={1}
                             showUploadList={false}
@@ -3453,6 +3474,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                 重新上传
                             </Button>
                         </Upload>
+                        )}
                     </div>
                 </div>
             ))}

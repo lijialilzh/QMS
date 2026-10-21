@@ -330,6 +330,16 @@
             margin-left: 6px;
         }
 
+        // 流程图等图片格不套表头底色，避免透明图透出浅蓝、和白底图表不一致
+        tbody tr:has(img) td.head,
+        tbody tr:first-child:has(img) td.pdp-row-op {
+            background: #fff;
+        }
+
+        td img {
+            background: #fff;
+        }
+
         .pdp-cell,
         textarea.pdp-cell,
         textarea.ant-input,

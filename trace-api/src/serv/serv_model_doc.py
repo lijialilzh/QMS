@@ -232,6 +232,40 @@ def _empty_template(doc_type):
     }
 
 
+_DEVICE_INFO_BLANK = "操作系统：\n内存：\nCPU：\n硬盘：\n存储盘：\nGPU：\nGPU显存："
+_DEVICE_INFO_BY_DOC = {
+    "md_019": {
+        "ISER21070004": "操作系统：Ubuntu18.04 64位版本 \n内存：64GB\nCPU：Intel(R) Core(TM) i7-8700K CPU @ 3.70GHz\n硬盘：256GB\n存储盘：10T\nGPU： RTX 4000 × 2\nGPU显存：8G",
+        "SER01391": "操作系统：Ubuntu18.04 64位版本 \n内存：64GB\nCPU：Intel(R) Core(TM) i7-8700K CPU @ 3.70GHz\n硬盘：256GB\n存储盘：10T\nGPU：GeForce GTX 2070× 2\nGPU显存：8G",
+        "SER01172": "操作系统：Ubuntu18.04 64位版本\n内存：32 GB\nCPU：Intel® Core™ i7-9700K CPU @ 3.60GHz × 8\n硬盘：250GB\n存储盘：3T\nGPU：GeForce RTX 2070 × 2\nGPU显存：8G",
+    },
+    "md_020": {
+        "SER01101": "操作系统: Ubuntu 18.04 64位版本\n内存: 32G\nCPU: Intel(R) Core(TM) i7-6850K CPU @ 3.60GHz\n硬盘: 1T\n存储盘: 8T\nGPU: GTX 1080Ti× 2\nGPU显存: 11G",
+        "SER01201": "操作系统：Ubuntu18.04 LTS 64位版本\n内存：64G\nCPU：Intel® Core™ i7-8700K CPU @ 3.70GHz × 12 \n硬盘：256GB\n存储盘：12T\nGPU：GeForce 1080\nGPU显存：8G",
+    },
+    "dd_016": {
+        "SER01256": "操作系统：Ubuntu18.04 LTS 64位版本\n内存：32 GiB\nCPU：Intel® Core™ i7-8700K CPU @ 3.50GHz × 12 \n硬盘：250GB\n存储盘：20T\nGPU：GeForce 1080\nGPU显存：8G",
+        "SER01201": "操作系统：Ubuntu18.04 LTS 64位版本\n内存：32 GiB\nCPU：Intel® Core™ i7-8700K CPU @ 3.70GHz × 12 \n硬盘：250GB\n存储盘：12T\nGPU：GeForce 1080\nGPU显存：8G",
+    },
+    "dd_017": {
+        "SER01020": "操作系统：Windows 10的64位版本\n内存：32 GiB\nCPU：Intel® Core™ i7-6850K CPU @ 3.60GHz × 12 \n硬盘：250GB\n存储盘：无\nGPU：GeForce 1080\nGPU显存：8G",
+        "SER01636": "操作系统：Windows 10的64位版本\n内存：32 GiB\nCPU：Intel® Core™ i7-6850K CPU @ 3.60GHz × 12 \n硬盘：250GB\n存储盘：无\nGPU：GeForce 1080\nGPU显存：8G",
+    },
+}
+
+
+def default_device_info(code, doc_type=""):
+    """设备信息为空时的默认配置。本类型原表优先，没有则用其它环境原表里同编码的配置。"""
+    c = str(code or "").strip()
+    own = (_DEVICE_INFO_BY_DOC.get(doc_type) or {}).get(c)
+    if own:
+        return own
+    for bucket in _DEVICE_INFO_BY_DOC.values():
+        if c in bucket:
+            return bucket[c]
+    return _DEVICE_INFO_BLANK
+
+
 class Server(object):
 
     def __default_content(self, doc_type, product_id=None):
@@ -3046,21 +3080,30 @@ class Server(object):
         return isinstance(tb, list) and tb and isinstance(tb[0], list) and str(tb[0][0] or "").strip() == "env_check"
 
     @staticmethod
+    def __asset_cell_text(value):
+        text = str(value or "").replace("\u200b", "").replace("\u200c", "").replace("\u200d", "").replace("\ufeff", "").replace("\u00a0", " ")
+        return re.sub(r"\s+", " ", text).strip()
+
+    @staticmethod
     def __merge_asset_name_version(table, grid):
         """资产表「产品名称」「完整版本」连续相同非空格纵向合并。"""
-        for col in (2, 3):
+        header = [Server.__asset_cell_text(c) for c in grid[0]] if grid and isinstance(grid[0], list) else []
+        cols = [i for i, h in enumerate(header) if h in ("产品名称", "完整版本")]
+        if not cols:
+            cols = [2, 3]
+        n = len(grid)
+        for col in cols:
             r = 1
-            n = len(grid)
             while r < n:
                 row = grid[r] if isinstance(grid[r], list) else []
-                val = str(row[col] if col < len(row) else "").strip()
+                val = Server.__asset_cell_text(row[col] if col < len(row) else "")
                 if not val:
                     r += 1
                     continue
                 r2 = r
                 while r2 + 1 < n:
                     nxt = grid[r2 + 1] if isinstance(grid[r2 + 1], list) else []
-                    nv = str(nxt[col] if col < len(nxt) else "").strip()
+                    nv = Server.__asset_cell_text(nxt[col] if col < len(nxt) else "")
                     if nv != val:
                         break
                     r2 += 1
@@ -3068,6 +3111,7 @@ class Server(object):
                     table.cell(r, col).merge(table.cell(r2, col))
                 r = r2 + 1
 
+    @staticmethod
     def __is_asset_grid(tb):
         if not (isinstance(tb, list) and tb and isinstance(tb[0], list) and tb[0]):
             return False
@@ -3500,7 +3544,7 @@ class Server(object):
                 last = max(ends)
                 file_date = f"{last.year}年{last.month}月{last.day}日"
                 env_cover_date = f"{last.year}.{last.month:02d}.{last.day:02d}"
-            eq_type = "md_deq" if doc_type == "md_019" else "md_teq"
+            eq_type = "md_deq" if doc_type == "md_019" else "md_eq"
             eq_doc = db.session.execute(
                 select(ModelDoc).where(ModelDoc.product_id == prod_id, ModelDoc.doc_type == eq_type).order_by(ModelDoc.id.desc())
             ).scalars().first()
@@ -3964,8 +4008,12 @@ class Server(object):
                         old[code] = str(row[1] if len(row) > 1 else "")
             hdr = [str(c or "") for c in tb[0]]
             hdr = hdr[:4] if len(hdr) >= 4 else ["资产编码", "设备信息", "产品名称", "完整版本"]
+            doc_type = info.get("doc_type") or ""
             if eq_assets is not None:
-                body = [[code, old.get(code, ""), prod_name, full_version] for code, _u in eq_assets]
+                body = []
+                for code, _u in eq_assets:
+                    kept = str(old.get(code, "") or "")
+                    body.append([code, kept if kept.strip() else default_device_info(code, doc_type), prod_name, full_version])
                 tables[ti] = [hdr] + body
             else:
                 new_tb = [hdr]
@@ -3975,6 +4023,8 @@ class Server(object):
                     next_row = list(row)
                     while len(next_row) < 4:
                         next_row.append("")
+                    if not str(next_row[1] or "").strip():
+                        next_row[1] = default_device_info(next_row[0], doc_type)
                     next_row[2] = prod_name
                     next_row[3] = full_version
                     new_tb.append(next_row)

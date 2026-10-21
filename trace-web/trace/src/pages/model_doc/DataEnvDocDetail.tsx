@@ -12,7 +12,7 @@ import * as ApiPersonSign from "@/api/ApiPersonSign";
 import { getDataDocMeta, getDataDocListType } from "./DataDocTypes";
 import {
     buildEnvCheckTable, collectAssetCodes, computeDataEnvWeeks, envCheckGroups, envCheckLeafCols, assetNameVersionSpan,
-    loadEnvTimelineRows,
+    loadEnvTimelineRows, defaultDeviceInfo,
     envCheckTitle, isEnvCheckGrid, parseEqAssets, prevEnvCheckRows,
 } from "./envMaintCheck";
 import "../pdp/PdpDocDetail.less";
@@ -129,12 +129,16 @@ const fillEnvMaint = (nodes: any[], opts: {
         });
         if (opts.eqAssets !== null) {
             const header = hdr.length >= 4 ? hdr.slice(0, 4) : ["资产编码", "设备信息", "产品名称", "完整版本"];
-            return [header, ...opts.eqAssets.map((a) => [a.code, old[a.code] || "", opts.prodName, opts.fullVersion])];
+            return [header, ...opts.eqAssets.map((a) => {
+                const kept = String(old[a.code] || "");
+                return [a.code, kept.trim() ? kept : defaultDeviceInfo(a.code, opts.docType), opts.prodName, opts.fullVersion];
+            })];
         }
         return tb.map((row: any[], i: number) => {
             if (i === 0 || !Array.isArray(row)) return row;
             const next = [...row];
             while (next.length < 4) next.push("");
+            if (!String(next[1] || "").trim()) next[1] = defaultDeviceInfo(String(next[0] || ""), opts.docType);
             next[2] = opts.prodName;
             next[3] = opts.fullVersion;
             return next;
@@ -218,7 +222,7 @@ export default () => {
                     fullVersion,
                     weeks: computeDataEnvWeeks(tlRows, docType),
                     checker: (checkerName && signMap[checkerName]) || checkerName || "",
-                    eqAssets: eqDoc ? parseEqAssets(eqDoc.content, docType === "dd_017" ? "标注" : "开发") : null,
+                    eqAssets: eqDoc ? parseEqAssets(eqDoc.content) : null,
                     docType,
                 });
                 out = replaceKeywords(out, [

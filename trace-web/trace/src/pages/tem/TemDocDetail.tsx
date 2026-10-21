@@ -209,8 +209,10 @@ export default () => {
             <Spin spinning={data.loading} wrapperClassName="pdp-scroll">
                 <div style={{ height: "100%", overflow: "auto" }}>
                     <div style={{ padding: "12px 20px" }}>
-                        <div style={{ textAlign: "center", fontSize: 16, fontWeight: 700, margin: "4px 0 12px" }}>测试环境维护记录</div>
-                        <div style={{ color: "#888", marginBottom: 4 }}>{syncFileNoVersion(data.doc.file_no, data.doc.version) || ""}</div>
+                        <div style={{ position: "relative", minHeight: 28, margin: "4px 0 12px" }}>
+                            <div style={{ textAlign: "center", fontSize: 16, fontWeight: 700, lineHeight: "28px" }}>测试环境维护记录</div>
+                            <div style={{ position: "absolute", right: 0, top: 0, color: "#888", lineHeight: "28px" }}>{syncFileNoVersion(data.doc.file_no, data.doc.version) || ""}</div>
+                        </div>
 
                         {/* 资产表 */}
                         <div style={{ color: "#888", margin: "16px 0 4px" }}>测试环境维护记录 · 资产</div>

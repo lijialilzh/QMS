@@ -14,7 +14,6 @@ import * as ApiHospital from "@/api/ApiProdHospital";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import { getDataDocMeta, DATA_STATS_IMPORT_TYPES, getDataDocListType } from "./DataDocTypes";
 import { ANN_PID_TYPES, annotTableSig, applyPidsToSections, attachCaseRows, autoStatsExtra, buildAnnotMeta, buildStatsGrid, caseRowsFromContent, pidsFromCache, readLastStats, readStatsCache, STATS_TITLES, StatsKind } from "../data_stats/dataStatsLocal";
-import { computeGridSpans } from "./gridSpans";
 import "../pdp/PdpDocDetail.less";
 import { syncDocVersionFields, syncFileNoVersion } from "@/pages/doc_fill/syncDocVersion";
 
@@ -140,18 +139,40 @@ const joinCheckItems = (items: Array<{ checked: boolean; label: string }>) =>
     items.map((it) => `${it.checked ? "☑" : "☐"}${it.label}`).join("\n");
 
 const computeRecordSpans = (grid: any[][], emptyMergeRows?: Set<number>) => {
-    const spans = computeGridSpans(grid);
     const rows = grid || [];
     const R = rows.length;
     const C = rows.reduce((m, r) => Math.max(m, Array.isArray(r) ? r.length : 0), 0);
+    const spans = Array.from({ length: R }, () => Array.from({ length: C }, () => ({ skip: false, colSpan: 1, rowSpan: 1 })));
     const at = (r: number, c: number) => String(rows[r]?.[c] ?? "");
+    const shown = (r: number, c: number) => at(r, c).replace(/\u200b/g, "").trim();
+    let headerIdx = -1;
+    for (let r = 0; r < R; r++) {
+        if (onlyFirstRow(rows[r], C) || rowAllEmpty(rows[r], C)) continue;
+        headerIdx = r;
+        break;
+    }
+    const headed = Array.from({ length: C }, () => false);
+    const markHead = (r: number) => {
+        for (let c = 0; c < C; c++) if (shown(r, c)) headed[c] = true;
+    };
+    if (headerIdx >= 0) {
+        markHead(headerIdx);
+        const sub = headerIdx + 1;
+        if (sub < R && !shown(sub, 0)) {
+            let subHas = false;
+            for (let c = 1; c < C; c++) if (shown(sub, c)) subHas = true;
+            if (subHas) markHead(sub);
+        }
+    }
     const allowEmpty = (r: number) => !emptyMergeRows || emptyMergeRows.has(r);
     for (let r = 0; r < R; r++) {
         if (rowAllEmpty(rows[r], C) || isSignRow(rows[r]) || !allowEmpty(r)) continue;
+        const banner = onlyFirstRow(rows[r], C);
         for (let c = 0; c < C; c++) {
             if (spans[r][c].skip) continue;
             let c2 = c + spans[r][c].colSpan - 1;
-            while (c2 + 1 < C && !spans[r][c2 + 1].skip && !at(r, c2 + 1).trim()) {
+            while (c2 + 1 < C && !spans[r][c2 + 1].skip && !shown(r, c2 + 1)) {
+                if (!banner && headed[c2 + 1]) break;
                 spans[r][c2 + 1].skip = true;
                 spans[r][c].colSpan += 1;
                 c2 += 1;
@@ -375,6 +396,53 @@ const parseMd003Req = (content: any) => {
     return { pe, lobe, deliver };
 };
 
+const md003ModuleNames = (content: any): string[] => {
+    const names: string[] = [];
+    const take = (n: any) => {
+        const title = stripNum(String(n?.title || ""));
+        if (!title || title === "数据标注需求") return;
+        if (/修订|附件|评审|交付时间|产品信息|简介|封面/.test(title)) return;
+        const kids = n?.children || [];
+        const moduleLike = kids.some((c: any) => /标注任务/.test(stripNum(String(c?.title || ""))))
+            || /模块$/.test(title);
+        if (moduleLike) names.push(title);
+    };
+    ((content && content.sections) || []).forEach(take);
+    return names;
+};
+
+const replaceDd011TypeRows = (tb: any[], typeReqs: string[]) => {
+    if (!typeReqs.length) return tb;
+    let start = -1;
+    let end = -1;
+    let prev = "";
+    tb.forEach((row: any[], i: number) => {
+        if (!Array.isArray(row)) return;
+        const label = String(row[0] ?? "").trim();
+        if (label) prev = label;
+        if (prev === "标注类型" && start < 0) start = i;
+        else if (start >= 0 && end < 0 && label && label !== "标注类型") end = i;
+    });
+    if (start < 0) return tb;
+    if (end < 0) end = tb.length;
+    const cols = tb.reduce((m: number, row: any[]) => Math.max(m, Array.isArray(row) ? row.length : 0), 6);
+    const rows = typeReqs.map((text, i) => {
+        const kept = start + i < end && Array.isArray(tb[start + i]) ? [...tb[start + i]] : null;
+        const old = kept || new Array(cols).fill("");
+        while (old.length < cols) old.push("");
+        old[0] = i === 0 ? "标注类型" : "";
+        old[1] = text;
+        if (!kept) {
+            old[2] = "";
+            old[3] = "";
+            old[4] = "";
+            old[5] = "";
+        }
+        return old;
+    });
+    return [...tb.slice(0, start), ...rows, ...tb.slice(end)];
+};
+
 const parseDd010Counts = (content: any) => {
     const counts: Record<string, string> = {};
     const dates: string[] = [];
@@ -461,6 +529,7 @@ const applyDd011Table = (nodes: any[], src: {
     peQtyReq?: string; peQtyAct?: string;
     lobeQtyReq?: string; lobeQtyAct?: string;
     deliverReq?: string; deliverAct?: string;
+    typeReqs?: string[];
 }) => {
     const fixTable = (tb: any[]) => {
         if (!Array.isArray(tb)) return tb;
@@ -470,8 +539,9 @@ const applyDd011Table = (nodes: any[], src: {
             && String(row[1] ?? "").includes("文档需求")
         );
         if (!hit) return tb;
+        const typed = src.typeReqs && src.typeReqs.length ? replaceDd011TypeRows(tb, src.typeReqs) : tb;
         let prev = "";
-        return tb.map((row: any[]) => {
+        return typed.map((row: any[]) => {
             if (!Array.isArray(row)) return row;
             const label = String(row[0] ?? "").trim();
             if (label) prev = label;
@@ -483,6 +553,7 @@ const applyDd011Table = (nodes: any[], src: {
                 next[ci] = val;
             };
             if (prev === "标注类型") {
+                if (src.typeReqs && src.typeReqs.length) return next;
                 if (req.includes("肺叶") || /^2[.]/.test(req.trim())) {
                     put(1, src.lobeTypeReq);
                     put(3, src.lobeTypeAct);
@@ -542,7 +613,9 @@ const fillDd011Feedback = (productId: number, secs: any[]): Promise<any[]> => {
         const hasLobeReq = !!(req.lobe.train || req.lobe.tune || req.lobe.test);
         const hasPeAct = !!(peAct.train || peAct.tune || peAct.test);
         const hasLobeAct = !!(lobeAct.train || lobeAct.tune || lobeAct.test);
+        const modules = md003ModuleNames(md003 && md003.content);
         return applyDd011Table(secs, {
+            typeReqs: modules.map((name, i) => `${i + 1}.${name}`),
             peTypeReq: hasPeReq ? "1.肺栓塞分割" : "",
             peTypeAct: hasPeAct ? "1.肺栓塞分割/分诊" : "",
             lobeTypeReq: hasLobeReq ? "2.肺叶分割" : "",
@@ -1023,7 +1096,13 @@ const applyDd003FromReturn = (nodes: any[], src: { org: string; recv: string; qt
             tb = tb.map((row, ri) => (ri === headerIdx + 1 ? cleared : row));
         }
         const dataStart = headerIdx + (hasSub ? 2 : 1);
-        const isBannerRow = (row: any[]) => Array.isArray(row) && !isSignRow(row) && !txt(row[iUnit]) && txt(iProj >= 0 ? row[iProj] : row[0]);
+        const isBannerRow = (row: any[]) => {
+            if (!Array.isArray(row) || txt(row[iUnit])) return false;
+            const proj = txt(iProj >= 0 ? row[iProj] : row[0]);
+            if (!proj) return false;
+            if (productName) return proj === productName;
+            return !isSignRow(row);
+        };
         const makeBanner = (name: string) => {
             const next = new Array(cols).fill("");
             next[iProj >= 0 ? iProj : 0] = name;
@@ -1042,7 +1121,7 @@ const applyDd003FromReturn = (nodes: any[], src: { org: string; recv: string; qt
             }
             break;
         }
-        const oldData = tb.slice(dataStart, footerStart).filter((row) => Array.isArray(row) && txt(row[iUnit]));
+        const oldData = tb.slice(dataStart, footerStart).filter((row) => Array.isArray(row) && !isBannerRow(row));
         const first = oldData[0];
         const hasCleaners = cleaners.length > 0;
         const along = [iProj, iStaff, iWay, iDev, iProto, iScene, iConc, iSign]
@@ -1074,7 +1153,7 @@ const applyDd003FromReturn = (nodes: any[], src: { org: string; recv: string; qt
             let ptr = 0;
             const hospitals = body.map((row) => {
                 const next = [...row];
-                if (iStaff >= 0 && hasCleaners && txt(next[iUnit])) {
+                if (iStaff >= 0 && hasCleaners && txt(next[iUnit]) && !txt(next[iStaff])) {
                     next[iStaff] = cleaners[ptr % cleaners.length];
                     ptr += 1;
                 }
@@ -1092,22 +1171,31 @@ const applyDd003FromReturn = (nodes: any[], src: { org: string; recv: string; qt
         };
         let staffPtr = 0;
         const putCleaner = (next: any[]) => {
-            if (iStaff >= 0 && hasCleaners) next[iStaff] = cleaners[staffPtr % cleaners.length];
+            if (iStaff < 0 || !hasCleaners || txt(next[iStaff])) return;
+            next[iStaff] = cleaners[staffPtr % cleaners.length];
+            staffPtr += 1;
+        };
+        const looksTemplate = (row: any[]) => {
+            const date = iDate >= 0 ? txt(row[iDate]) : "";
+            const staff = iStaff >= 0 ? txt(row[iStaff]) : "";
+            return /^2022\.11/.test(date) && staff === "谷雷涛";
         };
         const newData: any[] = [];
         oldData.forEach((row) => {
-            const hit = pick(txt(row[iUnit]));
-            if (!hit) return;
+            const hit = txt(row[iUnit]) ? pick(txt(row[iUnit])) : null;
+            if (!hit) {
+                if (!looksTemplate(row)) newData.push(row);
+                return;
+            }
             const next = [...row];
             while (next.length < cols) next.push("");
-            next[iUnit] = hit.org;
-            if (iDate >= 0) next[iDate] = hit.recv;
-            if (iQty >= 0) next[iQty] = hit.qty;
+            if (!txt(next[iUnit])) next[iUnit] = hit.org;
+            if (iDate >= 0 && !txt(next[iDate])) next[iDate] = hit.recv;
+            if (iQty >= 0 && !txt(next[iQty])) next[iQty] = hit.qty;
             putCleaner(next);
             fillAlong(next, true);
             fixProj(next);
             newData.push(next);
-            if (hasCleaners) staffPtr += 1;
         });
         unused.forEach((hit) => {
             const next = new Array(cols).fill("");
@@ -1118,7 +1206,6 @@ const applyDd003FromReturn = (nodes: any[], src: { org: string; recv: string; qt
             fillAlong(next, false);
             fixProj(next);
             newData.push(next);
-            if (hasCleaners) staffPtr += 1;
         });
         return withBanner(newData);
     };
@@ -1214,6 +1301,76 @@ const mergeDd004ReqAct = (tb: any[][], spans: ReturnType<typeof computeRecordSpa
         if (endReq > iReq) spanRowCols(spans, r, iReq, endReq);
         if (endAct > iAct) spanRowCols(spans, r, iAct, endAct);
     }
+    return spans;
+};
+
+/** 标注类型每一行的文档需求、实际情况、是否符合各自一格。左侧「标注类型」仍纵向合并。 */
+const splitDd011TypeBody = (tb: any[][], spans: ReturnType<typeof computeRecordSpans> | null) => {
+    if (!Array.isArray(tb) || !spans) return spans;
+    let start = -1;
+    let end = -1;
+    let prev = "";
+    tb.forEach((row: any[], i: number) => {
+        if (!Array.isArray(row)) return;
+        const label = String(row[0] ?? "").trim();
+        if (label) prev = label;
+        if (prev === "标注类型" && start < 0) start = i;
+        else if (start >= 0 && end < 0 && label && label !== "标注类型") end = i;
+    });
+    if (start < 0) return spans;
+    if (end < 0) end = tb.length;
+    for (let r = start; r < end; r++) {
+        const rowSpans = spans[r] || [];
+        for (let c = 1; c < rowSpans.length; c++) {
+            const sp = rowSpans[c];
+            if (!sp || sp.skip || (sp.rowSpan || 1) <= 1) continue;
+            const rs = sp.rowSpan;
+            const cs = sp.colSpan || 1;
+            sp.rowSpan = 1;
+            for (let k = r + 1; k < r + rs && k < end; k++) {
+                for (let j = 0; j < cs; j++) {
+                    const cell = spans[k]?.[c + j];
+                    if (!cell) continue;
+                    cell.skip = j > 0;
+                    cell.rowSpan = 1;
+                    cell.colSpan = j === 0 ? cs : 1;
+                }
+            }
+        }
+    }
+    return spans;
+};
+
+/** 初次/定期考核结果的人员行不合并。通栏标题和总体评价仍按原表合并。 */
+const splitExamPersonRows = (tb: any[][], spans: ReturnType<typeof computeRecordSpans> | null) => {
+    if (!Array.isArray(tb) || !spans) return spans;
+    const txt = (s: any) => String(s ?? "").replace(/\u200b/g, "").trim();
+    tb.forEach((row: any[], r: number) => {
+        if (!Array.isArray(row) || txt(row[0]) !== "考核结果") return;
+        let from = r + 1;
+        const head = txt(tb[from]?.[0]) === "人员" ? from : -1;
+        if (head >= 0) from += 1;
+        let foot = tb.length;
+        for (let i = from; i < tb.length; i++) {
+            if (txt(tb[i]?.[0]) === "总体评价") { foot = i; break; }
+        }
+        for (let i = 0; i < from; i++) {
+            (spans[i] || []).forEach((sp) => {
+                if (!sp || sp.skip) return;
+                if (i + (sp.rowSpan || 1) > from) sp.rowSpan = from - i;
+            });
+        }
+        const headSpans = head >= 0 ? spans[head] : null;
+        for (let i = from; i < foot; i++) {
+            (spans[i] || []).forEach((sp, c) => {
+                if (!sp) return;
+                const hs = headSpans?.[c];
+                sp.skip = !!hs?.skip;
+                sp.colSpan = hs && !hs.skip ? (hs.colSpan || 1) : 1;
+                sp.rowSpan = 1;
+            });
+        }
+    });
     return spans;
 };
 
@@ -1989,7 +2146,7 @@ const summarizeDd004Actual = (hospitals: Array<{ no: string; region: string }>, 
         采集参数: paramText,
         采集精度: "",
         数据量: qtySum ? `总计约${qtySum}例` : "",
-        kvpAllGe70: kvps.length ? kvps.every((v) => v >= 70) : null as boolean | null,
+        kvps,
         deviceCount: devices.length,
         regionCount: regions.length,
         hasBothSex: !!(male && female),
@@ -2012,23 +2169,101 @@ const dd004Meet = (label: string, req: string, act: string, extra: ReturnType<ty
         return extra.deviceCount >= need ? "是" : "否";
     }
     if (label === "地域分布") return extra.regionCount >= 2 ? "是" : "否";
-    if (label === "采集参数") return extra.kvpAllGe70 == null ? "" : extra.kvpAllGe70 ? "是" : "否";
+    if (label === "采集参数") {
+        if (!extra.kvps.length) return "";
+        const m = req.match(/(?:大于等于|≥|>=)\s*(\d+(?:\.\d+)?)/);
+        const need = m ? parseFloat(m[1]) : 70;
+        return extra.kvps.every((v) => v >= need) ? "是" : "否";
+    }
     if (label === "数据量") {
-        const m = req.match(/(\d+)例/);
+        const total = req.match(/总计(?:需要采集)?(?:至少|不少于)?(\d+)例/);
+        const m = total || req.match(/(\d+)例/);
         const need = m ? parseInt(m[1], 10) : 0;
         return need ? (extra.qtySum >= need ? "是" : "否") : "";
     }
     if (label === "性别分布") return extra.hasBothSex ? "是" : (act ? "否" : "");
     if (label === "年龄分布") return extra.ageSpread ? "是" : (act ? "否" : "");
     if (label === "检查方式" || label === "采集方式与协议") {
-        if (/CTPA/i.test(req)) return /CTPA/i.test(act) ? "是" : "否";
+        const norm = (s: string) => s.replace(/[。；;，,.\s]/g, "").toUpperCase();
+        const a = norm(act);
+        const b = norm(req);
+        if (!a || !b) return "";
+        return a === b || a.includes(b) || b.includes(a) ? "是" : "否";
     }
     return "";
+};
+
+const DD004_STOCK_NO = "本次采集到的数据尚未完全符合数据采集需求。";
+const DD004_STOCK_YES = "本次采集到的数据符合数据采集需求。";
+
+const pickQtyRequirement = (raw: string) => {
+    const text = String(raw || "").replace(/\r/g, "").trim();
+    if (!text) return "";
+    const sentences = text.split(/(?<=。)/).map((s) => s.trim()).filter(Boolean);
+    const hit = sentences.filter((s) => /总计需要采集|总计不少于|至少需要采集/.test(s));
+    if (hit.length) return hit[hit.length - 1];
+    const lines = text.split(/\n+/).map((s) => s.trim()).filter(Boolean);
+    const brief = lines.filter((s) => !/灵敏度|特异度|效应值|脱落率|α\s*=|1-β|模型需求规格说明/.test(s));
+    if (brief.length) return brief.join("\n");
+    return text;
+};
+
+const collectSectionText = (nodes: any[], acc: string[]) => {
+    (nodes || []).forEach((n) => {
+        const title = stripNum(String(n?.title || ""));
+        const body = String(n?.body || "").trim();
+        if (title) acc.push(title);
+        if (body) acc.push(body);
+        collectSectionText(n?.children || [], acc);
+    });
+};
+
+const parseDd001Reqs = (doc: any): Record<string, string> => {
+    const sections = (doc && doc.content && doc.content.sections) || [];
+    const acc: string[] = [];
+    collectSectionText(sections, acc);
+    const blob = acc.join("\n");
+    const out: Record<string, string> = {};
+    const put = (key: string, val: string) => {
+        const t = String(val || "").trim();
+        if (t) out[key] = t;
+    };
+    const lineValue = (label: string) => {
+        const re = new RegExp(`${label}\\s*[:：]\\s*([^\\n]+)`);
+        const m = blob.match(re);
+        return m ? m[1].trim() : "";
+    };
+    put("检查方式", lineValue("检查方式"));
+    put("性别分布", lineValue("性别"));
+    put("年龄分布", lineValue("年龄"));
+    put("地域分布", lineValue("地域"));
+    put("采集设备", lineValue("制造商"));
+    put("采集方式与协议", lineValue("采集方式与协议"));
+    put("采集参数", lineValue("采集参数"));
+    put("采集精度", lineValue("采集精度"));
+    const srcLine = blob.split("\n").map((s) => s.trim()).find((s) => /临床机构/.test(s) && /至少/.test(s));
+    if (srcLine) put("数据来源", srcLine);
+    let qty = "";
+    const walkQty = (nodes: any[]) => {
+        (nodes || []).forEach((n) => {
+            if (/需求数量/.test(stripNum(String(n?.title || ""))) && String(n?.body || "").trim()) qty = String(n.body).trim();
+            walkQty(n?.children || []);
+        });
+    };
+    walkQty(sections);
+    if (!qty) {
+        const m = blob.match(/需求数量\s*\n([\s\S]*?)(?=\n\s*(?:数据处理完成时间|参考文献|附件)|$)/);
+        if (m && m[1].trim()) qty = m[1].trim();
+    }
+    if (qty) put("数据量", pickQtyRequirement(qty));
+    return out;
 };
 
 const applyDd004Numbers = (nodes: any[], src: {
     act: ReturnType<typeof summarizeDd004Actual>;
     hasReturn: boolean;
+    reqs: Record<string, string>;
+    replace: boolean;
 }) => {
     const txt = (s: any) => String(s ?? "").trim();
     const fixTable = (tb: any[]) => {
@@ -2055,29 +2290,32 @@ const applyDd004Numbers = (nodes: any[], src: {
             const label = txt(row[iLabel]).replace(/[\uF000-\uF8FF]/g, "");
             if (label === "结论") {
                 const next = [...row];
-                if (iReq >= 0) {
-                    next[iReq] = anyNo
-                        ? "本次采集到的数据尚未完全符合数据采集需求。"
-                        : "本次采集到的数据符合数据采集需求。";
-                }
+                const sentence = anyNo ? DD004_STOCK_NO : DD004_STOCK_YES;
+                const cur = iReq >= 0 ? txt(row[iReq]) : "";
+                if (iReq >= 0 && (src.replace || !cur || cur === DD004_STOCK_NO || cur === DD004_STOCK_YES)) next[iReq] = sentence;
                 return next;
             }
             if (isSignRow(row)) return row;
             const next = [...row];
-            const reqVal = label === "数据量" && src.act.qtySum > 0
-                ? `总计不少于${src.act.qtySum}例数据`
-                : (DD004_REQ_TEMPLATE[label] || "");
-            if (reqVal && iReq >= 0) next[iReq] = reqVal;
+            const fromReq = src.reqs[label] || "";
+            const template = DD004_REQ_TEMPLATE[label] || "";
+            const reqVal = fromReq || (label === "数据量" && src.act.qtySum > 0 ? `总计不少于${src.act.qtySum}例数据` : template);
+            const curReq = iReq >= 0 ? txt(row[iReq]) : "";
+            const qtyEssay = label === "数据量" && /模型需求规格说明/.test(curReq) && /灵敏度目标值/.test(curReq);
+            const reqStillAuto = !curReq || curReq === template || (label === "数据量" && (/^总计不少于\d+例数据$/.test(curReq) || qtyEssay));
+            if (reqVal && iReq >= 0 && (src.replace || reqStillAuto)) next[iReq] = reqVal;
             if (label === "问题描述") return next;
             let actVal = src.act[label as keyof typeof src.act];
             if (typeof actVal !== "string") actVal = "";
-            if (!actVal && (label === "检查方式" || label === "采集方式与协议") && reqVal) actVal = reqVal;
+            if (!actVal && (label === "检查方式" || label === "采集方式与协议") && (txt(next[iReq]) || reqVal)) actVal = txt(next[iReq]) || reqVal;
             const forceAct = label === "数据来源" || label === "性别分布" || label === "年龄分布"
                 || label === "地域分布" || label === "采集设备" || label === "采集参数" || label === "数据量";
-            if (iAct >= 0 && actVal && (src.hasReturn || forceAct)) next[iAct] = actVal;
+            const curAct = iAct >= 0 ? txt(row[iAct]) : "";
+            if (iAct >= 0 && actVal && (src.hasReturn || forceAct) && (src.replace || !curAct)) next[iAct] = actVal;
             const ok = dd004Meet(label, txt(next[iReq]), txt(next[iAct]), src.act);
-            if (ok && iOk >= 0) next[iOk] = ok;
-            if (ok === "否") anyNo = true;
+            const curOk = iOk >= 0 ? txt(row[iOk]) : "";
+            if (ok && iOk >= 0 && (src.replace || !curOk || qtyEssay)) next[iOk] = ok;
+            if ((src.replace || !curOk ? ok : curOk) === "否") anyNo = true;
             return next;
         });
         return nextTb;
@@ -2093,13 +2331,14 @@ const applyDd004Numbers = (nodes: any[], src: {
     return (nodes || []).map(fix);
 };
 
-const fillDd004Numbers = (productId: number, secs: any[]): Promise<any[]> => {
+const fillDd004Numbers = (productId: number, secs: any[], replace = false): Promise<any[]> => {
     if (!productId) return Promise.resolve(secs);
     return Promise.all([
         latestDataDoc(productId, "dd_002"),
         ApiHospital.list_prod_hospital({ prod_id: productId, page_index: 0, page_size: 5000 }).catch(() => null),
         loadCaseRowsForDoc(productId).catch(() => []),
-    ]).then(([dd002, hp, cases]: any[]) => {
+        latestDataDoc(productId, "dd_001"),
+    ]).then(([dd002, hp, cases, dd001]: any[]) => {
         const rows = parseDd002ReturnRows((dd002 && dd002.content && dd002.content.sections) || []);
         const hospRows = hp && hp.code === ApiHospital.C_OK ? ((hp.data && hp.data.rows) || []) : [];
         const byNo = new Map<string, string>();
@@ -2113,9 +2352,10 @@ const fillDd004Numbers = (productId: number, secs: any[]): Promise<any[]> => {
         }));
         const returnSum = rows.reduce((s, r) => s + (parseInt(String(r.qty || "").replace(/[^\d]/g, ""), 10) || 0), 0);
         const qtySum = (cases || []).length || returnSum;
-        if (!rows.length && !(cases || []).length) return secs;
+        const reqs = parseDd001Reqs(dd001);
+        if (!rows.length && !(cases || []).length && !Object.keys(reqs).length) return secs;
         const act = summarizeDd004Actual(hospitals, cases || [], qtySum);
-        return applyDd004Numbers(secs, { act, hasReturn: rows.length > 0 });
+        return applyDd004Numbers(secs, { act, hasReturn: rows.length > 0, reqs, replace });
     }).catch(() => secs);
 };
 
@@ -2173,6 +2413,21 @@ const applyDd005Lists = (nodes: any[], annotators: string[], reviewers: string[]
             rows.push(row);
         }
         return [...tb.slice(0, start), ...rows, ...tb.slice(end)];
+    };
+    const countNameBlock = (tb: any[], labelRe: RegExp) => {
+        let start = -1;
+        tb.forEach((row, ri) => {
+            if (start >= 0 || !Array.isArray(row)) return;
+            if (labelRe.test(txt(row[0]))) start = ri;
+        });
+        if (start < 0) return -1;
+        let n = 0;
+        for (let r = start; r < tb.length; r++) {
+            const row = tb[r] || [];
+            if (r > start && txt(row[0])) break;
+            for (let c = 1; c < row.length; c++) if (String(row[c] ?? "").trim()) n += 1;
+        }
+        return n;
     };
     const ensureBlocks = (tb: any[]) => {
         const look = tb.map((r) => txt(r?.[0])).join(" ");
@@ -2287,14 +2542,85 @@ const applyDd005Lists = (nodes: any[], annotators: string[], reviewers: string[]
         });
         return [...tb.slice(0, headerIdx + 1), ...newData, ...tb.slice(footerStart)];
     };
+    const ensureExamResult = (tb: any[], names: string[]) => {
+        if (!Array.isArray(tb) || !tb.some((row) => /^本次考核细则$/.test(txt(row?.[0])))) return tb;
+        const cols = Math.max(6, tb.reduce((m, r) => Math.max(m, Array.isArray(r) ? r.length : 0), 0));
+        let project = "";
+        tb.forEach((row) => {
+            if (!Array.isArray(row) || project) return;
+            const i = row.findIndex((c: any) => txt(c) === "考核项目");
+            if (i >= 0) project = String(row[i + 1] ?? "").trim();
+        });
+        const dice = `${(project.split(/[/／]/)[0] || "考核").trim()}dice`;
+        const rowOf = (vals: string[]) => {
+            const row = new Array(cols).fill("");
+            vals.forEach((v, i) => { if (i < cols) row[i] = v; });
+            return row;
+        };
+        const shown = (s: any) => String(s ?? "").replace(/\u200b/g, "").trim();
+        const summaryText = (ok: number, bad: number) =>
+            `${ok}人合格，${bad}人不合格，不需要重新进行培训。\n\n记录人签字：                    日期：\n\n复核人签字：                    日期：`;
+        const personLine = (name: string, diceV = "", sens = "", spec = "", grade = "") =>
+            rowOf([name || "\u200b", diceV || "\u200b", sens || "\u200b", spec || "\u200b", grade || "\u200b"]);
+        const fresh = () => {
+            const people = (names || []).map((n) => String(n || "").trim()).filter(Boolean);
+            return [
+                rowOf(["考核结果"]),
+                rowOf(["人员", dice, "灵敏度", "特异度", "总评"]),
+                ...(people.length ? people : [""]).map((name) => personLine(name)),
+                rowOf(["总体评价", summaryText(0, 0)]),
+            ];
+        };
+        const idx = tb.findIndex((row) => txt(row?.[0]) === "考核结果");
+        if (idx < 0) {
+            let end = tb.length;
+            while (end > 0 && rowAllEmpty(tb[end - 1], cols)) end -= 1;
+            return [...tb.slice(0, end), ...fresh(), ...tb.slice(end)];
+        }
+        const header = tb[idx + 1] || [];
+        if (txt(header[2]) === "灵敏度" && txt(header[4]) === "总评") return tb;
+        let foot = -1;
+        for (let i = idx + 1; i < tb.length; i++) {
+            if (txt(tb[i]?.[0]) === "总体评价") { foot = i; break; }
+        }
+        const from = idx + (txt(header[0]) === "人员" ? 2 : 1);
+        const to = foot >= 0 ? foot : tb.length;
+        const kept: any[][] = [];
+        let ok = 0;
+        let bad = 0;
+        for (let i = from; i < to; i++) {
+            const row = tb[i] || [];
+            const name = shown(row[0]);
+            if (!name || name === "人员" || name === "考核结果" || name === "总体评价") continue;
+            const sens = txt(header[2]) === "灵敏度" ? shown(row[2]) : "";
+            const spec = txt(header[3]) === "特异度" ? shown(row[3]) : "";
+            const grade = txt(header[2]) === "总体" ? shown(row[2]) : shown(row[4]);
+            if (grade === "合格") ok += 1;
+            else if (grade === "不合格") bad += 1;
+            kept.push(personLine(name, shown(row[1]), sens, spec, grade));
+        }
+        const oldSum = foot >= 0 ? String(tb[foot]?.[1] ?? "") : "";
+        const keepSum = /记录人签字/.test(oldSum) && /日期/.test(oldSum) ? oldSum : "";
+        const block = [
+            rowOf(["考核结果"]),
+            rowOf(["人员", dice, "灵敏度", "特异度", "总评"]),
+            ...(kept.length ? kept : [personLine("")]),
+            rowOf(["总体评价", keepSum || summaryText(ok, bad)]),
+        ];
+        const end = foot >= 0 ? foot + 1 : to;
+        return [...tb.slice(0, idx), ...block, ...tb.slice(end)];
+    };
     const fixTable = (tb: any[]) => {
         if (!Array.isArray(tb) || !tb.length) return tb;
         let next = ensureBlocks(tb);
         next = fillBlock(next, /参与培训人员名单/, annotators);
+        const trainN = countNameBlock(next, /参与培训人员名单/);
+        if (trainN >= 0) next = fillCount(next, "培训人数", trainN);
         next = fillBlock(next, /^审核人员$/, reviewers);
         next = fillBlock(next, /考核通过人员/, annotators);
         next = fillBlock(next, /^参与考核人员$/, annotators);
         next = fillCount(next, "参与考核人数", annotators.length);
+        next = ensureExamResult(next, annotators);
         if (examTime) next = fillCount(next, "考核时间", examTime);
         next = fillDaily(next);
         return next;
@@ -2388,6 +2714,7 @@ export default () => {
                 return;
             }
             const doc = res.data || {};
+            loadAnnotators(doc.product_id || 0);
             const sections = dropProductInfo(ensureKeys((doc.content && doc.content.sections) || []));
             autofill(doc.product_id, sections).then((secs) => {
                 const fileNo = String(doc.file_no || "").trim();
@@ -2640,6 +2967,7 @@ export default () => {
     const rebindProduct = (newId: number) => {
         const product = (data.products || []).find((p: any) => p.id === newId) || {};
         const prevId = data.doc.product_id;
+        loadAnnotators(newId);
         dispatch({ loading: true, doc: { ...data.doc, product_id: newId, product_name: product.name, product_full_version: product.full_version } });
         autofill(newId, data.sections, true, prevId).then((secs) => {
             const docType = String(type || data.doc.doc_type || "");
@@ -2660,7 +2988,7 @@ export default () => {
                 return;
             }
             if (docType === "dd_004") {
-                fillDd004Numbers(newId, secs).then((filled) => dispatch({ loading: false, sections: filled }))
+                fillDd004Numbers(newId, secs, true).then((filled) => dispatch({ loading: false, sections: filled }))
                     .catch(() => dispatch({ loading: false, sections: secs }));
                 return;
             }
@@ -2727,18 +3055,17 @@ export default () => {
         }).catch(() => dispatch(empty));
     };
 
-    const applyCell = (sections: any[], key: string, ti: number, r: number, ci: number, val: string, colSpan = 1, rowSpan = 1) =>
+    const applyCell = (sections: any[], key: string, ti: number, r: number, ci: number, val: string, _colSpan = 1, _rowSpan = 1) =>
         mapNode(sections, key, (n: any) => ({
             ...n,
             tables: ((n.tables) || []).map((tb: any[], i: number) => {
                 if (i !== ti) return tb;
-                const cs = Math.max(1, colSpan);
-                const rs = Math.max(1, rowSpan);
                 return tb.map((row: any[], ri: number) => {
-                    if (ri < r || ri >= r + rs) return row;
+                    if (ri !== r) return row;
                     const next = [...row];
-                    while (next.length < ci + cs) next.push("");
-                    return next.map((cell: any, cc: number) => (cc < ci || cc >= ci + cs ? cell : val));
+                    while (next.length <= ci) next.push("");
+                    next[ci] = val;
+                    return next;
                 });
             }),
         }));
@@ -2778,9 +3105,40 @@ export default () => {
             if (i !== ti) return tb;
             const cols = tb[0] ? tb[0].length : 1;
             const src = tb[afterR] || [];
+            let examStart = -1;
+            let examHead = -1;
+            let examFoot = -1;
+            tb.forEach((row: any[], ri: number) => {
+                const a = String(row?.[0] ?? "").trim();
+                if (a === "考核结果") { examStart = ri; examHead = -1; examFoot = -1; }
+                else if (examStart >= 0 && examHead < 0 && a === "人员") examHead = ri;
+                else if (examStart >= 0 && examFoot < 0 && a === "总体评价") examFoot = ri;
+            });
+            if (examStart >= 0 && afterR >= examStart && (examFoot < 0 || afterR <= examFoot)) {
+                const blankPerson = new Array(cols).fill("");
+                for (let c = 0; c < Math.min(5, cols); c++) blankPerson[c] = "\u200b";
+                const label = String(src[0] ?? "").trim();
+                let at = afterR + 1;
+                if (label === "考核结果") at = (examHead >= 0 ? examHead : examStart) + 1;
+                if (label === "总体评价" && examFoot >= 0) at = examFoot;
+                const next = [...tb];
+                next.splice(at, 0, blankPerson);
+                return next;
+            }
             const blank = new Array(cols).fill("");
-            if (src.length && !isSignRow(src) && !isMetaLabelRow(src) && !onlyFirstRow(src, cols)) {
-                blank[0] = src[0] ?? "";
+            const hasBody = (src || []).some((c: any) => {
+                const t = String(c ?? "").trim();
+                return !!t && !isSignLabel(t);
+            });
+            if (src.length && !onlyFirstRow(src, cols) && (hasBody || !isSignRow(src))) {
+                if (String(src[0] ?? "").trim()) blank[0] = src[0] ?? "";
+                else {
+                    const textAt = src.findIndex((c: any, i: number) => i > 0 && String(c ?? "").trim() && !isSignLabel(String(c ?? "").trim()));
+                    blank[textAt > 0 ? textAt : 1] = "\u200b";
+                }
+                src.forEach((c: any, i: number) => {
+                    if (isSignLabel(String(c ?? "").trim())) blank[i] = c;
+                });
             }
             const next = [...tb];
             next.splice(afterR + 1, 0, blank);
@@ -2789,9 +3147,13 @@ export default () => {
         patchNode(key, { tables });
     };
     const delRow = (key: string, ti: number, r: number) => {
-        const tables = (findTables(data.sections, key) || []).map((tb: any[], i: number) =>
-            i !== ti ? tb : tb.filter((_: any, ri: number) => ri !== r)
-        );
+        const tables = (findTables(data.sections, key) || []).map((tb: any[], i: number) => {
+            if (i !== ti) return tb;
+            const a = String(tb[r]?.[0] ?? "").trim();
+            const head = a === "人员" && (tb[r] || []).some((c: any) => /灵敏度|总评/.test(String(c ?? "")));
+            if (a === "考核结果" || a === "总体评价" || head) return tb;
+            return tb.filter((_: any, ri: number) => ri !== r);
+        });
         patchNode(key, { tables });
     };
 
@@ -2906,6 +3268,8 @@ export default () => {
         const baseSpans = noCellMerge ? null : computeRecordSpans(tb, emptyMergeRows);
         let spans = mergeDd003ProductName(tb, mergeNameLabelCol(tb, baseSpans, nameBlockRows), firstBody);
         if (docType === "dd_004") spans = mergeDd004ReqAct(tb, spans);
+        if (docType === "dd_011") spans = splitDd011TypeBody(tb, spans);
+        if (/^dd_013_0[1-4]$/.test(docType)) spans = splitExamPersonRows(tb, spans);
         if (docType === "dd_010") spans = mergeDd010ProductName(tb, spans, firstBody);
         if (docType === "dd_012") spans = mergeDd012Project(tb, spans);
         const headerRow = firstBody >= 0 ? (tb[firstBody] || []) : [];
@@ -2951,15 +3315,21 @@ export default () => {
                             if (isDailyFootRow(row)) return null;
                             const allSkip = Array.from({ length: cols }, (_, ci) => !!spans?.[r]?.[ci]?.skip).every(Boolean);
                             if (allSkip) return <tr key={r} />;
-                            const subHead = firstBody >= 0 && r === firstBody + 1
+                            const subHead = docType === "dd_003" && firstBody >= 0 && r === firstBody + 1
                                 && !String(row[0] ?? "").trim()
                                 && row.slice(1).some((c: any) => String(c ?? "").trim());
                             const prodBanner = docType === "dd_003" && r === dd003DataStart
                                 && String(row[0] ?? "").trim()
                                 && (dd003UnitI < 0 || !String(row[dd003UnitI] ?? "").trim());
+                            const examHead = String(row[0] ?? "").trim() === "人员"
+                                && (row || []).some((c: any) => /灵敏度|总评/.test(String(c ?? "")));
+                            const examLock = String(row[0] ?? "").trim() === "考核结果"
+                                || String(row[0] ?? "").trim() === "总体评价"
+                                || examHead;
                             const isHeadRow = banner || r === firstBody || subHead || !!prodBanner;
-                            const sign = isSignRow(row);
-                            const showOps = !readonly && !emptyRow && !isHeadRow && !sign && !isMetaLabelRow(row);
+                            const dd003Hospital = docType === "dd_003" && r >= dd003DataStart && !prodBanner;
+                            const sign = isSignRow(row) && !dd003Hospital;
+                            const showOps = !readonly && !emptyRow && !isHeadRow && !sign && (docType === "dd_004" || !isMetaLabelRow(row));
                             return (
                             <tr key={r}>
                                 {Array.from({ length: cols }, (_, ci) => ci).map((ci: number) => {
@@ -2989,13 +3359,17 @@ export default () => {
                                     );
                                     const datePick = isDailyEval && !isHeadRow && !sign && !isDailyFootRow(row) && colLabel === "日期";
                                     const testers = uniqNames(data.reviewers || [], data.arbitrators || []);
-                                    const pickNames = /^测试医生/.test(colLabel) ? testers
+                                    const roleNames = /^测试医生/.test(colLabel) ? testers
                                         : colLabel === "审核医生" ? (data.reviewers || [])
                                         : colLabel === "仲裁医生" ? (data.arbitrators || [])
                                         : colLabel === "数据采集负责人" ? (data.collectors || [])
                                         : (colLabel === "脱敏检查、清洗人员" || colLabel === "上传人员" || colLabel === "检查人")
                                             ? (data.cleaners || [])
                                             : (data.annotators || []);
+                                    const pickNames = uniqNames(
+                                        roleNames,
+                                        tb.map((row: any[], ri: number) => (ri <= firstBody ? "" : String(row?.[ci] ?? "").replace(/\u200b/g, "").trim())),
+                                    );
                                     const pickPh = /^测试医生/.test(colLabel) ? "选择测试医生"
                                         : colLabel === "审核医生" ? "选择审核医生"
                                         : colLabel === "仲裁医生" ? "选择仲裁医生"
@@ -3004,10 +3378,10 @@ export default () => {
                                             ? "选择人员"
                                             : "选择标注人员";
                                     const isPath = isUpload && PATH_LABELS.has(colLabel);
-                                    const leftText = leftTextRows.has(r) && ci > 0;
+                                    const leftText = (leftTextRows.has(r) || String(row[0] ?? "").replace(/\s+/g, "") === "总体评价") && ci > 0;
                                     const align = /^(评估人|复核人)/.test(String(cell ?? "").trim()) || isPath || leftText ? "left" : "center";
                                     const st: CSSProperties = {
-                                        ...(isHeadRow ? tdHead : tdValue),
+                                        ...(isHeadRow || examHead ? tdHead : tdValue),
                                         textAlign: isHeadRow ? "center" : align,
                                         ...(leftText ? { paddingLeft: 12 } : {}),
                                         ...(isUpload ? { minWidth: uploadColMin(colLabel), ...(isPath ? { wordBreak: "break-all" } : {}) } : {}),
@@ -3072,22 +3446,40 @@ export default () => {
                                                 <Input.TextArea
                                                     variant="borderless"
                                                     autoSize={{ minRows: 1 }}
-                                                    value={cell ?? ""}
+                                                    value={String(cell ?? "").replace(/\u200b/g, "")}
                                                     disabled={readonly}
                                                     style={{ padding: 0, textAlign: align, fontSize: 13, lineHeight: 1.4, width: "100%", minWidth: 0, overflow: "hidden" }}
-                                                    onChange={(e) => setCell(n._key, ti, r, ci, e.target.value, cs, rs)}
+                                                    onChange={(e) => {
+                                                        const v = e.target.value;
+                                                        const keep = v === "" && String(cell ?? "").includes("\u200b") ? "\u200b" : v;
+                                                        setCell(n._key, ti, r, ci, keep, cs, rs);
+                                                    }}
                                                 />
                                             )}
                                         </td>
                                     );
                                 })}
                                 {!readonly && (
-                                    <td style={isHeadRow ? { ...tdHead, width: 100 } : tdOp}>
+                                    <td style={isHeadRow || examHead ? { ...tdHead, width: 100 } : tdOp}>
                                         {isHeadRow && r === firstBody ? "操作" : showOps ? (
-                                            <span style={{ display: "inline-flex", gap: 14, justifyContent: "center" }}>
-                                                <PlusOutlined title="在下方插入行" style={{ color: "#1677ff", cursor: "pointer" }} onClick={() => addRow(n._key, ti, r)} />
-                                                {tb.length > 1 && (
-                                                    <DeleteOutlined title="删除该行" style={{ color: "#999", cursor: "pointer" }} onClick={() => delRow(n._key, ti, r)} />
+                                            <span style={{ display: "inline-flex", gap: 6, justifyContent: "center" }}>
+                                                <button
+                                                    type="button"
+                                                    title="在下方插入行"
+                                                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); addRow(n._key, ti, r); }}
+                                                    style={{ border: "none", background: "transparent", cursor: "pointer", padding: "2px 6px" }}
+                                                >
+                                                    <PlusOutlined style={{ color: "#1677ff" }} />
+                                                </button>
+                                                {tb.length > 1 && !examLock && (
+                                                    <button
+                                                        type="button"
+                                                        title="删除该行"
+                                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); delRow(n._key, ti, r); }}
+                                                        style={{ border: "none", background: "transparent", cursor: "pointer", padding: "2px 6px" }}
+                                                    >
+                                                        <DeleteOutlined style={{ color: "#999" }} />
+                                                    </button>
                                                 )}
                                             </span>
                                         ) : null}

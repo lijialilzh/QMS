@@ -1071,7 +1071,6 @@ class Server(object):
         env_cover_date = ""
         if doc_type in ENV_DOC_TYPES:
             env_title = "开发环境维护记录" if doc_type == "dd_016" else "标注环境维护记录"
-            usage_kw = "标注" if doc_type == "dd_017" else "开发"
             env_rows = date_rows
             env_dept = data_dept_map
             if not date_rows:
@@ -1105,7 +1104,7 @@ class Server(object):
                 select(DataDoc).where(DataDoc.product_id == prod_id, DataDoc.doc_type == "dd_eq").order_by(DataDoc.id.desc())
             ).scalars().first()
             if eq_doc:
-                env_assets = self.__parse_eq_codes(eq_doc.content if isinstance(eq_doc.content, dict) else {}, usage_kw)
+                env_assets = self.__parse_eq_codes(eq_doc.content if isinstance(eq_doc.content, dict) else {})
             checkers = member_names(lambda r: r == "数据部负责人") or member_names(lambda r: r == "数据负责人") or member_names(lambda r: "数据" in r)
             env_checker = serv_review_util._sign_by_name(checkers[0] if checkers else "") or (checkers[0] if checkers else "")
 
@@ -1177,21 +1176,30 @@ class Server(object):
         return isinstance(tb, list) and tb and isinstance(tb[0], list) and str(tb[0][0] or "").strip() == "env_check"
 
     @staticmethod
+    def __asset_cell_text(value):
+        text = str(value or "").replace("\u200b", "").replace("\u200c", "").replace("\u200d", "").replace("\ufeff", "").replace("\u00a0", " ")
+        return re.sub(r"\s+", " ", text).strip()
+
+    @staticmethod
     def __merge_asset_name_version(table, grid):
         """资产表「产品名称」「完整版本」连续相同非空格纵向合并。"""
-        for col in (2, 3):
+        header = [Server.__asset_cell_text(c) for c in grid[0]] if grid and isinstance(grid[0], list) else []
+        cols = [i for i, h in enumerate(header) if h in ("产品名称", "完整版本")]
+        if not cols:
+            cols = [2, 3]
+        n = len(grid)
+        for col in cols:
             r = 1
-            n = len(grid)
             while r < n:
                 row = grid[r] if isinstance(grid[r], list) else []
-                val = str(row[col] if col < len(row) else "").strip()
+                val = Server.__asset_cell_text(row[col] if col < len(row) else "")
                 if not val:
                     r += 1
                     continue
                 r2 = r
                 while r2 + 1 < n:
                     nxt = grid[r2 + 1] if isinstance(grid[r2 + 1], list) else []
-                    nv = str(nxt[col] if col < len(nxt) else "").strip()
+                    nv = Server.__asset_cell_text(nxt[col] if col < len(nxt) else "")
                     if nv != val:
                         break
                     r2 += 1
@@ -1199,6 +1207,7 @@ class Server(object):
                     table.cell(r, col).merge(table.cell(r2, col))
                 r = r2 + 1
 
+    @staticmethod
     def __is_asset_grid(tb):
         if not (isinstance(tb, list) and tb and isinstance(tb[0], list) and tb[0]):
             return False
@@ -1383,8 +1392,13 @@ class Server(object):
                         old[code] = str(row[1] if len(row) > 1 else "")
             hdr = [str(c or "") for c in tb[0]]
             hdr = hdr[:4] if len(hdr) >= 4 else ["资产编码", "设备信息", "产品名称", "完整版本"]
+            doc_type = info.get("doc_type") or ""
+            from src.serv.serv_model_doc import default_device_info
             if eq_assets is not None:
-                body = [[code, old.get(code, ""), prod_name, full_version] for code, _u in eq_assets]
+                body = []
+                for code, _u in eq_assets:
+                    kept = str(old.get(code, "") or "")
+                    body.append([code, kept if kept.strip() else default_device_info(code, doc_type), prod_name, full_version])
                 tables[ti] = [hdr] + body
             else:
                 new_tb = [hdr]
@@ -1394,6 +1408,8 @@ class Server(object):
                     next_row = list(row)
                     while len(next_row) < 4:
                         next_row.append("")
+                    if not str(next_row[1] or "").strip():
+                        next_row[1] = default_device_info(next_row[0], doc_type)
                     next_row[2] = prod_name
                     next_row[3] = full_version
                     new_tb.append(next_row)
@@ -1827,6 +1843,90 @@ class Server(object):
         return rows, spans
 
     @staticmethod
+    def __clamp_dd011_type_rows(rows, spans):
+        """标注类型每一行的文档需求、实际情况、是否符合不纵向合并。左侧标签仍合并。"""
+        if not spans:
+            return rows, spans
+        start = end = -1
+        prev = ""
+        for i, row in enumerate(rows or []):
+            cells = row if isinstance(row, list) else []
+            label = str((cells[0] if cells else "") or "").strip()
+            if label:
+                prev = label
+            if prev == "标注类型" and start < 0:
+                start = i
+            elif start >= 0 and end < 0 and label and label != "标注类型":
+                end = i
+        if start < 0:
+            return rows, spans
+        if end < 0:
+            end = len(rows or [])
+        for r in range(start, end):
+            if r >= len(spans):
+                break
+            c = 1
+            while c < len(spans[r]):
+                sp = spans[r][c]
+                rs = int(sp.get("row") or 1)
+                cs = int(sp.get("col") or 1)
+                if sp.get("skip") or rs <= 1:
+                    c += 1
+                    continue
+                sp["row"] = 1
+                for k in range(r + 1, min(r + rs, end)):
+                    for j in range(cs):
+                        if k >= len(spans) or c + j >= len(spans[k]):
+                            continue
+                        cell = spans[k][c + j]
+                        cell["skip"] = j > 0
+                        cell["row"] = 1
+                        cell["col"] = cs if j == 0 else 1
+                c += cs
+        return rows, spans
+
+    @staticmethod
+    def __clamp_dd013_exam_rows(rows, spans):
+        """初次/定期考核结果的人员行不合并。通栏标题和总体评价仍合并。"""
+        if not spans:
+            return rows, spans
+
+        def txt(v):
+            return str(v or "").replace("\u200b", "").strip()
+
+        for r, row in enumerate(rows or []):
+            cells = row if isinstance(row, list) else []
+            if txt(cells[0] if cells else "") != "考核结果":
+                continue
+            start = r + 1
+            head = start if start < len(rows) and txt((rows[start] or [""])[0]) == "人员" else -1
+            if head >= 0:
+                start += 1
+            foot = len(rows)
+            for i in range(start, len(rows)):
+                if txt((rows[i] or [""])[0]) == "总体评价":
+                    foot = i
+                    break
+            for i in range(start):
+                if i >= len(spans):
+                    break
+                for sp in spans[i]:
+                    if sp.get("skip"):
+                        continue
+                    if i + int(sp.get("row") or 1) > start:
+                        sp["row"] = start - i
+            head_spans = spans[head] if head >= 0 and head < len(spans) else None
+            for i in range(start, foot):
+                if i >= len(spans):
+                    break
+                for c, sp in enumerate(spans[i]):
+                    hs = head_spans[c] if head_spans and c < len(head_spans) else None
+                    sp["skip"] = bool(hs and hs.get("skip"))
+                    sp["col"] = int(hs.get("col") or 1) if hs and not hs.get("skip") else 1
+                    sp["row"] = 1
+        return rows, spans
+
+    @staticmethod
     def __clamp_dd010_prod_banner(rows, spans):
         header = hosp = dataset = proj = person = -1
         for r, row in enumerate(rows or []):
@@ -1937,36 +2037,50 @@ class Server(object):
                 return ""
             return str(rows[r][c] or "")
 
-        def same(r, c, r2, c2):
-            a, b = txt(r, c), txt(r2, c2)
-            return a == b and a.strip() != ""
+        def shown(r, c):
+            return txt(r, c).replace("\u200b", "").strip()
 
+        def only_first(r):
+            if not shown(r, 0):
+                return False
+            return all(not shown(r, c) for c in range(1, c_n))
+
+        header = -1
         for r in range(r_n):
-            c = 0
-            while c < c_n:
-                if spans[r][c]["skip"]:
-                    c += 1
-                    continue
-                c2 = c
-                while c2 + 1 < c_n and same(r, c, r, c2 + 1):
-                    c2 += 1
-                cs = c2 - c + 1
-                spans[r][c]["col"] = cs
-                for k in range(c + 1, c2 + 1):
-                    spans[r][k]["skip"] = True
-                c = c2 + 1
+            if only_first(r) or all(not shown(r, c) for c in range(c_n)):
+                continue
+            header = r
+            break
+        headed = [False] * c_n
+        def mark_head(r):
+            for c in range(c_n):
+                if shown(r, c):
+                    headed[c] = True
+        if header >= 0:
+            mark_head(header)
+            sub = header + 1
+            if sub < r_n and not shown(sub, 0) and any(shown(sub, c) for c in range(1, c_n)):
+                mark_head(sub)
         for r in range(r_n):
+            if all(not shown(r, c) for c in range(c_n)):
+                continue
+            cells = [shown(r, c) for c in range(c_n)]
+            if any(re.match(r"^(评估人|复核人|记录人)", x) for x in cells):
+                continue
+            banner = only_first(r)
             for c in range(c_n):
                 if spans[r][c]["skip"]:
                     continue
                 c2 = c + spans[r][c]["col"] - 1
-                while c2 + 1 < c_n and not spans[r][c2 + 1]["skip"] and not txt(r, c2 + 1).strip():
+                while c2 + 1 < c_n and not spans[r][c2 + 1]["skip"] and not shown(r, c2 + 1):
+                    if not banner and headed[c2 + 1]:
+                        break
                     spans[r][c2 + 1]["skip"] = True
                     spans[r][c]["col"] += 1
                     c2 += 1
         for r in range(r_n):
             for c in range(c_n):
-                if spans[r][c]["skip"] or not txt(r, c).strip():
+                if spans[r][c]["skip"] or not shown(r, c):
                     continue
                 cs = spans[r][c]["col"]
                 r2 = r
@@ -1975,7 +2089,7 @@ class Server(object):
                     if nxt["skip"] or nxt["col"] != cs:
                         break
                     below = txt(r2 + 1, c)
-                    if same(r, c, r2 + 1, c) or not below.strip():
+                    if not below.strip():
                         r2 += 1
                         continue
                     break
@@ -2022,6 +2136,10 @@ class Server(object):
                 rows, spans = self.__clamp_dd004_req_act(rows, spans)
             elif str(getattr(obj, "doc_type", "") or "") == "dd_010":
                 rows, spans = self.__clamp_dd010_prod_banner(rows, spans)
+            elif str(getattr(obj, "doc_type", "") or "") == "dd_011":
+                rows, spans = self.__clamp_dd011_type_rows(rows, spans)
+            elif str(getattr(obj, "doc_type", "") or "") in ("dd_013_01", "dd_013_02", "dd_013_03", "dd_013_04"):
+                rows, spans = self.__clamp_dd013_exam_rows(rows, spans)
             elif str(getattr(obj, "doc_type", "") or "") == "dd_012":
                 rows, spans = self.__clamp_dd012_body(rows, spans)
             r_n = len(rows)
@@ -2047,7 +2165,7 @@ class Server(object):
                     if sp["skip"]:
                         continue
                     val = rows[r][c] if c < len(rows[r]) else ""
-                    s = str(val or "")
+                    s = str(val or "").replace("\u200b", "")
                     only_first = row_only_first(r)
                     if c == 0 and only_first and re.search(r"TX-|DD-|MD-", s) and (obj.file_no or "").strip():
                         s = str(obj.file_no).strip()

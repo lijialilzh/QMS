@@ -221,18 +221,63 @@ export const computeDataEnvWeeks = (rows: any[], _docType: string): string[] => 
     return spanWeeks(starts, ends);
 };
 
+const assetCellText = (v: any): string => String(v ?? "")
+    .replace(/[\u200b\u200c\u200d\ufeff]/g, "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/** 资产表「产品名称」「完整版本」列号。表头对不上时用第 3、4 列。 */
+const assetNameVersionCols = (rows: any[][]): number[] => {
+    const header = (Array.isArray(rows?.[0]) ? rows[0] : []).map((c: any) => assetCellText(c));
+    const cols = [header.indexOf("产品名称"), header.indexOf("完整版本")].filter((i) => i >= 0);
+    return cols.length ? cols : [2, 3];
+};
+
 /** 资产表产品名称、完整版本：连续相同非空格纵向合并。 */
 export const assetNameVersionSpan = (rows: any[][], r: number, c: number): { skip: boolean; rowSpan: number } => {
-    if ((c !== 2 && c !== 3) || r <= 0) return { skip: false, rowSpan: 1 };
-    const val = String(rows[r]?.[c] ?? "").trim();
+    if (r <= 0 || !assetNameVersionCols(rows).includes(c)) return { skip: false, rowSpan: 1 };
+    const val = assetCellText(rows[r]?.[c]);
     if (!val) return { skip: false, rowSpan: 1 };
-    if (r > 1 && String(rows[r - 1]?.[c] ?? "").trim() === val) return { skip: true, rowSpan: 1 };
+    if (r > 1 && assetCellText(rows[r - 1]?.[c]) === val) return { skip: true, rowSpan: 1 };
     let span = 1;
     for (let i = r + 1; i < rows.length; i++) {
-        if (String(rows[i]?.[c] ?? "").trim() !== val) break;
+        if (assetCellText(rows[i]?.[c]) !== val) break;
         span += 1;
     }
     return { skip: false, rowSpan: span };
+};
+
+const DEVICE_INFO_BLANK = "操作系统：\n内存：\nCPU：\n硬盘：\n存储盘：\nGPU：\nGPU显存：";
+const DEVICE_INFO_BY_DOC: Record<string, Record<string, string>> = {
+    md_019: {
+        ISER21070004: "操作系统：Ubuntu18.04 64位版本 \n内存：64GB\nCPU：Intel(R) Core(TM) i7-8700K CPU @ 3.70GHz\n硬盘：256GB\n存储盘：10T\nGPU： RTX 4000 × 2\nGPU显存：8G",
+        SER01391: "操作系统：Ubuntu18.04 64位版本 \n内存：64GB\nCPU：Intel(R) Core(TM) i7-8700K CPU @ 3.70GHz\n硬盘：256GB\n存储盘：10T\nGPU：GeForce GTX 2070× 2\nGPU显存：8G",
+        SER01172: "操作系统：Ubuntu18.04 64位版本\n内存：32 GB\nCPU：Intel® Core™ i7-9700K CPU @ 3.60GHz × 8\n硬盘：250GB\n存储盘：3T\nGPU：GeForce RTX 2070 × 2\nGPU显存：8G",
+    },
+    md_020: {
+        SER01101: "操作系统: Ubuntu 18.04 64位版本\n内存: 32G\nCPU: Intel(R) Core(TM) i7-6850K CPU @ 3.60GHz\n硬盘: 1T\n存储盘: 8T\nGPU: GTX 1080Ti× 2\nGPU显存: 11G",
+        SER01201: "操作系统：Ubuntu18.04 LTS 64位版本\n内存：64G\nCPU：Intel® Core™ i7-8700K CPU @ 3.70GHz × 12 \n硬盘：256GB\n存储盘：12T\nGPU：GeForce 1080\nGPU显存：8G",
+    },
+    dd_016: {
+        SER01256: "操作系统：Ubuntu18.04 LTS 64位版本\n内存：32 GiB\nCPU：Intel® Core™ i7-8700K CPU @ 3.50GHz × 12 \n硬盘：250GB\n存储盘：20T\nGPU：GeForce 1080\nGPU显存：8G",
+        SER01201: "操作系统：Ubuntu18.04 LTS 64位版本\n内存：32 GiB\nCPU：Intel® Core™ i7-8700K CPU @ 3.70GHz × 12 \n硬盘：250GB\n存储盘：12T\nGPU：GeForce 1080\nGPU显存：8G",
+    },
+    dd_017: {
+        SER01020: "操作系统：Windows 10的64位版本\n内存：32 GiB\nCPU：Intel® Core™ i7-6850K CPU @ 3.60GHz × 12 \n硬盘：250GB\n存储盘：无\nGPU：GeForce 1080\nGPU显存：8G",
+        SER01636: "操作系统：Windows 10的64位版本\n内存：32 GiB\nCPU：Intel® Core™ i7-6850K CPU @ 3.60GHz × 12 \n硬盘：250GB\n存储盘：无\nGPU：GeForce 1080\nGPU显存：8G",
+    },
+};
+
+/** 设备信息为空时的默认配置。本类型原表优先，没有则用其它环境原表里同编码的配置。 */
+export const defaultDeviceInfo = (code: string, docType?: string): string => {
+    const c = String(code || "").trim();
+    const own = docType ? DEVICE_INFO_BY_DOC[docType]?.[c] : "";
+    if (own) return own;
+    for (const bucket of Object.values(DEVICE_INFO_BY_DOC)) {
+        if (bucket[c]) return bucket[c];
+    }
+    return DEVICE_INFO_BLANK;
 };
 
 export const parseEqAssets = (content: any, usageContains?: string): EnvAsset[] => {

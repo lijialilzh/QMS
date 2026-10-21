@@ -13,7 +13,7 @@ from datetime import date, timedelta
 from io import BytesIO
 from typing import List
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -300,16 +300,37 @@ class Server(object):
                 out.append((code, usage))
         return out
 
-    def __autofill(self, content, prod_id, product=None, force=False):
+    def __autofill(self, content, prod_id, product=None, force=False, sync_assets=True):
+        """sync_assets=False：不改资产表（保存时用，避免冲掉用户编辑的设备信息）。"""
         if not isinstance(content, dict):
             return content
         # 资产编码/检查表：从「测试设备清单」自动获取
-        teq_assets = self.__teq_assets(prod_id)
+        # 同编码原样保留整行（含设备信息、产品名称、完整版本），仅新编码用默认模板
+        teq_assets = self.__teq_assets(prod_id) if sync_assets or force else []
         if teq_assets:
-            content["assets"] = [list(_ASSET_HEADER)] + [
-                [code, (_MAC_INFO if code.upper().startswith("ISER") else _UBUNTU_INFO), "", ""]
-                for code, _u in teq_assets
-            ]
+            old_by_code = {}
+            for r in (content.get("assets") or []):
+                if not isinstance(r, list) or not r:
+                    continue
+                code0 = str(r[0] or "").strip()
+                if not code0 or code0 == "资产编码":
+                    continue
+                prev = [str(x) if x is not None else "" for x in r]
+                while len(prev) < 4:
+                    prev.append("")
+                old_by_code[code0] = prev
+            new_assets = [list(_ASSET_HEADER)]
+            for code, _u in teq_assets:
+                default_info = _MAC_INFO if code.upper().startswith("ISER") else _UBUNTU_INFO
+                if code in old_by_code and not force:
+                    new_assets.append(list(old_by_code[code]))
+                elif code in old_by_code and force:
+                    prev = old_by_code[code]
+                    info = prev[1] if str(prev[1] or "").strip() else default_info
+                    new_assets.append([code, info, "", ""])
+                else:
+                    new_assets.append([code, default_info, "", ""])
+            content["assets"] = new_assets
             old_checks = {str(ch.get("asset")): ch for ch in (content.get("checks") or []) if isinstance(ch, dict)}
             content["checks"] = [
                 {
@@ -460,16 +481,32 @@ class Server(object):
             row: TemDoc = db.session.execute(select(TemDoc).where(TemDoc.id == form.id)).scalars().first()
             if not row:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
-            for key, value in form.dict(exclude_none=True).items():
-                if key == "id":
-                    continue
-                if key == "content":
-                    value = self.__normalize_content(value)
-                setattr(row, key, value)
-            if not (row.file_no or "").strip():
-                row.file_no = self.__dhf_file_no(row.product_id)
-            if getattr(form, "version", None) and hasattr(row, "file_no"):
-                row.file_no = sync_file_no_version(row.file_no or "", form.version or row.version) or row.file_no
+            prod_id = form.product_id if form.product_id is not None else row.product_id
+            product: Product = db.session.execute(select(Product).where(Product.id == prod_id)).scalars().first() if prod_id else None
+            version = form.version if form.version is not None else row.version
+            file_no = row.file_no
+            if not (file_no or "").strip():
+                file_no = self.__dhf_file_no(prod_id)
+            if form.version is not None:
+                file_no = sync_file_no_version(file_no or "", form.version or row.version) or file_no
+            change_log = form.change_log if form.change_log is not None else row.change_log
+            # 以用户提交的 content 为准；不从测试设备清单重建资产表
+            raw = copy.deepcopy(form.content) if form.content is not None else copy.deepcopy(row.content)
+            content = self.__normalize_content(raw)
+            content = self.__autofill(content, prod_id, product, force=False, sync_assets=False)
+            if isinstance(form.content, dict) and isinstance(form.content.get("assets"), list) and form.content["assets"]:
+                content["assets"] = [list(r) if isinstance(r, list) else [r] for r in copy.deepcopy(form.content["assets"])]
+            db.session.execute(
+                update(TemDoc)
+                .where(TemDoc.id == row.id)
+                .values(
+                    product_id=prod_id,
+                    version=version,
+                    file_no=file_no,
+                    change_log=change_log,
+                    content=content,
+                )
+            )
             db.session.commit()
             return Resp.resp_ok()
         except Exception:

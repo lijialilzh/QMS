@@ -812,7 +812,7 @@ export default () => {
                 md022Extra ? Api.list_model_doc({ product_id: productId, page_index: 0, page_size: 10000 }).catch(() => null) : Promise.resolve(null),
                 md022Extra ? ApiProdDhf.list_prod_dhf({ prod_id: productId, page_index: 0, page_size: 10000 }).catch(() => null) : Promise.resolve(null),
                 md022Extra ? ApiSrsDoc.list_srs_doc({ product_id: productId, page_index: 0, page_size: 5 }).catch(() => null) : Promise.resolve(null),
-                envExtra ? Api.list_model_doc({ product_id: productId, doc_type: type === "md_019" ? "md_deq" : "md_teq", page_index: 0, page_size: 1 }).catch(() => null) : Promise.resolve(null),
+                envExtra ? Api.list_model_doc({ product_id: productId, doc_type: type === "md_019" ? "md_deq" : "md_eq", page_index: 0, page_size: 1 }).catch(() => null) : Promise.resolve(null),
             ]).then(async ([pr, oldPr, tl, mb, ps, mdList, dhfList, srsList, eqList]: any[]) => {
                 const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
                 const oldProd = oldPr && oldPr.code === Api.C_OK ? (oldPr.data || {}) : {};
