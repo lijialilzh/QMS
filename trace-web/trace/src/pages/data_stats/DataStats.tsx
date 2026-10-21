@@ -35,7 +35,7 @@ import {
     caseRowsFromContent,
     importGpdExcel,
 } from "./dataStatsLocal";
-import { fillDd002Hospitals, fillDd003FromReturn, fillDd010FromReturn, fillDd012FromProduct, stripKeys } from "../model_doc/DataRecordDocDetail";
+import { fillDd002Hospitals, fillDd003FromReturn, fillDd010FromReturn, fillDd011Feedback, fillDd012FromProduct, stripKeys } from "../model_doc/DataRecordDocDetail";
 
 const KIND_DOC: Record<StatsKind, { type: string; title: string }> = {
     raw: { type: "dd_015_01", title: "原始数据库统计表" },
@@ -426,9 +426,15 @@ export default () => {
             { type: "dd_012", title: "训练集测试集查重记录" },
             (secs) => fillDd012FromProduct(productId, secs),
         );
-        const ok = [r002, r003, r010, r012].filter((r) => r.status === "ok").map((r) => r.title);
-        const missing = [r002, r003, r010, r012].filter((r) => r.status === "skip").map((r) => r.title);
-        const errors = [r002, r003, r010, r012]
+        const r011 = await writeOneCollect(
+            productId,
+            { type: "dd_011", title: "数据标注需求反馈" },
+            (secs) => fillDd011Feedback(productId, secs, true),
+        );
+        const wrote = [r002, r003, r010, r012, r011];
+        const ok = wrote.filter((r) => r.status === "ok").map((r) => r.title);
+        const missing = wrote.filter((r) => r.status === "skip").map((r) => r.title);
+        const errors = wrote
             .filter((r) => r.status === "error")
             .map((r) => r.msg || `写入「${r.title}」失败`);
         return {

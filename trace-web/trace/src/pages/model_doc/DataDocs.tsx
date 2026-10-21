@@ -41,6 +41,24 @@ const moduleNameOf = (groupTypes: string[], modules: string[], docType: string):
     return name || `模块${idx + 1}`;
 };
 
+/** 导航模块按产品分组，组内按 sort_order。 */
+const namesByProduct = (rows: any[]): Record<string, string[]> => {
+    const grouped: Record<string, any[]> = {};
+    (rows || []).forEach((r) => {
+        const id = String(r?.prod_id ?? "");
+        if (!id) return;
+        (grouped[id] = grouped[id] || []).push(r);
+    });
+    const out: Record<string, string[]> = {};
+    Object.keys(grouped).forEach((id) => {
+        out[id] = grouped[id]
+            .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0) || (a.id || 0) - (b.id || 0))
+            .map((r) => String(r.name || "").trim())
+            .filter(Boolean);
+    });
+    return out;
+};
+
 export default () => {
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
@@ -57,7 +75,7 @@ export default () => {
         rows: [],
         targetRow: {},
         products: [],
-        modules: [] as string[],
+        modulesByProduct: {} as Record<string, string[]>,
         versionOptions: [] as { value: string; label: string }[],
         exportingId: 0,
         editingFileNoId: 0,
@@ -69,17 +87,21 @@ export default () => {
 
     const productId = Form.useWatch("product_id", queryForm);
     const moduleFilter = Form.useWatch("module", queryForm);
+    const addProductId = Form.useWatch("product_id", addForm);
+    const modulesByProduct = data.modulesByProduct || {};
+    const selectedModules = isAllProductId(productId) ? [] : (modulesByProduct[String(productId)] || []);
+    const addModules = isAllProductId(addProductId) ? [] : (modulesByProduct[String(addProductId)] || []);
     useEffect(() => {
-        if (isAllProductId(productId)) {
-            dispatch({ modules: [] });
-        } else if (isGroup) {
-            ApiAlgo.list_prod_algo_module({ prod_id: productId, page_index: 0, page_size: 1000 }).then((res: any) => {
-                const modules = (res && res.code === ApiAlgo.C_OK && (res.data?.rows || []).length)
-                    ? (res.data.rows as any[]).sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0)).map((r: any) => String(r.name || "").trim()).filter(Boolean)
-                    : [];
-                dispatch({ modules });
-            }).catch(() => dispatch({ modules: [] }));
+        if (!isGroup) {
+            dispatch({ modulesByProduct: {} });
+            return;
         }
+        ApiAlgo.list_prod_algo_module({ page_index: 0, page_size: 10000 }).then((res: any) => {
+            const rows = res && res.code === ApiAlgo.C_OK ? (res.data?.rows || []) : [];
+            dispatch({ modulesByProduct: namesByProduct(rows) });
+        }).catch(() => dispatch({ modulesByProduct: {} }));
+    }, [type]);
+    useEffect(() => {
         Api.list_data_doc({
             ...sanitizeListQuery({ product_id: productId }),
             ...(isGroup ? { doc_types: groupTypes.join(",") } : { doc_type: type }),
@@ -125,7 +147,7 @@ export default () => {
     useEffect(() => {
         loadProducts(data, dispatch);
         queryForm.resetFields();
-        dispatch({ versionOptions: [], modules: [] });
+        dispatch({ versionOptions: [] });
     }, [type]);
 
     useEffect(() => {
@@ -264,8 +286,8 @@ export default () => {
             title: "算法模块",
             dataIndex: "doc_type",
             width: "12%",
-            render: (value: string) => {
-                const name = moduleNameOf(groupTypes, data.modules, value);
+            render: (value: string, row: any) => {
+                const name = moduleNameOf(groupTypes, modulesByProduct[String(row.product_id)] || [], value);
                 return (
                     <span
                         title={name}
@@ -364,7 +386,7 @@ export default () => {
                                         placeholder="全部模块"
                                         allowClear
                                         style={{ minWidth: 150 }}
-                                        options={data.modules.map((name: string, i: number) => ({ value: i, label: name }))}
+                                        options={selectedModules.map((name: string, i: number) => ({ value: i, label: name }))}
                                     />
                                 </Form.Item>
                             </Col>
@@ -453,7 +475,7 @@ export default () => {
                             rules={[{ required: true, message: sprintf(ts("msg_select"), { label: "算法模块" }) }]}>
                             <Select
                                 placeholder="请选择算法模块"
-                                options={data.modules.map((name: string, i: number) => ({ value: i, label: name }))}
+                                options={addModules.map((name: string, i: number) => ({ value: i, label: name }))}
                             />
                         </Form.Item>
                     )}

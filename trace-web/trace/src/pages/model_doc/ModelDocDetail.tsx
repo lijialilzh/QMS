@@ -994,8 +994,9 @@ export default () => {
                 while (next.length < ci + cs) next.push("");
                 return next.map((cell: any, cc: number) => {
                     if (cc < ci || cc >= ci + cs) return cell;
-                    if (crr) return (ri === r && cc === ci) ? val : "";
-                    return val;
+                    if (ri === r && cc === ci) return val;
+                    if (crr) return "";
+                    return cell;
                 });
             });
         });

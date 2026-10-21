@@ -182,11 +182,19 @@ const computeRecordSpans = (grid: any[][], emptyMergeRows?: Set<number>) => {
     for (let r = 0; r < R; r++) {
         if (emptyMergeRows && !allowEmpty(r)) continue;
         for (let c = 0; c < C; c++) {
+            // 只有左侧标签向下并。内容列保持各自一格，新增行不会并进上一行。
+            if (c !== 0) continue;
             if (spans[r][c].skip || !at(r, c).trim()) continue;
             const cs = spans[r][c].colSpan;
             let r2 = r;
+            const covered: number[] = [];
             while (r2 + 1 < R) {
-                if (rowAllEmpty(rows[r2 + 1], C) || isSignRow(rows[r2 + 1]) || !allowEmpty(r2 + 1)) break;
+                if (isSignRow(rows[r2 + 1]) || !allowEmpty(r2 + 1)) break;
+                // 全空行页面不画。行高不能把它们算进去，否则会盖住下一节。
+                if (rowAllEmpty(rows[r2 + 1], C)) {
+                    r2 += 1;
+                    continue;
+                }
                 let ok = true;
                 for (let k = 0; k < cs; k++) {
                     const cell = spans[r2 + 1]?.[c + k];
@@ -194,12 +202,13 @@ const computeRecordSpans = (grid: any[][], emptyMergeRows?: Set<number>) => {
                 }
                 if (!ok) break;
                 r2 += 1;
+                covered.push(r2);
             }
-            if (r2 > r) {
-                spans[r][c].rowSpan = r2 - r + 1;
-                for (let k = r + 1; k <= r2; k++) {
+            if (covered.length) {
+                spans[r][c].rowSpan = covered.length + 1;
+                covered.forEach((k) => {
                     for (let j = 0; j < cs; j++) spans[k][c + j].skip = true;
-                }
+                });
             }
         }
     }
@@ -530,8 +539,8 @@ const applyDd011Table = (nodes: any[], src: {
     lobeQtyReq?: string; lobeQtyAct?: string;
     deliverReq?: string; deliverAct?: string;
     typeReqs?: string[];
-}) => {
-    const fixTable = (tb: any[]) => {
+}, forceType = false) => {
+    const fixTable = (tb: any[], skipType: boolean) => {
         if (!Array.isArray(tb)) return tb;
         const hit = (tb || []).some((row) =>
             Array.isArray(row)
@@ -539,7 +548,7 @@ const applyDd011Table = (nodes: any[], src: {
             && String(row[1] ?? "").includes("文档需求")
         );
         if (!hit) return tb;
-        const typed = src.typeReqs && src.typeReqs.length ? replaceDd011TypeRows(tb, src.typeReqs) : tb;
+        const typed = !skipType && src.typeReqs && src.typeReqs.length ? replaceDd011TypeRows(tb, src.typeReqs) : tb;
         let prev = "";
         return typed.map((row: any[]) => {
             if (!Array.isArray(row)) return row;
@@ -553,7 +562,7 @@ const applyDd011Table = (nodes: any[], src: {
                 next[ci] = val;
             };
             if (prev === "标注类型") {
-                if (src.typeReqs && src.typeReqs.length) return next;
+                if (skipType || (src.typeReqs && src.typeReqs.length)) return next;
                 if (req.includes("肺叶") || /^2[.]/.test(req.trim())) {
                     put(1, src.lobeTypeReq);
                     put(3, src.lobeTypeAct);
@@ -576,11 +585,16 @@ const applyDd011Table = (nodes: any[], src: {
             return next;
         });
     };
-    const fix = (n: any): any => ({
-        ...n,
-        tables: (n.tables || []).map((tb: any[]) => (Array.isArray(tb) ? fixTable(tb) : tb)),
-        children: (n.children || []).map(fix),
-    });
+    const fix = (n: any): any => {
+        const skipType = !forceType && !!n.dd011TypeManual;
+        const next: any = {
+            ...n,
+            tables: (n.tables || []).map((tb: any[]) => (Array.isArray(tb) ? fixTable(tb, skipType) : tb)),
+            children: (n.children || []).map(fix),
+        };
+        if (forceType) delete next.dd011TypeManual;
+        return next;
+    };
     return (nodes || []).map(fix);
 };
 
@@ -597,7 +611,7 @@ const latestDataDoc = (productId: number, docType: string) =>
         })
         .catch(() => null);
 
-const fillDd011Feedback = (productId: number, secs: any[]): Promise<any[]> => {
+export const fillDd011Feedback = (productId: number, secs: any[], forceType = false): Promise<any[]> => {
     if (!productId) return Promise.resolve(secs);
     return Promise.all([
         latestDataDoc(productId, "md_003"),
@@ -626,7 +640,7 @@ const fillDd011Feedback = (productId: number, secs: any[]): Promise<any[]> => {
             lobeQtyAct: fmtLobeAct(lobeAct),
             deliverReq: req.deliver,
             deliverAct: up.date || req.deliver,
-        });
+        }, forceType);
     }).catch(() => secs);
 };
 
@@ -3070,8 +3084,24 @@ export default () => {
             }),
         }));
 
+    const sectionLabelAt = (tb: any[], r: number) => {
+        let prev = "";
+        for (let i = 0; i <= r && i < (tb || []).length; i++) {
+            const label = String(tb[i]?.[0] ?? "").trim();
+            if (label) prev = label;
+        }
+        return prev;
+    };
+    const markTypeManual = (sections: any[], key: string, ti: number, r: number) => {
+        if (String(type || data.doc.doc_type || "") !== "dd_011") return sections;
+        return mapNode(sections, key, (n) => {
+            const tb = (n.tables || [])[ti];
+            if (!Array.isArray(tb) || sectionLabelAt(tb, r) !== "标注类型") return n;
+            return { ...n, dd011TypeManual: true };
+        });
+    };
     const setCell = (key: string, ti: number, r: number, ci: number, val: string, colSpan = 1, rowSpan = 1) => {
-        setSections(applyCell(data.sections, key, ti, r, ci, val, colSpan, rowSpan));
+        setSections(markTypeManual(applyCell(data.sections, key, ti, r, ci, val, colSpan, rowSpan), key, ti, r));
     };
 
     const setCellAndSave = (key: string, ti: number, r: number, ci: number, val: string, colSpan = 1, rowSpan = 1) => {
@@ -3131,22 +3161,22 @@ export default () => {
                 return !!t && !isSignLabel(t);
             });
             if (src.length && !onlyFirstRow(src, cols) && (hasBody || !isSignRow(src))) {
-                if (String(src[0] ?? "").trim()) blank[0] = src[0] ?? "";
-                else {
-                    const textAt = src.findIndex((c: any, i: number) => i > 0 && String(c ?? "").trim() && !isSignLabel(String(c ?? "").trim()));
-                    blank[textAt > 0 ? textAt : 1] = "\u200b";
-                }
                 src.forEach((c: any, i: number) => {
-                    if (isSignLabel(String(c ?? "").trim())) blank[i] = c;
+                    if (i > 0 && isSignLabel(String(c ?? "").trim())) blank[i] = c;
                 });
             }
+            if (cols > 1 && !String(blank[1] ?? "").trim()) blank[1] = "\u200b";
             const next = [...tb];
             next.splice(afterR + 1, 0, blank);
             return next;
         });
-        patchNode(key, { tables });
+        const srcTb = (findTables(data.sections, key) || [])[ti] || [];
+        const lockType = String(type || data.doc.doc_type || "") === "dd_011" && sectionLabelAt(srcTb, afterR) === "标注类型";
+        patchNode(key, lockType ? { tables, dd011TypeManual: true } : { tables });
     };
     const delRow = (key: string, ti: number, r: number) => {
+        const srcTb = (findTables(data.sections, key) || [])[ti] || [];
+        const lockType = String(type || data.doc.doc_type || "") === "dd_011" && sectionLabelAt(srcTb, r) === "标注类型";
         const tables = (findTables(data.sections, key) || []).map((tb: any[], i: number) => {
             if (i !== ti) return tb;
             const a = String(tb[r]?.[0] ?? "").trim();
@@ -3154,7 +3184,7 @@ export default () => {
             if (a === "考核结果" || a === "总体评价" || head) return tb;
             return tb.filter((_: any, ri: number) => ri !== r);
         });
-        patchNode(key, { tables });
+        patchNode(key, lockType ? { tables, dd011TypeManual: true } : { tables });
     };
 
     const doSave = () => {

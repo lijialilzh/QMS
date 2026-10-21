@@ -477,7 +477,7 @@ export default () => {
                 if (ri < r || ri >= r + rs) return row;
                 const next = [...row];
                 while (next.length < ci + cs) next.push("");
-                return next.map((cell: any, cc: number) => (cc < ci || cc >= ci + cs ? cell : val));
+                return next.map((cell: any, cc: number) => (ri === r && cc === ci ? val : cell));
             });
         });
         updateTables(tables);

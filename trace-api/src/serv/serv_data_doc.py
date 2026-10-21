@@ -2080,6 +2080,9 @@ class Server(object):
                     c2 += 1
         for r in range(r_n):
             for c in range(c_n):
+                # 只有左侧标签向下并。内容列保持各自一格，新增行不会并进上一行。
+                if c != 0:
+                    continue
                 if spans[r][c]["skip"] or not shown(r, c):
                     continue
                 cs = spans[r][c]["col"]
