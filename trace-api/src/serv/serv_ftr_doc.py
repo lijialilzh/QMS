@@ -520,6 +520,7 @@ class Server(object):
                 for c_idx in range(cols):
                     text = row[c_idx] if c_idx < len(row) else ""
                     set_cell(cells[c_idx], text, bold=(c_idx % 2 == 0), align=WD_ALIGN_PARAGRAPH.CENTER)
+            docx_util.merge_effective_date_row(table)
             document.add_paragraph()
 
         def add_body_heading(title, level):

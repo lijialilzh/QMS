@@ -10,7 +10,7 @@ const isOther = (t: any) => {
     return s.startsWith("其他参会人员") || s.startsWith("其他参评人员");
 };
 
-export const ReviewTable: React.FC<{ grid: any[]; headerRows?: number }> = ({ grid, headerRows = 1 }) => {
+export const ReviewTable: React.FC<{ grid: any[]; headerRows?: number; approverKeepLabel?: boolean }> = ({ grid, headerRows = 1, approverKeepLabel = false }) => {
     const rows: string[][] = (Array.isArray(grid) ? grid : []).map((r) =>
         Array.isArray(r) ? r.map((c) => String(c ?? "")) : [],
     );
@@ -46,6 +46,21 @@ export const ReviewTable: React.FC<{ grid: any[]; headerRows?: number }> = ({ gr
                             const sign = String(row[1] ?? "");
                             const date = String(row[2] ?? "");
                             const isSign = sign.startsWith("data:image");
+                            if (approverKeepLabel && cols > 1) {
+                                return (
+                                    <tr key={r}>
+                                        <td style={{ whiteSpace: "pre-wrap", padding: "6px 8px", textAlign: "center", verticalAlign: "middle" }}>
+                                            {label}
+                                        </td>
+                                        <td colSpan={cols - 1} style={{ whiteSpace: "pre-wrap", padding: "6px 8px", textAlign: "center", verticalAlign: "middle" }}>
+                                            {isSign
+                                                ? <img src={sign} alt="批准人签字" style={{ height: 36, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
+                                                : (sign ? <span>{sign}</span> : null)}
+                                            {date ? <span style={{ marginLeft: sign ? 24 : 0 }}>{date}</span> : null}
+                                        </td>
+                                    </tr>
+                                );
+                            }
                             return (
                                 <tr key={r}>
                                     <td className={head ? "head" : ""} colSpan={cols}

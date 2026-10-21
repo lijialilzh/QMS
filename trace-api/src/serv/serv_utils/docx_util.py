@@ -267,6 +267,35 @@ def __apply_adaptive_col_width(tabx, headers, rows, total_width: float = 6.3):
                 widths[i] = max(min_width, widths[i] - overflow * (room / pool))
     __commit_table_col_widths(tabx, widths, nowrap_cols, tight_margin=tight_margin)
 
+def merge_effective_date_row(table):
+    """封面「生效日期」行：日期后面的空格并成一格，跨满本行。"""
+    if table is None:
+        return
+    for row in table.rows:
+        cells = row.cells
+        if not cells or len(cells) < 3:
+            continue
+        label = re.sub(r"\s+", "", cells[0].text or "")
+        if label != "生效日期":
+            continue
+        merged = cells[1]
+        for cell in cells[2:]:
+            if cell._tc is merged._tc:
+                continue
+            try:
+                merged = merged.merge(cell)
+            except Exception:
+                break
+        for para in list(merged.paragraphs)[1:]:
+            if str(para.text or "").strip():
+                continue
+            element = para._element
+            parent = element.getparent()
+            if parent is not None:
+                parent.remove(element)
+        break
+
+
 def save_tab2docx(tab: Table,  docx: Document):
     # 优先使用 cells 导出（保留Word导入时的合并单元格结构）
     if tab.cells and len(tab.cells) > 0:
@@ -324,6 +353,7 @@ def save_tab2docx(tab: Table,  docx: Document):
                 pseudo_rows.append(row_dict)
             __apply_adaptive_col_width(tabx, pseudo_headers, pseudo_rows, __content_width_in(docx))
             __apply_table_border(tabx)
+            merge_effective_date_row(tabx)
             empty = docx.add_paragraph()
             empty.paragraph_format.space_after = Pt(20)
             return
@@ -348,6 +378,7 @@ def save_tab2docx(tab: Table,  docx: Document):
 
     __apply_adaptive_col_width(tabx, tab.headers, tab.rows or [], __content_width_in(docx))
     __apply_table_border(tabx)
+    merge_effective_date_row(tabx)
 
     empty = docx.add_paragraph()
     empty.paragraph_format.space_after = Pt(20)

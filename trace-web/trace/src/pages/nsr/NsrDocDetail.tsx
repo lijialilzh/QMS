@@ -591,7 +591,7 @@ export default () => {
 
                 {active.ref_type === "sw_info" ? renderSwInfo() : editable ? (
                     <FreeChapterContent
-                        body={String(active.text || "")}
+                        body={String(active.text || "").split("\n").map((ln) => (/^\{\{TABLE:\d+\}\}$/.test(ln.trim()) ? "{{TBL}}" : ln.replace(/\{\{TABLE:\d+\}\}/g, ""))).join("\n")}
                         tables={active.tables || []}
                         images={Array.isArray(active.images) ? active.images : []}
                         onPatch={applyFreePatch}

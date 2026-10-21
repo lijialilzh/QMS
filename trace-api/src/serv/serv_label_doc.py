@@ -582,6 +582,18 @@ class Server(object):
                         kv[str(row[0]).strip()] = str(row[1] or "").strip()
             return kv
 
+        def drop_trailing_empty_para(cell):
+            # cell.add_table 会在表后补一个空段落，Word 里显示成多余空行
+            paras = cell.paragraphs
+            if len(paras) < 2:
+                return
+            last = paras[-1]
+            if (last.text or "").strip():
+                return
+            if last._element.find(".//" + qn("w:drawing")) is not None:
+                return
+            last._element.getparent().remove(last._element)
+
         def add_bracket_para(container, label, value, size=10.5, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
             p = container.add_paragraph()
             p.alignment = align
@@ -627,6 +639,7 @@ class Server(object):
             # 三行两列字段
             pair_w = max(total - 200, 400)
             ptbl = cell.add_table(rows=0, cols=2)
+            drop_trailing_empty_para(cell)
             ptbl.autofit = False
             set_table_borders(ptbl, "none", 0)
             # 清零嵌套表格的缩进与单元格边距，使左列与下方单列字段左对齐
@@ -653,6 +666,7 @@ class Server(object):
             # 虚线 UDI 条形码占位框
             cell.add_paragraph()
             udi = cell.add_table(rows=1, cols=1)
+            drop_trailing_empty_para(cell)
             udi.alignment = WD_TABLE_ALIGNMENT.CENTER
             udi.autofit = False
             set_table_borders(udi, "dashed", 8)

@@ -507,7 +507,7 @@ export default () => {
                                                 <div className="pdp-table-block" key={ti}>
                                                     <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
                                                         <div style={{ flex: 1, minWidth: 0, overflowX: "auto" }}>
-                                                            <ReviewTable grid={reviewDisplayGrid(tb)} headerRows={isReviewHeaderRow(tb) ? 1 : 0} />
+                                                            <ReviewTable grid={reviewDisplayGrid(tb)} headerRows={isReviewHeaderRow(tb) ? 1 : 0} approverKeepLabel />
                                                         </div>
                                                         {!readonly && (
                                                             <Space size={8} style={{ flexShrink: 0, marginTop: 8 }}>

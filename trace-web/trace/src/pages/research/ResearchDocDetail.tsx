@@ -23,6 +23,39 @@ const isAutoNode = (node: any) =>
     || !!node?.img_category
     || String(node?.title || "").replace(/^[0-9．.、\s]+/, "").trim() === "现成软件";
 
+const MD5_LINE = /^MD5\s*[:：]\s*(.*)$/i;
+
+const findSwIdent = (nodes: any[]): any => {
+    for (const n of nodes || []) {
+        const title = String(n?.title || "").replace(/^[0-9．.、\s]+/, "").trim();
+        if (n?.ref_type === "sw_ident" || title === "软件标识") return n;
+        const hit = findSwIdent(n.children || []);
+        if (hit) return hit;
+    }
+    return null;
+};
+
+const readMd5 = (text: string) => {
+    for (const ln of String(text || "").split("\n")) {
+        const matched = ln.trim().match(MD5_LINE);
+        if (matched) return matched[1];
+    }
+    return "";
+};
+
+const writeMd5 = (text: string, value: string) => {
+    const lines = String(text || "").split("\n");
+    const idx = lines.findIndex((ln) => MD5_LINE.test(ln.trim()));
+    const row = `MD5：${value}`;
+    if (idx >= 0) lines[idx] = row;
+    else {
+        const at = lines.findIndex((ln) => String(ln).includes("现成软件的标识信息"));
+        if (at >= 0) lines.splice(at, 0, row);
+        else lines.push(row);
+    }
+    return lines.join("\n");
+};
+
 const assignKeys = (nodes: any[], prefix = ""): any[] => {
     (nodes || []).forEach((n: any, i: number) => {
         n._key = `${prefix}${i}`;
@@ -115,6 +148,7 @@ export default () => {
     const rebindProduct = (newId: number) => {
         const product = (data.products || []).find((p: any) => p.id === newId) || {};
         dispatch({ loading: true, doc: { ...data.doc, product_id: newId, product_name: product.name, product_full_version: product.full_version } });
+        const prevMd5 = readMd5(findSwIdent(data.sections)?.text || "");
         Api.research_autofill({ product_id: newId }).then((res: any) => {
             if (res.code !== Api.C_OK) {
                 dispatch({ loading: false });
@@ -123,6 +157,8 @@ export default () => {
             }
             // 切换产品：按新产品整体重新获取全部内容（含表5开发量、全文软件名称、版本规则、图等）
             const sections = (res.data && res.data.sections) || [];
+            const ident = findSwIdent(sections);
+            if (ident && prevMd5) ident.text = writeMd5(ident.text || "", prevMd5);
             assignKeys(sections);
             dispatch({
                 loading: false,
@@ -284,10 +320,10 @@ export default () => {
             </div>
         ));
 
-    const renderImages = (urls: string[], emptyHint?: string) => (
+    const renderImages = (urls: string[], emptyHint?: string, maxWidth: string | number = "100%") => (
         (urls || []).filter(Boolean).length
             ? (urls || []).filter(Boolean).map((url: string, i: number) => (
-                <img key={i} src={url.startsWith("data:") ? url : `${url}${url.includes("?") ? "&" : "?"}_t=${data.imgVer}`} alt={`图${i + 1}`} style={{ maxWidth: "100%", height: "auto", display: "block", margin: "8px 0" }} />
+                <img key={i} src={url.startsWith("data:") ? url : `${url}${url.includes("?") ? "&" : "?"}_t=${data.imgVer}`} alt={`图${i + 1}`} style={{ maxWidth, height: "auto", display: "block", margin: "8px auto" }} />
             ))
             : <div style={{ color: "#bbb", margin: "8px 0", fontSize: 13 }}>{emptyHint || "未获取到对应图表，请在「图表文件管理」中按产品上传后重试。"}</div>
     );
@@ -480,6 +516,89 @@ export default () => {
         );
     };
 
+    const renderSwIdent = (node: any) => {
+        const lines = String(node.text || "").split("\n");
+        const md5Idx = lines.findIndex((ln) => MD5_LINE.test(String(ln).trim()));
+        const setMd5 = (value: string) => updateNode(node._key, (n) => { n.text = writeMd5(n.text || "", value); });
+        return (
+            <div style={{ color: "#46586b", fontSize: 13, lineHeight: 1.7 }}>
+                {lines.map((ln, i) => {
+                    if (i !== md5Idx) return <div key={i}>{ln || "\u00a0"}</div>;
+                    const matched = String(ln).trim().match(MD5_LINE);
+                    return (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, margin: "4px 0" }}>
+                            <span style={{ flex: "0 0 auto" }}>MD5：</span>
+                            <Input
+                                size="small"
+                                style={{ maxWidth: 480 }}
+                                value={matched ? matched[1] : ""}
+                                placeholder="请手动填写，刷新不会覆盖"
+                                onChange={(e) => setMd5(e.target.value)}
+                            />
+                        </div>
+                    );
+                })}
+                {md5Idx < 0 && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "4px 0" }}>
+                        <span style={{ flex: "0 0 auto" }}>MD5：</span>
+                        <Input size="small" style={{ maxWidth: 480 }} placeholder="请手动填写，刷新不会覆盖" onChange={(e) => setMd5(e.target.value)} />
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    const renderArchComponentTable = (rows: any[][], bi: number, ti: number) => {
+        const cols = Math.max(...(rows || []).map((r) => (r || []).length), 0);
+        if (cols <= 0) return null;
+        const patch = (mutate: (table: any[][]) => void) => updateNode(active._key, (n) => {
+            if (!Array.isArray(n.tables)) n.tables = [];
+            if (!n.tables[ti]) {
+                const fromBlock = n.blocks?.[bi]?.table;
+                n.tables[ti] = fromBlock ? JSON.parse(JSON.stringify(fromBlock)) : [];
+            }
+            mutate(n.tables[ti]);
+            if (Array.isArray(n.blocks) && n.blocks[bi]) {
+                n.blocks[bi] = { ...n.blocks[bi], table: n.tables[ti] };
+            }
+        });
+        return (
+            <>
+                <table className="pdp-grid">
+                    <tbody>
+                        {(rows || []).map((row: any[], ri: number) => (
+                            <tr key={ri}>
+                                {Array.from({ length: cols }).map((_, ci) => (
+                                    <td key={ci} className={ri === 0 ? "head" : ""}>
+                                        <Input.TextArea
+                                            className="pdp-cell"
+                                            autoSize={{ minRows: 1, maxRows: 6 }}
+                                            value={(row && row[ci]) ?? ""}
+                                            onChange={(e) => patch((table) => {
+                                                if (!table[ri]) table[ri] = [];
+                                                table[ri][ci] = e.target.value;
+                                            })}
+                                        />
+                                    </td>
+                                ))}
+                                <td className="pdp-row-op">
+                                    <PlusOutlined title="在下方插入行" onClick={() => patch((table) => {
+                                        const blank = Array.from({ length: cols }).map(() => "");
+                                        table.splice(ri + 1, 0, blank);
+                                    })} />
+                                    {(rows || []).length > 1 && (
+                                        <Button type="link" danger size="small" onClick={() => patch((table) => { table.splice(ri, 1); })}>删除</Button>
+                                    )}
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+                <div style={{ color: "#999", fontSize: 12, marginTop: 4 }}>此表可修改，保存后保留；本章其余正文和结构图仍自动获取。</div>
+            </>
+        );
+    };
+
     // 非自动获取的图文章节：编辑 blocks 里的文字/图题后，按版式重组回 node.text（图位置用 {{IMG}} 占位保留），图保持只读
     const setBlockText = (bi: number, val: string) => updateNode(active._key, (n) => {
         if (!Array.isArray(n.blocks)) return;
@@ -553,7 +672,11 @@ export default () => {
                             const isHome = b.img_category === "img_home";
                             return (
                                 <div className="pdp-field" key={bi}>
-                                    {renderImages([b.url], isHome ? "未获取到主界面图，请点击下方按钮上传/更换主界面图。" : undefined)}
+                                    {renderImages(
+                                        [b.url],
+                                        isHome ? "未获取到主界面图，请点击下方按钮上传/更换主界面图。" : undefined,
+                                        b.img_category === "img_topo" ? 560 : "100%",
+                                    )}
                                     {isHome && renderHomeUpload(!!b.url)}
                                 </div>
                             );
@@ -563,7 +686,13 @@ export default () => {
                                 ? <div className="pdp-field" key={bi}><Input size="small" value={b.text ?? ""} placeholder="图题（如：图7 …）" style={{ textAlign: "center", maxWidth: 460 }} onChange={(e) => setBlockText(bi, e.target.value)} /></div>
                                 : <div key={bi} style={{ textAlign: "center", fontSize: 13, color: "#444", margin: "4px 0 12px" }}>{b.text}</div>;
                         }
-                        if (b?.type === "table") return <div className="pdp-table-block" key={bi}>{renderReadonlyTable(b.table || [], b.title || "")}</div>;
+                        if (b?.type === "table") {
+                            if (!readonly && active.ref_type === "arch_func") {
+                                const ti = blocks.slice(0, bi).filter((x) => x?.type === "table").length;
+                                return <div className="pdp-table-block" key={bi}>{renderArchComponentTable(b.table || [], bi, ti)}</div>;
+                            }
+                            return <div className="pdp-table-block" key={bi}>{renderReadonlyTable(b.table || [], b.title || "")}</div>;
+                        }
                         if (editable && !rtContentLock) {
                             return <div className="pdp-field" key={bi}><Input.TextArea autoSize={{ minRows: 2, maxRows: 20 }} value={b?.text ?? ""} placeholder="本段正文内容，可多行" onChange={(e) => setBlockText(bi, e.target.value)} /></div>;
                         }
@@ -574,7 +703,9 @@ export default () => {
                 ) : (
                     <>
                         <div className="pdp-field">
-                            {editable && !isRuntimeLockedBody(active) ? (
+                            {!readonly && active.ref_type === "sw_ident" ? (
+                                renderSwIdent(active)
+                            ) : editable && !isRuntimeLockedBody(active) ? (
                                 <Input.TextArea
                                     autoSize={{ minRows: 3, maxRows: 20 }}
                                     value={active.text ?? ""}
@@ -593,6 +724,7 @@ export default () => {
                                 {renderImages(
                                     active.images || [],
                                     active.img_category === "img_home" ? "未获取到主界面图，请点击下方按钮上传/更换主界面图。" : undefined,
+                                    active.img_category === "img_topo" ? 560 : "100%",
                                 )}
                                 {active.img_category === "img_home" && renderHomeUpload((active.images || []).filter(Boolean).length > 0)}
                             </div>
@@ -662,7 +794,7 @@ export default () => {
                     <div className="pdp-nav">
                         <div className="pdp-nav-head">目录</div>
                         {!readonly && (
-                            <div className="pdp-nav-hint">蓝色「自动获取」章节由系统按产品自动填充，不可编辑；其余章节可直接修改正文与表格。右侧 + 加子章节、🗑 删除。</div>
+                            <div className="pdp-nav-hint">蓝色「自动获取」章节由系统按产品自动填充，不可编辑；1.1 的 MD5 可手填，1.3.2.1 的组件表可改。其余章节可直接修改正文与表格。右侧 + 加子章节、🗑 删除。</div>
                         )}
                         {renderNav(data.sections, 0)}
                         {!readonly && (

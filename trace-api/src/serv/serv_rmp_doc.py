@@ -534,16 +534,24 @@ class Server(object):
                     if i < len(widths):
                         gc.set(qn("w:w"), str(widths[i]))
             for row in table.rows:
-                for i, cell in enumerate(row.cells):
-                    if i >= len(widths):
+                i = 0
+                seen = set()
+                while i < len(row.cells) and i < len(widths):
+                    cell = row.cells[i]
+                    if id(cell._tc) in seen:
+                        i += 1
                         continue
+                    seen.add(id(cell._tc))
+                    span_el = cell._tc.tcPr.gridSpan if cell._tc.tcPr is not None else None
+                    span = int(span_el.val) if span_el is not None else 1
                     tc_pr = cell._tc.get_or_add_tcPr()
                     tc_w = tc_pr.find(qn("w:tcW"))
                     if tc_w is None:
                         tc_w = OxmlElement("w:tcW")
                         tc_pr.append(tc_w)
-                    tc_w.set(qn("w:w"), str(widths[i]))
+                    tc_w.set(qn("w:w"), str(sum(widths[i:i + span])))
                     tc_w.set(qn("w:type"), "dxa")
+                    i += max(span, 1)
 
         def add_grid(grid, merge_full_rows=False, skip_duplicate=False):
             grid = [row for row in (grid or []) if isinstance(row, list)]
@@ -567,8 +575,17 @@ class Server(object):
                 first = row[0] if row else ""
                 first_txt = str(first or "").strip()
                 is_other = first_txt.startswith("其他参会人员") or first_txt.startswith("其他参评人员")
+                is_approver = first_txt.startswith("批准人员签字")
+                # 批准人员签字/日期：标题留在第一格，签字和日期合并到后面
+                if merge_full_rows and is_approver and cols > 2:
+                    set_cell(cells[0], first, align=WD_ALIGN_PARAGRAPH.CENTER)
+                    sign = row[1] if len(row) > 1 else ""
+                    date = row[2] if len(row) > 2 else ""
+                    merged = cells[1].merge(cells[cols - 1])
+                    serv_review_util.write_approver_sign_date(merged, sign, date, set_cell)
+                    h_merged.append(True)
                 # 仅评审记录：整行只有第一格有内容时，跨整行合并
-                if merge_full_rows and cols > 1 and first_txt and rest_all_empty(row):
+                elif merge_full_rows and cols > 1 and first_txt and rest_all_empty(row):
                     merged = cells[0].merge(cells[cols - 1])
                     center = first_txt.startswith("参评人员签字") or first_txt.startswith("评审时间")
                     align = WD_ALIGN_PARAGRAPH.CENTER if center else WD_ALIGN_PARAGRAPH.LEFT

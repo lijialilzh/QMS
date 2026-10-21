@@ -23,6 +23,7 @@ from ..model.product import Product
 from ..model.rcm import Rcm
 from ..model.haz import Haz
 from ..model.prod_haz import ProdHaz
+from ..model.prod_rcm import ProdRcm
 from ..model.risk_mgmt_doc import RiskAnalysis, RiskControl, RiskMgmtDoc, RiskParticipant
 from ..model.project_member import ProjectMember
 from ..model.prod_dhf import ProdDhf
@@ -421,16 +422,31 @@ class Server(object):
         self.__node_outline(child, 0, lines)
         return "\n".join(lines)
 
-    def __pha_appendix_a_table(self, product_id):
-        # 附录A：初步危害分析清单「与安全有关特征的问题识别」ISO 问题表
-        doc = self.__latest_source_doc(PhaDoc, product_id)
-        if not doc or not isinstance(doc.content, dict):
-            return None
-        sections = doc.content.get("sections") or []
-        target = next((s for s in sections if self.__strip_no(s.get("title")) == "与安全有关特征的问题识别"), None)
-        if not target:
-            return None
+    def __family_prod_ids(self, product_id):
+        """当前版本在前，同名产品的其他版本按 id 从新到旧排在后面。"""
+        if not product_id:
+            return []
+        product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+        ids = [int(product_id)]
+        name = (getattr(product, "name", "") or "").strip() if product else ""
+        if not name:
+            return ids
+        others = db.session.execute(
+            select(Product.id).where(Product.name == name, Product.id != product_id).order_by(Product.id.desc())
+        ).scalars().all()
+        ids.extend([int(i) for i in others if i])
+        return ids
 
+    def __prod_id_with_rows(self, product_id, model):
+        """当前版本没有记录时，用同名产品其他版本里有数据的那一版。"""
+        for pid in self.__family_prod_ids(product_id):
+            n = db.session.execute(select(func.count()).select_from(model).where(model.prod_id == pid)).scalar() or 0
+            if n:
+                return pid
+        return product_id
+
+    def __pha_appendix_a_table(self, product_id):
+        # 附录A：初步危害分析清单「与安全有关特征的问题识别」ISO 问题表。当前版本没有时用同名其他版本。
         def find_table(node):
             for t in node.get("tables") or []:
                 if t and isinstance(t[0], list):
@@ -443,14 +459,24 @@ class Server(object):
                     return found
             return None
 
-        return find_table(target)
+        for pid in self.__family_prod_ids(product_id) or []:
+            doc = self.__latest_source_doc(PhaDoc, pid)
+            if not doc or not isinstance(doc.content, dict):
+                continue
+            sections = doc.content.get("sections") or []
+            target = next((s for s in sections if self.__strip_no(s.get("title")) == "与安全有关特征的问题识别"), None)
+            found = find_table(target) if target else None
+            if found:
+                return found
+        return None
 
     def __risk_dist_matrices(self, product_id):
         # 7.1 风险分布：初始/剩余（发生概率×严重度）5×5 数量矩阵
+        haz_pid = self.__prod_id_with_rows(product_id, ProdHaz) if product_id else None
         rows = db.session.execute(
             select(ProdHaz, Haz).outerjoin(Haz, ProdHaz.haz_id == Haz.id)
-            .where(ProdHaz.prod_id == product_id)
-        ).all() if product_id else []
+            .where(ProdHaz.prod_id == haz_pid)
+        ).all() if haz_pid else []
         # 无 HAZ 数据时也返回全 0 的两张矩阵（而非 None），确保 7.1 始终有表
         rate_to_row = {"5": 0, "4": 1, "3": 2, "2": 3, "1": 4}
         sev_to_col = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4}
@@ -497,10 +523,11 @@ class Server(object):
 
         rcm_col = find_col(["RCM编号", "RCM"], 0)
         measure_col = find_col(["风险控制措施", "控制措施"], 3)
+        haz_pid = self.__prod_id_with_rows(product_id, ProdHaz) if product_id else None
         haz_rows = db.session.execute(
             select(ProdHaz, Haz).outerjoin(Haz, ProdHaz.haz_id == Haz.id)
-            .where(ProdHaz.prod_id == product_id)
-        ).all() if product_id else []
+            .where(ProdHaz.prod_id == haz_pid)
+        ).all() if haz_pid else []
 
         def rcm_codes(text):
             return [x.replace(" ", "") for x in re.findall(r"RCM\s*\d+", str(text or "").upper())]
@@ -514,17 +541,21 @@ class Server(object):
                     res.append((getattr(haz, "code", "") or "", analysis))
             return res
 
+        haz_col = find_col(["引入的危害", "危害"], 1)
+        analysis_col = find_col(["风险分析"], 2)
         parsed = []
         for row in data_rows:
             if not isinstance(row, list):
                 continue
+            stored_haz = str(row[haz_col] if haz_col < len(row) else "").strip()
             raw = str(row[rcm_col] if rcm_col < len(row) else "")
             search = raw if raw.strip() else str(row[measure_col] if measure_col < len(row) else "")
             codes = rcm_codes(search)
             rcm = codes[0] if codes else ""
             stored = str(row[measure_col] if measure_col < len(row) else "")
-            parsed.append((raw, rcm, stored))
-        wanted = sorted({rcm for _, rcm, stored in parsed if rcm and (rcm_codes(stored)[:1] != [rcm])})
+            analysis = str(row[analysis_col] if analysis_col < len(row) else "")
+            parsed.append((raw, rcm, stored, stored_haz, analysis))
+        wanted = sorted({rcm for _, rcm, stored, _, _ in parsed if rcm and (rcm_codes(stored)[:1] != [rcm])})
         lib = {}
         if wanted:
             for item in db.session.execute(select(Rcm).where(Rcm.code.in_(wanted))).scalars().all():
@@ -542,7 +573,7 @@ class Server(object):
             return best
 
         out = []
-        for raw, rcm, stored in parsed:
+        for raw, rcm, stored, stored_haz, analysis in parsed:
             stored_code = (rcm_codes(stored)[:1] or [""])[0]
             measure = stored
             if rcm and stored_code != rcm:
@@ -555,12 +586,15 @@ class Server(object):
                     measure = "未匹配到RCM"
             elif not measure:
                 measure = raw
+            if stored_haz:
+                out.append([raw, stored_haz, analysis, measure])
+                continue
             ms = matches(rcm) if rcm else []
             if not ms:
                 out.append([raw, "未匹配到HAZ" if rcm else "", "", measure])
             else:
-                for code, analysis in ms:
-                    out.append([raw, code, analysis, measure])
+                for code, haz_analysis in ms:
+                    out.append([raw, code, haz_analysis, measure])
         return out
 
     def __project_time_range(self, product_id):
@@ -612,6 +646,9 @@ class Server(object):
             "风险分析方式": (
                 "根据YY/T 0316、ISO14971和风险管理控制程序，对于每个危害发生概率、危害程度的评估、"
                 "综合考虑概率和危害程度的风险等级、风险可接受准则如下所示。"
+            ),
+            "风险评价准则": (
+                f"风险可接受准则在《风险管理控制程序》已经定义，{name}适用于这个风险可接受准则。风险可接受准则为："
             ),
             "与合理可预见相关的环境相关的危害": "正常使用\n不正确的使用\n人为恶意使用",
             "考虑的危害包括": "对患者的危害\n对操作者的危害\n对信息资产的危害",
@@ -697,6 +734,46 @@ class Server(object):
             ),
         }
 
+    def __scope_template(self, product):
+        name = (getattr(product, "name", "") or "").strip() or "本产品"
+        ver = (getattr(product, "release_version", "") or "").strip()
+        head = f"本文件适用的产品为“{name}（版本：{ver}）”。" if ver else f"本文件适用的产品为“{name}”。"
+        return (
+            f"{head}\n"
+            "寿命周期内产品需要开展的风险管理活动的范围包括：\n"
+            "从实施过程的角度包括：设计和研发；采购；制造；包装；检查和测试等。\n"
+            "交付过程：贮存和运输。\n"
+            "交付后：操作说明，软件升级维护，使用过程中可能面临的问题。\n"
+            "产品失效后的处理。"
+        )
+
+    def __swap_product_name(self, text, current_name, names):
+        current = str(current_name or "").strip()
+        if not current:
+            return str(text or "")
+        out = str(text or "")
+        others = sorted({str(n or "").strip() for n in names or [] if str(n or "").strip() and str(n or "").strip() != current}, key=len, reverse=True)
+        for name in others:
+            if len(name) >= 2 and name in out:
+                out = out.replace(name, current)
+        return out
+
+    def __rewrite_applicability(self, table, current_name, names):
+        if not table or not isinstance(table, list) or not isinstance(table[0], list):
+            return table
+        head = [re.sub(r"\s+", "", str(c)) for c in table[0]]
+        col = next((i for i, h in enumerate(head) if "是否适用" in h), None)
+        if col is None:
+            return table
+        out = [list(table[0])]
+        for row in table[1:]:
+            row = list(row or [])
+            while len(row) <= col:
+                row.append("")
+            row[col] = self.__swap_product_name(row[col], current_name, names)
+            out.append(row)
+        return out
+
     def __autofill_body_sections(self, content, product_id, version, product=None):
         if not product_id:
             return content
@@ -706,6 +783,7 @@ class Server(object):
         overall = (getattr(product, "overall_desc", "") or "").strip() if product else ""
         time_range = self.__project_time_range(product_id)
         defaults = self.__body_text_defaults(pname, time_range)
+        product_names = [n for n in db.session.execute(select(Product.name)).scalars().all()]
         lazy = {"ptr": None, "appx_a": None, "dist": None}
 
         def has_text(node):
@@ -728,8 +806,11 @@ class Server(object):
 
         def walk(node):
             title = self.__strip_no(node.get("title"))
-            if title == "危害识别":
+            if title == "危害识别" or title == "风险控制":
+                # 5.1、6.5 正文保持为空，说明写在下级章节，也不从上级章节带出
                 node["text"] = ""
+                node["body"] = ""
+                node["content"] = ""
             elif title in defaults and not has_text(node):
                 node["text"] = defaults[title]
             if title in (
@@ -739,8 +820,14 @@ class Server(object):
                 "危害重点考虑的原因应包括",
             ):
                 node["text"] = self.__strip_duplicate_title(node.get("text"), title)
-            if title == "范围" and not has_text(node) and product and (getattr(product, "scope", "") or "").strip():
-                node["text"] = product.scope.strip()
+            if title == "范围" and product:
+                node["text"] = self.__scope_template(product)
+            if title == "风险分析参与人员" and not has_text(node):
+                node["text"] = (
+                    "如果风险管理计划确定的风险管理小组中的任何成员没有参与到评审过程，必须定义和进行后续适应性的确认。"
+                    "在本产品执行过程中，评审参与人员与风险管理计划没有偏差。\n"
+                    "表 1 风险管理参与人员表"
+                )
             if title == "产品描述" and not has_text(node) and product:
                 node["text"] = product_desc()
             # 3.1 产品预期用途每次打开/导出按产品适用范围重取
@@ -764,21 +851,22 @@ class Server(object):
                     lazy["ptr"] = self.__ptr_func_2_1(product_id) or ""
                 if lazy["ptr"]:
                     node["text"] = lazy["ptr"]
-            if is_appendix_a(node) and not (node.get("tables") or []):
-                if lazy["appx_a"] is None:
-                    lazy["appx_a"] = self.__pha_appendix_a_table(product_id) or []
-                if lazy["appx_a"]:
-                    node["tables"] = [copy.deepcopy(lazy["appx_a"])]
+            if is_appendix_a(node):
+                if not (node.get("tables") or []):
+                    if lazy["appx_a"] is None:
+                        lazy["appx_a"] = self.__pha_appendix_a_table(product_id) or []
+                    if lazy["appx_a"]:
+                        node["tables"] = [copy.deepcopy(lazy["appx_a"])]
+                if pname and node.get("tables"):
+                    node["tables"] = [self.__rewrite_applicability(t, pname, product_names) for t in node.get("tables") or []]
             tnorm = re.sub(r"\s+", "", str(node.get("title") or ""))
             if "由风险控制措施产生的风险" in tnorm:
                 tbs = node.get("tables") or []
                 table0 = tbs[0] if tbs and isinstance(tbs[0], list) else None
-                if not table0 or len(table0) <= 1:
-                    node["tables"] = [[
-                        ["RCM编号", "引入的危害", "RCM引入的风险分析", "风险控制措施"],
-                        ["RCM017", "", "", "RCM017.在用户说明书中说明，在软件中无法找到所需图像时的故障排除步骤。"],
-                        ["RCM115", "", "", "RCM115.在用户说明书中增加警告：请在随访前请确认所选病例的ID与医院系统匹配，以免造成错误。"],
-                    ]]
+                if table0 and len(table0) == 3:
+                    codes = [str((row or [""])[0] or "").strip() for row in table0[1:]]
+                    if codes == ["RCM017", "RCM115"]:
+                        node["tables"] = [table0[:1]]
             if title == "RCMs实施风险控制措施前/后的风险分布" and not (node.get("tables") or []):
                 if lazy["dist"] is None:
                     lazy["dist"] = self.__risk_dist_matrices(product_id) or []
@@ -1455,6 +1543,26 @@ class Server(object):
         risk_rates = {1: "1", 2: "2", 3: "3", 4: "4", 5: "5"}
         risk_degrees = {"A": "A", "B": "B", "C": "C", "D": "D", "E": "E"}
         risk_levels = {"1": "不可接受", "2": "进一步降低的研究", "3": "可忽略"}
+        evidence_by_code = {}
+        rcm_desc = {}
+        if obj.product_id:
+            try:
+                from .serv_prod_haz import Server as ProdHazServer
+                from .serv_prod_rcm import Server as ProdRcmServer
+                haz_pid = self.__prod_id_with_rows(obj.product_id, ProdHaz)
+                rcm_pid = self.__prod_id_with_rows(obj.product_id, ProdRcm)
+                haz_resp = await ProdHazServer().list_prod_haz(None, export=True, prod_id=haz_pid, page_index=0, page_size=100000)
+                for item in getattr(getattr(haz_resp, "data", None), "rows", None) or []:
+                    code = str(getattr(item, "code", "") or "").strip()
+                    if code:
+                        evidence_by_code[code] = getattr(item, "evidence", "") or ""
+                rcm_resp = await ProdRcmServer().list_prod_rcm(None, export=True, prod_id=rcm_pid, page_index=0, page_size=100000)
+                for item in getattr(getattr(rcm_resp, "data", None), "rows", None) or []:
+                    code = re.sub(r"\s+", "", str(getattr(item, "code", "") or "").upper())
+                    if code and code not in rcm_desc:
+                        rcm_desc[code] = str(getattr(item, "description", "") or "").strip()
+            except Exception:
+                logger.exception("风险管理报告导出补齐测试用例和风险控制措施失败")
 
         def normalized_title(value):
             return re.sub(r"\s+", "", str(value or ""))
@@ -1713,6 +1821,7 @@ class Server(object):
                 cells = table.add_row().cells
                 for idx in range(col_count):
                     set_cell_text(cells[idx], row[idx] if idx < len(row or []) else "", bold=(len(table.rows) == 1))
+            docx_util.merge_effective_date_row(table)
             document.add_paragraph()
 
         def add_section_image(image_url):
@@ -1897,7 +2006,7 @@ class Server(object):
             rows = db.session.execute(
                 select(ProdHaz, Haz)
                 .outerjoin(Haz, ProdHaz.haz_id == Haz.id)
-                .where(ProdHaz.prod_id == obj.product_id)
+                .where(ProdHaz.prod_id == self.__prod_id_with_rows(obj.product_id, ProdHaz))
                 .order_by(Haz.code)
             ).all()
             table = document.add_table(rows=1, cols=16)
@@ -1926,7 +2035,7 @@ class Server(object):
                     risk_levels.get(prod_haz.init_level or getattr(haz, "init_level", None), prod_haz.init_level or getattr(haz, "init_level", "") or ""),
                     prod_haz.deal or getattr(haz, "deal", "") or "",
                     prod_haz.rcms or getattr(haz, "rcms", "") or "",
-                    prod_haz.evidence or getattr(haz, "evidence", "") or "",
+                    evidence_by_code.get(getattr(haz, "code", "") or "", None) or prod_haz.evidence or getattr(haz, "evidence", "") or "",
                     risk_rates.get(prod_haz.cur_rate or getattr(haz, "cur_rate", None), prod_haz.cur_rate or getattr(haz, "cur_rate", "") or ""),
                     risk_degrees.get(prod_haz.cur_degree or getattr(haz, "cur_degree", None), prod_haz.cur_degree or getattr(haz, "cur_degree", "") or ""),
                     risk_levels.get(prod_haz.cur_level or getattr(haz, "cur_level", None), prod_haz.cur_level or getattr(haz, "cur_level", "") or ""),
@@ -1983,7 +2092,10 @@ class Server(object):
                 def _review_set_cell(cell, text, bold=False, align=None):
                     set_cell_text(cell, text, bold=bold)
                 for t_idx, table_rows in enumerate(section.get("tables", []) or []):
-                    serv_review_util.render_review_grid(document, table_rows, _review_set_cell, merge_col0=(t_idx == 0), merge_full=True)
+                    serv_review_util.render_review_grid(
+                        document, table_rows, _review_set_cell,
+                        merge_col0=(t_idx == 0), merge_full=True, approver_keep_label=True,
+                    )
             elif is_appendix_b(section):
                 add_product_haz_matrix()
             elif is_acceptance_standard_section(section):
@@ -2005,6 +2117,39 @@ class Server(object):
                             set_cell_text(cells[idx], value)
                 for table_rows in section.get("tables", []) or []:
                     add_plain_table(table_rows)
+            elif "风险控制措施的实施" in normalized_title(section.get("title") or ""):
+                def fill_rcm_grid(grid):
+                    rows = [list(r or []) for r in (grid or []) if isinstance(r, list)]
+                    if not rows:
+                        return rows
+                    head = "".join(str(c) for c in rows[0])
+                    if "RCM" not in head.upper() and "编号" not in head:
+                        return rows
+                    norm = [re.sub(r"\s+", "", str(c)) for c in rows[0]]
+                    rcm_i = next((i for i, h in enumerate(norm) if "RCM" in h.upper() or "编号" in h), 0)
+                    mea_i = next((i for i, h in enumerate(norm) if "措施" in h or "描述" in h), None)
+                    if mea_i is None:
+                        return rows
+                    for row in rows[1:]:
+                        while len(row) <= max(rcm_i, mea_i):
+                            row.append("")
+                        if str(row[mea_i] or "").strip():
+                            continue
+                        codes = re.findall(r"RCM\s*\d+", str(row[rcm_i] or "").upper())
+                        code = codes[0].replace(" ", "") if codes else ""
+                        if code and rcm_desc.get(code):
+                            row[mea_i] = rcm_desc[code]
+                    return rows
+
+                grids = [g for g in (section.get("tables") or []) if isinstance(g, list) and g]
+                if grids:
+                    for grid in grids:
+                        add_plain_table(fill_rcm_grid(grid))
+                elif rcm_desc:
+                    live = [["RCM编号", "控制措施描述"]]
+                    for code, desc in rcm_desc.items():
+                        live.append([code, desc])
+                    add_plain_table(live)
             elif section.get("ref_type") == "risk_controls":
                 rows = db.session.execute(select(RiskControl).where(RiskControl.doc_id == id).order_by(RiskControl.id)).scalars().all()
                 if rows:

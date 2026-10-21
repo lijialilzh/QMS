@@ -5,7 +5,7 @@
 # 自动获取：
 #   1) 全文产品名称（模板内置基准名 BASE_NAME，按所选产品名称全文替换）。
 #   2) A.2/A.3/A.4(CFMEA/DFMEA/PFMEA) 表按「危害编号」从产品HAZ管理回填
-#      潜在故障模式/故障的潜在原因/失效的潜在影响/分类。
+#      潜在故障模式←来源，故障的潜在原因←HAZ事件序列，失效的潜在影响←伤害，分类←分类。
 #   3) 封面/修订记录日期按产品时间逻辑线更新。
 
 import base64
@@ -296,7 +296,7 @@ class Server(object):
             if mode_idx is not None and mode_idx < len(row):
                 row[mode_idx] = info.get("source") or ""
             if cause_idx is not None and cause_idx < len(row):
-                row[cause_idx] = info.get("situation") or info.get("event") or ""
+                row[cause_idx] = info.get("event") or ""
             if damage_idx is not None and damage_idx < len(row):
                 row[damage_idx] = info.get("damage") or ""
             if category_idx is not None and category_idx < len(row):

@@ -321,6 +321,71 @@ class Server(object):
                     lines.append(text)
         return "\n".join(lines)
 
+    def __srs_topo_notes(self, product_id):
+        # 需求规格说明物理拓扑图图题以下的说明（不含图题本身、不含占位符）
+        doc = self.__latest_doc(SrsDoc, product_id)
+        if not doc:
+            return ""
+        nodes = db.session.execute(
+            select(SrsNode).where(SrsNode.doc_id == doc.id).order_by(SrsNode.priority, SrsNode.n_id)
+        ).scalars().all()
+        target = None
+        for n in nodes:
+            name = self.__strip_name(n.title)
+            if n.ref_type == "img_topo" or name in ("物理拓扑图", "物理拓扑"):
+                target = n
+                break
+        if not target:
+            return ""
+        lines = str(target.text or "").split("\n")
+        cap_i = next((i for i, ln in enumerate(lines) if re.match(r"^图\s*\d", ln.strip())), None)
+        if cap_i is None:
+            return ""
+        kept = []
+        for ln in lines[cap_i + 1:]:
+            if ln.strip() in ("{{IMG}}", "{{TXT}}", "{{TBL}}", "{{EMPTY}}"):
+                continue
+            kept.append(ln.rstrip())
+        while kept and not kept[0].strip():
+            kept.pop(0)
+        while kept and not kept[-1].strip():
+            kept.pop()
+        return "\n".join(kept)
+
+    @staticmethod
+    def __replace_after_caption(text, notes):
+        # 保留本章自己的引导句和图题，只替换图题以下的说明
+        notes = str(notes or "").strip()
+        if not notes:
+            return text
+        lines = str(text or "").split("\n")
+        cap_i = next((i for i, ln in enumerate(lines) if re.match(r"^图\s*\d", ln.strip())), None)
+        if cap_i is None:
+            base = str(text or "").rstrip()
+            return f"{base}\n{notes}" if base else notes
+        head = "\n".join(lines[:cap_i + 1]).rstrip()
+        return f"{head}\n{notes}"
+
+    @staticmethod
+    def __compose_sw_ident(auto, existing_text):
+        # MD5 为手填，刷新时从原文保留，不从产品覆盖
+        md5 = ""
+        for ln in str(existing_text or "").split("\n"):
+            matched = re.match(r"^MD5\s*[:：]\s*(.*)$", ln.strip(), re.I)
+            if matched:
+                md5 = matched.group(1).strip()
+                break
+        lines = [f"产品名称：{auto.get('product_name', '')}"]
+        model = (auto.get("product_model") or "").strip()
+        if model:
+            lines.append(f"型号：{model}")
+        lines.append(f"软件发布版本: {auto.get('release_version', '')}")
+        lines.append(f"注册申请人：{auto.get('registrant', '')}")
+        lines.append(f"设计开发地址：{auto.get('address', '')}")
+        lines.append(f"MD5：{md5}")
+        lines.append("现成软件的标识信息详见1.3.2.1章节组件信息。")
+        return "\n".join(lines)
+
     def __runtime_env(self, product_id):
         return get_runtime_payload(product_id)
 
@@ -492,13 +557,6 @@ class Server(object):
         env = self.__runtime_env(product_id)
         release_date = self.__release_date(product_id)
 
-        sw_ident_text = (
-            f"产品名称：{product.name or ''}\n"
-            f"软件发布版本: {product.release_version or ''}\n"
-            f"注册申请人：{company_name}\n"
-            f"设计开发地址：{address}\n"
-            f"现成软件的标识信息详见1.3.2.1章节组件信息。"
-        )
         update_text = (
             f"本软件当前发布版本{product.release_version or ''}，完整版本为{product.full_version or ''}，"
             f"发布日期是{release_date or ''}，版本命名规则和更新历史详见提交文件《版本更新历史》。"
@@ -507,8 +565,11 @@ class Server(object):
             "product_name": (product.name or "").strip(),
             "release_version": (product.release_version or "").strip(),
             "full_version": (product.full_version or "").strip(),
-            "sw_ident_text": sw_ident_text,
+            "product_model": (getattr(product, "type_code", None) or "").strip(),
+            "registrant": company_name,
+            "address": address,
             "overall_desc": (product.overall_desc or "").strip(),
+            "srs_topo_notes": self.__srs_topo_notes(product_id),
             "ptr_2_1": self.__ptr_func_2_1(product_id),
             "srs_2_3": self.__srs_2_3(product_id),
             "update_text": update_text,
@@ -611,8 +672,10 @@ class Server(object):
                         rt = "sw_ident"
                 if tn == "现成软件":
                     rt = "ots"
+                if (cat == "img_topo" or tn in ("物理拓扑", "物理拓扑图")) and (auto.get("srs_topo_notes") or "").strip():
+                    node["text"] = self.__replace_after_caption(node.get("text"), auto.get("srs_topo_notes"))
                 if rt == "sw_ident":
-                    node["text"] = auto["sw_ident_text"]
+                    node["text"] = self.__compose_sw_ident(auto, node.get("text"))
                 elif rt == "func_module":
                     node["text"] = ""
                     node["images"] = []
@@ -1008,12 +1071,16 @@ class Server(object):
                     set_cell_text(cells[idx], row[idx] if idx < len(row or []) else "", bold=(len(table.rows) == 1))
             document.add_paragraph()
 
-        def add_image(url):
+        def add_image(url, img_category=None):
             raw = str(url or "").strip()
             if not raw:
                 return
             try:
-                docx_util.save_img2docx(raw, document)
+                # 物理拓扑图横向较宽，导出时收到约页面可用宽度的一半
+                if img_category == "img_topo":
+                    docx_util.save_img2docx(raw, document, width_ratio=0.46, height_ratio=0.22)
+                else:
+                    docx_util.save_img2docx(raw, document)
             except Exception:
                 logger.exception("导出研究报告图片失败")
 
@@ -1027,7 +1094,7 @@ class Server(object):
                     if not isinstance(block, dict):
                         continue
                     if block.get("type") == "image":
-                        add_image(block.get("url"))
+                        add_image(block.get("url"), block.get("img_category"))
                     elif block.get("type") == "caption":
                         cap = document.add_paragraph()
                         cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -1040,7 +1107,7 @@ class Server(object):
                 if sec.get("text"):
                     docx_util.save_txt2docx(str(sec.get("text") or ""), document)
                 for url in sec.get("images", []) or []:
-                    add_image(url)
+                    add_image(url, sec.get("img_category"))
                 titles = sec.get("table_titles") or []
                 for idx, rows in enumerate(sec.get("tables", []) or []):
                     add_plain_table(rows, titles[idx] if idx < len(titles) else "")

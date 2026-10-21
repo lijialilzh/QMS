@@ -314,9 +314,11 @@ const applySrsReviewPersonAutofill = (
                 row[signKey] = nameVal;
             }
             row[nameKey] = name || "";
+            if (name) row[signKey] = sign || "";
             changed = true;
-        } else if (name && !nameVal.trim()) {
+        } else if (name && nameVal.trim() !== name) {
             row[nameKey] = name;
+            row[signKey] = sign || "";
             changed = true;
         }
         if (sign && !String(row[signKey] || "").trim()) {
@@ -3181,14 +3183,22 @@ export default () => {
                 return who ? (signMap[who] || who) : "";
             };
             const coverDate = computeSrsCoverDate(tlRows);
+            const pickTestLead = () => {
+                const names: string[] = [];
+                members.forEach((m: any) => {
+                    const role = String(m.role || "");
+                    const name = String(m.name || "").trim();
+                    if (!name || role.includes("用户") || !role.includes("测试") || names.includes(name)) return;
+                    names.push(name);
+                });
+                if (!names.length) return "";
+                if (names.length === 1) return names[0];
+                return names.includes("宋月") ? "宋月" : "孙家旭";
+            };
             const resolveReviewName = (role: string) => {
                 const label = String(role || "").trim();
                 if (label.includes("测试") && !label.includes("用户")) {
-                    const matched = String(coverDate || "").match(/(\d{4})\D+(\d{1,2})/);
-                    const before = matched
-                        ? parseInt(matched[1], 10) * 100 + parseInt(matched[2], 10) < 202509
-                        : false;
-                    return before ? "宋月" : "孙家旭";
+                    return pickTestLead();
                 }
                 const kws = SRS_REVIEW_ROLE_KWS[label] || [label];
                 for (const kw of kws) {

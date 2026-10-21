@@ -801,6 +801,33 @@ class Server(object):
         ).scalars().first()
         return (row.code or "").strip() if row and row.code else ""
 
+    def __fill_revision(self, content, prod_id, version=""):
+        """文件修订记录首行修改日期与封面生效日期同一天。覆盖模板占位 2015.10.21。"""
+        rev_date = serv_review_util.cover_date(prod_id, "nsr") if prod_id else ""
+        placeholders = {"2015.10.21", "2015年10月21日"}
+
+        def walk(nodes):
+            for node in nodes or []:
+                if not isinstance(node, dict):
+                    continue
+                title = self.__strip_name(node.get("title"))
+                if node.get("ref_type") == "revision" or title == "文件修订记录":
+                    tables = node.get("tables") or []
+                    if tables and isinstance(tables[0], list) and len(tables[0]) >= 2 and isinstance(tables[0][1], list):
+                        row = tables[0][1]
+                        if not row:
+                            row.append("")
+                        cur = str(row[0] or "").strip()
+                        if rev_date and (not cur or cur in placeholders):
+                            row[0] = rev_date
+                        elif cur in placeholders:
+                            row[0] = ""
+                        if version and len(row) > 1 and not str(row[1] or "").strip():
+                            row[1] = version
+                walk(node.get("children"))
+
+        walk((content or {}).get("sections"))
+
     async def __to_obj(self, row: NsrDoc, product: Product = None, with_autofill=True):
         obj = NsrDocObj(**row.dict())
         content = self.__normalize_content(obj.content)
@@ -810,6 +837,7 @@ class Server(object):
             if row.product_id:
                 serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(row.product_id, "nsr"))
                 serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(row.product_id, "nsr"), force=True)
+                self.__fill_revision(content, row.product_id, row.version or "")
         if product:
             content["productName"] = product.name or ""
         obj.content = content
@@ -934,6 +962,7 @@ class Server(object):
         content = self.__apply_autofill(content, auto)
         serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(product_id, "nsr"))
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(product_id, "nsr"), force=True)
+        self.__fill_revision(content, product_id, "A0")
         product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
         if product:
             content["productName"] = product.name or ""
@@ -970,7 +999,7 @@ class Server(object):
         def is_revision(sec):
             return sec.get("ref_type") == "revision" or normalized(sec.get("title")) == "文件修订记录"
 
-        def set_cell_text(cell, text, bold=False):
+        def set_cell_text(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
             s = str(text or "")
             if s.startswith("data:image"):
                 try:
@@ -985,7 +1014,7 @@ class Server(object):
                     pass
             cell.text = ""
             paragraph = cell.paragraphs[0]
-            paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            paragraph.alignment = align
             paragraph.paragraph_format.line_spacing = 1.5
             docx_util.fonted_txt(paragraph, s, font_size=10.5, bold=bold)
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
@@ -998,7 +1027,7 @@ class Server(object):
             para.alignment = WD_ALIGN_PARAGRAPH.CENTER
             docx_util.fonted_txt(para, title, font_size=10.5, bold=True)
 
-        def add_plain_table(rows, title="", no_merge=False):
+        def add_plain_table(rows, title="", no_merge=False, center=False):
             rows = rows or []
             col_count = max([len(row or []) for row in rows] or [0])
             if col_count <= 0:
@@ -1008,10 +1037,12 @@ class Server(object):
             table.style = "Table Grid"
             table.alignment = WD_TABLE_ALIGNMENT.CENTER
             table.autofit = True
+            align = WD_ALIGN_PARAGRAPH.CENTER if center else WD_ALIGN_PARAGRAPH.LEFT
             for row in rows:
                 cells = table.add_row().cells
                 for idx in range(col_count):
-                    set_cell_text(cells[idx], row[idx] if idx < len(row or []) else "", bold=(len(table.rows) == 1))
+                    set_cell_text(cells[idx], row[idx] if idx < len(row or []) else "", bold=(len(table.rows) == 1), align=align)
+            docx_util.merge_effective_date_row(table)
             if no_merge:
                 document.add_paragraph()
                 return
@@ -1168,7 +1199,7 @@ class Server(object):
         if revision:
             docx_util.save_title2docx("文件修订记录", document, level=1)
             for rows in revision.get("tables", []) or []:
-                add_plain_table(rows)
+                add_plain_table(rows, center=True)
             document.add_page_break()
         # 目录
         docx_util.insert_toc_field(document, "1-4")

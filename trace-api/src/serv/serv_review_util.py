@@ -1150,14 +1150,29 @@ REVIEW_ROLE_KW = {
 }
 
 
+def _pick_test_lead(members):
+    """测试负责人：参与人员里角色含「测试」且不含「用户」。只有一人用该人；多人时有宋月用宋月，否则用孙家旭。"""
+    names = []
+    for m in members or []:
+        role = str(getattr(m, "role", "") or "")
+        name = str(getattr(m, "name", "") or "").strip()
+        if not name or "用户" in role or "测试" not in role or name in names:
+            continue
+        names.append(name)
+    if not names:
+        return None
+    if len(names) == 1:
+        return names[0]
+    return "宋月" if "宋月" in names else "孙家旭"
+
+
 def _resolve_review_name(role_label, members, rev_date):
-    """按评审记录的「人员角色」取当前产品参与人员姓名；匹配不到返回 None（保留模板名）。
-    测试角色按日期规则：2025.09 前=宋月，之后=孙家旭。"""
+    """按评审记录的「人员角色」取当前产品参与人员姓名；匹配不到返回 None（保留原值）。"""
     label = str(role_label or "").strip()
     if not label or _is_banner(label) or label.startswith("其他"):
         return None
     if ("测试" in label) and ("用户" not in label):
-        return "宋月" if _before_202509(rev_date) else "孙家旭"
+        return _pick_test_lead(members)
     if "用户测试" in label:
         for m in members:
             if "用户测试" in str(m.role or ""):
@@ -1189,10 +1204,10 @@ def build_review_section(key, rev_date="", prod_id=None):
     ] + [list(r) for r in d["persons"]]
     # 「签字」列按「姓名」列自动取签名图（第2列姓名→第3列签字；第5列姓名→第6列签字），仅填空
     old_test = _before_202509(rev_date)
-    # 测试文件：评审记录按「人员角色」获取当前产品参与人员姓名（其余模块保持模板名+宋月规则）
-    role_based = key in ("stp", "utp", "utr", "str", "sds", "srs", "hld", "imm", "ftr", "tc_sw", "tc_user")
+    # 评审记录人员一律按「人员角色」取当前产品参与人员
+    role_based = bool(prod_id)
     rb_members = []
-    if role_based and prod_id:
+    if role_based:
         rb_members = db.session.execute(
             select(ProjectMember).where(ProjectMember.prod_id == prod_id)
         ).scalars().all()
@@ -1204,10 +1219,14 @@ def build_review_section(key, rev_date="", prod_id=None):
                 nm = _resolve_review_name(row[0], rb_members, rev_date)
                 if nm:
                     row[1] = nm
+                    if len(row) >= 3:
+                        row[2] = _sign_by_name(nm) if sign_mode_enabled() else ""
             if len(row) >= 5:
                 nm = _resolve_review_name(row[3] if len(row) >= 4 else "", rb_members, rev_date)
                 if nm:
                     row[4] = nm
+                    if len(row) >= 6:
+                        row[5] = _sign_by_name(nm) if sign_mode_enabled() else ""
         elif old_test:
             # 测试角色：2025.09 之前签名人统一为宋月
             if "测试" in str(row[0] or "") and len(row) >= 2:
@@ -1246,7 +1265,7 @@ def build_review_section(key, rev_date="", prod_id=None):
 
 def autofill_review_person_table(tbl, key="", rev_date="", prod_id=None, force_date=False):
     """对「已存在的参评人员签字表」就地自动填充（用于评审记录内置于默认内容、不经 build_review_section 的模块，如 rmp）：
-      - 「签字」列按「姓名」列取签名图（仅填空）；测试角色 2025.09 前统一取宋月；
+      - 参评人员按角色从该产品参与人员覆盖姓名和签字。测试负责人多人时有宋月用宋月，否则用孙家旭；
       - 「批准人员签字/日期」行填批准人签名(按部门) + 评审日期；
       - 「其他参评人员/其他参会人员」行标签后合并为一格并填 /。
       - force_date=True：有时间线日期则覆盖「评审时间」与批准日期（盖掉模板错误旧值）。
@@ -1265,10 +1284,10 @@ def autofill_review_person_table(tbl, key="", rev_date="", prod_id=None, force_d
                 break
     old_test = _before_202509(rev_date)
     approver = review_approver(key, prod_id, rev_date) if key else ""
-    # 含现场测试规程 ftr、测试用例评审 tc_sw/tc_user：测试角色按宋月/孙家旭日期规则
-    role_based = key in ("stp", "utp", "utr", "str", "sds", "srs", "hld", "imm", "ftr", "tc_sw", "tc_user")
+    # 评审记录人员一律按「人员角色」取当前产品参与人员
+    role_based = bool(prod_id)
     rb_members = []
-    if role_based and prod_id:
+    if role_based:
         rb_members = db.session.execute(
             select(ProjectMember).where(ProjectMember.prod_id == prod_id)
         ).scalars().all()
@@ -1322,22 +1341,20 @@ def autofill_review_person_table(tbl, key="", rev_date="", prod_id=None, force_d
             if len(row) >= 2:
                 row[1] = "/"
             continue
-        # 参评人员数据行：非测试角色姓名仅空时按角色补；测试角色（含测试、不含用户）按日期规则强制覆盖姓名与签字
+        # 参评人员：匹配到参与人员就覆盖姓名，并改成该人的签字
         def _apply_review_name(role_lab, name_i, sign_i):
             if name_i >= len(row):
-                return
-            is_tester = ("测试" in str(role_lab or "")) and ("用户" not in str(role_lab or ""))
-            cur = str(row[name_i] or "").strip()
-            if not is_tester and cur:
-                return
-            if not is_tester and not rb_members:
                 return
             nm = _resolve_review_name(role_lab, rb_members, rev_date)
             if not nm:
                 return
-            if is_tester or not cur:
+            cur = str(row[name_i] or "").strip()
+            if cur.startswith("data:image"):
+                if sign_i < len(row) and not str(row[sign_i] or "").strip():
+                    row[sign_i] = cur
+            if cur != nm:
                 row[name_i] = nm
-                if is_tester and sign_i < len(row):
+                if sign_i < len(row):
                     row[sign_i] = _sign_by_name(nm) if sign_mode_enabled() else ""
 
         if role_based:
@@ -1513,7 +1530,32 @@ def ensure_review(content, key, rev_date="", prod_id=None, force=False, force_da
     return content
 
 
-def render_review_grid(document, grid, set_cell, header_rows=1, **_ignore):
+def write_approver_sign_date(cell, sign, date, set_cell):
+    """批准人签字与日期写进同一格：签名图（或姓名）在前，日期在后。"""
+    set_cell(cell, "", align=WD_ALIGN_PARAGRAPH.CENTER)
+    para = cell.paragraphs[0]
+    para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    sign = str(sign or "")
+    date = str(date or "").strip()
+    wrote = False
+    if sign.startswith("data:image"):
+        try:
+            b64 = sign.split(",", 1)[1] if "," in sign else ""
+            para.add_run().add_picture(BytesIO(base64.b64decode(b64)), height=Pt(28))
+            wrote = True
+        except Exception:
+            pass
+    elif sign.strip():
+        rn = para.add_run(sign.strip())
+        rn.font.size = Pt(10.5)
+        wrote = True
+    if date:
+        rd = para.add_run(("      " if wrote else "") + date)
+        rd.font.size = Pt(10.5)
+    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
+
+def render_review_grid(document, grid, set_cell, header_rows=1, approver_keep_label=False, **_ignore):
     """评审表渲染：整行标记行横向合并；首列非空单元格纵向合并其后的空单元格。
     set_cell 由各模块传入以保持字体一致，签名 set_cell(cell, text, bold=False, align=...)。"""
     grid = [row for row in (grid or []) if isinstance(row, list)]
@@ -1577,6 +1619,14 @@ def render_review_grid(document, grid, set_cell, header_rows=1, **_ignore):
     for r in range(n):
         first = rows[r].cells[0].text
         if _is_banner(first) and len(rows[r].cells) > 1:
+            if approver_keep_label and first.startswith("批准人员签字") and len(rows[r].cells) > 2:
+                # 标题留在第一格，签字和日期合并到后面的格子
+                gr = grid[r] if r < len(grid) else []
+                sign = str(gr[1] or "") if len(gr) > 1 else ""
+                date = str(gr[2] or "") if len(gr) > 2 else ""
+                merged = rows[r].cells[1].merge(rows[r].cells[-1])
+                write_approver_sign_date(merged, sign, date, set_cell)
+                continue
             merged = rows[r].cells[0].merge(rows[r].cells[-1])
             if first.startswith("批准人员签字"):
                 # 批准人签字行：左对齐，渲染「标签 + 批准人签名图/姓名 + 日期」

@@ -414,9 +414,11 @@ const applyHldReviewAutofill = (
         if (isSign(nameVal)) {
             if (!String(row[signKey] || "").trim()) row[signKey] = nameVal;
             row[nameKey] = name || "";
+            if (name) row[signKey] = sign || "";
             changed = true;
-        } else if (name && !nameVal.trim()) {
+        } else if (name && nameVal.trim() !== name) {
             row[nameKey] = name;
+            row[signKey] = sign || "";
             changed = true;
         }
         if (sign && !String(row[signKey] || "").trim()) {
@@ -1987,7 +1989,22 @@ export default () => {
                 const who = label === "编制人" ? tpm : label === "审核人" || label === "批准人" ? devLead : "";
                 return who ? (signMap[who] || who) : "";
             };
+            const pickTestLead = () => {
+                const names: string[] = [];
+                members.forEach((m: any) => {
+                    const role = String(m.role || "");
+                    const name = String(m.name || "").trim();
+                    if (!name || role.includes("用户") || !role.includes("测试") || names.includes(name)) return;
+                    names.push(name);
+                });
+                if (!names.length) return "";
+                if (names.length === 1) return names[0];
+                return names.includes("宋月") ? "宋月" : "孙家旭";
+            };
             const resolveReviewName = (role: string) => {
+                if (String(role || "").includes("测试") && !String(role || "").includes("用户")) {
+                    return pickTestLead();
+                }
                 const keys = HLD_REVIEW_ROLE_KW[role] || [role];
                 for (const key of keys) {
                     const hit = members.find((m: any) => String(m.role || "").includes(key));

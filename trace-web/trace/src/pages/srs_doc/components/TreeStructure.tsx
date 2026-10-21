@@ -57,6 +57,12 @@ function getRefTypeLabel(refType: string | undefined, ts: (key: string) => strin
 
 const IMG_REF_TYPES = ['img_struct', 'img_flow', 'img_topo'];
 const PRODUCT_BOUND_DOC_IMAGE_REF_TYPES = ['img_topo', 'img_struct'] as const;
+
+function isSrsTopoStructImageLocked(version?: string) {
+    const text = String(version || "").replace(/[\s/]/g, "");
+    const matched = text.match(/^A(\d+)$/i);
+    return !!matched && Number(matched[1]) >= 1;
+}
 type ProductBoundDocImageRefType = typeof PRODUCT_BOUND_DOC_IMAGE_REF_TYPES[number];
 
 function isImgRefType(refType: string | undefined): boolean {
@@ -943,12 +949,6 @@ function isFixedTemplateSectionChapter(node: TreeNode): boolean {
 
 function isChapterMetaLockedNode(node: TreeNode, otherRows: any[] = []): boolean {
     return isFixedTemplateSectionChapter(node) || isOtherReqManagedChapterNode(node, otherRows);
-}
-
-export function isSrsTopoStructImageLocked(version?: string): boolean {
-    const text = String(version || "").replace(/[\s/]+/g, "").toUpperCase();
-    const matched = text.match(/^A(\d+)$/);
-    return !!matched && Number(matched[1]) >= 1;
 }
 
 export function resolveProductBoundDocImageRefType(
@@ -2154,13 +2154,13 @@ const TreeNodeItem = ({
     const embeddedImageNode = (node.children || []).find((child) => isEmbeddedImageNode(child));
     const productBoundImageRefType = resolveProductBoundDocImageRefType(node);
     const isProductBoundDocImageNode = !!productBoundImageRefType;
-    const topoStructImageLocked = isProductBoundDocImageNode && isSrsTopoStructImageLocked(docVersion);
     const isGenericImgRefNode = isImgRefType(node.ref_type) && !isProductBoundDocImageNode;
     const displayImageUrl = isProductBoundDocImageNode
         ? String(node.img_url || embeddedImageNode?.img_url || "")
         : (node.img_url || embeddedImageNode?.img_url || "");
     const imageTargetId = isProductBoundDocImageNode ? node.id : (embeddedImageNode?.id || node.id);
     const hasDisplayImage = !!String(displayImageUrl || "").trim();
+    const canReuploadProductImage = isProductBoundDocImageNode && !readOnly && !isSrsTopoStructImageLocked(docVersion);
 
     useEffect(() => {
         if (displayImageUrl) {
@@ -2182,15 +2182,15 @@ const TreeNodeItem = ({
     };
 
     const uploadProductBoundDocImage = async (file: File) => {
-        if (isSrsTopoStructImageLocked(docVersion)) {
-            message.warning("需求已更新到 A1 及以后，物理拓扑图和系统结构图不能修改");
-            return;
-        }
         if (!productId) {
             message.error("请先选择产品");
             return;
         }
         if (!productBoundImageRefType) return;
+        if (isSrsTopoStructImageLocked(docVersion)) {
+            message.warning("需求已更新到 A1 及以后，物理拓扑图和系统结构图不能修改");
+            return;
+        }
         const namedFile = buildNamedProductImageFile(file, productBoundImageRefType);
         const localPreview = URL.createObjectURL(namedFile);
         onImageChange(imageTargetId, localPreview);
@@ -3095,8 +3095,8 @@ const TreeNodeItem = ({
                           )}
                       </div>
                   )}
-                  {(level <= 2 && displayImageUrl) || (isProductBoundDocImageNode && !readOnly && !topoStructImageLocked) ? (
-                      <div className="node-pic-side-row">
+                  {(level <= 2 && displayImageUrl) || canReuploadProductImage ? (
+                      <div className={`node-pic-side-row${productBoundImageRefType === "img_topo" ? " node-pic-topo" : ""}`}>
                           {level <= 2 && displayImageUrl && (
                               <div className="node-pic-block">
                                   <div className="node-pic node-pic-readonly">
@@ -3109,7 +3109,7 @@ const TreeNodeItem = ({
                                   </div>
                               </div>
                           )}
-                          {isProductBoundDocImageNode && !readOnly && !topoStructImageLocked && (
+                          {canReuploadProductImage && (
                               <Upload {...productBoundUploadProps}>
                                   <Button size="small" icon={<UploadOutlined />}>
                                       {hasDisplayImage ? "重新上传" : ts("select_file")}

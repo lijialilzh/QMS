@@ -398,9 +398,28 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
               allowClear
               showSearch
               optionFilterProp="label"
+              filterOption={(input, option) => {
+                const query = String(input || "").trim().toLowerCase();
+                if (!query) return true;
+                const code = String(option?.label || "").toLowerCase();
+                const desc = String((option as { description?: string })?.description || "").toLowerCase();
+                return code.includes(query) || desc.includes(query);
+              }}
               placeholder={ts("srs_doc.select_rcm_code") || "选择RCM"}
               options={rcmOptions}
-              popupClassName="srs-rcm-select-dropdown"
+              popupClassName="srs-rcm-select-dropdown srs-rcm-table-dropdown"
+              popupMatchSelectWidth={false}
+              dropdownStyle={{ minWidth: 520, maxWidth: 720 }}
+              optionRender={(opt) => {
+                const code = String(opt.data?.label || "");
+                const desc = String(opt.data?.description || "").trim();
+                return (
+                  <div className="srs-rcm-option">
+                    <span className="srs-rcm-option-code">{code}</span>
+                    {desc ? <span className="srs-rcm-option-desc">{desc}</span> : null}
+                  </div>
+                );
+              }}
               value={getSelectedRcmIdsByText(text ?? "")}
               onChange={(vals) => {
                 const nextText = mergeRcmContent(text ?? "", (vals || []) as number[]);

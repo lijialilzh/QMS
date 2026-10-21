@@ -769,6 +769,7 @@ class Server(object):
                         except Exception:
                             logger.exception("cybersec_plan_time_plan_merge_failed")
                     r = end + 1
+            docx_util.merge_effective_date_row(table)
             document.add_paragraph()
 
         def set_cell_bg(cell, color_hex):

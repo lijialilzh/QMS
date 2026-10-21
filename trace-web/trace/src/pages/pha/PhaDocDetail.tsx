@@ -183,7 +183,7 @@ const fillFmea = (nodes: any[], hazMap: Record<string, any>): any[] => {
             const row = [...blank];
             if (processIdx >= 0) row[processIdx] = processByCode[code] || "";
             if (modeIdx >= 0) row[modeIdx] = info.source || "";
-            if (causeIdx >= 0) row[causeIdx] = info.situation || info.event || "";
+            if (causeIdx >= 0) row[causeIdx] = info.event || "";
             if (damageIdx >= 0) row[damageIdx] = info.damage || "";
             if (categoryIdx >= 0) row[categoryIdx] = info.category || "";
             row[codeIdx] = code;
