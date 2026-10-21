@@ -7,12 +7,12 @@ import { useData } from "@/common";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiModelDoc";
 import * as ApiProduct from "@/api/ApiProduct";
-import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
 import { getModelDocMeta } from "./ModelDocTypes";
 import {
-    buildEnvCheckTable, collectAssetCodes, computeDevTestWeeks, envCheckGroups, envCheckLeafCols,
+    buildEnvCheckTable, collectAssetCodes, computeModelEnvWeeks, envCheckGroups, envCheckLeafCols, assetNameVersionSpan,
+    loadEnvTimelineRows,
     envCheckTitle, isEnvCheckGrid, parseEqAssets, prevEnvCheckRows,
 } from "./envMaintCheck";
 import "../pdp/PdpDocDetail.less";
@@ -142,13 +142,12 @@ export default () => {
             if (!productId) { resolve(secs); return; }
             Promise.all([
                 ApiProduct.get_product({ id: productId }).catch(() => null),
-                ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
                 ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
                 ApiPersonSign.list_person_sign({ page_index: 0, page_size: 1000 }).catch(() => null),
                 Api.list_model_doc({ product_id: productId, doc_type: docType === "md_019" ? "md_deq" : "md_teq", page_index: 0, page_size: 1 }).catch(() => null),
-            ]).then(([pr, tl, mb, ps, eqList]: any[]) => {
+            ]).then(async ([pr, mb, ps, eqList]: any[]) => {
                 const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
-                const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
+                const tlRows = await loadEnvTimelineRows(productId, String(prod.name || ""));
                 const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
                 const signRows = ps && ps.code === Api.C_OK ? ((ps.data && ps.data.rows) || []) : [];
                 const signMap: Record<string, string> = {};
@@ -161,7 +160,7 @@ export default () => {
                 out = fillEnvMaint(out, {
                     prodName: String(prod.name || "").trim(),
                     fullVersion: String(prod.full_version || "").trim(),
-                    weeks: computeDevTestWeeks(tlRows),
+                    weeks: computeModelEnvWeeks(tlRows, docType),
                     checker: (checkerName && signMap[checkerName]) || checkerName || "",
                     eqAssets: eqDoc ? parseEqAssets(eqDoc.content) : null,
                     docType,
@@ -209,11 +208,15 @@ export default () => {
 
     const setSections = (sections: any[]) => dispatch({ sections });
 
-    const setAsset = (r: number, c: number, v: string) => {
+    const setAsset = (r: number, c: number, v: string, span = 1) => {
         setSections(mapByTitle(data.sections, inspectTitle(docType), (n: any) => {
             const tables = (n.tables || []).map((tb: any[]) => {
-                if (!isAssetGrid(tb) || !Array.isArray(tb[r])) return tb;
-                return tb.map((row: any[], ri: number) => (ri === r ? row.map((cell: any, ci: number) => (ci === c ? v : cell)) : row));
+                if (!isAssetGrid(tb)) return tb;
+                return tb.map((row: any[], ri: number) => (
+                    ri >= r && ri < r + span && Array.isArray(row)
+                        ? row.map((cell: any, ci: number) => (ci === c ? v : cell))
+                        : row
+                ));
             });
             return { ...n, tables };
         }));
@@ -315,11 +318,15 @@ export default () => {
                             <tbody>
                                 {assets.map((row, r) => (
                                     <tr key={r}>
-                                        {row.map((cell: any, ci: number) => (
-                                            <td key={ci} style={r === 0 ? thCell : (ci === 1 ? tdValue : { ...tdValue, textAlign: "center" })}>
-                                                {r === 0 ? cell : editText(String(cell ?? ""), (v) => setAsset(r, ci, v))}
+                                        {row.map((cell: any, ci: number) => {
+                                            const sp = assetNameVersionSpan(assets, r, ci);
+                                            if (sp.skip) return null;
+                                            return (
+                                            <td key={ci} rowSpan={sp.rowSpan > 1 ? sp.rowSpan : undefined} style={r === 0 ? thCell : (ci === 1 ? tdValue : { ...tdValue, textAlign: "center", verticalAlign: "middle" })}>
+                                                {r === 0 ? cell : editText(String(cell ?? ""), (v) => setAsset(r, ci, v, sp.rowSpan))}
                                             </td>
-                                        ))}
+                                            );
+                                        })}
                                     </tr>
                                 ))}
                             </tbody>
@@ -359,7 +366,7 @@ export default () => {
                                                 {groups.flatMap((g, gi) => g.leaves.map((lf, li) => <td key={`${gi}-${li}`} style={thCell}>{lf}</td>))}
                                             </tr>
                                             {dataRows.length === 0 ? (
-                                                <tr><td colSpan={cols.length} style={{ ...tdValue, textAlign: "center", color: "#bbb" }}>该产品未查询到「开发~测试」时间线，暂无周记录</td></tr>
+                                                <tr><td colSpan={cols.length} style={{ ...tdValue, textAlign: "center", color: "#bbb" }}>该产品未查询到模型部对应时间线，暂无周记录</td></tr>
                                             ) : dataRows.map((row: any[], ri: number) => {
                                                 let checkIdx = -1;
                                                 return (

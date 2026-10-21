@@ -1006,7 +1006,7 @@ class Server(object):
             self.__rebuild_env_checks(content, info)
         self.__fill_cover_meta(content, obj.version)
         key = obj.doc_type or ""
-        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, key))
+        serv_review_util.fill_cover_dates(content, info.get("env_cover_date") or serv_review_util.cover_date(prod_id, key))
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, key))
         serv_review_util.fill_annex_reviews(content, prod_id, key, getattr(product, "name", "") or "")
         if key == "md_003":
@@ -1068,26 +1068,39 @@ class Server(object):
         env_weeks = []
         env_assets = None
         env_checker = env_title = ""
+        env_cover_date = ""
         if doc_type in ENV_DOC_TYPES:
             env_title = "开发环境维护记录" if doc_type == "dd_016" else "标注环境维护记录"
             usage_kw = "标注" if doc_type == "dd_017" else "开发"
-            env_kws = (
-                ("标注环境维护", "人员培训", "培训记录", "试标注", "数据标注记录", "标注数据库", "标注需求反馈")
-                if doc_type == "dd_017"
-                else ("清洗", "整理", "回传", "多中心", "原始数据库", "基础数据库", "数据质量评估")
-            )
-            env_ds = []
-            for r in date_rows:
+            env_rows = date_rows
+            env_dept = data_dept_map
+            if not date_rows:
+                sib = serv_review_util.timeline_rows_with_sibling(prod_id)
+                env_rows = [r for r in sib if (r.row_type or "date") == "date" and to_int(r.year) and to_int(r.month)]
+                env_dept = {}
+                if env_rows:
+                    for c in db.session.execute(
+                        select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_([r.id for r in env_rows]))
+                    ).scalars().all():
+                        if c.dept == "数据部":
+                            env_dept[c.row_id] = c.output_result or ""
+            starts, ends = [], []
+            for r in env_rows:
                 y, m, d = to_int(r.year), to_int(r.month), to_int(r.day) or 1
                 try:
                     dt = date(y, m, d)
                 except Exception:
                     continue
-                text = data_dept_map.get(r.id, "")
-                if any(k in text for k in env_kws):
-                    env_ds.append(dt)
-            if env_ds:
-                env_weeks = self.__week_ranges_from_dates([min(env_ds), max(env_ds)])
+                text = env_dept.get(r.id, "") or ""
+                if "试标注记录" in text:
+                    starts.append(dt)
+                if "数据库维护记录" in text:
+                    ends.append(dt)
+            if starts and ends and min(starts) <= max(ends):
+                env_weeks = self.__week_ranges_from_dates([min(starts), max(ends)])
+                last = max(ends)
+                file_date = f"{last.year}年{last.month}月{last.day}日"
+                env_cover_date = f"{last.year}.{last.month:02d}.{last.day:02d}"
             eq_doc = db.session.execute(
                 select(DataDoc).where(DataDoc.product_id == prod_id, DataDoc.doc_type == "dd_eq").order_by(DataDoc.id.desc())
             ).scalars().first()
@@ -1101,7 +1114,7 @@ class Server(object):
             "scope": scope, "file_date": file_date, "version": doc_version,
             "reviser": modeler or algo, "approver": approver,
             "doc_type": doc_type, "env_weeks": env_weeks, "env_assets": env_assets,
-            "env_checker": env_checker, "env_title": env_title,
+            "env_checker": env_checker, "env_title": env_title, "env_cover_date": env_cover_date,
         }
 
     @staticmethod
@@ -1164,6 +1177,28 @@ class Server(object):
         return isinstance(tb, list) and tb and isinstance(tb[0], list) and str(tb[0][0] or "").strip() == "env_check"
 
     @staticmethod
+    def __merge_asset_name_version(table, grid):
+        """资产表「产品名称」「完整版本」连续相同非空格纵向合并。"""
+        for col in (2, 3):
+            r = 1
+            n = len(grid)
+            while r < n:
+                row = grid[r] if isinstance(grid[r], list) else []
+                val = str(row[col] if col < len(row) else "").strip()
+                if not val:
+                    r += 1
+                    continue
+                r2 = r
+                while r2 + 1 < n:
+                    nxt = grid[r2 + 1] if isinstance(grid[r2 + 1], list) else []
+                    nv = str(nxt[col] if col < len(nxt) else "").strip()
+                    if nv != val:
+                        break
+                    r2 += 1
+                if r2 > r:
+                    table.cell(r, col).merge(table.cell(r2, col))
+                r = r2 + 1
+
     def __is_asset_grid(tb):
         if not (isinstance(tb, list) and tb and isinstance(tb[0], list) and tb[0]):
             return False
@@ -1522,7 +1557,8 @@ class Server(object):
             payload.pop("doc_type", None)
             next_pid = payload.get("product_id", row.product_id)
             next_ver = payload.get("version", row.version)
-            if next_pid != row.product_id or next_ver != row.version:
+            product_changed = next_pid != row.product_id
+            if product_changed or next_ver != row.version:
                 if self.__exists(next_pid, row.doc_type, next_ver, exclude_id=row.id):
                     return Resp.resp_err(msg=ts("msg_obj_exist"))
             for key, value in payload.items():
@@ -1530,6 +1566,11 @@ class Server(object):
                     continue
                 if key == "content":
                     value = self.__normalize_content(value, row.doc_type)
+                    if product_changed:
+                        prod = db.session.execute(select(Product).where(Product.id == next_pid)).scalars().first()
+                        value = serv_review_util.fill_annex_reviews(
+                            value, next_pid, row.doc_type, getattr(prod, "name", "") or "", force=True
+                        )
                 setattr(row, key, value)
             if getattr(form, "version", None) and hasattr(row, "file_no"):
                 row.file_no = sync_file_no_version(row.file_no or "", form.version or row.version) or row.file_no
@@ -2305,6 +2346,8 @@ class Server(object):
                     for c_idx in range(cols):
                         set_cell(cells[c_idx], row[c_idx] if c_idx < len(row) else "", bold=(r_idx == 0))
                         fit_sign_row(table.rows[r_idx], row)
+                if self.__is_asset_grid(grid):
+                    self.__merge_asset_name_version(table, grid)
             document.add_paragraph()
 
         def fit_sign_row(row, src):

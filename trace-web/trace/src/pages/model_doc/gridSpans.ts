@@ -210,3 +210,121 @@ export const computeEnvMaintSpans = (grid: any[][]): CellSpan[][] => {
     }
     return spans;
 };
+
+const annexPersonKey = (name: string) => {
+    const n = String(name || "").trim();
+    if (n.length === 2 && (n.endsWith("微") || n.endsWith("薇"))) return `${n[0]}薇`;
+    return n;
+};
+
+const annexDeptNames = (members: any[]): Record<string, string> => {
+    const names = (exact: string[], contains = "") => {
+        const out: string[] = [];
+        const seen = new Set<string>();
+        (members || []).forEach((m) => {
+            const role = String(m.role || "").trim();
+            const name = annexPersonKey(m.name);
+            if (!name) return;
+            const hit = exact.length ? exact.includes(role) : !!(contains && role.includes(contains));
+            if (hit && !seen.has(name)) {
+                seen.add(name);
+                out.push(name);
+            }
+        });
+        return out.join(" ");
+    };
+    const tpm = names(["TPM"]) || names([], "TPM") || names([], "开发人员");
+    return {
+        模型部: names(["模型部负责人", "模型负责人", "高级算法工程师", "算法工程师", "项目专员"]),
+        产品部: names([], "产品经理"),
+        产品开发部: tpm,
+        数据部: names(["脱敏+清洗人员"]),
+        客户服务部: names([], "客户"),
+        其他部门: "",
+    };
+};
+
+const isAnnexDeptLabel = (s: string) => {
+    const t = String(s || "").trim();
+    if (!t || ["评审内容", "评审结论", "评审时间", "项目名称", "参评人员"].includes(t)) return false;
+    if (["模型部", "产品部", "产品开发部", "数据部", "客户服务部", "其他部门"].includes(t)) return true;
+    return t.endsWith("部");
+};
+
+/** 附件评审时间：关键字命中且优先含「评审」的最晚一天，yyyy.MM.dd。 */
+export const annexReviewDate = (rows: any[], keywords: string[]): string => {
+    const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
+    const kws = (keywords || []).filter(Boolean);
+    const dated = (rows || []).filter((r) => (r.row_type || "date") === "date" && num(r.year) && num(r.month));
+    const vals = (r: any) => Object.values(r.cells || {}).map((v) => String(v || ""));
+    const match = (r: any, needReview: boolean) => {
+        const cells = vals(r);
+        const hitName = cells.some((s) => kws.some((k) => s.includes(k)));
+        const hitReview = cells.some((s) => s.includes("评审"));
+        return hitName && (needReview ? hitReview : true);
+    };
+    let hits = dated.filter((r) => match(r, true));
+    if (!hits.length) hits = dated.filter((r) => match(r, false));
+    if (!hits.length) return "";
+    const key = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
+    let best = hits[0];
+    hits.forEach((r) => { if (key(r) > key(best)) best = r; });
+    const mm = String(num(best.month)).padStart(2, "0");
+    const dd = String(num(best.day) || 1).padStart(2, "0");
+    return `${num(best.year)}.${mm}.${dd}`;
+};
+
+/** 换产品时覆盖附件评审记录的项目名称、评审时间、参评人员、批准人；参评人签字只留标签。勾选和总结不动。 */
+export const overwriteAnnexReview = (
+    nodes: any[],
+    info: { prodName?: string; rev?: string; members?: any[]; approver?: string }
+): any[] => {
+    const deptMap = annexDeptNames(info.members || []);
+    const prodName = String(info.prodName || "").trim();
+    const rev = String(info.rev || "").trim();
+    const approver = String(info.approver || "").trim();
+    const tail = [approver, rev].filter(Boolean).join(" ");
+    const approverText = `批准人（签字/日期）：${tail}`;
+    const fixTable = (tb: any[]) => {
+        if (!isReviewRecordGrid(tb)) return tb;
+        return tb.map((row: any[]) => {
+            if (!Array.isArray(row) || !row.length) return row;
+            const next = [...row];
+            while (next.length < 5) next.push("");
+            const a = String(next[0] || "").trim();
+            if (a === "项目名称") {
+                if (prodName) {
+                    next[1] = prodName;
+                    next[2] = prodName;
+                }
+                for (let i = 0; i < next.length; i++) {
+                    if (String(next[i] || "").trim() === "评审时间" && i + 1 < next.length && rev) next[i + 1] = rev;
+                }
+                return next;
+            }
+            if (a === "参评人员") {
+                const dept1 = String(next[1] || "").trim();
+                if (isAnnexDeptLabel(dept1)) {
+                    const people = deptMap[dept1] || "无";
+                    next[2] = people;
+                    if (!isAnnexDeptLabel(String(next[3] || ""))) {
+                        for (let i = 3; i < next.length; i++) next[i] = people;
+                    }
+                }
+                const dept2 = String(next[3] || "").trim();
+                if (isAnnexDeptLabel(dept2) && next.length > 4) next[4] = deptMap[dept2] || "无";
+                return next;
+            }
+            if (a.startsWith("批准人")) return next.map(() => approverText);
+            if (a.startsWith("参评人签字")) return next.map(() => "参评人签字：");
+            return row;
+        });
+    };
+    const walk = (ns: any[]): any[] =>
+        (ns || []).map((n) => ({
+            ...n,
+            tables: (n.tables || []).map((tb: any) => (Array.isArray(tb) ? fixTable(tb) : tb)),
+            children: walk(n.children || []),
+        }));
+    return walk(nodes);
+};

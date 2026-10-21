@@ -3,7 +3,11 @@ import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
+import { Root, useSelector } from "@/store";
+import "./ProdHospitals.less";
 import * as Api from "@/api/ApiProdHospital";
+
+const pageSizeOptions = [20, 50, 100];
 
 const REGIONS = ["东区", "南区", "西区", "北区"];
 
@@ -59,7 +63,11 @@ const filterRows = (rows: any[], query: any = {}) => {
 
 export default () => {
     const { t: ts } = useTranslation();
+    const user = useSelector((state: Root) => state.user);
+    const canWrite = (user?.role_perms || []).includes("prod_hospital_edit")
+        && !["model_staff", "data_staff"].includes(String(user?.role_code || ""));
     const [queryForm] = Form.useForm();
+    const [addForm] = Form.useForm();
     const [data, dispatch] = useData({
         allRows: [],
         rows: [],
@@ -68,6 +76,10 @@ export default () => {
         editingField: null,
         updating: false,
         importing: false,
+        addOpen: false,
+        adding: false,
+        pageIndex: 1,
+        pageSize: pageSizeOptions[0],
     });
 
     const applyQuery = (query: any = queryForm.getFieldsValue(), allRows = data.allRows) => {
@@ -85,7 +97,7 @@ export default () => {
                 queryForm.setFieldsValue({ q_area: undefined });
             }
         }
-        dispatch({ rows: filterRows(allRows, next) });
+        dispatch({ rows: filterRows(allRows, next), pageIndex: 1 });
     };
 
     const loadHospitals = (allowSeed = true) => {
@@ -97,7 +109,7 @@ export default () => {
                 return;
             }
             const allRows = res.data.rows || [];
-            if (allowSeed && !allRows.length && DEFAULT_HOSPITALS.length) {
+            if (allowSeed && canWrite && !allRows.length && DEFAULT_HOSPITALS.length) {
                 const jobs = DEFAULT_HOSPITALS.map((h, i) =>
                     Api.add_prod_hospital({ prod_id: 0, ...h, sort_order: i + 1 })
                 );
@@ -112,24 +124,39 @@ export default () => {
 
     const reload = () => loadHospitals(false);
 
-    const doAdd = () => {
-        const maxSort = (data.allRows || data.rows || []).reduce((m: number, r: any) => Math.max(m, r.sort_order || 0), 0);
-        Api.add_prod_hospital({
-            prod_id: 0,
-            contract_no: "",
-            org_name: "",
-            hospital_no: "",
-            region: "",
-            province: "",
-            city: "",
-            sort_order: maxSort + 1,
-        }).then((res: any) => {
-            if (res.code === Api.C_OK) {
-                message.success(res.msg || ts("msg_ok"));
-                reload();
-            } else {
-                message.error(res.msg);
+    const openAdd = () => {
+        addForm.resetFields();
+        dispatch({ addOpen: true });
+    };
+
+    const submitAdd = () => {
+        addForm.validateFields().then((values) => {
+            const hospitalNo = String(values.hospital_no || "").trim();
+            if ((data.allRows || []).some((row: any) => String(row.hospital_no || "").trim().toUpperCase() === hospitalNo.toUpperCase())) {
+                message.error("医院编号已存在");
+                return;
             }
+            const maxSort = (data.allRows || data.rows || []).reduce((m: number, r: any) => Math.max(m, r.sort_order || 0), 0);
+            dispatch({ adding: true });
+            Api.add_prod_hospital({
+                prod_id: 0,
+                contract_no: "",
+                org_name: String(values.org_name || "").trim(),
+                hospital_no: hospitalNo,
+                region: String(values.region || "").trim(),
+                province: String(values.province || "").trim(),
+                city: String(values.city || "").trim(),
+                sort_order: maxSort + 1,
+            }).then((res: any) => {
+                dispatch({ adding: false });
+                if (res.code === Api.C_OK) {
+                    message.success(res.msg || ts("msg_ok"));
+                    dispatch({ addOpen: false });
+                    reload();
+                } else {
+                    message.error(res.msg);
+                }
+            });
         });
     };
 
@@ -180,6 +207,11 @@ export default () => {
     const saveCell = () => {
         const edit = { ...data.targetEdit };
         if (!edit?.id || data.updating) return;
+        const hospitalNo = String(edit.hospital_no || "").trim().toUpperCase();
+        if (hospitalNo && (data.allRows || []).some((row: any) => row.id !== edit.id && String(row.hospital_no || "").trim().toUpperCase() === hospitalNo)) {
+            message.error("医院编号已存在");
+            return;
+        }
         dispatch({ updating: true });
         Api.update_prod_hospital({ ...edit }).then((res: any) => {
             if (res.code === Api.C_OK) {
@@ -195,11 +227,18 @@ export default () => {
 
     const isEditing = (row: any, field: string) => data.targetEdit.id === row.id && data.editingField === field;
 
-    const clickToEdit = (row: any, field: string, value: any) => (
-        <div style={{ cursor: "pointer", minHeight: 22 }} title="点击编辑" onClick={() => startEdit(row, field)}>
-            {value !== null && value !== undefined && String(value) !== "" ? value : <span style={{ color: "#d9d9d9" }}>—</span>}
-        </div>
+    const showText = (value: any) => (
+        value !== null && value !== undefined && String(value) !== "" ? value : <span style={{ color: "#d9d9d9" }}>—</span>
     );
+
+    const clickToEdit = (row: any, field: string, value: any) => {
+        if (!canWrite) return <div style={{ minHeight: 22 }}>{showText(value)}</div>;
+        return (
+            <div style={{ cursor: "pointer", minHeight: 22 }} title="点击编辑" onClick={() => startEdit(row, field)}>
+                {showText(value)}
+            </div>
+        );
+    };
 
     const textCol = (title: string, field: string, width?: string) => ({
         title,
@@ -244,7 +283,7 @@ export default () => {
         textCol("医院编号", "hospital_no", "14%"),
         textCol("省份", "province", "12%"),
         textCol("城市信息", "city", "14%"),
-        {
+        ...(canWrite ? [{
             title: ts("action"),
             width: 90,
             render: (_value: any, row: any) => (
@@ -254,7 +293,7 @@ export default () => {
                     </Button>
                 </Space>
             ),
-        },
+        }] : []),
     ];
 
     useEffect(() => {
@@ -275,7 +314,7 @@ export default () => {
             <div className="div-h searchbar list-searchbar-align">
                 <Form
                     form={queryForm}
-                    className="expand"
+                    className="hosp-filter"
                     autoComplete="off"
                     onValuesChange={(_changed, values) => applyQuery(values)}
                     onFinish={(values) => applyQuery(values)}>
@@ -314,25 +353,60 @@ export default () => {
                         </Col>
                     </Row>
                 </Form>
-                <div className="div-h hspace">
+                {canWrite && <div className="div-h hspace">
                     <Upload showUploadList={false} accept=".xls,.xlsx" beforeUpload={doImport}>
                         <Button type="primary" loading={data.importing}>
                             导入
                         </Button>
                     </Upload>
-                    <Button onClick={doAdd}>
+                    <Button onClick={openAdd}>
                         {ts("add")}
                     </Button>
-                </div>
+                </div>}
             </div>
+            <Modal
+                title="新增合规医院"
+                open={data.addOpen}
+                confirmLoading={data.adding}
+                okText="确定"
+                cancelText="取消"
+                destroyOnClose
+                onCancel={() => dispatch({ addOpen: false })}
+                onOk={submitAdd}>
+                <Form form={addForm} layout="vertical" preserve={false}>
+                    <Form.Item label="医院名称" name="org_name" rules={[{ required: true, whitespace: true, message: "请输入医院名称" }]}>
+                        <Input autoComplete="off" />
+                    </Form.Item>
+                    <Form.Item label="区域" name="region">
+                        <AutoComplete options={REGIONS.map((item) => ({ label: item, value: item }))} />
+                    </Form.Item>
+                    <Form.Item label="医院编号" name="hospital_no" rules={[{ required: true, whitespace: true, message: "请输入医院编号" }]}>
+                        <Input autoComplete="off" />
+                    </Form.Item>
+                    <Form.Item label="省份" name="province">
+                        <Input autoComplete="off" />
+                    </Form.Item>
+                    <Form.Item label="城市信息" name="city">
+                        <Input autoComplete="off" />
+                    </Form.Item>
+                </Form>
+            </Modal>
             <Table
                 className="expand"
                 columns={columns}
                 rowKey={(item: any) => item.id}
                 dataSource={data.rows}
                 loading={data.loading}
-                pagination={false}
-                footer={() => sprintf(ts("total_items"), { total: (data.rows || []).length })}
+                pagination={{
+                    total: (data.rows || []).length,
+                    current: data.pageIndex,
+                    pageSize: data.pageSize,
+                    showSizeChanger: true,
+                    pageSizeOptions: pageSizeOptions.map(String),
+                    hideOnSinglePage: false,
+                    onChange: (page: number, pageSize: number) => dispatch({ pageIndex: page, pageSize }),
+                    showTotal: (total: number) => sprintf(ts("total_items"), { total }),
+                }}
             />
         </div>
     );

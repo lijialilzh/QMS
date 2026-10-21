@@ -15,9 +15,10 @@ import * as ApiSrsDoc from "@/api/ApiSrsDoc";
 import * as ApiSrsReq from "@/api/ApiSrsReq";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import { getModelDocMeta } from "./ModelDocTypes";
-import { computeGridSpans, computeCodeReviewSpans, isReviewRecordGrid, isCodeReviewChecklistGrid } from "./gridSpans";
+import { computeGridSpans, computeCodeReviewSpans, isReviewRecordGrid, isCodeReviewChecklistGrid, annexReviewDate, overwriteAnnexReview } from "./gridSpans";
 import {
-    buildEnvCheckTable, collectAssetCodes, computeDevTestWeeks, envCheckGroups, envCheckLeafCols,
+    buildEnvCheckTable, collectAssetCodes, computeModelEnvWeeks, envCheckGroups, envCheckLeafCols,
+    loadEnvTimelineRows,
     envCheckTitle, isEnvCheckGrid, parseEqAssets, prevEnvCheckRows,
 } from "./envMaintCheck";
 import "../pdp/PdpDocDetail.less";
@@ -53,7 +54,7 @@ const toDottedDate = (s: string): string => {
 const isModelDevOut = (val: any) => {
     const s = String(val || "");
     if (/模型开发(?!计划)/.test(s)) return true;
-    if (s.includes("模型训练")) return true;
+    if (/模型训练(?!集)/.test(s)) return true;
     if (/模型测试(?!方案)/.test(s)) return true;
     if (s.includes("模型封装") || s.includes("模型服务提交")) return true;
     return false;
@@ -92,7 +93,7 @@ const memberNames = (members: any[], pred: (role: string) => boolean): string[] 
         .filter((m) => m.name && pred(m.role))
         .map((m) => m.name);
 
-const fillMd006People = (nodes: any[], members: any[]): any[] => {
+const fillMd006People = (nodes: any[], members: any[], replaceReview = false): any[] => {
     const staffDefs = [
         { pred: (r: string) => r === "模型部负责人" || r === "模型负责人", label: "模型部负责人" },
         { pred: (r: string) => r === "高级算法工程师", label: "高级算法工程师" },
@@ -125,7 +126,7 @@ const fillMd006People = (nodes: any[], members: any[]): any[] => {
                 else if (dept === "产品部") names = pm;
                 else if (dept.includes("产品开发")) names = tpm;
                 else if (dept === "数据部") names = dataNames;
-                if (names && idx + 1 < next.length) next[idx + 1] = names;
+                if (names && idx + 1 < next.length && (replaceReview || !String(next[idx + 1] || "").trim())) next[idx + 1] = names;
             };
             put(1);
             put(3);
@@ -815,7 +816,11 @@ export default () => {
             ]).then(async ([pr, oldPr, tl, mb, ps, mdList, dhfList, srsList, eqList]: any[]) => {
                 const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
                 const oldProd = oldPr && oldPr.code === Api.C_OK ? (oldPr.data || {}) : {};
-                const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
+                let tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
+                const hasDate = tlRows.some((r: any) => (r.row_type || "date") === "date" && r.year && r.month);
+                if ((envExtra || replaceProduct) && !hasDate) {
+                    tlRows = await loadEnvTimelineRows(productId, String(prod.name || ""));
+                }
                 const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
                 const signRows = ps && ps.code === Api.C_OK ? ((ps.data && ps.data.rows) || []) : [];
                 const signMap: Record<string, string> = {};
@@ -865,7 +870,15 @@ export default () => {
                 ]);
                 if (type === "md_006") {
                     out = fillModelCycle(out, computeModelCycle(tlRows));
-                    out = fillMd006People(out, members);
+                    out = fillMd006People(out, members, replaceProduct);
+                }
+                if (replaceProduct) {
+                    out = overwriteAnnexReview(out, {
+                        prodName: newName,
+                        rev: annexReviewDate(tlRows, meta.keywords.concat(meta.title)),
+                        members,
+                        approver,
+                    });
                 }
                 if (type === "md_017") {
                     out = fillMd017People(out, members);
@@ -896,7 +909,7 @@ export default () => {
                     out = fillEnvMaint(out, {
                         prodName: newName,
                         fullVersion: String(prod.full_version || "").trim(),
-                        weeks: computeDevTestWeeks(tlRows),
+                        weeks: computeModelEnvWeeks(tlRows, type),
                         checker: (checkerName && signMap[checkerName]) || checkerName || "",
                         eqAssets: eqDoc ? parseEqAssets(eqDoc.content) : null,
                         docType: type,

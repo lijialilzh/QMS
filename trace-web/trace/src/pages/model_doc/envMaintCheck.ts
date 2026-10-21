@@ -1,3 +1,7 @@
+import * as ApiProduct from "@/api/ApiProduct";
+import * as ApiTimeline from "@/api/ApiProjectTimeline";
+import { C_OK } from "@/api/http";
+
 /** 模型说明里的周检表：分组与开发文件 DEM / 测试文件 TEM 一致。 */
 
 export type EnvCheckKind = "server" | "dev";
@@ -159,36 +163,76 @@ const weekRanges = (start: number, end: number): string[] => {
     return ranges;
 };
 
-export const computeDevTestWeeks = (rows: any[]): string[] => {
-    const dev: number[] = [];
-    const test: number[] = [];
-    (rows || []).forEach((r: any) => {
-        if ((r.row_type || "date") !== "date") return;
-        const dt = utcOf(r);
-        if (dt == null) return;
-        const vals = Object.values(r.cells || {});
-        if (vals.some((v) => String(v || "").includes("产品开发") && !String(v || "").includes("计划"))) dev.push(dt);
-        if (vals.some((v) => String(v || "").includes("测试"))) test.push(dt);
-    });
-    if (!dev.length || !test.length) return [];
-    return weekRanges(Math.min(...dev), Math.max(...test));
+const hasDateRow = (rows: any[]) => (rows || []).some((r: any) => (r.row_type || "date") === "date" && utcOf(r) != null);
+
+/** 当前版本没有日期行时，用同一产品名称下已有时间线的版本（id 从新到旧）。 */
+export const loadEnvTimelineRows = async (productId: number, productName: string): Promise<any[]> => {
+    const read = async (id: number) => {
+        const tl: any = await ApiTimeline.list_timeline({ prod_id: id }).catch(() => null);
+        return tl && tl.code === C_OK ? ((tl.data && tl.data.rows) || []) : [];
+    };
+    const first = await read(productId);
+    if (hasDateRow(first) || !String(productName || "").trim()) return first;
+    const list: any = await ApiProduct.list_product({ page_size: 10000 }).catch(() => null);
+    const siblings = (list && list.code === C_OK ? ((list.data && list.data.rows) || []) : [])
+        .filter((p: any) => String(p.name || "").trim() === String(productName).trim() && p.id !== productId)
+        .sort((a: any, b: any) => Number(b.id) - Number(a.id));
+    for (const s of siblings) {
+        const rows = await read(s.id);
+        if (hasDateRow(rows)) return rows;
+    }
+    return first;
 };
 
-const DATA_DEV_KWS = ["清洗", "整理", "回传", "多中心", "原始数据库", "基础数据库", "数据质量评估"];
-const DATA_ANNO_KWS = ["标注环境维护", "人员培训", "培训记录", "试标注", "数据标注记录", "标注数据库", "标注需求反馈"];
-
-export const computeDataEnvWeeks = (rows: any[], docType: string): string[] => {
-    const kws = docType === "dd_017" ? DATA_ANNO_KWS : DATA_DEV_KWS;
-    const dates: number[] = [];
+const deptDates = (rows: any[], dept: string, pred: (text: string) => boolean): number[] => {
+    const out: number[] = [];
     (rows || []).forEach((r: any) => {
         if ((r.row_type || "date") !== "date") return;
         const dt = utcOf(r);
         if (dt == null) return;
-        const text = String((r.cells || {})["数据部"] || "");
-        if (kws.some((k) => text.includes(k))) dates.push(dt);
+        if (pred(String((r.cells || {})[dept] || ""))) out.push(dt);
     });
-    if (!dates.length) return [];
-    return weekRanges(Math.min(...dates), Math.max(...dates));
+    return out;
+};
+
+const spanWeeks = (starts: number[], ends: number[]): string[] => {
+    if (!starts.length || !ends.length) return [];
+    const start = Math.min(...starts);
+    const end = Math.max(...ends);
+    if (start > end) return [];
+    return weekRanges(start, end);
+};
+
+/** 模型开发：模型配置管理计划 → 追溯。模型测试：模型测试（不含方案）→ 追溯。都看「模型部」。 */
+export const computeModelEnvWeeks = (rows: any[], docType: string): string[] => {
+    const starts = deptDates(rows, "模型部", (text) => (
+        docType === "md_020"
+            ? /模型测试(?!方案)/.test(text)
+            : text.includes("模型配置管理计划") || text.includes("模型配置计划")
+    ));
+    const ends = deptDates(rows, "模型部", (text) => text.includes("追溯"));
+    return spanWeeks(starts, ends);
+};
+
+/** 数据开发/标注环境：数据试标注记录 → 数据库维护记录。都看「数据部」。 */
+export const computeDataEnvWeeks = (rows: any[], _docType: string): string[] => {
+    const starts = deptDates(rows, "数据部", (text) => text.includes("试标注记录"));
+    const ends = deptDates(rows, "数据部", (text) => text.includes("数据库维护记录"));
+    return spanWeeks(starts, ends);
+};
+
+/** 资产表产品名称、完整版本：连续相同非空格纵向合并。 */
+export const assetNameVersionSpan = (rows: any[][], r: number, c: number): { skip: boolean; rowSpan: number } => {
+    if ((c !== 2 && c !== 3) || r <= 0) return { skip: false, rowSpan: 1 };
+    const val = String(rows[r]?.[c] ?? "").trim();
+    if (!val) return { skip: false, rowSpan: 1 };
+    if (r > 1 && String(rows[r - 1]?.[c] ?? "").trim() === val) return { skip: true, rowSpan: 1 };
+    let span = 1;
+    for (let i = r + 1; i < rows.length; i++) {
+        if (String(rows[i]?.[c] ?? "").trim() !== val) break;
+        span += 1;
+    }
+    return { skip: false, rowSpan: span };
 };
 
 export const parseEqAssets = (content: any, usageContains?: string): EnvAsset[] => {

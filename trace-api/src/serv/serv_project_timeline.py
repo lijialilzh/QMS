@@ -25,10 +25,82 @@ TIMELINE_DEPTS = [
     "三级通用技术文件",
 ]
 
+# 训练集 / 调优集 / 测试集构建记录归模型部，不留在数据部。
+_BUILD_SET_RE = re.compile(r"(训练集|调优集|测试集)")
+
+
+def _split_build_record_lines(text):
+    moved = []
+    kept = []
+    for line in str(text or "").replace("\r", "").split("\n"):
+        s = line.strip()
+        if s and "构建记录" in s and _BUILD_SET_RE.search(s):
+            moved.append(s)
+        else:
+            kept.append(line)
+    while kept and not kept[0].strip():
+        kept.pop(0)
+    while kept and not kept[-1].strip():
+        kept.pop()
+    return moved, "\n".join(kept).strip()
+
+
+def _append_lines(base, lines):
+    existing = {ln.strip() for ln in str(base or "").split("\n") if ln.strip()}
+    extra = [ln for ln in lines if ln not in existing]
+    if not extra:
+        return str(base or "").strip()
+    head = str(base or "").strip()
+    return (head + "\n" + "\n".join(extra)).strip() if head else "\n".join(extra)
+
 
 class Server(object):
 
+    def _relocate_build_records(self, prod_id: int = None):
+        """数据部里的训练集/调优集/测试集构建记录挪到同行模型部。"""
+        sql = (
+            select(ProjectTimelineCell, ProjectTimelineRow)
+            .join(ProjectTimelineRow, ProjectTimelineRow.id == ProjectTimelineCell.row_id)
+            .where(ProjectTimelineCell.dept == "数据部")
+        )
+        if prod_id:
+            sql = sql.where(ProjectTimelineRow.prod_id == prod_id)
+        pairs = db.session.execute(sql).all()
+        changed = False
+        for cell, _row in pairs:
+            moved, kept = _split_build_record_lines(cell.output_result)
+            if not moved:
+                continue
+            model_cell = db.session.execute(
+                select(ProjectTimelineCell).where(
+                    ProjectTimelineCell.row_id == cell.row_id,
+                    ProjectTimelineCell.dept == "模型部",
+                )
+            ).scalars().first()
+            merged = _append_lines(model_cell.output_result if model_cell else "", moved)
+            if model_cell:
+                if (model_cell.output_result or "").strip() != merged:
+                    model_cell.output_result = merged
+                    changed = True
+            else:
+                db.session.add(ProjectTimelineCell(row_id=cell.row_id, dept="模型部", output_result=merged))
+                changed = True
+            if kept:
+                if (cell.output_result or "").strip() != kept:
+                    cell.output_result = kept
+                    changed = True
+            else:
+                db.session.delete(cell)
+                changed = True
+        if changed:
+            db.session.commit()
+
     async def list_timeline(self, prod_id: int = None):
+        try:
+            self._relocate_build_records(prod_id)
+        except Exception:
+            logger.exception("")
+            db.session.rollback()
         sql = select(ProjectTimelineRow)
         if prod_id:
             sql = sql.where(ProjectTimelineRow.prod_id == prod_id)
@@ -125,10 +197,28 @@ class Server(object):
                     ProjectTimelineCell.row_id == form.row_id, ProjectTimelineCell.dept == form.dept
                 )
             ).scalars().first()
+            text = form.output_result or ""
+            if form.dept == "数据部":
+                moved, kept = _split_build_record_lines(text)
+                text = kept
+                if moved:
+                    model_cell = db.session.execute(
+                        select(ProjectTimelineCell).where(
+                            ProjectTimelineCell.row_id == form.row_id,
+                            ProjectTimelineCell.dept == "模型部",
+                        )
+                    ).scalars().first()
+                    merged = _append_lines(model_cell.output_result if model_cell else "", moved)
+                    if model_cell:
+                        model_cell.output_result = merged
+                    else:
+                        db.session.add(ProjectTimelineCell(
+                            row_id=form.row_id, dept="模型部", output_result=merged,
+                        ))
             if cell:
-                cell.output_result = form.output_result or ""
-            else:
-                cell = ProjectTimelineCell(row_id=form.row_id, dept=form.dept, output_result=form.output_result or "")
+                cell.output_result = text
+            elif text:
+                cell = ProjectTimelineCell(row_id=form.row_id, dept=form.dept, output_result=text)
                 db.session.add(cell)
             db.session.commit()
             return Resp.resp_ok()
@@ -193,6 +283,10 @@ class Server(object):
                     return str(r[i]).strip() if i < len(r) and r[i] is not None else ""
                 a, b, c = cell(0), cell(1), cell(2)
                 dept_values = {dept: cell(ci) for ci, dept in dept_cols.items()}
+                moved, kept = _split_build_record_lines(dept_values.get("数据部") or "")
+                if moved:
+                    dept_values["数据部"] = kept
+                    dept_values["模型部"] = _append_lines(dept_values.get("模型部") or "", moved)
                 has_dept = any(v for v in dept_values.values())
                 has_date = bool(b or c)
 

@@ -11,7 +11,8 @@ import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import { getDataDocMeta, DATA_STATS_IMPORT_TYPES, getDataDocListType } from "./DataDocTypes";
-import { computeGridSpans, isReviewRecordGrid } from "./gridSpans";
+import { computeGridSpans, isReviewRecordGrid, annexReviewDate, overwriteAnnexReview } from "./gridSpans";
+import { loadEnvTimelineRows } from "./envMaintCheck";
 import "../pdp/PdpDocDetail.less";
 import FreeChapterContent from "../pdp/FreeChapterContent";
 import { chapterAllowsAboveTable, freeAddTable, freeDelTable } from "../pdp/freeChapterBlocks";
@@ -337,10 +338,13 @@ export default () => {
                 ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
                 ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
                 ApiPersonSign.list_person_sign({ page_index: 0, page_size: 1000 }).catch(() => null),
-            ]).then(([pr, oldPr, tl, mb, ps]: any[]) => {
+            ]).then(async ([pr, oldPr, tl, mb, ps]: any[]) => {
                 const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
                 const oldProd = oldPr && oldPr.code === Api.C_OK ? (oldPr.data || {}) : {};
-                const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
+                let tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
+                if (replaceProduct && !tlRows.some((r: any) => (r.row_type || "date") === "date" && r.year && r.month)) {
+                    tlRows = await loadEnvTimelineRows(productId, String(prod.name || ""));
+                }
                 const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
                 const signRows = ps && ps.code === Api.C_OK ? ((ps.data && ps.data.rows) || []) : [];
                 const signMap: Record<string, string> = {};
@@ -391,6 +395,14 @@ export default () => {
                     [BASE_PROD_TYPE, newType],
                     [oldCode, newCode],
                 ]);
+                if (replaceProduct) {
+                    out = overwriteAnnexReview(out, {
+                        prodName: newName,
+                        rev: annexReviewDate(tlRows, meta.keywords.concat(meta.title)),
+                        members,
+                        approver,
+                    });
+                }
                 resolve(syncDocVersionFields(out, version));
             }).catch(() => resolve(secs));
         });

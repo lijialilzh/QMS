@@ -3046,6 +3046,28 @@ class Server(object):
         return isinstance(tb, list) and tb and isinstance(tb[0], list) and str(tb[0][0] or "").strip() == "env_check"
 
     @staticmethod
+    def __merge_asset_name_version(table, grid):
+        """资产表「产品名称」「完整版本」连续相同非空格纵向合并。"""
+        for col in (2, 3):
+            r = 1
+            n = len(grid)
+            while r < n:
+                row = grid[r] if isinstance(grid[r], list) else []
+                val = str(row[col] if col < len(row) else "").strip()
+                if not val:
+                    r += 1
+                    continue
+                r2 = r
+                while r2 + 1 < n:
+                    nxt = grid[r2 + 1] if isinstance(grid[r2 + 1], list) else []
+                    nv = str(nxt[col] if col < len(nxt) else "").strip()
+                    if nv != val:
+                        break
+                    r2 += 1
+                if r2 > r:
+                    table.cell(r, col).merge(table.cell(r2, col))
+                r = r2 + 1
+
     def __is_asset_grid(tb):
         if not (isinstance(tb, list) and tb and isinstance(tb[0], list) and tb[0]):
             return False
@@ -3342,7 +3364,7 @@ class Server(object):
             self.__rebuild_env_checks(content, info)
         self.__fill_cover_meta(content, obj.version)
         key = obj.doc_type or ""
-        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, key))
+        serv_review_util.fill_cover_dates(content, info.get("env_cover_date") or serv_review_util.cover_date(prod_id, key))
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, key))
         serv_review_util.fill_annex_reviews(content, prod_id, key, getattr(product, "name", "") or "")
         fill_chapter_images(content, obj.doc_type)
@@ -3364,7 +3386,7 @@ class Server(object):
             s = str(text or "")
             if re.search(r"模型开发(?!计划)", s):
                 return True
-            if "模型训练" in s:
+            if re.search(r"模型训练(?!集)", s):
                 return True
             if re.search(r"模型测试(?!方案)", s):
                 return True
@@ -3443,22 +3465,41 @@ class Server(object):
         env_weeks = []
         env_assets = None
         env_checker = env_title = ""
+        env_cover_date = ""
         if doc_type in ("md_019", "md_020"):
             env_title = "开发环境维护记录" if doc_type == "md_019" else "测试环境维护记录"
-            dev_ds, test_ds = [], []
-            for r in date_rows:
+            env_rows = date_rows
+            env_dept = {}
+            if not date_rows:
+                sib = serv_review_util.timeline_rows_with_sibling(prod_id)
+                env_rows = [r for r in sib if (r.row_type or "date") == "date" and to_int(r.year) and to_int(r.month)]
+            src_rows = env_rows or date_rows
+            if src_rows:
+                for c in db.session.execute(
+                    select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_([r.id for r in src_rows]))
+                ).scalars().all():
+                    if c.dept == "模型部":
+                        env_dept[c.row_id] = ((env_dept.get(c.row_id) or "") + "\n" + (c.output_result or "")).strip()
+            starts, ends = [], []
+            for r in src_rows:
                 y, m, d = to_int(r.year), to_int(r.month), to_int(r.day) or 1
                 try:
                     dt = date(y, m, d)
                 except Exception:
                     continue
-                vals = cell_map.get(r.id, [])
-                if any(("产品开发" in str(v)) and ("计划" not in str(v)) for v in vals):
-                    dev_ds.append(dt)
-                if any("测试" in str(v) for v in vals):
-                    test_ds.append(dt)
-            if dev_ds and test_ds:
-                env_weeks = self.__week_ranges_from_dates([min(dev_ds), max(test_ds)])
+                text = env_dept.get(r.id, "")
+                if doc_type == "md_020":
+                    if re.search(r"模型测试(?!方案)", text or ""):
+                        starts.append(dt)
+                elif "模型配置管理计划" in text or "模型配置计划" in text:
+                    starts.append(dt)
+                if "追溯" in (text or ""):
+                    ends.append(dt)
+            if starts and ends and min(starts) <= max(ends):
+                env_weeks = self.__week_ranges_from_dates([min(starts), max(ends)])
+                last = max(ends)
+                file_date = f"{last.year}年{last.month}月{last.day}日"
+                env_cover_date = f"{last.year}.{last.month:02d}.{last.day:02d}"
             eq_type = "md_deq" if doc_type == "md_019" else "md_teq"
             eq_doc = db.session.execute(
                 select(ModelDoc).where(ModelDoc.product_id == prod_id, ModelDoc.doc_type == eq_type).order_by(ModelDoc.id.desc())
@@ -3477,7 +3518,7 @@ class Server(object):
             "md008_date": md008_date, "md008_auditee": md008_auditee,
             "md008_auditor": md008_auditor, "md008_sign": md008_sign,
             "env_weeks": env_weeks, "env_assets": env_assets, "env_checker": env_checker,
-            "env_title": env_title,
+            "env_title": env_title, "env_cover_date": env_cover_date,
         }
 
     @staticmethod
@@ -4127,7 +4168,8 @@ class Server(object):
             payload.pop("doc_type", None)
             next_pid = payload.get("product_id", row.product_id)
             next_ver = payload.get("version", row.version)
-            if next_pid != row.product_id or next_ver != row.version:
+            product_changed = next_pid != row.product_id
+            if product_changed or next_ver != row.version:
                 if self.__exists(next_pid, row.doc_type, next_ver, exclude_id=row.id):
                     return Resp.resp_err(msg=ts("msg_obj_exist"))
             if next_pid != row.product_id or "content" in payload:
@@ -4141,6 +4183,11 @@ class Server(object):
                 if key == "content":
                     value = self.__normalize_content(value, row.doc_type, product_id=next_pid)
                     value = self.__apply_dataset_counts(value, row.doc_type, next_pid)
+                    if product_changed:
+                        prod = db.session.execute(select(Product).where(Product.id == next_pid)).scalars().first()
+                        value = serv_review_util.fill_annex_reviews(
+                            value, next_pid, row.doc_type, getattr(prod, "name", "") or "", force=True
+                        )
                 setattr(row, key, value)
             if getattr(form, "version", None) and hasattr(row, "file_no"):
                 row.file_no = sync_file_no_version(row.file_no or "", form.version or row.version) or row.file_no
@@ -5199,6 +5246,8 @@ class Server(object):
                             bold=(r_idx == 0),
                             figure=("算法流程图" in left and c_idx > 0),
                         )
+                if self.__is_asset_grid(grid):
+                    self.__merge_asset_name_version(table, grid)
             document.add_paragraph()
 
         def add_cover_grid(grid):

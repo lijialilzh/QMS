@@ -17,6 +17,7 @@ export function buildAppMenus(ts: (key: string) => string, ctx: MenuCtx = {}): N
     const role = String(ctx.role || "");
     const user = { id: ctx.userId, role_code: role };
     const seeBaseMasters = ["root", "dqa", "qa"].includes(role);
+    const seeHospitalList = seeBaseMasters || role === "model_staff" || role === "data_staff";
     const seeFullGeneralCfg = ["root", "dqa", "qa"].includes(role);
     return [
         {
@@ -110,7 +111,7 @@ export function buildAppMenus(ts: (key: string) => string, ctx: MenuCtx = {}): N
                     key: "/prod_hospitals",
                     label: ts("menu.prod_hospitals"),
                     perm: "prod_hospital_view",
-                    hidden: !seeBaseMasters,
+                    hidden: !seeHospitalList,
                 },
             ],
         },

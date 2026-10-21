@@ -49,6 +49,17 @@ def _read_excel_grid(file_bytes: bytes):
     return [sheet.row_values(i) for i in range(sheet.nrows)]
 
 
+def _dup_hospital_no(hospital_no, exclude_id=None):
+    """医院编号去空白后不区分大小写，已有其他行使用则不能再写入。空编号不校验。"""
+    key = str(hospital_no or "").strip()
+    if not key:
+        return False
+    sql = select(ProdHospital.id).where(func.upper(ProdHospital.hospital_no) == key.upper())
+    if exclude_id:
+        sql = sql.where(ProdHospital.id != exclude_id)
+    return db.session.execute(sql).first() is not None
+
+
 def _header_index(grid):
     for i, row in enumerate(grid or []):
         cells = [_cell_str(c) for c in (row or [])]
@@ -64,6 +75,8 @@ class Server(object):
         try:
             if form.prod_id is None:
                 form.prod_id = 0
+            if _dup_hospital_no(form.hospital_no):
+                return Resp.resp_err(msg="医院编号已存在")
             row = ProdHospital(**form.dict())
             row.id = None
             row.prod_id = form.prod_id or 0
@@ -81,6 +94,8 @@ class Server(object):
             row: ProdHospital = db.session.execute(sql).scalars().first()
             if not row:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
+            if _dup_hospital_no(form.hospital_no, exclude_id=row.id):
+                return Resp.resp_err(msg="医院编号已存在")
             for key, value in form.dict().items():
                 if key in ("id", "prod_id"):
                     continue
@@ -176,8 +191,8 @@ class Server(object):
                 hospital_no = cell("hospital_no")
                 if not (org_name or hospital_no):
                     continue
-                no_key = hospital_no.upper()
-                if no_key and no_key in seen_nos:
+                no_key = hospital_no.strip().upper()
+                if no_key and (no_key in seen_nos or (not replace and _dup_hospital_no(hospital_no))):
                     continue
                 if no_key:
                     seen_nos.add(no_key)

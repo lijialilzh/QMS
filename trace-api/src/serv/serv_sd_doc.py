@@ -872,6 +872,8 @@ class Server(object):
         seq = 0
         for node in body:
             if node.get("ref_type") == "review":
+                if seq > 0:
+                    document.add_page_break()
                 render_body_section(node, 1, "")
             else:
                 seq += 1

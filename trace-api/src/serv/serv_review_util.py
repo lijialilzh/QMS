@@ -608,18 +608,57 @@ def _timeline_date_rows_with_year(tl_rows):
     return dated
 
 
-def review_date(prod_id, name_keywords):
-    """从时间线取评审日期（命中「文档名关键字」且优先命中「评审」的行，取最新），格式 yyyy.MM.dd。"""
+def timeline_rows_with_sibling(prod_id):
+    """当前产品没有日期行时，用同一产品名称下已有时间线的版本（id 从新到旧）。"""
     if not prod_id:
+        return []
+
+    def load(pid):
+        return db.session.execute(
+            select(ProjectTimelineRow).where(ProjectTimelineRow.prod_id == pid)
+        ).scalars().all()
+
+    def has_date(rows):
+        for r in rows or []:
+            if (r.row_type or "date") != "date":
+                continue
+            year = re.sub(r"[^\d]", "", str(r.year or ""))
+            month = re.sub(r"[^\d]", "", str(r.month or ""))
+            if year and month:
+                return True
+        return False
+
+    rows = load(prod_id)
+    if has_date(rows):
+        return rows
+    product = db.session.execute(select(Product).where(Product.id == prod_id)).scalars().first()
+    name = (product.name or "").strip() if product else ""
+    if not name:
+        return rows
+    ids = db.session.execute(
+        select(Product.id).where(Product.name == name, Product.id != prod_id).order_by(Product.id.desc())
+    ).scalars().all()
+    for pid in ids:
+        alt = load(pid)
+        if has_date(alt):
+            return alt
+    return rows
+
+
+def review_date(prod_id, name_keywords, tl_rows=None):
+    """从时间线取评审日期（命中「文档名关键字」且优先命中「评审」的行，取最新），格式 yyyy.MM.dd。
+    tl_rows 传入时不再查当前产品（附件评审可用同名版本时间线）。"""
+    if tl_rows is None and not prod_id:
         return ""
 
     def to_int(v):
         digits = re.sub(r"[^\d]", "", str(v or ""))
         return int(digits) if digits else None
 
-    tl_rows = db.session.execute(
-        select(ProjectTimelineRow).where(ProjectTimelineRow.prod_id == prod_id)
-    ).scalars().all()
+    if tl_rows is None:
+        tl_rows = db.session.execute(
+            select(ProjectTimelineRow).where(ProjectTimelineRow.prod_id == prod_id)
+        ).scalars().all()
     if not tl_rows:
         return ""
     cell_map = {}
@@ -1427,14 +1466,91 @@ def _annex_dept_people(members):
     }
 
 
-def fill_annex_review_grid(tb, prod_id, doc_type, prod_name=""):
-    """模型/数据文件「附件 1 评审记录」五列表：评审时间←时间线，参评人员←参与人员，批准人←研发负责人+日期。"""
+def _annex_template_grid(doc_type):
+    """该类型原 Word 评审表，用来识别尚未手改的样例格。"""
+    if not doc_type:
+        return []
+    cache = getattr(_annex_template_grid, "_cache", None)
+    if cache is None:
+        from .model_doc_templates import DEFAULT_CONTENTS as mc
+        from .model_doc_templates import REVIEW_TABLES as mr
+        from .data_doc_templates import DEFAULT_CONTENTS as dc
+        from .data_doc_templates import REVIEW_TABLES as dr
+        cache = {}
+        cache.update(dr or {})
+        cache.update(mr or {})
+        for key, content in list((dc or {}).items()) + list((mc or {}).items()):
+            if key in cache:
+                continue
+            found = []
+
+            def walk(ns):
+                for n in ns or []:
+                    if not isinstance(n, dict):
+                        continue
+                    for tb in n.get("tables") or []:
+                        if _is_annex_review_grid(tb):
+                            found.append(tb)
+                    walk(n.get("children") or [])
+
+            walk((content or {}).get("sections") or [])
+            if found:
+                cache[key] = found[0]
+        _annex_template_grid._cache = cache
+    return cache.get(doc_type) or []
+
+
+def _annex_sample_row(doc_type, label, nth, startswith=False):
+    hit = 0
+    for row in _annex_template_grid(doc_type):
+        if not isinstance(row, list) or not row:
+            continue
+        a = str(row[0] or "").strip()
+        ok = a.startswith(label) if startswith else a == label
+        if not ok:
+            continue
+        hit += 1
+        if hit == nth:
+            return row
+    return []
+
+
+def _annex_placeholder(cur, sample):
+    """空，或仍等于模板样例 / 未填写的签字标签。手改过的文字返回 False。"""
+    c = str(cur or "").strip()
+    if not c:
+        return True
+    s = str(sample or "").strip()
+    if s and c == s:
+        return True
+    plain = c.replace("\n", "").strip()
+    if plain in ("参评人签字：", "参评人签字", "批准人（签字/日期）：", "批准人（签字/日期）"):
+        return True
+    return False
+
+
+def _annex_row_untouched(row, sample):
+    n = max(len(row or []), len(sample or []))
+    for i in range(n):
+        cur = row[i] if i < len(row) else ""
+        samp = sample[i] if sample and i < len(sample) else ""
+        if not _annex_placeholder(cur, samp):
+            return False
+    return True
+
+
+def fill_annex_review_grid(tb, prod_id, doc_type, prod_name="", force=False):
+    """模型/数据文件「附件 1 评审记录」五列表。
+    force=False：项目名称、评审时间、参评人员、批准人、参评人签字只填空或仍是模板样例的格，已手改的保留。
+    force=True：换产品时覆盖上述格子。评审内容勾选与总结两种情况都不改。
+    评审时间用同名版本时间线（当前版本没有日期行时）。"""
     if not _is_annex_review_grid(tb) or not prod_id:
         return tb
-    rev = cover_date(prod_id, doc_type) or ""
+    rev = review_date(prod_id, COVER_KEYWORDS.get(doc_type) or [], timeline_rows_with_sibling(prod_id)) or ""
     members = db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == prod_id)).scalars().all()
     dept_map = _annex_dept_people(members)
     approver = review_approver(doc_type, prod_id, rev) or ""
+    seen = {}
     for row in tb:
         if not isinstance(row, list) or not row:
             continue
@@ -1442,40 +1558,58 @@ def fill_annex_review_grid(tb, prod_id, doc_type, prod_name=""):
             row.append("")
         a = str(row[0] or "").strip()
         if a == "项目名称":
+            seen["项目名称"] = seen.get("项目名称", 0) + 1
+            sample = _annex_sample_row(doc_type, "项目名称", seen["项目名称"])
             if prod_name:
-                row[1] = prod_name
-                row[2] = prod_name
+                for idx in (1, 2):
+                    if idx < len(row) and (force or _annex_placeholder(row[idx], sample[idx] if idx < len(sample) else "")):
+                        row[idx] = prod_name
             for i, c in enumerate(row):
                 if str(c or "").strip() == "评审时间" and i + 1 < len(row) and rev:
-                    row[i + 1] = rev
+                    samp = sample[i + 1] if i + 1 < len(sample) else ""
+                    if force or _annex_placeholder(row[i + 1], samp):
+                        row[i + 1] = rev
             continue
         if a == "参评人员":
+            seen["参评人员"] = seen.get("参评人员", 0) + 1
+            sample = _annex_sample_row(doc_type, "参评人员", seen["参评人员"])
             dept1 = str(row[1] or "").strip()
             if _is_annex_dept(dept1):
                 names = dept_map.get(dept1) or "无"
-                row[2] = names
+                if force or _annex_placeholder(row[2], sample[2] if len(sample) > 2 else ""):
+                    row[2] = names
                 if not _is_annex_dept(row[3]):
                     for i in range(3, len(row)):
-                        row[i] = names
+                        samp = sample[i] if i < len(sample) else ""
+                        if force or _annex_placeholder(row[i], samp):
+                            row[i] = names
             dept2 = str(row[3] or "").strip()
             if _is_annex_dept(dept2) and len(row) > 4:
-                row[4] = dept_map.get(dept2) or "无"
+                samp = sample[4] if len(sample) > 4 else ""
+                if force or _annex_placeholder(row[4], samp):
+                    row[4] = dept_map.get(dept2) or "无"
             continue
         if a.startswith("批准人"):
-            text = "批准人（签字/日期）："
-            tail = " ".join(x for x in (approver, rev) if x).strip()
-            if tail:
-                text = text + tail
-            for i in range(len(row)):
-                row[i] = text
+            seen["批准人"] = seen.get("批准人", 0) + 1
+            sample = _annex_sample_row(doc_type, "批准人", seen["批准人"], startswith=True)
+            if force or _annex_row_untouched(row, sample):
+                text = "批准人（签字/日期）："
+                tail = " ".join(x for x in (approver, rev) if x).strip()
+                if tail:
+                    text = text + tail
+                for i in range(len(row)):
+                    row[i] = text
             continue
         if a.startswith("参评人签字"):
-            for i in range(len(row)):
-                row[i] = "参评人签字："
+            seen["参评人签字"] = seen.get("参评人签字", 0) + 1
+            sample = _annex_sample_row(doc_type, "参评人签字", seen["参评人签字"], startswith=True)
+            if force or _annex_row_untouched(row, sample):
+                for i in range(len(row)):
+                    row[i] = "参评人签字："
     return tb
 
 
-def fill_annex_reviews(content, prod_id, doc_type, prod_name=""):
+def fill_annex_reviews(content, prod_id, doc_type, prod_name="", force=False):
     if not isinstance(content, dict) or not prod_id:
         return content
 
@@ -1486,7 +1620,7 @@ def fill_annex_reviews(content, prod_id, doc_type, prod_name=""):
             tables = n.get("tables") or []
             for i, tb in enumerate(tables):
                 if _is_annex_review_grid(tb):
-                    tables[i] = fill_annex_review_grid(tb, prod_id, doc_type, prod_name)
+                    tables[i] = fill_annex_review_grid(tb, prod_id, doc_type, prod_name, force=force)
             walk(n.get("children") or [])
 
     walk(content.get("sections") or [])

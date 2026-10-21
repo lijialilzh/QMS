@@ -251,13 +251,13 @@ class Server(object):
         return ""
 
     def __autofill_front_matter(self, content, product_id, version):
-        # 封面、文件修订记录自动获取（仅填空，不覆盖已填内容），与「风险管理计划」保持一致
+        # 封面、文件修订记录：时间和人员打开、导出都按当前产品重取
         if not product_id:
             return content
-        reviser = self.__member_name(product_id, ("产品经理", "项目经理"))
-        auditor = self.__member_name(product_id, ("QA负责人", "质量负责人", "QA"))
-        approver = self.__member_name(product_id, ("产品负责人", "研发负责人", "管理者代表"))
-        rev_date = serv_review_util.review_date(product_id, serv_review_util.REVIEW_DEFS["risk"]["name_keywords"]) or ""
+        rev_date = serv_review_util.review_date(product_id, serv_review_util.COVER_KEYWORDS.get("risk") or []) or ""
+        names = serv_review_util.cover_signer_names(product_id, "risk", rev_date)
+        reviser = names.get("编制人") or self.__member_name(product_id, ("产品经理", "项目经理"))
+        approver = names.get("批准人") or self.__member_name(product_id, ("产品负责人", "研发负责人", "管理者代表"))
         ver = str(version or "")
         for section in (content.get("sections") or []):
             if self.__is_cover_section(section):
@@ -268,43 +268,45 @@ class Server(object):
                         label = str(row[0]).strip()
                         if len(row) >= 4 and str(row[2]).strip() == "文件版本" and ver and not str(row[3] or "").strip():
                             row[3] = ver
-
-                        def set_name(val):
-                            if val and len(row) >= 2 and not str(row[1] or "").strip():
-                                row[1] = val
-
-                        def set_date(val):
-                            if val and len(row) >= 4 and not str(row[3] or "").strip():
-                                row[3] = val
-                        # 编制/审核/批准人「姓名」列统一由签名规则填充（见文末 fill_cover_signers），此处仅填日期
                         if label in ("编制部门", "编写部门"):
-                            set_name("产品部")
+                            if len(row) >= 2 and not str(row[1] or "").strip():
+                                row[1] = "产品部"
                         elif label in ("编制人", "审核人", "批准人"):
-                            set_date(rev_date)
+                            if rev_date and len(row) >= 4:
+                                row[3] = rev_date
                         elif label == "生效日期":
-                            set_name(rev_date)
+                            if rev_date and len(row) >= 2:
+                                row[1] = rev_date
             elif self.__is_revision_section(section):
                 for table in (section.get("tables") or []):
                     if not isinstance(table, list) or not table:
                         continue
                     if len(table) >= 2 and isinstance(table[1], list) and len(table[1]) >= 5:
                         row = table[1]
-
-                        def set_if(i, val):
-                            if val and not str(row[i] if i < len(row) else "").strip():
-                                row[i] = val
-                        set_if(0, rev_date)
-                        set_if(1, ver)
+                        if rev_date:
+                            row[0] = rev_date
+                        if ver and not str(row[1] or "").strip():
+                            row[1] = ver
                         if not str(row[2] or "").strip():
                             row[2] = "首次发布"
-                        set_if(3, reviser)
-                        set_if(4, approver)
-                    # 默认五行：补足到「表头 + 5 行」
+                        if reviser:
+                            row[3] = reviser
+                        if approver:
+                            row[4] = approver
                     col = len(table[0]) if isinstance(table[0], list) and table[0] else 5
                     while len(table) < 6:
                         table.append(["" for _ in range(col)])
-        # 封面「编制/审核/批准人」按部门签名规则填充签名图（仅填空）
-        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(product_id, "risk"))
+        signers = serv_review_util.cover_signers(product_id, "risk", rev_date)
+        for section in (content.get("sections") or []):
+            if not self.__is_cover_section(section):
+                continue
+            for table in (section.get("tables") or []):
+                for row in table or []:
+                    if not isinstance(row, list) or not row:
+                        continue
+                    label = str(row[0] or "").strip()
+                    if label in ("编制人", "审核人", "批准人") and signers.get(label) and len(row) >= 2:
+                        row[1] = signers[label]
         return content
 
     def __dhf_code(self, prod_id, keyword):
