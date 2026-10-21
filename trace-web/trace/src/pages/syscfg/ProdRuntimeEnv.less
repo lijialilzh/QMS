@@ -144,6 +144,37 @@
             white-space: nowrap;
         }
 
+        td.env-merged {
+            vertical-align: middle;
+            height: 1px;
+
+            .env-merged-box {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                height: 100%;
+            }
+
+            .env-input {
+                text-align: center;
+            }
+        }
+
+        .env-head-cell {
+            display: flex;
+            align-items: center;
+
+            .env-input {
+                flex: 1;
+                min-width: 0;
+            }
+
+            .risk-part-row-actions {
+                display: inline-flex;
+                flex: none;
+            }
+        }
+
         th:first-child,
         td:first-child:not(.env-row-op) {
             width: 9em;

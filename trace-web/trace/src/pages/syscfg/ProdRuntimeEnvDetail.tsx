@@ -17,6 +17,22 @@ const FIELDS = [
 
 const cloneTables = (tables: any[]) => JSON.parse(JSON.stringify(tables || []));
 
+const cellText = (value: any) => String(value ?? "").trim();
+
+/** 数据行里，与上一行相同的非空单元格纵向合并。表头、空单元格不并。 */
+const cellMerge = (cells: any[][], r: number, ci: number) => {
+    if (r <= 0) return { skip: false, span: 1 };
+    const text = cellText(cells[r]?.[ci]);
+    if (!text) return { skip: false, span: 1 };
+    if (r > 1 && cellText(cells[r - 1]?.[ci]) === text) return { skip: true, span: 1 };
+    let span = 1;
+    for (let i = r + 1; i < cells.length; i++) {
+        if (cellText(cells[i]?.[ci]) !== text) break;
+        span += 1;
+    }
+    return { skip: false, span };
+};
+
 export default ({ prodId, readOnly, onChanged }: { prodId: number; readOnly?: boolean; onChanged?: () => void }) => {
     const { t: ts } = useTranslation();
     const [data, dispatch] = useData({
@@ -90,7 +106,15 @@ export default ({ prodId, readOnly, onChanged }: { prodId: number; readOnly?: bo
     const setCell = (ti: number, r: number, ci: number, val: string) => {
         const tables = cloneTables(data.form.tables || []);
         if (!tables[ti] || !tables[ti].cells || !tables[ti].cells[r]) return;
-        tables[ti].cells[r][ci] = val;
+        const cells = tables[ti].cells;
+        const old = cellText(cells[r][ci]);
+        let start = r;
+        let end = r;
+        if (r > 0 && old) {
+            while (start > 1 && cellText(cells[start - 1]?.[ci]) === old) start -= 1;
+            while (end + 1 < cells.length && cellText(cells[end + 1]?.[ci]) === old) end += 1;
+        }
+        for (let i = start; i <= end; i++) cells[i][ci] = val;
         dispatch({ form: { ...data.form, tables } });
     };
 
@@ -102,6 +126,28 @@ export default ({ prodId, readOnly, onChanged }: { prodId: number; readOnly?: bo
         const next = [...cells];
         next.splice(r + 1, 0, new Array(cols).fill(""));
         tables[ti].cells = next;
+        setTables(tables, true);
+    };
+
+    const insertColAfter = (ti: number, ci: number) => {
+        if (readOnly) return;
+        const tables = cloneTables(data.form.tables || []);
+        const cells = tables[ti]?.cells || [];
+        tables[ti].cells = cells.map((row: any[]) => {
+            const next = Array.isArray(row) ? [...row] : [];
+            next.splice(ci + 1, 0, "");
+            return next;
+        });
+        setTables(tables, true);
+    };
+
+    const delCol = (ti: number, ci: number) => {
+        if (readOnly) return;
+        const tables = cloneTables(data.form.tables || []);
+        const cells = tables[ti]?.cells || [];
+        const width = Array.isArray(cells[0]) ? cells[0].length : 0;
+        if (width <= 1) return;
+        tables[ti].cells = cells.map((row: any[]) => (Array.isArray(row) ? row.filter((_: any, i: number) => i !== ci) : row));
         setTables(tables, true);
     };
 
@@ -155,8 +201,44 @@ export default ({ prodId, readOnly, onChanged }: { prodId: number; readOnly?: bo
                                     <tbody>
                                         {cells.map((row: any[], r: number) => (
                                             <tr key={r}>
-                                                {row.map((cell: any, ci: number) => (
-                                                    <td key={ci} className={r === 0 ? "lbl" : ""}>
+                                                {row.map((cell: any, ci: number) => {
+                                                    const merged = cellMerge(cells, r, ci);
+                                                    if (merged.skip) return null;
+                                                    return (
+                                                    <td key={ci} rowSpan={merged.span > 1 ? merged.span : undefined} className={r === 0 ? "lbl" : (merged.span > 1 ? "env-merged" : "")}>
+                                                        {r === 0 && !readOnly ? (
+                                                            <div className="env-head-cell">
+                                                                <Input.TextArea
+                                                                    className="env-input"
+                                                                    autoSize={{ minRows: 1, maxRows: 8 }}
+                                                                    value={cell ?? ""}
+                                                                    onChange={(e) => setCell(ti, r, ci, e.target.value)}
+                                                                    onBlur={() => saveIfTablesChanged(data.form.tables || [])}
+                                                                />
+                                                                <span className="risk-part-row-actions">
+                                                                    <Button
+                                                                        type="text"
+                                                                        size="small"
+                                                                        className="risk-part-action-btn"
+                                                                        icon={<PlusOutlined />}
+                                                                        title="在右侧插入列"
+                                                                        onClick={() => insertColAfter(ti, ci)}
+                                                                    />
+                                                                    {row.length > 1 ? (
+                                                                        <Button
+                                                                            type="text"
+                                                                            size="small"
+                                                                            danger
+                                                                            className="risk-part-action-btn"
+                                                                            icon={<DeleteOutlined />}
+                                                                            title="删除此列"
+                                                                            onClick={() => delCol(ti, ci)}
+                                                                        />
+                                                                    ) : null}
+                                                                </span>
+                                                            </div>
+                                                        ) : (
+                                                        <div className={merged.span > 1 ? "env-merged-box" : undefined}>
                                                         <Input.TextArea
                                                             className="env-input"
                                                             autoSize={{ minRows: 1, maxRows: 8 }}
@@ -165,8 +247,11 @@ export default ({ prodId, readOnly, onChanged }: { prodId: number; readOnly?: bo
                                                             onChange={(e) => setCell(ti, r, ci, e.target.value)}
                                                             onBlur={() => saveIfTablesChanged(data.form.tables || [])}
                                                         />
+                                                        </div>
+                                                        )}
                                                     </td>
-                                                ))}
+                                                    );
+                                                })}
                                                 {readOnly ? null : (
                                                 <td className={r === 0 ? "lbl env-row-op" : "env-row-op"}>
                                                     {r === 0 ? (

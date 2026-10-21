@@ -118,14 +118,14 @@ export default ({ prodId, readOnly, onChanged }: { prodId: number; readOnly?: bo
                     });
                 }
                 const hasCollector = rows.some((r: any) => (r.role || "").trim() === COLLECTOR_ROLE);
-                if (!hasCollector && DEFAULT_COLLECTORS.length) {
+                if (!rows.length && !hasCollector && DEFAULT_COLLECTORS.length) {
                     DEFAULT_COLLECTORS.forEach((name) => {
                         sort += 1;
                         adds.push({ role: COLLECTOR_ROLE, name, sort_order: sort });
                     });
                 }
                 const hasCleaner = rows.some((r: any) => (r.role || "").trim() === CLEANER_ROLE);
-                if (!hasCleaner && DEFAULT_CLEANERS.length) {
+                if (!rows.length && !hasCleaner && DEFAULT_CLEANERS.length) {
                     DEFAULT_CLEANERS.forEach((name) => {
                         sort += 1;
                         adds.push({ role: CLEANER_ROLE, name, sort_order: sort });
@@ -151,11 +151,14 @@ export default ({ prodId, readOnly, onChanged }: { prodId: number; readOnly?: bo
                     existingRoles.add("模型部负责人");
                     existingRoles.add("模型负责人");
                 }
-                DEFAULT_MODEL_MEMBERS.forEach((m) => {
-                    if (existingRoles.has(m.role)) return;
-                    sort += 1;
-                    adds.push({ role: m.role, name: m.name, sort_order: sort });
-                });
+                if (!rows.length) {
+                    DEFAULT_MODEL_MEMBERS.forEach((m) => {
+                        if (m.role !== "算法工程师" && existingRoles.has(m.role)) return;
+                        sort += 1;
+                        adds.push({ role: m.role, name: m.name, sort_order: sort });
+                        if (m.role !== "算法工程师") existingRoles.add(m.role);
+                    });
+                }
                 const jobs: Promise<any>[] = [
                     ...updates.map((u) => Api.update_project_member({ ...u })),
                     ...adds.map((a) => Api.add_project_member({ prod_id: id, ...a })),
