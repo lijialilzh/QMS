@@ -32,8 +32,15 @@ const CAPTION_CATS: [string, string][] = [
     ["体系结构图", "img_struct"],
 ];
 
-// 仅这些分类允许在文档内上传（写回图表文件管理）；其余为只读预览
+// 仅这些分类允许在文档内上传（写回图表文件管理）；其余为只读预览。物理拓扑图只自动获取。
 const UPLOADABLE_CATS = new Set(["img_ui", "img_home"]);
+
+const isPhysicalTopoChapter = (node: any) => {
+    if (!node) return false;
+    if (node.img_category === "img_topo") return true;
+    if (String(node.title || "").includes("物理拓扑")) return true;
+    return getNodeFigures(node).some((fig) => fig.category === "img_topo");
+};
 
 // 扫描节点正文图题行（图N xxx），返回 [{caption, category}]
 const getNodeFigures = (node: any): { caption: string; category: string }[] => {
@@ -327,7 +334,12 @@ export default () => {
         const catList = [...cats];
         if (!catList.length) return;
         Promise.all(catList.map((cat) =>
-            ApiDocFile.list_doc_file(cat, { product_id: productId, page_index: 0, page_size: 50 })
+            ApiDocFile.list_doc_file(cat, {
+                product_id: productId,
+                page_index: 0,
+                page_size: 50,
+                ...(cat === "img_topo" ? { doc_version: "A0" } : {}),
+            })
                 .then((res: any) => {
                     const first = res.code === Api.C_OK ? (res.data?.rows || [])[0] : null;
                     return [cat, first?.file_url ? `/${first.file_url}` : ""] as [string, string];
@@ -580,6 +592,9 @@ export default () => {
                         未在「图表文件管理 - {IMG_CATEGORY_LABEL[cat] || ""}」找到该产品的图片。
                     </div>
                 )}
+                {!readonly && cat === "img_topo" && (
+                    <div style={{ color: "#999", marginTop: 8 }}>自动获取，不可修改</div>
+                )}
                 {!readonly && UPLOADABLE_CATS.has(cat) && (
                     <div style={{ marginTop: 10 }}>
                         <Upload beforeUpload={(file: any) => uploadDocImage(cat, file)} showUploadList={false} accept="image/*">
@@ -724,7 +739,12 @@ export default () => {
                                     />
                                 </div>
                                 {(() => {
-                                    const anchors = getImageAnchors(active);
+                                    const topoLocked = isPhysicalTopoChapter(active);
+                                    let anchors = getImageAnchors(active);
+                                    if (topoLocked && !anchors.some((a) => a.category === "img_topo")) {
+                                        const lineCount = String(active.body || "").split("\n").length;
+                                        anchors = [...anchors, { kind: "docfile", category: "img_topo", caption: "物理拓扑图", lineIndex: Math.max(0, lineCount - 1) }];
+                                    }
                                     const renderTb = (ti: number) => {
                                         const tb = (active.tables || [])[ti];
                                         if (!tb) return null;
@@ -811,7 +831,7 @@ export default () => {
                                                     {i < anchors.length && renderImageBlock(anchors[i])}
                                                 </div>
                                             ))}
-                                            {(Array.isArray(active.images) ? active.images : []).map((url: string, ii: number) => (
+                                            {!topoLocked && (Array.isArray(active.images) ? active.images : []).map((url: string, ii: number) => (
                                                 <div key={`free-img-${ii}`} style={{ margin: "8px 0 12px", textAlign: "center" }}>
                                                     <img src={url} alt="" style={{ maxWidth: "100%", border: "1px solid #eee" }} />
                                                     {!readonly && (
@@ -827,9 +847,11 @@ export default () => {
                                             {!readonly && !isRuntimeLockedBody(active) && (
                                                 <Space wrap style={{ margin: "8px 0" }}>
                                                     <Button size="small" onClick={addBodyBlock}>添加正文</Button>
-                                                    <Upload accept="image/*" showUploadList={false} beforeUpload={(file) => uploadFreeImage(file as File)}>
-                                                        <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
-                                                    </Upload>
+                                                    {!topoLocked && (
+                                                        <Upload accept="image/*" showUploadList={false} beforeUpload={(file) => uploadFreeImage(file as File)}>
+                                                            <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
+                                                        </Upload>
+                                                    )}
                                                 </Space>
                                             )}
                                             {(active.tables || []).map((_: any[], ti: number) => renderTb(ti))}

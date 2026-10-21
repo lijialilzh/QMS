@@ -16,6 +16,7 @@ import * as ApiSrsType from "@/api/ApiSrsType";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
+import * as ApiRuntime from "@/api/ApiProdRuntimeEnv";
 import { ensureRevisionObjectRows } from "@/pages/doc_fill/syncDocVersion";
 import TreeStructure, {
     TreeNode,
@@ -77,6 +78,139 @@ const isSrsApprovalTableNode = (node: TreeNode) => {
 const isSrsChangeLogTableNode = (node: TreeNode) => {
     const txt = getSrsTableText(node);
     return ["修改日期", "版本号", "修订说明", "修订人", "批准人"].every((k) => txt.includes(k));
+};
+
+const SRS_RUNTIME_TABLE_ORDER = ["srv_hw", "srv_sw", "cli", "net"];
+const SRS_RUNTIME_CHILD_KEYS: Array<[string, string[]]> = [
+    ["srv_hw", ["表1", "服务器硬件"]],
+    ["srv_sw", ["表2", "服务器软件"]],
+    ["net", ["表4", "网络"]],
+    ["cli", ["表3", "用户端配置", "用户端"]],
+];
+
+const isSrsImportTableTitle = (title?: string) => /^导入表格\d*$/.test(String(title || "").trim());
+
+const matchSrsRuntimeChildKey = (title?: string) => {
+    const text = String(title || "");
+    const plain = text.replace(/^\s*\d+(?:\.\d+)*[\.、\s]*/, "").trim();
+    for (const [key, words] of SRS_RUNTIME_CHILD_KEYS) {
+        for (const word of words) {
+            if (!text.includes(word) && !plain.includes(word)) continue;
+            if (key === "cli" && word === "用户端" && (text.includes("网络") || plain.includes("网络") || text.includes("表4") || plain.includes("表4"))) {
+                continue;
+            }
+            return key;
+        }
+    }
+    return "";
+};
+
+const runtimeCellsToSrsTable = (cells: any[][], title: string) => {
+    const grid = (cells || []).filter((row) => Array.isArray(row)).map((row) => row.map((cell) => String(cell ?? "")));
+    if (!grid.length) return null;
+    const colCount = Math.max(...grid.map((row) => row.length));
+    const padded = grid.map((row) => row.concat(Array(Math.max(0, colCount - row.length)).fill("")));
+    const headers = padded[0].map((name, index) => ({ code: `col_${index + 1}`, name: name || `列${index + 1}` }));
+    const rows = padded.slice(1).map((body) => {
+        const row: Record<string, string> = {};
+        body.forEach((value, index) => { row[`col_${index + 1}`] = value; });
+        return row;
+    });
+    const cellObjs = padded.map((row) => row.map((value) => ({ value, row_span: 1, col_span: 1, h_align: "left", v_align: "top" })));
+    return { name: title || "", show_header: 1, headers, rows, cells: cellObjs };
+};
+
+const srsRuntimeHasImportTable = (node: TreeNode): boolean => {
+    const children = node.children || [];
+    if (children.some((child) => isSrsImportTableTitle(child.title))) return true;
+    return children.some((child) => srsRuntimeHasImportTable(child));
+};
+
+const writeSrsRuntimeTable = (node: TreeNode, table: any): TreeNode => {
+    const children = node.children || [];
+    const direct = children.findIndex((child) => isSrsImportTableTitle(child.title));
+    if (direct >= 0) {
+        const nextChildren = children.slice();
+        nextChildren[direct] = { ...children[direct], table };
+        return { ...node, children: nextChildren };
+    }
+    const nested = children.findIndex((child) => srsRuntimeHasImportTable(child));
+    if (nested >= 0) {
+        const nextChildren = children.slice();
+        nextChildren[nested] = writeSrsRuntimeTable(children[nested], table);
+        return { ...node, children: nextChildren };
+    }
+    return { ...node, table };
+};
+
+const applyRuntimePayloadToSrsTree = (nodes: TreeNode[], payload: any): TreeNode[] => {
+    if (!payload || !nodes?.length) return nodes;
+    const arch = String(payload.arch || "");
+    const list = (payload.tables || []).filter((item: any) => item && typeof item === "object");
+    const byKey = new Map<string, any>();
+    list.forEach((item: any) => { if (item.key) byKey.set(item.key, item); });
+    const keyed = SRS_RUNTIME_TABLE_ORDER.map((key) => byKey.get(key)).filter(Boolean);
+    const ordered = keyed.length < 4 ? list.slice(0, 4) : keyed;
+    let replaced = false;
+    const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+        if (replaced) return node;
+        const title = String(node.title || "");
+        const heading = title.trim().match(/^\s*(\d+(?:\.\d+)*)/)?.[1] || "";
+        const plain = title.replace(/^\s*\d+(?:\.\d+)*[\.、\s]*/, "").trim();
+        if (heading !== "2.4" && plain !== "运行环境") {
+            const children = walk(node.children || []);
+            return children === node.children ? node : { ...node, children };
+        }
+        replaced = true;
+        const children = node.children || [];
+        const matched: Array<{ child: TreeNode; item: any }> = [];
+        children.forEach((child) => {
+            if (isSrsImportTableTitle(child.title)) return;
+            const key = matchSrsRuntimeChildKey(child.title);
+            const item = key ? byKey.get(key) : null;
+            if (item?.cells?.length) matched.push({ child, item });
+        });
+        const text = arch || node.text;
+        if (matched.length) {
+            const nextChildren = children
+                .filter((child) => !isSrsImportTableTitle(child.title))
+                .map((child) => {
+                    const hit = matched.find((item) => item.child === child);
+                    if (!hit) return child;
+                    const table = runtimeCellsToSrsTable(hit.item.cells, hit.item.title || "");
+                    return table ? writeSrsRuntimeTable(child, table) : child;
+                });
+            return { ...node, text, table: undefined, children: nextChildren };
+        }
+        const built = ordered
+            .map((item: any) => ({ title: item.title || "", table: runtimeCellsToSrsTable(item.cells, item.title || "") }))
+            .filter((item) => item.table);
+        if (!built.length) return { ...node, text };
+        const [first, ...rest] = built;
+        return {
+            ...node,
+            text,
+            table: {
+                ...first.table,
+                name: first.title || first.table.name,
+                extra_tables: rest.map((item) => ({ title: item.title, table: item.table })),
+            },
+            children: children.filter((child) => !isSrsImportTableTitle(child.title)),
+        };
+    });
+    return walk(nodes);
+};
+
+const applyRuntimeEnvToSrsTree = async (nodes: TreeNode[], productId?: number): Promise<TreeNode[]> => {
+    if (!productId || !nodes?.length) return nodes;
+    try {
+        const res: any = await ApiRuntime.get_prod_runtime_env({ prod_id: productId });
+        if (res?.code !== ApiRuntime.C_OK || !res.data) return nodes;
+        return applyRuntimePayloadToSrsTree(nodes, res.data);
+    } catch (error) {
+        console.error("加载产品运行环境失败:", error);
+        return nodes;
+    }
 };
 
 const normalizeSrsApprovalRows = (node: TreeNode) => {
@@ -281,7 +415,8 @@ const applyCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAutofi
                 const row = rows[idx + 1];
                 if (!row) return;
                 const sig = info.resolveSigner(label);
-                if (sig && !String(row.value1 ?? "").startsWith("data:image") && !String(row.value1 ?? "").trim()) {
+                // 打开时覆盖签署人：编制人=产品经理，审核人/批准人=产品负责人
+                if (sig && String(row.value1 ?? "") !== sig) {
                     row.value1 = sig;
                     changed = true;
                 }
@@ -305,8 +440,15 @@ const applyCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAutofi
                 row.change_desc = "首次发布";
                 changed = true;
             }
-            setIf(row, "changer", info.reviser);
-            setIf(row, "approver", info.approver);
+            // 修订记录首行人员随产品部职能覆盖；已有 A1 等后续行不改
+            if (info.reviser && String(row.changer ?? "") !== info.reviser) {
+                row.changer = info.reviser;
+                changed = true;
+            }
+            if (info.approver && String(row.approver ?? "") !== info.approver) {
+                row.approver = info.approver;
+                changed = true;
+            }
             rows[0] = row;
             const revisionRows = ensureRevisionObjectRows(rows, info.version || "");
             if (JSON.stringify(revisionRows) !== JSON.stringify(rows)) changed = true;
@@ -689,7 +831,6 @@ export default () => {
         .replace(/[：:]+$/, "")
         .replace(/\s+/g, "")
         .trim();
-    const isStructDiagramSection = (title?: string) => normalizeTemplateTitle(title) === "系统结构图";
     const cloneTemplateBranch = (tplNode: any): TreeNode => {
         const addIds = (items: any[]): TreeNode[] => items.map((node) => ({
             ...node,
@@ -720,8 +861,7 @@ export default () => {
             return next;
         };
 
-        const mergeChildrenOrdered = (currentChildren: TreeNode[], templateChildren: TreeNode[], parentTpl?: TreeNode): TreeNode[] => {
-            const lockToTemplate = isStructDiagramSection(parentTpl?.title);
+        const mergeChildrenOrdered = (currentChildren: TreeNode[], templateChildren: TreeNode[]): TreeNode[] => {
             const current = [...(currentChildren || [])];
             const consumed = new Set<number>();
             const output: TreeNode[] = [];
@@ -747,21 +887,7 @@ export default () => {
                 }
                 if (matchIdx >= 0) {
                     consumed.add(matchIdx);
-                    const merged = mergeNode(current[matchIdx], tplChild);
-                    if (lockToTemplate) {
-                        const nextTitle = String(tplChild.title || merged.title || "");
-                        const nextText = String(tplChild.text ?? merged.text ?? "");
-                        if (String(merged.title || "") !== nextTitle || String(merged.text || "") !== nextText) {
-                            changed = true;
-                        }
-                        output.push({ ...merged, title: nextTitle, text: nextText });
-                    } else {
-                        output.push(merged);
-                    }
-                } else if (lockToTemplate && (titleKey || tplChild.ref_type)) {
-                    // 仅 2.3 系统结构图缺的模板子节自动补回；2.6 等其它章节删除后不因打开页恢复
-                    changed = true;
-                    output.push(cloneTemplateBranch(tplChild));
+                    output.push(mergeNode(current[matchIdx], tplChild));
                 } else if (tplChild.ref_type === "srs_reqs") {
                     // 需求区节点承载「新增变更表格」入口；Word 导入的文档没有它，缺失时补回。
                     changed = true;
@@ -771,10 +897,6 @@ export default () => {
 
             current.forEach((child, idx) => {
                 if (consumed.has(idx)) return;
-                if (lockToTemplate) {
-                    changed = true;
-                    return;
-                }
                 output.push(child);
             });
             return dedupeChildrenByHeading(output);
@@ -797,7 +919,7 @@ export default () => {
         const mergeNode = (current: TreeNode, template: TreeNode): TreeNode => {
             const merged: TreeNode = {
                 ...current,
-                children: mergeChildrenOrdered(current.children || [], template.children || [], template),
+                children: mergeChildrenOrdered(current.children || [], template.children || []),
             };
             const titleKey = normalizeTemplateTitle(current.title || template.title);
             if (/术语/.test(titleKey) && isEmptyNodeTable(current.table) && !isEmptyNodeTable(template.table)) {
@@ -2936,6 +3058,16 @@ export default () => {
             treeStructureRef.current = overallResult.nodes;
             dispatch({ treeStructure: overallResult.nodes });
         }
+        const runtimeProductId = Number(displayProductId || 0);
+        if (isReadOnly || !runtimeProductId || !(overallResult.nodes || []).length) return;
+        let cancelled = false;
+        applyRuntimeEnvToSrsTree(overallResult.nodes as TreeNode[], runtimeProductId).then((next) => {
+            if (cancelled) return;
+            if (JSON.stringify(next) === JSON.stringify(overallResult.nodes)) return;
+            treeStructureRef.current = next;
+            dispatch({ treeStructure: next });
+        });
+        return () => { cancelled = true; };
     }, [displayProductId, currentProduct?.scope, currentProduct?.name, currentProduct?.type_code, currentProduct?.overall_desc]);
 
     const applyVersionToCoverTable = (nodes: TreeNode[], version?: any): { nodes: TreeNode[]; changed: boolean } => {
@@ -3010,27 +3142,42 @@ export default () => {
     useEffect(() => {
         if (!displayProductId || !(data.treeStructure as TreeNode[] || []).length) return;
         let cancelled = false;
+        const productName = String(currentProduct?.name || "").trim();
+        const siblingIds = productName
+            ? (data.products as any[])
+                .filter((p: any) => p?.id && p.id !== displayProductId && String(p.name || "").trim() === productName)
+                .map((p: any) => p.id)
+                .sort((a: number, b: number) => b - a)
+            : [];
         Promise.all([
             ApiTimeline.list_timeline({ prod_id: displayProductId }).catch(() => null),
             ApiMember.list_project_member({ prod_id: displayProductId, page_index: 0, page_size: 1000 }).catch(() => null),
             ApiPersonSign.list_person_sign({ page_index: 0, page_size: 1000 }).catch(() => null),
-        ]).then(([tl, mb, ps]: any[]) => {
+            ...siblingIds.map((id: number) => ApiMember.list_project_member({ prod_id: id, page_index: 0, page_size: 1000 }).catch(() => null)),
+        ]).then((results: any[]) => {
             if (cancelled) return;
-            const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
-            const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
-            const signRows = ps && ps.code === Api.C_OK ? ((ps.data && ps.data.rows) || []) : [];
+            const [tl, mb, ps, ...siblingRes] = results;
+            const rowsOf = (res: any) => (res && res.code === Api.C_OK ? ((res.data && res.data.rows) || []) : []);
+            const tlRows = rowsOf(tl);
+            const members = rowsOf(mb);
+            const siblingMembers = siblingRes.flatMap(rowsOf);
+            const signRows = rowsOf(ps);
             const signMap: Record<string, string> = {};
             signRows.forEach((s: any) => {
                 if (s.name && s.sign_img) signMap[String(s.name).trim()] = s.sign_img;
             });
-            const findRole = (pred: (role: string) => boolean) => {
-                const hit = members.find((m: any) => pred(String(m.role || "")));
+            const findIn = (list: any[], pred: (role: string) => boolean) => {
+                const hit = list.find((m: any) => pred(String(m.role || "")) && String(m.name || "").trim());
                 return hit ? String(hit.name || "").trim() : "";
             };
-            const tpm = findRole((r) => r.includes("TPM"));
+            const findRole = (pred: (role: string) => boolean) => findIn(members, pred);
+            // 当前完整版本没有对应职能时，用同一产品名称下其它版本
+            const findCoverRole = (pred: (role: string) => boolean) => findIn(members, pred) || findIn(siblingMembers, pred);
+            const productManager = findCoverRole((r) => r.includes("产品经理"));
+            const productOwner = findCoverRole((r) => r.includes("产品负责人"));
             const devLead = findRole((r) => r.includes("研发负责人"));
             const resolveSigner = (label: string) => {
-                const who = label === "编制人" ? tpm : label === "审核人" || label === "批准人" ? devLead : "";
+                const who = label === "编制人" ? productManager : label === "审核人" || label === "批准人" ? productOwner : "";
                 return who ? (signMap[who] || who) : "";
             };
             const coverDate = computeSrsCoverDate(tlRows);
@@ -3054,8 +3201,8 @@ export default () => {
                 coverDate,
                 version: String(displayDocVersion || ""),
                 resolveSigner,
-                reviser: tpm,
-                approver: devLead,
+                reviser: productManager,
+                approver: productOwner,
             });
             const reviewResult = applySrsReviewPersonAutofill(result.nodes, {
                 coverDate,
@@ -3070,7 +3217,7 @@ export default () => {
             }
         });
         return () => { cancelled = true; };
-    }, [displayProductId, displayDocVersion, data.treeStructure]);
+    }, [displayProductId, displayDocVersion, data.treeStructure, data.products, currentProduct?.name]);
 
     useEffect(() => {
         if (params.id || data.loading || !(data.treeStructure as TreeNode[] || []).length) return;

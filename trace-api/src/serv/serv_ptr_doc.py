@@ -563,8 +563,10 @@ class Server(object):
                     add_naming_diagram()
             elif body.strip():
                 add_text(body)
-            # 本章节手动上传的图片（base64），导出嵌入
-            for img in (node.get("images") or []):
+            # 物理拓扑图只嵌入自动获取的产品图示，不导出本章另外上传的图。
+            topo_chapter = node.get("img_category") == "img_topo" or "物理拓扑" in (node.get("title") or "")
+            manual_images = [] if topo_chapter else (node.get("images") or [])
+            for img in manual_images:
                 try:
                     docx_util.save_img2docx(img, document, mw=520, mh=520)
                 except Exception:

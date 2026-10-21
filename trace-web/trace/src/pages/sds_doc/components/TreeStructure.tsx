@@ -1,7 +1,7 @@
 import "./TreeStructure.less";
 import { useState, useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode } from "react";
 import { Button, Input, Space, Popconfirm, Upload, Table, message, Empty, Tooltip, Image } from "antd";
-import { PlusOutlined, DeleteOutlined, TableOutlined, EditOutlined, UploadOutlined, FileOutlined, CaretRightOutlined, CaretDownOutlined, CloseOutlined } from "@ant-design/icons";
+import { PlusOutlined, DeleteOutlined, TableOutlined, EditOutlined, UploadOutlined, FileOutlined, CaretRightOutlined, CaretDownOutlined, CloseOutlined, ArrowUpOutlined, ArrowDownOutlined } from "@ant-design/icons";
 import { numberToChinese } from "@/common";
 import { useTranslation } from "react-i18next";
 import EditableTableGenerator, { TableDataWithHeaders } from "./EditableTableGenerator";
@@ -1463,9 +1463,13 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         || (isChapter7ComplianceContext && !!navEmbeddedDocImageChild?.img_url)
     ) ? 'node-pic-block--embedded-flow' : 'node-pic-block--embedded-figure';
     const compactWithImage = !readOnly && hasDisplayImage && !navFullSizeImageMode && !isNavEditComplianceCandidate && !isNavSingleChapterEdit;
-    // 物理拓扑图、系统结构图不能删；标题旁可重新上传，替换当前这一张
-    const isAutoOnlyImage = node.ref_type === 'img_topo' || node.ref_type === 'img_struct'
-        || navEmbeddedDocImageChild?.ref_type === 'img_topo' || navEmbeddedDocImageChild?.ref_type === 'img_struct';
+    // 物理拓扑图、系统结构图这一章的自动图不能重新上传、不能删图。其下编号子章节仍按普通章节编辑。
+    const diagramName = stripNavChapterPrefix(String(node.title || "")).replace(/\s+/g, "");
+    const isDiagramChapter = /^(物理拓扑图|拓扑图|系统结构图|体系结构图)$/.test(diagramName);
+    const isAutoOnlyImage = isDiagramChapter && (
+        node.ref_type === 'img_topo' || node.ref_type === 'img_struct'
+        || navEmbeddedDocImageChild?.ref_type === 'img_topo' || navEmbeddedDocImageChild?.ref_type === 'img_struct'
+    );
     const showNodeTableActions = node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces';
     const hideMisplacedReviewTable = hasTable && !nodeIsReviewAppendix && isMisplacedReviewTable(node.table);
     // 标准需求/变更需求对应章节(SDS-RCN 编码)：章节标题与 SDS 编码只读，不可修改
@@ -1735,13 +1739,12 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const navImageInHeaderRow = isNavSingleChapterEdit
         && !showSplitInlineInEdit
         && hasDisplayImage
-        && !multiEmbeddedFigures
         && (
             node.ref_type === 'img_topo'
             || node.ref_type === 'img_struct'
             || navEmbeddedDocImageChild?.ref_type === 'img_topo'
             || navEmbeddedDocImageChild?.ref_type === 'img_struct'
-            || (isChapter345Section && !!navEmbeddedFigureChild?.img_url)
+            || (!multiEmbeddedFigures && isChapter345Section && !!navEmbeddedFigureChild?.img_url)
         );
     const editTextBeforeTable = showComplianceInlineInEdit
         ? (chapter7TableSplit?.before || "")
@@ -2246,22 +2249,6 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                               </div>
                               {renderNameEditor(editFigureCaption, editFigureCaptionNodeId, { placeholder: "请输入图题", style: { marginTop: 6 }, forceShow: !!editFigureCaptionNodeId })}
                           </div>
-                          {!readOnly && isAutoOnlyImage && (
-                              <Upload
-                                  maxCount={1}
-                                  showUploadList={false}
-                                  accept="image/*"
-                                  disabled={uploadLoading}
-                                  beforeUpload={(file) => {
-                                      void uploadImageTo(file, imageSourceNodeId);
-                                      return false;
-                                  }}
-                              >
-                                  <Button size="small" icon={<UploadOutlined />}>
-                                      重新上传
-                                  </Button>
-                              </Upload>
-                          )}
                       </div>
                   )}
                   {isDocImageRefType(node.ref_type) && !readOnly && imageChildrenAll.length === 0 && !hasDisplayImage && (
@@ -2486,9 +2473,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           >
                               添加正文
                           </Button>
-                          <Upload {...freeAddUploadProps}>
-                              <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
-                          </Upload>
+                          {!isAutoOnlyImage && (
+                              <Upload {...freeAddUploadProps}>
+                                  <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
+                              </Upload>
+                          )}
                           <Button
                               size="small"
                               icon={<TableOutlined />}
@@ -2908,9 +2897,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                   >
                                       添加正文
                                   </Button>
-                                  <Upload {...freeAddUploadProps}>
-                                      <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
-                                  </Upload>
+                                  {!isAutoOnlyImage && (
+                                      <Upload {...freeAddUploadProps}>
+                                          <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
+                                      </Upload>
+                                  )}
                                   <Button size="small" icon={<TableOutlined />} onClick={() => onAddTable(node.id)}>
                                       添加表格
                                   </Button>
@@ -2936,9 +2927,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                           >
                                               添加正文
                                           </Button>
-                                          <Upload {...freeAddUploadProps}>
-                                              <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
-                                          </Upload>
+                                          {!isAutoOnlyImage && (
+                                              <Upload {...freeAddUploadProps}>
+                                                  <Button size="small" icon={<UploadOutlined />}>上传图片</Button>
+                                              </Upload>
+                                          )}
                                           <Button
                                               size="small"
                                               icon={<TableOutlined />}
@@ -4388,8 +4381,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
         !readOnly &&
         depth < 4 &&
         node.ref_type !== "sds_reqds" &&
-        node.ref_type !== "sds_traces" &&
-        !isDocImageRefType(node.ref_type)
+        node.ref_type !== "sds_traces"
     );
     const handleAddChildFromNav = (parentId: number) => {
         const newId = handleAdd(parentId);
@@ -4401,6 +4393,41 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
         if (newId !== undefined && newId !== null) {
             setActiveNodeId(newId);
         }
+    };
+    const moveNavChapter = (id: string | number, dir: -1 | 1) => {
+        const movable = (item: TreeNode) => (
+            isNavChapter(item)
+            && !hiddenSet.has(String(item.id))
+            && !hiddenSet.has(String(item.n_id || ""))
+        );
+        const swapIn = (list: TreeNode[]): TreeNode[] => {
+            const idx = (list || []).findIndex((item) => String(item.id) === String(id));
+            if (idx >= 0) {
+                const chapterIdxs = list
+                    .map((item, itemIndex) => (movable(item) ? itemIndex : -1))
+                    .filter((itemIndex) => itemIndex >= 0);
+                const pos = chapterIdxs.indexOf(idx);
+                const nextPos = pos + dir;
+                if (pos < 0 || nextPos < 0 || nextPos >= chapterIdxs.length) return list;
+                const next = [...list];
+                const from = chapterIdxs[pos];
+                const to = chapterIdxs[nextPos];
+                [next[from], next[to]] = [next[to], next[from]];
+                return next;
+            }
+            let changed = false;
+            const next = (list || []).map((item) => {
+                const children = swapIn(item.children || []);
+                if (children !== item.children) {
+                    changed = true;
+                    return { ...item, children };
+                }
+                return item;
+            });
+            return changed ? next : list;
+        };
+        const nextNodes = swapIn(nodes);
+        if (nextNodes !== nodes) updateNodes(nextNodes);
     };
     const activeExtra = extraNavSections.find((s) => String(activeNodeId) === `${extraKeyPrefix}${s.key}`) || null;
     const defaultActiveNode = visibleNodes[0] || null;
@@ -4424,7 +4451,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
         ));
     })();
     const renderNav = (list: TreeNode[], depth: number): JSX.Element[] => (
-        (list || []).filter(isNavChapter).map((node) => {
+        (list || []).filter(isNavChapter).map((node, index, rowList) => {
             const kids = (node.children || []).filter(isNavChapter);
             const hasKids = kids.length > 0;
             const collapsed = navCollapsedIds.has(String(node.id));
@@ -4451,6 +4478,16 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                         <span className="srs-nav-title" title={navLabel}>{navLabel}</span>
                         {!readOnly && (
                             <span className="srs-nav-ops" onClick={(e) => e.stopPropagation()}>
+                                {!isLockedSdsFunctionChapter(chapterNum, node.title) && (
+                                    <span className="srs-nav-move">
+                                        {index > 0 && (
+                                            <ArrowUpOutlined title="上移" onClick={() => moveNavChapter(node.id, -1)} />
+                                        )}
+                                        {index < rowList.length - 1 && (
+                                            <ArrowDownOutlined title="下移" onClick={() => moveNavChapter(node.id, 1)} />
+                                        )}
+                                    </span>
+                                )}
                                 {canAddChildInNav(node, depth) && !isLockedSdsFunctionChapter(chapterNum, node.title) && chapterNum !== "6" && !(lockRuntimeEnv && isRuntimeEnvSection(node)) && (
                                     <Tooltip title={ts("sds_doc.add_sub_chapter") || ts("srs_doc.add_sub_chapter") || "添加子章节"}>
                                         <PlusOutlined
@@ -4561,7 +4598,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                             <div className="srs-tree-nav">
                                 <div className="srs-tree-nav-head">{ts("sds_doc.directory_structure") || ts("srs_doc.directory") || "目录"}</div>
                                 {!readOnly && (
-                                    <div className="srs-tree-nav-hint">封面/修订记录/附件一不参与编号；正文章节自动编号。</div>
+                                    <div className="srs-tree-nav-hint">封面/修订记录/附件一不参与编号；正文章节自动编号。悬停或选中显示 ↑↓，只与同级章节交换。</div>
                                 )}
                                 <div className="srs-tree-nav-body">
                                     {extraNavSections.map((sec) => {

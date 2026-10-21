@@ -48,6 +48,27 @@ const resolveRole = (role: string): string => {
     const k = String(role || "").trim();
     return ROLE_ALIAS[k] || k;
 };
+const roleHits = (memberRole: string, rowRole: string) => {
+    const a = resolveRole(String(memberRole || "").trim());
+    const b = String(rowRole || "").trim();
+    return !!a && !!b && (a === b || a.includes(b) || b.includes(a));
+};
+const isDevStaff = (m: any) => {
+    if (!String(m?.name || "").trim()) return false;
+    const role = String(m?.role || "").trim();
+    if (/TPM/i.test(role)) return true;
+    return resolveRole(role) === "软件开发工程师";
+};
+// 人员资源「模型部」行：算法研究员及算法工程师（含算法工程师等能对上该行的角色），或所属部门已填模型部
+const isModelDeptStaff = (m: any) => {
+    if (!String(m?.name || "").trim()) return false;
+    if (String(m?.dept || "").trim() === "模型部") return true;
+    return roleHits(m?.role, "算法研究员及算法工程师");
+};
+const isTestStaff = (m: any) => {
+    if (!String(m?.name || "").trim()) return false;
+    return resolveRole(String(m?.role || "").trim()) === "软件测试工程师";
+};
 
 const timelineNum = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
 const cellText = (v: any) => {
@@ -311,9 +332,11 @@ export default () => {
     };
 
     // 「设备资源」章：按设备及用途从产品设备资源写入名称/数量（覆盖这两列；设备说明等不改）
-    const fillDevice = (nodes: any[], items: any[]): any[] => {
+    // 开发设备、测试设备的数量按参与人员人数覆盖：开发人员含 TPM 和模型部，测试人员不含用户测试。
+    const fillDevice = (nodes: any[], items: any[], members: any[] = []): any[] => {
         const list = (items || []).filter((it: any) => String(it?.use || "").trim());
-        if (!list.length) return nodes;
+        const devQty = String((members || []).filter((m) => isDevStaff(m) || isModelDeptStaff(m)).length);
+        const testQty = String((members || []).filter(isTestStaff).length);
         const byUse = new Map<string, { name: string; qty: string }>();
         list.forEach((it: any) => {
             byUse.set(String(it.use).trim(), { name: String(it.name ?? ""), qty: String(it.qty ?? "") });
@@ -348,6 +371,11 @@ export default () => {
                     row[idxQty] = src.qty;
                     t.push(row);
                 });
+                for (let i = 1; i < t.length; i++) {
+                    const use = String(t[i][idxUse] || "").trim();
+                    if (use === "开发设备") t[i][idxQty] = devQty;
+                    else if (use === "测试设备") t[i][idxQty] = testQty;
+                }
                 tables = [t, ...n.tables.slice(1)];
             }
             return { ...n, tables, children: (n.children || []).map(fix) };
@@ -364,14 +392,21 @@ export default () => {
         const roleMatch = (a: string, b: string) => !!a && !!b && (a === b || a.includes(b) || b.includes(a));
         const applyTable = (cur: any[]) => {
             const header = Array.isArray(cur[0]) && cur[0].length === 5 ? cur[0] : DEFAULT_HEADER;
-            const bodyRows = cur.slice(1).map((r: any[]) => (Array.isArray(r) ? [...r] : r));
+            // TPM 不单独成行，并入「软件开发工程师」；去掉此前单独插入的 TPM 行
+            const bodyRows = cur.slice(1)
+                .map((r: any[]) => (Array.isArray(r) ? [...r] : r))
+                .filter((row: any[]) => !/TPM/i.test(norm(row[3])));
             const used = new Array(rows.length).fill(false);
             bodyRows.forEach((row: any[]) => {
                 const rowRole = norm(row[3]);
                 if (!rowRole) return;
+                const isDevEngineer = rowRole.includes("软件开发工程师") && !rowRole.includes("安全");
                 const matched = rows.filter((m: any, i: number) => {
                     if (used[i]) return false;
-                    const ok = roleMatch(resolveRole(m.role), rowRole);
+                    const role = norm(m.role);
+                    const ok = isDevEngineer
+                        ? (roleMatch(resolveRole(role), rowRole) || /TPM/i.test(role))
+                        : roleMatch(resolveRole(role), rowRole);
                     if (ok) used[i] = true;
                     return ok;
                 });
@@ -430,7 +465,7 @@ export default () => {
                 });
                 out = fillCoverSigners(out, pm, signMap, overwrite);
                 const deviceItems = dr && dr.code === Api.C_OK ? ((dr.data && dr.data.items) || []) : [];
-                out = fillDevice(out, deviceItems);
+                out = fillDevice(out, deviceItems, members);
                 out = fillPersonnel(out, members);
                 resolve(syncDocVersionFields(out, version));
             }).catch(() => resolve(secs));

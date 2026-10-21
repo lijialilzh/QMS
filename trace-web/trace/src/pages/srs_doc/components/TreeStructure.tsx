@@ -2,7 +2,7 @@ import "./TreeStructure.less";
 import { useState, useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { Button, Input, Space, Popconfirm, Table, Empty, Tooltip, Select, Tag, Upload, message, Image } from "antd";
-import { PlusOutlined, DeleteOutlined, TableOutlined, EditOutlined, FileOutlined, UploadOutlined, CaretRightOutlined, CaretDownOutlined } from "@ant-design/icons";
+import { PlusOutlined, DeleteOutlined, TableOutlined, EditOutlined, FileOutlined, UploadOutlined, CaretRightOutlined, CaretDownOutlined, ArrowUpOutlined, ArrowDownOutlined } from "@ant-design/icons";
 import { useTranslation } from "react-i18next";
 import EditableTableGenerator, { TableDataWithHeaders } from "./EditableTableGenerator";
 import type { ColumnsType } from "antd/es/table";
@@ -943,6 +943,12 @@ function isFixedTemplateSectionChapter(node: TreeNode): boolean {
 
 function isChapterMetaLockedNode(node: TreeNode, otherRows: any[] = []): boolean {
     return isFixedTemplateSectionChapter(node) || isOtherReqManagedChapterNode(node, otherRows);
+}
+
+export function isSrsTopoStructImageLocked(version?: string): boolean {
+    const text = String(version || "").replace(/[\s/]+/g, "").toUpperCase();
+    const matched = text.match(/^A(\d+)$/);
+    return !!matched && Number(matched[1]) >= 1;
 }
 
 export function resolveProductBoundDocImageRefType(
@@ -2148,6 +2154,7 @@ const TreeNodeItem = ({
     const embeddedImageNode = (node.children || []).find((child) => isEmbeddedImageNode(child));
     const productBoundImageRefType = resolveProductBoundDocImageRefType(node);
     const isProductBoundDocImageNode = !!productBoundImageRefType;
+    const topoStructImageLocked = isProductBoundDocImageNode && isSrsTopoStructImageLocked(docVersion);
     const isGenericImgRefNode = isImgRefType(node.ref_type) && !isProductBoundDocImageNode;
     const displayImageUrl = isProductBoundDocImageNode
         ? String(node.img_url || embeddedImageNode?.img_url || "")
@@ -2175,6 +2182,10 @@ const TreeNodeItem = ({
     };
 
     const uploadProductBoundDocImage = async (file: File) => {
+        if (isSrsTopoStructImageLocked(docVersion)) {
+            message.warning("需求已更新到 A1 及以后，物理拓扑图和系统结构图不能修改");
+            return;
+        }
         if (!productId) {
             message.error("请先选择产品");
             return;
@@ -3084,7 +3095,7 @@ const TreeNodeItem = ({
                           )}
                       </div>
                   )}
-                  {(level <= 2 && displayImageUrl) || (isProductBoundDocImageNode && !readOnly) ? (
+                  {(level <= 2 && displayImageUrl) || (isProductBoundDocImageNode && !readOnly && !topoStructImageLocked) ? (
                       <div className="node-pic-side-row">
                           {level <= 2 && displayImageUrl && (
                               <div className="node-pic-block">
@@ -3098,7 +3109,7 @@ const TreeNodeItem = ({
                                   </div>
                               </div>
                           )}
-                          {isProductBoundDocImageNode && !readOnly && (
+                          {isProductBoundDocImageNode && !readOnly && !topoStructImageLocked && (
                               <Upload {...productBoundUploadProps}>
                                   <Button size="small" icon={<UploadOutlined />}>
                                       {hasDisplayImage ? "重新上传" : ts("select_file")}
@@ -7611,7 +7622,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         node.ref_type !== "srs_reqs_2" &&
         node.ref_type !== "srs_reqds" &&
         node.ref_type !== "review" &&
-        !isImgRefType(node.ref_type)
+        !(isImgRefType(node.ref_type) && node.ref_type !== "img_struct")
     );
     // 目录里新增子章节：复用 handleAdd，并自动展开父节点、选中新节点
     const handleAddChildFromNav = (parentId: number) => {
@@ -7624,6 +7635,43 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         if (newId !== undefined && newId !== null) {
             setActiveNodeId(newId);
         }
+    };
+    const moveNavChapter = (id: string | number, dir: -1 | 1) => {
+        const swapIn = (list: TreeNode[]): TreeNode[] => {
+            const idx = (list || []).findIndex((item) => String(item.id) === String(id));
+            if (idx >= 0) {
+                const movable = (item: TreeNode) => (
+                    isNavChapter(item)
+                    && !isNavHiddenReqTableNode(item)
+                    && !isNavSpecialRefNode(item)
+                    && !hiddenSet.has(String(item.id))
+                    && !hiddenSet.has(String(item.n_id || ""))
+                );
+                const chapterIdxs = list
+                    .map((item, itemIndex) => (movable(item) ? itemIndex : -1))
+                    .filter((itemIndex) => itemIndex >= 0);
+                const pos = chapterIdxs.indexOf(idx);
+                const nextPos = pos + dir;
+                if (pos < 0 || nextPos < 0 || nextPos >= chapterIdxs.length) return list;
+                const next = [...list];
+                const from = chapterIdxs[pos];
+                const to = chapterIdxs[nextPos];
+                [next[from], next[to]] = [next[to], next[from]];
+                return next;
+            }
+            let changed = false;
+            const next = (list || []).map((item) => {
+                const children = swapIn(item.children || []);
+                if (children !== item.children) {
+                    changed = true;
+                    return { ...item, children };
+                }
+                return item;
+            });
+            return changed ? next : list;
+        };
+        const nextNodes = swapIn(nodes);
+        if (nextNodes !== nodes) updateNodes(nextNodes);
     };
 
     const isNavChapter = (n: TreeNode): boolean => (
@@ -7711,6 +7759,23 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                         <span className="srs-nav-title" title={navLabel}>{navLabel}</span>
                         {!readOnly && (
                             <span className="srs-nav-ops" onClick={(e) => e.stopPropagation()}>
+                                {(() => {
+                                    const chapterRows = (list || []).filter((item) => (
+                                        !isNavHiddenReqTableNode(item) && !isNavSpecialRefNode(item) && isNavChapter(item)
+                                    ));
+                                    const chapterIndex = chapterRows.findIndex((item) => String(item.id) === String(node.id));
+                                    if (chapterIndex < 0) return null;
+                                    return (
+                                        <span className="srs-nav-move">
+                                            {chapterIndex > 0 && (
+                                                <ArrowUpOutlined title="上移" onClick={() => moveNavChapter(node.id, -1)} />
+                                            )}
+                                            {chapterIndex < chapterRows.length - 1 && (
+                                                <ArrowDownOutlined title="下移" onClick={() => moveNavChapter(node.id, 1)} />
+                                            )}
+                                        </span>
+                                    );
+                                })()}
                                 {canAddChildInNav(node, depth) && (
                                     <Tooltip title={ts('srs_doc.add_sub_chapter') || '添加子章节'}>
                                         <PlusOutlined
@@ -7811,7 +7876,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                         <div className="srs-tree-nav">
                             <div className="srs-tree-nav-head">{ts("srs_doc.directory_structure") || ts("srs_doc.directory") || "目录"}</div>
                             {!readOnly && (
-                                <div className="srs-tree-nav-hint">封面/修订记录/评审记录不参与编号；正文章节自动编号。</div>
+                                <div className="srs-tree-nav-hint">封面/修订记录/评审记录不参与编号；正文章节自动编号。悬停或选中显示 ↑↓，只与同级章节交换。</div>
                             )}
                             <div className="srs-tree-nav-body">
                                 {extraNavSections.map((sec) => {

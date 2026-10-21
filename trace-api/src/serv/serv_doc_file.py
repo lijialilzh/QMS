@@ -28,6 +28,35 @@ def sanitize_doc_image_token(value: str) -> str:
     return token.strip("_") or ""
 
 
+def srs_image_revision(version: str):
+    """需求文档版本 A0/A1/A2。无法识别时返回 None。"""
+    text = re.sub(r"[\s/]+", "", str(version or "")).upper()
+    matched = re.fullmatch(r"A(\d+)", text)
+    if not matched:
+        return None
+    return int(matched.group(1))
+
+
+def is_srs_a0_image_version(version: str) -> bool:
+    return srs_image_revision(version) == 0
+
+
+def is_srs_topo_struct_locked(version: str) -> bool:
+    revision = srs_image_revision(version)
+    return revision is not None and revision >= 1
+
+
+SRS_TOPO_STRUCT_LOCK_MSG = "需求已更新到 A1 及以后，物理拓扑图和系统结构图不能修改"
+SRS_FLOW_LOCK_MSG = "已更新到 A1 及以后，网络安全流程图不能修改"
+LOCKED_CHART_CATEGORIES = {"img_topo", "img_struct", "img_flow"}
+
+
+def chart_image_lock_message(category: str) -> str:
+    if category == "img_flow":
+        return SRS_FLOW_LOCK_MSG
+    return SRS_TOPO_STRUCT_LOCK_MSG
+
+
 def build_doc_image_file_prefix(product_version: str = "", doc_version: str = "") -> str:
     product_token = sanitize_doc_image_token(product_version)
     doc_token = sanitize_doc_image_token(doc_version)
@@ -290,6 +319,10 @@ class Server(object):
         if not product_id or category not in self.DOC_IMG_KEYWORDS:
             return
         normalized_doc_version = self.__normalize_doc_version(doc_version)
+        # 物理拓扑图、系统结构图只从需求 A0 回填，A1/A2 不新建图示。
+        if category in {"img_topo", "img_struct"}:
+            if normalized_doc_version and not is_srs_a0_image_version(normalized_doc_version):
+                return
         normalized_product_version = sanitize_doc_image_token(product_version or "")
         if not normalized_product_version:
             product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
@@ -306,6 +339,8 @@ class Server(object):
         for latest_doc in docs:
             latest_doc_version = self.__normalize_doc_version(getattr(latest_doc, "version", "") or "")
             if not latest_doc_version or latest_doc_version.startswith("__deleted"):
+                continue
+            if category in {"img_topo", "img_struct"} and not is_srs_a0_image_version(latest_doc_version):
                 continue
             row = pick_doc_image_file_row(
                 product_id,
@@ -369,6 +404,10 @@ class Server(object):
         if not product_id or category not in self.DOC_IMG_KEYWORDS:
             return
         normalized_doc_version = self.__normalize_doc_version(doc_version)
+        # 网络安全流程图只从详细设计 A0 回填，A1/A2 不新建图示。
+        if category == "img_flow":
+            if normalized_doc_version and not is_srs_a0_image_version(normalized_doc_version):
+                return
 
         sql_docs = select(SdsDoc).join(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id).where(SrsDoc.product_id == product_id)
         if normalized_doc_version:
@@ -386,6 +425,8 @@ class Server(object):
                 select(SdsNode).where(SdsNode.doc_id == doc.id).order_by(SdsNode.priority, SdsNode.n_id)
             ).scalars().all()
             if not nodes:
+                continue
+            if category == "img_flow" and not is_srs_a0_image_version(getattr(doc, "version", "")):
                 continue
             if category == "img_flow":
                 flow_img = self.__pick_sds_flow_img_by_name(nodes)
@@ -452,14 +493,19 @@ class Server(object):
         normalized_doc_version = self.__normalize_doc_version(
             doc_version or self.__extract_doc_version_from_file_name(row.file_name, row.category)
         )
+        if row.category in LOCKED_CHART_CATEGORIES and is_srs_topo_struct_locked(normalized_doc_version):
+            return
         sql_docs = (
-            select(SdsDoc.id)
+            select(SdsDoc)
             .join(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id)
             .where(SrsDoc.product_id == row.product_id)
         )
         if normalized_doc_version:
             sql_docs = sql_docs.where(SdsDoc.version == normalized_doc_version)
-        doc_ids = [doc_id for doc_id in db.session.execute(sql_docs).scalars().all()]
+        doc_ids = [
+            doc.id for doc in db.session.execute(sql_docs).scalars().all()
+            if not (row.category in LOCKED_CHART_CATEGORIES and is_srs_topo_struct_locked(getattr(doc, "version", "")))
+        ]
         if not doc_ids:
             return
         img_url = str(row.file_url or "").strip()
@@ -480,10 +526,15 @@ class Server(object):
         normalized_doc_version = self.__normalize_doc_version(
             doc_version or self.__extract_doc_version_from_file_name(row.file_name, row.category)
         )
-        sql_docs = select(SrsDoc.id).where(SrsDoc.product_id == row.product_id)
+        if is_srs_topo_struct_locked(normalized_doc_version):
+            return
+        sql_docs = select(SrsDoc).where(SrsDoc.product_id == row.product_id)
         if normalized_doc_version:
             sql_docs = sql_docs.where(SrsDoc.version == normalized_doc_version)
-        doc_ids = [doc_id for doc_id in db.session.execute(sql_docs).scalars().all()]
+        doc_ids = [
+            doc.id for doc in db.session.execute(sql_docs).scalars().all()
+            if not is_srs_topo_struct_locked(getattr(doc, "version", ""))
+        ]
         if not doc_ids:
             return
         img_url = str(row.file_url or "").strip()
@@ -563,12 +614,14 @@ class Server(object):
         ).scalar() or ""
 
     async def add_doc_file(self, form: DocFileForm, file):
-        try:           
+        try:
+            explicit_doc_version = self.__normalize_doc_version(getattr(form, "doc_version", None) or "")
+            if form.category in LOCKED_CHART_CATEGORIES and is_srs_topo_struct_locked(explicit_doc_version):
+                return Resp.resp_err(msg=chart_image_lock_message(form.category))
             row = DocFile(**self.__row_kwargs_from_form(form))
             row.id = None
             db.session.add(row)
             db.session.flush()
-            explicit_doc_version = self.__normalize_doc_version(getattr(form, "doc_version", None) or "")
             file_size, file_url = await save_file(row.category, row.id, file, with_uid=False)
             if file_url:
                 row.file_size = file_size
@@ -599,6 +652,15 @@ class Server(object):
             row:DocFile = db.session.execute(sql).scalars().first()
             if not row:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
+            category = form.category or row.category
+            product_version = self.__product_version_of(row.product_id or 0)
+            old_doc_version = self.__extract_doc_version_from_file_name(row.file_name, category, product_version)
+            explicit_doc_version = self.__normalize_doc_version(getattr(form, "doc_version", None) or "")
+            next_doc_version = explicit_doc_version or old_doc_version
+            if category in LOCKED_CHART_CATEGORIES and (
+                is_srs_topo_struct_locked(next_doc_version) or is_srs_topo_struct_locked(old_doc_version)
+            ):
+                return Resp.resp_err(msg=chart_image_lock_message(category))
             skip_keys = {"id", "doc_version", "srsdoc_version", "product_name", "product_version", "product_type_code", "create_time"}
             for key, value in form.dict().items():
                 if key in skip_keys or value is None:
@@ -606,11 +668,6 @@ class Server(object):
                 if not hasattr(row, key):
                     continue
                 setattr(row, key, value)
-            category = form.category or row.category
-            product_version = self.__product_version_of(row.product_id or 0)
-            old_doc_version = self.__extract_doc_version_from_file_name(row.file_name, category, product_version)
-            explicit_doc_version = self.__normalize_doc_version(getattr(form, "doc_version", None) or "")
-            next_doc_version = explicit_doc_version or old_doc_version
             if self.__has_upload_file(file):
                 file_size, file_url = await save_file(category, row.id, file, with_uid=False)
                 if file_url:

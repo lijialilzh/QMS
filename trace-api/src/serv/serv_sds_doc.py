@@ -59,6 +59,7 @@ from .serv_utils.tree_util import find_parent
 from .serv_utils import new_version
 from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, fixed_rcn300_sds_codes, rcn300_tail_name_key, live_rcn300_tail_chapters, align_rcn300_tail_node_codes
 from .serv_sds_reqd import Server as ServSdsReqd
+from .serv_doc_file import is_srs_a0_image_version
 from .serv_srs_doc import Server as ServSrsDoc
 from .serv_sds_srs_trace_sync import SdsSrsTraceSyncMixin
 
@@ -1365,8 +1366,13 @@ class Server(SdsSrsTraceSyncMixin, object):
     ):
         if ref_type not in {"img_flow", "img_topo", "img_struct"} or not file_url:
             return
+        # 详细设计不能改产品图示里的物理拓扑图、系统结构图。流程图只回写 A0。
+        if ref_type in {"img_topo", "img_struct"}:
+            return
         sds_doc = db.session.execute(select(SdsDoc).where(SdsDoc.id == doc_id)).scalars().first()
         if not sds_doc:
+            return
+        if ref_type == "img_flow" and not is_srs_a0_image_version(getattr(sds_doc, "version", "")):
             return
         srs_doc = db.session.execute(select(SrsDoc).where(SrsDoc.id == sds_doc.srsdoc_id)).scalars().first()
         product_id = getattr(srs_doc, "product_id", None) if srs_doc else None

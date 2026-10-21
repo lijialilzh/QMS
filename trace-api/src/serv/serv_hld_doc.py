@@ -33,6 +33,7 @@ from ..utils.i18n import ts
 from ..utils.sql_ctx import db
 from . import msg_err_db
 from . import serv_review_util
+from .serv_doc_file import is_srs_a0_image_version
 from .serv_srs_doc import Server as ServSrsDoc
 from .serv_utils import new_version, sync_file_no_version
 from .serv_product import product_scope_filter
@@ -285,8 +286,13 @@ class Server(object):
     def __upsert_product_doc_image(self, doc_id: int, ref_type: str, file_name: str, file_size: int, file_url: str):
         if ref_type not in {"img_flow", "img_topo", "img_struct"} or not file_url:
             return
+        # 概要设计不能改产品图示里的物理拓扑图、系统结构图。流程图只回写 A0。
+        if ref_type in {"img_topo", "img_struct"}:
+            return
         hld_doc = db.session.execute(select(HldDoc).where(HldDoc.id == doc_id)).scalars().first()
         if not hld_doc or not hld_doc.product_id:
+            return
+        if ref_type == "img_flow" and not is_srs_a0_image_version(getattr(hld_doc, "version", "")):
             return
         row = db.session.execute(
             select(DocFile)

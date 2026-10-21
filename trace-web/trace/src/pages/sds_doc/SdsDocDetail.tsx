@@ -246,6 +246,82 @@ function ensureSdsOtherReqChapterNodes(nodes: TreeNode[], otherRows: any[]): Tre
     return nextRoots;
 }
 
+function isStructDiagramTitle(title?: string) {
+    const name = stripNavChapterPrefix(String(title || "")).replace(/\s+/g, "");
+    return /^(系统结构图|体系结构图)$/.test(name);
+}
+
+function isFigureCaptionTitle(title?: string) {
+    return /^图\s*\d+/i.test(String(title || "").trim());
+}
+
+function structChapterName(title?: string) {
+    return stripNavChapterPrefix(String(title || "")).replace(/\s+/g, "");
+}
+
+let sdsStructChildSeq = 0;
+function cloneSrsStructChild(node: any): TreeNode {
+    sdsStructChildSeq += 1;
+    const children = ((node?.children || []) as any[])
+        .filter((child) => structChapterName(child?.title) && !isFigureCaptionTitle(child?.title))
+        .map((child) => cloneSrsStructChild(child));
+    const table = node?.table && !Array.isArray(node.table) ? node.table : {};
+    return {
+        id: Date.now() * 1000 + sdsStructChildSeq,
+        n_id: 0,
+        title: String(node?.title || "").trim(),
+        text: String(node?.text || ""),
+        img_url: "",
+        table,
+        children,
+    };
+}
+
+function findStructDiagramNode(nodes: any[]): any | null {
+    for (const node of nodes || []) {
+        if (isStructDiagramTitle(node?.title)) return node;
+        const found = findStructDiagramNode(node?.children || []);
+        if (found) return found;
+    }
+    return null;
+}
+
+async function ensureSdsStructDiagramChildren(nodes: TreeNode[], srsDocId?: number): Promise<TreeNode[]> {
+    const docId = Number(srsDocId || 0);
+    if (!docId) return nodes || [];
+    try {
+        const res: any = await ApiSrsDoc.get_srs_doc({ id: docId });
+        if (res?.code !== ApiSrsDoc.C_OK) return nodes || [];
+        const srsStruct = findStructDiagramNode(res.data?.content || []);
+        const incoming = ((srsStruct?.children || []) as any[]).filter((child) => {
+            const name = structChapterName(child?.title);
+            return !!name && !isFigureCaptionTitle(child?.title) && !isStructDiagramTitle(child?.title);
+        });
+        if (!incoming.length) return nodes || [];
+        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+            const children = walk((node.children || []) as TreeNode[]);
+            if (!isStructDiagramTitle(node.title)) return { ...node, children };
+            const names = new Set(
+                children
+                    .map((child) => structChapterName(child.title))
+                    .filter((name) => !!name && !isFigureCaptionTitle(name) && !/^图\d+/.test(name))
+            );
+            const added = incoming
+                .filter((child) => {
+                    const name = structChapterName(child?.title);
+                    return !!name && !names.has(name);
+                })
+                .map((child) => cloneSrsStructChild(child));
+            if (!added.length) return { ...node, children };
+            return { ...node, children: [...children, ...added] };
+        });
+        return walk(nodes || []);
+    } catch (error) {
+        console.error("补详细设计系统结构图子章节失败:", error);
+        return nodes || [];
+    }
+}
+
 async function ensureSdsOtherReqChapters(nodes: TreeNode[], srsDocId?: number): Promise<TreeNode[]> {
     const docId = Number(srsDocId || 0);
     if (!docId) return nodes || [];
@@ -2699,8 +2775,10 @@ export default () => {
             targetRow.srsdoc_id,
         );
         const alignedTail = alignTailChapterSdsCodes(withOtherReqChapters);
-        if (!isTraceSyncedOnTree(alignedTail)) return alignedTail;
-        return await syncTraceTableNodes(alignedTail, docIdForSync) as TreeNode[];
+        const traced = !isTraceSyncedOnTree(alignedTail)
+            ? alignedTail
+            : await syncTraceTableNodes(alignedTail, docIdForSync) as TreeNode[];
+        return await ensureSdsStructDiagramChildren(traced, targetRow.srsdoc_id);
     };
 
     const refreshSdsDocTree = async (docId: number) => {
@@ -2938,12 +3016,16 @@ export default () => {
                         withOtherReqChapters,
                         latestRow.id || docId
                     );
-                    const ensuredContent = isTraceSyncedOnTree(ensuredReqdContent as TreeNode[])
+                    const tracedContent = isTraceSyncedOnTree(ensuredReqdContent as TreeNode[])
                         ? await syncTraceTableNodes(
                             ensuredReqdContent as TreeNode[],
                             latestRow.id || docId
                         )
                         : ensuredReqdContent as TreeNode[];
+                    const ensuredContent = await ensureSdsStructDiagramChildren(
+                        tracedContent,
+                        latestRow.srsdoc_id,
+                    );
                     currentTree = ensuredContent as TreeNode[];
                     treeStructureRef.current = ensuredContent;
                     dispatch({ treeStructure: ensuredContent });
@@ -3562,6 +3644,7 @@ export default () => {
         nodesWithIds = rebindFlowImageToFlowChild(nodesWithIds);
         nodesWithIds = normalizeImageRefTypes(nodesWithIds);
         nodesWithIds = await remapRefTypeImagesByProduct(nodesWithIds, productId, version);
+        nodesWithIds = await ensureSdsStructDiagramChildren(nodesWithIds, editForm.getFieldValue("srsdoc_id"));
         treeStructureRef.current = nodesWithIds;
         dispatch({ treeStructure: nodesWithIds, traceTreeRefreshKey: Date.now(), showInitTemplateTip: false });
         message.success(ts("sds_doc.load_standard_structure_success"));

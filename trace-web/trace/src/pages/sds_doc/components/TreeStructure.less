@@ -509,6 +509,11 @@
                 .srs-nav-ops {
                     opacity: 1;
                 }
+
+                .srs-nav-move {
+                    max-width: 48px;
+                    opacity: 1;
+                }
             }
 
             &.active {
@@ -517,6 +522,11 @@
                 font-weight: 600;
 
                 .srs-nav-ops {
+                    opacity: 1;
+                }
+
+                .srs-nav-move {
+                    max-width: 48px;
                     opacity: 1;
                 }
             }
@@ -564,6 +574,23 @@
 
                 .srs-nav-delete-child:hover {
                     color: #ff4d4f;
+                }
+            }
+
+            .srs-nav-move {
+                display: inline-flex;
+                gap: 10px;
+                max-width: 0;
+                opacity: 0;
+                overflow: hidden;
+                transition: max-width 0.15s ease, opacity 0.15s ease;
+
+                .anticon {
+                    cursor: pointer;
+                }
+
+                .anticon:hover {
+                    color: #1677ff;
                 }
             }
         }

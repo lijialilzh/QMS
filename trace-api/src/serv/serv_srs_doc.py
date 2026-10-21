@@ -63,7 +63,12 @@ from .serv_srs_reqd import Server as ServSrsReqd
 from .serv_sds_trace import NAME_DICT
 from .serv_utils import new_version
 from .serv_utils.tree_util import find_parent, iter_tree
-from .serv_doc_file import build_doc_image_file_name, pick_doc_image_file_row, sanitize_doc_image_token
+from .serv_doc_file import (
+    build_doc_image_file_name,
+    is_srs_a0_image_version,
+    pick_doc_image_file_row,
+    sanitize_doc_image_token,
+)
 from .serv_prod_runtime_env import apply_runtime_to_srs_tree, get_runtime_payload
 from . import msg_err_db, save_file, serv_review_util
 
@@ -522,6 +527,9 @@ class Server(object):
         docx_bytes: bytes = None,
         doc_id: int = None,
     ):
+        # 产品图示只接收需求 A0 的物理拓扑图和系统结构图。
+        if not is_srs_a0_image_version(doc_version):
+            return
         # 以导入文档里 2.2/2.3 已经挂上的原图为准，用它替换该版本图示里的旧图。
         # zip 只补树和正文都没取到的章节，避免把文中其它图写进图示。
         picked = {}

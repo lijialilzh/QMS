@@ -576,35 +576,56 @@ def apply_runtime_to_hld_tree(nodes, prod_id):
     return nodes
 
 
+def _is_import_table_title(title):
+    return bool(re.match(r"^导入表格\d*$", str(title or "").strip()))
+
+
 def apply_runtime_to_srs_tree(nodes, payload):
-    """打开/导出需求文档时，用运行环境覆盖 2.4。"""
+    """打开/导出需求文档时，用运行环境覆盖 2.4。
+
+    已有子章节时，按标题把产品表写到该子章的「导入表格」（没有则写到子章本身），
+    并清掉父章上的表，避免 2.4 与 2.4.1–2.4.4 各显示一遍。
+    没有可匹配的子章时，各表仍挂在 2.4 正文上。
+    """
     node = find_srs_runtime_node(nodes)
     if not node or not payload:
         return nodes
     arch = payload.get("arch") or ""
     if arch:
         _nset(node, "text", arch)
-    env_tables = payload.get("tables") or []
+    by_key = {t.get("key"): t for t in _runtime_tables_ordered(payload) if t.get("key")}
+    children = list(_nget(node, "children") or [])
+    matched = []
+    for child in children:
+        title = _nget(child, "title") or ""
+        if _is_import_table_title(title):
+            continue
+        key = _match_child_key(title, _plain_title(title))
+        item = by_key.get(key) if key else None
+        if not item or not item.get("cells"):
+            continue
+        matched.append((child, item))
+    if matched:
+        for child, item in matched:
+            table = cells_to_srs_table(item.get("cells"), item.get("title") or "")
+            if table:
+                _nset(_hld_table_holder(child), "table", table)
+        _nset(node, "table", None)
+        _nset(node, "children", [child for child in children if not _is_import_table_title(_nget(child, "title"))])
+        return nodes
     srs_tables = []
-    for item in env_tables:
+    for item in _runtime_tables_ordered(payload):
         table = cells_to_srs_table(item.get("cells"), item.get("title") or "")
         if table:
             srs_tables.append((item.get("title") or "", table))
     if not srs_tables:
-        return nodes
-    children = _nget(node, "children") or []
-    table_children = [child for child in children if srs_table_to_cells(_nget(child, "table"))]
-    if table_children:
-        for idx, child in enumerate(table_children):
-            if idx >= len(srs_tables):
-                break
-            _nset(child, "table", srs_tables[idx][1])
         return nodes
     from ..obj.tobj_srs_doc import ExtraTable
     title0, first = srs_tables[0]
     first.extra_tables = [ExtraTable(title=title, table=table) for title, table in srs_tables[1:]]
     first.name = title0 or first.name
     _nset(node, "table", first)
+    _nset(node, "children", [child for child in children if not _is_import_table_title(_nget(child, "title"))])
     return nodes
 
 

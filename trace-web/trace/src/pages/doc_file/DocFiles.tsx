@@ -242,9 +242,11 @@ export default ({ fileType }: any) => {
         return fnRequest({ product_id: pid, page_index: 0, page_size: 10000 }).then((res: any) => {
             if (res.code !== Api.C_OK) return [];
             const rows = res?.data?.rows || [];
-            return Array.from(
+            const versions = Array.from(
                 new Set(rows.map((row: any) => String(row?.version || "").trim()).filter(Boolean))
             ) as string[];
+            if (fileType !== "img_topo" && fileType !== "img_struct" && fileType !== "img_flow") return versions;
+            return versions.filter((version) => /^A0$/i.test(version.replace(/[\s/]+/g, "")));
         }).catch(() => []);
     };
     const loadDocVersions = (selectedProductId?: number) => {

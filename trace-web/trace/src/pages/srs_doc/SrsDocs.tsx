@@ -40,7 +40,6 @@ export default () => {
     const navigate = useNavigate();
     const user = useSelector((state: Root) => state.user);
     const canEdit = (user?.role_perms || []).includes("srs_doc_edit");
-    const canConfigViewers = user?.id === 1 || user?.role_code === "root" || user?.role_code === "dqa";
     const [queryForm] = Form.useForm();
     const [importForm] = Form.useForm();
     const [addForm] = Form.useForm();
@@ -405,11 +404,6 @@ export default () => {
                     </Row>
                 </Form>
                 <Space>
-                    {canConfigViewers ? (
-                        <Button onClick={() => navigate("/srs_viewers")}>
-                            {ts("menu.srs_viewers")}
-                        </Button>
-                    ) : null}
                     {canEdit ? (
                         <>
                             <Button type="primary" onClick={() => dispatch({ dlgType: DlgTypes.import })}>
