@@ -461,7 +461,7 @@
         "sync_on_product_change_product": "Product will change from \"{{from}}\" to \"{{to}}\".",
         "sync_on_product_change_version": "Document version will change from \"{{from}}\" to \"{{to}}\".",
         "sync_on_product_change_both": "Product will change from \"{{from}}\" to \"{{to}}\", and document version to \"{{version}}\".",
-        "sync_on_product_change_warning": "This will sync scope, product info, topology/structure images, interfaces and DB tables. Unsaved edits may be overwritten.",
+        "sync_on_product_change_warning": "This will reload runtime environment, scope, product info, topology/structure images, interfaces and DB tables for the new product. Unsaved edits may be overwritten.",
         "sync_on_product_change_success": "Content synced after product/version switch",
         "please_fill_version_before_sync": "Please enter the document version before switching product to sync content",
         "ref_type_topo": "Topology Diagram",

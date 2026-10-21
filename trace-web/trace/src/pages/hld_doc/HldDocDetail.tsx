@@ -11,6 +11,7 @@ import * as Api from "@/api/ApiHldDoc";
 import * as ApiSdsDoc from "@/api/ApiSdsDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiDocFile from "@/api/ApiDocFile";
+import * as ApiRuntime from "@/api/ApiProdRuntimeEnv";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
@@ -33,6 +34,127 @@ const hasHldSyncedFromSds = (nodes: TreeNode[]): boolean => {
 };
 
 const HLD_COVER_DATE_KEYWORDS = ["软件概要设计", "概要设计"];
+
+const hldPlainTitle = (title?: string) => String(title || "")
+    .replace(/^(\d+(?:\.\d+)+|\d{1,2})(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+    .trim();
+
+const isHldRuntimeSection = (title?: string) => {
+    const text = String(title || "");
+    const plain = hldPlainTitle(text);
+    if (text.includes("确认运行环境") || plain.includes("确认运行环境")) return false;
+    return text.includes("运行环境") || plain === "运行环境";
+};
+
+const matchHldRuntimeChildKey = (title?: string) => {
+    const text = String(title || "");
+    const plain = hldPlainTitle(text);
+    const keys: Array<[string, string[]]> = [
+        ["srv_hw", ["表1", "服务器硬件"]],
+        ["srv_sw", ["表2", "服务器软件"]],
+        ["net", ["表4", "网络"]],
+        ["cli", ["表3", "用户端配置", "用户端"]],
+    ];
+    for (const [key, words] of keys) {
+        for (const word of words) {
+            if (!text.includes(word) && !plain.includes(word)) continue;
+            if (key === "cli" && word === "用户端" && (text.includes("网络") || plain.includes("网络") || text.includes("表4") || plain.includes("表4"))) continue;
+            return key;
+        }
+    }
+    return "";
+};
+
+const patchHldArchText = (text: string, arch: string) => {
+    if (!arch) return text;
+    const raw = String(text || "");
+    if (!raw.trim()) return text;
+    const lines = raw.split("\n");
+    const first = lines[0];
+    if (!["B/S", "C/S", "架构"].some((token) => first.includes(token))) return raw;
+    let archText = String(arch);
+    if (!/[。.!！？]$/.test(archText)) archText += "。";
+    if (first.startsWith("本软件")) {
+        let rest = archText.startsWith("软件") ? archText.slice(2) : archText;
+        if (!rest.startsWith("为")) rest = `为${rest}`;
+        lines[0] = `本软件${rest}`;
+    } else {
+        lines[0] = archText;
+    }
+    return lines.join("\n");
+};
+
+const runtimeCellsToTable = (cells: any[][], title: string) => {
+    const grid = (cells || []).filter((row) => Array.isArray(row)).map((row) => row.map((cell) => String(cell ?? "")));
+    if (!grid.length) return null;
+    const colCount = Math.max(...grid.map((row) => row.length));
+    const padded = grid.map((row) => row.concat(Array(Math.max(0, colCount - row.length)).fill("")));
+    const headers = padded[0].map((name, index) => ({ code: `col_${index + 1}`, name: name || `列${index + 1}` }));
+    const rows = padded.slice(1).map((body) => {
+        const row: Record<string, string> = {};
+        body.forEach((value, index) => { row[`col_${index + 1}`] = value; });
+        return row;
+    });
+    const cellObjs = padded.map((row) => row.map((value) => ({ value, row_span: 1, col_span: 1, h_align: "left", v_align: "top" })));
+    return { name: title || "", show_header: 1, headers, rows, cells: cellObjs };
+};
+
+const hldHasImportTable = (node: TreeNode): boolean => {
+    const children = (node.children || []) as TreeNode[];
+    if (children.some((child) => /^导入表格\d*$/.test(String(child.title || "").trim()))) return true;
+    return children.some((child) => hldHasImportTable(child));
+};
+
+const writeHldRuntimeTable = (node: TreeNode, table: any): TreeNode => {
+    const children = (node.children || []) as TreeNode[];
+    const direct = children.findIndex((child) => /^导入表格\d*$/.test(String(child.title || "").trim()));
+    if (direct >= 0) {
+        const nextChildren = children.slice();
+        nextChildren[direct] = { ...children[direct], table };
+        return { ...node, children: nextChildren };
+    }
+    const nested = children.findIndex((child) => hldHasImportTable(child));
+    if (nested >= 0) {
+        const nextChildren = children.slice();
+        nextChildren[nested] = writeHldRuntimeTable(children[nested], table);
+        return { ...node, children: nextChildren };
+    }
+    return { ...node, table };
+};
+
+const applyRuntimeEnvToHldTree = async (nodes: TreeNode[], productId?: number): Promise<TreeNode[]> => {
+    if (!productId || !Array.isArray(nodes) || !nodes.length) return nodes;
+    let payload: any = null;
+    try {
+        const res: any = await ApiRuntime.get_prod_runtime_env({ prod_id: productId });
+        if (res?.code === ApiRuntime.C_OK) payload = res.data || {};
+    } catch (error) {
+        console.error("加载产品运行环境失败:", error);
+    }
+    if (!payload) return nodes;
+    const byKey = new Map<string, any>();
+    (payload.tables || []).forEach((item: any) => { if (item?.key) byKey.set(item.key, item); });
+    const arch = String(payload.arch || "");
+    const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+        const children = walk((node.children || []) as TreeNode[]);
+        if (!isHldRuntimeSection(node.title)) return children === node.children ? node : { ...node, children };
+        let text = String(node.text || "");
+        if (arch) {
+            text = text.trim()
+                ? patchHldArchText(text, arch)
+                : (/[。.!！？]$/.test(arch) ? arch : `${arch}。`);
+        }
+        const nextChildren = children.map((child) => {
+            const key = matchHldRuntimeChildKey(child.title);
+            const item = key ? byKey.get(key) : null;
+            if (!item?.cells) return child;
+            const table = runtimeCellsToTable(item.cells, item.title || "");
+            return table ? writeHldRuntimeTable(child, table) : child;
+        });
+        return { ...node, text, children: nextChildren };
+    });
+    return walk(nodes);
+};
 
 const HLD_APPROVAL_HEADERS = [
     { code: "label1", name: "" },
@@ -432,7 +554,7 @@ export default () => {
         return { nodes, changed };
     };
 
-    const remapRefTypeImagesByProduct = async (treeNodes: TreeNode[], productId?: number, docVersion?: string) => {
+    const remapRefTypeImagesByProduct = async (treeNodes: TreeNode[], productId?: number, docVersion?: string, force = false) => {
         if (!productId || !Array.isArray(treeNodes) || treeNodes.length === 0) return treeNodes;
         const fileMaps = new Map<string, string>();
         await Promise.all(
@@ -460,11 +582,16 @@ export default () => {
                 }
             })
         );
-        if (fileMaps.size === 0) return treeNodes;
+        if (fileMaps.size === 0 && !force) return treeNodes;
         const walk = (nodes: TreeNode[]): TreeNode[] =>
             (nodes || []).map((node) => {
                 const children = walk((node.children || []) as TreeNode[]);
                 const refType = String((node as any).ref_type || "");
+                const isAutoImage = (DOC_IMAGE_REF_TYPES as readonly string[]).includes(refType);
+                if (force && isAutoImage) {
+                    const mapped = fileMaps.get(refType) || "";
+                    return { ...node, img_url: mapped, children };
+                }
                 const currentRaw = String((node as any).img_url || "").trim();
                 const childHasFigure = children.some((child) => /^图\s*\d+/.test(String(child.title || "").trim()) && String(child.img_url || "").trim());
                 const mappedUrl = (!currentRaw && !childHasFigure) ? fileMaps.get(refType) : "";
@@ -1136,7 +1263,7 @@ export default () => {
         targetProductId: number,
         targetVersion: string,
         product?: any,
-        options?: { silent?: boolean },
+        options?: { silent?: boolean; forceImages?: boolean },
     ): Promise<TreeNode[]> => {
         if (!targetProductId || !String(targetVersion || "").trim() || !Array.isArray(nodes) || nodes.length === 0) {
             return nodes;
@@ -1144,7 +1271,8 @@ export default () => {
         let next = applyProductScopeToTree(nodes, product).nodes;
         next = applyProductBasicInfoToTree(next, product).nodes;
         next = applyScopeChapterFromProduct(next, product).nodes;
-        next = await remapRefTypeImagesByProduct(next, targetProductId, targetVersion);
+        next = await remapRefTypeImagesByProduct(next, targetProductId, targetVersion, !!options?.forceImages);
+        next = await applyRuntimeEnvToHldTree(next, targetProductId);
         const sdsdocId = Number(editForm.getFieldValue("sdsdoc_id") || 0);
         if (sdsdocId) next = await syncTreeFromSds(targetProductId, sdsdocId, next, options);
         return next;
@@ -1163,6 +1291,7 @@ export default () => {
         nodesWithIds = rebindFlowImageToFlowChild(nodesWithIds);
         nodesWithIds = normalizeImageRefTypes(nodesWithIds);
         nodesWithIds = await remapRefTypeImagesByProduct(nodesWithIds, productId, version);
+        nodesWithIds = await applyRuntimeEnvToHldTree(nodesWithIds, productId);
         // 打开新增/空文档初始化模版时不同步，需用户点「从详细设计同步」；加载标准目录结构时可同步
         if (options?.syncFromSds !== false) {
             const sdsdocId = Number(editForm.getFieldValue("sdsdoc_id") || 0);
@@ -1236,7 +1365,8 @@ export default () => {
             dispatch({ loading: true });
             try {
                 const product = await resolveProductById(targetPid);
-                const synced = await applyProductContextToTree(treeNodes, targetPid, targetVer, product);
+                const productChanged = (last.productId ?? undefined) !== targetPid;
+                const synced = await applyProductContextToTree(treeNodes, targetPid, targetVer, product, { forceImages: productChanged });
                 treeStructureRef.current = synced;
                 dispatch({
                     treeStructure: synced,

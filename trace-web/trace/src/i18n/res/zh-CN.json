@@ -460,7 +460,7 @@
         "sync_on_product_change_product": "产品将由「{{from}}」切换为「{{to}}」。",
         "sync_on_product_change_version": "文档版本将由「{{from}}」切换为「{{to}}」。",
         "sync_on_product_change_both": "产品将由「{{from}}」切换为「{{to}}」，文档版本将切换为「{{version}}」。",
-        "sync_on_product_change_warning": "确认后将自动同步适用范围、产品信息、拓扑/结构图、接口与库表等内容，未保存的修改可能被覆盖。",
+        "sync_on_product_change_warning": "确认后将按新产品重新获取运行环境、适用范围、产品信息、拓扑/结构图、接口与库表等内容，未保存的修改可能被覆盖。",
         "sync_on_product_change_success": "已随产品/版本切换完成内容同步",
         "please_fill_version_before_sync": "请先填写文档版本，再切换产品以同步内容",
         "ref_type_topo": "拓扑图",
