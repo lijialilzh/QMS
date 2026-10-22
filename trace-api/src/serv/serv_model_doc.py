@@ -1096,6 +1096,66 @@ class Server(object):
                 yield from walk(n.get("children") or [])
         yield from walk((content or {}).get("sections") or [])
 
+    def __case_modules_map(self, content):
+        found = {}
+
+        def walk(ns):
+            for n in ns or []:
+                if not isinstance(n, dict):
+                    continue
+                saved = n.get("case_modules")
+                if isinstance(saved, dict) and saved:
+                    found.update(saved)
+                walk(n.get("children") or [])
+
+        walk((content or {}).get("sections") or [])
+        return found
+
+    def __module_ann_cases(self, product_id, doc_type):
+        """按模块建的文件只取标注统计表里该模块的病例。不是按模块建的返回 None。没有该模块病例返回空列表，不回退其它库。"""
+        if not module_doc_parts(doc_type):
+            return None
+        name = str(getattr(module_doc_chapter(doc_type), "name", "") or "").strip()
+        if not product_id or not name:
+            return []
+        saved = self.__case_modules_map(self.__latest_data_content(product_id, "dd_015_03"))
+        slot = None
+        for key, val in (saved or {}).items():
+            if str(key or "").strip() == name:
+                slot = val
+                break
+        rows = (slot or {}).get("rows") if isinstance(slot, dict) else None
+        return [r for r in (rows or []) if isinstance(r, dict)]
+
+    def __dist_from_cases(self, rows):
+        """用病例重算构建记录数据分布。分组与测试记录一致，总计按最后一组因素求和。"""
+        rows = [r for r in (rows or []) if isinstance(r, dict)]
+        if not rows:
+            return None
+        total = len(rows)
+        factors = [
+            ("性别", lambda r: self.__case_sex(r), False),
+            ("年龄", lambda r: self.__case_age_bin(r), False),
+            ("设备", lambda r: self.__case_device(r), False),
+            ("重建算法", lambda r: self.__case_kernel_label(r), True),
+            ("管电压", lambda r: self.__case_kvp(r), False),
+            ("层厚", lambda r: self.__case_thickness(r), False),
+        ]
+        out = [["因素", "类别", "数量", "占比"]]
+        for name, getter, merge_small in factors:
+            groups = self.__group_test_factor(rows, getter, merge_small=merge_small)
+            first = True
+            for lab, bucket in groups:
+                out.append([
+                    name if first else "",
+                    lab,
+                    str(bucket["n"]),
+                    self.__build_fmt_pct(bucket["n"] / float(total) if total else 0),
+                ])
+                first = False
+        out.append(["总计", "", str(total), self.__build_fmt_pct(1 if total else 0)])
+        return self.__build_fill_total(out)
+
     def __kernel_series_prefix(self, name):
         u = str(name or "").strip().upper()
         if u.endswith("系列"):
@@ -2231,7 +2291,12 @@ class Server(object):
             content["hw_env"] = hw
         if sw:
             content["sw_env"] = sw
-        rows = self.__test_result_from_cases(self.__dd015_cases_for_product(product_id), doc_type)
+        module_cases = self.__module_ann_cases(product_id, doc_type)
+        if module_cases is None:
+            case_rows = self.__dd015_cases_for_product(product_id)
+        else:
+            case_rows = module_cases
+        rows = self.__test_result_from_cases(case_rows, doc_type)
         if rows:
             content["result_rows"] = rows
             conc = self.__test_conclusion(rows, doc_type)
@@ -2673,16 +2738,25 @@ class Server(object):
             row = self.__dataset_row(product_id, module_dataset_name(doc_type))
             qty = (row or {}).get("qty") or ""
             upload_date = (row or {}).get("date") or ""
-            dist = self.__dd015_dist_for_product(product_id)
-            if dist:
-                content["dist_rows"] = dist
-                total = self.__dist_total_qty(dist)
-                if total:
-                    content["case_count"] = total
+            module_cases = self.__module_ann_cases(product_id, doc_type)
+            if module_cases is None:
+                dist = self.__dd015_dist_for_product(product_id)
+                if dist:
+                    content["dist_rows"] = dist
+                    total = self.__dist_total_qty(dist)
+                    if total:
+                        content["case_count"] = total
+                    elif qty:
+                        content["case_count"] = qty
                 elif qty:
                     content["case_count"] = qty
-            elif qty:
-                content["case_count"] = qty
+            elif module_cases:
+                dist = self.__dist_from_cases(module_cases)
+                if dist:
+                    content["dist_rows"] = dist
+                    total = self.__dist_total_qty(dist)
+                    if total:
+                        content["case_count"] = total
             write_date = self.__build_write_date(product_id, doc_type) or upload_date
             if write_date:
                 content["write_date"] = write_date
@@ -2691,6 +2765,14 @@ class Server(object):
                 content["author"] = author
             return content
         if doc_type in TRAIN_DOC_TYPES:
+            module_cases = self.__module_ann_cases(product_id, doc_type)
+            if module_cases is not None:
+                if module_cases:
+                    dist = self.__dist_from_cases(module_cases)
+                    total = self.__dist_total_qty(dist) if dist else ""
+                    if total:
+                        content["case_count"] = total
+                return content
             parts = module_doc_parts(doc_type)
             if parts:
                 # 同一模块的训练集构建记录。

@@ -2877,8 +2877,7 @@ export default () => {
                             product_id: doc.product_id,
                             version: doc.version,
                         }).then((up: any) => {
-                            if (up.code === Api.C_OK) message.success("已按参与人员写入名单");
-                            else message.error(up.msg || "写入名单失败");
+                            if (up.code !== Api.C_OK) message.error(up.msg || "写入名单失败");
                         });
                     }).catch(() => dispatch({ loading: false, doc, sections: withNo }));
                     return;
@@ -2896,8 +2895,7 @@ export default () => {
                             product_id: doc.product_id,
                             version: doc.version,
                         }).then((up: any) => {
-                            if (up.code === Api.C_OK) message.success("已按病例明细 TXID 写入回传记录");
-                            else message.error(up.msg || "写入回传记录失败");
+                            if (up.code !== Api.C_OK) message.error(up.msg || "写入回传记录失败");
                         });
                     }).catch(() => dispatch({ loading: false, doc, sections: withNo }));
                     return;
@@ -2915,8 +2913,7 @@ export default () => {
                             product_id: doc.product_id,
                             version: doc.version,
                         }).then((up: any) => {
-                            if (up.code === Api.C_OK) message.success("已按回传记录写入整理表");
-                            else message.error(up.msg || "写入整理表失败");
+                            if (up.code !== Api.C_OK) message.error(up.msg || "写入整理表失败");
                         });
                     }).catch(() => dispatch({ loading: false, doc, sections: withNo }));
                     return;
@@ -2934,8 +2931,7 @@ export default () => {
                             product_id: doc.product_id,
                             version: doc.version,
                         }).then((up: any) => {
-                            if (up.code === Api.C_OK) message.success("已按采集需求/回传记录写入需求反馈");
-                            else message.error(up.msg || "写入需求反馈失败");
+                            if (up.code !== Api.C_OK) message.error(up.msg || "写入需求反馈失败");
                         });
                     }).catch(() => dispatch({ loading: false, doc, sections: withNo }));
                     return;
@@ -2953,8 +2949,7 @@ export default () => {
                             product_id: doc.product_id,
                             version: doc.version,
                         }).then((up: any) => {
-                            if (up.code === Api.C_OK) message.success("已按回传记录写入上传记录");
-                            else message.error(up.msg || "写入上传记录失败");
+                            if (up.code !== Api.C_OK) message.error(up.msg || "写入上传记录失败");
                         });
                     }).catch(() => dispatch({ loading: false, doc, sections: withNo }));
                     return;
@@ -2972,8 +2967,7 @@ export default () => {
                             product_id: doc.product_id,
                             version: doc.version,
                         }).then((up: any) => {
-                            if (up.code === Api.C_OK) message.success("已按产品名称/上传记录写入查重表");
-                            else message.error(up.msg || "写入查重表失败");
+                            if (up.code !== Api.C_OK) message.error(up.msg || "写入查重表失败");
                         });
                     }).catch(() => dispatch({ loading: false, doc, sections: withNo }));
                     return;
@@ -2991,8 +2985,7 @@ export default () => {
                             product_id: doc.product_id,
                             version: doc.version,
                         }).then((up: any) => {
-                            if (up.code === Api.C_OK) message.success("已按时间线写入检查日期");
-                            else message.error(up.msg || "写入检查日期失败");
+                            if (up.code !== Api.C_OK) message.error(up.msg || "写入检查日期失败");
                         });
                     }).catch(() => dispatch({ loading: false, doc, sections: withNo }));
                     return;
@@ -3010,8 +3003,7 @@ export default () => {
                             product_id: doc.product_id,
                             version: doc.version,
                         }).then((up: any) => {
-                            if (up.code === Api.C_OK) message.success("已按病例明细/时间线写入统计表");
-                            else message.error(up.msg || "写入统计表失败");
+                            if (up.code !== Api.C_OK) message.error(up.msg || "写入统计表失败");
                         });
                     }).catch(() => dispatch({ loading: false, doc, sections: withNo }));
                     return;
@@ -3029,8 +3021,7 @@ export default () => {
                             product_id: doc.product_id,
                             version: doc.version,
                         }).then((up: any) => {
-                            if (up.code === Api.C_OK) message.success("已按标注需求/上传记录写入需求反馈");
-                            else message.error(up.msg || "写入需求反馈失败");
+                            if (up.code !== Api.C_OK) message.error(up.msg || "写入需求反馈失败");
                         });
                     }).catch(() => dispatch({ loading: false, doc, sections: withNo }));
                     return;
@@ -3092,8 +3083,7 @@ export default () => {
                         product_id: doc.product_id,
                         version: doc.version,
                     }).then((up: any) => {
-                        if (up.code === Api.C_OK) message.success(`已写入 ${pids.length} 条标注记录`);
-                        else message.error(up.msg || "写入标注记录失败");
+                        if (up.code !== Api.C_OK) message.error(up.msg || "写入标注记录失败");
                     });
                 }).catch(() => dispatch({ loading: false, doc, sections: withNo }));
             });

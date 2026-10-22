@@ -340,6 +340,7 @@ export default () => {
         productId: 0,
         products: [] as any[],
         writing: false,
+        templating: false,
         pageSize: 50,
         serverPaths: {
             raw: "10.10.1.11:/media/tx-deepocean/Data1/DATA/dr/dr全身骨折注册/肋骨骨折2/test",
@@ -635,7 +636,7 @@ export default () => {
                 return {
                     status: failed.length && !ok.length ? "error" : (ok.length ? "ok" : "skip"),
                     title: ok.map((r) => r.title).join("、"),
-                    msg: skip.length ? `请先在数据文件新增「${skip.map((r) => r.title).join("、")}」，本次未写入统计表` : "",
+                    msg: skip.length ? `「${skip.map((r) => r.title).join("、")}」还不存在，请先点「生成文件模版」，本次未写入统计表` : "",
                     errors: failed.map((r) => r.msg || `写入「${r.title}」失败`),
                 };
             });
@@ -833,6 +834,53 @@ export default () => {
         };
     };
 
+    /** 标注库写入某模块后，覆盖该模块已有的训练/调优/测试构建、训练记录、测试记录。没有文件或没有病例则跳过，不新建。 */
+    const MODULE_MODEL_GROUPS = ["md_009", "md_010", "md_011", "md_012", "md_013"];
+    const writeModuleModelDocs = async (productId: number, module: string) => {
+        const okDocs: WrittenDoc[] = [];
+        const errors: string[] = [];
+        if (!productId || !module) return { okDocs, errors };
+        const chRes: any = await ApiChapter.list_prod_algo_chapter({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null);
+        const chapters = chRes && chRes.code === Api.C_OK ? ((chRes.data && chRes.data.rows) || []) : [];
+        const ids = chapters
+            .filter((r: any) => String(r.name || "").trim() === module)
+            .map((r: any) => Number(r.id))
+            .filter((id: number) => id > 0);
+        if (!ids.length) return { okDocs, errors };
+        const list: any = await ApiModel.list_model_doc({ product_id: productId, page_index: 0, page_size: 10000 }).catch(() => null);
+        if (!list || list.code !== Api.C_OK) {
+            errors.push(list?.msg || "读取模型文件失败");
+            return { okDocs, errors };
+        }
+        const rows = ((list.data && list.data.rows) || []) as any[];
+        const hits = rows.filter((r) => ids.some((id: number) => MODULE_MODEL_GROUPS.some((g) => new RegExp(`^${g}_0[12]_m${id}$`).test(String(r.doc_type || "")))));
+        hits.sort((a, b) => MODULE_MODEL_GROUPS.indexOf(getModelDocMenuKey(a.doc_type)) - MODULE_MODEL_GROUPS.indexOf(getModelDocMenuKey(b.doc_type)));
+        for (const row of hits) {
+            const got: any = await ApiModel.get_model_doc({ id: row.id }).catch(() => null);
+            if (!got || got.code !== Api.C_OK) {
+                errors.push(got?.msg || `写入「${module}」模型文件失败`);
+                continue;
+            }
+            const doc = got.data || {};
+            const up: any = await ApiModel.update_model_doc({
+                id: row.id,
+                content: doc.content,
+                product_id: doc.product_id,
+                version: doc.version,
+            }).catch(() => null);
+            if (!up || up.code !== Api.C_OK) {
+                errors.push(up?.msg || `写入「${doc.doc_title || module}」失败`);
+                continue;
+            }
+            okDocs.push({
+                kind: "model",
+                type: String(row.doc_type || ""),
+                title: String(doc.doc_title || `${module}${getModelDocNavTitle(row.doc_type)}`),
+            });
+        }
+        return { okDocs, errors };
+    };
+
     const writeDataFiles = (
         shownRows: CaseRow[],
         tip?: string | false,
@@ -862,27 +910,29 @@ export default () => {
         }
         if (!productId) {
             if (typeof tip === "string") message.success(tip.replace(/，(并)?已写入.*$/, ""));
-            else if (tip !== false) message.warning("请先选择产品，统计结果未写入数据文件");
+            else if (tip !== false) message.warning("请先选择产品，统计结果未写入");
             return Promise.resolve({ hospitalMiss: false });
         }
         dispatch({ writing: true });
         const hospitalP = matchCaseHospitals(productId, rows);
-        return ensureMissingDocs(productId).then((ens) => {
-            ens.errors.forEach((msg) => message.warning(msg));
-            if (ens.created) {
-                message.success(writtenDocsContent(`已按模板新建 ${ens.created} 份缺失文档：`, ens.docs), 10);
-            }
-            return writeStatsDoc(productId, kind, rows, source, annPack);
-        })
+        return writeStatsDoc(productId, kind, rows, source, annPack)
             .then((stats: any) => (kind === "ann" ? writeAnnotPids(productId, rows, annPack, module) : Promise.resolve(null))
                 .then((ann: any) => ({ stats, ann })))
             .then(({ stats, ann }: any) => writeCollectDocs(productId, kind, rows, module).then((col: any) => ({ stats, ann, col })))
-            .then(({ stats, ann, col }: any) => hospitalP.then((match) => ({ stats, ann, col, match })))
-            .then(({ stats, ann, col, match }: any) => {
+            .then(({ stats, ann, col }: any) => {
+                const moduleRows = annPack && module ? (annPack.rows[module] || []) : [];
+                if (kind !== "ann" || !module || !moduleRows.length) {
+                    return { stats, ann, col, model: { okDocs: [] as WrittenDoc[], errors: [] as string[] } };
+                }
+                return writeModuleModelDocs(productId, module).then((model) => ({ stats, ann, col, model }));
+            })
+            .then(({ stats, ann, col, model }: any) => hospitalP.then((match) => ({ stats, ann, col, model, match })))
+            .then(({ stats, ann, col, model, match }: any) => {
                 const errors = [
                     ...((stats && stats.errors) || (stats?.status === "error" ? [stats.msg || "写入统计表失败"] : [])),
                     ...((ann && ann.errors) || []),
                     ...((col && col.errors) || []),
+                    ...((model && model.errors) || []),
                 ].filter(Boolean);
                 const warns = [
                     stats?.msg,
@@ -902,10 +952,12 @@ export default () => {
                     ...(stats?.status === "ok" ? [{ kind: "data" as const, type: KIND_DOC[kind].type, title: KIND_DOC[kind].title }] : []),
                     ...((ann && ann.okDocs) || []),
                     ...((col && col.okDocs) || []),
+                    ...((model && model.okDocs) || []),
                 ];
+                const modelN = written.filter((d) => d.kind === "model").length;
                 if (written.length) {
                     message.success(writtenDocsContent(
-                        [head, `已写入 ${written.length} 份数据文件：`].filter(Boolean).join("；"),
+                        [head, `已写入 ${written.length} 份${modelN ? "" : "数据"}文件：`].filter(Boolean).join("；"),
                         written,
                     ), 10);
                 } else if (head) {
@@ -914,10 +966,30 @@ export default () => {
                 return { hospitalMiss: false };
             })
             .catch(() => {
-                message.error("写入数据文件失败");
+                message.error("写入数据失败");
                 return { hospitalMiss: false };
             })
             .finally(() => dispatch({ writing: false }));
+    };
+
+    /** 只补该产品还没有的菜单类型空模板，已有的不覆盖。 */
+    const generateTemplates = () => {
+        const productId = ctxRef.current.productId;
+        if (!productId) {
+            message.warning("请先选择产品");
+            return;
+        }
+        dispatch({ templating: true });
+        ensureMissingDocs(productId).then((ens) => {
+            ens.errors.forEach((msg) => message.warning(msg));
+            if (ens.created) {
+                message.success(writtenDocsContent(`已按模板新建 ${ens.created} 份缺失文档：`, ens.docs), 10);
+            } else if (!ens.errors.length) {
+                message.info("已有文件未替换，没有需要新建的模板");
+            }
+        }).catch(() => {
+            message.error("生成文件模版失败");
+        }).finally(() => dispatch({ templating: false }));
     };
 
     const title = STATS_TITLES[data.kind as StatsKind];
@@ -1030,8 +1102,8 @@ export default () => {
         return false;
     };
 
-    /** 写回某个标注模块：只换这个模块的病例，再把各模块合成汇总写入标注统计表。 */
-    const commitAnnModule = (rows: CaseRow[], source: string, slot: ReadSlot, tip: string | false) => {
+    /** 写回某个标注模块的本机缓存。写入数据只在手动点「写入」时发生。 */
+    const commitAnnModule = (rows: CaseRow[], source: string, slot: ReadSlot) => {
         const cur = ctxRef.current;
         const sameProduct = cur.productId === slot.productId;
         const rowsBy: Record<string, CaseRow[]> = {};
@@ -1060,13 +1132,12 @@ export default () => {
         }
         persistRows(rows, { source }, { productId: slot.productId, kind: annSlot(slot.module) });
         persistRows(merged, { source: mergedSrc }, { productId: slot.productId, kind: "ann" });
-        return writeDataFiles(merged, tip, {
-            productId: slot.productId,
-            kind: "ann",
-            source: mergedSrc,
-            annPack: { modules: slot.modules, rows: rowsBy, sources: srcBy },
-            module: slot.module,
-        });
+    };
+
+    const promptWrite = (n: number, module = "") => {
+        const btn = module ? `写入『${module}』` : "写入数据";
+        const head = module ? `已统计「${module}」${n} 个序列` : `已统计 ${n} 个序列`;
+        message.info(`${head}，请点击「${btn}」写入`, 8);
     };
 
     /** 读取开始时记下产品、库和模块；读取过程中切换了，结果仍只写回发起读取的那一处。 */
@@ -1078,13 +1149,14 @@ export default () => {
             return;
         }
         if (slot.module) {
-            commitAnnModule(rows, source, slot, `已统计「${slot.module}」${rows.length} 个序列，已写入「${KIND_DOC.ann.title}」（各模块合并）`);
+            commitAnnModule(rows, source, slot);
+            promptWrite(rows.length, slot.module);
             return;
         }
         const same = cur.productId === slot.productId && cur.kind === slot.kind;
         dispatch(same ? { loading: false, progress: "", rows, source } : { loading: false, progress: "" });
         persistRows(rows, { source }, slot);
-        writeDataFiles(rows, `已统计 ${rows.length} 个序列，已写入「${KIND_DOC[slot.kind].title}」`, { ...slot, source });
+        promptWrite(rows.length);
     };
 
     const pickFolder = () => {
@@ -1120,13 +1192,13 @@ export default () => {
             let tip = `已匹配 ${r.matched} 行，已填入 gt/pred/dice`;
             if (r.unmatched.length) tip += `；${r.unmatched.length} 个 TXID 未匹配到病例`;
             if (slot.module) {
-                commitAnnModule(r.rows, ctxRef.current.annSources[slot.module] || "", slot, false)
-                    .then((wrote: any) => { if (!wrote || !wrote.hospitalMiss) message.success(tip, 6); });
+                commitAnnModule(r.rows, ctxRef.current.annSources[slot.module] || "", slot);
+                message.success(`${tip}。请点击「写入『${slot.module}』」写入`, 8);
                 return;
             }
             dispatch({ rows: r.rows });
             persistRows(r.rows);
-            writeDataFiles(r.rows, false).then((wrote: any) => { if (!wrote || !wrote.hospitalMiss) message.success(tip, 6); });
+            message.success(`${tip}。请点击「写入数据」写入`, 8);
         }).catch((e: any) => {
             dispatch({ loading: false, progress: "" });
             message.error(e?.message || "导入失败，请检查 Excel 格式");
@@ -1242,7 +1314,6 @@ export default () => {
         const fileTitle = annByModule && data.annModule ? `${title}-${data.annModule}` : title;
         saveXlsx(sheets, fileTitle);
         message.success(`已下载「${fileTitle}.xlsx」，请看 Excel 底部的多个工作表`, 8);
-        if (ctxRef.current.productId) writeDataFiles(data.rows, false);
     };
 
     return (
@@ -1295,7 +1366,10 @@ export default () => {
                         导入 gt/pred/dice
                     </Button>
                     <Button disabled={!total} loading={data.writing} onClick={() => writeDataFiles(data.rows)}>
-                        {annByModule && data.annModule ? `写入「${data.annModule}」` : "写入数据文件"}
+                        {annByModule && data.annModule ? `写入「${data.annModule}」` : "写入数据"}
+                    </Button>
+                    <Button loading={data.templating} disabled={data.writing} onClick={generateTemplates}>
+                        生成文件模版
                     </Button>
                 </Space>
             </div>

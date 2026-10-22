@@ -1,7 +1,9 @@
 import logging
-from sqlalchemy import select, delete, func
+from sqlalchemy import select, delete, func, or_
 from sqlalchemy.sql import asc
 from ..model.prod_algo_chapter import ProdAlgoChapter
+from ..model.model_doc import ModelDoc
+from ..model.data_doc import DataDoc
 from ..obj.tobj_prod_algo_chapter import ProdAlgoChapterForm
 from ..obj.vobj_prod_algo_chapter import ProdAlgoChapterObj
 from ..utils.sql_ctx import db
@@ -72,6 +74,11 @@ class Server(object):
         ids = [int(i) for i in (ids or []) if str(i).strip().isdigit()]
         if not ids:
             return Resp.resp_err(msg=ts("msg_err_param"))
+        # 只删恰好以 _m{章节id} 结尾的文件，避免 _m1 误伤 _m18。
+        conds = [ModelDoc.doc_type.op("~")(rf"_m{i}$") for i in ids]
+        db.session.execute(delete(ModelDoc).where(or_(*conds)))
+        dconds = [DataDoc.doc_type.op("~")(rf"_m{i}$") for i in ids]
+        db.session.execute(delete(DataDoc).where(or_(*dconds)))
         db.session.execute(delete(ProdAlgoChapter).where(ProdAlgoChapter.id.in_(ids)))
         db.session.commit()
         return Resp.resp_ok()
