@@ -120,6 +120,17 @@ MODULE_RECORD_GENERIC = {"dd_005": "人员培训记录", "dd_008": "试标注记
 TRAIN_SAMPLE_CELLS = {"培训日期": (1, 3, 5), "讲解人员": (1, 3)}
 TRAIN_NAME_BLOCKS = ("参与培训人员名单", "审核人员", "考核通过人员")
 
+# 初次/定期/日常考核按章节模块各一份：类型为「模板类型_m章节模块id」，如 dd_013_02_m8。
+# 模板在建档时按模块名选定（见 pick_exam_base），之后不随改名变化；名称随模块名。
+EXAM_GROUPS = {
+    "dd_013_first": (["dd_013_01", "dd_013_02"], "初次考核记录", "dd_013_02"),
+    "dd_013_periodic": (["dd_013_03", "dd_013_04"], "定期考核记录", "dd_013_04"),
+    "dd_013_daily": (["dd_013_05", "dd_013_06", "dd_013_07"], "日常考核", "dd_013_06"),
+}
+EXAM_RE = re.compile(r"^(dd_013_0[1-7])_m(\d+)$")
+EXAM_ALIAS_RE = re.compile(r"^(dd_013_(?:first|periodic|daily))_m(\d+)$")
+EXAM_DAILY = {"dd_013_05", "dd_013_06", "dd_013_07"}
+
 
 def set_record_title_row(content, title):
     """记录表首行通栏标题（如人员培训记录）跟着模块名。"""
@@ -137,9 +148,89 @@ def module_record_parts(doc_type):
     return (m.group(1), int(m.group(2))) if m else None
 
 
+def exam_parts(doc_type):
+    """(模板类型, 章节模块id)；不是按模块建的考核记录返回 None。"""
+    m = EXAM_RE.match(str(doc_type or ""))
+    return (m.group(1), int(m.group(2))) if m else None
+
+
+def exam_group_of_base(base):
+    for group, (bases, _suffix, _default) in EXAM_GROUPS.items():
+        if base in bases:
+            return group
+    return ""
+
+
+def exam_template_name(base):
+    """模板原表里的模块名，如 dd_013_02 → 肺叶分割，dd_013_06 → 肺叶分割。"""
+    title = (DOC_META.get(base) or {}).get("title") or ""
+    if "-" in title:
+        return title.split("-", 1)[1]
+    if title.endswith("日常考核"):
+        return title[:-len("日常考核")]
+    return ""
+
+
+def exam_name_variants(base):
+    old = exam_template_name(base)
+    variants = [old] if old else []
+    if old == "肺栓塞分割分诊":
+        variants.append("肺栓塞分割/分诊")
+    return [v for v in variants if v]
+
+
+def pick_exam_base(group, name):
+    """新模块用哪套考核模板：同名优先，其次名称互相包含，再按前缀，都一样取肺叶分割那份。"""
+    bases, _suffix, default = EXAM_GROUPS[group]
+    name = str(name or "").strip()
+
+    def score(base):
+        old = exam_template_name(base)
+        if name and name == old:
+            return (3, len(old), base == default)
+        if name and old and (old.startswith(name) or name.startswith(old)):
+            return (2, min(len(name), len(old)), base == default)
+        prefix = 0
+        for a, b in zip(name, old):
+            if a != b:
+                break
+            prefix += 1
+        kind = ("分诊" in name) == ("分诊" in old) and ("肺叶" in name) == ("肺叶" in old)
+        return (1 if kind and prefix else 0, prefix, base == default)
+
+    return max(bases, key=score)
+
+
+def _exam_chapter(chapter_id):
+    return db.session.execute(select(ProdAlgoChapter).where(ProdAlgoChapter.id == chapter_id)).scalars().first()
+
+
+def resolve_exam_alias(doc_type, prod_id):
+    """列表新增传 dd_013_first_m{id}，这里换成选定的模板类型。该模块这一类已有则用已有类型。"""
+    m = EXAM_ALIAS_RE.match(str(doc_type or ""))
+    if not m:
+        return doc_type
+    group, chapter_id = m.group(1), int(m.group(2))
+    ch = _exam_chapter(chapter_id)
+    if not ch or ch.prod_id != prod_id or not str(ch.name or "").strip():
+        return ""
+    for base in EXAM_GROUPS[group][0]:
+        hit = db.session.execute(
+            select(DataDoc.doc_type).where(
+                DataDoc.product_id == prod_id, DataDoc.doc_type == f"{base}_m{chapter_id}",
+            )
+        ).first()
+        if hit:
+            return hit[0]
+    return f"{pick_exam_base(group, ch.name)}_m{chapter_id}"
+
+
 def base_doc_type(doc_type):
     parts = module_record_parts(doc_type)
-    return MODULE_RECORD_BASE[parts[0]] if parts else doc_type
+    if parts:
+        return MODULE_RECORD_BASE[parts[0]]
+    ep = exam_parts(doc_type)
+    return ep[0] if ep else doc_type
 
 
 def module_record_chapter(doc_type):
@@ -150,9 +241,10 @@ def module_record_chapter(doc_type):
 
 
 def ensure_module_records(prod_id, chapter_id):
-    """章节模块有名称后，给它建试标注/标注记录（A0，已有任意版本则跳过）。调用方负责 commit。"""
+    """章节模块有名称后，给它建试标注/标注/培训记录，以及初次/定期/日常考核（A0，已有任意版本则跳过）。调用方负责 commit。"""
     ch = db.session.execute(select(ProdAlgoChapter).where(ProdAlgoChapter.id == chapter_id)).scalars().first()
-    if not ch or ch.prod_id != prod_id or not str(ch.name or "").strip():
+    name = str(getattr(ch, "name", "") or "").strip()
+    if not ch or ch.prod_id != prod_id or not name:
         return 0
     made = 0
     for group in MODULE_RECORD_BASE:
@@ -167,6 +259,21 @@ def ensure_module_records(prod_id, chapter_id):
         row.content = Server()._Server__normalize_content(None, doc_type, product_id=prod_id)
         db.session.add(row)
         made += 1
+    for group, (bases, _suffix, _default) in EXAM_GROUPS.items():
+        hit = db.session.execute(
+            select(DataDoc.id).where(
+                DataDoc.product_id == prod_id,
+                DataDoc.doc_type.in_([f"{base}_m{chapter_id}" for base in bases]),
+            )
+        ).first()
+        if hit:
+            continue
+        doc_type = f"{pick_exam_base(group, name)}_m{chapter_id}"
+        row = DataDoc(product_id=prod_id, doc_type=doc_type, version="A0", change_log="按算法模块自动建档")
+        row.file_no = serv_review_util.resolve_doc_file_no(prod_id, None, "A0", doc_type) or None
+        row.content = Server()._Server__normalize_content(None, doc_type, product_id=prod_id)
+        db.session.add(row)
+        made += 1
     return made
 
 
@@ -176,6 +283,12 @@ def doc_title(doc_type):
         ch = module_record_chapter(doc_type)
         name = str(getattr(ch, "name", "") or "").strip()
         return f"{name}{MODULE_RECORD_SUFFIX[parts[0]]}" if name else MODULE_RECORD_GENERIC[parts[0]]
+    ep = exam_parts(doc_type)
+    if ep:
+        ch = _exam_chapter(ep[1])
+        name = str(getattr(ch, "name", "") or "").strip()
+        suffix = EXAM_GROUPS.get(exam_group_of_base(ep[0]), (None, "考核记录", None))[1]
+        return f"{name}{suffix}" if name else suffix
     return (DOC_META.get(doc_type) or {}).get("title") or "数据文件"
 
 
@@ -183,6 +296,14 @@ def doc_keywords(doc_type):
     parts = module_record_parts(doc_type)
     if parts:
         return [MODULE_RECORD_GENERIC[parts[0]], doc_title(doc_type)]
+    ep = exam_parts(doc_type)
+    if ep:
+        kws = list((DOC_META.get(ep[0]) or {}).get("keywords") or [])
+        name = str(getattr(_exam_chapter(ep[1]), "name", "") or "").strip()
+        for old in exam_name_variants(ep[0]):
+            if name and old:
+                kws = [k.replace(old, name) for k in kws]
+        return kws or [doc_title(doc_type)]
     return list((DOC_META.get(doc_type) or {}).get("keywords") or [])
 
 
@@ -222,9 +343,101 @@ def _empty_template(doc_type):
 class Server(object):
 
     @staticmethod
+    def __exam_module_content(content, doc_type):
+        """按模块建的考核记录：标题和考核项目换成模块名，去掉模板里的样例日期、人员和日常打分行。考核要点里的原模块名换成当前模块名。"""
+        ep = exam_parts(doc_type)
+        if not ep:
+            return content
+        name = str(getattr(_exam_chapter(ep[1]), "name", "") or "").strip()
+        variants = sorted(exam_name_variants(ep[0]), key=len, reverse=True)
+        daily = ep[0] in EXAM_DAILY
+
+        def repl(value):
+            if not isinstance(value, str) or not name:
+                return value
+            for old in variants:
+                value = value.replace(old, name)
+            return value
+
+        for n in (content or {}).get("sections") or []:
+            if not isinstance(n, dict) or n.get("ref_type") in ("cover", "revision", "basic_info"):
+                continue
+            tables = []
+            for tb in n.get("tables") or []:
+                if not isinstance(tb, list):
+                    tables.append(tb)
+                    continue
+                rows = []
+                in_names = False
+                past_daily_head = False
+                for raw in tb:
+                    if not isinstance(raw, list):
+                        rows.append(raw)
+                        continue
+                    row = [repl(c) for c in raw]
+                    label = str(row[0] or "").strip() if row else ""
+                    if re.search(r"-DD-\d+", label):
+                        row[0] = ""
+                        label = ""
+                    for ci, cell in enumerate(list(row)):
+                        text = str(cell or "").strip()
+                        if text in ("考核时间", "参与考核人数") and ci + 1 < len(row):
+                            row[ci + 1] = ""
+                    if daily and any(str(c or "").strip() == "标注人员姓名" for c in row):
+                        past_daily_head = True
+                        rows.append(row)
+                        continue
+                    if daily and past_daily_head:
+                        continue
+                    if label.startswith("参与考核人员"):
+                        in_names = True
+                    elif label:
+                        in_names = False
+                    if in_names:
+                        if label:
+                            rows.append([row[0]] + [""] * (len(row) - 1))
+                        continue
+                    rows.append(row)
+                tables.append(rows)
+            n["tables"] = tables
+        return Server.__apply_exam_live(content, doc_type)
+
+    @staticmethod
+    def __apply_exam_live(content, doc_type):
+        """打开/导出时标题和考核项目跟着当前模块名。"""
+        ep = exam_parts(doc_type)
+        if not ep:
+            return content
+        title = doc_title(doc_type)
+        name = str(getattr(_exam_chapter(ep[1]), "name", "") or "").strip()
+        for n in (content or {}).get("sections") or []:
+            if not isinstance(n, dict):
+                continue
+            if n.get("ref_type") == "cover":
+                n["title"] = title
+                continue
+            if n.get("ref_type") in ("revision", "basic_info"):
+                continue
+            for tb in n.get("tables") or []:
+                if not isinstance(tb, list):
+                    continue
+                for row in tb:
+                    if not isinstance(row, list) or not row:
+                        continue
+                    if name and str(row[0] or "").startswith("标注人员日常评价"):
+                        row[0] = f"标注人员日常评价-{name}"
+                    for ci, cell in enumerate(row):
+                        if name and str(cell or "").strip() == "考核项目" and ci + 1 < len(row):
+                            row[ci + 1] = name
+        return content
+
+    @staticmethod
     def __module_record_content(content, doc_type):
         """按模块建的记录：标题换成「模块名+记录名」，去掉肺叶分割的样例内容。
-        试标注/标注记录只留表头；人员培训记录留表结构与通用培训条目，清空样例日期/人员/名单、去掉肺叶专用的注意事项。"""
+        试标注/标注记录只留表头；人员培训记录留表结构与通用培训条目，清空样例日期/人员/名单、去掉肺叶专用的注意事项。
+        考核记录换成模块名并清掉样例人员、日期和日常打分行。"""
+        if exam_parts(doc_type):
+            return Server.__exam_module_content(content, doc_type)
         title = doc_title(doc_type)
         if module_record_parts(doc_type)[0] == "dd_005":
             for n in (content or {}).get("sections") or []:
@@ -732,6 +945,8 @@ class Server(object):
                 if isinstance(n, dict) and n.get("ref_type") == "cover":
                     n["title"] = title
             set_record_title_row(obj.content, title)
+        elif exam_parts(row.doc_type):
+            self.__apply_exam_live(obj.content, row.doc_type)
         key = base_doc_type(row.doc_type or "")
         serv_review_util.fill_cover_dates(
             obj.content, serv_review_util.cover_date(row.product_id, key) if row.product_id else ""
@@ -1643,9 +1858,15 @@ class Server(object):
 
     async def add_data_doc(self, form: DataDocForm):
         try:
-            doc_type = (form.doc_type or "").strip()
+            doc_type = resolve_exam_alias((form.doc_type or "").strip(), form.product_id)
+            if EXAM_ALIAS_RE.match((form.doc_type or "").strip()) and not doc_type:
+                return Resp.resp_err(msg="该算法模块不属于所选产品")
             if module_record_parts(doc_type):
                 ch = module_record_chapter(doc_type)
+                if not ch or ch.prod_id != form.product_id:
+                    return Resp.resp_err(msg="该算法模块不属于所选产品")
+            elif exam_parts(doc_type):
+                ch = _exam_chapter(exam_parts(doc_type)[1])
                 if not ch or ch.prod_id != form.product_id:
                     return Resp.resp_err(msg="该算法模块不属于所选产品")
             elif doc_type not in DOC_META:
@@ -1672,7 +1893,7 @@ class Server(object):
             if not fromdoc:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
             target_pid = product_id or fromdoc.product_id
-            if target_pid != fromdoc.product_id and module_record_parts(fromdoc.doc_type):
+            if target_pid != fromdoc.product_id and (module_record_parts(fromdoc.doc_type) or exam_parts(fromdoc.doc_type)):
                 return Resp.resp_err(msg="按算法模块建的记录不能复制到其它产品")
             all_versions = db.session.execute(
                 select(DataDoc.version).where(DataDoc.product_id == target_pid, DataDoc.doc_type == fromdoc.doc_type)
@@ -2289,7 +2510,7 @@ class Server(object):
                 rows, spans = self.__clamp_dd010_prod_banner(rows, spans)
             elif str(getattr(obj, "doc_type", "") or "") == "dd_011":
                 rows, spans = self.__clamp_dd011_type_rows(rows, spans)
-            elif str(getattr(obj, "doc_type", "") or "") in ("dd_013_01", "dd_013_02", "dd_013_03", "dd_013_04"):
+            elif base_doc_type(getattr(obj, "doc_type", "") or "") in ("dd_013_01", "dd_013_02", "dd_013_03", "dd_013_04"):
                 rows, spans = self.__clamp_dd013_exam_rows(rows, spans)
             elif str(getattr(obj, "doc_type", "") or "") == "dd_012":
                 rows, spans = self.__clamp_dd012_body(rows, spans)

@@ -14,6 +14,7 @@ import * as ApiChapter from "@/api/ApiProdAlgoChapter";
 import {
     isDataDocGroup, getDataDocNavTitle, getDataDocGroupTypes, getDataDocGroupQuery,
     isModuleRecordGroup, isModuleRecordType, moduleRecordChapterId, moduleRecordType, ModuleRecordGroup,
+    isExamGroup, isExamModuleType, examModuleChapterId, examAliasType, examModuleQuery, ExamGroup,
 } from "./DataDocTypes";
 import { sanitizeListQuery, isAllProductId } from "../doc_shared/sanitizeListQuery";
 import "../risk_mgmt/RiskMgmtDocs.less";
@@ -73,6 +74,8 @@ export default () => {
     const groupTypes = getDataDocGroupTypes(type);
     const groupQuery = getDataDocGroupQuery(type);
     const recordGroup: ModuleRecordGroup | null = isModuleRecordGroup(type) ? type : null;
+    const examGroup: ExamGroup | null = isExamGroup(type) ? type : null;
+    const perModule = !!recordGroup || !!examGroup;
     const [queryForm] = Form.useForm();
     const [addForm] = Form.useForm();
     const [data, dispatch] = useData({
@@ -105,11 +108,11 @@ export default () => {
     }, [chaptersByProduct]);
     /** 人员培训/试标注/标注记录：每个章节模块一份，选项即该产品的全部章节模块。 */
     const extraModuleOptions = (pid: any) => {
-        if (!recordGroup || isAllProductId(pid)) return [] as { value: string; label: string }[];
+        if (!perModule || isAllProductId(pid)) return [] as { value: string; label: string }[];
         const list: { id: number; name: string }[] = chaptersByProduct[String(pid)] || [];
         return list.map((c) => ({ value: `m${c.id}`, label: c.name }));
     };
-    const navModules = (pid: any) => (recordGroup || isAllProductId(pid)) ? [] : (modulesByProduct[String(pid)] || []);
+    const navModules = (pid: any) => (perModule || isAllProductId(pid)) ? [] : (modulesByProduct[String(pid)] || []);
     const selectedModules = navModules(productId);
     const addModules = navModules(addProductId);
     useEffect(() => {
@@ -121,7 +124,7 @@ export default () => {
             const rows = res && res.code === ApiAlgo.C_OK ? (res.data?.rows || []) : [];
             dispatch({ modulesByProduct: namesByProduct(rows) });
         }).catch(() => dispatch({ modulesByProduct: {} }));
-        if (!isModuleRecordGroup(type)) {
+        if (!perModule) {
             dispatch({ chaptersByProduct: {} });
             return;
         }
@@ -171,12 +174,14 @@ export default () => {
         delete req.doc_type;
         delete req.doc_type_prefix;
         delete req.doc_types;
-        if (isGroup && recordGroup && moduleRaw === LEGACY_MODULE) {
+        if (isGroup && perModule && moduleRaw === LEGACY_MODULE) {
             req.doc_types = groupTypes.join(",");
         } else if (isGroup) {
             req.doc_types = moduleChapter && recordGroup
                 ? moduleRecordType(recordGroup, moduleChapter)
-                : moduleIdx >= 0 ? (groupTypes[moduleIdx] || "") : groupQuery;
+                : moduleChapter && examGroup
+                    ? examModuleQuery(examGroup, moduleChapter)
+                    : moduleIdx >= 0 ? (groupTypes[moduleIdx] || "") : groupQuery;
         } else {
             req.doc_type = type;
         }
@@ -213,6 +218,8 @@ export default () => {
                 const raw = values.module;
                 if (recordGroup && typeof raw === "string" && /^m\d+$/.test(raw)) {
                     docType = moduleRecordType(recordGroup, Number(raw.slice(1)));
+                } else if (examGroup && typeof raw === "string" && /^m\d+$/.test(raw)) {
+                    docType = examAliasType(examGroup, Number(raw.slice(1)));
                 } else {
                     const moduleIdx = Number(raw ?? 0);
                     docType = groupTypes[moduleIdx] || groupTypes[0];
@@ -338,9 +345,12 @@ export default () => {
             dataIndex: "doc_type",
             width: "12%",
             render: (value: string, row: any) => {
-                const name = isModuleRecordType(value)
-                    ? (chapterNameById[moduleRecordChapterId(value)] || "已删除的模块")
-                    : recordGroup ? "未对应模块" : moduleNameOf(groupTypes, modulesByProduct[String(row.product_id)] || [], value);
+                const chapterId = isModuleRecordType(value)
+                    ? moduleRecordChapterId(value)
+                    : isExamModuleType(value) ? examModuleChapterId(value) : 0;
+                const name = chapterId
+                    ? (chapterNameById[chapterId] || "已删除的模块")
+                    : perModule ? "未对应模块" : moduleNameOf(groupTypes, modulesByProduct[String(row.product_id)] || [], value);
                 return (
                     <span
                         title={name}
@@ -442,7 +452,7 @@ export default () => {
                                         options={[
                                             ...selectedModules.map((name: string, i: number) => ({ value: i as any, label: name })),
                                             ...extraModuleOptions(productId),
-                                            ...(recordGroup ? [{ value: LEGACY_MODULE, label: "未对应模块" }] : []),
+                                            ...(perModule ? [{ value: LEGACY_MODULE, label: "未对应模块" }] : []),
                                         ]}
                                     />
                                 </Form.Item>

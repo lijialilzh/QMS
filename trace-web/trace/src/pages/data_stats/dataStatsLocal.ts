@@ -15,7 +15,7 @@ export const STATS_TITLES: Record<StatsKind, string> = {
 export const DETAIL_COLUMNS = [
     "TXID", "PatientID", "SeriesInstanceUID", "SEX", "DEVICE", "ConvolutionKernel",
     "PhotometricInterpretation", "AGE", "KVP", "THICKNESS", "PixelSpacing",
-    "gt", "pred", "dice",
+    "自定义", "gt", "pred", "dice",
 ];
 
 export const DETAIL_PREVIEW_COLUMNS = [
@@ -551,7 +551,7 @@ function mergeByStudy(rows: CaseRow[]): CaseRow[] {
 export const KEEP_CASE_KEYS = [
     "TXID", "PatientID", "SeriesInstanceUID", "SEX", "DEVICE", "ConvolutionKernel",
     "PhotometricInterpretation", "AGE", "KVP", "THICKNESS", "PixelSpacing",
-    "gt", "pred", "dice",
+    "自定义", "gt", "pred", "dice",
 ];
 
 function trimCaseRow(row: CaseRow): CaseRow {

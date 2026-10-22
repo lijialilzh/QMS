@@ -89,21 +89,52 @@ export const moduleRecordType = (group: ModuleRecordGroup, chapterId: number) =>
 export const moduleRecordTitle = (group: ModuleRecordGroup, moduleName: string) =>
     `${moduleName}${MODULE_RECORD_SUFFIX[group]}`;
 
-/** 按模块建的记录归到肺叶分割那份的类型（表头、填写规则相同）。 */
+/** 初次/定期/日常考核按章节模块各一份，类型为模板类型_m章节模块id（如 dd_013_02_m8）。 */
+export type ExamGroup = "dd_013_first" | "dd_013_periodic" | "dd_013_daily";
+const EXAM_RE = /^(dd_013_0[1-7])_m(\d+)$/;
+
+export const isExamGroup = (type?: string): type is ExamGroup =>
+    type === "dd_013_first" || type === "dd_013_periodic" || type === "dd_013_daily";
+
+export const isExamModuleType = (type?: string) => EXAM_RE.test(type || "");
+
+export const examModuleChapterId = (type?: string): number => {
+    const m = EXAM_RE.exec(type || "");
+    return m ? Number(m[2]) : 0;
+};
+
+export const examGroupOfType = (type?: string): ExamGroup | "" => {
+    const m = EXAM_RE.exec(type || "");
+    if (!m) return "";
+    return (DATA_DOC_TYPE_GROUP[m[1]] || "") as ExamGroup | "";
+};
+
+/** 列表新增时先传分组别名，后端再选定模板类型。 */
+export const examAliasType = (group: ExamGroup, chapterId: number) => `${group}_m${chapterId}`;
+
+/** 筛选某一个模块：这一组里每种模板都查一次。 */
+export const examModuleQuery = (group: string, chapterId: number) =>
+    getDataDocGroupTypes(group).map((base) => `${base}_m${chapterId}`).join(",");
+
+/** 按模块建的记录归到肺叶分割那份的类型（表头、填写规则相同）。考核记录归到它建档时选定的模板。 */
 export const baseDataDocType = (type?: string) => {
     const g = moduleRecordGroup(type);
-    return g ? MODULE_RECORD_BASE[g] : (type || "");
+    if (g) return MODULE_RECORD_BASE[g];
+    const m = EXAM_RE.exec(type || "");
+    return m ? m[1] : (type || "");
 };
 
 /** 分组列表查询用：固定子类型 + 按模块建的记录。 */
 export const getDataDocGroupQuery = (type?: string): string => {
     const types = getDataDocGroupTypes(type);
-    return isModuleRecordGroup(type) ? [...types, `${type}_m*`].join(",") : types.join(",");
+    if (isModuleRecordGroup(type)) return [...types, `${type}_m*`].join(",");
+    if (isExamGroup(type)) return [...types, ...types.map((base) => `${base}_m*`)].join(",");
+    return types.join(",");
 };
 
 /** 菜单 key / 高亮用：子类型归一到分组 key，其余原样返回。 */
 export const getDataDocMenuKey = (type?: string) =>
-    moduleRecordGroup(type) || DATA_DOC_TYPE_GROUP[type || ""] || type || "";
+    moduleRecordGroup(type) || examGroupOfType(type) || DATA_DOC_TYPE_GROUP[type || ""] || type || "";
 
 /** 列表页路径：分组子类型归一到分组入口。 */
 export const getDataDocListType = (type?: string) => getDataDocMenuKey(type);
@@ -112,9 +143,9 @@ export const getDataDocListType = (type?: string) => getDataDocMenuKey(type);
 export const getDataDocNavTitle = (type?: string) => {
     if (!type) return "数据文件";
     if (isDataDocGroup(type)) return DATA_DOC_GROUPS[type].title;
-    const g = moduleRecordGroup(type);
-    if (g) return DATA_DOC_GROUPS[g].title;
-    return DATA_DOC_TYPES[type]?.title || "数据文件";
+    const g = moduleRecordGroup(type) || examGroupOfType(type);
+    if (g && DATA_DOC_GROUPS[g]) return DATA_DOC_GROUPS[g].title;
+    return DATA_DOC_TYPES[type || ""]?.title || "数据文件";
 };
 
 export const DATA_DOC_MENU: DataDocMenuNode[] = [
@@ -164,11 +195,11 @@ export const DATA_RECORD_DOC_TYPES = new Set([
 ]);
 
 export const isDataRecordDocType = (type?: string) =>
-    DATA_RECORD_DOC_TYPES.has(type || "") || isModuleRecordType(type);
+    DATA_RECORD_DOC_TYPES.has(type || "") || isModuleRecordType(type) || isExamModuleType(type);
 
 /** 按模块建的记录这里只有通用标题；带模块名的标题在文档封面章节里。 */
 export const getDataDocMeta = (type?: string) => {
-    const g = moduleRecordGroup(type);
+    const g = moduleRecordGroup(type) || examGroupOfType(type);
     if (g) return { title: DATA_DOC_GROUPS[g].title, keywords: [DATA_DOC_GROUPS[g].title] };
     return DATA_DOC_TYPES[type || ""] || { title: "数据文件", keywords: [] as string[] };
 };

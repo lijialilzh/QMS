@@ -78,6 +78,74 @@ const computeModelCycle = (rows: any[]): string => {
 };
 
 
+/** 里程碑「计划完成时间」：时间线模型部对上的输出取最晚一月，写成 yyyy.M；对不上则清空。 */
+const fillMd006PlanTimes = (nodes: any[], tlRows: any[]): any[] => {
+    const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
+    const outs = (tlRows || [])
+        .filter((r: any) => (r.row_type || "date") === "date")
+        .map((r: any) => ({
+            y: num(r.year),
+            m: num(r.month),
+            text: String((r.cells || {})["模型部"] || ""),
+        }))
+        .filter((x: any) => x.text.trim() && x.y && x.m >= 1 && x.m <= 12);
+    const latest = (hit: (s: string) => boolean) => {
+        let bestY = 0;
+        let bestM = 0;
+        outs.forEach((o: any) => {
+            if (!hit(o.text)) return;
+            if (!bestY || o.y * 100 + o.m > bestY * 100 + bestM) {
+                bestY = o.y;
+                bestM = o.m;
+            }
+        });
+        return bestY ? `${bestY}.${bestM}` : "";
+    };
+    const monthOf = (task: string, stage: string) => {
+        if (task.includes("训练集构建")) return latest((s) => s.includes("训练集构建"));
+        if (task.includes("调优集构建")) return latest((s) => s.includes("调优集构建"));
+        if (task.includes("测试集构建")) return latest((s) => s.includes("测试集构建"));
+        if (task.includes("模型服务提交") || stage.includes("模型提交") || stage.includes("模型服务提交")) {
+            return latest((s) => s.includes("模型服务提交"));
+        }
+        if (task.includes("模型封装") || stage.includes("模型封装")) return latest((s) => s.includes("模型封装"));
+        if (task.includes("模型训练") || stage.includes("模型训练")) return latest((s) => /模型训练(?!集)/.test(s));
+        if (stage.includes("模型测试") || task.trim() === "测试" || task.includes("模型测试")) {
+            return latest((s) => /模型测试(?!方案)/.test(s));
+        }
+        if (task.includes("实现") || stage.includes("实现") || task.includes("调试")) {
+            return latest((s) => s.includes("源代码") || (s.includes("模型开发阶段") && !s.includes("模型开发计划")));
+        }
+        if (stage.includes("调研") || task.includes("调研") || stage.includes("方案确认")) {
+            return latest((s) => s.includes("算法方案概要设计") || s.includes("算法方案详细设计"));
+        }
+        return "";
+    };
+    const fix = (n: any): any => {
+        const title = stripNum(n.title);
+        let tables = n.tables;
+        if (title.includes("里程碑") && Array.isArray(tables) && Array.isArray(tables[0]) && tables[0][0]) {
+            const t = tables[0].map((row: any[]) => (Array.isArray(row) ? [...row] : row));
+            const header = t[0];
+            const ti = header.findIndex((h: any) => String(h || "").includes("计划完成时间"));
+            const taskI = header.findIndex((h: any) => String(h || "").includes("任务划分"));
+            const stageI = header.findIndex((h: any) => String(h || "").includes("阶段"));
+            if (ti >= 0) {
+                t.slice(1).forEach((row: any[]) => {
+                    if (!Array.isArray(row)) return;
+                    while (row.length <= ti) row.push("");
+                    const task = taskI >= 0 ? String(row[taskI] || "") : "";
+                    const stage = stageI >= 0 ? String(row[stageI] || "") : "";
+                    row[ti] = monthOf(task, stage);
+                });
+                tables = [t, ...tables.slice(1)];
+            }
+        }
+        return { ...n, tables, children: (n.children || []).map(fix) };
+    };
+    return (nodes || []).map(fix);
+};
+
 const fillModelCycle = (nodes: any[], text: string): any[] => {
     if (!text) return nodes;
     const fix = (n: any): any => {
@@ -871,6 +939,7 @@ export default () => {
                 if (type === "md_006") {
                     out = fillModelCycle(out, computeModelCycle(tlRows));
                     out = fillMd006People(out, members, replaceProduct);
+                    out = fillMd006PlanTimes(out, tlRows);
                 }
                 if (replaceProduct) {
                     out = overwriteAnnexReview(out, {

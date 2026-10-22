@@ -12,7 +12,7 @@ import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiHospital from "@/api/ApiProdHospital";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
-import { getDataDocMeta, DATA_STATS_IMPORT_TYPES, getDataDocListType, isModuleRecordType, moduleRecordGroup } from "./DataDocTypes";
+import { getDataDocMeta, DATA_STATS_IMPORT_TYPES, getDataDocListType, isModuleRecordType, isExamModuleType, moduleRecordGroup } from "./DataDocTypes";
 import { ANN_PID_TYPES, annotTableSig, applyPidsToSections, attachCaseRows, autoStatsExtra, buildAnnotMeta, buildStatsGrid, caseRowsFromContent, pidsFromCache, pidsFromRows, readLastStats, readStatsCache, STATS_TITLES, StatsKind } from "../data_stats/dataStatsLocal";
 import "../pdp/PdpDocDetail.less";
 import { syncDocVersionFields, syncFileNoVersion } from "@/pages/doc_fill/syncDocVersion";
@@ -605,7 +605,7 @@ const isAnnotModuleRecord = (docType: string) => {
 
 /** 记录标题：按模块建的取封面章节标题（带模块名），其余取类型标题。 */
 const recordDocTitle = (docType: string, sections: any[]): string => {
-    if (isModuleRecordType(docType)) {
+    if (isModuleRecordType(docType) || isExamModuleType(docType)) {
         const cover = (sections || []).find((n: any) => n && n.ref_type === "cover");
         const t = String((cover && cover.title) || "").trim();
         if (t) return t;
@@ -722,7 +722,11 @@ const datesFromTimeline = (tlRows: any[], key: string) => {
     return out.sort((a, b) => a.k - b.k).map((x) => x.s);
 };
 
-const examDatesFromTimeline = (tlRows: any[], docType: string) => {
+/** 按模块建的考核记录沿用它选定的那套模板的日期规则。 */
+const examRuleType = (docType: string) => String(docType || "").replace(/^(dd_013_0[1-7])_m\d+$/, "$1");
+
+const examDatesFromTimeline = (tlRows: any[], rawType: string) => {
+    const docType = examRuleType(rawType);
     if (!/^dd_013_0[1-4]$/.test(docType)) return [];
     const kind = /dd_013_0[24]/.test(docType) ? "肺叶" : "肺栓塞";
     const pick = (pred: (t: string) => boolean) => {
@@ -750,7 +754,8 @@ const examDatesFromTimeline = (tlRows: any[], docType: string) => {
     return dates;
 };
 
-const examTimeText = (docType: string, dates: string[]) => {
+const examTimeText = (rawType: string, dates: string[]) => {
+    const docType = examRuleType(rawType);
     if (!dates.length) return "";
     if (/^dd_013_0[12]$/.test(docType)) return dates[0];
     return dates.join("\n");
@@ -777,7 +782,8 @@ const nextDashDate = (s: string) => {
     return `${dt.getUTCFullYear()}-${pad2(dt.getUTCMonth() + 1)}-${pad2(dt.getUTCDate())}`;
 };
 
-const dailyDatesFromTimeline = (tlRows: any[], docType: string) => {
+const dailyDatesFromTimeline = (tlRows: any[], rawType: string) => {
+    const docType = examRuleType(rawType);
     if (!/^dd_013_0[567]$/.test(docType)) return [];
     const pick = (pred: (t: string) => boolean) => {
         const seen: Record<string, true> = {};
@@ -847,6 +853,34 @@ const uniqueHospitalNosFromCases = (rows: any[]): string[] => {
 const packDd002Cases = (rows: any[]): { qty: Record<string, number>; order: string[] } | null => {
     if (!rows || !rows.length) return null;
     return { qty: countCasesByHospitalNo(rows), order: uniqueHospitalNosFromCases(rows) };
+};
+
+/** 本次病例的 TXID 前缀是否都在该产品合规医院编号里。原始、基础、标注写入前共用。 */
+export type HospitalMatch = { emptyList: boolean; missed: string[]; matched: number; failed?: boolean };
+
+export const matchCaseHospitals = (productId: number, caseRows?: any[]): Promise<HospitalMatch> => {
+    const empty: HospitalMatch = { emptyList: false, missed: [], matched: 0 };
+    if (!productId || !(caseRows || []).length) return Promise.resolve(empty);
+    return ApiHospital.list_prod_hospital({ prod_id: productId, page_index: 0, page_size: 5000 }).then((res: any) => {
+        if (!res || res.code !== ApiHospital.C_OK) return { emptyList: false, missed: [], matched: 0, failed: true };
+        const nos = new Set<string>();
+        ((res.data && res.data.rows) || []).forEach((r: any) => {
+            const key = String(r.hospital_no || "").trim().toUpperCase();
+            if (key) nos.add(key);
+        });
+        const missed: string[] = [];
+        const seen = new Set<string>();
+        let matched = 0;
+        (caseRows || []).forEach((r) => {
+            const no = hospitalNoFromTxid(r && r.TXID);
+            const key = no.toUpperCase();
+            if (seen.has(key)) return;
+            seen.add(key);
+            if (no && nos.has(key)) matched += 1;
+            else missed.push(no || "（无 TXID）");
+        });
+        return { emptyList: nos.size === 0, missed, matched };
+    }).catch(() => ({ emptyList: false, missed: [], matched: 0, failed: true }));
 };
 
 const loadDd002Cases = (productId: number): Promise<{ qty: Record<string, number>; order: string[] } | null> => {
@@ -3324,7 +3358,7 @@ export default () => {
     const backPath = `/data_docs/${getDataDocListType(type || data.doc.doc_type) || "dd_002"}`;
 
     const renderTable = (n: any, ti: number, tb: any[]) => {
-        const docType = String(type || data.doc.doc_type || "");
+        const docType = examRuleType(String(type || data.doc.doc_type || ""));
         const isUpload = docType === "dd_010";
         const isDailyEval = /^dd_013_0[567]$/.test(docType);
         const noCellMerge = docType === "dd_eq" || docType === "dd_002" || isUpload

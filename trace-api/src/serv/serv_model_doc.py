@@ -3592,6 +3592,7 @@ class Server(object):
         ).scalars().all()
         cell_map = {}
         model_row_ids = set()
+        model_dept_text = {}
 
         def is_model_dev_out(text):
             s = str(text or "")
@@ -3610,8 +3611,10 @@ class Server(object):
                 select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_([r.id for r in tl_rows]))
             ).scalars().all():
                 cell_map.setdefault(c.row_id, []).append(c.output_result or "")
-                if (c.dept or "") == "模型部" and is_model_dev_out(c.output_result):
-                    model_row_ids.add(c.row_id)
+                if (c.dept or "") == "模型部":
+                    model_dept_text[c.row_id] = c.output_result or ""
+                    if is_model_dev_out(c.output_result):
+                        model_row_ids.add(c.row_id)
 
         def to_int(v):
             digits = re.sub(r"[^\d]", "", str(v or ""))
@@ -3647,6 +3650,13 @@ class Server(object):
                 days = (max(model_dates) - min(model_dates)).days + 1
                 if days > 0:
                     cycle_text = "共用时约%d天。" % days
+        model_plan_rows = []
+        if doc_type == "md_006":
+            for r in date_rows:
+                text = str(model_dept_text.get(r.id) or "").strip()
+                y, m = to_int(r.year), to_int(r.month)
+                if text and y and m and 1 <= m <= 12:
+                    model_plan_rows.append((y, m, text))
 
         members = db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == prod_id)).scalars().all()
         def find_member(pred):
@@ -3724,6 +3734,7 @@ class Server(object):
             "prod_name": prod_name, "full_version": full_version, "product_code": product_code,
             "scope": scope, "file_date": file_date, "version": doc_version,
             "reviser": modeler or algo, "approver": approver, "cycle_text": cycle_text,
+            "model_plan_rows": model_plan_rows if doc_type == "md_006" else [],
             "members": members, "doc_type": doc_type,
             "md022_file_nos": md022_file_nos, "md022_srs": md022_srs,
             "md008_date": md008_date, "md008_auditee": md008_auditee,
@@ -3799,7 +3810,7 @@ class Server(object):
         if is_cycle and info.get("cycle_text"):
             node["body"] = info["cycle_text"]
         if info.get("doc_type") == "md_006":
-            self.__fill_md006_people_node(node, info.get("members") or [])
+            self.__fill_md006_people_node(node, info.get("members") or [], info.get("model_plan_rows") or [])
         if info.get("doc_type") == "md_017":
             self.__fill_md017_people_node(node, info.get("members") or [])
         if info.get("doc_type") == "md_022":
@@ -3821,7 +3832,44 @@ class Server(object):
                 out.append(name)
         return out
 
-    def __fill_md006_people_node(self, node, members):
+    @staticmethod
+    def __md006_plan_month(task, stage, outs):
+        task = str(task or "")
+        stage = str(stage or "")
+
+        def latest(pred):
+            best = None
+            for y, m, text in outs or []:
+                if not pred(str(text or "")):
+                    continue
+                key = y * 100 + m
+                if best is None or key > best[0]:
+                    best = (key, y, m)
+            if not best:
+                return ""
+            return "%d.%d" % (best[1], best[2])
+
+        if "训练集构建" in task:
+            return latest(lambda s: "训练集构建" in s)
+        if "调优集构建" in task:
+            return latest(lambda s: "调优集构建" in s)
+        if "测试集构建" in task:
+            return latest(lambda s: "测试集构建" in s)
+        if "模型服务提交" in task or "模型提交" in stage or "模型服务提交" in stage:
+            return latest(lambda s: "模型服务提交" in s)
+        if "模型封装" in task or "模型封装" in stage:
+            return latest(lambda s: "模型封装" in s)
+        if "模型训练" in task or "模型训练" in stage:
+            return latest(lambda s: re.search(r"模型训练(?!集)", s) is not None)
+        if "模型测试" in stage or task.strip() == "测试" or "模型测试" in task:
+            return latest(lambda s: re.search(r"模型测试(?!方案)", s) is not None)
+        if "实现" in task or "实现" in stage or "调试" in task:
+            return latest(lambda s: ("源代码" in s) or ("模型开发阶段" in s and "模型开发计划" not in s))
+        if "调研" in stage or "调研" in task or "方案确认" in stage:
+            return latest(lambda s: ("算法方案概要设计" in s) or ("算法方案详细设计" in s))
+        return ""
+
+    def __fill_md006_people_node(self, node, members, plan_rows=None):
         title = self.__strip_num(node.get("title"))
         staff_defs = [
             (lambda r: r in ("模型部负责人", "模型负责人"), "模型部负责人"),
@@ -3860,16 +3908,24 @@ class Server(object):
             header = t[0] if isinstance(t[0], list) else []
             hi = next((i for i, h in enumerate(header) if "负责人" in str(h or "")), -1)
             si = next((i for i, h in enumerate(header) if "阶段" in str(h or "")), -1)
-            if hi >= 0:
+            ti = next((i for i, h in enumerate(header) if "计划完成时间" in str(h or "")), -1)
+            task_i = next((i for i, h in enumerate(header) if "任务划分" in str(h or "")), -1)
+            if hi >= 0 or ti >= 0:
                 for row in t[1:]:
                     if not isinstance(row, list):
                         continue
                     stage = str(row[si] or "") if si >= 0 else " ".join(str(c or "") for c in row)
-                    names = testers if "测试" in stage else algos
-                    if names:
-                        while len(row) <= hi:
+                    task = str(row[task_i] or "") if task_i >= 0 else ""
+                    if hi >= 0:
+                        names = testers if "测试" in stage else algos
+                        if names:
+                            while len(row) <= hi:
+                                row.append("")
+                            row[hi] = "\n".join(names)
+                    if ti >= 0:
+                        while len(row) <= ti:
                             row.append("")
-                        row[hi] = "\n".join(names)
+                        row[ti] = self.__md006_plan_month(task, stage, plan_rows)
 
         for i, tb in enumerate(tables):
             if not self.__is_review_grid(tb):

@@ -44,7 +44,7 @@ import {
     importGpdExcel,
     normalizeStatsRows,
 } from "./dataStatsLocal";
-import { fillDd002Hospitals, fillDd003FromReturn, fillDd010FromReturn, fillDd011Feedback, fillDd012FromProduct, stripKeys } from "../model_doc/DataRecordDocDetail";
+import { fillDd002Hospitals, fillDd003FromReturn, fillDd010FromReturn, fillDd011Feedback, fillDd012FromProduct, matchCaseHospitals, type HospitalMatch, stripKeys } from "../model_doc/DataRecordDocDetail";
 
 const KIND_DOC: Record<StatsKind, { type: string; title: string }> = {
     raw: { type: "dd_015_01", title: "原始数据库统计表" },
@@ -54,8 +54,8 @@ const KIND_DOC: Record<StatsKind, { type: string; title: string }> = {
 /** 试标注/标注记录按算法模块各一份（dd_00x_m{章节id}），这里只剩评测记录是固定文件。 */
 const ANN_PID_DOCS = ["dd_009_03"]
     .map((type) => ({ type, title: getDataDocMeta(type).title }));
-/** 旧的写死人员培训/试标注/标注文件：已迁到模块记录，剩下的是对不上模块的，不再自动新建。 */
-const isLegacyRecordType = (type: string) => /^dd_005_0\d+$|^dd_008_0\d+$|^dd_009_0[12]$/.test(type);
+/** 旧的写死人员培训/试标注/标注/考核文件：已迁到模块记录，剩下的是对不上模块的，不再自动新建。 */
+const isLegacyRecordType = (type: string) => /^dd_005_0\d+$|^dd_008_0\d+$|^dd_009_0[12]$|^dd_013_0[1-7]$/.test(type);
 
 const AUTO_DOC_VERSION = "A0";
 const AUTO_CHANGE_LOG = "数据统计自动建档";
@@ -116,6 +116,25 @@ const writtenDocsContent = (head: string, docs: WrittenDoc[]) => {
 };
 
 const isAlreadyExist = (msg: any) => /exist|已存在|msg_obj_exist/i.test(String(msg || ""));
+
+/** 有 TXID 没对上合规医院时的警告。三个库同一句式；原始库另说明回传、整理不算写入成功。 */
+const hospitalMissText = (kind: StatsKind, match: HospitalMatch, wroteStats: boolean) => {
+    const ids = match.missed || [];
+    const shown = ids.slice(0, 8).map((s) => `「${s}」`).join("、");
+    const more = ids.length > 8 ? `等 ${ids.length} 个` : "";
+    const parts = [match.failed
+        ? "未能读取该产品合规医院，无法确认病例是否对上医院"
+        : match.emptyList
+            ? `该产品没有合规医院，病例 TXID ${shown}${more}未对上医院`
+            : `病例 TXID ${shown}${more}未对上该产品合规医院`];
+    if (wroteStats) parts.push("统计表已写入");
+    if (kind === "raw") {
+        parts.push(match.matched > 0
+            ? "未对上的病例不写入多中心数据回传记录和数据整理记录"
+            : "多中心数据回传记录、数据整理记录未按医院写入");
+    }
+    return parts.join("。");
+};
 
 const ensureOneDoc = async (
     kind: "data" | "model",
@@ -844,9 +863,10 @@ export default () => {
         if (!productId) {
             if (typeof tip === "string") message.success(tip.replace(/，(并)?已写入.*$/, ""));
             else if (tip !== false) message.warning("请先选择产品，统计结果未写入数据文件");
-            return Promise.resolve();
+            return Promise.resolve({ hospitalMiss: false });
         }
         dispatch({ writing: true });
+        const hospitalP = matchCaseHospitals(productId, rows);
         return ensureMissingDocs(productId).then((ens) => {
             ens.errors.forEach((msg) => message.warning(msg));
             if (ens.created) {
@@ -857,7 +877,8 @@ export default () => {
             .then((stats: any) => (kind === "ann" ? writeAnnotPids(productId, rows, annPack, module) : Promise.resolve(null))
                 .then((ann: any) => ({ stats, ann })))
             .then(({ stats, ann }: any) => writeCollectDocs(productId, kind, rows, module).then((col: any) => ({ stats, ann, col })))
-            .then(({ stats, ann, col }: any) => {
+            .then(({ stats, ann, col }: any) => hospitalP.then((match) => ({ stats, ann, col, match })))
+            .then(({ stats, ann, col, match }: any) => {
                 const errors = [
                     ...((stats && stats.errors) || (stats?.status === "error" ? [stats.msg || "写入统计表失败"] : [])),
                     ...((ann && ann.errors) || []),
@@ -870,13 +891,18 @@ export default () => {
                 ].filter(Boolean);
                 errors.forEach((msg: string) => message.error(msg));
                 warns.forEach((msg: string) => message.warning(msg));
-                if (tip === false) return;
+                const hospitalMiss = !!(match && (match.failed || (match.missed || []).length));
+                const head = tip ? String(tip).replace(/，(并)?已写入.*$/, "") : "";
+                if (hospitalMiss) {
+                    message.warning([head, hospitalMissText(kind, match, stats?.status === "ok")].filter(Boolean).join("；"), 10);
+                    return { hospitalMiss: true };
+                }
+                if (tip === false) return { hospitalMiss: false };
                 const written: WrittenDoc[] = [
                     ...(stats?.status === "ok" ? [{ kind: "data" as const, type: KIND_DOC[kind].type, title: KIND_DOC[kind].title }] : []),
                     ...((ann && ann.okDocs) || []),
                     ...((col && col.okDocs) || []),
                 ];
-                const head = tip ? String(tip).replace(/，(并)?已写入.*$/, "") : "";
                 if (written.length) {
                     message.success(writtenDocsContent(
                         [head, `已写入 ${written.length} 份数据文件：`].filter(Boolean).join("；"),
@@ -885,9 +911,11 @@ export default () => {
                 } else if (head) {
                     message.success(head);
                 }
+                return { hospitalMiss: false };
             })
             .catch(() => {
                 message.error("写入数据文件失败");
+                return { hospitalMiss: false };
             })
             .finally(() => dispatch({ writing: false }));
     };
@@ -907,6 +935,56 @@ export default () => {
         () => (data.rows || []).map((r: CaseRow, i: number) => ({ key: i, ...r })),
         [data.rows],
     );
+    const detailSaveChain = useRef<Promise<unknown>>(Promise.resolve());
+    const detailFocus = useRef("");
+    const patchDetailCell = (index: number, field: string, value: string) => {
+        const cur = ctxRef.current;
+        const rows = (cur.rows || []).map((r: CaseRow, i: number) => (i === index ? { ...r, [field]: value } : r));
+        const annRows = cur.kind === "ann" && cur.annModule && (cur.annModules || []).length
+            ? { ...cur.annRows, [cur.annModule]: rows }
+            : cur.annRows;
+        ctxRef.current = { ...cur, rows, annRows };
+        dispatch(annRows === cur.annRows ? { rows } : { rows, annRows });
+    };
+    const saveDetailEdits = () => {
+        const job = () => {
+            const cur = ctxRef.current;
+            const rows = cur.rows || [];
+            const productId = cur.productId || 0;
+            if (cur.kind === "ann" && cur.annModule && (cur.annModules || []).length) {
+                const annRows = { ...cur.annRows, [cur.annModule]: rows };
+                const source = cur.annSources[cur.annModule] || cur.source || "";
+                persistRows(rows, { source }, { productId, kind: annSlot(cur.annModule) });
+                const merged = mergeAnnRows(cur.annModules, annRows);
+                const mergedSrc = joinAnnSources(cur.annModules, cur.annSources);
+                persistRows(merged, { source: mergedSrc }, { productId, kind: "ann" });
+                if (!productId) {
+                    message.success("修改成功");
+                    return Promise.resolve();
+                }
+                return writeStatsDoc(productId, "ann", merged, mergedSrc, {
+                    modules: [...cur.annModules],
+                    rows: annRows,
+                    sources: { ...cur.annSources },
+                }).then((stats: any) => {
+                    const errors = (stats && stats.errors) || [];
+                    errors.forEach((msg: string) => message.warning(msg));
+                    if (!errors.length) message.success("修改成功");
+                });
+            }
+            persistRows(rows);
+            if (!productId) {
+                message.success("修改成功");
+                return Promise.resolve();
+            }
+            return writeStatsDoc(productId, cur.kind as StatsKind, rows, cur.source || "").then((stats: any) => {
+                const errors = (stats && stats.errors) || [];
+                errors.forEach((msg: string) => message.warning(msg));
+                if (!errors.length) message.success("修改成功");
+            });
+        };
+        detailSaveChain.current = detailSaveChain.current.then(job, job);
+    };
     const triageRows = useMemo(() => {
         const aoa = buildTriageAoa(data.rows || []);
         if (aoa.length < 2) return [];
@@ -1043,12 +1121,12 @@ export default () => {
             if (r.unmatched.length) tip += `；${r.unmatched.length} 个 TXID 未匹配到病例`;
             if (slot.module) {
                 commitAnnModule(r.rows, ctxRef.current.annSources[slot.module] || "", slot, false)
-                    .then(() => message.success(tip, 6));
+                    .then((wrote: any) => { if (!wrote || !wrote.hospitalMiss) message.success(tip, 6); });
                 return;
             }
             dispatch({ rows: r.rows });
             persistRows(r.rows);
-            writeDataFiles(r.rows, false).then(() => message.success(tip, 6));
+            writeDataFiles(r.rows, false).then((wrote: any) => { if (!wrote || !wrote.hospitalMiss) message.success(tip, 6); });
         }).catch((e: any) => {
             dispatch({ loading: false, progress: "" });
             message.error(e?.message || "导入失败，请检查 Excel 格式");
@@ -1313,14 +1391,28 @@ export default () => {
                                             if (size) dispatch({ pageSize: size });
                                         },
                                     }}
-                                    scroll={{ x: 1300 }}
+                                    scroll={{ x: 1460 }}
                                     dataSource={detailRows}
                                     columns={DETAIL_COLUMNS.map((c) => ({
                                         title: c === "TXID" ? "TXID（病例文件夹）" : c,
-                                        dataIndex: c, ellipsis: true, width: c === "TXID" ? 180 : 130,
-                                        render: (c === "gt" || c === "pred" || c === "dice")
-                                            ? (v: any) => (v == null || String(v).trim() === "" ? "/" : v)
-                                            : undefined,
+                                        dataIndex: c,
+                                        ellipsis: c !== "TXID" && c !== "自定义",
+                                        width: c === "TXID" ? 200 : c === "自定义" ? 140 : 130,
+                                        render: (c === "TXID" || c === "自定义")
+                                            ? (v: any, row: { key: number }) => (
+                                                <Input
+                                                    className="data-stats-cell-input"
+                                                    size="small"
+                                                    value={v == null ? "" : String(v)}
+                                                    onChange={(e) => patchDetailCell(row.key, c, e.target.value)}
+                                                    onFocus={(e) => { detailFocus.current = e.currentTarget.value; }}
+                                                    onBlur={(e) => { if (e.currentTarget.value !== detailFocus.current) saveDetailEdits(); }}
+                                                    onPressEnter={(e) => (e.target as HTMLInputElement).blur()}
+                                                />
+                                            )
+                                            : (c === "gt" || c === "pred" || c === "dice")
+                                                ? (v: any) => (v == null || String(v).trim() === "" ? "/" : v)
+                                                : undefined,
                                     }))}
                                     locale={{ emptyText: "请选择病例文件夹" }}
                                 />
