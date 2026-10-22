@@ -1123,6 +1123,16 @@ const mergeDd003ProductName = (tb: any[][], spans: ReturnType<typeof computeReco
     return spans;
 };
 
+/** 数据整理记录数据量 = 读取例数 − 评估结论里「损坏/不完整」前面的数字。没有这个数字则减 0。 */
+const tidyDd003Qty = (readQty: string, conclusion: string): string | null => {
+    const raw = String(readQty || "").replace(/[^\d]/g, "");
+    if (!raw) return null;
+    const n = parseInt(raw, 10);
+    const m = String(conclusion || "").match(/(\d+)\s*例?\s*损坏\s*[/／或]\s*不完整/);
+    const d = m ? parseInt(m[1], 10) : 0;
+    return String(Math.max(0, n - (isNaN(d) ? 0 : d)));
+};
+
 const applyDd003FromReturn = (nodes: any[], src: { org: string; recv: string; qty: string }[], cleaners: string[] = [], productName = "") => {
     const txt = (s: any) => String(s ?? "").trim();
     const norm = (s: any) => txt(s).replace(/\s+/g, "");
@@ -1275,20 +1285,26 @@ const applyDd003FromReturn = (nodes: any[], src: { org: string; recv: string; qt
             while (next.length < cols) next.push("");
             if (!txt(next[iUnit])) next[iUnit] = hit.org;
             if (iDate >= 0 && !txt(next[iDate])) next[iDate] = hit.recv;
-            if (iQty >= 0 && !txt(next[iQty])) next[iQty] = hit.qty;
             putCleaner(next);
             fillAlong(next, true);
             fixProj(next);
+            if (iQty >= 0) {
+                const qty = tidyDd003Qty(hit.qty, iConc >= 0 ? txt(next[iConc]) : "");
+                if (qty != null) next[iQty] = qty;
+            }
             newData.push(next);
         });
         unused.forEach((hit) => {
             const next = new Array(cols).fill("");
             next[iUnit] = hit.org;
             if (iDate >= 0) next[iDate] = hit.recv;
-            if (iQty >= 0) next[iQty] = hit.qty;
             putCleaner(next);
             fillAlong(next, false);
             fixProj(next);
+            if (iQty >= 0) {
+                const qty = tidyDd003Qty(hit.qty, iConc >= 0 ? txt(next[iConc]) : "");
+                if (qty != null) next[iQty] = qty;
+            }
             newData.push(next);
         });
         return withBanner(newData);

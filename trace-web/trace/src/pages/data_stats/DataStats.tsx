@@ -1,5 +1,5 @@
 import "./DataStats.less";
-import { Button, Input, Radio, Space, Spin, Table, Tabs, message } from "antd";
+import { Alert, Button, Input, Radio, Space, Spin, Table, Tabs, message } from "antd";
 import { FolderOpenOutlined, DownloadOutlined, CloudServerOutlined, UploadOutlined } from "@ant-design/icons";
 import { useMemo, useRef, useEffect } from "react";
 import { useData } from "@/common";
@@ -194,6 +194,8 @@ type AnnPack = { modules: string[]; rows: Record<string, CaseRow[]>; sources: Re
 
 /** 标注库按算法模块分开缓存；「ann」槽位仍存汇总，供数据库上传记录读取标注数据量。 */
 const annSlot = (module: string) => `ann@${module}` as StatsKind;
+/** 标注库「汇总」页签。不是模块名，不能读取、导入或写入。 */
+const ANN_SUMMARY = "__ann_summary__";
 
 const moduleKey = (name: string) => String(name || "").replace(/模块$/, "").trim();
 
@@ -341,6 +343,7 @@ export default () => {
         products: [] as any[],
         writing: false,
         templating: false,
+        writeHint: "",
         pageSize: 50,
         serverPaths: {
             raw: "10.10.1.11:/media/tx-deepocean/Data1/DATA/dr/dr全身骨折注册/肋骨骨折2/test",
@@ -525,22 +528,38 @@ export default () => {
             })
             .catch(() => null);
 
-    /** 标注库没有汇总页签：停在当前模块，没有则选第一个模块，只展示该模块已读病例，不回退到整库旧病例。 */
+    /** 停在当前模块；正在看汇总则刷新去重结果。没有选中模块时选第一个，不回退到整库旧病例。 */
     const showAnnModule = (modules: string[], rowsBy: Record<string, CaseRow[]>, srcBy: Record<string, string>) => {
         const cur = ctxRef.current;
         if (cur.kind !== "ann" || !modules.length) return;
+        if (cur.annModule === ANN_SUMMARY) {
+            dispatch({
+                annModule: ANN_SUMMARY,
+                rows: mergeAnnRows(modules, rowsBy),
+                source: joinAnnSources(modules, srcBy),
+            });
+            return;
+        }
         const m = cur.annModule && modules.includes(cur.annModule) ? cur.annModule : modules[0];
         dispatch({ annModule: m, rows: rowsBy[m] || [], source: srcBy[m] || "" });
     };
 
     const selectAnnModule = (module: string) => {
         const cur = ctxRef.current;
+        if (module === ANN_SUMMARY) {
+            dispatch({
+                annModule: ANN_SUMMARY,
+                rows: mergeAnnRows(cur.annModules, cur.annRows),
+                source: joinAnnSources(cur.annModules, cur.annSources),
+            });
+            return;
+        }
         dispatch({ annModule: module, rows: cur.annRows[module] || [], source: cur.annSources[module] || "" });
     };
 
     const switchSlot = (productId: number, kind: StatsKind) => {
         if (kind === "ann" && productId) {
-            dispatch({ productId, kind, rows: [], source: "", annModule: "" });
+            dispatch({ productId, kind, rows: [], source: "", annModule: "", writeHint: "" });
             loadAnn(productId);
             return;
         }
@@ -548,11 +567,11 @@ export default () => {
         if (hit) {
             dispatch({
                 productId, kind, rows: hit.rows, person: hit.person, dataType: hit.dataType,
-                disease: hit.disease, source: hit.source, annModule: "",
+                disease: hit.disease, source: hit.source, annModule: "", writeHint: "",
             });
             return;
         }
-        dispatch({ productId, kind, rows: [], person: data.person, dataType: data.dataType, disease: data.disease, source: "", annModule: "" });
+        dispatch({ productId, kind, rows: [], person: data.person, dataType: data.dataType, disease: data.disease, source: "", annModule: "", writeHint: "" });
         loadFromDoc(productId, kind);
     };
 
@@ -913,7 +932,7 @@ export default () => {
             else if (tip !== false) message.warning("请先选择产品，统计结果未写入");
             return Promise.resolve({ hospitalMiss: false });
         }
-        dispatch({ writing: true });
+        dispatch({ writing: true, writeHint: "" });
         const hospitalP = matchCaseHospitals(productId, rows);
         return writeStatsDoc(productId, kind, rows, source, annPack)
             .then((stats: any) => (kind === "ann" ? writeAnnotPids(productId, rows, annPack, module) : Promise.resolve(null))
@@ -1002,7 +1021,8 @@ export default () => {
     const tableRows = useMemo(() => distRowsFromGrid(statsGrid), [statsGrid]);
     const total = (data.rows || []).length;
     const annByModule = data.kind === "ann" && (data.annModules || []).length > 0;
-    const annOnSummary = annByModule && !data.annModule;
+    const annOnSummary = annByModule && data.annModule === ANN_SUMMARY;
+    const annMergedCount = annByModule ? mergeAnnRows(data.annModules, data.annRows).length : 0;
     const detailRows = useMemo(
         () => (data.rows || []).map((r: CaseRow, i: number) => ({ key: i, ...r })),
         [data.rows],
@@ -1088,7 +1108,7 @@ export default () => {
         return {
             productId: cur.productId || 0,
             kind,
-            module: byModule ? cur.annModule : "",
+            module: byModule && cur.annModule !== ANN_SUMMARY ? cur.annModule : "",
             modules: byModule ? [...cur.annModules] : [],
         };
     };
@@ -1123,9 +1143,10 @@ export default () => {
         const mergedSrc = joinAnnSources(slot.modules, srcBy);
         if (sameProduct) {
             const showing = cur.kind === "ann" && cur.annModule === slot.module;
+            const onSummary = cur.kind === "ann" && cur.annModule === ANN_SUMMARY;
             dispatch({
                 loading: false, progress: "", annRows: rowsBy, annSources: srcBy,
-                ...(showing ? { rows, source } : {}),
+                ...(showing ? { rows, source } : onSummary ? { rows: merged, source: mergedSrc } : {}),
             });
         } else {
             dispatch({ loading: false, progress: "" });
@@ -1135,9 +1156,9 @@ export default () => {
     };
 
     const promptWrite = (n: number, module = "") => {
-        const btn = module ? `写入『${module}』` : "写入数据";
+        const btn = module ? `写入「${module}」` : "写入数据";
         const head = module ? `已统计「${module}」${n} 个序列` : `已统计 ${n} 个序列`;
-        message.info(`${head}，请点击「${btn}」写入`, 8);
+        dispatch({ writeHint: `${head}，请点击「${btn}」写入` });
     };
 
     /** 读取开始时记下产品、库和模块；读取过程中切换了，结果仍只写回发起读取的那一处。 */
@@ -1311,7 +1332,9 @@ export default () => {
             message.warning("请先选择病例文件夹");
             return;
         }
-        const fileTitle = annByModule && data.annModule ? `${title}-${data.annModule}` : title;
+        const fileTitle = annOnSummary
+            ? `${title}-汇总`
+            : (annByModule && data.annModule ? `${title}-${data.annModule}` : title);
         saveXlsx(sheets, fileTitle);
         message.success(`已下载「${fileTitle}.xlsx」，请看 Excel 底部的多个工作表`, 8);
     };
@@ -1356,31 +1379,39 @@ export default () => {
                     <Radio.Button value="ann">标注数据库</Radio.Button>
                 </Radio.Group>
                 <Space>
-                    <Button icon={<FolderOpenOutlined />} loading={data.loading || data.writing} disabled={annOnSummary} onClick={pickFolder}>
-                        选择病例文件夹
-                    </Button>
-                    <Button type="primary" icon={<DownloadOutlined />} disabled={!total} onClick={downloadXlsx}>
-                        下载 Excel
-                    </Button>
                     <Button icon={<UploadOutlined />} disabled={!total || annOnSummary} loading={data.loading || data.writing} onClick={pickGpdExcel}>
                         导入 gt/pred/dice
                     </Button>
-                    <Button disabled={!total} loading={data.writing} onClick={() => writeDataFiles(data.rows)}>
-                        {annByModule && data.annModule ? `写入「${data.annModule}」` : "写入数据"}
+                    <Button disabled={!total || annOnSummary} loading={data.writing} onClick={() => writeDataFiles(data.rows)}>
+                        {annByModule && data.annModule && !annOnSummary ? `写入「${data.annModule}」` : "写入数据"}
                     </Button>
                     <Button loading={data.templating} disabled={data.writing} onClick={generateTemplates}>
                         生成文件模版
                     </Button>
                 </Space>
             </div>
+            {data.writeHint ? (
+                <Alert className="data-stats-write-hint" type="warning" showIcon banner message={data.writeHint} />
+            ) : null}
             {annByModule ? (
                 <Tabs
                     className="data-stats-modules"
                     size="small"
                     type="card"
-                    activeKey={data.annModule || data.annModules[0]}
+                    activeKey={annOnSummary ? ANN_SUMMARY : (data.annModule || data.annModules[0])}
                     onChange={selectAnnModule}
                     items={[
+                        {
+                            key: ANN_SUMMARY,
+                            label: (
+                                <span>
+                                    汇总
+                                    <span className={annMergedCount ? "data-stats-module-count" : "data-stats-module-unread"}>
+                                        {annMergedCount ? annMergedCount : "未读"}
+                                    </span>
+                                </span>
+                            ),
+                        },
                         ...data.annModules.map((m: string) => {
                             const n = (data.annRows[m] || []).length;
                             return {
@@ -1403,11 +1434,11 @@ export default () => {
             <div className="data-stats-path">
                 {annByModule ? (
                     <Input
-                        addonBefore={data.annModule || data.annModules[0]}
-                        disabled={!data.annModule}
-                        placeholder="该模块的服务器路径；空则按数据库上传记录里该模块数据集的存储路径"
-                        value={data.annModule ? (data.annPaths || {})[data.annModule] || "" : ""}
-                        onChange={(e) => setAnnPath(data.productId || 0, data.annModule, e.target.value)}
+                        addonBefore={annOnSummary ? "汇总" : (data.annModule || data.annModules[0])}
+                        disabled={annOnSummary || !data.annModule}
+                        placeholder={annOnSummary ? "汇总为各模块去重后的结果，请到各模块页签读取" : "该模块的服务器路径；空则按数据库上传记录里该模块数据集的存储路径"}
+                        value={annOnSummary || !data.annModule ? "" : ((data.annPaths || {})[data.annModule] || "")}
+                        onChange={(e) => { if (!annOnSummary && data.annModule) setAnnPath(data.productId || 0, data.annModule, e.target.value); }}
                         onPressEnter={scanServer}
                     />
                 ) : (
@@ -1435,6 +1466,12 @@ export default () => {
                     style={{ width: 160, maxWidth: 160, minWidth: 140 }}
                     visibilityToggle
                 />
+                <Button icon={<FolderOpenOutlined />} loading={data.loading || data.writing} disabled={annOnSummary} onClick={pickFolder}>
+                    选择病例文件夹
+                </Button>
+                <Button type="primary" icon={<DownloadOutlined />} disabled={!total} onClick={downloadXlsx}>
+                    下载 Excel
+                </Button>
                 <Button
                     icon={<CloudServerOutlined />}
                     loading={data.loading || data.writing}
@@ -1473,7 +1510,9 @@ export default () => {
                                         ellipsis: c !== "TXID" && c !== "自定义",
                                         width: c === "TXID" ? 200 : c === "自定义" ? 140 : 130,
                                         render: (c === "TXID" || c === "自定义")
-                                            ? (v: any, row: { key: number }) => (
+                                            ? (annOnSummary
+                                                ? (v: any) => (v == null ? "" : String(v))
+                                                : (v: any, row: { key: number }) => (
                                                 <Input
                                                     className="data-stats-cell-input"
                                                     size="small"
@@ -1483,7 +1522,7 @@ export default () => {
                                                     onBlur={(e) => { if (e.currentTarget.value !== detailFocus.current) saveDetailEdits(); }}
                                                     onPressEnter={(e) => (e.target as HTMLInputElement).blur()}
                                                 />
-                                            )
+                                            ))
                                             : (c === "gt" || c === "pred" || c === "dice")
                                                 ? (v: any) => (v == null || String(v).trim() === "" ? "/" : v)
                                                 : undefined,
