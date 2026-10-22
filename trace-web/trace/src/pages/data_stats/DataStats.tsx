@@ -11,8 +11,15 @@ import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiChapter from "@/api/ApiProdAlgoChapter";
-import { DATA_DOC_MENU, getDataDocGroupTypes } from "../model_doc/DataDocTypes";
-import { MODEL_DOC_MENU, getModelDocGroupTypes } from "../model_doc/ModelDocTypes";
+import * as ApiAlgo from "@/api/ApiProdAlgoModule";
+import { mergeRows } from "../syscfg/ProdAlgoChapterDetail";
+import {
+    DATA_DOC_MENU, getDataDocGroupTypes, getDataDocMeta, getDataDocMenuKey, getDataDocNavTitle,
+    moduleRecordTitle, moduleRecordType, ModuleRecordGroup,
+} from "../model_doc/DataDocTypes";
+import {
+    MODEL_DOC_MENU, getModelDocGroupTypes, getModelDocMeta, getModelDocMenuKey, getModelDocNavTitle,
+} from "../model_doc/ModelDocTypes";
 import {
     STATS_TITLES,
     StatsKind,
@@ -44,13 +51,11 @@ const KIND_DOC: Record<StatsKind, { type: string; title: string }> = {
     base: { type: "dd_015_02", title: "基础数据库统计表" },
     ann: { type: "dd_015_03", title: "标注数据库统计表" },
 };
-const ANN_PID_DOCS = [
-    { type: "dd_008_01", title: "肺栓塞分割试标注记录" },
-    { type: "dd_008_02", title: "肺叶分割试标注记录" },
-    { type: "dd_009_01", title: "肺栓塞分割标注记录" },
-    { type: "dd_009_02", title: "肺叶分割标注记录" },
-    { type: "dd_009_03", title: "肺栓塞分诊评测记录" },
-];
+/** 试标注/标注记录按算法模块各一份（dd_00x_m{章节id}），这里只剩评测记录是固定文件。 */
+const ANN_PID_DOCS = ["dd_009_03"]
+    .map((type) => ({ type, title: getDataDocMeta(type).title }));
+/** 旧的写死人员培训/试标注/标注文件：已迁到模块记录，剩下的是对不上模块的，不再自动新建。 */
+const isLegacyRecordType = (type: string) => /^dd_005_0\d+$|^dd_008_0\d+$|^dd_009_0[12]$/.test(type);
 
 const AUTO_DOC_VERSION = "A0";
 const AUTO_CHANGE_LOG = "数据统计自动建档";
@@ -67,8 +72,48 @@ const expandMenuTypes = (menu: { types: string[] }[], groupTypes: (t: string) =>
     });
     return out;
 };
-const STATS_DATA_DOC_TYPES = expandMenuTypes(DATA_DOC_MENU, getDataDocGroupTypes);
-const STATS_MODEL_DOC_TYPES = expandMenuTypes(MODEL_DOC_MENU, getModelDocGroupTypes);
+const STATS_DATA_DOC_TYPES = expandMenuTypes(DATA_DOC_MENU, getDataDocGroupTypes).filter((t) => !isLegacyRecordType(t));
+/** 模型分组记录按导航模块各一份，由算法模块管理建档，这里不再补旧的写死 _01/_02。 */
+const STATS_MODEL_DOC_TYPES = expandMenuTypes(MODEL_DOC_MENU, getModelDocGroupTypes)
+    .filter((t) => !/^md_0(08|09|10|11|12|13|15)_0[12]$/.test(t));
+
+type WrittenDoc = { kind: "data" | "model"; type: string; title: string };
+
+const COLLECT_TYPE_BY_TITLE: Record<string, string> = {
+    多中心数据回传记录: "dd_002",
+    数据整理记录: "dd_003",
+    数据库上传记录: "dd_010",
+    训练集测试集查重记录: "dd_012",
+    数据标注需求反馈: "dd_011",
+};
+
+/** 文件在左侧导航里的位置：数据文件/模型文件 › 二级分组 › 菜单项。 */
+const docNavPath = (doc: WrittenDoc) => {
+    const key = doc.kind === "data" ? getDataDocMenuKey(doc.type) : getModelDocMenuKey(doc.type);
+    const menu = (doc.kind === "data" ? DATA_DOC_MENU : MODEL_DOC_MENU).find((m) => m.types.includes(key));
+    const leaf = doc.kind === "data" ? getDataDocNavTitle(key) : getModelDocNavTitle(key);
+    return [doc.kind === "data" ? "数据文件" : "模型文件", menu?.group, leaf].filter(Boolean).join(" › ");
+};
+
+/** 按导航位置分行列出文件；菜单项就是文件本身时只写位置。 */
+const writtenDocsContent = (head: string, docs: WrittenDoc[]) => {
+    const byPath: Record<string, string[]> = {};
+    docs.forEach((d) => {
+        const path = docNavPath(d);
+        const list = (byPath[path] = byPath[path] || []);
+        if (!path.endsWith(` › ${d.title}`) && !list.includes(d.title)) list.push(d.title);
+    });
+    return (
+        <div style={{ textAlign: "left", display: "inline-block", verticalAlign: "top" }}>
+            <div>{head}</div>
+            {Object.keys(byPath).map((path) => (
+                <div key={path}>
+                    {path}{byPath[path].length ? `：${byPath[path].map((t) => `「${t}」`).join("、")}` : ""}
+                </div>
+            ))}
+        </div>
+    );
+};
 
 const isAlreadyExist = (msg: any) => /exist|已存在|msg_obj_exist/i.test(String(msg || ""));
 
@@ -99,12 +144,21 @@ const ensureMissingDocs = async (productId: number) => {
         ...STATS_MODEL_DOC_TYPES.map((type) => ({ kind: "model" as const, type })),
     ];
     const results: { status: "ok" | "skip" | "error"; type: string; msg?: string }[] = [];
+    const docs: WrittenDoc[] = [];
     const chunk = 4;
     for (let i = 0; i < jobs.length; i += chunk) {
-        const part = await Promise.all(jobs.slice(i, i + chunk).map((j) => ensureOneDoc(j.kind, productId, j.type)));
+        const batch = jobs.slice(i, i + chunk);
+        const part = await Promise.all(batch.map((j) => ensureOneDoc(j.kind, productId, j.type)));
+        part.forEach((r, k) => {
+            if (r.status !== "ok") return;
+            const j = batch[k];
+            const title = (j.kind === "data" ? getDataDocMeta(j.type) : getModelDocMeta(j.type)).title;
+            docs.push({ kind: j.kind, type: j.type, title });
+        });
         results.push(...part);
     }
     return {
+        docs,
         created: results.filter((r) => r.status === "ok").length,
         errors: results.filter((r) => r.status === "error").map((r) => r.msg || `新建「${r.type}」失败`),
     };
@@ -123,6 +177,47 @@ type AnnPack = { modules: string[]; rows: Record<string, CaseRow[]>; sources: Re
 const annSlot = (module: string) => `ann@${module}` as StatsKind;
 
 const moduleKey = (name: string) => String(name || "").replace(/模块$/, "").trim();
+
+/** 拆分前一个地址同时写三个库：本机缓存里基础/标注与同产品原始库病例完全相同的，是当时复制过去的旧病例，只清一次。 */
+const PURGE_COPIED_KEY = "qms_data_stats_purge_copied_v1";
+const purgeCopiedCaches = () => {
+    try {
+        if (localStorage.getItem(PURGE_COPIED_KEY)) return;
+        const raw = localStorage.getItem("qms_data_stats_v1");
+        const store = raw ? JSON.parse(raw) : null;
+        const caches = (store && store.caches) || {};
+        let changed = false;
+        Object.keys(caches).forEach((key) => {
+            const m = key.match(/^(\d+):(base|ann)$/);
+            if (!m) return;
+            const src = caches[`${m[1]}:raw`];
+            const rows = caches[key] && caches[key].rows;
+            if (src && Array.isArray(rows) && rows.length && JSON.stringify(rows) === JSON.stringify(src.rows)) {
+                delete caches[key];
+                changed = true;
+            }
+        });
+        if (changed) {
+            const last = store.last;
+            const next: any = { ...store, caches };
+            if (last && !caches[`${last.productId || 0}:${last.kind}`]) delete next.last;
+            localStorage.setItem("qms_data_stats_v1", JSON.stringify(next));
+        }
+        localStorage.setItem(PURGE_COPIED_KEY, "1");
+    } catch (e) {
+        /* 本机缓存不可用时不清 */
+    }
+};
+
+/** 名称里含哪个模块名；多个都含时取模块名更长的（「肺叶分割2」优先于「肺叶分割」）。 */
+const matchModule = (text: string, modules: string[]): string => {
+    let best = "";
+    modules.forEach((m) => {
+        const k = moduleKey(m);
+        if (k.length >= 2 && String(text || "").includes(k) && k.length > moduleKey(best).length) best = m;
+    });
+    return best;
+};
 
 /** 汇总：按模块顺序合并，同一序列只算一次。 */
 const mergeAnnRows = (modules: string[], byModule: Record<string, CaseRow[]>): CaseRow[] => {
@@ -277,6 +372,7 @@ export default () => {
         ApiProduct.list_product({ page_size: 10000 }).then((res: any) => {
             if (res.code === Api.C_OK) dispatch({ products: res.data?.rows || [] });
         });
+        purgeCopiedCaches();
         const last = readLastStats();
         if (!last) return;
         if (last.kind === "ann") {
@@ -329,7 +425,7 @@ export default () => {
         });
     };
 
-    /** 标注库：按章节模块列出页签；各模块病例先读本机缓存，没有再读标注统计表里按模块存的病例。 */
+    /** 标注库：按算法模块管理的清单（章节模块 + 只在导航模块里的，顺序同该页）列出页签；各模块病例先读本机缓存，没有再读标注统计表里按模块存的病例。 */
     const loadAnn = (productId: number) => {
         const empty = { annModules: [], annModule: "", annRows: {}, annSources: {}, annPaths: {} };
         if (!productId) {
@@ -337,16 +433,19 @@ export default () => {
             return;
         }
         dispatch({ ...empty, annPaths: readAnnPaths(productId) });
-        ApiChapter.list_prod_algo_chapter({ prod_id: productId, page_index: 0, page_size: 1000 }).then((res: any) => {
+        Promise.all([
+            ApiChapter.list_prod_algo_chapter({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
+            ApiAlgo.list_prod_algo_module({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
+        ]).then(([chRes, moRes]: any[]) => {
             if (ctxRef.current.productId !== productId) return;
-            const list = res && res.code === ApiChapter.C_OK ? ((res.data && res.data.rows) || []) : [];
+            const chapters = chRes && chRes.code === ApiChapter.C_OK ? ((chRes.data && chRes.data.rows) || []) : [];
+            const navs = (moRes && moRes.code === ApiAlgo.C_OK ? ((moRes.data && moRes.data.rows) || []) : [])
+                .filter((r: any) => !r.prod_id || r.prod_id === productId);
             const modules: string[] = [];
-            [...list]
-                .sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0) || (a.id || 0) - (b.id || 0))
-                .forEach((r: any) => {
-                    const name = String(r.name || "").trim();
-                    if (name && !modules.includes(name)) modules.push(name);
-                });
+            mergeRows(chapters, navs).forEach((r: any) => {
+                const name = String(r.name || "").trim();
+                if (name && !modules.includes(name)) modules.push(name);
+            });
             const rowsBy: Record<string, CaseRow[]> = {};
             const srcBy: Record<string, string> = {};
             modules.forEach((m) => {
@@ -371,11 +470,8 @@ export default () => {
                 }
                 return;
             }
-            showAnnSummary(modules, rowsBy, srcBy);
-            if (Object.keys(rowsBy).length) {
-                showAnnSummary(modules, rowsBy, srcBy);
-                return;
-            }
+            showAnnModule(modules, rowsBy, srcBy);
+            if (Object.keys(rowsBy).length) return;
             latestStatsDoc(productId, "ann").then((doc: any) => {
                 const cur = ctxRef.current;
                 if (!doc || cur.productId !== productId) return;
@@ -395,7 +491,7 @@ export default () => {
                 });
                 if (!Object.keys(fromDoc).length) return;
                 dispatch({ annRows: fromDoc, annSources: fromSrc });
-                showAnnSummary(modules, fromDoc, fromSrc);
+                showAnnModule(modules, fromDoc, fromSrc);
             });
         }).catch(() => undefined);
     };
@@ -409,23 +505,16 @@ export default () => {
             })
             .catch(() => null);
 
-    /** 汇总页签只展示各模块已读病例的合并结果；模块都未读则为空，不回退到整库旧病例。 */
-    const showAnnSummary = (modules: string[], rowsBy: Record<string, CaseRow[]>, srcBy: Record<string, string>) => {
+    /** 标注库没有汇总页签：停在当前模块，没有则选第一个模块，只展示该模块已读病例，不回退到整库旧病例。 */
+    const showAnnModule = (modules: string[], rowsBy: Record<string, CaseRow[]>, srcBy: Record<string, string>) => {
         const cur = ctxRef.current;
-        if (cur.kind !== "ann" || cur.annModule) return;
-        dispatch({ rows: mergeAnnRows(modules, rowsBy), source: joinAnnSources(modules, srcBy) });
+        if (cur.kind !== "ann" || !modules.length) return;
+        const m = cur.annModule && modules.includes(cur.annModule) ? cur.annModule : modules[0];
+        dispatch({ annModule: m, rows: rowsBy[m] || [], source: srcBy[m] || "" });
     };
 
     const selectAnnModule = (module: string) => {
         const cur = ctxRef.current;
-        if (!module) {
-            dispatch({
-                annModule: "",
-                rows: mergeAnnRows(cur.annModules, cur.annRows),
-                source: joinAnnSources(cur.annModules, cur.annSources),
-            });
-            return;
-        }
         dispatch({ annModule: module, rows: cur.annRows[module] || [], source: cur.annSources[module] || "" });
     };
 
@@ -565,19 +654,17 @@ export default () => {
             });
         });
 
-    /** 记录名含某个模块名的，只写该模块的 PID（该模块还没读则不动）；对不上任何模块的写汇总 PID。 */
-    const writeAnnotPids = async (productId: number, rows: CaseRow[], annPack?: AnnPack | null) => {
+    /** 记录名含某个模块名的，只写该模块的 PID（该模块还没读则不动）；对不上任何模块的写合并 PID。传了 module 时，其它模块的记录不动。 */
+    const writeAnnotPids = async (productId: number, rows: CaseRow[], annPack?: AnnPack | null, module = "") => {
         const pids = pidsFromRows(rows);
         if (!pids.length) {
             return { ok: [] as string[], missing: 0, errors: [] as string[], warn: "病例明细没有可用 PID，未写入试标注/标注记录" };
         }
         const pidsFor = (title: string): string[] | null => {
             if (!annPack) return pids;
-            const hit = annPack.modules.find((m) => {
-                const k = moduleKey(m);
-                return k.length >= 2 && title.includes(k);
-            });
+            const hit = matchModule(title, annPack.modules);
             if (!hit) return pids;
+            if (module && hit !== module) return null;
             const own = pidsFromRows(annPack.rows[hit] || []);
             return own.length ? own : null;
         };
@@ -588,24 +675,64 @@ export default () => {
         const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
         const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
         const ok: string[] = [];
+        const okDocs: WrittenDoc[] = [];
         const errors: string[] = [];
         let missing = 0;
-        for (let i = 0; i < ANN_PID_DOCS.length; i++) {
-            const item = ANN_PID_DOCS[i];
+        const docs: { type: string; title: string; module: string }[] = ANN_PID_DOCS.map((d) => ({ ...d, module: "" }));
+        if (annPack) {
+            const extra = await moduleRecordDocs(productId, annPack, module);
+            errors.push(...extra.errors);
+            docs.push(...extra.docs);
+        }
+        for (let i = 0; i < docs.length; i++) {
+            const item = docs[i];
             const list = pidsFor(item.title);
             if (!list) continue;
-            const fill = buildAnnotMeta(item.type, tlRows, members);
+            const fill = buildAnnotMeta(item.type, tlRows, members, item.module);
             const r = await writeOneAnnot(productId, item, list, fill);
-            if (r.status === "ok") ok.push(r.title);
+            if (r.status === "ok") {
+                ok.push(r.title);
+                okDocs.push({ kind: "data", type: item.type, title: r.title });
+            }
             else if (r.status === "skip") missing += 1;
             else errors.push(r.msg || `写入「${r.title}」失败`);
         }
         return {
             ok,
+            okDocs,
             missing,
             errors,
             warn: !ok.length && missing ? "请先在数据文件新增试标注或标注记录，本次未写入" : "",
         };
+    };
+
+    /** 本次写入、且已读到病例的模块：取它自己的试标注/标注记录，缺了就建（已有不覆盖）。 */
+    const moduleRecordDocs = async (productId: number, annPack: AnnPack, module: string) => {
+        const res: any = await ApiChapter.list_prod_algo_chapter({ prod_id: productId, page_index: 0, page_size: 1000 })
+            .catch(() => null);
+        const idOf: Record<string, number> = {};
+        ((res && res.code === ApiChapter.C_OK ? (res.data && res.data.rows) : []) || []).forEach((r: any) => {
+            const name = String(r.name || "").trim();
+            if (name && !(name in idOf)) idOf[name] = r.id;
+        });
+        const docs: { type: string; title: string; module: string }[] = [];
+        const errors: string[] = [];
+        const targets = annPack.modules.filter((m) => (!module || m === module) && (annPack.rows[m] || []).length && idOf[m]);
+        for (let i = 0; i < targets.length; i++) {
+            const m = targets[i];
+            const groups: ModuleRecordGroup[] = ["dd_008", "dd_009"];
+            for (let j = 0; j < groups.length; j++) {
+                const g = groups[j];
+                const type = moduleRecordType(g, idOf[m]);
+                const made = await ensureOneDoc("data", productId, type);
+                if (made.status === "error") {
+                    errors.push(made.msg || `新建「${moduleRecordTitle(g, m)}」失败`);
+                    continue;
+                }
+                docs.push({ type, title: moduleRecordTitle(g, m), module: m });
+            }
+        }
+        return { docs, errors };
     };
 
     const writeOneCollect = (productId: number, meta: { type: string; title: string }, fill: (secs: any[]) => Promise<any[]>) =>
@@ -635,8 +762,8 @@ export default () => {
             });
         });
 
-    /** 原始库：回传→整理→上传（原始/基础段）。标注库：上传（标注段）→查重→标注需求反馈。基础库不写下游。 */
-    const writeCollectDocs = async (productId: number, kind: StatsKind, rows: CaseRow[]) => {
+    /** 原始库：回传→整理→上传（只改原始段）。标注库：上传（只改标注段；按模块写时只改该模块的数据集行）→查重→标注需求反馈。基础库不写下游。 */
+    const writeCollectDocs = async (productId: number, kind: StatsKind, rows: CaseRow[], module = "") => {
         if (!productId || !(rows || []).length || kind === "base") {
             return { ok: [] as string[], missing: [] as string[], errors: [] as string[], warn: "" };
         }
@@ -653,11 +780,10 @@ export default () => {
                 (secs) => fillDd003FromReturn(productId, secs),
             ));
         }
-        // 不传病例：医院行读刚写好的回传记录，标注数据量读标注库缓存或标注统计表，两段互不覆盖。
         wrote.push(await writeOneCollect(
             productId,
             { type: "dd_010", title: "数据库上传记录" },
-            (secs) => fillDd010FromReturn(productId, secs),
+            (secs) => fillDd010FromReturn(productId, secs, undefined, { only: kind === "raw" ? "raw" : "ann", module }),
         ));
         if (kind === "ann") {
             wrote.push(await writeOneCollect(
@@ -672,12 +798,16 @@ export default () => {
             ));
         }
         const ok = wrote.filter((r) => r.status === "ok").map((r) => r.title);
+        const okDocs: WrittenDoc[] = wrote
+            .filter((r) => r.status === "ok")
+            .map((r) => ({ kind: "data", type: COLLECT_TYPE_BY_TITLE[r.title] || "", title: r.title }));
         const missing = wrote.filter((r) => r.status === "skip").map((r) => r.title);
         const errors = wrote
             .filter((r) => r.status === "error")
             .map((r) => r.msg || `写入「${r.title}」失败`);
         return {
             ok,
+            okDocs,
             missing,
             errors,
             warn: missing.length ? `请先在数据文件新增「${missing.join("、")}」，本次未写入` : "",
@@ -687,7 +817,7 @@ export default () => {
     const writeDataFiles = (
         shownRows: CaseRow[],
         tip?: string | false,
-        slot?: { productId: number; kind: StatsKind; source: string; annPack?: AnnPack },
+        slot?: { productId: number; kind: StatsKind; source: string; annPack?: AnnPack; module?: string },
     ) => {
         const cur = ctxRef.current;
         const productId = slot ? slot.productId : cur.productId;
@@ -695,15 +825,18 @@ export default () => {
         let rows = shownRows;
         let source = slot ? slot.source : (cur.source || "");
         let annPack: AnnPack | null = null;
+        let module = "";
         if (kind === "ann") {
             annPack = slot?.annPack || (cur.productId === productId && cur.annModules.length
                 ? { modules: cur.annModules, rows: cur.annRows, sources: cur.annSources }
                 : null);
             const merged = annPack ? mergeAnnRows(annPack.modules, annPack.rows) : [];
-            // 标注统计表始终写汇总；在模块页签上点写入也不会只剩这一个模块。
+            // 标注统计表始终写各模块合并；在模块页签上点写入也不会只剩这一个模块。
             if (merged.length) {
                 rows = merged;
                 source = joinAnnSources(annPack!.modules, annPack!.sources);
+                module = slot ? slot.module || "" : cur.annModule || "";
+                if (module && !annPack!.modules.includes(module)) module = "";
             } else {
                 annPack = null;
             }
@@ -716,12 +849,14 @@ export default () => {
         dispatch({ writing: true });
         return ensureMissingDocs(productId).then((ens) => {
             ens.errors.forEach((msg) => message.warning(msg));
-            if (ens.created) message.success(`已按模板新建 ${ens.created} 份缺失文档`);
+            if (ens.created) {
+                message.success(writtenDocsContent(`已按模板新建 ${ens.created} 份缺失文档：`, ens.docs), 10);
+            }
             return writeStatsDoc(productId, kind, rows, source, annPack);
         })
-            .then((stats: any) => (kind === "ann" ? writeAnnotPids(productId, rows, annPack) : Promise.resolve(null))
+            .then((stats: any) => (kind === "ann" ? writeAnnotPids(productId, rows, annPack, module) : Promise.resolve(null))
                 .then((ann: any) => ({ stats, ann })))
-            .then(({ stats, ann }: any) => writeCollectDocs(productId, kind, rows).then((col: any) => ({ stats, ann, col })))
+            .then(({ stats, ann }: any) => writeCollectDocs(productId, kind, rows, module).then((col: any) => ({ stats, ann, col })))
             .then(({ stats, ann, col }: any) => {
                 const errors = [
                     ...((stats && stats.errors) || (stats?.status === "error" ? [stats.msg || "写入统计表失败"] : [])),
@@ -736,10 +871,19 @@ export default () => {
                 errors.forEach((msg: string) => message.error(msg));
                 warns.forEach((msg: string) => message.warning(msg));
                 if (tip === false) return;
-                if (tip) {
-                    message.success(errors.length ? String(tip).replace(/，(并)?已写入.*$/, "") : tip);
-                } else if (stats?.status === "ok" || (ann && ann.ok && ann.ok.length) || (col && col.ok && col.ok.length)) {
-                    message.success("已写入数据文件");
+                const written: WrittenDoc[] = [
+                    ...(stats?.status === "ok" ? [{ kind: "data" as const, type: KIND_DOC[kind].type, title: KIND_DOC[kind].title }] : []),
+                    ...((ann && ann.okDocs) || []),
+                    ...((col && col.okDocs) || []),
+                ];
+                const head = tip ? String(tip).replace(/，(并)?已写入.*$/, "") : "";
+                if (written.length) {
+                    message.success(writtenDocsContent(
+                        [head, `已写入 ${written.length} 份数据文件：`].filter(Boolean).join("；"),
+                        written,
+                    ), 10);
+                } else if (head) {
+                    message.success(head);
                 }
             })
             .catch(() => {
@@ -759,10 +903,6 @@ export default () => {
     const total = (data.rows || []).length;
     const annByModule = data.kind === "ann" && (data.annModules || []).length > 0;
     const annOnSummary = annByModule && !data.annModule;
-    const annMergedCount = useMemo(
-        () => mergeAnnRows(data.annModules || [], data.annRows || {}).length,
-        [data.annModules, data.annRows],
-    );
     const detailRows = useMemo(
         () => (data.rows || []).map((r: CaseRow, i: number) => ({ key: i, ...r })),
         [data.rows],
@@ -847,6 +987,7 @@ export default () => {
             kind: "ann",
             source: mergedSrc,
             annPack: { modules: slot.modules, rows: rowsBy, sources: srcBy },
+            module: slot.module,
         });
     };
 
@@ -859,7 +1000,7 @@ export default () => {
             return;
         }
         if (slot.module) {
-            commitAnnModule(rows, source, slot, `已统计「${slot.module}」${rows.length} 个序列，已写入「${KIND_DOC.ann.title}」汇总`);
+            commitAnnModule(rows, source, slot, `已统计「${slot.module}」${rows.length} 个序列，已写入「${KIND_DOC.ann.title}」（各模块合并）`);
             return;
         }
         const same = cur.productId === slot.productId && cur.kind === slot.kind;
@@ -1076,7 +1217,7 @@ export default () => {
                         导入 gt/pred/dice
                     </Button>
                     <Button disabled={!total} loading={data.writing} onClick={() => writeDataFiles(data.rows)}>
-                        写入数据文件
+                        {annByModule && data.annModule ? `写入「${data.annModule}」` : "写入数据文件"}
                     </Button>
                 </Space>
             </div>
@@ -1085,13 +1226,9 @@ export default () => {
                     className="data-stats-modules"
                     size="small"
                     type="card"
-                    activeKey={data.annModule || "__sum__"}
-                    onChange={(k) => selectAnnModule(k === "__sum__" ? "" : k)}
+                    activeKey={data.annModule || data.annModules[0]}
+                    onChange={selectAnnModule}
                     items={[
-                        {
-                            key: "__sum__",
-                            label: `汇总${annMergedCount ? ` ${annMergedCount}` : ""}`,
-                        },
                         ...data.annModules.map((m: string) => {
                             const n = (data.annRows[m] || []).length;
                             return {
@@ -1114,11 +1251,9 @@ export default () => {
             <div className="data-stats-path">
                 {annByModule ? (
                     <Input
-                        addonBefore={data.annModule || "汇总"}
+                        addonBefore={data.annModule || data.annModules[0]}
                         disabled={!data.annModule}
-                        placeholder={data.annModule
-                            ? "该模块的服务器路径；空则按数据库上传记录里该模块数据集的存储路径"
-                            : "汇总不能读取，请选择一个模块"}
+                        placeholder="该模块的服务器路径；空则按数据库上传记录里该模块数据集的存储路径"
                         value={data.annModule ? (data.annPaths || {})[data.annModule] || "" : ""}
                         onChange={(e) => setAnnPath(data.productId || 0, data.annModule, e.target.value)}
                         onPressEnter={scanServer}

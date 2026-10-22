@@ -92,7 +92,8 @@ export default () => {
                 const signRows = ps && ps.code === Api.C_OK ? ((ps.data && ps.data.rows) || []) : [];
                 const signMap: Record<string, string> = {};
                 signRows.forEach((s: any) => { if (s.name && s.sign_img) signMap[String(s.name).trim()] = s.sign_img; });
-                const date = computeFileDate(tlRows, meta.keywords.concat(meta.title));
+                const kws: string[] = data.doc.doc_keywords || meta.keywords;
+                const date = computeFileDate(tlRows, kws.concat(data.doc.doc_title || meta.title));
                 const auditee = memberNames(members, (r) => r === "算法工程师").join(" ");
                 const auditor = memberNames(members, (r) => r === "高级算法工程师").join(" ");
                 const firstAuditor = memberNames(members, (r) => r === "高级算法工程师")[0] || "";
@@ -236,7 +237,7 @@ export default () => {
             <Spin spinning={data.loading} wrapperClassName="pdp-scroll">
                 <div style={{ height: "100%", overflow: "auto" }}>
                     <div style={{ padding: "12px 20px", maxWidth: 1000 }}>
-                        <div style={{ textAlign: "center", fontSize: 16, fontWeight: 700, margin: "4px 0 6px" }}>{meta.title}</div>
+                        <div style={{ textAlign: "center", fontSize: 16, fontWeight: 700, margin: "4px 0 6px" }}>{data.doc.doc_title || meta.title}</div>
                         <div style={{ textAlign: "center", color: "#999", marginBottom: 14 }}>{syncFileNoVersion(data.doc.file_no, data.doc.version) || ""}</div>
 
                         <table style={tableStyle}>

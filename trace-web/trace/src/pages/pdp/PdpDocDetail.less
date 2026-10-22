@@ -233,6 +233,26 @@
         }
     }
 
+    // 查看页（/view/）表格单元格也用 disabled 防改，同样保持正文色
+    .ant-input-disabled,
+    .ant-input[disabled],
+    .ant-picker-disabled input,
+    .ant-select-disabled .ant-select-selection-item,
+    .ant-checkbox-wrapper-disabled {
+        color: #1f2d3d !important;
+        -webkit-text-fill-color: #1f2d3d;
+        cursor: default !important;
+    }
+    .ant-input[disabled]::placeholder,
+    .ant-picker-disabled input::placeholder {
+        color: #bfbfbf;
+        -webkit-text-fill-color: #bfbfbf;
+    }
+    .ant-select-disabled .ant-select-selector,
+    .ant-picker-disabled {
+        cursor: default !important;
+    }
+
     .pdp-label {
         font-size: 13px;
         font-weight: 600;

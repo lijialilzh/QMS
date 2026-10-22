@@ -12,6 +12,17 @@ from . import msg_err_db
 logger = logging.getLogger(__name__)
 
 
+def _ensure_docs(prod_id, name):
+    # 建模型记录失败不影响导航模块本身的保存。
+    from .serv_model_doc import ensure_nav_module_docs
+    try:
+        if ensure_nav_module_docs(prod_id, name):
+            db.session.commit()
+    except Exception:
+        logger.exception("")
+        db.session.rollback()
+
+
 class Server(object):
 
     async def add_prod_algo_module(self, form: ProdAlgoModuleForm):
@@ -22,6 +33,7 @@ class Server(object):
             row.id = None
             db.session.add(row)
             db.session.commit()
+            _ensure_docs(row.prod_id, row.name)
             return Resp.resp_ok()
         except Exception:
             logger.exception("")
@@ -39,6 +51,7 @@ class Server(object):
                     continue
                 setattr(row, key, value)
             db.session.commit()
+            _ensure_docs(row.prod_id, row.name)
             return Resp.resp_ok()
         except Exception:
             logger.exception("")

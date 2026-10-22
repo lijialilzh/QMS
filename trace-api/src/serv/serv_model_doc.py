@@ -191,16 +191,170 @@ _MD007_IMG_FILES = {
 _MD007_IMG_CACHE = {}
 
 
+# 按章节模块各一份的模型记录：类型为「模板类型_m章节模块id」，如 md_013_01_m7 = 用肺栓塞分诊测试那套表、属于章节模块 7。
+# 模板类型建档时定下（见 pick_module_base），模块改名不变；名称随模块名。
+MODULE_GROUP_SUFFIX = {
+    "md_008": "代码审查记录",
+    "md_009": "模型训练集构建记录",
+    "md_010": "模型调优集构建记录",
+    "md_011": "模型测试集构建记录",
+    "md_012": "模型训练记录",
+    "md_013": "模型测试记录",
+    "md_015": "封装需求",
+}
+MODULE_DATASET_SUFFIX = {"md_009": "训练集", "md_010": "调优集", "md_011": "测试集"}
+MODULE_DOC_RE = re.compile(r"^((md_0(?:08|09|10|11|12|13|15))_0[12])_m(\d+)$")
+MODULE_GROUP_RE = re.compile(r"^(md_0(?:08|09|10|11|12|13|15))_m(\d+)$")
+
+
+def module_doc_parts(doc_type):
+    """(模板类型, 分组, 章节模块id)；不是按模块建的返回 None。"""
+    m = MODULE_DOC_RE.match(str(doc_type or ""))
+    return (m.group(1), m.group(2), int(m.group(3))) if m else None
+
+
+def base_doc_type(doc_type):
+    parts = module_doc_parts(doc_type)
+    return parts[0] if parts else doc_type
+
+
+def module_doc_chapter(doc_type):
+    parts = module_doc_parts(doc_type)
+    if not parts:
+        return None
+    return db.session.execute(select(ProdAlgoChapter).where(ProdAlgoChapter.id == parts[2])).scalars().first()
+
+
+def _base_module_name(base):
+    """模板类型原表里的模块名，如 md_010_02 → 肺叶分割。"""
+    group = base[:6]
+    title = (DOC_META.get(base) or {}).get("title") or ""
+    suffix = MODULE_GROUP_SUFFIX.get(group, "")
+    return title[:-len(suffix)] if suffix and title.endswith(suffix) else ""
+
+
+def _module_kind(name):
+    return "分诊" if "分诊" in str(name or "") else "分割"
+
+
+def pick_module_base(group, name):
+    """新模块用哪套模板：同名原表优先，其次同类（分诊/分割），再按名称前缀最像的，都一样取肺叶分割那份（_02）。"""
+    name = str(name or "").strip()
+
+    def score(base):
+        old = _base_module_name(base)
+        prefix = 0
+        for a, b in zip(name, old):
+            if a != b:
+                break
+            prefix += 1
+        return (name == old, _module_kind(name) == _module_kind(old), prefix, base.endswith("_02"))
+
+    return max((f"{group}_01", f"{group}_02"), key=score)
+
+
 def doc_title(doc_type):
+    parts = module_doc_parts(doc_type)
+    if parts:
+        name = str(getattr(module_doc_chapter(doc_type), "name", "") or "").strip()
+        return f"{name}{MODULE_GROUP_SUFFIX[parts[1]]}" if name else MODULE_GROUP_SUFFIX[parts[1]]
     return (DOC_META.get(doc_type) or {}).get("title") or "模型文件"
 
 
 def doc_keywords(doc_type):
+    parts = module_doc_parts(doc_type)
+    if parts:
+        name = str(getattr(module_doc_chapter(doc_type), "name", "") or "").strip()
+        old = _base_module_name(parts[0])
+        kws = list((DOC_META.get(parts[0]) or {}).get("keywords") or [])
+        if not name or not old:
+            return [k for k in kws if old not in k] if old else kws
+        return [k.replace(old, name) for k in kws]
     return list((DOC_META.get(doc_type) or {}).get("keywords") or [])
 
 
+def cover_keywords(doc_type):
+    """时间线取日期用的关键词：固定类型按原表，按模块建的换成模块名。"""
+    if module_doc_parts(doc_type):
+        return doc_keywords(doc_type)
+    return list(serv_review_util.COVER_KEYWORDS.get(doc_type) or [])
+
+
 def doc_format(doc_type):
-    return (DOC_META.get(doc_type) or {}).get("format") or "docx"
+    return (DOC_META.get(base_doc_type(doc_type)) or {}).get("format") or "docx"
+
+
+def module_dataset_name(doc_type):
+    """构建记录对应的 dd_010 数据集名：固定类型按原表，按模块建的为「模块名+训练集/调优集/测试集」。"""
+    parts = module_doc_parts(doc_type)
+    if not parts:
+        return BUILD_DATASET_NAME.get(doc_type)
+    name = str(getattr(module_doc_chapter(doc_type), "name", "") or "").strip()
+    suffix = MODULE_DATASET_SUFFIX.get(parts[1])
+    return f"{name}{suffix}" if name and suffix else None
+
+
+def _replace_text(node, old, new):
+    if isinstance(node, str):
+        return node.replace(old, new)
+    if isinstance(node, list):
+        return [_replace_text(x, old, new) for x in node]
+    if isinstance(node, dict):
+        return {k: _replace_text(v, old, new) for k, v in node.items()}
+    return node
+
+
+class _TypeSet(frozenset):
+    """按模块建的记录按其模板类型归类（md_013_01_m7 属于测试记录）。"""
+
+    def __contains__(self, doc_type):
+        return frozenset.__contains__(self, base_doc_type(doc_type))
+
+
+CRR_DOC_TYPES = _TypeSet(CRR_DOC_TYPES)
+BUILD_DOC_TYPES = _TypeSet(BUILD_DOC_TYPES)
+TRAIN_DOC_TYPES = _TypeSet(TRAIN_DOC_TYPES)
+TEST_DOC_TYPES = _TypeSet(TEST_DOC_TYPES)
+PKG_DOC_TYPES = _TypeSet(PKG_DOC_TYPES)
+PKG_REQ_TYPES = _TypeSet(PKG_REQ_TYPES)
+PKG_REC_TYPES = _TypeSet(PKG_REC_TYPES)
+PKG_SUBMIT_TYPES = _TypeSet(PKG_SUBMIT_TYPES)
+
+
+def ensure_module_docs(prod_id, chapter_id):
+    """导航模块（同名章节模块）给它建 7 类模型记录（A0；该模块这一类已有任意一份则跳过）。调用方负责 commit。"""
+    ch = db.session.execute(select(ProdAlgoChapter).where(ProdAlgoChapter.id == chapter_id)).scalars().first()
+    name = str(getattr(ch, "name", "") or "").strip()
+    if not ch or ch.prod_id != prod_id or not name:
+        return 0
+    made = 0
+    for group in MODULE_GROUP_SUFFIX:
+        hit = db.session.execute(
+            select(ModelDoc.id).where(
+                ModelDoc.product_id == prod_id,
+                ModelDoc.doc_type.like(f"{group}\\_0_\\_m{chapter_id}"),
+            )
+        ).first()
+        if hit:
+            continue
+        doc_type = f"{pick_module_base(group, name)}_m{chapter_id}"
+        row = ModelDoc(product_id=prod_id, doc_type=doc_type, version="A0", change_log="按算法模块自动建档")
+        row.content = Server().new_module_content(doc_type, prod_id)
+        db.session.add(row)
+        made += 1
+    return made
+
+
+def ensure_nav_module_docs(prod_id, nav_name):
+    """导航模块按名称找同产品的章节模块后建档。"""
+    name = str(nav_name or "").strip()
+    if not prod_id or not name:
+        return 0
+    ch = db.session.execute(
+        select(ProdAlgoChapter).where(ProdAlgoChapter.prod_id == prod_id, ProdAlgoChapter.name == name)
+        .order_by(ProdAlgoChapter.id.asc())
+    ).scalars().first()
+    return ensure_module_docs(prod_id, ch.id) if ch else 0
 
 
 def _empty_template(doc_type):
@@ -568,6 +722,8 @@ class Server(object):
     def __to_obj(self, row: ModelDoc, product: Product = None):
         obj = ModelDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content, row.doc_type, product_id=row.product_id)
+        obj.doc_title = doc_title(row.doc_type)
+        obj.doc_keywords = doc_keywords(row.doc_type)
         key = row.doc_type or ""
         # pd_003/md_004/md_007/md_014/md_016/md_018：查看时从章节模块管理自动获取（不修改数据库，只影响返回内容）
         if key in ("pd_003", "md_004", "md_007", "md_014", "md_016", "md_018"):
@@ -831,7 +987,7 @@ class Server(object):
         return base
 
     def __build_default_content(self, doc_type):
-        raw = BUILD_DEFAULTS.get(doc_type) or BUILD_DEFAULTS.get("md_009_01") or {}
+        raw = BUILD_DEFAULTS.get(base_doc_type(doc_type)) or BUILD_DEFAULTS.get("md_009_01") or {}
         return copy.deepcopy(raw)
 
     def __build_fmt_pct(self, v):
@@ -1156,7 +1312,7 @@ class Server(object):
         return base
 
     def __train_default_content(self, doc_type):
-        raw = TRAIN_DEFAULTS.get(doc_type) or TRAIN_DEFAULTS.get("md_012_01") or {}
+        raw = TRAIN_DEFAULTS.get(base_doc_type(doc_type)) or TRAIN_DEFAULTS.get("md_012_01") or {}
         return copy.deepcopy(raw)
 
     def __train_pad_row(self, row, n=3):
@@ -1259,19 +1415,19 @@ class Server(object):
         return self.__train_fill_count(base)
 
     def __test_default_content(self, doc_type):
-        raw = TEST_DEFAULTS.get(doc_type) or TEST_DEFAULTS.get("md_013_01") or {}
+        raw = TEST_DEFAULTS.get(base_doc_type(doc_type)) or TEST_DEFAULTS.get("md_013_01") or {}
         return copy.deepcopy(raw)
 
     def __test_ncols(self, doc_type):
-        return 6 if doc_type == "md_013_01" else 5
+        return 6 if base_doc_type(doc_type) == "md_013_01" else 5
 
     def __test_header(self, doc_type):
-        if doc_type == "md_013_01":
+        if base_doc_type(doc_type) == "md_013_01":
             return ["因素", "类别", "阳性数据量", "阴性数据量", "灵敏度(95%CI区间)", "特异度(95%CI区间)"]
         return ["因素", "类别", "样本量", "dice均值", "dice方差"]
 
     def __test_qty_cols(self, doc_type):
-        return (2, 3) if doc_type == "md_013_01" else (2,)
+        return (2, 3) if base_doc_type(doc_type) == "md_013_01" else (2,)
 
     def __test_pad_row(self, row, n):
         cells = [str(c if c is not None else "").replace("\xa0", "").strip() for c in (row or [])]
@@ -1297,7 +1453,7 @@ class Server(object):
             out = [header[:]]
         if str(out[0][0]).strip() != "因素":
             out = [header[:]] + out
-        if doc_type == "md_013_02":
+        if base_doc_type(doc_type) == "md_013_02":
             for r in out[1:]:
                 for ci in (3, 4):
                     if ci < len(r):
@@ -1322,7 +1478,7 @@ class Server(object):
                 total[ci] = str(int(round(q))) if abs(q - round(q)) < 1e-9 else str(q)
             else:
                 total[ci] = old[ci] if ci < len(old) else ""
-                if doc_type == "md_013_02" and ci in (3, 4):
+                if base_doc_type(doc_type) == "md_013_02" and ci in (3, 4):
                     total[ci] = self.__test_fmt_dice(total[ci])
         if total_at >= 0:
             out[total_at] = total
@@ -1431,7 +1587,7 @@ class Server(object):
         return base
 
     def __pkg_default_content(self, doc_type):
-        raw = PKG_DEFAULTS.get(doc_type) or PKG_DEFAULTS.get("md_015_01") or {}
+        raw = PKG_DEFAULTS.get(base_doc_type(doc_type)) or PKG_DEFAULTS.get("md_015_01") or {}
         return copy.deepcopy(raw)
 
     def __pkg_is_flat(self, content):
@@ -1717,7 +1873,7 @@ class Server(object):
         return self.__to_dotted_date(info.get("file_date") or "")
 
     def __build_author(self, product_id, doc_type):
-        kind = BUILD_AUTHOR_ROLE.get(doc_type)
+        kind = BUILD_AUTHOR_ROLE.get(base_doc_type(doc_type))
         if not product_id or not kind:
             return ""
         members = db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == product_id)).scalars().all()
@@ -1957,7 +2113,7 @@ class Server(object):
     def __test_result_from_cases(self, rows, doc_type):
         if not rows:
             return []
-        thick_name = "层厚（mm）" if doc_type == "md_013_01" else "层厚"
+        thick_name = "层厚（mm）" if base_doc_type(doc_type) == "md_013_01" else "层厚"
         factors = [
             ("性别", lambda r: self.__case_sex(r), False),
             ("年龄", lambda r: self.__case_age_bin(r), False),
@@ -1978,7 +2134,7 @@ class Server(object):
                 continue
             first = True
             for lab, b in groups:
-                if doc_type == "md_013_01":
+                if base_doc_type(doc_type) == "md_013_01":
                     sen = self.__fmt_rate_ci(b["tp"], b["tp"] + b["fn"])
                     spe = self.__fmt_rate_ci(b["tn"], b["tn"] + b["fp"])
                     out.append([name if first else "", lab, str(b["pos"]), str(b["neg"]), sen, spe][:n])
@@ -1989,7 +2145,7 @@ class Server(object):
         if len(out) <= 1:
             return []
         total = ["总计"] + [""] * (n - 1)
-        if doc_type == "md_013_01":
+        if base_doc_type(doc_type) == "md_013_01":
             total[4] = self.__fmt_rate_ci(all_b["tp"], all_b["tp"] + all_b["fn"])
             total[5] = self.__fmt_rate_ci(all_b["tn"], all_b["tn"] + all_b["fp"])
         else:
@@ -2007,7 +2163,7 @@ class Server(object):
 
     def __test_conclusion(self, rows, doc_type):
         rows = [r for r in (rows or []) if isinstance(r, list)]
-        if doc_type == "md_013_02":
+        if base_doc_type(doc_type) == "md_013_02":
             means = []
             for r in rows[1:]:
                 if str(r[0] or "").strip() == "总计":
@@ -2059,7 +2215,7 @@ class Server(object):
         if lead:
             content["author"] = lead
             content["auditor"] = lead
-        kws = serv_review_util.COVER_KEYWORDS.get(doc_type) or []
+        kws = cover_keywords(doc_type)
         lo, hi = serv_review_util.date_range(product_id, kws)
         if lo or hi:
             a = self.__fmt_short_date(lo)
@@ -2514,7 +2670,7 @@ class Server(object):
         if not isinstance(content, dict) or not product_id:
             return content
         if doc_type in BUILD_DOC_TYPES:
-            row = self.__dataset_row(product_id, BUILD_DATASET_NAME.get(doc_type))
+            row = self.__dataset_row(product_id, module_dataset_name(doc_type))
             qty = (row or {}).get("qty") or ""
             upload_date = (row or {}).get("date") or ""
             dist = self.__dd015_dist_for_product(product_id)
@@ -2535,8 +2691,19 @@ class Server(object):
                 content["author"] = author
             return content
         if doc_type in TRAIN_DOC_TYPES:
-            build_type = TRAIN_BUILD_TYPE.get(doc_type)
-            name = BUILD_DATASET_NAME.get(build_type)
+            parts = module_doc_parts(doc_type)
+            if parts:
+                # 同一模块的训练集构建记录。
+                build_type = db.session.execute(
+                    select(ModelDoc.doc_type).where(
+                        ModelDoc.product_id == product_id,
+                        ModelDoc.doc_type.like(f"md\\_009\\_0_\\_m{parts[2]}"),
+                    ).order_by(ModelDoc.id.desc())
+                ).scalars().first()
+                name = module_dataset_name(build_type) if build_type else None
+            else:
+                build_type = TRAIN_BUILD_TYPE.get(doc_type)
+                name = BUILD_DATASET_NAME.get(build_type)
             qty = self.__dataset_qty(product_id, name)
             if not qty and build_type:
                 row = db.session.execute(
@@ -2587,7 +2754,7 @@ class Server(object):
             self.__fill_md007_algo_info(out)
         if doc_type in WORD_CONTENTS:
             self.__fill_empty_template_tables(out, doc_type)
-        if doc_type in ("md_008_01", "md_008_02"):
+        if doc_type in CRR_DOC_TYPES:
             self.__complete_md008_checklist(out, doc_type)
         if doc_type in ("md_019", "md_020"):
             self.__complete_env_maint_chapter(out, doc_type)
@@ -3498,7 +3665,7 @@ class Server(object):
             md022_srs = self.__md022_srs_by_module(prod_id)
 
         md008_date = md008_auditee = md008_auditor = md008_sign = ""
-        if doc_type in ("md_008_01", "md_008_02"):
+        if doc_type in CRR_DOC_TYPES:
             auditees = self.__member_names(members, lambda r: r == "算法工程师")
             auditors = self.__member_names(members, lambda r: r == "高级算法工程师")
             md008_date = self.__to_dotted_date(file_date)
@@ -3637,7 +3804,7 @@ class Server(object):
             self.__fill_md017_people_node(node, info.get("members") or [])
         if info.get("doc_type") == "md_022":
             self.__fill_md022_trace_node(node, info)
-        if info.get("doc_type") in ("md_008_01", "md_008_02"):
+        if info.get("doc_type") in CRR_DOC_TYPES:
             self.__fill_md008_meta_node(node, info)
         if info.get("doc_type") in ("md_019", "md_020"):
             self.__fill_env_maint_node(node, info)
@@ -4146,10 +4313,40 @@ class Server(object):
             sql = sql.where(ModelDoc.id != exclude_id)
         return (db.session.execute(sql).scalar() or 0) > 0
 
+    def new_module_content(self, doc_type, product_id):
+        """按模块建的记录：按模板类型的原表建，原表里的模块名换成本模块名。"""
+        content = self.__normalize_content(None, doc_type, product_id=product_id)
+        old = _base_module_name(base_doc_type(doc_type))
+        name = str(getattr(module_doc_chapter(doc_type), "name", "") or "").strip()
+        if old and name and old != name:
+            content = _replace_text(content, old, name)
+        return self.__apply_dataset_counts(content, doc_type, product_id)
+
+    def __resolve_module_type(self, product_id, doc_type):
+        """列表按模块新增时传「分组_m章节id」：该模块这一类已有记录沿用其类型，没有则按模块名选模板。"""
+        m = MODULE_GROUP_RE.match(doc_type)
+        if not m:
+            return doc_type
+        group, cid = m.group(1), int(m.group(2))
+        hit = db.session.execute(
+            select(ModelDoc.doc_type).where(
+                ModelDoc.product_id == product_id,
+                ModelDoc.doc_type.like(f"{group}\\_0_\\_m{cid}"),
+            ).order_by(ModelDoc.id.asc())
+        ).scalars().first()
+        if hit:
+            return hit
+        ch = db.session.execute(select(ProdAlgoChapter).where(ProdAlgoChapter.id == cid)).scalars().first()
+        return f"{pick_module_base(group, getattr(ch, 'name', ''))}_m{cid}"
+
     async def add_model_doc(self, form: ModelDocForm):
         try:
-            doc_type = (form.doc_type or "").strip()
-            if doc_type not in DOC_META:
+            doc_type = self.__resolve_module_type(form.product_id, (form.doc_type or "").strip())
+            if module_doc_parts(doc_type):
+                ch = module_doc_chapter(doc_type)
+                if not ch or ch.prod_id != form.product_id:
+                    return Resp.resp_err(msg="该算法模块不属于所选产品")
+            elif doc_type not in DOC_META:
                 return Resp.resp_err(msg=ts("msg_err_param"))
             if self.__exists(form.product_id, doc_type, form.version):
                 return Resp.resp_err(msg=ts("msg_obj_exist"))
@@ -4158,11 +4355,14 @@ class Server(object):
             row = ModelDoc(**payload)
             row.id = None
             row.file_no = serv_review_util.resolve_doc_file_no(form.product_id, form.file_no, form.version, doc_type) or None
-            row.content = self.__normalize_content(row.content, doc_type, product_id=form.product_id)
-            row.content = self.__apply_dataset_counts(row.content, doc_type, form.product_id)
+            if module_doc_parts(doc_type) and not row.content:
+                row.content = self.new_module_content(doc_type, form.product_id)
+            else:
+                row.content = self.__normalize_content(row.content, doc_type, product_id=form.product_id)
+                row.content = self.__apply_dataset_counts(row.content, doc_type, form.product_id)
             db.session.add(row)
             db.session.commit()
-            return Resp.resp_ok(data=ModelDocForm(id=row.id))
+            return Resp.resp_ok(data=ModelDocForm(id=row.id, doc_type=doc_type))
         except Exception:
             logger.exception("")
             db.session.rollback()
@@ -4174,6 +4374,8 @@ class Server(object):
             if not fromdoc:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
             target_pid = product_id or fromdoc.product_id
+            if target_pid != fromdoc.product_id and module_doc_parts(fromdoc.doc_type):
+                return Resp.resp_err(msg="按算法模块建的记录不能复制到其它产品")
             all_versions = db.session.execute(
                 select(ModelDoc.version).where(ModelDoc.product_id == target_pid, ModelDoc.doc_type == fromdoc.doc_type)
             ).scalars().all()
@@ -4883,7 +5085,7 @@ class Server(object):
         span_val("软件环境", c.get("sw_env") or "")
         bar("测试结果")
 
-        is_pe = obj.doc_type == "md_013_01"
+        is_pe = base_doc_type(obj.doc_type) == "md_013_01"
         n = 6 if is_pe else 5
         rows = [self.__test_pad_row(row, n) for row in (c.get("result_rows") or []) if isinstance(row, list)]
         if not rows:

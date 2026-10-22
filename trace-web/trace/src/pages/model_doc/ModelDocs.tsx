@@ -10,7 +10,10 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as Api from "@/api/ApiModelDoc";
 import * as ApiProduct from "@/api/ApiProduct";
 import * as ApiAlgo from "@/api/ApiProdAlgoModule";
-import { isModelDocGroup, getModelDocNavTitle } from "./ModelDocTypes";
+import * as ApiChapter from "@/api/ApiProdAlgoChapter";
+import {
+    isModelDocGroup, getModelDocNavTitle, isModelModuleType, modelModuleChapterId, modelModuleAddType,
+} from "./ModelDocTypes";
 import { sanitizeListQuery, isAllProductId } from "../doc_shared/sanitizeListQuery";
 import "../risk_mgmt/RiskMgmtDocs.less";
 
@@ -33,14 +36,7 @@ const loadProducts = (data: any, dispatch: any) => {
     });
 };
 
-/** md_008_01 → 第 1 个模块；md_008_02 → 第 2 个模块 */
-const moduleNameOf = (modules: string[], docType: string): string => {
-    const m = String(docType || "").match(/^.+_(\d+)$/);
-    if (!m) return "";
-    const idx = parseInt(m[1], 10) - 1;
-    const name = modules[idx] || "";
-    return name || `模块${idx + 1}`;
-};
+const LEGACY_MODULE = "legacy";
 
 /** 导航模块按产品分组，组内按 sort_order。 */
 const namesByProduct = (rows: any[]): Record<string, string[]> => {
@@ -60,7 +56,22 @@ const namesByProduct = (rows: any[]): Record<string, string[]> => {
     return out;
 };
 
-const docTypeOf = (group: string, idx: number): string => `${group}_${String(idx + 1).padStart(2, "0")}`;
+/** 章节模块按产品分组，组内按 sort_order。 */
+const chaptersOf = (rows: any[]): Record<string, { id: number; name: string }[]> => {
+    const grouped: Record<string, any[]> = {};
+    (rows || []).forEach((r) => {
+        const id = String(r?.prod_id ?? "");
+        if (!id || !String(r?.name || "").trim()) return;
+        (grouped[id] = grouped[id] || []).push(r);
+    });
+    const out: Record<string, { id: number; name: string }[]> = {};
+    Object.keys(grouped).forEach((id) => {
+        out[id] = grouped[id]
+            .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0) || (a.id || 0) - (b.id || 0))
+            .map((r) => ({ id: r.id, name: String(r.name).trim() }));
+    });
+    return out;
+};
 
 export default () => {
     const { t: ts } = useTranslation();
@@ -78,6 +89,7 @@ export default () => {
         targetRow: {},
         products: [],
         modulesByProduct: {} as Record<string, string[]>,
+        chaptersByProduct: {} as Record<string, { id: number; name: string }[]>,
         versionOptions: [] as { value: string; label: string }[],
         exportingId: 0,
         editingFileNoId: 0,
@@ -91,17 +103,40 @@ export default () => {
     const moduleFilter = Form.useWatch("module", queryForm);
     const addProductId = Form.useWatch("product_id", addForm);
     const modulesByProduct = data.modulesByProduct || {};
-    const selectedModules = isAllProductId(productId) ? [] : (modulesByProduct[String(productId)] || []);
-    const addModules = isAllProductId(addProductId) ? [] : (modulesByProduct[String(addProductId)] || []);
+    const chaptersByProduct = data.chaptersByProduct || {};
+    const isNav = (pid: any, name: string) => (modulesByProduct[String(pid)] || []).includes(name);
+    const chapterOf = (pid: any, docType: string) =>
+        (chaptersByProduct[String(pid)] || []).find((c: any) => c.id === modelModuleChapterId(docType));
+    const moduleLabel = (pid: any, docType: string) => {
+        if (!isModelModuleType(docType)) return "未对应模块";
+        const ch = chapterOf(pid, docType);
+        if (!ch) return "已删除的模块";
+        return isNav(pid, ch.name) ? ch.name : `${ch.name}（非导航）`;
+    };
+    /** 筛选：该产品全部章节模块（非导航的带标注）+ 未对应模块；新增：只列导航模块。 */
+    const filterOptions = isAllProductId(productId) ? [] : [
+        ...(chaptersByProduct[String(productId)] || []).map((c: any) => ({
+            value: `m${c.id}`,
+            label: isNav(productId, c.name) ? c.name : `${c.name}（非导航）`,
+        })),
+        { value: LEGACY_MODULE, label: "未对应模块" },
+    ];
+    const addOptions = isAllProductId(addProductId) ? [] : (chaptersByProduct[String(addProductId)] || [])
+        .filter((c: any) => isNav(addProductId, c.name))
+        .map((c: any) => ({ value: c.id, label: c.name }));
     useEffect(() => {
         if (!isGroup) {
-            dispatch({ modulesByProduct: {} });
+            dispatch({ modulesByProduct: {}, chaptersByProduct: {} });
             return;
         }
         ApiAlgo.list_prod_algo_module({ page_index: 0, page_size: 10000 }).then((res: any) => {
             const rows = res && res.code === ApiAlgo.C_OK ? (res.data?.rows || []) : [];
             dispatch({ modulesByProduct: namesByProduct(rows) });
         }).catch(() => dispatch({ modulesByProduct: {} }));
+        ApiChapter.list_prod_algo_chapter({ page_index: 0, page_size: 10000 }).then((res: any) => {
+            const rows = res && res.code === ApiChapter.C_OK ? (res.data?.rows || []) : [];
+            dispatch({ chaptersByProduct: chaptersOf(rows) });
+        }).catch(() => dispatch({ chaptersByProduct: {} }));
     }, [type]);
     useEffect(() => {
         Api.list_model_doc({
@@ -121,7 +156,7 @@ export default () => {
 
     const doSearch = (params: any = {}, pageIndex: any = data.pageIndex, pageSize: any = data.pageSize) => {
         dispatch({ loading: true });
-        const moduleIdx = params.module !== undefined && params.module !== null && params.module !== "" ? Number(params.module) : -1;
+        const moduleRaw = isGroup ? String(params.module ?? "") : "";
         const req: any = {
             ...sanitizeListQuery(params),
             page_index: pageIndex - 1,
@@ -131,12 +166,28 @@ export default () => {
         delete req.doc_type;
         delete req.doc_type_prefix;
         if (isGroup) {
-            req.doc_type_prefix = moduleIdx >= 0 ? docTypeOf(type || "", moduleIdx) : (type || "");
+            req.doc_type_prefix = type || "";
         } else {
             req.doc_type = type;
         }
+        // 按模块筛选：同一模块的模板类型可能是 _01 或 _02，取整组后在本页过滤、分页。
+        const keep = moduleRaw === LEGACY_MODULE
+            ? (t: string) => !isModelModuleType(t)
+            : /^m\d+$/.test(moduleRaw)
+                ? (t: string) => modelModuleChapterId(t) === Number(moduleRaw.slice(1))
+                : null;
+        if (keep) {
+            req.page_index = 0;
+            req.page_size = 10000;
+        }
         Api.list_model_doc(req).then((res: any) => {
             if (res.code === Api.C_OK) {
+                if (keep) {
+                    const all = (res.data.rows || []).filter((r: any) => keep(r.doc_type));
+                    const rows = all.slice((pageIndex - 1) * pageSize, pageIndex * pageSize);
+                    dispatch({ loading: false, total: all.length, rows, pageIndex, pageSize });
+                    return;
+                }
                 dispatch({ loading: false, total: res.data.total, rows: res.data.rows || [], pageIndex, pageSize });
             } else {
                 dispatch({ loading: false, rows: [], total: 0 });
@@ -165,17 +216,18 @@ export default () => {
             dispatch({ adding: true });
             let docType = type || "";
             if (isGroup) {
-                const moduleIdx = Number(values.module ?? 0);
-                docType = docTypeOf(type || "", moduleIdx);
+                docType = modelModuleAddType(type || "", Number(values.module));
             }
-            Api.add_model_doc({ ...values, doc_type: docType }).then((res: any) => {
+            const payload = { ...values, doc_type: docType };
+            delete payload.module;
+            Api.add_model_doc(payload).then((res: any) => {
                 dispatch({ adding: false });
                 if (res.code === Api.C_OK) {
                     message.success(ts("save_success"));
                     dispatch({ dlgType: null });
                     const newId = res.data?.id;
                     if (newId) {
-                        navigate(`/model_docs/${docType}/edit/${newId}`);
+                        navigate(`/model_docs/${res.data?.doc_type || docType}/edit/${newId}`);
                     } else {
                         doSearch(queryForm.getFieldsValue(), 1, data.pageSize);
                     }
@@ -288,7 +340,7 @@ export default () => {
             dataIndex: "doc_type",
             width: "12%",
             render: (value: string, row: any) => {
-                const name = moduleNameOf(modulesByProduct[String(row.product_id)] || [], value);
+                const name = moduleLabel(row.product_id, value);
                 return (
                     <span
                         title={name}
@@ -387,7 +439,7 @@ export default () => {
                                         placeholder="全部模块"
                                         allowClear
                                         style={{ minWidth: 150 }}
-                                        options={selectedModules.map((name: string, i: number) => ({ value: i, label: name }))}
+                                        options={filterOptions}
                                     />
                                 </Form.Item>
                             </Col>
@@ -410,7 +462,7 @@ export default () => {
                     <Button type="primary" onClick={() => {
                         addForm.resetFields();
                         addForm.setFieldValue("version", "A0");
-                        addForm.setFieldValue("module", 0);
+                        addForm.setFieldValue("module", undefined);
                         dispatch({ dlgType: DlgTypes.add });
                         loadProducts(data, dispatch);
                     }}>
@@ -476,7 +528,7 @@ export default () => {
                             rules={[{ required: true, message: sprintf(ts("msg_select"), { label: "算法模块" }) }]}>
                             <Select
                                 placeholder="请选择算法模块"
-                                options={addModules.map((name: string, i: number) => ({ value: i, label: name }))}
+                                options={addOptions}
                             />
                         </Form.Item>
                     )}

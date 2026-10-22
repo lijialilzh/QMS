@@ -12,7 +12,7 @@ const DEFAULT_MODULES = ["肺栓塞分诊", "肺叶分割"];
 
 const normName = (name: any) => String(name ?? "").trim();
 
-const mergeRows = (chapters: any[], modules: any[]) => {
+export const mergeRows = (chapters: any[], modules: any[]) => {
     const used = new Set<number>();
     const chSorted = [...chapters].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0) || a.id - b.id);
     const rows: any[] = chSorted.map((c) => {
@@ -291,18 +291,26 @@ export default ({ prodId, readOnly, onChanged }: { prodId: number; readOnly?: bo
             return;
         }
         if (!row.moduleId) return;
-        dispatch({ updating: true });
-        ApiModule.delete_prod_algo_modules({ id: row.moduleId }).then((res: any) => {
-            dispatch({ updating: false });
-            if (res.code === ApiModule.C_OK) {
-                message.success(res.msg || ts("save_success"));
-                loadModules(prodId, false);
-            } else {
-                message.error(res.msg);
-            }
-        }).catch(() => {
-            dispatch({ updating: false });
-            message.error("保存失败");
+        Modal.confirm({
+            title: "改为非导航模块",
+            content: `「${row.name}」的模型文件（代码审查、训练集/调优集/测试集构建、训练、测试记录及封装需求）会保留，列表中显示为「${row.name}（非导航）」。如不保留，请到模型文件中手动删除。`,
+            okText: "确定",
+            cancelText: "取消",
+            onOk: () => {
+                dispatch({ updating: true });
+                ApiModule.delete_prod_algo_modules({ id: row.moduleId }).then((res: any) => {
+                    dispatch({ updating: false });
+                    if (res.code === ApiModule.C_OK) {
+                        message.success(res.msg || ts("save_success"));
+                        loadModules(prodId, false);
+                    } else {
+                        message.error(res.msg);
+                    }
+                }).catch(() => {
+                    dispatch({ updating: false });
+                    message.error("保存失败");
+                });
+            },
         });
     };
 

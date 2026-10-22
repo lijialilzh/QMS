@@ -12,6 +12,27 @@ from . import msg_err_db
 logger = logging.getLogger(__name__)
 
 
+def _ensure_records(prod_id, chapter_id):
+    # 建记录失败不影响模块本身的保存。
+    from .serv_data_doc import ensure_module_records
+    from .serv_model_doc import ensure_module_docs
+    from ..model.prod_algo_module import ProdAlgoModule
+    try:
+        made = ensure_module_records(prod_id, chapter_id)
+        ch = db.session.execute(select(ProdAlgoChapter).where(ProdAlgoChapter.id == chapter_id)).scalars().first()
+        name = str(getattr(ch, "name", "") or "").strip()
+        is_nav = name and db.session.execute(
+            select(ProdAlgoModule.id).where(ProdAlgoModule.prod_id == prod_id, ProdAlgoModule.name == name)
+        ).first()
+        if is_nav:
+            made += ensure_module_docs(prod_id, chapter_id)
+        if made:
+            db.session.commit()
+    except Exception:
+        logger.exception("")
+        db.session.rollback()
+
+
 class Server(object):
 
     async def add_prod_algo_chapter(self, form: ProdAlgoChapterForm):
@@ -22,6 +43,7 @@ class Server(object):
             row.id = None
             db.session.add(row)
             db.session.commit()
+            _ensure_records(row.prod_id, row.id)
             return Resp.resp_ok()
         except Exception:
             logger.exception("")
@@ -39,6 +61,7 @@ class Server(object):
                     continue
                 setattr(row, key, value)
             db.session.commit()
+            _ensure_records(row.prod_id, row.id)
             return Resp.resp_ok()
         except Exception:
             logger.exception("")

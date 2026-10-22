@@ -12,8 +12,8 @@ import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiMember from "@/api/ApiProjectMember";
 import * as ApiHospital from "@/api/ApiProdHospital";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
-import { getDataDocMeta, DATA_STATS_IMPORT_TYPES, getDataDocListType } from "./DataDocTypes";
-import { ANN_PID_TYPES, annotTableSig, applyPidsToSections, attachCaseRows, autoStatsExtra, buildAnnotMeta, buildStatsGrid, caseRowsFromContent, pidsFromCache, readLastStats, readStatsCache, STATS_TITLES, StatsKind } from "../data_stats/dataStatsLocal";
+import { getDataDocMeta, DATA_STATS_IMPORT_TYPES, getDataDocListType, isModuleRecordType, moduleRecordGroup } from "./DataDocTypes";
+import { ANN_PID_TYPES, annotTableSig, applyPidsToSections, attachCaseRows, autoStatsExtra, buildAnnotMeta, buildStatsGrid, caseRowsFromContent, pidsFromCache, pidsFromRows, readLastStats, readStatsCache, STATS_TITLES, StatsKind } from "../data_stats/dataStatsLocal";
 import "../pdp/PdpDocDetail.less";
 import { syncDocVersionFields, syncFileNoVersion } from "@/pages/doc_fill/syncDocVersion";
 
@@ -597,6 +597,42 @@ const applyDd011Table = (nodes: any[], src: {
     };
     return (nodes || []).map(fix);
 };
+
+const isAnnotModuleRecord = (docType: string) => {
+    const g = moduleRecordGroup(docType);
+    return g === "dd_008" || g === "dd_009";
+};
+
+/** 记录标题：按模块建的取封面章节标题（带模块名），其余取类型标题。 */
+const recordDocTitle = (docType: string, sections: any[]): string => {
+    if (isModuleRecordType(docType)) {
+        const cover = (sections || []).find((n: any) => n && n.ref_type === "cover");
+        const t = String((cover && cover.title) || "").trim();
+        if (t) return t;
+    }
+    return getDataDocMeta(docType).title;
+};
+
+/** 记录对应的标注模块病例：标注统计表有按模块病例时，记录名含哪个模块就取该模块，对不上取合并病例；没有按模块病例返回 null。 */
+const annotPidsFromStats = (productId: number, title: string): Promise<{ pids: string[]; module: string } | null> =>
+    latestDataDoc(productId, "dd_015_03").then((doc: any) => {
+        const content = doc && doc.content;
+        let saved: any = null;
+        walkDocSections((content && content.sections) || [], (n) => {
+            if (!saved && n && n.case_modules && typeof n.case_modules === "object" && Object.keys(n.case_modules).length) {
+                saved = n.case_modules;
+            }
+        });
+        if (!saved) return null;
+        const modules = Object.keys(saved);
+        const hit = matchDd010Module(title, modules);
+        if (hit) {
+            const rows = (saved[hit] && saved[hit].rows) || [];
+            return { pids: pidsFromRows(rows), module: hit };
+        }
+        const merged = caseRowsFromContent(content);
+        return { pids: pidsFromRows((merged && merged.rows) || []), module: "" };
+    }).catch(() => null);
 
 const latestDataDoc = (productId: number, docType: string) =>
     Api.list_data_doc({ product_id: productId, doc_type: docType, page_index: 0, page_size: 1 })
@@ -1505,8 +1541,13 @@ const applyDd010FromReturn = (
     src: { org: string; recv: string; qty: string; no: string }[],
     productName = "",
     annQty = "",
-    extra: { rawDates?: string[]; baseDates?: string[]; annDates?: string[]; cleaners?: string[] } = {},
+    extra: {
+        rawDates?: string[]; baseDates?: string[]; annDates?: string[]; cleaners?: string[];
+        only?: "raw" | "ann"; module?: string; annByModule?: Record<string, string>;
+    } = {},
 ) => {
+    const annByModule = extra.annByModule || {};
+    const annModules = Object.keys(annByModule);
     const rawDates = extra.rawDates || [];
     const baseDates = extra.baseDates || [];
     const annDates = extra.annDates || [];
@@ -1548,6 +1589,8 @@ const applyDd010FromReturn = (
         });
         if (headerIdx < 0) return tb;
         const kind = String(title || "").replace(/\s/g, "");
+        const seg = kind.includes("标注") || iSet >= 0 ? "ann" : kind.includes("基础") ? "base" : "raw";
+        if (extra.only && seg !== extra.only) return tb;
         const dates = kind.includes("标注") || iSet >= 0
             ? annDates
             : kind.includes("基础")
@@ -1588,9 +1631,13 @@ const applyDd010FromReturn = (
             const kept = tb.slice(headerIdx + 1, footerStart).filter((row) => Array.isArray(row) && txt(row[iSet])).map((row, i) => {
                 const next = [...row];
                 if (iProj >= 0 && productName && txt(next[iProj]) === productName) next[iProj] = "肺栓塞";
-                if (annQty && iQty >= 0) {
+                // 标注库按模块统计时：数据集名含某模块的行写该模块序列数，对不上模块的行数量不改；按模块写入时只改该模块的行。
+                const hit = annModules.length ? matchDd010Module(txt(row[iSet]), annModules) : "";
+                if (extra.module && hit !== extra.module) return next;
+                const qty = annModules.length ? (hit ? annByModule[hit] : "") : annQty;
+                if (qty && iQty >= 0) {
                     while (next.length <= iQty) next.push("");
-                    next[iQty] = annQty;
+                    next[iQty] = qty;
                 }
                 putDatePerson(next, i);
                 return next;
@@ -1662,6 +1709,32 @@ const applyDd010FromReturn = (
     return (nodes || []).map(fix);
 };
 
+const dd010ModuleKey = (name: string) => String(name || "").replace(/模块$/, "").trim();
+
+/** 数据集名含哪个模块名；多个都含时取模块名更长的。 */
+const matchDd010Module = (text: string, modules: string[]): string => {
+    let best = "";
+    modules.forEach((m) => {
+        const k = dd010ModuleKey(m);
+        if (k.length >= 2 && String(text || "").includes(k) && k.length > dd010ModuleKey(best).length) best = m;
+    });
+    return best;
+};
+
+/** 标注统计表里按模块存的病例数（`case_modules`，数据统计写入）。 */
+const parseDd015ModuleQty = (content: any): Record<string, string> => {
+    const out: Record<string, string> = {};
+    walkDocSections((content && content.sections) || [], (n) => {
+        const saved = n && n.case_modules;
+        if (!saved || typeof saved !== "object") return;
+        Object.keys(saved).forEach((m) => {
+            const rows = saved[m] && saved[m].rows;
+            if (Array.isArray(rows) && rows.length) out[m] = String(rows.length);
+        });
+    });
+    return out;
+};
+
 const parseDd015TotalQty = (content: any): string => {
     const hit = caseRowsFromContent(content);
     if (hit && hit.rows && hit.rows.length) return String(hit.rows.length);
@@ -1699,7 +1772,10 @@ const srcFromCases = (cases: { qty: Record<string, number>; order: string[] } | 
     }).filter(Boolean) as { org: string; recv: string; qty: string; no: string }[];
 };
 
-export const fillDd010FromReturn = (productId: number, secs: any[], caseRows?: any[]): Promise<any[]> => {
+/** opts.only：只改原始段或标注段，其它段原样；opts.module：标注段只改数据集名含该模块的行。 */
+export const fillDd010FromReturn = (
+    productId: number, secs: any[], caseRows?: any[], opts: { only?: "raw" | "ann"; module?: string } = {},
+): Promise<any[]> => {
     if (!productId) return Promise.resolve(secs);
     const hasRows = !!(caseRows && caseRows.length);
     const casesP = hasRows ? Promise.resolve(packDd002Cases(caseRows || [])) : Promise.resolve(null);
@@ -1728,6 +1804,9 @@ export const fillDd010FromReturn = (productId: number, secs: any[], caseRows?: a
             baseDates: datesFromTimeline(tlRows, "基础数据库上传记录"),
             annDates: datesFromTimeline(tlRows, "标注数据库上传记录"),
             cleaners: namesByRole(members, "脱敏+清洗人员"),
+            only: opts.only,
+            module: opts.module || "",
+            annByModule: hasRows ? {} : parseDd015ModuleQty(dd01503 && dd01503.content),
         };
         if (!src.length && !productName && !annQty && !extra.rawDates.length && !extra.baseDates.length
             && !extra.annDates.length && !extra.cleaners.length) return secs;
@@ -2687,6 +2766,7 @@ export default () => {
         arbitrators: [] as string[],
         collectors: [] as string[],
         cleaners: [] as string[],
+        annPidCount: -1,
     });
 
     const autofill = (productId: number, secs: any[], replaceProduct = false, oldProductId = 0): Promise<any[]> =>
@@ -2921,7 +3001,7 @@ export default () => {
                     }).catch(() => dispatch({ loading: false, doc, sections: withNo }));
                     return;
                 }
-                if (ANN_PID_TYPES.indexOf(docType) < 0) {
+                if (ANN_PID_TYPES.indexOf(docType) < 0 && !isAnnotModuleRecord(docType)) {
                     dispatch({ loading: false, doc, sections: withNo });
                     return;
                 }
@@ -2945,19 +3025,27 @@ export default () => {
                     });
                 };
                 pickPids(withNo);
-                const cachePids = pidsFromCache(doc.product_id || 0);
-                const pids = cachePids.length ? cachePids : curPids;
-                if (!pids.length) {
-                    dispatch({ loading: false, doc, sections: withNo });
-                    return;
-                }
+                const title = recordDocTitle(docType, withNo);
                 Promise.all([
                     ApiTimeline.list_timeline({ prod_id: doc.product_id }).catch(() => null),
                     ApiMember.list_project_member({ prod_id: doc.product_id, page_index: 0, page_size: 1000 }).catch(() => null),
-                ]).then(([tl, mb]: any[]) => {
+                    annotPidsFromStats(doc.product_id || 0, title),
+                ]).then(([tl, mb, fromStats]: any[]) => {
+                    // 标注库按模块统计过：只用该记录对应模块的病例；否则沿用本机缓存。
+                    const srcPids: string[] = fromStats ? fromStats.pids : pidsFromCache(doc.product_id || 0);
+                    dispatch({ annPidCount: srcPids.length });
+                    const pids = srcPids.length ? srcPids : curPids;
+                    // 试标注/标注记录（含对不上模块的旧文件）：标注库已按模块统计时，对不上就不写合并病例。
+                    const legacyUnmatched = (isAnnotModuleRecord(docType) || /^dd_008_0\d+$|^dd_009_0[12]$/.test(docType))
+                        && fromStats && !fromStats.module;
+                    if (!pids.length || (fromStats && !srcPids.length) || legacyUnmatched) {
+                        dispatch({ loading: false, doc, sections: withNo });
+                        return;
+                    }
                     const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
                     const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
-                    const fill = buildAnnotMeta(docType, tlRows, members);
+                    const moduleName = isAnnotModuleRecord(docType) ? ((fromStats && fromStats.module) || title.replace(/(试标注记录|标注记录)$/, "")) : "";
+                    const fill = buildAnnotMeta(docType, tlRows, members, moduleName);
                     const filled = applyPidsToSections(withNo, pids, docType, fill);
                     if (annotTableSig(filled) === annotTableSig(withNo)) {
                         dispatch({ loading: false, doc, sections: withNo });
@@ -3310,9 +3398,10 @@ export default () => {
             && Array.isArray(tb[firstBody + 1])
             && (tb[firstBody + 1] || []).some((c: any) => /检查方式|数据量/.test(String(c ?? "")));
         const dd003DataStart = firstBody >= 0 ? firstBody + (dd003HasSub ? 2 : 1) : -1;
-        const isAnnotPid = ANN_PID_TYPES.indexOf(docType) >= 0;
+        const isAnnotPid = ANN_PID_TYPES.indexOf(docType) >= 0 || isAnnotModuleRecord(docType);
         const tableCount = isAnnotPid ? countPidRows(tb, firstBody, cols) : 0;
-        const importCount = isAnnotPid ? pidsFromCache(data.doc.product_id || 0).length : 0;
+        const importCount = !isAnnotPid ? 0
+            : data.annPidCount >= 0 ? data.annPidCount : pidsFromCache(data.doc.product_id || 0).length;
         const countMismatch = importCount > 0 && tableCount !== importCount;
         return (
             <div key={ti} style={{ marginBottom: 8, overflowX: (isUpload || isDailyEval) ? "auto" : "visible" }}>
@@ -3338,7 +3427,8 @@ export default () => {
                         {tb.map((row: any[], r: number) => {
                             const banner = onlyFirstRow(row, cols);
                             const bannerText = String(row[0] ?? "").trim();
-                            if (banner && (looksLikeFileNo(bannerText) || bannerText === meta.title)) return null;
+                            if (banner && (looksLikeFileNo(bannerText) || bannerText === meta.title
+                                || bannerText === recordDocTitle(String(type || ""), data.sections))) return null;
                             if (banner && r <= 1 && !(isUpload && /数据库上传记录/.test(bannerText))) return null;
                             const emptyRow = rowAllEmpty(row, cols);
                             if (emptyRow) return null;
@@ -3591,7 +3681,7 @@ export default () => {
                             ? "100%"
                             : (maxTableCols(data.sections) > 8 ? 1600 : 1100),
                     }}>
-                        <div style={{ textAlign: "center", fontSize: 16, fontWeight: 700, margin: "4px 0 6px" }}>{meta.title}</div>
+                        <div style={{ textAlign: "center", fontSize: 16, fontWeight: 700, margin: "4px 0 6px" }}>{recordDocTitle(String(type || ""), data.sections)}</div>
                         <div style={{ textAlign: "center", color: "#999", marginBottom: 14 }}>{syncFileNoVersion(data.doc.file_no, data.doc.version) || ""}</div>
                         {(data.sections || []).map((n: any) => renderSection(n))}
                     </div>

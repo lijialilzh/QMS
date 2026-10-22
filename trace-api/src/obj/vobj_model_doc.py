@@ -10,3 +10,5 @@ class ModelDocObj(ModelDocForm):
     product_full_version: Optional[str] = Field(title="完整版本")
     product_type_code: Optional[str] = Field(title="产品型号")
     create_time: Optional[datetime] = Field(title="创建时间")
+    doc_title: Optional[str] = Field(title="文档名称")
+    doc_keywords: Optional[list] = Field(title="时间线关键词")

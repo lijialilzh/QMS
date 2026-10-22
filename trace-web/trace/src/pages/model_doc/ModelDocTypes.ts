@@ -68,6 +68,25 @@ export const MODEL_DOC_TYPE_GROUP: Record<string, string> = (() => {
     return map;
 })();
 
+/** 按章节模块各一份的模型记录：「模板类型_m章节模块id」，如 md_013_01_m7（用肺栓塞分诊测试那套表、属于章节模块 7）。 */
+const MODEL_MODULE_RE = /^((md_0(?:08|09|10|11|12|13|15))_0[12])_m(\d+)$/;
+
+export const isModelModuleType = (type?: string) => MODEL_MODULE_RE.test(type || "");
+
+/** 模板类型：按模块建的取其原表类型，其余原样。按类型判断表结构/规则时用它。 */
+export const baseModelDocType = (type?: string) => {
+    const m = MODEL_MODULE_RE.exec(type || "");
+    return m ? m[1] : (type || "");
+};
+
+export const modelModuleChapterId = (type?: string): number => {
+    const m = MODEL_MODULE_RE.exec(type || "");
+    return m ? Number(m[3]) : 0;
+};
+
+/** 列表按模块新增用：后端按该模块已有记录或模块名定模板类型。 */
+export const modelModuleAddType = (group: string, chapterId: number) => `${group}_m${chapterId}`;
+
 export const isModelDocGroup = (type?: string) => !!type && type in MODEL_DOC_GROUPS;
 
 /** 分组 → 子类型列表。 */
@@ -75,7 +94,10 @@ export const getModelDocGroupTypes = (type?: string): string[] =>
     (type && MODEL_DOC_GROUPS[type]) || [];
 
 /** 菜单 key / 高亮用：子类型归一到分组前缀，其余原样返回。 */
-export const getModelDocMenuKey = (type?: string) => MODEL_DOC_TYPE_GROUP[type || ""] || type || "";
+export const getModelDocMenuKey = (type?: string) => {
+    const base = baseModelDocType(type);
+    return MODEL_DOC_TYPE_GROUP[base] || base || "";
+};
 
 /** 列表页路径：分组子类型归一到分组入口（如 md_008_01 → md_008），其余原样。 */
 export const getModelDocListType = (type?: string) => getModelDocMenuKey(type);
@@ -96,12 +118,19 @@ export const MODEL_DOC_MENU: ModelDocMenuNode[] = [
 
 export const MODEL_DOC_TYPE_ORDER = MODEL_DOC_MENU.flatMap((item) => item.types);
 
-export const getModelDocMeta = (type?: string) =>
-    MODEL_DOC_TYPES[type || ""] || { title: "模型文件", keywords: [] as string[] };
+/** 按模块建的记录这里只有通用标题；带模块名的标题/关键词用接口返回的 doc_title / doc_keywords。 */
+export const getModelDocMeta = (type?: string) => {
+    if (isModelModuleType(type)) {
+        const title = MODEL_DOC_GROUP_TITLES[getModelDocMenuKey(type)] || "模型文件";
+        return { title, keywords: [title] };
+    }
+    return MODEL_DOC_TYPES[type || ""] || { title: "模型文件", keywords: [] as string[] };
+};
 
 /** 左侧导航显示名称（不带模块名）。分组类型用组标题，其余用文档标题。 */
 export const getModelDocNavTitle = (type?: string) => {
     if (!type) return "模型文件";
     if (isModelDocGroup(type)) return MODEL_DOC_GROUP_TITLES[type];
+    if (isModelModuleType(type)) return getModelDocMeta(type).title;
     return MODEL_DOC_TYPES[type]?.title || "模型文件";
 };

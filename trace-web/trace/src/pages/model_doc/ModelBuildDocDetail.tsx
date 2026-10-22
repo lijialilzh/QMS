@@ -252,7 +252,7 @@ export default () => {
             <Spin spinning={data.loading} wrapperClassName="pdp-scroll">
                 <div style={{ height: "100%", overflow: "auto" }}>
                     <div style={{ padding: "12px 20px", maxWidth: 960 }}>
-                        <div style={{ textAlign: "center", fontSize: 16, fontWeight: 700, margin: "4px 0 6px" }}>{meta.title}</div>
+                        <div style={{ textAlign: "center", fontSize: 16, fontWeight: 700, margin: "4px 0 6px" }}>{data.doc.doc_title || meta.title}</div>
                         <div style={{ textAlign: "center", color: "#999", marginBottom: 14 }}>{syncFileNoVersion(data.doc.file_no, data.doc.version) || ""}</div>
 
                         <table style={tableStyle}>

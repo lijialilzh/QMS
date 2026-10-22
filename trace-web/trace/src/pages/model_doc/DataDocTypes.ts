@@ -64,8 +64,46 @@ export const isDataDocGroup = (type?: string) => !!type && type in DATA_DOC_GROU
 export const getDataDocGroupTypes = (type?: string): string[] =>
     (type && DATA_DOC_GROUPS[type]?.types) || [];
 
+/** 按章节模块各一份的记录：人员培训 / 试标注 / 标注记录，类型为 dd_00x_m{章节模块id}，规则同肺叶分割那份。 */
+export type ModuleRecordGroup = "dd_005" | "dd_008" | "dd_009";
+const MODULE_RECORD_RE = /^(dd_005|dd_008|dd_009)_m(\d+)$/;
+const MODULE_RECORD_BASE: Record<ModuleRecordGroup, string> = { dd_005: "dd_005_02", dd_008: "dd_008_02", dd_009: "dd_009_02" };
+const MODULE_RECORD_SUFFIX: Record<ModuleRecordGroup, string> = { dd_005: "人员培训记录", dd_008: "试标注记录", dd_009: "标注记录" };
+
+export const isModuleRecordGroup = (type?: string): type is ModuleRecordGroup => !!type && type in MODULE_RECORD_BASE;
+
+export const isModuleRecordType = (type?: string) => MODULE_RECORD_RE.test(type || "");
+
+export const moduleRecordGroup = (type?: string): ModuleRecordGroup | "" => {
+    const m = MODULE_RECORD_RE.exec(type || "");
+    return m ? (m[1] as ModuleRecordGroup) : "";
+};
+
+export const moduleRecordChapterId = (type?: string): number => {
+    const m = MODULE_RECORD_RE.exec(type || "");
+    return m ? Number(m[2]) : 0;
+};
+
+export const moduleRecordType = (group: ModuleRecordGroup, chapterId: number) => `${group}_m${chapterId}`;
+
+export const moduleRecordTitle = (group: ModuleRecordGroup, moduleName: string) =>
+    `${moduleName}${MODULE_RECORD_SUFFIX[group]}`;
+
+/** 按模块建的记录归到肺叶分割那份的类型（表头、填写规则相同）。 */
+export const baseDataDocType = (type?: string) => {
+    const g = moduleRecordGroup(type);
+    return g ? MODULE_RECORD_BASE[g] : (type || "");
+};
+
+/** 分组列表查询用：固定子类型 + 按模块建的记录。 */
+export const getDataDocGroupQuery = (type?: string): string => {
+    const types = getDataDocGroupTypes(type);
+    return isModuleRecordGroup(type) ? [...types, `${type}_m*`].join(",") : types.join(",");
+};
+
 /** 菜单 key / 高亮用：子类型归一到分组 key，其余原样返回。 */
-export const getDataDocMenuKey = (type?: string) => DATA_DOC_TYPE_GROUP[type || ""] || type || "";
+export const getDataDocMenuKey = (type?: string) =>
+    moduleRecordGroup(type) || DATA_DOC_TYPE_GROUP[type || ""] || type || "";
 
 /** 列表页路径：分组子类型归一到分组入口。 */
 export const getDataDocListType = (type?: string) => getDataDocMenuKey(type);
@@ -74,6 +112,8 @@ export const getDataDocListType = (type?: string) => getDataDocMenuKey(type);
 export const getDataDocNavTitle = (type?: string) => {
     if (!type) return "数据文件";
     if (isDataDocGroup(type)) return DATA_DOC_GROUPS[type].title;
+    const g = moduleRecordGroup(type);
+    if (g) return DATA_DOC_GROUPS[g].title;
     return DATA_DOC_TYPES[type]?.title || "数据文件";
 };
 
@@ -123,5 +163,12 @@ export const DATA_RECORD_DOC_TYPES = new Set([
     "dd_eq",
 ]);
 
-export const getDataDocMeta = (type?: string) =>
-    DATA_DOC_TYPES[type || ""] || { title: "数据文件", keywords: [] as string[] };
+export const isDataRecordDocType = (type?: string) =>
+    DATA_RECORD_DOC_TYPES.has(type || "") || isModuleRecordType(type);
+
+/** 按模块建的记录这里只有通用标题；带模块名的标题在文档封面章节里。 */
+export const getDataDocMeta = (type?: string) => {
+    const g = moduleRecordGroup(type);
+    if (g) return { title: DATA_DOC_GROUPS[g].title, keywords: [DATA_DOC_GROUPS[g].title] };
+    return DATA_DOC_TYPES[type || ""] || { title: "数据文件", keywords: [] as string[] };
+};

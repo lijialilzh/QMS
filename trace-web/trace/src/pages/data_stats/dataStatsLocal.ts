@@ -1091,14 +1091,23 @@ export const annotProjectOf = (docType: string) => {
 
 export const annotDataTypeOf = (docType: string) => (docType === "dd_009_03" ? "测试集" : "训练集");
 
-export const buildAnnotMeta = (docType: string, tlRows: any[], members: any[]): AnnotFillMeta => {
+/** 按模块建的记录：时间线数据部文字含「试标注」/「标注记录」且含模块名。 */
+const matchModuleAnnotText = (text: string, docType: string, moduleName: string) => {
+    const t = String(text || "");
+    const key = String(moduleName || "").replace(/模块$/, "").trim();
+    if (!key || !t.includes(key)) return false;
+    return docType.indexOf("dd_008_") === 0 ? t.includes("试标注") : (t.includes("标注记录") && !t.includes("试标注"));
+};
+
+/** moduleName：按章节模块建的记录（dd_008_m* / dd_009_m*）传模块名，标注项目与时间线日期按该模块取。 */
+export const buildAnnotMeta = (docType: string, tlRows: any[], members: any[], moduleName = ""): AnnotFillMeta => {
     const dates: number[] = [];
     (tlRows || []).forEach((r: any) => {
         if ((r.row_type || "date") !== "date") return;
         const dt = utcOf(r);
         if (dt == null) return;
         const text = String((r.cells || {})["数据部"] || "");
-        if (matchAnnotText(text, docType)) dates.push(dt);
+        if (moduleName ? matchModuleAnnotText(text, docType, moduleName) : matchAnnotText(text, docType)) dates.push(dt);
     });
     if (!dates.length) {
         (tlRows || []).forEach((r: any) => {
@@ -1138,7 +1147,7 @@ export const buildAnnotMeta = (docType: string, tlRows: any[], members: any[]): 
         reviewer: reviewers[0] || "",
         arbiters,
         testers,
-        project: annotProjectOf(docType),
+        project: moduleName || annotProjectOf(docType),
         dataType: annotDataTypeOf(docType),
         status: "已标注",
         result: "通过",

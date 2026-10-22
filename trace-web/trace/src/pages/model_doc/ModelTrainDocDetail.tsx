@@ -10,7 +10,7 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import * as echarts from "echarts";
 import * as Api from "@/api/ApiModelDoc";
 import * as ApiProduct from "@/api/ApiProduct";
-import { getModelDocMeta, getModelDocListType } from "./ModelDocTypes";
+import { getModelDocMeta, getModelDocListType, baseModelDocType } from "./ModelDocTypes";
 import "../pdp/PdpDocDetail.less";
 
 const tableStyle: CSSProperties = { borderCollapse: "collapse", width: "100%", marginBottom: 16, tableLayout: "auto" };
@@ -116,7 +116,7 @@ export default () => {
     const location = useLocation();
     const readonly = location.pathname.includes("/view/");
     const meta = getModelDocMeta(type);
-    const isPe = type === "md_012_01";
+    const isPe = baseModelDocType(type) === "md_012_01";
     const evalCols = isPe ? 3 : 2;
     const [data, dispatch] = useData({
         loading: false,
@@ -308,7 +308,7 @@ export default () => {
             <Spin spinning={data.loading} wrapperClassName="pdp-scroll">
                 <div style={{ height: "100%", overflow: "auto" }}>
                     <div style={{ padding: "12px 20px", maxWidth: 960 }}>
-                        <div style={{ textAlign: "center", fontSize: 16, fontWeight: 700, margin: "4px 0 6px" }}>{meta.title}</div>
+                        <div style={{ textAlign: "center", fontSize: 16, fontWeight: 700, margin: "4px 0 6px" }}>{data.doc.doc_title || meta.title}</div>
                         <div style={{ textAlign: "center", color: "#999", marginBottom: 14 }}>{syncFileNoVersion(data.doc.file_no, data.doc.version) || ""}</div>
 
                         <table style={tableStyle}>

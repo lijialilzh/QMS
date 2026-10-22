@@ -11,7 +11,7 @@ import re
 from datetime import date, timedelta
 from io import BytesIO
 from typing import List
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -111,16 +111,83 @@ ENV_CHECK_GROUPS = {
 }
 
 
+# 按章节模块各一份的人员培训/试标注/标注记录：dd_00x_m{章节模块id}，模板与规则同肺叶分割那份。
+MODULE_RECORD_RE = re.compile(r"^(dd_005|dd_008|dd_009)_m(\d+)$")
+MODULE_RECORD_BASE = {"dd_005": "dd_005_02", "dd_008": "dd_008_02", "dd_009": "dd_009_02"}
+MODULE_RECORD_SUFFIX = {"dd_005": "人员培训记录", "dd_008": "试标注记录", "dd_009": "标注记录"}
+MODULE_RECORD_GENERIC = {"dd_005": "人员培训记录", "dd_008": "试标注记录", "dd_009": "数据标注记录"}
+# 培训记录模板里属于肺叶分割那次培训的样例值：标签 → 清空的列。
+TRAIN_SAMPLE_CELLS = {"培训日期": (1, 3, 5), "讲解人员": (1, 3)}
+TRAIN_NAME_BLOCKS = ("参与培训人员名单", "审核人员", "考核通过人员")
+
+
+def set_record_title_row(content, title):
+    """记录表首行通栏标题（如人员培训记录）跟着模块名。"""
+    for n in (content or {}).get("sections") or []:
+        if not isinstance(n, dict) or n.get("ref_type") in ("cover", "revision", "basic_info"):
+            continue
+        for tb in n.get("tables") or []:
+            if isinstance(tb, list) and tb and isinstance(tb[0], list) and tb[0] \
+                    and str(tb[0][0] or "").strip().endswith(("人员培训记录", "试标注记录", "标注记录")):
+                tb[0][0] = title
+
+
+def module_record_parts(doc_type):
+    m = MODULE_RECORD_RE.match(str(doc_type or ""))
+    return (m.group(1), int(m.group(2))) if m else None
+
+
+def base_doc_type(doc_type):
+    parts = module_record_parts(doc_type)
+    return MODULE_RECORD_BASE[parts[0]] if parts else doc_type
+
+
+def module_record_chapter(doc_type):
+    parts = module_record_parts(doc_type)
+    if not parts:
+        return None
+    return db.session.execute(select(ProdAlgoChapter).where(ProdAlgoChapter.id == parts[1])).scalars().first()
+
+
+def ensure_module_records(prod_id, chapter_id):
+    """章节模块有名称后，给它建试标注/标注记录（A0，已有任意版本则跳过）。调用方负责 commit。"""
+    ch = db.session.execute(select(ProdAlgoChapter).where(ProdAlgoChapter.id == chapter_id)).scalars().first()
+    if not ch or ch.prod_id != prod_id or not str(ch.name or "").strip():
+        return 0
+    made = 0
+    for group in MODULE_RECORD_BASE:
+        doc_type = f"{group}_m{chapter_id}"
+        hit = db.session.execute(
+            select(DataDoc.id).where(DataDoc.product_id == prod_id, DataDoc.doc_type == doc_type)
+        ).first()
+        if hit:
+            continue
+        row = DataDoc(product_id=prod_id, doc_type=doc_type, version="A0", change_log="按算法模块自动建档")
+        row.file_no = serv_review_util.resolve_doc_file_no(prod_id, None, "A0", doc_type) or None
+        row.content = Server()._Server__normalize_content(None, doc_type, product_id=prod_id)
+        db.session.add(row)
+        made += 1
+    return made
+
+
 def doc_title(doc_type):
+    parts = module_record_parts(doc_type)
+    if parts:
+        ch = module_record_chapter(doc_type)
+        name = str(getattr(ch, "name", "") or "").strip()
+        return f"{name}{MODULE_RECORD_SUFFIX[parts[0]]}" if name else MODULE_RECORD_GENERIC[parts[0]]
     return (DOC_META.get(doc_type) or {}).get("title") or "数据文件"
 
 
 def doc_keywords(doc_type):
+    parts = module_record_parts(doc_type)
+    if parts:
+        return [MODULE_RECORD_GENERIC[parts[0]], doc_title(doc_type)]
     return list((DOC_META.get(doc_type) or {}).get("keywords") or [])
 
 
 def doc_format(doc_type):
-    return (DOC_META.get(doc_type) or {}).get("format") or "docx"
+    return (DOC_META.get(base_doc_type(doc_type)) or {}).get("format") or "docx"
 
 
 def _empty_template(doc_type):
@@ -154,11 +221,76 @@ def _empty_template(doc_type):
 
 class Server(object):
 
+    @staticmethod
+    def __module_record_content(content, doc_type):
+        """按模块建的记录：标题换成「模块名+记录名」，去掉肺叶分割的样例内容。
+        试标注/标注记录只留表头；人员培训记录留表结构与通用培训条目，清空样例日期/人员/名单、去掉肺叶专用的注意事项。"""
+        title = doc_title(doc_type)
+        if module_record_parts(doc_type)[0] == "dd_005":
+            for n in (content or {}).get("sections") or []:
+                if isinstance(n, dict) and n.get("ref_type") == "cover":
+                    n["title"] = title
+            set_record_title_row(content, title)
+            for n in (content or {}).get("sections") or []:
+                if not isinstance(n, dict) or n.get("ref_type") in ("cover", "revision", "basic_info"):
+                    continue
+                n["tables"] = [Server.__clean_train_table(tb) for tb in n.get("tables") or []]
+            return content
+        for n in (content or {}).get("sections") or []:
+            if not isinstance(n, dict):
+                continue
+            if n.get("ref_type") == "cover":
+                n["title"] = title
+                continue
+            if n.get("ref_type") in ("revision", "basic_info"):
+                continue
+            tables = []
+            for tb in n.get("tables") or []:
+                rows = tb if isinstance(tb, list) else []
+                head = next((i for i, r in enumerate(rows)
+                             if isinstance(r, list) and any(str(c or "").strip() == "PID" for c in r)), -1)
+                tables.append(rows[:head + 1] if head >= 0 else rows)
+            n["tables"] = tables
+        return content
+
+    @staticmethod
+    def __clean_train_table(tb):
+        if not isinstance(tb, list):
+            return tb
+        out = []
+        block = False
+        for i, r in enumerate(tb):
+            if not isinstance(r, list) or not r:
+                out.append(r)
+                continue
+            row = list(r)
+            label = str(row[0] or "").strip()
+            if i == 1 and re.search(r"-DD-\d+", label):
+                row[0] = ""
+                label = ""
+            if label:
+                block = label.startswith(TRAIN_NAME_BLOCKS)
+            for c in TRAIN_SAMPLE_CELLS.get(label, ()):
+                if c < len(row):
+                    row[c] = ""
+            if block:
+                # 名单只留标签行，姓名打开时按参与人员带出。
+                if label:
+                    out.append([row[0]] + [""] * (len(row) - 1))
+                continue
+            if not label and len(row) > 1 and re.match(r"^\s*(需要注意|[（(]\d+[)）])", str(row[1] or "")):
+                continue
+            out.append(row)
+        return out
+
     def __default_content(self, doc_type, product_id=None):
-        raw = DEFAULT_CONTENTS.get(doc_type)
+        base = base_doc_type(doc_type)
+        raw = DEFAULT_CONTENTS.get(base)
         content = copy.deepcopy(raw) if raw else _empty_template(doc_type)
+        if base != doc_type:
+            self.__module_record_content(content, doc_type)
         self.__drop_product_info(content)
-        self.__ensure_review_annex(content, doc_type)
+        self.__ensure_review_annex(content, base)
         if doc_type in ENV_DOC_TYPES:
             self.__complete_env_maint_chapter(content, doc_type)
         if doc_type == "dd_007":
@@ -593,7 +725,14 @@ class Server(object):
             self.__apply_md003_qty(obj.content, row.product_id)
         fill_chapter_images(obj.content, row.doc_type or "")
         self.__fill_cover_meta(obj.content, obj.version)
-        key = row.doc_type or ""
+        if module_record_parts(row.doc_type):
+            # 标题跟着算法模块名走，模块改名后打开即是新名称。
+            title = doc_title(row.doc_type)
+            for n in (obj.content or {}).get("sections") or []:
+                if isinstance(n, dict) and n.get("ref_type") == "cover":
+                    n["title"] = title
+            set_record_title_row(obj.content, title)
+        key = base_doc_type(row.doc_type or "")
         serv_review_util.fill_cover_dates(
             obj.content, serv_review_util.cover_date(row.product_id, key) if row.product_id else ""
         )
@@ -1505,7 +1644,11 @@ class Server(object):
     async def add_data_doc(self, form: DataDocForm):
         try:
             doc_type = (form.doc_type or "").strip()
-            if doc_type not in DOC_META:
+            if module_record_parts(doc_type):
+                ch = module_record_chapter(doc_type)
+                if not ch or ch.prod_id != form.product_id:
+                    return Resp.resp_err(msg="该算法模块不属于所选产品")
+            elif doc_type not in DOC_META:
                 return Resp.resp_err(msg=ts("msg_err_param"))
             if self.__exists(form.product_id, doc_type, form.version):
                 return Resp.resp_err(msg=ts("msg_obj_exist"))
@@ -1529,6 +1672,8 @@ class Server(object):
             if not fromdoc:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
             target_pid = product_id or fromdoc.product_id
+            if target_pid != fromdoc.product_id and module_record_parts(fromdoc.doc_type):
+                return Resp.resp_err(msg="按算法模块建的记录不能复制到其它产品")
             all_versions = db.session.execute(
                 select(DataDoc.version).where(DataDoc.product_id == target_pid, DataDoc.doc_type == fromdoc.doc_type)
             ).scalars().all()
@@ -1696,8 +1841,11 @@ class Server(object):
             wheres.append(DataDoc.doc_type.like(f"{doc_type_prefix}%"))
         if doc_types:
             types = [t.strip() for t in (doc_types or "").split(",") if t.strip()]
-            if types:
-                wheres.append(DataDoc.doc_type.in_(types))
+            exact = [t for t in types if not t.endswith("*")]
+            prefixes = [t[:-1] for t in types if t.endswith("*") and len(t) > 1]
+            conds = ([DataDoc.doc_type.in_(exact)] if exact else []) + [DataDoc.doc_type.like(f"{p}%") for p in prefixes]
+            if conds:
+                wheres.append(or_(*conds))
         if product_id:
             wheres.append(DataDoc.product_id == product_id)
         if version:
@@ -2310,7 +2458,7 @@ class Server(object):
             self.__fill_dd007_chapters(c, obj.product_id)
         title = doc_title(obj.doc_type)
         if doc_format(obj.doc_type) == "xlsx":
-            if obj.doc_type in RECORD_DOC_TYPES:
+            if base_doc_type(obj.doc_type) in RECORD_DOC_TYPES:
                 self.__export_record_xlsx(output, obj, c)
             else:
                 self.__export_xlsx(output, obj, c)
