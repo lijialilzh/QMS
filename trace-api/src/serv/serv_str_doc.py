@@ -234,6 +234,23 @@ class Server(object):
                 if m3:
                     req_group = str(m3.group(3) or "").zfill(3)
                     candidates.append(f"SRS-{m3.group(1)}{m3.group(2)}-{req_group}")
+        # 数值压缩还原：body = 主号*10+次号，且主号末两位等于 IF 号。
+        # SDS-IF00-RCN3010-001 -> SRS-RCN300-010；SDS-IF00-RCH2010-001 -> SRS-RCH200-010。
+        matched_num = re.match(r"^SDS-IF(\d+)-([A-Z]+)(\d+)-\d+$", code)
+        if matched_num:
+            if_int = int(matched_num.group(1))
+            pref = matched_num.group(2)
+            compressed = int(matched_num.group(3))
+            for minor in range(1, 1000):
+                if compressed < minor:
+                    break
+                if (compressed - minor) % 10 != 0:
+                    continue
+                major = (compressed - minor) // 10
+                if major % 100 != if_int:
+                    continue
+                candidates.append(f"SRS-{pref}{major}-{str(minor).zfill(3)}")
+                break
         seen, uniq = set(), []
         for item in candidates:
             if item and item not in seen:
@@ -242,20 +259,25 @@ class Server(object):
         return uniq
 
     def __pick_srs_from_if(self, raw, known_srs):
-        """从接口编号解析 SRS：优先本产品已有需求编号，否则取压缩段候选。"""
+        """从接口编号解析 SRS：本产品已有编号里，优先数值还原（候选末尾），否则取最后一条。"""
         cands = self.__if_to_srs_candidates(raw)
         if not cands:
             return ""
         known = known_srs or set()
+        chosen = ""
         for c in cands:
-            if c in known or c.upper() in known:
-                # 若已知集合里有原大小写，尽量回原样
-                for k in known:
-                    if k.upper() == c.upper() and k.startswith("SRS"):
-                        return k
-                return c
-        # 优先压缩段（通常在候选末尾）
-        return cands[-1] if len(cands) > 1 else cands[0]
+            hit = ""
+            for k in known:
+                if str(k).upper() == c.upper() and str(k).upper().startswith("SRS"):
+                    hit = k if str(k).startswith("SRS") else c
+                    break
+            if not hit and (c in known or c.upper() in known):
+                hit = c
+            if hit:
+                chosen = hit
+        if chosen:
+            return chosen
+        return cands[-1]
 
     def __split_req_design(self, raw, srs_to_sds, sds_to_srs, known_srs=None):
         """拆分需求编号与设计编号；单元测试表专用。"""

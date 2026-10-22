@@ -912,6 +912,7 @@ export default () => {
         let source = slot ? slot.source : (cur.source || "");
         let annPack: AnnPack | null = null;
         let module = "";
+        let statsOnly = false;
         if (kind === "ann") {
             annPack = slot?.annPack || (cur.productId === productId && cur.annModules.length
                 ? { modules: cur.annModules, rows: cur.annRows, sources: cur.annSources }
@@ -923,6 +924,7 @@ export default () => {
                 source = joinAnnSources(annPack!.modules, annPack!.sources);
                 module = slot ? slot.module || "" : cur.annModule || "";
                 if (module && !annPack!.modules.includes(module)) module = "";
+                if (!slot && cur.annModule === ANN_SUMMARY) statsOnly = true;
             } else {
                 annPack = null;
             }
@@ -933,14 +935,22 @@ export default () => {
             return Promise.resolve({ hospitalMiss: false });
         }
         dispatch({ writing: true, writeHint: "" });
-        const hospitalP = matchCaseHospitals(productId, rows);
+        const checkRows = kind === "ann" && module && annPack ? (annPack.rows[module] || []) : rows;
+        const hospitalP = statsOnly ? Promise.resolve(null) : matchCaseHospitals(productId, checkRows);
         return writeStatsDoc(productId, kind, rows, source, annPack)
-            .then((stats: any) => (kind === "ann" ? writeAnnotPids(productId, rows, annPack, module) : Promise.resolve(null))
-                .then((ann: any) => ({ stats, ann })))
-            .then(({ stats, ann }: any) => writeCollectDocs(productId, kind, rows, module).then((col: any) => ({ stats, ann, col })))
+            .then((stats: any) => {
+                if (statsOnly || kind !== "ann") {
+                    return { stats, ann: null as any };
+                }
+                return writeAnnotPids(productId, rows, annPack, module).then((ann: any) => ({ stats, ann }));
+            })
+            .then(({ stats, ann }: any) => {
+                if (statsOnly) return { stats, ann, col: null as any };
+                return writeCollectDocs(productId, kind, rows, module).then((col: any) => ({ stats, ann, col }));
+            })
             .then(({ stats, ann, col }: any) => {
                 const moduleRows = annPack && module ? (annPack.rows[module] || []) : [];
-                if (kind !== "ann" || !module || !moduleRows.length) {
+                if (statsOnly || kind !== "ann" || !module || !moduleRows.length) {
                     return { stats, ann, col, model: { okDocs: [] as WrittenDoc[], errors: [] as string[] } };
                 }
                 return writeModuleModelDocs(productId, module).then((model) => ({ stats, ann, col, model }));
@@ -1382,7 +1392,7 @@ export default () => {
                     <Button icon={<UploadOutlined />} disabled={!total || annOnSummary} loading={data.loading || data.writing} onClick={pickGpdExcel}>
                         导入 gt/pred/dice
                     </Button>
-                    <Button disabled={!total || annOnSummary} loading={data.writing} onClick={() => writeDataFiles(data.rows)}>
+                    <Button disabled={!total} loading={data.writing} onClick={() => writeDataFiles(data.rows)}>
                         {annByModule && data.annModule && !annOnSummary ? `写入「${data.annModule}」` : "写入数据"}
                     </Button>
                     <Button loading={data.templating} disabled={data.writing} onClick={generateTemplates}>
@@ -1466,18 +1476,18 @@ export default () => {
                     style={{ width: 160, maxWidth: 160, minWidth: 140 }}
                     visibilityToggle
                 />
-                <Button icon={<FolderOpenOutlined />} loading={data.loading || data.writing} disabled={annOnSummary} onClick={pickFolder}>
-                    选择病例文件夹
-                </Button>
-                <Button type="primary" icon={<DownloadOutlined />} disabled={!total} onClick={downloadXlsx}>
-                    下载 Excel
-                </Button>
                 <Button
                     icon={<CloudServerOutlined />}
                     loading={data.loading || data.writing}
                     disabled={annOnSummary}
                     onClick={scanServer}>
                     从服务器读取
+                </Button>
+                <Button icon={<FolderOpenOutlined />} loading={data.loading || data.writing} disabled={annOnSummary} onClick={pickFolder}>
+                    选择病例文件夹
+                </Button>
+                <Button type="primary" icon={<DownloadOutlined />} disabled={!total} onClick={downloadXlsx}>
+                    下载 Excel
                 </Button>
             </div>
             {data.source ? (

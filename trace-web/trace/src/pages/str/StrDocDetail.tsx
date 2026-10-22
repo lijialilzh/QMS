@@ -946,7 +946,7 @@ export default () => {
                     const pv = String(r[ciP] || "");
                     flags.push(pv.includes("是") || pv.includes("通过") || !pv.trim() ? 0 : 1);
                 });
-                charts.push(buildChartUrl(`${stripNum(stage.title)}用例`, funcs, counts, flags));
+                charts.push(buildChartUrl("单元/集成/系统测试记录", funcs, counts, flags));
             });
             patchNode(active._key, { charts });
             message.success(`已生成 ${charts.length} 张分布图`);
