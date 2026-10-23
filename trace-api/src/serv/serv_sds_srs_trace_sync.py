@@ -348,12 +348,7 @@ class SdsSrsTraceSyncMixin:
             else:
                 reqd_query = reqd_query.where(SrsReq.id.in_(trace_req_ids))
             for reqd_row, req_row in db.session.execute(reqd_query).all():
-                ccode = str(getattr(req_row, "code", "") or "").strip()
-                if ccode and ccode not in reqd_by_srs_code:
-                    reqd_by_srs_code[ccode] = reqd_row
-                rid = getattr(req_row, "id", None)
-                if rid is not None and rid not in reqd_by_req_id:
-                    reqd_by_req_id[rid] = reqd_row
+                self._store_reqd_lookup(reqd_by_srs_code, reqd_by_req_id, reqd_row, req_row)
 
         def _norm(v) -> str:
             return re.sub(r"\s+", "", str(v or "").strip().upper())
@@ -1152,6 +1147,49 @@ class SdsSrsTraceSyncMixin:
                 return False
         return True
 
+    def _store_reqd_lookup(self, reqd_by_srs_code: Dict[str, SrsReqd], reqd_by_req_id: Dict[int, SrsReqd], reqd_row, req_row):
+        """同一编号有多条功能描述时，保留有内容的那条，空的变更行不覆盖。"""
+        code = str(getattr(req_row, "code", "") or "").strip()
+        rid = getattr(req_row, "id", None)
+        if rid is not None and rid not in reqd_by_req_id:
+            reqd_by_req_id[rid] = reqd_row
+        if not code:
+            return
+        current = reqd_by_srs_code.get(code)
+        if current is None or (
+            not self._reqd_detail_text(current).strip() and self._reqd_detail_text(reqd_row).strip()
+        ):
+            reqd_by_srs_code[code] = reqd_row
+
+    def _pick_reqd_for_design(
+        self,
+        req: Optional[SrsReq],
+        srs_code: str,
+        req_id: Optional[int],
+        reqd_by_srs_code: Dict[str, SrsReqd],
+        reqd_by_req_id: Dict[int, SrsReqd],
+        hierarchy_map: dict,
+    ):
+        """变更需求复用已有标准需求编号、自身功能描述为空时，用同编号里有内容的功能描述。"""
+        own = reqd_by_req_id.get(req_id) if req_id is not None else None
+        shared = reqd_by_srs_code.get(str(srs_code or "").strip())
+        chosen = own if own is not None else shared
+        if shared is not None and self._reqd_detail_text(shared).strip():
+            if chosen is None or not self._reqd_detail_text(chosen).strip():
+                chosen = shared
+        if chosen is not None and req is not None and not self._reqd_belongs_to_req(
+            chosen, req, hierarchy_map
+        ):
+            if (
+                shared is not None
+                and shared is not chosen
+                and self._reqd_detail_text(shared).strip()
+                and self._reqd_belongs_to_req(shared, req, hierarchy_map)
+            ):
+                return shared
+            return None
+        return chosen
+
     def _compose_design_text_for_trace_sync(
         self,
         req: Optional[SrsReq],
@@ -1163,15 +1201,9 @@ class SdsSrsTraceSyncMixin:
         trace_rows,
     ) -> str:
         """功能设计正文严格来自 SRS reqd，不合成、不猜测。"""
-        srs_reqd_row = None
-        if req_id is not None:
-            srs_reqd_row = reqd_by_req_id.get(req_id)
-        if srs_reqd_row is None:
-            srs_reqd_row = reqd_by_srs_code.get(str(srs_code or "").strip())
-        if srs_reqd_row is not None and req is not None and not self._reqd_belongs_to_req(
-            srs_reqd_row, req, hierarchy_map
-        ):
-            srs_reqd_row = None
+        srs_reqd_row = self._pick_reqd_for_design(
+            req, srs_code, req_id, reqd_by_srs_code, reqd_by_req_id, hierarchy_map
+        )
         overview = (getattr(srs_reqd_row, "overview", None) or "").strip()
         func_detail = _reqd_compose_srs_function_for_design(srs_reqd_row) if srs_reqd_row else ""
         return sdstreqd_serv.compose_design_text_for_sync(overview, func_detail)
@@ -1766,6 +1798,8 @@ class SdsSrsTraceSyncMixin:
     ):
         """追溯同步：同一功能重写总体描述和功能；程序逻辑及之后的段落保留。"""
         if node is None or not expected_text:
+            return
+        if not self._design_text_is_substantive(expected_text) and self._node_has_substantive_design_body(node):
             return
         existing = (getattr(node, "text", "") or "").strip()
         if existing == expected_text.strip():
@@ -3383,12 +3417,7 @@ class SdsSrsTraceSyncMixin:
                 reqd_query = reqd_query.where(SrsReq.id.in_(trace_req_ids))
             reqd_rows = db.session.execute(reqd_query).all()
             for reqd_row, req_row in reqd_rows:
-                code = str(getattr(req_row, "code", "") or "").strip()
-                if code and code not in reqd_by_srs_code:
-                    reqd_by_srs_code[code] = reqd_row
-                rid = getattr(req_row, "id", None)
-                if rid is not None and rid not in reqd_by_req_id:
-                    reqd_by_req_id[rid] = reqd_row
+                self._store_reqd_lookup(reqd_by_srs_code, reqd_by_req_id, reqd_row, req_row)
 
         def normalize_code(value: str) -> str:
             return re.sub(r"\s+", "", str(value or "").strip().upper())

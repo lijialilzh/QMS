@@ -936,6 +936,34 @@ def dhf_file_no(prod_id, name_keywords=None, exclude_fragments=()):
     return ""
 
 
+_DESIGN_FILE_NO_SUFFIX = {
+    "sds": "SD-005",
+    "hld": "SD-004",
+}
+
+
+def _design_file_no_fallback(prod_id, doc_key):
+    """本版本 DHF 没有详细/概要设计编号时，用产品代码生成；没有产品代码再用同名其它版本的 DHF。"""
+    suffix = _DESIGN_FILE_NO_SUFFIX.get(doc_key)
+    if not suffix or not prod_id:
+        return ""
+    product = db.session.get(Product, prod_id)
+    code = (getattr(product, "product_code", None) or "").strip()
+    if code:
+        return f"TX-TF-{code}-{suffix}-A0"
+    name = (getattr(product, "name", None) or "").strip() if product else ""
+    if not name:
+        return ""
+    sibling_ids = db.session.execute(
+        select(Product.id).where(Product.name == name, Product.id != prod_id).order_by(Product.id.desc())
+    ).scalars().all()
+    for sid in sibling_ids:
+        hit = dhf_file_no(sid, COVER_KEYWORDS.get(doc_key, []), DHF_NAME_EXCLUDES.get(doc_key, ()))
+        if hit:
+            return hit
+    return ""
+
+
 def resolve_doc_file_no(prod_id, file_no="", version="", doc_key=""):
     """未填写 file_no 时从产品 DHF 匹配；并按 version 同步末尾版本段。"""
     from .serv_utils import sync_file_no_version
@@ -947,6 +975,8 @@ def resolve_doc_file_no(prod_id, file_no="", version="", doc_key=""):
             COVER_KEYWORDS.get(doc_key, []),
             DHF_NAME_EXCLUDES.get(doc_key, ()),
         )
+    if not base and doc_key in _DESIGN_FILE_NO_SUFFIX:
+        base = _design_file_no_fallback(prod_id, doc_key)
     if not base:
         return None
     if version:
