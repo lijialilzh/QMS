@@ -2853,7 +2853,7 @@ export default () => {
         const docIdForSync = targetRow.id || (params.id ? parseInt(params.id) : undefined);
         const ensuredReqdContent = ensureFrontMatterTables(remappedContent as TreeNode[]);
         const withOtherReqChapters = await ensureSdsOtherReqChapters(
-            ensuredReqdContent as TreeNode[],
+                ensuredReqdContent as TreeNode[],
             targetRow.srsdoc_id,
         );
         const alignedTail = alignTailChapterSdsCodes(withOtherReqChapters);
@@ -4591,36 +4591,36 @@ export default () => {
                     )}
                     <div className="expand"></div>
                     <Space className="sds-toolbar-actions" wrap={false}>
-                        {!isReadOnly && (
+                    {!isReadOnly && (
                             <>
-                                <Button
-                                    type="primary"
-                                    icon={<DownloadOutlined />}
-                                    loading={data.exporting}
-                                    onClick={handleExport}
-                                    disabled={!data.isEdit}>
-                                    {ts("export")}
-                                </Button>
-                                <Button
-                                    type="primary"
-                                    icon={<FileAddOutlined />}
-                                    onClick={handleInitTemplate}>
-                                    {ts("sds_doc.init_template")}
-                                </Button>
-                                <Button
-                                    type="primary"
-                                    loading={data.saving}
-                                    onClick={handleSaveTreeStructure}>
-                                    {ts("save")}
-                                </Button>
+                            <Button
+                                type="primary"
+                                icon={<DownloadOutlined />}
+                                loading={data.exporting}
+                                onClick={handleExport}
+                                disabled={!data.isEdit}>
+                                {ts("export")}
+                            </Button>
+                            <Button
+                                type="primary"
+                                icon={<FileAddOutlined />}
+                                onClick={handleInitTemplate}>
+                                {ts("sds_doc.init_template")}
+                            </Button>
+                            <Button
+                                type="primary"
+                                loading={data.saving}
+                                onClick={handleSaveTreeStructure}>
+                                {ts("save")}
+                            </Button>
                             </>
-                        )}
-                        <Button
-                            className="sds-toolbar-back"
-                            icon={<ArrowLeftOutlined />}
-                            onClick={() => navigate("/sds_docs")}>
-                            {ts("back")}
-                        </Button>
+                    )}
+                    <Button
+                        className="sds-toolbar-back"
+                        icon={<ArrowLeftOutlined />}
+                        onClick={() => navigate("/sds_docs")}>
+                        {ts("back")}
+                    </Button>
                     </Space>
                 </div>
             </Form>

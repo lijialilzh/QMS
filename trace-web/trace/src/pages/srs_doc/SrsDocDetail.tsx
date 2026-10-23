@@ -5059,7 +5059,7 @@ export default () => {
         ]));
         rows.forEach((row: any) => {
             const chapterNo = chapterNoByCode.get(String(row.code || "").replace(/\s+/g, "").toUpperCase());
-            if (chapterNo && !parseOtherReqLocation(row.location)) row.location = chapterNo;
+            if (chapterNo) row.location = chapterNo;
         });
 
         try {
