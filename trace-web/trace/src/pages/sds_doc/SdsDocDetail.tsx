@@ -65,6 +65,12 @@ function fixedSds300ModuleName(code?: string): string {
     return FIXED_SDS300_MODULE_NAME[key] || "";
 }
 
+function traceReqNumberKey(code?: string): string {
+    const matched = String(code || "").toUpperCase().replace(/\s+/g, "").match(/^(?:SRS|SDS)-[A-Z]+?(\d+)-(\d+)$/);
+    if (!matched) return "";
+    return `${matched[1]}-${String(parseInt(matched[2], 10)).padStart(3, "0")}`;
+}
+
 function isSdsFrontMatterTitle(title?: string) {
     const compact = String(title || "").replace(/\s+/g, "");
     if (!compact) return false;
@@ -3289,7 +3295,14 @@ export default () => {
         directoryByCode?: Map<string, string>,
         directoryByName?: Map<string, string>,
         directoryByCodeName?: Map<string, string>,
+        livingReqKeys?: Set<string>,
     ) => {
+        const isDeletedPresetCode = (raw?: string) => {
+            const sdsCode = normalizeReqCode(raw);
+            const key = traceReqNumberKey(sdsCode);
+            const presetName = fixedSds300ModuleName(sdsCode);
+            return !!(presetName && key && livingReqKeys && !livingReqKeys.has(key));
+        };
         const directoryNumber = (sdsCode: string, chapter: string) => {
             const fromCode = sdsCode ? directoryByCode?.get(sdsCode) || "" : "";
             if (fromCode) return fromCode;
@@ -3313,6 +3326,7 @@ export default () => {
             const sdsCodes = splitTraceLines(row.sds_code);
             if (row?.design_manual) {
                 const lines = sdsCodes.map((raw) => {
+                    if (isDeletedPresetCode(raw)) return "";
                     const sdsCode = normalizeReqCode(raw);
                     const fixedName = fixedSds300ModuleName(sdsCode);
                     const name = fixedName || (sdsCode && directoryByCodeName?.get(sdsCode)) || "";
@@ -3331,7 +3345,9 @@ export default () => {
             const chapters = reqChapter ? [reqChapter] : rawChapters;
             const count = Math.max(1, sdsCodes.length, chapters.length, locations.length);
             return Array.from({ length: count }).map((_, index) => {
-                const sdsCode = normalizeReqCode(sdsCodes[index] ?? "");
+                const rawCode = sdsCodes[index] ?? "";
+                if (isDeletedPresetCode(rawCode)) return "";
+                const sdsCode = normalizeReqCode(rawCode);
                 const linked = !isFixedRcn300Row(row) && sdsCode ? navChapterBySdsCode?.get(sdsCode) : undefined;
                 if (linked) {
                     return `${linked.name}（章节 ${linked.num}）`;
@@ -3345,7 +3361,7 @@ export default () => {
                     || ""
                 ).trim();
                 return `${chapter}${location ? `（章节 ${location}）` : ""}`;
-            }).join("\n");
+            }).filter(Boolean).join("\n");
         };
         const visibleRows = (rows || []).filter((row: any) => {
             const code = String(row?.srs_code || "").replace(/\s+/g, "").toUpperCase();
@@ -3361,7 +3377,7 @@ export default () => {
             rows: visibleRows.map((row: any) => {
                 return {
                     srs_code: row.srs_code || "",
-                    sds_code: row.sds_code || "",
+                    sds_code: splitTraceLines(row.sds_code).filter((line) => !isDeletedPresetCode(line)).join("\n"),
                     chapter: buildChapterCell(row),
                     trace_id: row.id || "",
                     type_code: row.type_code || "",
@@ -3384,6 +3400,7 @@ export default () => {
         directoryByCode?: Map<string, string>,
         directoryByName?: Map<string, string>,
         directoryByCodeName?: Map<string, string>,
+        livingReqKeys?: Set<string>,
     ) => {
         const groups: Array<{ typeCode: string; title: string; rows: any[] }> = [];
         const groupIndex = new Map<string, number>();
@@ -3413,6 +3430,7 @@ export default () => {
                 directoryByCode,
                 directoryByName,
                 directoryByCodeName,
+                livingReqKeys,
             ),
         }));
     };
@@ -3453,6 +3471,11 @@ export default () => {
             const liveTailChapterByName = buildLiveTailChapterByName(roots);
             const directoryChapters = buildDirectoryChapterLookup(roots);
             const rows = res.data?.rows || [];
+            const livingReqKeys = new Set<string>();
+            rows.forEach((row: any) => {
+                const key = traceReqNumberKey(row?.srs_code);
+                if (key) livingReqKeys.add(key);
+            });
             const normalRows = rows.filter((row: any) => !isChangeTraceRow(row)).sort(compareTraceRow);
             const changeRows = rows.filter((row: any) => isChangeTraceRow(row)).sort(compareTraceRow);
             const table = buildTraceTableFromRows(
@@ -3463,6 +3486,7 @@ export default () => {
                 directoryChapters.byCode,
                 directoryChapters.byName,
                 directoryChapters.byCodeName,
+                livingReqKeys,
             );
             const changeExtraTables = buildTraceChangeExtraTables(
                 changeRows,
@@ -3472,6 +3496,7 @@ export default () => {
                 directoryChapters.byCode,
                 directoryChapters.byName,
                 directoryChapters.byCodeName,
+                livingReqKeys,
             );
             let traceTableApplied = false;
             const updateNodes = (nodes: TreeNode[]): TreeNode[] => (nodes || []).map((node) => {
