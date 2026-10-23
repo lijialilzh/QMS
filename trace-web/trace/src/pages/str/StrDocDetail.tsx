@@ -49,6 +49,16 @@ const compatMerge = (tb: any[]): Record<number, number> | null => {
     return g;
 };
 
+const isEquipInfoTable = (tb: any[]): boolean =>
+    ((tb?.[0] || []) as any[]).some((c) => String(c || "").includes("设备信息"));
+
+const cellAutoSize = (tb: any[], ci: number, value: any) => {
+    const header = String((tb?.[0] || [])[ci] || "");
+    if (!header.includes("设备信息")) return { minRows: 1, maxRows: 8 };
+    const lines = String(value ?? "").split("\n").length;
+    return { minRows: Math.min(40, Math.max(lines, 1)), maxRows: 40 };
+};
+
 // 兼容性表：表头行数（连续以"测试模块"开头的行）
 const compatHdrCount = (tb: any[]): number => {
     if (!tb || !tb.length || String((tb[0] || [])[0] || "").trim() !== "测试模块") return 0;
@@ -946,7 +956,7 @@ export default () => {
                     const pv = String(r[ciP] || "");
                     flags.push(pv.includes("是") || pv.includes("通过") || !pv.trim() ? 0 : 1);
                 });
-                charts.push(buildChartUrl("单元/集成/系统测试记录", funcs, counts, flags));
+                charts.push(buildChartUrl(`${stripNum(stage.title)}记录`, funcs, counts, flags));
             });
             patchNode(active._key, { charts });
             message.success(`已生成 ${charts.length} 张分布图`);
@@ -1208,11 +1218,11 @@ export default () => {
                                                                 style={{ marginBottom: 6, fontSize: 13 }}
                                                                 onChange={(e) => setCaption(ti, e.target.value)}
                                                             />
-                                                            <table className="pdp-grid" style={{ tableLayout: "fixed", width: "100%" }}>
+                                                            <table className="pdp-grid" style={{ tableLayout: isEquipInfoTable(tb) ? "auto" : "fixed", width: "100%" }}>
                                                                 {tb[0] && (
                                                                     <colgroup>
-                                                                        {tb[0].map((_: any, ci: number) => (
-                                                                            <col key={ci} />
+                                                                        {tb[0].map((h: any, ci: number) => (
+                                                                            <col key={ci} style={String(h || "").includes("设备信息") ? { width: "62%" } : undefined} />
                                                                         ))}
                                                                         {!readonly && <col style={{ width: 72 }} />}
                                                                     </colgroup>
@@ -1235,9 +1245,10 @@ export default () => {
                                                                                     ) : (
                                                                                         <Input.TextArea
                                                                                             className="pdp-cell"
-                                                                                            autoSize={{ minRows: 1, maxRows: 8 }}
+                                                                                            autoSize={cellAutoSize(tb, ci, cell)}
                                                                                             value={cell ?? ""}
                                                                                             disabled={readonly}
+                                                                                            style={String((tb[0] || [])[ci] || "").includes("设备信息") ? { whiteSpace: "pre-wrap" } : undefined}
                                                                                             onChange={(e) => setCell(ti, r, ci, e.target.value)}
                                                                                         />
                                                                                     )}
@@ -1376,11 +1387,11 @@ export default () => {
                                                         style={{ marginBottom: 6, fontSize: 13 }}
                                                         onChange={(e) => setCaption(ti, e.target.value)}
                                                     />
-                                                    <table className="pdp-grid" style={{ tableLayout: "fixed", width: "100%" }}>
+                                                    <table className="pdp-grid" style={{ tableLayout: isEquipInfoTable(tb) ? "auto" : "fixed", width: "100%" }}>
                                                         {tb[0] && (
                                                             <colgroup>
-                                                                {tb[0].map((_: any, ci: number) => (
-                                                                    <col key={ci} />
+                                                                {tb[0].map((h: any, ci: number) => (
+                                                                    <col key={ci} style={String(h || "").includes("设备信息") ? { width: "62%" } : undefined} />
                                                                 ))}
                                                                 {!readonly && <col style={{ width: 72 }} />}
                                                             </colgroup>
@@ -1403,9 +1414,10 @@ export default () => {
                                                                             ) : (
                                                                                 <Input.TextArea
                                                                                     className="pdp-cell"
-                                                                                    autoSize={{ minRows: 1, maxRows: 8 }}
+                                                                                    autoSize={cellAutoSize(tb, ci, cell)}
                                                                                     value={cell ?? ""}
                                                                                     disabled={readonly}
+                                                                                    style={String((tb[0] || [])[ci] || "").includes("设备信息") ? { whiteSpace: "pre-wrap" } : undefined}
                                                                                     onChange={(e) => setCell(ti, r, ci, e.target.value)}
                                                                                 />
                                                                             )}

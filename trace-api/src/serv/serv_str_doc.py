@@ -587,48 +587,55 @@ class Server(object):
     def __split_version_list(self, text):
         return [p.strip() for p in re.split(r"[、,，;；\n]+", str(text or "")) if p and p.strip()]
 
-    def __browser_header_versions(self, tbl):
-        if not isinstance(tbl, list) or len(tbl) < 2 or not isinstance(tbl[1], list):
-            return []
-        row = tbl[1]
-        if str(row[0] or "").strip() != "测试模块":
-            return []
-        out = []
-        for cell in row[2:]:
-            text = str(cell or "").strip()
-            if text and text not in ("测试点", "测试模块"):
-                out.append(text)
-        return out
+    def __equip_os_key(self, text):
+        blob = str(text or "")
+        if re.search(r"Windows\s*11|Win\s*11", blob, re.I):
+            return "win11"
+        if re.search(r"Windows\s*10|Win\s*10", blob, re.I):
+            return "win10"
+        return ""
+
+    def __equip_browser_versions(self, text):
+        """设备信息及浏览器版本里的浏览器版本号。至少 x.y.z，避免把 12.6、1920 当成版本。"""
+        vers = []
+        for raw in str(text or "").splitlines():
+            for ver in re.findall(r"\d+(?:\.\d+){2,}", raw):
+                if ver not in vers:
+                    vers.append(ver)
+        return vers
 
     def __paint_version_cols(self, tbl, versions, label):
-        """表头两行：第 3 列起换成给定版本，列数随之增减；数据行结果列不足时补「通过」。"""
-        if not versions or not isinstance(tbl, list) or len(tbl) < 2:
+        """表头两行：第 3 列起换成给定版本，有几个版本几列。没有版本行时补一行。结果格不足补「通过」。"""
+        if not versions or not isinstance(tbl, list) or not tbl or not isinstance(tbl[0], list):
             return
-        name_row = tbl[0] if isinstance(tbl[0], list) else []
-        ver_row = tbl[1] if isinstance(tbl[1], list) else []
-        if str(ver_row[0] or "").strip() != "测试模块":
+        if str(tbl[0][0] or "").strip() != "测试模块":
             return
-        head_a = list(name_row[:2])
-        head_b = list(ver_row[:2])
-        while len(head_a) < 2:
-            head_a.append("测试模块" if not head_a else "测试点")
-        while len(head_b) < 2:
-            head_b.append(head_a[len(head_b)])
-        tbl[0] = head_a + [label] * len(versions)
-        tbl[1] = head_b + list(versions)
-        for i in range(2, len(tbl)):
-            row = list(tbl[i]) if isinstance(tbl[i], list) else []
+        name_row = list(tbl[0])
+        has_ver_row = len(tbl) > 1 and isinstance(tbl[1], list) and str(tbl[1][0] or "").strip() == "测试模块"
+        ver_row = list(tbl[1]) if has_ver_row else ["测试模块", "测试点"]
+        data_start = 2 if has_ver_row else 1
+        head_a = (name_row + ["测试模块", "测试点"])[:2]
+        head_b = (ver_row + ["测试模块", "测试点"])[:2]
+        new_rows = [head_a + [label] * len(versions), head_b + list(versions)]
+        for src in tbl[data_start:]:
+            row = list(src) if isinstance(src, list) else []
             base = (row + ["", ""])[:2]
-            tail = row[2:]
-            pad = tail[-1] if tail else "通过"
+            tail = [("通过" if str(c or "").strip() in ("", "结果") else c) for c in row[2:]]
+            pad = "通过"
+            for cell in reversed(tail):
+                if str(cell or "").strip() in ("通过", "不通过", "失败"):
+                    pad = cell
+                    break
             if len(tail) < len(versions):
                 tail = tail + [pad] * (len(versions) - len(tail))
             else:
                 tail = tail[:len(versions)]
-            tbl[i] = base + tail
+            new_rows.append(base + tail)
+        tbl[:] = new_rows
 
     def __sync_compat_versions(self, content):
-        """测试概述的杀毒软件名称/版本写入 4.4 表头；Win10/Win11 表头浏览器版本写入测试设备详情。"""
+        """测试概述的杀毒软件名称/版本写入杀毒表头。
+        设备需求「设备信息及浏览器版本」里的浏览器版本写入 Win10/Win11 表头和测试设备详情。不回写设备需求。"""
         if not isinstance(content, dict):
             return content
         nodes = []
@@ -658,47 +665,80 @@ class Server(object):
         client_name = overview.get("客户端杀毒软件名称", "")
         server_vers = self.__split_version_list(overview.get("服务端杀毒软件版本", ""))
         server_name = overview.get("服务端杀毒软件名称", "")
-        win_vers = {"win10": [], "win11": []}
+        equip = {"win10": [], "win11": []}
+        for node in nodes:
+            if self.__plain_title(node) != "设备需求":
+                continue
+            for tbl in (node.get("tables") or []):
+                if not isinstance(tbl, list) or not tbl or not isinstance(tbl[0], list):
+                    continue
+                header = [str(c or "").strip() for c in tbl[0]]
+                info_col = next((i for i, h in enumerate(header) if "设备信息" in h and "浏览器" in h), -1)
+                if info_col < 0:
+                    continue
+                for row in tbl[1:]:
+                    if not isinstance(row, list) or info_col >= len(row):
+                        continue
+                    key = self.__equip_os_key(str(row[info_col] or "") + " " + str(row[0] or ""))
+                    vers = self.__equip_browser_versions(row[info_col])
+                    if key and vers:
+                        equip[key] = vers
         for node in nodes:
             title = self.__plain_title(node)
             tables = node.get("tables") or []
             if not tables or not isinstance(tables[0], list):
                 continue
             header = tables[0][0] if tables[0] else []
-            has_av = isinstance(header, list) and any("杀毒" in str(cell) for cell in header)
-            if title == "用户端测试" and has_av and client_name and client_vers:
-                old = str(header[2] or "") if len(header) > 2 else ""
+            is_module = isinstance(header, list) and str(header[0] or "").strip() == "测试模块"
+            if title == "用户端测试" and is_module and client_name and client_vers:
+                old = " ".join(str(cell or "") for cell in header)
                 if "、Windows" in old or "、windows" in old.lower():
                     label = f"杀毒及设备信息({client_name}、Windows)"
                 else:
                     label = f"杀毒及设备信息({client_name})"
                 self.__paint_version_cols(tables[0], client_vers, label)
-            elif ("服务端" in title and "测试" in title and has_av and server_name and server_vers):
+            elif "服务端" in title and "测试" in title and is_module and server_name and server_vers:
                 self.__paint_version_cols(tables[0], server_vers, f"杀毒信息({server_name})")
-            elif "Win10" in title and "测试项" in title:
-                win_vers["win10"] = self.__browser_header_versions(tables[0])
-            elif "Win11" in title and "测试项" in title:
-                win_vers["win11"] = self.__browser_header_versions(tables[0])
+            elif is_module and (
+                ("Win10" in title and "测试项" in title and equip["win10"])
+                or ("Win11" in title and "测试项" in title and equip["win11"])
+            ):
+                versions = equip["win10"] if "Win10" in title else equip["win11"]
+                label = "Google Chrome版本信息"
+                if isinstance(header, list):
+                    for cell in header[2:]:
+                        text = str(cell or "").strip()
+                        if text and text not in ("结果",):
+                            label = text
+                            break
+                self.__paint_version_cols(tables[0], versions, label)
 
         def patch_browser(text, versions):
-            if not versions or "浏览器版本" not in str(text or ""):
+            if not versions:
                 return text
             line = "浏览器版本：Chrome " + "、".join(versions)
-            return re.sub(r"浏览器版本：[^\n]*", line, str(text))
+            src = str(text or "")
+            if "浏览器版本" in src:
+                return re.sub(r"浏览器版本：[^\n]*", line, src)
+            src = src.rstrip()
+            return (src + "\n" + line) if src else line
 
         for node in nodes:
             if self.__plain_title(node) != "测试设备详情":
                 continue
             for tbl in (node.get("tables") or []):
-                for row in tbl:
-                    if not isinstance(row, list) or len(row) < 2 or str(row[0] or "").strip() != "用户端":
+                if not isinstance(tbl, list) or not tbl or not isinstance(tbl[0], list):
+                    continue
+                header = [str(c or "").strip() for c in tbl[0]]
+                info_col = next((i for i, h in enumerate(header) if "设备信息" in h), 1)
+                for row in tbl[1:]:
+                    if not isinstance(row, list) or len(row) <= info_col or str(row[0] or "").strip() != "用户端":
                         continue
-                    info = str(row[1] or "")
-                    if "Win11" in info or "Windows 11" in info:
-                        versions = win_vers["win11"] or win_vers["win10"]
-                    else:
-                        versions = win_vers["win10"] or win_vers["win11"]
-                    row[1] = patch_browser(info, versions)
+                    info = str(row[info_col] or "")
+                    key = self.__equip_os_key(info + " " + str(row[0] or ""))
+                    if not key or not equip[key]:
+                        continue
+                    row[info_col] = patch_browser(info, equip[key])
         return content
 
     def __srs_leaves(self, prod_id):
