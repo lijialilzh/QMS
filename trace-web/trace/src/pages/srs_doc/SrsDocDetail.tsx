@@ -5094,8 +5094,8 @@ export default () => {
             };
             const changedAssignments = assignments.filter(isChangedAssignment);
             const deletedOldRows = oldRows.filter((oldRow: any) => oldRow?.id && !usedOldIds.has(oldRow.id));
-            const persistOtherReqChapters = async (tree: TreeNode[]) => {
-                if (!chapterPlan.changed) return;
+            const persistOtherReqChapters = async (tree: TreeNode[], force = false) => {
+                if (!force && !chapterPlan.changed) return;
                 const cleanedContent = (tree || []).map((node: any) => cleanTreeNode(node, docId, 0));
                 if (!cleanedContent.length) return;
                 const saveRes: any = await Api.update_srs_doc({
@@ -5226,7 +5226,7 @@ export default () => {
                     { ...srsTableState, srsOtherReqData: orderedOther },
                 ),
             );
-            await persistOtherReqChapters(syncedTree);
+            await persistOtherReqChapters(syncedTree, true);
             treeStructureRef.current = syncedTree;
             dispatch({
                 srsTableData: srsTableState.srsTableData,

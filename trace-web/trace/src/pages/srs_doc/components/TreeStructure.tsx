@@ -1624,11 +1624,24 @@ export function syncOtherReqCodesToChaptersFromRows(
         .map(normalizeOtherReqSyncRow)
         .filter((row) => row.code && row.type_code === "2");
     const byLocation = new Map<string, string>();
+    const claimedHeadings = new Set<string>();
     (otherRows || []).forEach((row) => {
         const code = normalizeSrsCodeValue(row?.code || row?.srs_code || "");
         const syncLocation = getOtherReqSyncLocationToken(row?.location);
+        if (syncLocation) claimedHeadings.add(syncLocation);
         if (code && syncLocation) byLocation.set(syncLocation, code);
     });
+    const presetOtherReqNames = new Set(
+        ["数据库要求", "性能要求", "基本要求", "图像接收", "图像存储", "图像处理", "图像显示", "文档需求", "法规符合需求", "外部连接"]
+            .map((name) => name.replace(/\s+/g, "")),
+    );
+    const isUnclaimedOtherReqChapter = (node: TreeNode, headingNo: string) => {
+        if (!headingNo || headingNo.includes(".") || fixedSections[headingNo] || claimedHeadings.has(headingNo)) return false;
+        const code = normalizeSrsCodeValue(node.srs_code || extractSrsCodeFromText(node.text) || "");
+        const name = normalizeReqDisplayText(String(node.title || "").replace(/^\d+(?:\.\d+)*\s*/, "")).replace(/\s+/g, "");
+        if (code && /RCN300-/i.test(code)) return true;
+        return !!name && presetOtherReqNames.has(name);
+    };
     const synced = (items || []).map((node) => {
         const headingNo = getHeadingNumberFromTitle(node.title);
         const fixedName = headingNo ? fixedSections[headingNo] : undefined;
@@ -1650,7 +1663,7 @@ export function syncOtherReqCodesToChaptersFromRows(
             { fixedName, resolveSrsCode },
             children,
         );
-    });
+    }).filter((node) => !isUnclaimedOtherReqChapter(node, getHeadingNumberFromTitle(node.title)));
     return applyFixedProtection(synced);
 }
 
