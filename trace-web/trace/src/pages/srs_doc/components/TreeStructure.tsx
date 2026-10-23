@@ -1180,6 +1180,7 @@ function normalizeOtherReqSyncRow(row: any) {
         code: normalizeSrsCodeValue(row?.code || row?.srs_code || ""),
         module: normalizeReqDisplayText(row?.module),
         location: normalizeReqDisplayText(row?.location),
+        design_role: String(row?.design_role || ""),
         type_code: String(row?.type_code || "2"),
         id: row?.id,
     };
@@ -1294,6 +1295,7 @@ export function mergeOtherReqDetailsForSync(previewRows: any[] = [], tableRows: 
         srs_code: row.code,
         module: row.module,
         location: row.location,
+        design_role: row.design_role,
         type_code: row.type_code,
         id: row.id,
     });
@@ -1663,8 +1665,60 @@ export function syncOtherReqCodesToChaptersFromRows(
             { fixedName, resolveSrsCode },
             children,
         );
-    }).filter((node) => !isUnclaimedOtherReqChapter(node, getHeadingNumberFromTitle(node.title)));
-    return applyFixedProtection(synced);
+    });
+    const functionDesignHeading = (() => {
+        const row = (otherRows || []).find((item) => {
+            const role = String(item?.design_role || "").replace(/\s+/g, "");
+            return role === "功能设计" || role === "function" || role === "NeoViewer";
+        });
+        const token = getOtherReqSyncLocationToken(row?.location);
+        return token ? token.split(".")[0] : "";
+    })();
+    const rewriteHeadingPrefix = (node: TreeNode, fromPrefix: string, toPrefix: string): TreeNode => {
+        const title = String(node.title || "");
+        const nextTitle = fromPrefix && (title.startsWith(`${fromPrefix} `) || title.startsWith(`${fromPrefix}.`))
+            ? `${toPrefix}${title.slice(fromPrefix.length)}`
+            : title;
+        return {
+            ...node,
+            title: nextTitle,
+            children: (node.children || []).map((child) => rewriteHeadingPrefix(child, fromPrefix, toPrefix)),
+        };
+    };
+    const functionChapter = functionDesignHeading
+        ? synced.find((node) => getHeadingNumberFromTitle(node.title) === functionDesignHeading)
+        : undefined;
+    const kept: TreeNode[] = [];
+    const carried: TreeNode[] = [];
+    synced.forEach((node) => {
+        const headingNo = getHeadingNumberFromTitle(node.title);
+        if (!isUnclaimedOtherReqChapter(node, headingNo)) {
+            kept.push(node);
+            return;
+        }
+        if (!(node.children || []).length || !functionChapter || functionChapter === node) {
+            if ((node.children || []).length) kept.push(node);
+            return;
+        }
+        carried.push(...(node.children || []));
+    });
+    if (carried.length && functionChapter) {
+        const targetHeading = getHeadingNumberFromTitle(functionChapter.title);
+        const moved = carried.map((child) => {
+            const childHeading = getHeadingNumberFromTitle(child.title);
+            const parentHeading = childHeading.includes(".") ? childHeading.split(".").slice(0, -1).join(".") : childHeading;
+            if (!parentHeading || !targetHeading || parentHeading === targetHeading) return child;
+            return rewriteHeadingPrefix(child, parentHeading, targetHeading);
+        });
+        const targetIndex = kept.indexOf(functionChapter);
+        if (targetIndex >= 0) {
+            kept[targetIndex] = {
+                ...functionChapter,
+                children: [...(functionChapter.children || []), ...moved],
+            };
+        }
+    }
+    return applyFixedProtection(kept);
 }
 
 function extractSrsCodeFromText(value: any): string {
@@ -3987,15 +4041,26 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         ));
     };
     const findReqDetailRoot = (items: TreeNode[]): TreeNode | undefined => {
+        const functionRow = (srsReqPreview?.other || []).find((row: any) => {
+            const role = String(row?.design_role || "").replace(/\s+/g, "");
+            return role === "功能设计" || role === "function" || role === "NeoViewer";
+        });
+        const functionHeading = getOtherReqSyncLocationToken(functionRow?.location).split(".")[0];
+        if (functionHeading) {
+            const matched = (items || []).find((node) => getHeadingNumberFromTitle(node.title) === functionHeading);
+            if (matched) return matched;
+        }
         for (const node of items || []) {
             const title = String(node.title || "").trim();
             const heading = title.match(/^(\d+(?:\.\d+)*)\s+/)?.[1] || "";
             if (heading === "7") return node;
         }
-        return (items || []).find((node) => (
-            getHeadingDepth(node.title) === 1 &&
-            /需求/.test(stripHeadingNumber(node.title))
-        ));
+        return (items || []).find((node) => {
+            if (getHeadingDepth(node.title) !== 1) return false;
+            const name = stripHeadingNumber(node.title).replace(/\s+/g, "");
+            if (/文档需求|法规符合|数据库要求|性能要求|基本要求|外部连接/.test(name)) return false;
+            return /需求/.test(name);
+        });
     };
     const filterReqTableRows = (table: TableData | null | undefined, detailMap: Map<string, any>) => {
         if (!table || !Array.isArray(table.rows)) return table;
@@ -4443,6 +4508,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             code: normalizeSrsCode(item?.srs_code || item?.code || ""),
             module: normalizeReqDisplayText(item?.module),
             location: normalizeReqDisplayText(item?.location),
+            design_role: item?.design_role || "",
             type_code: item?.type_code || "2",
         }))
         .filter((item: any) => item.code && item.module);
@@ -4941,6 +5007,98 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         return cleanedCloned;
     };
 
+    const restoreMissingStandardFunctionChapters = (items: TreeNode[], details: any[]): TreeNode[] => {
+        const standard = (details || []).filter((detail) => {
+            const typeCode = String(detail?.type_code || "1");
+            return typeCode === "1" && normalizeSrsCode(detail?.code);
+        });
+        if (!standard.length) return items;
+        const cloned: TreeNode[] = JSON.parse(JSON.stringify(items || []));
+        const root = findReqDetailRoot(cloned);
+        if (!root) return items;
+        const titleText = (title?: string) => normalizeTitleText(String(title || "").replace(/^\d+(?:\.\d+)*\s*/, ""));
+        const moduleNames = new Set(
+            standard.map((detail) => normalizeTitleText(detail?.module)).filter(Boolean),
+        );
+        (cloned || []).forEach((chapter) => {
+            if (chapter === root || getHeadingDepth(chapter.title) !== 1) return;
+            const stay: TreeNode[] = [];
+            (chapter.children || []).forEach((child) => {
+                if (moduleNames.has(titleText(child.title))) {
+                    root.children = [...(root.children || []), child];
+                    return;
+                }
+                stay.push(child);
+            });
+            chapter.children = stay;
+        });
+        const rootPrefixForMove = String(root.title || "").trim().match(/^(\d+)/)?.[1] || "";
+        if (rootPrefixForMove) renumberDirectHeadingChildren(root.children || [], rootPrefixForMove);
+        const existing = new Set<string>();
+        const walkCodes = (nodes: TreeNode[]) => {
+            (nodes || []).forEach((node) => {
+                const code = normalizeSrsCode(node.srs_code || "") || normalizeSrsCode(extractSrsCodeFromTable(node.table));
+                if (code) existing.add(code);
+                walkCodes(node.children || []);
+            });
+        };
+        walkCodes(cloned);
+        const rootPrefix = String(root.title || "").trim().match(/^(\d+)/)?.[1] || "";
+        if (!rootPrefix) return items;
+        const ensureChild = (parent: TreeNode, name: string) => {
+            const prefix = String(parent.title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || rootPrefix;
+            parent.children = parent.children || [];
+            const found = findChildByTitleText(parent.children, prefix, name);
+            if (found) return found;
+            const node = buildAutoNode(`${prefix}.${getNextChildNo(parent.children, prefix)} ${name}`, parent);
+            parent.children = [...parent.children, node];
+            return node;
+        };
+        const fillDetail = (parent: TreeNode, name: string, detail: any) => {
+            const prefix = String(parent.title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || rootPrefix;
+            parent.children = parent.children || [];
+            const code = normalizeSrsCode(detail?.code);
+            const found = findChildByTitleText(parent.children, prefix, name);
+            const node = found || buildAutoNode(`${prefix}.${getNextChildNo(parent.children, prefix)} ${name}`, parent);
+            if (!found) parent.children = [...parent.children, node];
+            if (!normalizeSrsCode(node.srs_code || "") && code) {
+                node.srs_code = code;
+                node.label = "__auto_req_detail";
+                node.text = "";
+                node.req_detail_key = detail?.req_id ? `reqd_${detail.req_id}` : node.req_detail_key;
+                node.table = buildReqDetailTable({
+                    ...detail,
+                    code,
+                    req_detail_key: node.req_detail_key,
+                });
+            }
+        };
+        standard.forEach((detail) => {
+            const code = normalizeSrsCode(detail?.code);
+            if (!code || existing.has(code)) return;
+            const moduleText = normalizeReqDisplayText(detail?.module);
+            const functionText = normalizeReqDisplayText(detail?.function);
+            const subText = normalizeReqDisplayText(detail?.sub_function);
+            if (!moduleText && !functionText && !subText) return;
+            if (!functionText && !subText) {
+                fillDetail(root, moduleText, detail);
+                existing.add(code);
+                return;
+            }
+            const moduleNode = moduleText ? ensureChild(root, moduleText) : root;
+            if (!subText) {
+                fillDetail(moduleNode, functionText, detail);
+                existing.add(code);
+                return;
+            }
+            const functionNode = functionText ? ensureChild(moduleNode, functionText) : moduleNode;
+            fillDetail(functionNode, subText, detail);
+            existing.add(code);
+        });
+        sortTreeChildrenBySrsCode([root]);
+        return cloned;
+    };
+
     // 同步外部传入的 value 到内部状态
     useEffect(() => {
         const withRcm = syncRcmCodesFromText(value);
@@ -4989,7 +5147,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             : (hasPreviewChangeRows
                 ? syncMissingChangeReqPreviewToTree(withChangePruned)
                 : withChangePruned);
-        setNodes(nextNodes);
+        setNodes(restoreMissingStandardFunctionChapters(nextNodes, reqDetails || []));
     }, [value, reqDetails, srsReqPreview, enableStandardReqAutoSync]);
     // 把组件内部“最新树状态”实时回传给父组件，避免保存时拿到滞后值
     useEffect(() => {

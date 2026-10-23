@@ -112,6 +112,12 @@ _OTHER_REQ_ROLE_BY_MODULE = {
 }
 
 
+def other_req_is_document_requirement(*parts: str) -> bool:
+    """详细设计不获取文档需求。按模块名判断，名称里带「文档需求」即跳过。"""
+    text = re.sub(r"\s+", "", "".join(str(part or "") for part in parts))
+    return "文档需求" in text
+
+
 def other_req_design_role_is_explicit(value: str) -> bool:
     label = re.sub(r"\s+", "", str(value or ""))
     return label in _OTHER_REQ_ROLE_LABELS
@@ -1857,6 +1863,8 @@ class Server(object):
             obj.type_code = row_req.type_code
             obj.type_name = type_names.get(row_req.id) or default_types.get(row_req.type_code) or row_req.type_code
             if str(row_req.type_code) == "2":
+                if other_req_is_document_requirement(getattr(row_req, "module", ""), obj.module):
+                    continue
                 role = normalize_other_req_design_role(
                     getattr(row_req, "design_role", ""), getattr(row_req, "module", ""), getattr(row_req, "code", ""),
                 )
