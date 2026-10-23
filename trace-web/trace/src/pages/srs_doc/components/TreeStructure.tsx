@@ -1524,6 +1524,7 @@ export function syncTreeWithOtherReqState(
             srs_code: row.code,
             module: row.module,
             location: row.location,
+            design_role: row.design_role,
             type_code: row.type_code,
             id: row.id,
         }));
@@ -1666,14 +1667,10 @@ export function syncOtherReqCodesToChaptersFromRows(
             children,
         );
     });
-    const functionDesignHeading = (() => {
-        const row = (otherRows || []).find((item) => {
-            const role = String(item?.design_role || "").replace(/\s+/g, "");
-            return role === "功能设计" || role === "function" || role === "NeoViewer";
-        });
-        const token = getOtherReqSyncLocationToken(row?.location);
-        return token ? token.split(".")[0] : "";
-    })();
+    const chapterNameOf = (node: TreeNode) => normalizeReqDisplayText(
+        String(node.title || "").replace(/^\d+(?:\.\d+)*\s*/, ""),
+    ).replace(/\s+/g, "");
+    const isRequirementSection = (node: TreeNode) => chapterNameOf(node) === "要求";
     const rewriteHeadingPrefix = (node: TreeNode, fromPrefix: string, toPrefix: string): TreeNode => {
         const title = String(node.title || "");
         const nextTitle = fromPrefix && (title.startsWith(`${fromPrefix} `) || title.startsWith(`${fromPrefix}.`))
@@ -1685,36 +1682,85 @@ export function syncOtherReqCodesToChaptersFromRows(
             children: (node.children || []).map((child) => rewriteHeadingPrefix(child, fromPrefix, toPrefix)),
         };
     };
-    const functionChapter = functionDesignHeading
-        ? synced.find((node) => getHeadingNumberFromTitle(node.title) === functionDesignHeading)
-        : undefined;
-    const kept: TreeNode[] = [];
-    const carried: TreeNode[] = [];
-    synced.forEach((node) => {
-        const headingNo = getHeadingNumberFromTitle(node.title);
-        if (!isUnclaimedOtherReqChapter(node, headingNo)) {
-            kept.push(node);
-            return;
-        }
-        if (!(node.children || []).length || !functionChapter || functionChapter === node) {
-            if ((node.children || []).length) kept.push(node);
-            return;
-        }
-        carried.push(...(node.children || []));
+    const functionRow = (otherRows || []).find((item) => {
+        const role = String(item?.design_role || "").replace(/\s+/g, "");
+        return role === "功能设计" || role === "function" || role === "NeoViewer";
     });
-    if (carried.length && functionChapter) {
-        const targetHeading = getHeadingNumberFromTitle(functionChapter.title);
-        const moved = carried.map((child) => {
+    const functionModule = normalizeReqDisplayText(functionRow?.module || "").replace(/\s+/g, "");
+    const livingNames = new Set(
+        (otherRows || [])
+            .map((row) => normalizeReqDisplayText(row?.module || "").replace(/\s+/g, ""))
+            .filter(Boolean),
+    );
+    const functionChapter = functionModule
+        ? synced.find((node) => chapterNameOf(node) === functionModule)
+            || synced.find((node) => chapterNameOf(node) === "图像显示")
+        : undefined;
+    if (functionChapter && functionModule && chapterNameOf(functionChapter) === "图像显示") {
+        const headingNo = getHeadingNumberFromTitle(functionChapter.title);
+        functionChapter.title = headingNo
+            ? `${headingNo} ${normalizeReqDisplayText(functionRow?.module)}`
+            : normalizeReqDisplayText(functionRow?.module);
+    }
+    const kept: TreeNode[] = [];
+    const broughtChildren: TreeNode[] = [];
+    const takeChildren = (children: TreeNode[], targetHeading: string) => {
+        (children || []).forEach((child) => {
             const childHeading = getHeadingNumberFromTitle(child.title);
             const parentHeading = childHeading.includes(".") ? childHeading.split(".").slice(0, -1).join(".") : childHeading;
-            if (!parentHeading || !targetHeading || parentHeading === targetHeading) return child;
-            return rewriteHeadingPrefix(child, parentHeading, targetHeading);
+            if (!parentHeading || !targetHeading || parentHeading === targetHeading) {
+                broughtChildren.push(child);
+                return;
+            }
+            broughtChildren.push(rewriteHeadingPrefix(child, parentHeading, targetHeading));
         });
+    };
+    synced.forEach((node) => {
+        const headingNo = getHeadingNumberFromTitle(node.title);
+        const name = chapterNameOf(node);
+        const leftoverImageDisplay = !!functionChapter
+            && node !== functionChapter
+            && name === "图像显示"
+            && !!headingNo
+            && !headingNo.includes(".")
+            && !claimedHeadings.has(headingNo);
+        if (leftoverImageDisplay) {
+            takeChildren(node.children || [], getHeadingNumberFromTitle(functionChapter.title));
+            return;
+        }
+        const requirementChildren = (node.children || []).filter(isRequirementSection);
+        const otherChildren = (node.children || []).filter((child) => !isRequirementSection(child));
+        const staleRenamedChapter = !!functionChapter
+            && node !== functionChapter
+            && !!headingNo
+            && !headingNo.includes(".")
+            && !fixedSections[headingNo]
+            && !claimedHeadings.has(headingNo)
+            && !livingNames.has(name)
+            && requirementChildren.length > 0
+            && !(functionChapter.children || []).some(isRequirementSection);
+        if (staleRenamedChapter) {
+            takeChildren(requirementChildren, getHeadingNumberFromTitle(functionChapter.title));
+            if (otherChildren.length) kept.push({ ...node, children: otherChildren });
+            return;
+        }
+        if (isUnclaimedOtherReqChapter(node, headingNo) && !(node.children || []).length) return;
+        kept.push(node);
+    });
+    if (broughtChildren.length && functionChapter) {
+        const targetHeading = getHeadingNumberFromTitle(functionChapter.title);
         const targetIndex = kept.indexOf(functionChapter);
         if (targetIndex >= 0) {
+            const combined = [...(functionChapter.children || []), ...broughtChildren];
+            const renumbered = combined.map((child, index) => {
+                const childHeading = getHeadingNumberFromTitle(child.title);
+                const nextHeading = targetHeading ? `${targetHeading}.${index + 1}` : "";
+                if (!childHeading || !nextHeading || childHeading === nextHeading) return child;
+                return rewriteHeadingPrefix(child, childHeading, nextHeading);
+            });
             kept[targetIndex] = {
                 ...functionChapter,
-                children: [...(functionChapter.children || []), ...moved],
+                children: renumbered,
             };
         }
     }
@@ -5016,24 +5062,6 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         const cloned: TreeNode[] = JSON.parse(JSON.stringify(items || []));
         const root = findReqDetailRoot(cloned);
         if (!root) return items;
-        const titleText = (title?: string) => normalizeTitleText(String(title || "").replace(/^\d+(?:\.\d+)*\s*/, ""));
-        const moduleNames = new Set(
-            standard.map((detail) => normalizeTitleText(detail?.module)).filter(Boolean),
-        );
-        (cloned || []).forEach((chapter) => {
-            if (chapter === root || getHeadingDepth(chapter.title) !== 1) return;
-            const stay: TreeNode[] = [];
-            (chapter.children || []).forEach((child) => {
-                if (moduleNames.has(titleText(child.title))) {
-                    root.children = [...(root.children || []), child];
-                    return;
-                }
-                stay.push(child);
-            });
-            chapter.children = stay;
-        });
-        const rootPrefixForMove = String(root.title || "").trim().match(/^(\d+)/)?.[1] || "";
-        if (rootPrefixForMove) renumberDirectHeadingChildren(root.children || [], rootPrefixForMove);
         const existing = new Set<string>();
         const walkCodes = (nodes: TreeNode[]) => {
             (nodes || []).forEach((node) => {
@@ -5120,8 +5148,21 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             srsReqPreviewChanges: previewChanges,
             enableStandardReqAutoSync,
         };
+        const applyFunctionChaptersToOutline = (source: TreeNode[]) => {
+            const previewOtherDetails = buildPreviewOtherDetails();
+            if (!previewOtherDetails.length) return source;
+            return syncOtherReqCodesToChapters(
+                syncEmbeddedOtherReqTableInTree(source, previewOtherDetails),
+                previewOtherDetails,
+            );
+        };
         if (!shouldSyncReqDerivedTree) {
-            if (valueChanged) setNodes(withRcm);
+            if (valueChanged) {
+                setNodes(restoreMissingStandardFunctionChapters(
+                    applyFunctionChaptersToOutline(withRcm),
+                    reqDetails || [],
+                ));
+            }
             return;
         }
         const sourceNodes = valueChanged ? withRcm : nodes;

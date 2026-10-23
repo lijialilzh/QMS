@@ -3787,6 +3787,10 @@ export default () => {
                     const parsedContent = dedupeChangeTableNodesInTree(
                         syncTreeWithSrsTableStateForDisplay(otherChapterEnsured.nodes, srsTableState),
                     );
+                    const topChapterTitles = (nodes: TreeNode[]) => (nodes || [])
+                        .map((node) => String(node.title || "").trim())
+                        .join("\n");
+                    const functionChaptersMoved = topChapterTitles(otherChapterEnsured.nodes) !== topChapterTitles(parsedContent);
                     const derivedCoverTitle = extractCoverTitleFromTree(parsedContent);
                     const derivedFileNo = extractFileNoFromTree(parsedContent);
 
@@ -3810,14 +3814,14 @@ export default () => {
                         srsOtherReqData: srsTableState.srsOtherReqData,
                         srsChangeTables: srsTableState.srsChangeTables,
                         srsTableLoading: false,
-                        treeRefreshKey: (shouldInitStandard || shouldPatchTemplate || shouldAppendReview || shouldRedistributeDocReq || shouldSeedOtherReqs || otherChapterEnsured.changed) ? Date.now() : data.treeRefreshKey,
+                        treeRefreshKey: (shouldInitStandard || shouldPatchTemplate || shouldAppendReview || shouldRedistributeDocReq || shouldSeedOtherReqs || otherChapterEnsured.changed || functionChaptersMoved) ? Date.now() : data.treeRefreshKey,
                     });
                     treeStructureRef.current = parsedContent;
                     initialEditTreeRef.current = cloneTree(parsedContent);
                     if (!(srsTableState.srsTableData || []).length && !isReadOnly) {
                         window.setTimeout(() => loadSrsTableData(true), 600);
                     }
-                    if ((shouldInitStandard || shouldPatchTemplate || shouldAppendReview || shouldRedistributeDocReq || shouldSeedOtherReqs || otherChapterEnsured.changed) && !isReadOnly) {
+                    if ((shouldInitStandard || shouldPatchTemplate || shouldAppendReview || shouldRedistributeDocReq || shouldSeedOtherReqs || otherChapterEnsured.changed || functionChaptersMoved) && !isReadOnly) {
                         const docId = targetRow.id || parseInt(String(id), 10);
                         if (otherChapterEnsured.changed) {
                             otherChapterEnsured.filled.forEach((row: any) => {
@@ -5099,8 +5103,8 @@ export default () => {
             };
             const changedAssignments = assignments.filter(isChangedAssignment);
             const deletedOldRows = oldRows.filter((oldRow: any) => oldRow?.id && !usedOldIds.has(oldRow.id));
-            const persistOtherReqChapters = async (tree: TreeNode[]) => {
-                if (!chapterPlan.changed) return;
+            const persistOtherReqChapters = async (tree: TreeNode[], force = false) => {
+                if (!force && !chapterPlan.changed) return;
                 const cleanedContent = (tree || []).map((node: any) => cleanTreeNode(node, docId, 0));
                 if (!cleanedContent.length) return;
                 const saveRes: any = await Api.update_srs_doc({
