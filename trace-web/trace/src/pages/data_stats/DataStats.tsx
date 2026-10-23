@@ -935,9 +935,28 @@ export default () => {
             return Promise.resolve({ hospitalMiss: false });
         }
         dispatch({ writing: true, writeHint: "" });
-        const checkRows = kind === "ann" && module && annPack ? (annPack.rows[module] || []) : rows;
-        const hospitalP = statsOnly ? Promise.resolve(null) : matchCaseHospitals(productId, checkRows);
-        return writeStatsDoc(productId, kind, rows, source, annPack)
+        const hospitalRows = kind !== "ann"
+            ? rows
+            : (statsOnly && annPack
+                ? annPack.modules.reduce((acc: CaseRow[], m) => acc.concat(annPack.rows[m] || []), [] as CaseRow[])
+                : (module && annPack ? (annPack.rows[module] || []) : rows));
+        const hospitalP = matchCaseHospitals(productId, hospitalRows);
+        const blocked = (match: HospitalMatch | null) => {
+            if (kind !== "ann" || !match) return false;
+            if (match.failed) {
+                message.warning("未能读取该产品合规医院，本次未写入。请确认后再写入");
+                return true;
+            }
+            if (match.emptyList || (match.missed || []).length) {
+                message.warning(`${hospitalMissText(kind, match, false)}。请修改 TXID 后再写入，本次未写入`, 10);
+                return true;
+            }
+            return false;
+        };
+        return hospitalP.then((match) => {
+            if (blocked(match)) return { hospitalMiss: true };
+            const laterHospital = kind === "ann" ? Promise.resolve(null) : matchCaseHospitals(productId, rows);
+            return writeStatsDoc(productId, kind, rows, source, annPack)
             .then((stats: any) => {
                 if (statsOnly || kind !== "ann") {
                     return { stats, ann: null as any };
@@ -955,7 +974,7 @@ export default () => {
                 }
                 return writeModuleModelDocs(productId, module).then((model) => ({ stats, ann, col, model }));
             })
-            .then(({ stats, ann, col, model }: any) => hospitalP.then((match) => ({ stats, ann, col, model, match })))
+            .then(({ stats, ann, col, model }: any) => laterHospital.then((match) => ({ stats, ann, col, model, match })))
             .then(({ stats, ann, col, model, match }: any) => {
                 const errors = [
                     ...((stats && stats.errors) || (stats?.status === "error" ? [stats.msg || "写入统计表失败"] : [])),
@@ -997,8 +1016,8 @@ export default () => {
             .catch(() => {
                 message.error("写入数据失败");
                 return { hospitalMiss: false };
-            })
-            .finally(() => dispatch({ writing: false }));
+            });
+        }).finally(() => dispatch({ writing: false }));
     };
 
     /** 只补该产品还没有的菜单类型空模板，已有的不覆盖。 */

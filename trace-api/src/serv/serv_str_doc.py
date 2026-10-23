@@ -578,6 +578,127 @@ class Server(object):
         for s in (content.get("sections") or []):
             if s.get("ref_type") == "attachment":
                 proc(s)
+        self.__sync_compat_versions(content)
+        return content
+
+    def __plain_title(self, node):
+        return re.sub(r"^\s*\d+(?:\.\d+)*[\.、\s]*", "", str((node or {}).get("title") or "")).strip()
+
+    def __split_version_list(self, text):
+        return [p.strip() for p in re.split(r"[、,，;；\n]+", str(text or "")) if p and p.strip()]
+
+    def __browser_header_versions(self, tbl):
+        if not isinstance(tbl, list) or len(tbl) < 2 or not isinstance(tbl[1], list):
+            return []
+        row = tbl[1]
+        if str(row[0] or "").strip() != "测试模块":
+            return []
+        out = []
+        for cell in row[2:]:
+            text = str(cell or "").strip()
+            if text and text not in ("测试点", "测试模块"):
+                out.append(text)
+        return out
+
+    def __paint_version_cols(self, tbl, versions, label):
+        """表头两行：第 3 列起换成给定版本，列数随之增减；数据行结果列不足时补「通过」。"""
+        if not versions or not isinstance(tbl, list) or len(tbl) < 2:
+            return
+        name_row = tbl[0] if isinstance(tbl[0], list) else []
+        ver_row = tbl[1] if isinstance(tbl[1], list) else []
+        if str(ver_row[0] or "").strip() != "测试模块":
+            return
+        head_a = list(name_row[:2])
+        head_b = list(ver_row[:2])
+        while len(head_a) < 2:
+            head_a.append("测试模块" if not head_a else "测试点")
+        while len(head_b) < 2:
+            head_b.append(head_a[len(head_b)])
+        tbl[0] = head_a + [label] * len(versions)
+        tbl[1] = head_b + list(versions)
+        for i in range(2, len(tbl)):
+            row = list(tbl[i]) if isinstance(tbl[i], list) else []
+            base = (row + ["", ""])[:2]
+            tail = row[2:]
+            pad = tail[-1] if tail else "通过"
+            if len(tail) < len(versions):
+                tail = tail + [pad] * (len(versions) - len(tail))
+            else:
+                tail = tail[:len(versions)]
+            tbl[i] = base + tail
+
+    def __sync_compat_versions(self, content):
+        """测试概述的杀毒软件名称/版本写入 4.4 表头；Win10/Win11 表头浏览器版本写入测试设备详情。"""
+        if not isinstance(content, dict):
+            return content
+        nodes = []
+
+        def walk(node):
+            if not isinstance(node, dict):
+                return
+            nodes.append(node)
+            for child in (node.get("children") or []):
+                walk(child)
+
+        for section in (content.get("sections") or []):
+            walk(section)
+
+        overview = {}
+        for node in nodes:
+            if self.__plain_title(node) != "测试概述":
+                continue
+            for tbl in (node.get("tables") or []):
+                for row in tbl:
+                    if isinstance(row, list) and len(row) >= 2:
+                        lab = str(row[0] or "").strip()
+                        if lab in ("客户端杀毒软件名称", "客户端杀毒软件版本", "服务端杀毒软件名称", "服务端杀毒软件版本"):
+                            overview[lab] = str(row[1] or "").strip()
+
+        client_vers = self.__split_version_list(overview.get("客户端杀毒软件版本", ""))
+        client_name = overview.get("客户端杀毒软件名称", "")
+        server_vers = self.__split_version_list(overview.get("服务端杀毒软件版本", ""))
+        server_name = overview.get("服务端杀毒软件名称", "")
+        win_vers = {"win10": [], "win11": []}
+        for node in nodes:
+            title = self.__plain_title(node)
+            tables = node.get("tables") or []
+            if not tables or not isinstance(tables[0], list):
+                continue
+            header = tables[0][0] if tables[0] else []
+            has_av = isinstance(header, list) and any("杀毒" in str(cell) for cell in header)
+            if title == "用户端测试" and has_av and client_name and client_vers:
+                old = str(header[2] or "") if len(header) > 2 else ""
+                if "、Windows" in old or "、windows" in old.lower():
+                    label = f"杀毒及设备信息({client_name}、Windows)"
+                else:
+                    label = f"杀毒及设备信息({client_name})"
+                self.__paint_version_cols(tables[0], client_vers, label)
+            elif ("服务端" in title and "测试" in title and has_av and server_name and server_vers):
+                self.__paint_version_cols(tables[0], server_vers, f"杀毒信息({server_name})")
+            elif "Win10" in title and "测试项" in title:
+                win_vers["win10"] = self.__browser_header_versions(tables[0])
+            elif "Win11" in title and "测试项" in title:
+                win_vers["win11"] = self.__browser_header_versions(tables[0])
+
+        def patch_browser(text, versions):
+            if not versions or "浏览器版本" not in str(text or ""):
+                return text
+            line = "浏览器版本：Chrome " + "、".join(versions)
+            return re.sub(r"浏览器版本：[^\n]*", line, str(text))
+
+        for node in nodes:
+            if self.__plain_title(node) != "测试设备详情":
+                continue
+            for tbl in (node.get("tables") or []):
+                for row in tbl:
+                    if not isinstance(row, list) or len(row) < 2 or str(row[0] or "").strip() != "用户端":
+                        continue
+                    info = str(row[1] or "")
+                    if "Win11" in info or "Windows 11" in info:
+                        versions = win_vers["win11"] or win_vers["win10"]
+                    else:
+                        versions = win_vers["win10"] or win_vers["win11"]
+                    row[1] = patch_browser(info, versions)
         return content
 
     def __srs_leaves(self, prod_id):
@@ -929,12 +1050,17 @@ class Server(object):
                 def _update_version(node):
                     if node.get("body") and "完整版本" in str(node.get("body")):
                         node["body"] = re.sub(r"完整版本：[^\n]*", f"完整版本：{new_full_version}", str(node["body"]))
-                    # 表格中的版本号替换（如"测试版本"行的值含 1.1.0.1）
+                    # 只改产品版本行和安装包路径。杀毒软件版本、浏览器版本留给同步，不改成产品版本。
                     for tbl in (node.get("tables") or []):
                         for row in tbl:
-                            for i in range(len(row)):
-                                if isinstance(row[i], str) and re.search(r"\d+\.\d+\.\d+\.\d+", str(row[i])):
-                                    row[i] = re.sub(r"\d+\.\d+\.\d+\.\d+", new_full_version, str(row[i]))
+                            if not isinstance(row, list) or not row:
+                                continue
+                            lab = str(row[0] or "").strip()
+                            if lab not in ("测试版本", "产品名称/版本", "产品名称/型号") and "安装包路径" not in lab:
+                                continue
+                            for i in range(1, len(row)):
+                                if isinstance(row[i], str) and re.search(r"\d+\.\d+\.\d+\.\d+", row[i]):
+                                    row[i] = re.sub(r"\d+\.\d+\.\d+\.\d+", new_full_version, row[i])
                     for c in (node.get("children") or []):
                         _update_version(c)
                 for s in (content.get("sections") or []):
@@ -1108,10 +1234,15 @@ class Server(object):
                 if "用户端测试" not in node_title:
                     for tbl in (node.get("tables") or []):
                         for r in tbl:
+                            if not isinstance(r, list) or not r:
+                                continue
                             # 版本信息表跳过"最终安装包路径"行（保留模板包名）
                             if "版本信息" in node_title and any("安装包路径" in str(c) for c in r):
                                 continue
-                            for i in range(len(r)):
+                            lab = str(r[0] or "").strip()
+                            if lab not in ("测试版本", "产品名称/版本", "产品名称/型号") and "安装包路径" not in lab:
+                                continue
+                            for i in range(1, len(r)):
                                 if isinstance(r[i], str) and re.search(r"\d+\.\d+\.\d+\.\d+", r[i]):
                                     r[i] = re.sub(r"\d+\.\d+\.\d+\.\d+", new_full_version, r[i])
                 caps = node.get("table_captions") or []
@@ -1570,7 +1701,8 @@ class Server(object):
             body = all_body
 
         add_blank_lines(6)
-        write_center_title((strip_num(cover.get("title")) if cover else "") or DOC_NAME, size=22.0, bold=True)
+        cover_title = "兼容性测试报告" if mode == "compat" else ((strip_num(cover.get("title")) if cover else "") or DOC_NAME)
+        write_center_title(cover_title, size=22.0, bold=True)
         add_blank_lines(4)
         if cover:
             for table in (cover.get("tables") or []):
