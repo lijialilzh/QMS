@@ -1253,8 +1253,8 @@ class Server(object):
 
     async def export_imm_doc(self, output, id: int):
         resp = await self.get_imm_doc(id)
-        # 列表导出完整版：主文档 + MD5值附件 + 评审记录（分页分隔）
-        self.__export_docx(output, resp.data, mode="all")
+        # 手册正文导出不含 MD5 附件和 MD5 评审记录；这两份仍走单独导出接口
+        self.__export_docx(output, resp.data, mode="main")
 
     async def export_imm_md5_attachment(self, output, id: int):
         resp = await self.get_imm_doc(id)

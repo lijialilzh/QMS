@@ -6,6 +6,7 @@ import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
 import * as Api from "@/api/ApiUtpRecordDoc";
+import * as ApiPersonSign from "@/api/ApiPersonSign";
 import * as ApiProduct from "@/api/ApiProduct";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
@@ -72,7 +73,7 @@ function parseCaseInput(text: string): string {
 }
 
 /** 封面标签样式；测试项目表对齐评审记录（#f5f8fc / #e8edf2） */
-const tdStyle: CSSProperties = { border: "1px solid #d9d9d9", padding: "6px 10px", fontSize: 13, verticalAlign: "middle" };
+const tdStyle: CSSProperties = { border: "1px solid #d9d9d9", padding: "6px 10px", fontSize: 13, verticalAlign: "middle", height: 1 };
 const labelStyle: CSSProperties = { ...tdStyle, background: "#fafafa", fontWeight: 600, color: "#555", width: 110, textAlign: "center", whiteSpace: "nowrap" };
 const valueStyle: CSSProperties = { ...tdStyle, color: "#333", whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45 };
 
@@ -84,7 +85,7 @@ export default () => {
     const readonly = location.pathname.includes("/view/");
     const [data, dispatch] = useData({
         loading: false, saving: false, exporting: false,
-        doc: {} as any, rows: [] as any[][], products: [] as any[],
+        doc: {} as any, rows: [] as any[][], products: [] as any[], signMap: {} as Record<string, string>,
     });
 
     const load = () => {
@@ -113,6 +114,14 @@ export default () => {
     useEffect(() => {
         ApiProduct.list_product({ page_size: 10000 }).then((res: any) => {
             if (res.code === Api.C_OK) dispatch({ products: res.data?.rows || [] });
+        });
+        ApiPersonSign.list_person_sign({ page_index: 0, page_size: 1000 }).then((res: any) => {
+            if (res.code !== Api.C_OK) return;
+            const signMap: Record<string, string> = {};
+            (res.data?.rows || []).forEach((s: any) => {
+                if (s.name && s.sign_img) signMap[String(s.name).trim()] = s.sign_img;
+            });
+            dispatch({ signMap });
         });
     }, []);
 
@@ -197,17 +206,19 @@ export default () => {
     };
 
     const editCell = (value: string, onChange: (v: string) => void, multiline = false) => (
-        readonly
-            ? <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", minHeight: 20, lineHeight: 1.45 }}>{value || ""}</div>
-            : multiline
-                ? <Input.TextArea
-                    variant="borderless"
-                    autoSize={{ minRows: 2, maxRows: 8 }}
-                    style={{ padding: 0, fontSize: 12, lineHeight: 1.45, resize: "none" }}
-                    value={value ?? ""}
-                    onChange={(e) => onChange(e.target.value)}
-                />
-                : <Input variant="borderless" size="small" style={{ padding: 0, fontSize: 12 }} value={value ?? ""} onChange={(e) => onChange(e.target.value)} />
+        <div style={{ display: "flex", alignItems: "center", width: "100%", height: "100%", minHeight: 28 }}>
+            {readonly
+                ? <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45, width: "100%" }}>{value || ""}</div>
+                : multiline
+                    ? <Input.TextArea
+                        variant="borderless"
+                        autoSize={{ minRows: 1, maxRows: 12 }}
+                        style={{ padding: 0, fontSize: 12, lineHeight: 1.45, resize: "none", width: "100%" }}
+                        value={value ?? ""}
+                        onChange={(e) => onChange(e.target.value)}
+                    />
+                    : <Input variant="borderless" size="small" style={{ padding: 0, fontSize: 12 }} value={value ?? ""} onChange={(e) => onChange(e.target.value)} />}
+        </div>
     );
 
     const moduleSpans = useMemo(() => {
@@ -344,14 +355,8 @@ export default () => {
                                     <tr>
                                         <td style={labelStyle}>用户端设备</td>
                                         <td style={valueStyle}>{editCell(cover["用户端设备"] || "", (v) => setCover("用户端设备", v), true)}</td>
-                                        <td style={labelStyle}>数量/浏览器</td>
-                                        <td style={valueStyle}>
-                                            <div style={{ display: "flex", gap: 6, alignItems: "flex-start", flexWrap: "wrap" }}>
-                                                {editCell(cover["用户端数量"] || "", (v) => setCover("用户端数量", v))}
-                                                <span>/</span>
-                                                <div style={{ flex: 1, minWidth: 0 }}>{editCell(cover["用户端浏览器"] || "", (v) => setCover("用户端浏览器", v), true)}</div>
-                                            </div>
-                                        </td>
+                                        <td style={labelStyle}>数量</td>
+                                        <td style={valueStyle}>{editCell(cover["用户端数量"] || "", (v) => setCover("用户端数量", v))}</td>
                                     </tr>
                                     <tr>
                                         <td style={labelStyle}>服务端设备</td>
@@ -390,7 +395,14 @@ export default () => {
                             />
                             <div style={{ marginTop: 24, fontSize: 14, lineHeight: 2.2, color: "#333", display: "flex", justifyContent: "flex-end" }}>
                                 <div style={{ textAlign: "left", minWidth: 220 }}>
-                                    <div>签名：{cover["测试人员"] || ""}</div>
+                                    <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8 }}>
+                                        <span>签名：</span>
+                                        {String(cover["测试人员"] || "").split(/[、,，;；\s]+/).filter(Boolean).map((name) => (
+                                            data.signMap[name]
+                                                ? <img key={name} src={data.signMap[name]} alt={name} style={{ height: 36, width: "auto", objectFit: "contain" }} />
+                                                : <span key={name}>{name}</span>
+                                        ))}
+                                    </div>
                                     <div>日期：{cover["测试日期"] || ""}</div>
                                 </div>
                             </div>

@@ -197,15 +197,34 @@ export default () => {
         });
     };
 
-    // 加载图表文件（参考产品技术要求，用docImages字典）
-    const loadDocImages = (productId: any) => {
-        if (!productId) { dispatch({ docImages: {} }); return; }
+    // 按产品名称和完整版本取产品图示，不按文档版本。
+    const loadDocImages = (productId: any, productName?: string, fullVersion?: string) => {
+        const name = String(productName || "").trim();
+        const ver = String(fullVersion || "").trim();
+        if (!productId && !(name && ver)) { dispatch({ docImages: {} }); return; }
+        const pick = (rows: any[]) => {
+            const list = (rows || []).filter((r) => {
+                if (name && String(r?.product_name || "").trim() && String(r?.product_name || "").trim() !== name) return false;
+                if (ver && String(r?.product_version || "").trim() !== ver) return false;
+                return !!String(r?.file_url || "").trim();
+            });
+            return [...list].sort((a, b) => Number(b?.id || 0) - Number(a?.id || 0))[0];
+        };
         const cats = ["img_topo", "img_struct"];
         Promise.all(cats.map((cat) =>
-            ApiDocFile.list_doc_file(cat, { product_id: productId, page_index: 0, page_size: 50 })
+            ApiDocFile.list_doc_file(cat, {
+                product_id: productId || 0,
+                product_name: name,
+                product_version: ver,
+                page_index: 0,
+                page_size: 50,
+            })
                 .then((res: any) => {
-                    const first = res.code === ApiDocFile.C_OK ? (res.data?.rows || [])[0] : null;
-                    return [cat, first?.file_url ? `/${first.file_url}` : ""] as [string, string];
+                    const row = res.code === ApiDocFile.C_OK ? pick(res.data?.rows || []) : null;
+                    if (!row?.file_url) return [cat, ""] as [string, string];
+                    const stamp = row.update_time || row.id || "";
+                    const joiner = String(row.file_url).includes("?") ? "&" : "?";
+                    return [cat, `/${row.file_url}${joiner}t=${encodeURIComponent(stamp)}`] as [string, string];
                 })
                 .catch(() => [cat, ""] as [string, string])
         )).then((pairs) => {
@@ -225,7 +244,7 @@ export default () => {
             const sections = ensureKeys(content.sections || []);
             const fallback = sections.find((s: any) => !isCoverSection(s) && !isRevisionSection(s));
             dispatch({ loading: false, content: { ...content, sections }, activeSectionKey: sectionKey(fallback) });
-            loadDocImages(newId);
+            loadDocImages(newId, product.name, product.full_version);
         });
     };
 
@@ -252,11 +271,27 @@ export default () => {
             const sections = ensureKeys(content.sections || []);
             const fallback = sections.find((s: any) => !isCoverSection(s) && !isRevisionSection(s));
             dispatch({ loading: false, detail, content: { ...content, sections }, activeSectionKey: sectionKey(fallback), selectedProductId: detail.product_id });
-            loadDocImages(detail.product_id);
+            loadDocImages(detail.product_id, detail.product_name, detail.product_full_version);
         });
     };
 
     useEffect(() => { loadProducts(); load(); }, [params.id, location.pathname]);
+
+    useEffect(() => {
+        const pid = data.selectedProductId || data.detail?.product_id;
+        if (!pid) return;
+        const onShow = () => {
+            if (document.visibilityState === "visible") {
+                loadDocImages(pid, data.detail?.product_name, data.detail?.product_full_version);
+            }
+        };
+        document.addEventListener("visibilitychange", onShow);
+        window.addEventListener("focus", onShow);
+        return () => {
+            document.removeEventListener("visibilitychange", onShow);
+            window.removeEventListener("focus", onShow);
+        };
+    }, [data.selectedProductId, data.detail?.product_id, data.detail?.product_name, data.detail?.product_full_version]);
 
     const setSections = (sections: any[]) => dispatch({ content: { ...data.content, sections } });
     const patchNode = (key: string, patch: any) =>
@@ -547,8 +582,10 @@ export default () => {
                                             newParts[i] = val;
                                             patchNode(active._key, { text: joinTextWithCaptions(newParts, captions) });
                                         };
-                                        const segLabel = (i: number) =>
-                                            parts.length === 1 ? "正文" : i === 0 ? "正文（图前）" : i === parts.length - 1 ? "正文（图后）" : "正文（图间）";
+                                        const segLabel = (i: number) => {
+                                            const base = parts.length === 1 ? "正文" : i === 0 ? "正文（图前）" : i === parts.length - 1 ? "正文（图后）" : "正文（图间）";
+                                            return i > 0 ? `${base}（自动获取，可修改）` : base;
+                                        };
                                         return parts.map((p, i) => (
                                             <div key={`seg-${i}`}>
                                                 <div className="pdp-field">
@@ -564,11 +601,11 @@ export default () => {
                                                             <img src={data.docImages[anchors[i].category]} alt="" style={{ maxWidth: "100%", border: "1px solid #eee", borderRadius: 4 }} />
                                                         ) : (
                                                             <div style={{ color: "#999", padding: "8px 0" }}>
-                                                                未在「图表文件管理 - {anchors[i].caption}」找到该产品的图片。
+                                                                未在「产品图示 - {anchors[i].caption}」找到该产品的图片。
                                                             </div>
                                                         )}
                                                         <div style={{ textAlign: "center", fontSize: 13, color: "#444", margin: "4px 0 8px" }}>
-                                                            {anchors[i].caption}（取自「图表文件管理」，自动获取）
+                                                            {anchors[i].caption}（取自「产品图示」，自动获取）
                                                         </div>
                                                     </div>
                                                 )}

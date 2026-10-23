@@ -127,15 +127,23 @@ class Server(object):
             ).scalars().first()
         return (row.code or "").strip() if row and row.code else ""
 
+    def __plan_cover_date(self, prod_id):
+        """编审批、生效日期、修订修改日期：时间线里「用户测试计划」的最晚一天。
+        本版本没有时间线时，用同名产品其它版本的时间线。不用宽泛「用户测试」，避免串到用例/记录/报告。"""
+        if not prod_id:
+            return ""
+        rows = serv_review_util.timeline_rows_with_sibling(prod_id)
+        if not rows:
+            return ""
+        return serv_review_util.review_date(prod_id, ["用户测试计划"], tl_rows=rows) or ""
+
     def __fill_revision(self, content, prod_id, version, force=False):
         """文件修订记录首行：修改日期(评审/封面日期)、版本号、首次发布、
         修订人=测试人员（2025.09 前宋月/之后孙家旭）、批准人=研发负责人。打开即覆盖修订人/批准人。"""
-        rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
+        rev_date = self.__plan_cover_date(prod_id)
         reviser = "宋月" if serv_review_util._before_202509(rev_date) else "孙家旭"
-        approver = ""
-        if prod_id:
-            members = db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == prod_id)).scalars().all()
-            approver = next((m.name for m in members if "研发负责人" in str(m.role or "")), "")
+        # 批准人=研发负责人。本版本没有该角色时，用同一产品名称下其它版本的参与人员。
+        approver = (serv_review_util.cover_signer_names(prod_id, DOC_KEY, rev_date).get("批准人") or "") if prod_id else ""
         for s in (content.get("sections") or []):
             if s.get("ref_type") != "revision":
                 continue
@@ -170,7 +178,7 @@ class Server(object):
         其余行→测试人员（与修订人相同：2025.09 前宋月/之后孙家旭）。打开即覆盖。"""
         if not prod_id or not isinstance(content, dict):
             return content
-        doc_date = serv_review_util.cover_date(prod_id, DOC_KEY) or ""
+        doc_date = self.__plan_cover_date(prod_id)
         members = db.session.execute(
             select(ProjectMember).where(ProjectMember.prod_id == prod_id)
         ).scalars().all()
@@ -280,7 +288,7 @@ class Server(object):
         force=False：匹配不到则保留原值；force=True：强制覆盖，无人员则置空。"""
         if not isinstance(content, dict):
             return content
-        doc_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
+        doc_date = self.__plan_cover_date(prod_id)
         members = db.session.execute(
             select(ProjectMember).where(ProjectMember.prod_id == prod_id)
         ).scalars().all() if prod_id else []
@@ -432,7 +440,7 @@ class Server(object):
             serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS[DOC_KEY]["name_keywords"]) if prod_id else "",
             prod_id,
         )
-        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else "", force=force)
+        serv_review_util.fill_cover_dates(content, self.__plan_cover_date(prod_id), force=force)
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, DOC_KEY) if prod_id else {}, force=force)
         return content
 

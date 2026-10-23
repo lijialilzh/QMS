@@ -236,7 +236,8 @@ class Server(object):
         is_user = DOC_KEY == "utr"
         if is_user:
             range_kw = {"计划": ["用户测试计划"], "用例": ["用户测试用例"],
-                        "执行": ["用户测试记录"], "报告": ["用户测试报告"]}
+                        "执行": ["用户测试记录"], "报告": ["用户测试报告"],
+                        "培训": ["用户培训"]}
         else:
             range_kw = {"计划": ["软件测试计划"],
                         "用例": ["单元测试用例", "集成测试用例", "系统测试用例"],
@@ -245,6 +246,8 @@ class Server(object):
 
         def kind_of(task):
             a = str(task or "")
+            if "培训" in a:
+                return "培训"
             if "总结" in a or "报告" in a:
                 return "报告"
             if "用例" in a or "设计" in a:
@@ -426,6 +429,29 @@ class Server(object):
     def __strip_title(title):
         return re.sub(r"^\s*\d+(?:\.\d+)*[、.\s]*", "", str(title or "")).strip()
 
+    @staticmethod
+    def __replace_table_product_version(tbl, new_full_version):
+        """只改「测试版本 / 完整版本」行。浏览器版本（含 xx.xx.xx.xx）保持原样。"""
+        if not new_full_version or not tbl:
+            return
+        header = [str(c or "") for c in (tbl[0] or [])]
+        for row in tbl:
+            label = ""
+            for c in row[:2]:
+                s = str(c or "").strip()
+                if s:
+                    label = s
+                    break
+            if "测试版本" not in label and "完整版本" not in label:
+                continue
+            for i in range(len(row)):
+                cell = str(row[i] or "")
+                head = header[i] if i < len(header) else ""
+                if "浏览器" in head or "浏览器" in cell or re.search(r"Chrome", cell, re.I):
+                    continue
+                if re.search(r"\d+\.\d+\.\d+\.\d+", cell):
+                    row[i] = re.sub(r"\d+\.\d+\.\d+\.\d+", new_full_version, cell)
+
     def __fill_desc(self, content, product):
         """「描述」章：产品名称/完整版本自动写入；有型号则写入，无则隐藏；保留其后说明正文。"""
         if not product:
@@ -471,6 +497,102 @@ class Server(object):
         for s in (content.get("sections") or []):
             walk(s)
 
+    @staticmethod
+    def __collapse_device_lines(info: str) -> str:
+        """同一设备字段被重复拼接时只留第一次。"""
+        text = re.sub(
+            r"(\S)\s*(FP16计算性能|固态硬盘\s*[:：]|存储盘\s*[:：]|网卡\s*[:：]|浏览器版本)",
+            r"\1\n\2",
+            str(info or ""),
+        )
+        lines, seen = [], set()
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            key = re.sub(r"\s+", "", line)
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(line)
+        return "\n".join(lines)
+
+    def __record_device_map(self, prod_id):
+        """最新《用户测试记录》封面：用户端/服务端 → (设备信息含浏览器版本, 数量)。"""
+        if not prod_id:
+            return {}
+        from ..model.utp_record_doc import UtpRecordDoc
+        from .serv_utp_record_doc import Server as RecordServer
+        row = db.session.execute(
+            select(UtpRecordDoc).where(UtpRecordDoc.product_id == prod_id).order_by(UtpRecordDoc.id.desc())
+        ).scalars().first()
+        if not row or not isinstance(row.content, dict):
+            return {}
+        content = copy.deepcopy(row.content)
+        rec = RecordServer()
+        rec._Server__fill_devices_from_utp(content, prod_id)
+        rec._Server__apply_str_browser(content, prod_id)
+        found = {}
+        for section in (content.get("sections") or []):
+            for tbl in (section.get("tables") or []):
+                if not tbl or len(tbl) < 6 or not isinstance(tbl[0], list):
+                    continue
+                if "产品名称" not in str(tbl[0][0] or ""):
+                    continue
+                for src in tbl[4:6]:
+                    if not isinstance(src, list):
+                        continue
+                    label = next((str(c or "").strip() for c in src[:3] if str(c or "").strip() in ("用户端", "服务端")), "")
+                    if not label or label in found:
+                        continue
+                    info = str(src[3] if len(src) > 3 else "").strip()
+                    if not info:
+                        continue
+                    qty = str(src[6] if len(src) > 6 else "").strip() or "1台"
+                    browser = str(src[7] if len(src) > 7 else "").strip()
+                    info = self.__collapse_device_lines(info)
+                    if label == "用户端" and browser and browser not in ("/", "／") and "浏览器" not in info:
+                        info = info.rstrip() + "\n" + f"浏览器版本：{browser}"
+                    found[label] = (info, qty)
+                return found
+        return {}
+
+    def __fill_devices_from_record(self, content, prod_id):
+        """测试设备详情的设备信息和数量（含浏览器版本）从用户测试记录覆盖。记录没有则不改。"""
+        found = self.__record_device_map(prod_id)
+        if not found:
+            return
+
+        def walk(node):
+            if self.__strip_title(node.get("title")) == "测试设备详情":
+                for tbl in (node.get("tables") or []):
+                    if not isinstance(tbl, list) or not tbl or not isinstance(tbl[0], list):
+                        continue
+                    header = [str(c or "") for c in tbl[0]]
+                    info_i = next((i for i, h in enumerate(header) if "设备信息" in h), None)
+                    if info_i is None:
+                        continue
+                    qty_i = next((i for i, h in enumerate(header) if "数量" in h), None)
+                    for r in tbl[1:]:
+                        if not isinstance(r, list) or not r:
+                            continue
+                        label = str(r[0] or "").strip()
+                        if label not in found:
+                            continue
+                        info, qty = found[label]
+                        while len(r) <= info_i:
+                            r.append("")
+                        r[info_i] = info
+                        if qty_i is not None:
+                            while len(r) <= qty_i:
+                                r.append("")
+                            r[qty_i] = qty
+            for child in (node.get("children") or []):
+                walk(child)
+
+        for section in (content.get("sections") or []):
+            walk(section)
+
     def __autofill(self, content, prod_id, product=None, version="", force=False):
         if not isinstance(content, dict):
             return content
@@ -488,12 +610,8 @@ class Server(object):
                         pass
                     elif node.get("body") and "完整版本" in str(node.get("body")):
                         node["body"] = re.sub(r"完整版本：[^\n]*", f"完整版本：{new_full_version}", str(node["body"]))
-                    # 表格中的版本号替换（如"测试版本"行的值含 1.1.0.1）
                     for tbl in (node.get("tables") or []):
-                        for row in tbl:
-                            for i in range(len(row)):
-                                if isinstance(row[i], str) and re.search(r"\d+\.\d+\.\d+\.\d+", str(row[i])):
-                                    row[i] = re.sub(r"\d+\.\d+\.\d+\.\d+", new_full_version, str(row[i]))
+                        self.__replace_table_product_version(tbl, new_full_version)
                     for c in (node.get("children") or []):
                         _update_version(c)
                 for s in (content.get("sections") or []):
@@ -510,6 +628,7 @@ class Server(object):
         )
         serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else "", force=force)
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, DOC_KEY) if prod_id else {}, force=force)
+        self.__fill_devices_from_record(content, prod_id)
         return content
 
     def __to_obj(self, row: UtrDoc, product: Product = None):
@@ -638,10 +757,7 @@ class Server(object):
                 if node.get("body") and "完整版本" in str(node.get("body")):
                     node["body"] = re.sub(r"完整版本：[^\n]*", f"完整版本：{new_full_version}", str(node["body"]))
                 for tbl in (node.get("tables") or []):
-                    for r in tbl:
-                        for i in range(len(r)):
-                            if isinstance(r[i], str) and re.search(r"\d+\.\d+\.\d+\.\d+", r[i]):
-                                r[i] = re.sub(r"\d+\.\d+\.\d+\.\d+", new_full_version, r[i])
+                    self.__replace_table_product_version(tbl, new_full_version)
                 caps = node.get("table_captions") or []
                 if caps:
                     node["table_captions"] = [re.sub(r"\d+\.\d+\.\d+\.\d+", new_full_version, str(c)) if re.search(r"\d+\.\d+\.\d+\.\d+", str(c)) else c for c in caps]

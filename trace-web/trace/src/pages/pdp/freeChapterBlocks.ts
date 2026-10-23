@@ -2,7 +2,111 @@
  * PDP 风格章节：可自由添加多段正文 / 图片 / 表格（按插入顺序交错）。
  * 供 IMM 等文档详情页复用；不改 src/common/DocBlocks。
  */
-import { splitBodyTables } from "@/common/DocBlocks";
+/** 正文末行已有「见下图/如下图/下图」时，后面的 {{IMG}} 是同一次插图，不再多占一张。 */
+const lineAnchorsImage = (line: string) => /见下图|如下图|下图/.test(String(line || ""));
+
+const splitFreeBody = (body: string, tables: any[], images?: any[]): any[] => {
+    const text = String(body || "");
+    const tablesArr = Array.isArray(tables) ? tables : [];
+    const imagesArr = Array.isArray(images) ? images : [];
+    if (!text.trim() && tablesArr.length === 0 && imagesArr.length === 0) return [];
+    const lines = text.split("\n");
+    const segments: any[] = [];
+    let tableIdx = 0;
+    let imgIdx = 0;
+    let buf: string[] = [];
+    let lastImageFromAnchor = false;
+
+    const flushText = () => {
+        const raw = buf.join("\n").replace(/^\n+/, "").replace(/[ \t]+$/g, "");
+        buf = [];
+        if (!raw.trim()) return;
+        segments.push({ type: "text", text: raw });
+    };
+
+    const hasTblPh = text.includes("{{TBL}}");
+    for (const ln of lines) {
+        const s = ln.trim();
+        if (s === "{{IMG}}" && imgIdx < imagesArr.length) {
+            if (lastImageFromAnchor) {
+                lastImageFromAnchor = false;
+                continue;
+            }
+            flushText();
+            segments.push({ type: "image", imageIndex: imgIdx });
+            imgIdx++;
+            lastImageFromAnchor = false;
+            continue;
+        }
+        if ((s === "{{TBL}}" || /^(见下表|如下表|下表)$/.test(s)) && tableIdx < tablesArr.length) {
+            flushText();
+            lastImageFromAnchor = false;
+            segments.push({ type: "table", tableIndex: tableIdx });
+            tableIdx++;
+            continue;
+        }
+        if (/见表\s*\d/.test(s) && tableIdx < tablesArr.length) {
+            const rest = ln.replace(/见表\s*\d+/, "").trim();
+            if (rest) buf.push(rest);
+            flushText();
+            lastImageFromAnchor = false;
+            segments.push({ type: "table", tableIndex: tableIdx });
+            tableIdx++;
+            continue;
+        }
+        if (/^表\s*\d/.test(s) && tableIdx < tablesArr.length) {
+            flushText();
+            lastImageFromAnchor = false;
+            segments.push({ type: "table", tableIndex: tableIdx, caption: s });
+            tableIdx++;
+            continue;
+        }
+        if (!hasTblPh && /^\d+[）)]/.test(s) && tableIdx < tablesArr.length) {
+            buf.push(ln);
+            flushText();
+            lastImageFromAnchor = false;
+            segments.push({ type: "table", tableIndex: tableIdx });
+            tableIdx++;
+            continue;
+        }
+        if ((s === "{{IMG}}" || /^(见下图|如下图|下图)$/.test(s)) && imgIdx < imagesArr.length) {
+            if (s === "{{IMG}}" && lastImageFromAnchor) {
+                lastImageFromAnchor = false;
+                continue;
+            }
+            flushText();
+            segments.push({ type: "image", imageIndex: imgIdx });
+            imgIdx++;
+            lastImageFromAnchor = /^(见下图|如下图|下图)$/.test(s);
+            continue;
+        }
+        if (lineAnchorsImage(s) && imgIdx < imagesArr.length) {
+            buf.push(ln);
+            flushText();
+            segments.push({ type: "image", imageIndex: imgIdx });
+            imgIdx++;
+            lastImageFromAnchor = true;
+            continue;
+        }
+        if (/^图\s*\d/.test(s) && imgIdx < imagesArr.length) {
+            flushText();
+            segments.push({ type: "image", imageIndex: imgIdx, caption: s });
+            imgIdx++;
+            lastImageFromAnchor = false;
+            continue;
+        }
+        buf.push(ln);
+        if (s) lastImageFromAnchor = false;
+    }
+    flushText();
+    for (; tableIdx < tablesArr.length; tableIdx++) {
+        segments.push({ type: "table", tableIndex: tableIdx });
+    }
+    for (; imgIdx < imagesArr.length; imgIdx++) {
+        segments.push({ type: "image", imageIndex: imgIdx });
+    }
+    return segments;
+};
 
 export const appendBodyLine = (body: string, line: string) => {
     const b = String(body || "");
@@ -102,7 +206,7 @@ export const expandTxtMarkers = (segs: any[]): any[] => {
             continue;
         }
         raw.split(/\{\{TXT\}\}/).forEach((piece) => {
-            const p = piece.replace(/^\n+|\n+$/g, "");
+            const p = piece.replace(/^\n/, "").replace(/\n$/, "");
             out.push({ type: "text", text: p.trim() === "{{EMPTY}}" ? "" : p });
         });
     }
@@ -128,6 +232,9 @@ export const reassembleFreeBody = (segments: any[], editedIndex?: number, newTex
             parts.push(seg.caption || "{{TBL}}");
         } else if (seg.type === "image") {
             prevWasText = false;
+            const prev = parts.length ? String(parts[parts.length - 1] || "") : "";
+            const lastLine = prev.split("\n").filter((ln) => ln.trim()).pop() || "";
+            if (!seg.caption && lineAnchorsImage(lastLine)) continue;
             parts.push(seg.caption || "{{IMG}}");
         }
     }
@@ -137,7 +244,7 @@ export const reassembleFreeBody = (segments: any[], editedIndex?: number, newTex
 export const buildFreeSegments = (body: string, tables: any[], images: any[]) => {
     const normalized = ensureMediaPlaceholders(body, tables, images);
     return expandTxtMarkers(
-        ensureInterleaveTextSlots(stripOrphanMediaLines(splitBodyTables(normalized, tables, images)))
+        ensureInterleaveTextSlots(stripOrphanMediaLines(splitFreeBody(normalized, tables, images)))
     );
 };
 

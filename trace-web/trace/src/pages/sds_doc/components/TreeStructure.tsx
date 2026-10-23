@@ -1470,6 +1470,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
         node.ref_type === 'img_topo' || node.ref_type === 'img_struct'
         || navEmbeddedDocImageChild?.ref_type === 'img_topo' || navEmbeddedDocImageChild?.ref_type === 'img_struct'
     );
+    const isProductDiagramFigure = (child: any) => {
+        const blob = `${child?.title || ""} ${child?.label || ""}`;
+        return child?.ref_type === "img_topo" || child?.ref_type === "img_struct"
+            || /物理拓扑|系统结构|体系结构/.test(blob);
+    };
     const showNodeTableActions = node.ref_type !== 'sds_reqds' && node.ref_type !== 'sds_traces';
     const hideMisplacedReviewTable = hasTable && !nodeIsReviewAppendix && isMisplacedReviewTable(node.table);
     // 标准需求/变更需求对应章节(SDS-RCN 编码)：章节标题与 SDS 编码只读，不可修改
@@ -1757,6 +1762,11 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
     const wantsProgramLogicSlot = !!bodyLogicSplit && (hasLogicFigure || navEmbeddedFigureChildren.length === 0);
     const programLogicSplit = wantsProgramLogicSlot ? bodyLogicSplit : null;
     const programLogicCaption = editFigureCaption || pendingProgramLogicCaption;
+    // 产品功能下的图2系统结构图、物理拓扑图：自动获取，不提供重新上传。
+    const embeddedProductDiagram = isAutoOnlyImage
+        || isProductDiagramFigure(navEmbeddedFigureChild)
+        || isProductDiagramFigure(navEmbeddedDocImageChild)
+        || isProductDiagramFigure({ title: programLogicCaption || editFigureCaption, ref_type: node.ref_type });
     const headerShownImageUrl = navImageInHeaderRow ? String(displayImageUrl || "").trim() : "";
     const figuresInBody = ((isAutoOnlyImage || glossaryContentAfterTable) ? navEmbeddedFigureChildren : (multiEmbeddedFigures
         ? navEmbeddedFigureChildren.filter((child) => !(programLogicSplit && /程序逻辑/.test(String(child.title || child.label || ""))))
@@ -2337,7 +2347,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                               alt={displayTitle || 'image'}
                               preview={true}
                           />
-                          {!isAutoOnlyImage && (
+                          {!embeddedProductDiagram && (
                           <Button
                               type="text"
                               size="small"
@@ -2370,7 +2380,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                       </div>
                   )}
                   {/* 无图：标题行「选择文件」；有图且图在正文区时不在标题行放「重新上传」（改到图右侧） */}
-                  {!readOnly && !isAutoOnlyImage && (
+                  {!readOnly && !embeddedProductDiagram && (
                       (!hasDisplayImage && (level <= 2 || !!String(node.img_url || "").trim() || !!navEmbeddedFigureChild?.img_url))
                       || (navImageInHeaderRow && hasDisplayImage)
                   ) && (
@@ -2640,7 +2650,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                               ))
                               )}
                               {!navImageInHeaderRow && isNavSingleChapterEdit && !showSplitInlineInEdit && (!!programLogicSplit || (navFullSizeImageMode && !multiEmbeddedFigures)) && (displayImageUrl || programLogicSplit) && (
-                                  <div className={`node-pic-block ${navEmbeddedImageBlockClass}${!isAutoOnlyImage ? " node-pic-block--reupload-side" : ""}`}>
+                                  <div className={`node-pic-block ${navEmbeddedImageBlockClass}${!embeddedProductDiagram ? " node-pic-block--reupload-side" : ""}`}>
                                       <div className="node-pic-reupload-row">
                                           <div className="node-pic-reupload-figure">
                                               {displayImageUrl ? (
@@ -2660,7 +2670,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                                   { placeholder: "请输入图题", forceShow: !!editFigureCaptionNodeId || !!displayImageUrl || !!programLogicSplit },
                                               )}
                                           </div>
-                                          {!isAutoOnlyImage ? (
+                                          {!embeddedProductDiagram ? (
                                               <Upload {...uploadProps}>
                                                   <Button size="small" icon={<UploadOutlined />}>
                                                       {displayImageUrl ? "重新上传" : "上传图"}
@@ -2966,11 +2976,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                                   ) : null}
                                                   {renderNameEditor(String(child.title || ""), child.id, { placeholder: "请输入图题", forceShow: true })}
                                               </div>
-                                              {!(isAutoOnlyImage && (
-                                                  child.ref_type === "img_topo"
-                                                  || child.ref_type === "img_struct"
-                                                  || /物理拓扑|系统结构|体系结构/.test(`${child.title || ""} ${child.label || ""}`)
-                                              )) && (
+                                              {!isProductDiagramFigure(child) && (
                                               <Upload
                                                   maxCount={1}
                                                   showUploadList={false}
@@ -3323,7 +3329,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                 <div className="node-row node-row-follow node-row-content-below">
                     <span className="node-expand-placeholder" />
                     <div className="node-content-below-title">
-                        <div className={`node-pic-block ${navEmbeddedImageBlockClass}${!isAutoOnlyImage ? " node-pic-block--reupload-side" : ""}`}>
+                        <div className={`node-pic-block ${navEmbeddedImageBlockClass}${!embeddedProductDiagram ? " node-pic-block--reupload-side" : ""}`}>
                             <div className="node-pic-reupload-row">
                                 <div className="node-pic-reupload-figure">
                                     <div className="node-pic node-pic-readonly node-pic-inline">
@@ -3335,7 +3341,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                                     </div>
                                     {renderNameEditor(editFigureCaption, editFigureCaptionNodeId, { placeholder: "请输入图题", forceShow: !!editFigureCaptionNodeId || !!displayImageUrl })}
                                 </div>
-                                {!isAutoOnlyImage ? (
+                                {!embeddedProductDiagram ? (
                                     <Upload {...uploadProps}>
                                         <Button size="small" icon={<UploadOutlined />}>
                                             {displayImageUrl ? "重新上传" : "上传图"}
@@ -3455,11 +3461,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                             </div>
                             {renderNameEditor(String(child.title || ""), child.id, { placeholder: "请输入图题", forceShow: true })}
                         </div>
-                        {!(isAutoOnlyImage && (
-                            child.ref_type === "img_topo"
-                            || child.ref_type === "img_struct"
-                            || /物理拓扑|系统结构|体系结构/.test(`${child.title || ""} ${child.label || ""}`)
-                        )) && (
+                        {!isProductDiagramFigure(child) && (
                         <Upload
                             maxCount={1}
                             showUploadList={false}

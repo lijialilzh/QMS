@@ -40,6 +40,15 @@
     .ftr-record-table.ant-table-wrapper {
         height: auto;
 
+        &:not(.utp-record-table) {
+            width: 100%;
+
+            table {
+                table-layout: fixed;
+                width: 100%;
+            }
+        }
+
         .ant-spin-nested-loading {
             height: auto;
         }
@@ -74,7 +83,7 @@
             .ant-table-tbody > tr > td {
                 height: auto !important;
                 white-space: normal;
-                vertical-align: middle;
+                vertical-align: middle !important;
                 padding: 6px 8px !important;
             }
 

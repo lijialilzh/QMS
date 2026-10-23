@@ -4,6 +4,7 @@
 # 用户测试记录服务层（测试文件 PD-010-QR-02）。
 # 列表/编辑维护一份主文档；导出按 型号×用户测试人员 展开 zip。
 
+import base64
 import copy
 import io
 import json
@@ -112,19 +113,39 @@ class Server(object):
         return (row.code or "").strip() if row and row.code else ""
 
     def __user_testers(self, prod_id) -> List[str]:
+        """角色含「用户测试」的参与人员。本版本没有时用同名产品其它版本。按排序取人。"""
         if not prod_id:
             return []
-        members = db.session.execute(
-            select(ProjectMember).where(ProjectMember.prod_id == prod_id)
+
+        def collect(pid):
+            members = db.session.execute(
+                select(ProjectMember).where(ProjectMember.prod_id == pid).order_by(ProjectMember.sort_order, ProjectMember.id)
+            ).scalars().all()
+            names = []
+            for m in members:
+                role = str(m.role or "")
+                if "用户测试" not in role:
+                    continue
+                nm = (m.name or "").strip()
+                if nm and nm not in names:
+                    names.append(nm)
+            return names
+
+        names = collect(prod_id)
+        if names:
+            return names
+        product = db.session.get(Product, prod_id)
+        pname = (getattr(product, "name", None) or "").strip()
+        if not pname:
+            return []
+        ids = db.session.execute(
+            select(Product.id).where(Product.name == pname, Product.id != prod_id).order_by(Product.id.desc())
         ).scalars().all()
-        names = []
-        for m in members:
-            if "用户测试" not in str(m.role or ""):
-                continue
-            nm = (m.name or "").strip()
-            if nm and nm not in names:
-                names.append(nm)
-        return names
+        for pid in ids:
+            names = collect(pid)
+            if names:
+                return names
+        return []
 
     def __user_test_cases(self, prod_id) -> List[TestCase]:
         if not prod_id:
@@ -233,18 +254,35 @@ class Server(object):
         return content
 
     def __fill_runtime_fields(self, content, prod_id):
-        """测试工具←浏览器；网络环境←局域网&广域网（来自产品运行环境）。"""
+        """测试工具←谷歌浏览器；网络环境只取带宽更低的一项。"""
         from .serv_prod_runtime_env import get_runtime_payload
         payload = get_runtime_payload(prod_id) or {}
-        tool = (payload.get("cli_browser") or "").strip()
-        lan = (payload.get("net_lan") or "").strip()
-        wan = (payload.get("net_wan") or "").strip()
-        net_parts = []
-        if lan:
-            net_parts.append(f"局域网{lan}" if "局域" not in lan else lan)
-        if wan:
-            net_parts.append(f"广域网{wan}" if "广域" not in wan else wan)
-        net = "&".join(net_parts)
+        tool = "谷歌浏览器"
+        lan = self.__drop_and_above((payload.get("net_lan") or "").strip())
+        wan = self.__drop_and_above((payload.get("net_wan") or "").strip())
+
+        def label_of(raw, kind):
+            if not raw:
+                return ""
+            if kind == "lan":
+                return raw if "局域" in raw else f"局域网{raw}"
+            return raw if "广域" in raw else f"广域网{raw}"
+
+        def mbps(raw):
+            matched = re.search(r"(\d+(?:\.\d+)?)\s*[MG]bps", raw or "", re.I)
+            if not matched:
+                return None
+            value = float(matched.group(1))
+            if re.search(r"Gbps", raw or "", re.I):
+                value *= 1000
+            return value
+
+        options = []
+        for raw, kind in ((lan, "lan"), (wan, "wan")):
+            text = label_of(raw, kind)
+            if text:
+                options.append((mbps(raw) if mbps(raw) is not None else 10 ** 9, text))
+        net = min(options, key=lambda item: item[0])[1] if options else ""
         for s in (content.get("sections") or []):
             for tbl in (s.get("tables") or []):
                 if not tbl or not isinstance(tbl, list):
@@ -257,89 +295,267 @@ class Server(object):
                     for i in range(1, min(8, len(tbl[2]))):
                         tbl[2][i] = net
 
-    def __str_device_rows(self, prod_id) -> List[list]:
-        """取产品最新软件测试报告「测试设备详情」表数据行。"""
-        if not prod_id:
-            return []
-        from ..model.str_doc import StrDoc
-        row = db.session.execute(
-            select(StrDoc).where(StrDoc.product_id == prod_id).order_by(StrDoc.id.desc())
-        ).scalars().first()
-        if not row or not isinstance(row.content, dict):
-            return []
+    @staticmethod
+    def __extract_browser(info: str) -> str:
+        m = re.search(r"(Chrome[^\n]*)", info or "", re.I)
+        return (m.group(1).strip() if m else "").strip(" 、,;")
 
+    def __device_detail_rows(self, content):
+        """软件测试报告「测试设备详情」表。"""
         def walk(nodes):
             for n in nodes or []:
                 if not isinstance(n, dict):
                     continue
-                title = str(n.get("title") or "")
-                if "测试设备详情" in title:
+                if "测试设备详情" in str(n.get("title") or ""):
                     tables = n.get("tables") or []
-                    if tables and isinstance(tables[0], list):
+                    if tables and isinstance(tables[0], list) and tables[0]:
                         return [r for r in tables[0] if isinstance(r, list)]
                 hit = walk(n.get("children") or [])
                 if hit:
                     return hit
             return []
 
-        return walk(row.content.get("sections") or [])
+        if not isinstance(content, dict):
+            return []
+        return walk(content.get("sections") or [])
 
     @staticmethod
-    def __pick_lowest_client(client_rows: List[list]) -> list:
-        """多台用户端取最低配：优先 Win10，否则第一条。"""
+    def __pick_lowest_client(client_rows):
+        """多台用户端取最低配：优先 Windows 10，否则第一条。"""
         if not client_rows:
             return []
-        win10 = []
         for r in client_rows:
-            info = str(r[1] if len(r) > 1 else "")
+            info = " ".join(str(c or "") for c in r)
             if re.search(r"Windows\s*10|Win\s*10|Win10", info, re.I):
-                win10.append(r)
-        return win10[0] if win10 else client_rows[0]
+                return r
+        return client_rows[0]
+
+    def __browser_from_device_rows(self, rows) -> str:
+        """用户端最低配「设备信息及浏览器版本」里的浏览器版本，至少 x.y.z。"""
+        if not rows or not isinstance(rows[0], list):
+            return ""
+        header = [str(c or "") for c in rows[0]]
+        info_i = next((i for i, h in enumerate(header) if "设备信息" in h), 1)
+        clients = [r for r in rows[1:] if str(r[0] or "").strip() == "用户端"]
+        client = self.__pick_lowest_client(clients)
+        if not client or info_i >= len(client):
+            return ""
+        vers = []
+        for ver in re.findall(r"\d+(?:\.\d+){2,}", str(client[info_i] or "")):
+            if ver not in vers:
+                vers.append(ver)
+        if not vers:
+            return ""
+        lowest = min(vers, key=lambda v: tuple(int(p) for p in v.split(".")))
+        return f"Chrome {lowest}"
+
+    def __lowest_client_browser(self, prod_id) -> str:
+        """软件测试报告用户端最低配的浏览器版本。本产品没有报告时用同名其它版本，再没有用报告模版。"""
+        from ..model.str_doc import StrDoc
+
+        def from_product(pid):
+            row = db.session.execute(
+                select(StrDoc).where(StrDoc.product_id == pid).order_by(StrDoc.id.desc())
+            ).scalars().first()
+            if not row or not isinstance(row.content, dict):
+                return ""
+            return self.__browser_from_device_rows(self.__device_detail_rows(row.content))
+
+        browser = from_product(prod_id) if prod_id else ""
+        if browser:
+            return browser
+        product = db.session.get(Product, prod_id) if prod_id else None
+        name = (getattr(product, "name", None) or "").strip()
+        if name:
+            ids = db.session.execute(
+                select(Product.id).where(Product.name == name, Product.id != prod_id).order_by(Product.id.desc())
+            ).scalars().all()
+            for pid in ids:
+                browser = from_product(pid)
+                if browser:
+                    return browser
+        from .serv_str_doc import DEFAULT_STR_CONTENT
+        return self.__browser_from_device_rows(self.__device_detail_rows(DEFAULT_STR_CONTENT))
 
     @staticmethod
-    def __extract_browser(info: str) -> str:
-        m = re.search(r"(Chrome[^\n]*)", info or "", re.I)
-        return (m.group(1).strip() if m else "").strip(" 、,;")
+    def __replace_browser_block(info: str, browser: str) -> str:
+        text = str(info or "")
+        line = f"浏览器版本：{browser}"
+        if "浏览器版本" in text:
+            return re.sub(r"浏览器版本：[^\n]*(?:\n[、,，][^\n]*)*", line, text)
+        if re.search(r"浏览器\s*[:：]", text):
+            return re.sub(r"浏览器\s*[:：][^\n]*", f"浏览器：{browser}", text)
+        text = text.rstrip()
+        return (text + "\n" + line) if text else line
 
-    def __fill_devices_from_str(self, content, prod_id):
-        """用户端/服务端设备信息从软件测试报告「测试设备详情」获取。"""
-        rows = self.__str_device_rows(prod_id)
-        if not rows:
+    @staticmethod
+    def __dedupe_os_blocks(info: str) -> str:
+        parts = re.split(r"(?=操作系统\s*[:：])", str(info or ""))
+        kept, seen = [], set()
+        for part in parts:
+            key = re.sub(r"\s+", "", part)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            kept.append(part)
+        return "".join(kept) if kept else str(info or "")
+
+    @staticmethod
+    def __drop_and_above(text: str) -> str:
+        return re.sub(r"[ \t]*及以上", "", str(text or ""))
+
+    def __apply_str_browser(self, content, prod_id):
+        """用户端设备里只保留最低配的一个浏览器版本。测试工具写谷歌浏览器。数量旁不再写浏览器。"""
+        browser = self.__lowest_client_browser(prod_id)
+        for s in (content.get("sections") or []):
+            for tbl in (s.get("tables") or []):
+                if not tbl or not isinstance(tbl[0], list) or "产品名称" not in str(tbl[0][0] or ""):
+                    continue
+                if len(tbl) > 1 and isinstance(tbl[1], list) and len(tbl[1]) >= 7:
+                    tbl[1][6] = tbl[1][7] = "谷歌浏览器"
+                if len(tbl) > 4 and isinstance(tbl[4], list):
+                    for i in range(3, min(6, len(tbl[4]))):
+                        cell = tbl[4][i]
+                        if isinstance(cell, str) and cell.strip():
+                            text = self.__dedupe_os_blocks(cell)
+                            if browser:
+                                text = self.__replace_browser_block(text, browser)
+                            tbl[4][i] = self.__drop_and_above(text)
+                    if len(tbl[4]) > 7:
+                        tbl[4][7] = ""
+                if len(tbl) > 5 and isinstance(tbl[5], list):
+                    for i in range(3, min(6, len(tbl[5]))):
+                        cell = tbl[5][i]
+                        if isinstance(cell, str) and cell.strip():
+                            tbl[5][i] = self.__drop_and_above(cell)
+
+    def __device_map_from_plan(self, content) -> dict:
+        """计划正文里「设备信息」表：用户端/服务端 → (设备信息, 数量)。"""
+        found = {}
+        if not isinstance(content, dict):
+            return found
+
+        def walk(node):
+            if not isinstance(node, dict):
+                return
+            for tbl in node.get("tables") or []:
+                if not isinstance(tbl, list) or not tbl or not isinstance(tbl[0], list):
+                    continue
+                header = [str(c or "") for c in tbl[0]]
+                info_i = next((i for i, h in enumerate(header) if "设备信息" in h), None)
+                if info_i is None:
+                    continue
+                qty_i = next((i for i, h in enumerate(header) if "数量" in h), None)
+                for r in tbl[1:]:
+                    if not isinstance(r, list) or not r:
+                        continue
+                    label = str(r[0] or "").strip()
+                    if label not in ("用户端", "服务端") or label in found:
+                        continue
+                    info = str(r[info_i] if info_i < len(r) else "").strip()
+                    qty = str(r[qty_i] if qty_i is not None and qty_i < len(r) else "").strip()
+                    if info:
+                        found[label] = (info, qty or "1台")
+            for child in node.get("children") or []:
+                walk(child)
+
+        for section in content.get("sections") or []:
+            walk(section)
+        return found
+
+    def __utp_device_map(self, prod_id):
+        """最新《用户测试计划》设备表。本版本没有时用同名产品其它版本。"""
+        if not prod_id:
+            return {}
+        from ..model.utp_doc import UtpDoc
+
+        def load(pid):
+            row = db.session.execute(
+                select(UtpDoc).where(UtpDoc.product_id == pid).order_by(UtpDoc.id.desc())
+            ).scalars().first()
+            if not row or not isinstance(row.content, dict):
+                return {}
+            return self.__device_map_from_plan(row.content)
+
+        found = load(prod_id)
+        if found:
+            return found
+        product = db.session.get(Product, prod_id)
+        name = (getattr(product, "name", None) or "").strip()
+        if not name:
+            return {}
+        ids = db.session.execute(
+            select(Product.id).where(Product.name == name, Product.id != prod_id).order_by(Product.id.desc())
+        ).scalars().all()
+        for pid in ids:
+            found = load(pid)
+            if found:
+                return found
+        return {}
+
+    def __fill_devices_from_utp(self, content, prod_id):
+        """用户端/服务端设备信息从用户测试计划「测试设备需求」覆盖。计划没有该表则不改，便于手填。"""
+        found = self.__utp_device_map(prod_id)
+        if not found:
             return
-        clients = [r for r in rows if str(r[0] or "").strip() == "用户端"]
-        servers = [r for r in rows if str(r[0] or "").strip() == "服务端"]
-        client = self.__pick_lowest_client(clients)
-        server = servers[0] if servers else []
+        client = found.get("用户端")
+        server = found.get("服务端")
         for s in (content.get("sections") or []):
             for tbl in (s.get("tables") or []):
                 if not tbl or len(tbl) < 6:
                     continue
                 if client and isinstance(tbl[4], list) and len(tbl[4]) >= 7:
-                    info = str(client[1] if len(client) > 1 else "")
-                    qty = str(client[2] if len(client) > 2 else "") or "1台"
-                    browser = self.__extract_browser(info)
+                    info, qty = client
                     for i in range(3, 6):
                         if i < len(tbl[4]):
-                            tbl[4][i] = info
+                            tbl[4][i] = self.__drop_and_above(info)
                     tbl[4][6] = qty
-                    if browser:
-                        tbl[4][7] = browser
+                    if len(tbl[4]) > 7:
+                        tbl[4][7] = ""
                 if server and isinstance(tbl[5], list) and len(tbl[5]) >= 7:
-                    info = str(server[1] if len(server) > 1 else "")
-                    qty = str(server[2] if len(server) > 2 else "") or "1台"
+                    info, qty = server
                     for i in range(3, 6):
                         if i < len(tbl[5]):
-                            tbl[5][i] = info
+                            tbl[5][i] = self.__drop_and_above(info)
                     tbl[5][6] = qty
                     if len(tbl[5]) > 7:
                         tbl[5][7] = "/"
 
-    def __fill_tester_and_date(self, content, prod_id):
-        """编辑页：测试人员默认第一人；测试日期取时间逻辑线。"""
+    def __record_test_date(self, prod_id):
+        """时间线输出含「用户测试记录」的最晚一天。本版本没有时间线时用同名产品其它版本。
+        不取用户测试计划/用例/报告里带评审的日期。"""
+        if not prod_id:
+            return ""
         from . import serv_review_util
+        from ..model.project_timeline import ProjectTimelineCell
+        tl_rows = serv_review_util.timeline_rows_with_sibling(prod_id)
+        if not tl_rows:
+            return ""
+        cell_map = {}
+        for cell in db.session.execute(
+            select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_([r.id for r in tl_rows]))
+        ).scalars().all():
+            cell_map.setdefault(cell.row_id, []).append(cell.output_result or "")
+        hits = []
+        for row, year in serv_review_util._timeline_date_rows_with_year(tl_rows):
+            vals = cell_map.get(row.id, [])
+            if not any("用户测试记录" in str(v or "") for v in vals):
+                continue
+            month = re.sub(r"[^\d]", "", str(row.month or ""))
+            day = re.sub(r"[^\d]", "", str(row.day or ""))
+            if not month or not year:
+                continue
+            hits.append((int(year) * 10000 + int(month) * 100 + (int(day) if day else 1), int(year), int(month), int(day) if day else 1))
+        if not hits:
+            return ""
+        _, year, month, day = max(hits, key=lambda item: item[0])
+        return f"{year}.{month:02d}.{day:02d}"
+
+    def __fill_tester_and_date(self, content, prod_id):
+        """编辑页：测试人员默认第一人；测试日期取时间线「用户测试记录」最晚一天。"""
         testers = self.__user_testers(prod_id)
         first = testers[0] if testers else ""
-        test_date = serv_review_util.review_date(prod_id, ["用户测试记录", "用户测试"]) or ""
+        test_date = self.__record_test_date(prod_id)
         for s in (content.get("sections") or []):
             for tbl in (s.get("tables") or []):
                 if not tbl or len(tbl) < 7 or not isinstance(tbl[6], list):
@@ -397,7 +613,8 @@ class Server(object):
                                     continue
                                 r[i] = re.sub(r"\d+\.\d+\.\d+\.\d+", new_fv, cell)
         self.__fill_runtime_fields(content, prod_id)
-        self.__fill_devices_from_str(content, prod_id)
+        self.__fill_devices_from_utp(content, prod_id)
+        self.__apply_str_browser(content, prod_id)
         self.__fill_tester_and_date(content, prod_id)
         fill_model = (model or "").strip()
         if not fill_model and product:
@@ -619,8 +836,43 @@ class Server(object):
         docx_util.fonted_txt(header_para, file_no or "")
         docx_util.add_page_number_footer(section, file_no or "")
 
+        def write_pass_fail(cell, text, align):
+            """是否通过：与评审记录相同的 Wingdings 方框，勾中为方框对号，未勾为空框。"""
+            from docx.oxml import OxmlElement
+            from docx.oxml.ns import qn
+            raw = str(text or "")
+            pass_on = bool(re.search(r"[■☑√✓✔]\s*通过", raw))
+            fail_on = bool(re.search(r"[■☑√✓✔]\s*不通过", raw))
+            cell.text = ""
+            para = cell.paragraphs[0]
+            para.alignment = align
+            para.paragraph_format.space_before = Pt(0)
+            para.paragraph_format.space_after = Pt(0)
+
+            def add(txt, font_name):
+                run = para.add_run(txt)
+                run.font.size = Pt(10.5)
+                run.font.bold = False
+                run.font.name = font_name
+                rpr = run._element.get_or_add_rPr()
+                rfonts = rpr.find(qn("w:rFonts"))
+                if rfonts is None:
+                    rfonts = OxmlElement("w:rFonts")
+                    rpr.append(rfonts)
+                for attr in ("w:ascii", "w:hAnsi", "w:eastAsia", "w:cs"):
+                    rfonts.set(qn(attr), font_name)
+
+            add("\u00fe" if pass_on else "\u00a8", "Wingdings")
+            add(" 通过    ", "宋体")
+            add("\u00fe" if fail_on else "\u00a8", "Wingdings")
+            add(" 不通过", "宋体")
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
         def set_cell(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
             s = str(text or "")
+            if re.search(r"[■□☑☐✓✔√]\s*通过", s) and "不通过" in s:
+                write_pass_fail(cell, s, align)
+                return
             cell.text = ""
             for i, line in enumerate(s.split("\n")):
                 para = cell.paragraphs[0] if i == 0 else cell.add_paragraph()
@@ -712,7 +964,20 @@ class Server(object):
         document.add_paragraph()
         p2 = document.add_paragraph()
         p2.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        docx_util.fonted_txt(p2, f"签名：{sign_name}", font_size=12.0)
+        docx_util.fonted_txt(p2, "签名：", font_size=12.0)
+        from ..model.person_sign import PersonSign
+        for name in [n for n in re.split(r"[、,，;；\s]+", sign_name) if n]:
+            hit = db.session.execute(select(PersonSign).where(PersonSign.name == name)).scalars().first()
+            img = str(getattr(hit, "sign_img", "") or "") if hit else ""
+            if img.startswith("data:image"):
+                try:
+                    b64 = img.split(",", 1)[1] if "," in img else ""
+                    p2.add_run().add_picture(io.BytesIO(base64.b64decode(b64)), height=Pt(28))
+                    p2.add_run(" ")
+                    continue
+                except Exception:
+                    logging.exception("用户测试记录签名图写入失败")
+            docx_util.fonted_txt(p2, name + " ", font_size=12.0)
         p3 = document.add_paragraph()
         p3.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         docx_util.fonted_txt(p3, f"日期：{sign_date}", font_size=12.0)

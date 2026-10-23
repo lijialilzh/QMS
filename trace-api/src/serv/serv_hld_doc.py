@@ -271,17 +271,32 @@ class Server(object):
         return {row.category: row.file_url for row in rows}
 
     def __hydrate_tree_product_images(self, nodes: List[HldNodeForm], prod_imgs: dict):
-        if not nodes or not prod_imgs:
+        """物理拓扑图、系统结构图（含产品功能下的图2）打开时用产品图示覆盖。没有对应图则保留原图。"""
+        if not nodes:
             return
+        prod_imgs = prod_imgs or {}
         for node in nodes or []:
-            ref_type = getattr(node, "ref_type", None)
-            existing = _normalize_hld_img_url(getattr(node, "img_url", "") or "")
-            # 章节或图题上已经有图时保留原图。没有图才用产品图示补。
-            # 只补给物理拓扑/图1、系统结构/图2；子图题已经有图时不再往父章节补，避免导出重复。
-            if ref_type in prod_imgs and prod_imgs.get(ref_type) and not existing:
-                if self.__title_accepts_product_image(node, ref_type) and not self.__child_owns_figure(node):
-                    node.img_url = prod_imgs[ref_type]
+            title = str(getattr(node, "title", "") or "").strip()
+            plain = self._biz_title(title)
+            ref_type = str(getattr(node, "ref_type", None) or "")
+            if ref_type not in {"img_topo", "img_struct"}:
+                if "物理拓扑" in plain or re.match(r"^图\s*1", title):
+                    ref_type = "img_topo"
+                elif ("系统结构" in plain or "体系结构" in plain) or re.match(r"^图\s*2", title):
+                    ref_type = "img_struct"
+                else:
+                    ref_type = ""
             self.__hydrate_tree_product_images(getattr(node, "children", None) or [], prod_imgs)
+            if ref_type in {"img_topo", "img_struct"} and self.__title_accepts_product_image(node, ref_type):
+                url = prod_imgs.get(ref_type) or ""
+                if not url:
+                    continue
+                # 图已经挂在子图题上时，父章节不再留同一张，避免打开和导出重复。
+                if self.__child_owns_figure(node):
+                    node.img_url = ""
+                else:
+                    node.ref_type = ref_type
+                    node.img_url = url
 
     def __upsert_product_doc_image(self, doc_id: int, ref_type: str, file_name: str, file_size: int, file_url: str):
         if ref_type not in {"img_flow", "img_topo", "img_struct"} or not file_url:

@@ -533,7 +533,7 @@ DOC_DEPT = {
     "nsmp": "product", "nsr": "product", "crr": "dev",
     "scm": "dev", "scs": "dev",
     # 测试文件：编制人=测试人员，审核/批准=研发负责人
-    "stp": "test", "utp": "test", "utr": "test", "str": "test", "bug": "test", "imm": "test",
+    "stp": "test", "utp": "test", "utr": "test", "str": "test", "bug": "test", "imm": "test", "ftr": "test",
     "tc_sw": "test", "tc_user": "test",
     # 模型文件：编制人=模型部负责人（无则模型负责人/角色含模型），审核人=算法（无则研发负责人），批准人=研发负责人（无匹配则空）
     "md_001": "model",

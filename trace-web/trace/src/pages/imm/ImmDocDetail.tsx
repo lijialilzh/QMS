@@ -9,7 +9,7 @@ import * as ApiProduct from "@/api/ApiProduct";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import ReviewRecordTables from "@/pages/doc_fill/ReviewRecordTables";
 import "../pdp/PdpDocDetail.less";
-import { isRuntimeLockedBody, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
+import { isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
 import {
     appendBodyLine,
     buildFreeSegments,
@@ -266,7 +266,7 @@ export default () => {
         patchNode(data.activeKey, { tables: next.tables, body: next.body, images: next.images });
         if (kind === "image") message.success("图片已更新，请保存文档");
     };
-    const aboveBar = active && !readonly && !isImmAutofillLockedBody(active) && !isRuntimeLockedBody(active) && chapterAllowsAboveTable(active) && (active.tables || []).length > 0 ? (
+    const aboveBar = active && !readonly && !isImmAutofillLockedBody(active) && chapterAllowsAboveTable(active) && (active.tables || []).length > 0 ? (
         <FreeSideActions
             label="上方添加正文"
             onBody={() => placeAbove("body")}
@@ -549,7 +549,8 @@ export default () => {
                                     const images: string[] = Array.isArray(active.images) ? active.images : [];
                                     const isTopoAuto = stripNum(active.title) === "硬件拓扑";
                                     const autofillBodyLock = isImmAutofillLockedBody(active);
-                                    const bodyLock = readonly || isRuntimeLockedBody(active) || autofillBodyLock;
+                                    const bodyLock = readonly || autofillBodyLock;
+                                    const bodyBoxStyle = { whiteSpace: "pre-wrap" as const, overflowWrap: "anywhere" as const };
                                     const segments = buildFreeSegments(String(active.body || ""), active.tables || [], images);
                                     // 有图/表，或多段正文（含 {{TXT}}）时走交错；清空某段正文仍保留输入框
                                     const hasInterleave = shouldUseFreeInterleave(String(active.body || ""), segments, { skip: isMd5Review });
@@ -581,6 +582,7 @@ export default () => {
                                                             autoSize={{ minRows: 3, maxRows: 24 }}
                                                             value={seg.text}
                                                             disabled={bodyLock}
+                                                            style={bodyBoxStyle}
                                                             placeholder="本段正文内容，可多行"
                                                             onChange={(e) => {
                                                                 patchNode(active._key, { body: reassembleFreeBody(segments, si, e.target.value) });
@@ -730,6 +732,7 @@ export default () => {
                                                     autoSize={{ minRows: 3, maxRows: 24 }}
                                                     value={active.body ?? ""}
                                                     disabled={bodyLock}
+                                                    style={bodyBoxStyle}
                                                     placeholder="本章节正文内容，可多行"
                                                     onChange={(e) => patchNode(active._key, { body: e.target.value })}
                                                 />

@@ -4,11 +4,13 @@
 # 现场测试规程服务层（测试文件 VV-006），结构与软件测试计划(stp)一致。
 # 默认内容取自 src-res/ftr_default_content.json。
 
+import base64
 import copy
 import json
 import logging
 import os
 import re
+from io import BytesIO
 from typing import List
 
 from sqlalchemy import delete, func, select
@@ -267,7 +269,12 @@ class Server(object):
             prod_id,
         )
         serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else "", force=force)
-        serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, DOC_KEY) if prod_id else {}, force=force)
+        # 封面签署人按测试文件打开即覆盖：编制人=测试人员，审核人/批准人=研发负责人。
+        serv_review_util.fill_cover_signers(
+            content,
+            serv_review_util.cover_signers(prod_id, DOC_KEY) if prod_id else {},
+            force=bool(prod_id) or force,
+        )
         return content
 
     def __to_obj(self, row: FtrDoc, product: Product = None):
@@ -463,6 +470,18 @@ class Server(object):
 
         def set_cell(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT, valign=WD_CELL_VERTICAL_ALIGNMENT.CENTER):
             s = str(text or "")
+            if s.startswith("data:image"):
+                try:
+                    b64 = s.split(",", 1)[1] if "," in s else ""
+                    cell.text = ""
+                    para = cell.paragraphs[0]
+                    para.alignment = align
+                    para.add_run().add_picture(BytesIO(base64.b64decode(b64)), height=Pt(33))
+                    cell.vertical_alignment = valign
+                    clear_cell_shading(cell)
+                    return
+                except Exception:
+                    logging.exception("embed signature image into ftr cell failed")
             cell.text = ""
             for i, line in enumerate(s.split("\n")):
                 para = cell.paragraphs[0] if i == 0 else cell.add_paragraph()

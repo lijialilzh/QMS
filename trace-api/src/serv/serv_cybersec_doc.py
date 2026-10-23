@@ -24,6 +24,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 
 from ..model.product import Product
+from ..model.prod_dhf import ProdDhf
 from ..model.project_member import ProjectMember
 from ..model.project_timeline import ProjectTimelineRow, ProjectTimelineCell
 from ..model.cybersec_doc import (
@@ -319,11 +320,11 @@ class Server(object):
         return ""
 
     def __autofill_front_matter(self, content, product_id, version):
-        # 编制人/修订人 ← DQA；日期 ← 时间逻辑线（打开覆盖）
+        # 编制人/修订人 ← DQA；修订批准人与封面批准人相同（研发负责人）；日期 ← 时间逻辑线（打开覆盖）
         if not isinstance(content, dict):
             return content
         reviser = self.__member_name(product_id, ("DQA",))
-        approver = self.__member_name(product_id, ("产品负责人", "研发负责人", "管理者代表"))
+        approver = (serv_review_util.cover_signer_names(product_id, "cybersec").get("批准人") or "") if product_id else ""
         rev_date = serv_review_util.review_date(
             product_id, ["网络安全风险管理报告"]
         ) if product_id else ""
@@ -370,8 +371,8 @@ class Server(object):
                             row[2] = "首次发布"
                         if reviser:
                             set_force(3, reviser)
-                        if approver and not str(row[4] or "").strip():
-                            row[4] = approver
+                        if approver:
+                            set_force(4, approver)
                     col = len(table[0]) if isinstance(table[0], list) and table[0] else 5
                     while len(table) < 6:
                         table.append(["" for _ in range(col)])
@@ -525,7 +526,18 @@ class Server(object):
             obj.product_version = product.full_version
             obj.product_full_version = product.full_version
             obj.product_type_code = product.type_code
+        base = (obj.file_no or "").strip() or self.__dhf_file_no(_pid)
+        obj.file_no = sync_file_no_version(base, row.version) or base
         return obj
+
+    def __dhf_file_no(self, prod_id):
+        """文档未填文件编号时，用产品 DHF 里《网络安全风险管理报告》的编号。"""
+        if not prod_id:
+            return ""
+        row = db.session.execute(
+            select(ProdDhf).where(ProdDhf.prod_id == prod_id, ProdDhf.name.like("%网络安全风险管理报告%"))
+        ).scalars().first()
+        return (row.code or "").strip() if row and row.code else ""
 
     def __fill_list_obj(self, obj, product: Product = None, doc: CybersecDoc = None):
         if product:

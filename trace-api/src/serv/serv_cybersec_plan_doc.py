@@ -210,9 +210,9 @@ class Server(object):
     def __autofill_front_matter(self, content, product_id, version):
         if not isinstance(content, dict):
             return content
-        # 编制人/修订人 ← DQA；日期 ← 时间逻辑线（打开覆盖）
+        # 编制人/修订人 ← DQA；修订批准人与封面批准人相同（研发负责人）；日期 ← 时间逻辑线（打开覆盖）
         reviser = self.__member_name(product_id, ("DQA",)) if product_id else ""
-        approver = self.__member_name(product_id, ("产品负责人", "研发负责人", "管理者代表")) if product_id else ""
+        approver = (serv_review_util.cover_signer_names(product_id, "cybersec").get("批准人") or "") if product_id else ""
         rev_date = serv_review_util.review_date(product_id, DATE_KEYWORDS) if product_id else ""
         rev_date = rev_date or ""
         ver = str(version or "")
@@ -257,8 +257,8 @@ class Server(object):
                             row[2] = "首次发布"
                         if reviser:
                             set_force(3, reviser)
-                        if approver and not str(row[4] or "").strip():
-                            row[4] = approver
+                        if approver:
+                            set_force(4, approver)
         if product_id:
             serv_review_util.fill_cover_signers(
                 content, serv_review_util.cover_signers(product_id, "cybersec"), force=True
@@ -431,11 +431,8 @@ class Server(object):
                 return ["SBOM工具清单", "SBOM信息", "SBOM"]
             if "控制措施" in t or "制定控制" in t:
                 return ["网络安全风险管理报告"]
-            if "风险评估" in t:
-                return ["网络安全风险评估"]
-            if "威胁识别" in t or "威胁建模" in t:
-                return ["威胁识别", "威胁建模"]
-            if "准备" in t:
+            # 准备、威胁识别与分析、风险评估同一时间，都取网络安全风险管理计划
+            if "风险评估" in t or "威胁识别" in t or "威胁建模" in t or "准备" in t:
                 return ["网络安全风险管理计划"]
             return None
 
@@ -493,11 +490,87 @@ class Server(object):
         fill_sections(content.get("sections"))
         return content
 
+    def __srs_figure_notes(self, product_id, kind):
+        """最新需求规格说明里，物理拓扑图 / 系统结构图图题以下的说明。"""
+        from ..model.srs_doc import SrsDoc, SrsNode
+        if not product_id:
+            return ""
+        doc = db.session.execute(
+            select(SrsDoc).where(SrsDoc.product_id == product_id, ~SrsDoc.version.like("__deleted%")).order_by(SrsDoc.id.desc())
+        ).scalars().first()
+        if not doc:
+            return ""
+        nodes = db.session.execute(select(SrsNode).where(SrsNode.doc_id == doc.id)).scalars().all()
+
+        def plain(title):
+            return re.sub(r"^[0-9０-９．.、\s]+", "", str(title or "")).strip()
+
+        target = None
+        for n in nodes:
+            name = plain(n.title)
+            if kind == "topo" and (n.ref_type == "img_topo" or name in ("物理拓扑图", "物理拓扑")):
+                target = n
+                break
+            if kind == "struct" and (n.ref_type == "img_struct" or name in ("系统结构图", "体系结构图", "系统架构", "系统架构图")):
+                target = n
+                break
+        if not target:
+            return ""
+        lines = str(target.text or "").split("\n")
+        cap_i = next((i for i, ln in enumerate(lines) if re.match(r"^图\s*\d", ln.strip())), None)
+        body = lines[cap_i + 1:] if cap_i is not None else lines
+        kept = [ln.rstrip() for ln in body if ln.strip() not in ("{{IMG}}", "{{TXT}}", "{{TBL}}", "{{EMPTY}}")]
+        while kept and not kept[0].strip():
+            kept.pop(0)
+        while kept and not kept[-1].strip():
+            kept.pop()
+        return "\n".join(kept)
+
+    @staticmethod
+    def __replace_after_caption(text, notes):
+        """保留本章引导句和图题，只替换图题以下的说明。"""
+        notes = str(notes or "").strip()
+        if not notes:
+            return text
+        lines = str(text or "").split("\n")
+        cap_i = next((i for i, ln in enumerate(lines) if re.match(r"^图\s*\d", ln.strip())), None)
+        if cap_i is None:
+            base = str(text or "").rstrip()
+            return f"{base}\n{notes}" if base else notes
+        head = "\n".join(lines[:cap_i + 1]).rstrip()
+        return f"{head}\n{notes}"
+
+    def __autofill_figure_notes(self, content, product_id):
+        """物理拓扑图、系统架构图下的说明，从需求规格说明对应章节获取。图本身仍由产品图示提供。"""
+        if not product_id or not isinstance(content, dict):
+            return content
+        topo = self.__srs_figure_notes(product_id, "topo")
+        struct = self.__srs_figure_notes(product_id, "struct")
+
+        def plain(title):
+            return re.sub(r"^[0-9０-９．.、\s]+", "", str(title or "")).strip()
+
+        def walk(nodes):
+            for n in nodes or []:
+                if not isinstance(n, dict):
+                    continue
+                title = plain(n.get("title"))
+                ref = n.get("ref_type")
+                if topo and (ref == "img_topo" or "物理拓扑" in title):
+                    n["text"] = self.__replace_after_caption(n.get("text"), topo)
+                elif struct and (ref == "img_struct" or "体系结构" in title or title in ("系统架构", "系统架构图", "系统结构图")):
+                    n["text"] = self.__replace_after_caption(n.get("text"), struct)
+                walk(n.get("children"))
+
+        walk(content.get("sections"))
+        return content
+
     # ---------------- 统一自动获取入口 ----------------
     def __autofill(self, content, product_id, version=""):
         content = self.__autofill_front_matter(content, product_id, version)
         content = self.__autofill_time_plan(content, product_id)
         content = self.__autofill_team(content, product_id)
+        content = self.__autofill_figure_notes(content, product_id)
         content = self.__autofill_product_info(content, product_id)
         content = self.__autofill_runtime_env(content, product_id)
         return content
@@ -510,6 +583,32 @@ class Server(object):
             select(ProdDhf).where(ProdDhf.prod_id == prod_id, ProdDhf.name.like("%网络安全风险管理计划%"))
         ).scalars().first()
         return (row.code or "").strip() if row and row.code else ""
+
+    def __display_file_no(self, product_id, version, stored=""):
+        """与列表/详情一致：库里的文件编号优先，空则用 DHF 编号。"""
+        base = (stored or "").strip() or self.__dhf_file_no(product_id)
+        return sync_file_no_version(base, version) or base
+
+    @staticmethod
+    def __stamp_cover_file_no(content, file_no):
+        """封面表里标了「文件编号」的格子，导出时写入与列表相同的编号。"""
+        if not file_no or not isinstance(content, dict):
+            return
+        for section in (content.get("sections") or []):
+            if not isinstance(section, dict):
+                continue
+            title = re.sub(r"\s+", "", str(section.get("title") or ""))
+            if section.get("ref_type") != "cover" and title != DOC_TITLE:
+                continue
+            for table in (section.get("tables") or []):
+                if not isinstance(table, list):
+                    continue
+                for row in table:
+                    if not isinstance(row, list):
+                        continue
+                    for i, cell in enumerate(row):
+                        if str(cell or "").strip() == "文件编号" and i + 1 < len(row):
+                            row[i + 1] = file_no
 
     # ---------------- 文档 CRUD ----------------
     def add_cybersec_plan_doc(self, form: CybersecPlanDocForm):
@@ -656,6 +755,8 @@ class Server(object):
             return
         content = self.__normalize_content(row.content)
         content = self.__autofill(content, row.product_id, row.version)
+        file_no = self.__display_file_no(row.product_id, row.version, row.file_no)
+        self.__stamp_cover_file_no(content, file_no)
         sections = content.get("sections") or []
         product = db.session.execute(select(Product).where(Product.id == row.product_id)).scalars().first()
 
@@ -670,8 +771,8 @@ class Server(object):
         document.settings.element.append(update_fields)
         header_para = section.header.add_paragraph()
         header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        docx_util.fonted_txt(header_para, row.file_no or "")
-        docx_util.add_page_number_footer(section, row.file_no or "")
+        docx_util.fonted_txt(header_para, file_no)
+        docx_util.add_page_number_footer(section, file_no)
 
         product_version = (product.full_version if product else "") or ""
 
@@ -836,7 +937,7 @@ class Server(object):
         def add_section_image_by_category(category):
             """从图表文件管理获取图片并插入文档"""
             try:
-                img_row = pick_doc_image_file_row(row.product_id, category, row.version or "", product_version)
+                img_row = pick_doc_image_file_row(row.product_id, category, "", product_version)
                 if img_row and img_row.file_url:
                     docx_util.save_img2docx(img_row.file_url, document, mw=520, mh=520)
                     return True

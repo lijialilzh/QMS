@@ -1,4 +1,5 @@
 import { syncFileNoVersion } from "@/pages/doc_fill/syncDocVersion";
+import { DeleteOutlined, PlusOutlined } from "@ant-design/icons";
 import { Button, Checkbox, Input, Modal, Space, Spin, Table, message } from "antd";
 import type { CSSProperties } from "react";
 import { useEffect, useMemo } from "react";
@@ -46,6 +47,21 @@ function formatResult(val: "pass" | "fail" | ""): string {
     if (val === "pass") return "■通过   □不通过";
     if (val === "fail") return "□通过   ■不通过";
     return "□通过   □不通过";
+}
+
+const PURPOSE_ITEMS = ["成品检验", "现场测试"];
+
+function parsePurpose(val: string): Record<string, boolean> {
+    const s = String(val || "");
+    const flags: Record<string, boolean> = {};
+    PURPOSE_ITEMS.forEach((name) => {
+        flags[name] = new RegExp(`[■☑√✓]\\s*${name}`).test(s);
+    });
+    return flags;
+}
+
+function formatPurpose(flags: Record<string, boolean>): string {
+    return PURPOSE_ITEMS.map((name) => `${flags[name] ? "■" : "□"}${name}`).join("   ");
 }
 
 const tdStyle: CSSProperties = { border: "1px solid #d9d9d9", padding: "4px 8px", fontSize: 12, verticalAlign: "middle" };
@@ -124,10 +140,45 @@ export default () => {
         const next = rows.map((r: any[]) => [...r]);
         const ri = DATA_START + idx;
         if (next[ri]) {
-            if (field === "result") next[ri][2] = val;
+            if (field === "result") {
+                next[ri][2] = val;
+                if (next[ri].length > 3) next[ri][3] = val;
+            }
             if (field === "remark") next[ri][4] = val;
             if (field === "func") next[ri][1] = val;
+            if (field === "module") {
+                const old = next[ri][0];
+                let i = ri;
+                while (i < next.length && next[i] && next[i][0] === old) {
+                    next[i][0] = val;
+                    i += 1;
+                }
+            }
         }
+        dispatch({ rows: next });
+    };
+
+    const addRecord = (idx: number) => {
+        const next = rows.map((r: any[]) => [...r]);
+        const blankResult = formatResult("");
+        if (idx < 0) {
+            next.push(["", "", blankResult, blankResult, ""]);
+            dispatch({ rows: next });
+            return;
+        }
+        const ri = DATA_START + idx;
+        const mod = (next[ri] && next[ri][0]) || "";
+        const blank = [mod, "", blankResult, blankResult, ""];
+        if (ri + 1 >= next.length) next.push(blank);
+        else next.splice(ri + 1, 0, blank);
+        dispatch({ rows: next });
+    };
+
+    const delRecord = (idx: number) => {
+        const next = rows.map((r: any[]) => [...r]);
+        const ri = DATA_START + idx;
+        if (ri < DATA_START || ri >= next.length) return;
+        next.splice(ri, 1);
         dispatch({ rows: next });
     };
 
@@ -177,10 +228,10 @@ export default () => {
                 rowSpan: moduleSpans[index ?? 0] || 0,
                 style: { fontWeight: 600, background: "#fafafa", verticalAlign: "middle" },
             }),
-            render: (text: string) => text,
+            render: (text: string, _r: any, idx: number) => editCell(text, (v) => setRecord(idx, "module", v)),
         },
         {
-            title: "功能", dataIndex: "func", width: 280,
+            title: "功能", dataIndex: "func",
             render: (text: string, _r: any, idx: number) => editCell(text, (v) => setRecord(idx, "func", v)),
         },
         {
@@ -209,9 +260,18 @@ export default () => {
             },
         },
         {
-            title: "备注", dataIndex: "remark",
+            title: "备注", dataIndex: "remark", width: 120,
             render: (text: string, _r: any, idx: number) => editCell(text, (v) => setRecord(idx, "remark", v)),
         },
+        ...(!readonly ? [{
+            title: "操作", width: 64, align: "center" as const,
+            render: (_t: string, _r: any, idx: number) => (
+                <Space size={10}>
+                    <PlusOutlined title="增加" style={{ color: "#1677ff", cursor: "pointer" }} onClick={() => addRecord(idx)} />
+                    <DeleteOutlined title="删除" style={{ color: "#ff4d4f", cursor: "pointer" }} onClick={() => delRecord(idx)} />
+                </Space>
+            ),
+        }] : []),
     ];
 
     return (
@@ -248,9 +308,10 @@ export default () => {
                         <div style={{ textAlign: "center", fontSize: 18, fontWeight: 700, margin: "4px 0 4px" }}>现场测试记录</div>
                         <div style={{ textAlign: "center", color: "#888", marginBottom: 12 }}>{syncFileNoVersion(data.doc.file_no, data.doc.version) || ""}</div>
 
-                        {/* 封面信息 */}
-                        <div style={{ maxWidth: 900, marginBottom: 16 }}>
-                            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                        {/* 封面与测试项目同宽，右边缘对齐 */}
+                        <div style={{ maxWidth: 960 }}>
+                        <div style={{ marginBottom: 16 }}>
+                            <table style={{ borderCollapse: "collapse", width: "100%", tableLayout: "fixed" }}>
                                 <tbody>
                                     <tr>
                                         <td style={labelStyle}>产品名称</td>
@@ -268,7 +329,22 @@ export default () => {
                                         <td style={labelStyle}>测试人员</td>
                                         <td style={valueStyle}>{editCell(cover["测试人员"] || "", (v) => setCover("测试人员", v))}</td>
                                         <td style={labelStyle}>测试目的</td>
-                                        <td style={valueStyle}>{editCell(cover["测试目的"] || "", (v) => setCover("测试目的", v))}</td>
+                                        <td style={valueStyle}>
+                                            <Space size={16}>
+                                                {PURPOSE_ITEMS.map((name) => (
+                                                    <Checkbox
+                                                        key={name}
+                                                        disabled={readonly}
+                                                        checked={!!parsePurpose(cover["测试目的"] || "")[name]}
+                                                        onChange={(e) => {
+                                                            const flags = parsePurpose(cover["测试目的"] || "");
+                                                            flags[name] = e.target.checked;
+                                                            setCover("测试目的", formatPurpose(flags));
+                                                        }}
+                                                    >{name}</Checkbox>
+                                                ))}
+                                            </Space>
+                                        </td>
                                     </tr>
                                     <tr>
                                         <td style={labelStyle}>测试依据</td>
@@ -288,8 +364,13 @@ export default () => {
                             size="small"
                             bordered
                             rowKey="key"
-                            scroll={{ x: 700 }}
+                            tableLayout="fixed"
+                            style={{ width: "100%" }}
                         />
+                        {!readonly && records.length === 0 && (
+                            <Button size="small" style={{ marginTop: 8 }} onClick={() => addRecord(-1)}>添加功能</Button>
+                        )}
+                        </div>
                     </div>
                 </div>
             </Spin>

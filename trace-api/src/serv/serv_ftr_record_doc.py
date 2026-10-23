@@ -21,6 +21,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 
 from ..model.product import Product
+from ..model.ftr_doc import FtrDoc
 from ..model.ftr_record_doc import FtrRecordDoc
 from ..model.prod_dhf import ProdDhf
 from ..model.project_member import ProjectMember
@@ -42,6 +43,8 @@ logger = logging.getLogger(__name__)
 DOC_NAME = "现场测试记录"
 DOC_KEY = "ftr_record"
 BASE_NAME = "InferOperate Suite"
+_PURPOSE_ITEMS = ("成品检验", "现场测试")
+_EMPTY_RESULT = "□通过   □不通过"
 
 _DEFAULT_FILE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "src-res", "ftr_record_default_content.json"
@@ -51,6 +54,24 @@ try:
         DEFAULT_CONTENT = json.load(_f)
 except Exception:
     DEFAULT_CONTENT = {"sections": []}
+
+
+def _default_case_keys():
+    """模板里的功能模块+功能，同步时丢掉，避免旧样例和规程叠在一起。"""
+    keys = set()
+    try:
+        grid = (((DEFAULT_CONTENT.get("sections") or [{}])[0].get("tables") or [[]])[0])
+    except Exception:
+        return keys
+    start = 7
+    for i, row in enumerate(grid or []):
+        if isinstance(row, list) and row and str(row[0] or "").strip() == "功能模块":
+            start = i + 1
+            break
+    for row in (grid or [])[start:]:
+        if isinstance(row, list):
+            keys.add((str(row[0] or "").strip(), str(row[1] or "").strip()))
+    return keys
 
 
 class Server(object):
@@ -98,6 +119,131 @@ class Server(object):
             ).scalars().first()
         return (row.code or "").strip() if row and row.code else ""
 
+    @staticmethod
+    def __plain_title(title):
+        return re.sub(r"^\s*(第[一二三四五六七八九十0-9]+章\s*)?(?:\d+(?:\.\d+)*[、.\s]*)?", "", str(title or "")).strip()
+
+    @staticmethod
+    def __case_titles(tables):
+        titles = []
+        for grid in tables or []:
+            if not isinstance(grid, list):
+                continue
+            for row in grid:
+                if isinstance(row, list) and row and str(row[0] or "").strip() == "用例标题":
+                    title = str(row[1] if len(row) > 1 else "").strip()
+                    if title:
+                        titles.append(title)
+                    break
+        return titles
+
+    def __ftr_cases(self, prod_id, version=""):
+        """同产品《现场测试规程》第2章：功能模块=「功能测试用例」下的二级章节名，功能=该节及其下级的用例标题。"""
+        if not prod_id:
+            return []
+        rows = db.session.execute(
+            select(FtrDoc).where(FtrDoc.product_id == prod_id).order_by(FtrDoc.id.desc())
+        ).scalars().all()
+        if not rows:
+            return []
+        picked = next((r for r in rows if version and str(r.version or "") == str(version)), None) or rows[0]
+        content = picked.content if isinstance(picked.content, dict) else {}
+        sections = content.get("sections") or []
+        roots = [s for s in sections if isinstance(s, dict) and "功能测试用例" in self.__plain_title(s.get("title"))]
+        found = []
+
+        def collect(node, module):
+            for title in self.__case_titles(node.get("tables")):
+                found.append((module, title))
+            for child in (node.get("children") or []):
+                if isinstance(child, dict):
+                    collect(child, module)
+
+        for root in roots:
+            for child in (root.get("children") or []):
+                if not isinstance(child, dict):
+                    continue
+                module = self.__plain_title(child.get("title"))
+                if not module or "功能测试用例" in module:
+                    continue
+                collect(child, module)
+        return found
+
+    @staticmethod
+    def __record_grid(content):
+        sections = content.get("sections") or []
+        if not sections or not isinstance(sections[0], dict):
+            return None, None
+        tables = sections[0].get("tables") or []
+        if not tables or not isinstance(tables[0], list):
+            return None, None
+        return sections[0], tables[0]
+
+    @staticmethod
+    def __data_start(grid):
+        for i, row in enumerate(grid or []):
+            if isinstance(row, list) and row and str(row[0] or "").strip() == "功能模块":
+                return i + 1
+        return 7
+
+    @staticmethod
+    def __format_purpose(text):
+        raw = str(text or "")
+        parts = []
+        for name in _PURPOSE_ITEMS:
+            checked = bool(re.search(r"[■☑√✓]\s*" + re.escape(name), raw))
+            parts.append(("■" if checked else "□") + name)
+        return "   ".join(parts)
+
+    def __sync_cases(self, content, prod_id, version=""):
+        """有现场测试规程时，按规程重建功能行；对得上的测试结果和备注保留。没有规程则不改行。"""
+        section, grid = self.__record_grid(content)
+        if section is None or not isinstance(grid, list) or len(grid) < 5:
+            return
+        purpose = self.__format_purpose(grid[4][1] if len(grid[4]) > 1 else "")
+        while len(grid[4]) < 5:
+            grid[4].append("")
+        for i in range(1, 5):
+            grid[4][i] = purpose
+        cases = self.__ftr_cases(prod_id, version)
+        if not cases:
+            return
+        start = self.__data_start(grid)
+        old = [r for r in grid[start:] if isinstance(r, list)]
+        buckets = {}
+        by_func = {}
+        for row in old:
+            key = (str(row[0] or "").strip(), str(row[1] or "").strip())
+            buckets.setdefault(key, []).append(row)
+            by_func.setdefault(key[1], []).append(row)
+        used = set()
+        new_rows = []
+        for module, func in cases:
+            prev = buckets.get((module, func)) or []
+            row = prev.pop(0) if prev else None
+            if row is None:
+                alt = by_func.get(func) or []
+                while alt and id(alt[0]) in used:
+                    alt.pop(0)
+                row = alt.pop(0) if alt else None
+            if row is not None:
+                used.add(id(row))
+            result = str((row[2] if row and len(row) > 2 else "") or _EMPTY_RESULT)
+            remark = str(row[4] if row and len(row) > 4 else "")
+            new_rows.append([module, func, result, result, remark])
+        # 规程里没有、模板里也没有的行是手增的，留在表尾
+        default_keys = _default_case_keys()
+        for row in old:
+            if id(row) in used:
+                continue
+            key = (str(row[0] or "").strip(), str(row[1] or "").strip())
+            if key in default_keys or not key[1]:
+                continue
+            result = str((row[2] if len(row) > 2 else "") or _EMPTY_RESULT)
+            remark = str(row[4] if len(row) > 4 else "")
+            new_rows.append([key[0], key[1], result, result, remark])
+        section["tables"][0] = grid[:start] + new_rows
+
     def __autofill(self, content, prod_id, product=None, version="", force=False):
         if not isinstance(content, dict):
             return content
@@ -113,6 +259,7 @@ class Server(object):
                         for i in range(len(r)):
                             if isinstance(r[i], str) and re.search(r"\d+\.\d+\.\d+\.\d+", r[i]):
                                 r[i] = re.sub(r"\d+\.\d+\.\d+\.\d+", new_fv, r[i])
+        self.__sync_cases(content, prod_id, version)
         return content
 
     def __to_obj(self, row: FtrRecordDoc, product: Product = None):
