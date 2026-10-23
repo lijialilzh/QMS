@@ -16,6 +16,7 @@ class SrsReq(Model):
 
     location = Column(String(256), comment="位置")
     type_code = Column(String(64), nullable=False, default="1", comment="需求类型")
+    design_role = Column(String(64), comment="其他需求设计类型")
 
     __table_args__ = (
         UniqueConstraint("doc_id", "type_code", "code"),

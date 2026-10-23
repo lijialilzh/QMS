@@ -83,6 +83,83 @@ FIXED_RCN300_TRACES = {
 
 _REQ_CODE_RE = re.compile(r"^SRS-([A-Z]+?)(\d+)-(\d+)$", re.I)
 
+# 其他需求设计类型。名称和编号都还是预置值时，详细设计仍用原来的英文章节名。
+OTHER_REQ_DESIGN_ROLES = {
+    "dataprocessing": {"preset_module": "图像接收", "english": "DataProcessing", "tail": "004"},
+    "interface": {"preset_module": "图像存储", "english": "RePACS", "tail": "005"},
+    "dlserver": {"preset_module": "图像处理", "english": "DLServer", "tail": "006"},
+    "function": {"preset_module": "图像显示", "english": "NeoViewer", "tail": "007"},
+    "document": {"preset_module": "文档需求", "english": "文档需求", "tail": "008"},
+    "regulation": {"preset_module": "法规符合需求", "english": "法规符合性需求", "tail": "009"},
+    "external": {"preset_module": "外部连接", "english": "外部连接", "tail": "010"},
+}
+_OTHER_REQ_ROLE_LABELS = {
+    "DataProcessing": "dataprocessing",
+    "dataprocessing": "dataprocessing",
+    "接口设计": "interface",
+    "RePACS": "interface",
+    "interface": "interface",
+    "DLServer": "dlserver",
+    "dlserver": "dlserver",
+    "功能设计": "function",
+    "NeoViewer": "function",
+    "function": "function",
+    "外部连接": "external",
+    "external": "external",
+}
+_OTHER_REQ_ROLE_BY_MODULE = {
+    spec["preset_module"]: key for key, spec in OTHER_REQ_DESIGN_ROLES.items()
+}
+
+
+def other_req_design_role_is_explicit(value: str) -> bool:
+    label = re.sub(r"\s+", "", str(value or ""))
+    return label in _OTHER_REQ_ROLE_LABELS
+
+
+def normalize_other_req_design_role(value: str, module: str = "", code: str = "") -> str:
+    """其他需求设计类型。没填开关时，编号末段仍是 004、005、006、007、010 就按末段认原来的模版章。"""
+    label = re.sub(r"\s+", "", str(value or ""))
+    if label in _OTHER_REQ_ROLE_LABELS:
+        return _OTHER_REQ_ROLE_LABELS[label]
+    by_module = _OTHER_REQ_ROLE_BY_MODULE.get(str(module or "").strip())
+    if by_module:
+        return by_module
+    module_text = re.sub(r"\s+", "", str(module or ""))
+    if any(key in module_text for key in ("数据库要求", "性能要求", "基本要求", "文档需求", "法规符合", "外部连接")):
+        return ""
+    matched = re.search(r"300-(\d+)$", re.sub(r"\s+", "", str(code or "")).upper())
+    if not matched:
+        return ""
+    tail = f"{int(matched.group(1)):03d}"
+    # 文档需求、法规符合不靠编号末段去改详细设计章节。
+    if tail in ("008", "009"):
+        return ""
+    for key, spec in OTHER_REQ_DESIGN_ROLES.items():
+        if spec["tail"] == tail:
+            return key
+    return ""
+
+
+def other_req_role_is_changed(code: str, module: str, role: str) -> bool:
+    """名称或编号离开预置值时，章节改读这一行现在的中文名和编号。"""
+    spec = OTHER_REQ_DESIGN_ROLES.get(role or "")
+    if not spec:
+        return False
+    if str(module or "").strip() != spec["preset_module"]:
+        return True
+    matched = re.search(r"300-(\d+)$", re.sub(r"\s+", "", str(code or "")).upper())
+    if not matched:
+        return True
+    return f"{int(matched.group(1)):03d}" != spec["tail"]
+
+
+def other_req_role_display_name(module: str, role: str) -> str:
+    spec = OTHER_REQ_DESIGN_ROLES.get(role or "") or {}
+    if str(module or "").strip() == spec.get("preset_module"):
+        return spec.get("english") or str(module or "").strip()
+    return str(module or "").strip() or spec.get("english") or ""
+
 
 def fixed_rcn300_trace_for_code(code: str):
     """300-001～010 按固定对照取设计编号和模块。代号字母变了只改设计编号里的同样字母，模块名和行内顺序不动。"""
@@ -236,6 +313,51 @@ def live_rcn300_tail_chapters(nodes) -> dict:
 
     walk(nodes or [], "")
     return found
+
+
+def live_heading_for_exact_title(nodes, module: str) -> str:
+    """目录里还有同名章节时返回它的章号。没有这章就空着，不再套模板里的旧章号。"""
+    target = re.sub(r"\s+", "", str(module or ""))
+    if not target:
+        return ""
+    found = {}
+
+    def consider(title: str, num: str):
+        name = re.sub(
+            r"^\s*\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))",
+            "",
+            str(title or ""),
+        )
+        name = re.sub(r"\s+", "", name)
+        if name != target:
+            return
+        prev = found.get("hit")
+        if not prev or num.count(".") < prev.count("."):
+            found["hit"] = num
+
+    def skipped(node) -> bool:
+        ref = str(getattr(node, "ref_type", "") or "")
+        title = str(getattr(node, "title", "") or "").strip()
+        compact = re.sub(r"\s+", "", title)
+        if ref in ("sds_reqds", "sds_traces", "img_flow"):
+            return True
+        if compact == "目录" or "软件详细设计" in compact or "文件修订记录" in compact:
+            return True
+        return bool(re.match(r"^\s*图\s*\d+", title) or re.match(r"^\s*导入表格\d*$", title))
+
+    def walk(items, prefix: str):
+        idx = 0
+        for node in items or []:
+            if skipped(node):
+                continue
+            children = getattr(node, "children", None) or []
+            idx += 1
+            num = f"{prefix}.{idx}" if prefix else str(idx)
+            consider(getattr(node, "title", "") or "", num)
+            walk(children, num)
+
+    walk(nodes or [], "")
+    return found.get("hit") or ""
 
 
 def design_letter_for_tail(nodes) -> str:
@@ -1735,6 +1857,34 @@ class Server(object):
             obj.type_code = row_req.type_code
             obj.type_name = type_names.get(row_req.id) or default_types.get(row_req.type_code) or row_req.type_code
             if str(row_req.type_code) == "2":
+                role = normalize_other_req_design_role(
+                    getattr(row_req, "design_role", ""), getattr(row_req, "module", ""), getattr(row_req, "code", ""),
+                )
+                if role and other_req_role_is_changed(row_req.code, row_req.module, role):
+                    display = other_req_role_display_name(row_req.module, role)
+                    derived_sds_code = (row_req.code or "").replace("SRS", "SDS").strip()
+                    obj.sds_code = derived_sds_code
+                    obj.chapter = display
+                    obj.name = display
+                    objs.append(obj)
+                    continue
+                current_module = str(row_req.module or "").strip()
+                preset_module = ""
+                tail_matched = re.search(r"300-(\d+)$", re.sub(r"\s+", "", str(row_req.code or "")).upper())
+                if tail_matched:
+                    tail = f"{int(tail_matched.group(1)):03d}"
+                    for spec in OTHER_REQ_DESIGN_ROLES.values():
+                        if spec["tail"] == tail:
+                            preset_module = spec["preset_module"]
+                            break
+                if preset_module and current_module and current_module != preset_module:
+                    tree = doc_trees.get(row_sdsdoc.id) if row_sdsdoc else None
+                    obj.sds_code = (row_req.code or "").replace("SRS", "SDS").strip()
+                    obj.chapter = current_module
+                    obj.name = current_module
+                    obj.location = live_heading_for_exact_title(tree, current_module)
+                    objs.append(obj)
+                    continue
                 stored_sds_code = str(obj.sds_code or "")
                 fixed_for_manual = fixed_rcn300_trace_for_code(row_req.code)
                 if fixed_for_manual is not None:

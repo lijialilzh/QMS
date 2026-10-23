@@ -179,6 +179,52 @@ function fixedModuleForSrsCode(code?: string) {
     return fixedSds300ModuleName(String(code || "").replace(/^SRS/i, "SDS"));
 }
 
+const OTHER_REQ_ROLE_CHAPTER: Record<string, string> = {
+    dataprocessing: "DataProcessing",
+    interface: "RePACS",
+    dlserver: "DLServer",
+    function: "NeoViewer",
+    external: "外部连接",
+};
+
+function otherReqDesignRole(row?: { design_role?: string; module?: string }) {
+    const stored = String(row?.design_role || "").replace(/\s+/g, "");
+    const byLabel: Record<string, string> = {
+        DataProcessing: "dataprocessing",
+        dataprocessing: "dataprocessing",
+        接口设计: "interface",
+        RePACS: "interface",
+        interface: "interface",
+        DLServer: "dlserver",
+        dlserver: "dlserver",
+        功能设计: "function",
+        NeoViewer: "function",
+        function: "function",
+        外部连接: "external",
+        external: "external",
+    };
+    if (byLabel[stored]) return byLabel[stored];
+    const byModule: Record<string, string> = {
+        图像接收: "dataprocessing",
+        图像存储: "interface",
+        图像处理: "dlserver",
+        图像显示: "function",
+        外部连接: "external",
+    };
+    const byModuleHit = byModule[String(row?.module || "").trim()];
+    if (byModuleHit) return byModuleHit;
+    const tail = String(row?.code || row?.srs_code || "").toUpperCase().match(/300-(\d+)$/);
+    if (!tail) return "";
+    const byTail: Record<string, string> = {
+        "004": "dataprocessing",
+        "005": "interface",
+        "006": "dlserver",
+        "007": "function",
+        "010": "external",
+    };
+    return byTail[String(parseInt(tail[1], 10)).padStart(3, "0")] || "";
+}
+
 function rootHasModule(roots: TreeNode[], module: string) {
     return (roots || []).some((node) =>
         !isSdsFrontMatterTitle(node.title) &&
@@ -189,15 +235,23 @@ function rootHasModule(roots: TreeNode[], module: string) {
 
 function dropAbsentPresetOtherReqChapters(nodes: TreeNode[], otherRows: any[]): TreeNode[] {
     const living = new Set<string>();
+    const livingRoles = new Set<string>();
     (otherRows || []).forEach((row) => {
         const code = String(row?.code || row?.srs_code || "").replace(/\s+/g, "").toUpperCase();
         const name = fixedModuleForSrsCode(code);
         if (name) living.add(name);
+        const role = otherReqDesignRole(row);
+        if (role) livingRoles.add(role);
     });
+    const roleByChapter = Object.fromEntries(
+        Object.entries(OTHER_REQ_ROLE_CHAPTER).map(([role, name]) => [name, role])
+    );
     return (nodes || []).filter((node) => {
         if (isSdsFrontMatterTitle(node.title) || isSdsAppendixTitle(node.title, node.ref_type)) return true;
         const presetName = Object.values(FIXED_SDS300_MODULE_NAME).find((name) => sdsTitleMatchesModule(node.title || "", name));
         if (!presetName) return true;
+        const role = roleByChapter[presetName];
+        if (role) return livingRoles.has(role);
         return living.has(presetName);
     });
 }
@@ -212,6 +266,7 @@ function ensureSdsOtherReqChapterNodes(nodes: TreeNode[], otherRows: any[]): Tre
         .map((row) => ({
             code: String(row?.code || row?.srs_code || "").replace(/\s+/g, "").toUpperCase(),
             module: String(row?.module || "").trim(),
+            design_role: row?.design_role,
         }))
         .filter((row) => {
             if (!row.code || !row.module || !row.code.startsWith("SRS-") || seenCodes.has(row.code)) return false;
@@ -234,6 +289,7 @@ function ensureSdsOtherReqChapterNodes(nodes: TreeNode[], otherRows: any[]): Tre
             const preset = isPresetRcn300OtherReq(row.code);
             return { ...row, chapterName: preset ? fixedName : row.module, preset };
         })
+        .filter((row) => !otherReqDesignRole(row))
         .filter((row) => {
             if (row.module.replace(/\s+/g, "").includes("法规符合")) return false;
             if (row.preset && !row.chapterName) return false;
@@ -2853,7 +2909,8 @@ export default () => {
                 traceSyncing: false,
                 showTraceListModal: options?.openModal ? true : data.showTraceListModal,
             });
-            message.success("已从SRS获取追溯数据");
+            if (res?.msg) message.warning(res.msg);
+            else message.success("已从SRS获取追溯数据");
         } catch (error: any) {
             console.error("获取SRS追溯失败:", error);
             message.error(error?.message || "获取SRS追溯失败");

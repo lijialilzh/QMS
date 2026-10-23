@@ -17,6 +17,7 @@ class SrsReqForm(BaseModel):
 
     location: Optional[str] = Field(title="位置")
     type_code: Optional[str] = Field(title="需求类型")
+    design_role: Optional[str] = Field(title="其他需求设计类型")
 
     rcm_ids: Optional[List[int]] = Field(title="RCM")
 

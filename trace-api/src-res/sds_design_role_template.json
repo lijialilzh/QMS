@@ -1,0 +1,845 @@
+{
+  "dataprocessing": [
+    {
+      "title": "总体描述",
+      "text": "DataProcessing用于和医院的浏览器上传或通过接口导入对接，支持DICOM3.0标准，被动接收医院信息系统/影像设备发送的Dicom图像数据到本软件中，是本软件图像数据的入口。DataProcessing具有请求和数据校验功能，对于非DICOM3.0传输标准的请求会予以拒绝，对非DICOM3.0文件标准的文件会予以拒绝。DataProcessing也是整个处理任务的发起者，通过将处理后的数据发送到RePACS模块提供的指定的处理任务接口，启动整个处理模块的工作。",
+      "img_url": ""
+    },
+    {
+      "title": "功能",
+      "text": "DataProcessing提供标准DICOM图像接收服务，即DICOM3.0标准中的C-STORE SCP服务。",
+      "img_url": "",
+      "children": [
+        {
+          "title": "图3\tDP工作流",
+          "text": "",
+          "img_url": "/data.trace/sds_node_img/import_sds/f66a48584bce-a09b-11f1-c6b7-81fe154e.png"
+        }
+      ]
+    },
+    {
+      "title": "性能",
+      "text": "暂无",
+      "img_url": ""
+    },
+    {
+      "title": "模块结构",
+      "text": "DP模块主要由信息拉取组件，处理组件和数据发送组件三部分构成。\n如上结构图所示，DP模块内部的三个组件是依次串联而成的。\n信息拉取组件，是用来接收由医院信息系统/影像设备推送来的DICOM图像数据；\n处理组件，是用来对拉取组件获取的数据，根据配置文件中配置的规则，进行数据过滤和筛选；\n数据发送组件，是接收处理组件筛选后的序列，并且用HTTP/HTTPS的POST请求，将数据发送到RePACS提供的处理任务的接口中。",
+      "img_url": "",
+      "children": [
+        {
+          "title": "图4\tDP模块结构图",
+          "text": "",
+          "img_url": "/data.trace/sds_node_img/import_sds/f66a48584bce-a09b-11f1-c6b7-81fe6a30.png"
+        }
+      ]
+    },
+    {
+      "title": "程序逻辑",
+      "text": "",
+      "img_url": "",
+      "children": [
+        {
+          "title": "图5\tDP程序逻辑",
+          "text": "",
+          "img_url": "/data.trace/sds_node_img/import_sds/f66a48584bce-a09b-11f1-c6b7-81fe8b32.png"
+        }
+      ]
+    },
+    {
+      "title": "输入项",
+      "text": "符合DICOM3.0标准要求。该服务基于TCP/IP协议，在指定端口监听来自浏览器上传或通过接口导入的患者图像数据的数据接入请求。",
+      "img_url": ""
+    },
+    {
+      "title": "输出项",
+      "text": "将处理后的序列发送至RePACS提供的图像接收和数据处理任务接口。",
+      "img_url": ""
+    },
+    {
+      "title": "接口",
+      "text": "调用创建处理任务的接口，接口信息见5.7章节。",
+      "img_url": ""
+    },
+    {
+      "title": "限制条件",
+      "text": "无",
+      "img_url": ""
+    },
+    {
+      "title": "尚未解决的问题",
+      "text": "无",
+      "img_url": ""
+    }
+  ],
+  "dlserver": [
+    {
+      "title": "总体描述",
+      "text": "DLServer提供数据处理后端服务，用于图像识别与相关运算资源调用。DLServer 通过HTTP/HTTPS协议调用RePACS实现处理任务的获取与结果的反馈。",
+      "img_url": ""
+    },
+    {
+      "title": "功能",
+      "text": "功能清单：",
+      "img_url": "",
+      "children": [
+        {
+          "title": "图6\tDLServer工作流",
+          "text": "",
+          "img_url": "/data.trace/sds_node_img/import_sds/f66a48584bce-a09b-11f1-c6b7-81feae82.png"
+        }
+      ]
+    },
+    {
+      "title": "性能",
+      "text": "在符合运行环境下，单并发：\n1. 一套总大小177 MB的医学图像，从接收传输图像开始，至产品处理完成的时间≤15分钟。",
+      "img_url": ""
+    },
+    {
+      "title": "模块结构",
+      "text": "",
+      "img_url": "",
+      "children": [
+        {
+          "title": "图7\tDLServer模块结构图",
+          "text": "",
+          "img_url": "/data.trace/sds_node_img/import_sds/f66a48584bce-a09b-11f1-c6b7-81fec390.png"
+        }
+      ]
+    },
+    {
+      "title": "程序逻辑",
+      "text": "",
+      "img_url": "",
+      "children": [
+        {
+          "title": "图8\tDLServer程序逻辑",
+          "text": "",
+          "img_url": "/data.trace/sds_node_img/import_sds/f66a48584bce-a09b-11f1-c6b7-81fed34e.png"
+        }
+      ]
+    },
+    {
+      "title": "输入项",
+      "text": "包含两项输入：\n1.参数文件;\n2.处理任务清单;",
+      "img_url": ""
+    },
+    {
+      "title": "输出项",
+      "text": "将处理结果发给RePACS进行保存。",
+      "img_url": ""
+    },
+    {
+      "title": "接口",
+      "text": "调用获取处理任务、保存处理结果、任务状态更新接口，接口信息见5.7章节。",
+      "img_url": ""
+    },
+    {
+      "title": "限制条件",
+      "text": "DLServer 处理过程中使用的Dicom图像文件，需要满足下表中的要求。",
+      "img_url": "",
+      "children": [
+        {
+          "title": "导入表格5",
+          "text": "",
+          "img_url": ""
+        }
+      ]
+    },
+    {
+      "title": "尚未解决的问题",
+      "text": "无",
+      "img_url": ""
+    }
+  ],
+  "interface": [
+    {
+      "title": "总体描述",
+      "text": "RePACS 是数据存储后端服务。RePACS 提供 DICOM 图像数据。RePACS 提供基于HTTP/HTTPS协议的API，由前端组件或其他后端组件调用。",
+      "img_url": ""
+    },
+    {
+      "title": "功能",
+      "text": "RePACS 的主要功能为数据存储和查询。\n功能清单：\n衔接处理任务流程：",
+      "img_url": "",
+      "children": [
+        {
+          "title": "导入表格6",
+          "text": "",
+          "img_url": ""
+        },
+        {
+          "title": "图9RePACS功能定位",
+          "text": "",
+          "img_url": "/data.trace/sds_node_img/import_sds/f66a48584bce-a09b-11f1-c6b7-81ff03e6.png"
+        },
+        {
+          "title": "图10RePACS功能流程",
+          "text": "",
+          "img_url": "/data.trace/sds_node_img/import_sds/f66a48584bce-a09b-11f1-c6b7-81ff2e84.png"
+        }
+      ]
+    },
+    {
+      "title": "性能",
+      "text": "在符合运行环境下，一套总大小177 MB的医学图像，单并发：\n1.从接收传输图像开始，至产品处理完成的时间≤15分钟。\n2.进入患者详情页面，点击任意病灶进入阅片页面开始，至图像加载完成时间≤10s。\n3.用户点击登录之后，成功登录软件，进入患者列表的时间≤2s。\n4.用户点击退出之后，退出软件，跳转至登录页面的时间≤2s。\n5.用户输入搜索条件，出现检索结果的时间≤2s。",
+      "img_url": ""
+    },
+    {
+      "title": "模块结构",
+      "text": "",
+      "img_url": "",
+      "children": [
+        {
+          "title": "图11RePACS模型结构图",
+          "text": "",
+          "img_url": "/data.trace/sds_node_img/import_sds/f66a48584bce-a09b-11f1-c6b7-81ff5940.png"
+        }
+      ]
+    },
+    {
+      "title": "程序逻辑",
+      "text": "RePACS 初始化后在指定的端口（默认 3333）监听 TCP 连接，TCP 连接建立后接收 HTTP/HTTPS 请求，收到请求之后 RePACS 将请求解析为 JSON 数据对象，若该请求格式正确，则调用注册的方法执行查询，并将发送查询结果作为响应数据发送响应到客户端；若请求格式错误，则发送 400 响应到客户端。",
+      "img_url": "",
+      "children": [
+        {
+          "title": "图12RePACS程序逻辑",
+          "text": "",
+          "img_url": "/data.trace/sds_node_img/import_sds/f66a48584bce-a09b-11f1-c6b7-81ff798e.png"
+        }
+      ]
+    },
+    {
+      "title": "数据结构",
+      "text": "本系统内的数据结构主要指用于存储患者图像数据信息的数据结构，主要包括：用户信息、科室信息、患者信息、病灶信息、图像信息和存储信息、处理结果。\n本部分数据采用Postgresql数据库进行存储。",
+      "img_url": "",
+      "children": [
+        {
+          "title": "Postgresql库1数据库：",
+          "text": "",
+          "img_url": "",
+          "children": [
+            {
+              "title": "alembic_Version:版本管理",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "auto_enroll_rule：自动注册规则",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "clinial_stage:​​分期表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "department:​​科室表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "department:​​科室通知",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "doctor:​​医生表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "enroll_rule:​​入组规则表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "exam:​​检查记录表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "label_config:​​标签配置表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "Lesion:​​病灶表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "Lesionline:病灶轮廓表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "master_slave_patient:主从患者关联表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "menu:角色菜单权限表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "organization:医疗机构表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "patient:患者",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "patient_label:患者标签表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "patient_statistic:患者统计报表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "risk_survey:风险评估表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "role:角色表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "role_menu:角色菜单权限表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "series:科室系列表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "sys_language:系统语言包表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "sys_language:系统语言包表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "timeline_event：时间线事件表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "timeline_followup:随访时间线表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "timeline_report:报告时间线表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "timeline_target_lesion:靶病灶时间线表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "upload_dicom:DICOM上传记录表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "upload_task:文件上传任务表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "upload_task:文件上传任务表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "uploaded_cache:上传缓存表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "uploaded_cache:上传缓存表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "user_operation:用户操作表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "weekly_statistic:周度综合统计表",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "weekly_statistic:周度综合统计表",
+              "text": "",
+              "img_url": ""
+            }
+          ]
+        },
+        {
+          "title": "库2数据库：",
+          "text": "",
+          "img_url": "",
+          "children": [
+            {
+              "title": "alembic_version数据库迁移表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "event数据库迁移表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "Favorite收藏表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "favorite_to_study收藏-检查关联表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "flyway_schema_historyFlyway迁移历史表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "nex_manual_upload_dicom_info手动上传DICOM信息表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "nex_product_task_results产品信息结果表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "nex_series_product_result序列产品结果表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "nex_stud检查研究表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "nex_study_series_error_log研究序列错误日志表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "nex_timeline时间线表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "nex_timeline_detection_service时间线检测服务表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "nex_timeline_lesion_position时间线病灶位置表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "nex_timeline_registration_service时间线配准服务表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "nex_timeline_solution时间线解决方案表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "nex_timeline_solution_to_timeline_to_view_service时间线解决方案视图服务关联表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "nex_timeline_to_detection_service时间线检测服务关联表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "nex_timeline_to_registration_service时间线配准服务关联表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "nex_timeline_view_service时间线视图服务表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "patient患者表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "result结果表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "series序列表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "study调查表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "task任务表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "task_to_series任务序列表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "upload_info上传信息表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "webhook表：",
+              "text": "",
+              "img_url": ""
+            },
+            {
+              "title": "webhook_to_event事件关联表：",
+              "text": "",
+              "img_url": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "接口",
+      "text": "",
+      "img_url": "",
+      "children": [
+        {
+          "title": "导入表格70",
+          "text": "",
+          "img_url": ""
+        },
+        {
+          "title": "数据上传接口",
+          "text": "在本机IP指定端口处开放导入图像服务。\n（1）输入项\nHTTP/HTTPS 协议的 POST /upload/compressed/file请求，输入，示例如下：\n（2）输出项\n若图像上传流程完成，接口返回 200 响应 JSON 编码的 study 对象描述。\n返回的json示例如下：\n{\n\"version\":4,\n\"code\":0,\n\"message\":\"Success\",\n\"timestamp\":1747793014.2918446,\n\"data\":{\n\"success\":true,\n\"filename\":\"XCX.zip\",\n\"filesize\":419248221,\n\"uuid\":\"607f8d2f-4856-4c37-ab85-3a1f5f6b6b4f\"\n}\n}",
+          "img_url": "",
+          "children": [
+            {
+              "title": "导入表格71",
+              "text": "",
+              "img_url": ""
+            }
+          ]
+        },
+        {
+          "title": "创建处理任务接口",
+          "text": "（1）输入项\n接受 HTTP/HTTPS协议下的POST /series/<series_uid>/tasks请求。\nPOST Header需包含Content-Type: application/json。\n输入Json数据格式为：\n{\n\"type\": \"predict/infercare_ct_liver、predict/infercare_ct_lymph、predict/infercare_ct_urinary\",\n\"priority\": 20,\n\"payload\": {\n\"path\": \" path \"\n}\n}\n（2）输出项\n返回HTTP/HTTPS status code 200时，表示任务发起成功。\n返回的json示例如下：\n{\n\"product\": : [\n\"UNKNOWN\"\n],\n\"workerId\": \"\",\n\"originPriority\": 200,\n\"acquiredAt\": \"\",\n\"priority\": 200,\n\"type\": \"predict/infercare_ct_liver、predict/infercare_ct_lymph、predict/infercare_ct_urinary\",\n\"target\": {\n\"series\": [\n{\n\"modality\": \"CT\",\n\"thumbStorageId\":\"thumbStorageId\",\n\"seriesDate\": \" seriesDate \",\n\"seriesTimeStamp\": seriesTimeStamp,\n\"seriesId\": 52\n\"createdAt\": \" createdAt \",\n\"sliceThickness\": \"1.5\",\n\"protocolName\": \" protocolName \",\n\"convolutionKernel\": [\n\"Br36d\",\n\"1\"\n],\n\"stationName\":\"stationName\",\n\"updatedAt\": \" updatedAt \",\n\"product\":\n……..",
+          "img_url": "",
+          "children": [
+            {
+              "title": "图13发送预测任务接口程序流程图",
+              "text": "",
+              "img_url": "/data.trace/sds_node_img/import_sds/f66a48584bce-a09b-11f1-c6b7-81ff9252.png"
+            }
+          ]
+        },
+        {
+          "title": "获取处理任务接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议下的 Post /tasks/_acquire 请求。\n其中query string中需要携带type参数：predict/infercare_ct_liver、predict/infercare_ct_lymph、predict/infercare_ct_urinary，内容为处理任务类型。\nPOST Header需包含Content-Type: application/json。\nJson数据内容形如：\n{\n\"workerId\": \"worker1\"\n}\n其中workerId内容为获取task的处理任务唯一标识。\n（2）输出项\n若前来获取任务的worker已经领取了任务，且尚未写回处理结果，则再次下发已领取过的任务数据。\n否则，根据任务类型，获取一个需要处理的任务进行下发。\n返回的JSON数据格式为：\n{\n\"createdAt\": \"createdAt\",\n\"workerId\": \"\",\n\"payload\": {\n\"path\":  \"path\",\n\"series_iuid\": \"series_iuid\",\n\"output_path\":  \"output_path\"\n},\n\"acquiredAt\": \"acquiredAt\",\n\"origin_priority\": 200,\n\"isHistory\": false,\n\"type\": \"predict/infercare_ct_liver、predict/infercare_ct_lymph、predict/infercare_ct_urinary\",\n\"priority\": 150,\n\"taskId\": \"taskId\",\n\"status\": \"pending\",\n\"updatedAt\": \"updatedAt\",\n\"target\": {\n\"createdAt\": \"createdAt\",\n\"relId\": -1,\n\"series\": [\n{\n\"modality\": \"CT\",\n\"thumbStorageId\": \"fs1\",\n\"patientId\": \"3150532\",\n\"seriesDate\":  \"seriesDate\",\n\"seriesTimeStamp\": \"seriesTimeStamp\",\n\"seriesId\": -1,\n\"createdAt\": \"createdAt\",\n\"sliceThickness\": 1.5,\n\"protocolName\":\"protocolName\",\n\"convolutionKernel\": [\n\"Br36d\",\n\"1\"\n],\n……",
+          "img_url": "",
+          "children": [
+            {
+              "title": "图14获取预测任务接口程序流程图",
+              "text": "",
+              "img_url": "/data.trace/sds_node_img/import_sds/f66a48584bce-a09b-11f1-c6b7-81ffa486.png"
+            }
+          ]
+        },
+        {
+          "title": "保存处理结果接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的PUT /series/<series_uid>/predict/infercare_ct_liver、predict/infercare_ct_lymph、predict/infercare_ct_urinary 请求。\n其中id为seriesId或者SeriesInstanceUID属性，type为处理类型。PUT请求数据为处理结果JSON。\nJson数据内容形如：\n{ \"lesions\": {\n\"1\": {\n\"attr\": {\n\"volume\": 25.331087339496612,\n\"shortDiameter\": 32.066354986375835,\n\"anatomy\": [\n\"left_basalGanglion\",\n\"left_temporal\",\n\"left_thalamus\",\n\"left_ventricle\"],\n\"meanHuValue\": 53.91975665164992,\n\"pixelNumber\": 25971,\n\"keySliceId\": 17,\n\"keyZ\": -166.38537630003,\n\"type\": \"hemorrhage\",\n\"longDiameter\": 36.541290085004725\n},\n\"contours\": {\n\"data\": [\n{\"sliceId\": 22,\n\"z\": -184.88537630003,\n\"contour\": [\n[[299,  265],\n[299,\n264],  [\n299,\n263]]]}],\n\"_type\": \"contours\"}}},\n\"standardLine\": {\"lines\": {\n\"data\": [[321, 458, 225, 37,\n-240.38537630003,\n1],\n……..\n（2）输出项\n若保存成功，则返回HTTP/HTTPSstatus 200。\n返回的json示例如下：\n{\n\"encryption_path\": \" encryption_path \"\n}",
+          "img_url": "",
+          "children": [
+            {
+              "title": "图15保存预测任务接口程序的流程图",
+              "text": "",
+              "img_url": "/data.trace/sds_node_img/import_sds/f66a48584bce-a09b-11f1-c6b7-81ffb1d8.png"
+            }
+          ]
+        },
+        {
+          "title": "任务状态更新接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的PATCH /tasks/<taskId>请求。\n请求内容为：\n{“status”: “error”}\n（2）输出项\n若设置成功，则返回 HTTP/HTTPSstatus 200，返回的json示例为：\n{\n\"product\": [\n],\n\"workerId\": null,\n\"originPriority\": 200,\n\"acquiredAt\": null,\n\"priority\": null,\n\"type\":  \"type\",\n\"target\": {\n\"series\": [\n{\n\"modality\": \"CT\",\n\"thumbStorageId\": \"fs1\",\n\"patientId\": \"patientId\",\n\"seriesDate\": \"seriesDate\",\n\"seriesTimeStamp\": \"seriesTimeStamp\",\n\"seriesId\": -1,\n\"createdAt\":  \"createdAt\",\n\"sliceThickness\": 1.5,\n\"protocolName\": \"protocolName\",\n\"convolutionKernel\": [\n\"Br36d\",\n\"1\"\n],\n\"stationName\":  \"stationName\",\n\"updatedAt\":  \"updatedAt\",\n\"product\": [\n\"UNKNOWN\"\n],\n\"seriesInstanceUID\": \"seriesInstanceUID\",\n\"seriesDescription\":\"seriesDescription\",\n\"seriesTime\":  \"seriesTime\",\n\"studyInstanceUID\":\"studyInstanceUID\",\n\"storagePath\": \"\",\n\"xRayTubeCurrent\": 126,\n\"seriesNumber\": \"9\",\n\"bodyPartExamined\":  \"bodyPartExamined\",\n\"studyId\": -1,\n\"thumbStoragePath\": \"\",\n\"spacingBetweenSlices\": null,\n\"statusCode\": 200\n}\n]\n},\n……..",
+          "img_url": "",
+          "children": [
+            {
+              "title": "图16任务状态更新界面流程图",
+              "text": "",
+              "img_url": "/data.trace/sds_node_img/import_sds/f66a48584bce-a09b-11f1-c6b7-81ffc6a0.png"
+            }
+          ]
+        },
+        {
+          "title": "查询处理结果接口",
+          "text": "(1) 输入项：\n接受HTTP/HTTPS协议的GET /series/<series_uid>/predict/infercare_ct_liver、predict/infercare_ct_lymph、predict/infercare_ct_urinary请求。\n(2) 输出项：\n若根据seriesId找到处理结果。\n返回的json示例如下：\n{\n\"lesions\": {\n\"1\": {\n\"attr\": {\n\"volume\": 25.331087339496612,\n\"shortDiameter\": 32.066354986375835,\n\"anatomy\": [\n\"left_basalGanglion\",\n\"left_temporal\",\n\"left_thalamus\",\n\"left_ventricle\"\n],\n\"meanHuValue\": 53.91975665164992,\n\"pixelNumber\": 25971,\n\"keySliceId\": 17,\n\"keyZ\": -166.38537630003,\n\"type\": \"hemorrhage\",\n\"longDiameter\": 36.541290085004725\n},\n\"contours\": {\n\"data\": [\n{\n\"sliceId\": 22,\n\"z\": -184.88537630003,\n\"contour\": [\n[\n[\n299,\n265\n],\n[\n299,\n264\n],\n[\n299,\n263\n]\n]\n]\n}\n],",
+          "img_url": ""
+        },
+        {
+          "title": "查询图像数据接口",
+          "text": "（1）输入项\n接受 HTTPS 协议下的 GET /studies/<studyInstanceUID> /< predict/infercare_ct_liver、predict/infercare_ct_lymph、predict/infercare_ct_urinary 请求。\n（2）输出项\n若输入为 GET /studies/<studyInstanceUID> 且图像查询流程完成，接口返回 HTTPS 200 响应 JSON 编码的 study 对象描述。\n返回json示例如下：\n{\n\"stationFlag\": \"\",\n\"patientSex\": \"M\",\n\"studyTime\": \"studyTime\",\n\"modality\": \"CT\",\n\"patientId\": \"3150532\",\n\"isRead\": null,\n\"seriesStatus\": 4,\n\"accessionNumber\": \"accessionNumber\",\n\"createdAt\": \"createdAt\",\n\"arrivalTime\": \"arrivalTime\",\n\"viewed\": \"unprocessed\",\n\"studyTimeStamp\": \"studyTimeStamp\",\n\"patientAge\": \"patientAge\",\n\"studyID\": \"studyID\",\n\"id\": 48,\n\"updatedAt\":\"updatedAt\",\n\"patientName\": \"\",\n\"pneumoniaResult\": -1,\n\"studyDescription\": \"studyDescription\",\n\"studyInstanceUID\": \"studyInstanceUID\",\n\"patientIndex\":\"patientIndex\",\n\"patientBirthDate\": \"patientBirthDate\",\n\"study_extra\": {\n},\n\"series\": [\n{\n\"modality\": \"CT\",\n\"thumbStorageId\": \"fs1\",\n\"seriesDate\":  \"seriesDate\",\n\"seriesTimeStamp\": \"seriesTimeStamp\",\n\"imgFrameNumber\": \"imgFrameNumber\",\n\"seriesId\": \"seriesId\",\n\"createdAt\":  \"createdAt\",\n\"sliceThickness\": 1.5,\n\"path\":  \"path\",\n\"protocolName\":  \"protocolName\",\n\"convolutionKernel\": [\n\"Br36d\",\n\"1\"\n],\n……",
+          "img_url": "",
+          "children": [
+            {
+              "title": "图17查询图像数据接口程序流程图",
+              "text": "",
+              "img_url": "/data.trace/sds_node_img/import_sds/f66a48584bce-a09b-11f1-c6b7-81ffe32e.png"
+            }
+          ]
+        },
+        {
+          "title": "获取病灶时间线列表接口",
+          "text": "（1）输入项：\n接受HTTP/HTTPS协议的GET /patient/detail/10/lesion?tab=cf66299e-d62d-4c42-9c6c-4678981f5cba 请求。\n（2）输出项：\n返回的json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1741174861.8293614,\n\"data\": {\n\"total\": 17,\n\"pages\": 1,\n\"rows\": [{\n\"index\": 1,\n\"lesion_size\": \"big\",\n\"master_patient_fk\": 2,\n\"template_id\": \"cf66299e-d62d-4c42-9c6c-4678981f5cba\",\n\"lesion_info\": [{\n\"id\": 62,\n\"detail\": {\n\"id\": 1,\n\"type\": \"solid nodule\",\n\"volume\": 357.326509475708,\n\"density\": [-723, 99],\n\"position\": [\"L_super_lb_apicoposter\"],\n\"axialZoom\": \"InferCareMPR/cf66299e-d62d-4c42-9c6c-4678981f5cba/1.3.12.2.1107.5.1.4.60217.30000020080615123145900095721/1-AZ.png\",\n\"malignant\": 0.5681018394729864,\n\"keySliceId\": 56,\n\"probability\": 0.9954901337623596,\n\"longDiameter\": 14.142615111868583,\n\"position_flow\": [],\n\"shortDiameter\": 3.9435717377675\n},\n\"summary\": {\n\"volume\": 357.326509475708,\n\"longDiameter\": 14.142615111868583,\n\"shortDiameter\": 3.9435717377675\n},\n\"modality\": \"CT\",\n\"visit_id\": 6,\n\"has_image\": true,\n\"patient_fk\": 2,\n\"study_date\": \"2020-08-08\",\n\"study_iuid\": \"1.2.840.113564.345049290535.9692.637324740667728219.67829\",\n\"study_time\": \"095006\",\n\"series_iuid\": \"1.3.12.2.1107.5.1.4.60217.30000020080615123145900095721\",\n\"accession_number\": \"CT2008080208\"\n}],\n\"echart\": {\n\"volume\": [357.326509475708, 96.36752414703369, 102.46635913113602],\n\"longDiameter\": [14.142615111868583, 5.797232698394026, 10.743466281805867],\n\"shortDiameter\": [3.9435717377675, 3.725476062322739, 3.7605498677025575],\n\"study_date\": [\"2020-08-08\", \"2021-01-18\", \"2022-10-27\"],\n\"study_time\": [\"095006\", \"165851\", \"092452\"]\n}], \"page\": 1, \"size\": 10, \"has_next\": false, \"extra\": {\n\"viewers\": [{\n\"id\": \"922fb0d2-d9bd-4e4b-a74b-0c44c71cbece\",\n\"name\": \"3D Viewer\",\n\"description\": \"3D 追踪客户端\",\n\"url\": \"/3dViewer\",\n\"preset\": true,\n\"multiTimePoint\": true,\n\"createdAt\": \"2025-03-05T18:26:43.574391\",\n\"updatedAt\": \"2025-03-05T18:26:43.574414\"\n}],\n\"lesion_threshold\": 6\n}\n}\n},……..",
+          "img_url": ""
+        },
+        {
+          "title": "获取单个患者时间线接口",
+          "text": "（1）输入项\n接收HTTP/HTTPS协议的GET /patient/detail/1?solution=fada36b5-3e8f-4c69-9400-180f9a1ce798请求。\n（2）输出项：\n返回的json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1746699618.1988273,\n\"data\": {\n\"id\": 1,\n\"patient_id\": \"encrypted52uPhS8Tl70UcCttx2i5nO6khG8TcqWEFTYq7bQsE-I\",\n\"name\": \"encrypted52uPhS8Tl70UcCttx2i5nO6khG8TcqWEFTYq7bQsE-I\",\n\"gender_code\": \"M\",\n\"gender_display\": \"Male\",\n\"birthday\": \"1979-11-12\",\n\"age\": \"45\",\n\"phone_number\": null,\n\"id_number\": null,\n\"department_name\": \"System (Automatic enrollment)\",\n\"enroll_motivation\": {},\n\"visits\": [{\n\"id\": 3,\n\"patient_fk\": 1,\n\"assist_study_date\": \"2020-11-20\",\n\"default_study_iuid\": {\n\"tag\": {\n\"CT-chest\": [\"12629322-1776-457a-8ac6-d5d2c25c5dcc\"],\n\"CT-abdomen\": [\"68eac778-3994-405d-b688-295cc9fa823c\"]\n},\n\"tabs\": {\n\"08ea9ebc-b92f-46e3-8440-d4592c704796\": {\n\"key\": \"StomachLesion\",\n\"value\": \"Stomach lesion\"\n},\n},\n\"modality\": [\"CT\"],\n\"mpc_result\": [\"CT-abdomen\", \"CT-chest\"],\n\"study_iuid\": \"1.2.840.20201120.120112005799\"\n},\n\"default_series_iuid\": {\n\"08ea9ebc-b92f-46e3-8440-d4592c704796\": \"1.2.840.113619.2.55.3.2831183620.555.1605751157.325.3\",\n},\n\"default_study_time\": \"162026\",\n\"has_image\": true,\n\"extra\": {}\n}, {\n\"modality\": [\"CT\"],\n\"mpc_result\": [\"CT-abdomen\", \"CT-chest\"]\n},\n\"extra\": {\n\"visible_tags\": [\"CT-chest\"],\n\"visible_tabs\": [\"1aefc79c-90f8-4450-993d-8974567b010e\"],\n\"template_ids\": [\"1aefc79c-90f8-4450-993d-8974567b010e\"]\n},\n\"read\": false\n}\n}",
+          "img_url": ""
+        },
+        {
+          "title": "统一搜索接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的GET /unity/list?type=patient&page=1&size=10请求。\n（2）输出项：返回的json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1740736540.2686117,\n\"data\": {\n\"total\": 3,\n\"pages\": 1,\n\"rows\": [{\n\"id\": 3,\n\"patient_id\": \"CW023001-P003184673\",\n\"name\": \"CW023001-P003184673\",\n\"gender_code\": \"F\",\n\"gender_display\": \"女\",\n\"birthday\": \"1966-11-30\",\n\"age\": \"58\",\n\"phone_number\": null,\n\"id_number\": null,\n\"department_name\": \"系统（自动入组）\",\n\"enroll_motivation\": {\n\"method\": \"auto\",\n\"reason\": \"2022年03月31日检查，1、2、3号结节等16个结节长径大于1mm\",\n\"method_cn\": \"自动入组\"\n},\n\"visits\": [{\n\"id\": 5,\n\"patient_fk\": 3,\n\"assist_study_date\": \"2022-03-31\",\n\"default_study_iuid\": {\n\"study_iuid\": \"1.2.840.113564.345051450607.22592.637843375046413693.1076\",\n\"modality\": [\"CT\"],\n\"tag\": {\n\"CT-lung\": [\"83fde03b-0acb-4ed0-85ff-91d663f97ac2\"],\n\"CT-abdomen\": [\"e619c516-6689-40c5-b643-c009ad628e2b\", \"0b06c8dd-1230-43ea-ae5b-c25451ed1005\"]\n},\n\"mpc_result\": [\"CT-lung\", \"CT-abdomen\"],\n\"tabs\": {\n\"83fde03b-0acb-4ed0-85ff-91d663f97ac2\": \"Nodule\",\n\"e619c516-6689-40c5-b643-c009ad628e2b\": \"LiverTumour\",\n\"0b06c8dd-1230-43ea-ae5b-c25451ed1005\": \"UrinaryTumour\"\n}\n},\n\"default_series_iuid\": {\n\"83fde03b-0acb-4ed0-85ff-91d663f97ac2\": \"1.3.12.2.1107.5.1.4.73388.30000022032900102536800253076\",\n\"e619c516-6689-40c5-b643-c009ad628e2b\": \"1.3.12.2.1107.5.1.4.73388.30000022032900102536800253746\",\n\"0b06c8dd-1230-43ea-ae5b-c25451ed1005\": \"1.3.12.2.1107.5.1.4.73388.30000022032900102536800253076\"\n},\n\"default_study_time\": \"192918\",\n\"has_image\": true,\n\"extra\": {}\n}],\n\"tags\": {\n\"modality\": [\"CT\"],\n\"tag\": {\n\"CT-lung\": [\"83fde03b-0acb-4ed0-85ff-91d663f97ac2\"],\n\"CT-abdomen\": [\"e619c516-6689-40c5-b643-c009ad628e2b\", \"0b06c8dd-1230-43ea-ae5b-c25451ed1005\"]\n},\n\"mpc_result\": [\"CT-lung\", \"CT-abdomen\"],\n\"tabs\": {\n\"83fde03b-0acb-4ed0-85ff-91d663f97ac2\": \"Nodule\",\n\"e619c516-6689-40c5-b643-c009ad628e2b\": \"LiverTumour\",\n\"0b06c8dd-1230-43ea-ae5b-c25451ed1005\": \"UrinaryTumour\"\n}\n},\n\"tags\": {\n\"modality\": [\"CT\"],\n\"tag\": {\n\"CT-lung\": [\"83fde03b-0acb-4ed0-85ff-91d663f97ac2\"]\n},\n\"mpc_result\": [\"CT-lung\"],\n\"tabs\": {\n\"83fde03b-0acb-4ed0-85ff-91d663f97ac2\": \"Nodule\"\n}\n}\n}],\n\"page\": 1,\n\"size\": 10,\n\"has_next\": false\n}\n},\n……..",
+          "img_url": ""
+        },
+        {
+          "title": "获取磁盘容量接口",
+          "text": "（1）输入项:\n接受HTTPS 协议的GET /unity/capacity 请求。\n（2）输出项：\n若磁盘空间正常或磁盘已满，接口返回free_bytes(可用空间)、total_bytes(总空间)。\n返回的json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1744274821.3891902,\n\"data\": {\n\"free_bytes\": 184447266816,\n\"total_bytes\": 490000453632\n}\n}",
+          "img_url": ""
+        },
+        {
+          "title": "用户登录接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的POST /doctor/login 请求。\n请求内容为：\n{\n\"login_id\": \"G/ex3qYobBP3/VAi534VHKcBqqak7brwINpZua1MCMuRonaFsj3LRchN7Z4Ikvo237lU3bqryxybtWuzBs0yctB8k/FK7M5DvLUwt66Q1Cenn5gcWrolUJZwX9ZG1y2U5HN8x1uF+24qNOmQe7cDl7kFgyWiRazAFUIM3hgum22JcLumQBnCwNTKnn4+UQWJG5L5/JOxqVblnVJuwue38lOrtbUgztfJxUOrsHmojBSyR3LN7/DQaqGnEX+zC3APCqQgWgXnf5CI++BugMxwVa6phzS4P3q32gnphNzriIL62tP/ILcslwCFxj/SZzTuMTG0I2ceq3/RkrjWYSBdFw==\"\n}\n（2）输出项\n若登录成功，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1750756255.3504727,\n\"data\": {\n\"id\": 1,\n\"account\": \"tx-master\",\n\"name\": \"System Administrator\",\n\"mobile\": \"\",\n\"email\": null,\n\"doctor_code\": \"tx-master\",\n\"status\": 1,\n\"token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwic3ltYm9sIjoiTVdZMFl6Y3dOREV0TkRaaE5pMDBNRGM1TFRsbFpUQXRPVFptWXpFeU1qQmhO\",\n\"hospital_id\": null,\n\"hospital_name\": null,\n\"extra_uuid\": null,\n\"extra_info\": {},\n\"solutions\": [\"solutions \"],\n\"password_reset\": false\n}\n}",
+          "img_url": ""
+        },
+        {
+          "title": "用户修改密码接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的POST /doctor/change_password 请求。\n请求内容为：\n{\n\"old_password\": \"321\",\n\"new_password\": \"TXniubi2021\",\n\"confirm_password\": \"TXniubi2021\"\n}\n（2）输出项\n若首次修改密码成功，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 2,\n\"code\": 0,\n\"msg\": \"Successful.\",\n\"msg_cn\": \"密码修改成功，请重新登录\",\n\"timestamp\": 1715246243.7924857,\n\"data\": {}\n}",
+          "img_url": ""
+        },
+        {
+          "title": "用户退出接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的POST /doctor/logout 请求，raw-json\n（2）输出项\n若用户退出成功，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 2,\n\"code\": 0,\n\"msg\": \"Successful.\",\n\"msg_cn\": \"成功.\",\n\"timestamp\": 1715246131.5561185,\n\"data\": {}\n}",
+          "img_url": ""
+        },
+        {
+          "title": "科室列表接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的GET / department/list?name=请求。\n（2）输出项\n若退出成功，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"成功\",\n\"timestamp\": 1740044787.9643407,\n\"data\": {\n\"total\": 2,\n\"pages\": 1,\n\"rows\": [{\n\"id\": 1,\n\"name\": \"默认科室\",\n\"user_count\": 1,\n\"template_groups\": [\"a\", \"b\"]\n}, {\n\"id\": 2,\n\"name\": \"放射科2\",\n\"user_count\": 0,\n\"template_groups\": [\"a\", \"b\"]\n}],\n\"page\": 1,\n\"size\": 10,\n\"has_next\": false\n}\n}",
+          "img_url": ""
+        },
+        {
+          "title": "创建科室接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的POST /department/create请求。\n请求内容为：\n{\n\"name\": \"放射科\",\n\"solutions\": [\"abc\", \"bcd\"]\n}\n（2）输出项\n若成功显示用户列表，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"成功\",\n\"timestamp\": 1740044787.9643407,\n\"data\": {}\n}",
+          "img_url": ""
+        },
+        {
+          "title": "编辑科室接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的POST /department/update/<id>请求。\n请求内容为：\n{\n\"name\": \"放射科\",\n\"solutions\": [\"abc\", \"bcd\"]\n}\n（2）输出项\n若成功显示用户列表，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"成功\",\n\"timestamp\": 1740044787.9643407,\n\"data\": {}\n}",
+          "img_url": ""
+        },
+        {
+          "title": "删除科室接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的POST /department/delete/<id>请求。\n（2）输出项\n若成功显示用户列表，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 34,\n\"message\": \"科室被用户绑定\",\n\"timestamp\": 1740044787.9643407,\n\"data\": {}\n}",
+          "img_url": ""
+        },
+        {
+          "title": "获取用户列表接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的GET /doctor/list?name= 请求。\n请求内容为:\n（2）输出项\n若新增成功，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1750128332.2168877,\n\"data\": {\n\"total\": 6,\n\"pages\": 1,\n\"rows\": [{\n\"id\": 8,\n\"name\": \"user1\",\n\"account\": \"user1\",\n\"mobile\": null,\n\"sex\": \"9\",\n\"doctor_code\": \"user1\",\n\"department_id\": 4,\n\"created_at\": \"2025-06-16 18:09:06\",\n\"updated_at\": \"2025-06-16 18:09:06\",\n\"role_id\": 4,\n\"last_login\": \"\",\n\"status\": 1,\n\"organization_id\": 1\n}, {\n\"id\": 7,\n\"name\": \"dep1\",\n\"account\": \"thoraxadmin\",\n\"mobile\": null,\n\"sex\": \"9\",\n\"doctor_code\": \"thoraxadmin\",\n\"department_id\": 4,\n\"created_at\": \"2025-06-16 18:08:46\",\n\"updated_at\": \"2025-06-16 18:08:46\",\n\"role_id\": 3,\n\"last_login\": \"\",\n\"status\": 1,\n\"organization_id\": 1\n}],\n\"page\": 1,\n\"size\": 10,\n\"has_next\": false,\n\"extra\": {}\n}\n}",
+          "img_url": "",
+          "children": [
+            {
+              "title": "导入表格72",
+              "text": "",
+              "img_url": ""
+            }
+          ]
+        },
+        {
+          "title": "创建用户接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的POST /doctor/create请求。\n请求内容为：\n{\n\"username\": \"testdd12345\",\n\"title\": \"住院医师\",\n\"sex\": \"0\",\n\"status\": 1,\n\"password\": \"qwer1234\",\n\"role_ids\": [1, 2],\n\"organization_id\": 1,\n\"name\": \"测试dd\",\n\"mobile\": \"13914111111\",\n\"department_ids\": [1]\n}\n（2）输出项\n若编辑成功，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 2,\n\"code\": 0,\n\"msg\": \"Successful.\",\n\"msg_cn\": \"成功.\",\n\"timestamp\": 1716256478.0007992,\n\"data\": {}\n}",
+          "img_url": ""
+        },
+        {
+          "title": "编辑用户接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的POST /doctor/single/<id>请求。\n请求内容为：\n{\n\"account\": \"testdd12345\",\n\"role_id\": 2,\n\"organization_id\": 1,\n\"name\": \"测试dd\",\n\"mobile\": \"13914111111\",\n\"department_id\": 8\n}\n（2）输出项\n若编辑成功，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 2,\n\"code\": 0,\n\"msg\": \"Successful.\",\n\"msg_cn\": \"成功.\",\n\"timestamp\": 1716257083.261009,\n\"data\": {}\n}",
+          "img_url": ""
+        },
+        {
+          "title": "重置用户密码接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的POST /doctor/reset_password/<id> 请求。\n请求内容为：\n{\n\"new_password\": \"321\",\n\"confirm_password\": \"321\"\n}\n（2）输出项\n若重置成功，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 2,\n\"code\": 2,\n\"msg\": \"Failed.\",\n\"msg_cn\": \"超管不可以给自己重置密码\",\n\"timestamp\": 1715246243.7924857,\n\"data\": {}\n}",
+          "img_url": ""
+        },
+        {
+          "title": "删除用户接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的DELETE /doctor/single/<id> 请求。\n请求内容为：\n请求内容为:\n（2）输出项\n若禁用成功，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 2,\n\"code\": 0,\n\"msg\": \"Successful.\",\n\"msg_cn\": \"成功.\",\n\"timestamp\": 1715247080.8356886,\n\"data\": {}\n}",
+          "img_url": "",
+          "children": [
+            {
+              "title": "导入表格73",
+              "text": "",
+              "img_url": ""
+            }
+          ]
+        },
+        {
+          "title": "新建事件接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的POST /treatment/event/create 请求。\n请求内容为：\n{\n\"patient_fk\": 1,\n\"event_type\": \"chemotherapy\",\n\"event_date\": \"2025-04-15\",\n\"description\": \"  \",\n\"solution\": \"44b03efa-5ccc-44a5-9ca0-1beba7587f5b\",\n\"baseline_detail\": {\n\"chestCT\": {\n\"accession_number\": \"01D2020112005799\",\n\"study_iuid\": \"1.2.840.20201120.120112005799\",\n\"modality\": \"CT\",\n\"series_iuid\": \"1.2.840.113619.2.55.3.2831183620.555.1605751157.325.3\",\n\"study_date\": \"2020-11-20\",\n\"study_time\": \"162108\",\n\"product\": {\n\"1da39037-6bad-416e-959f-f6b51b47f9e8\": \"INFERCARE_CT_LYMPH\",\n\"f8e56cc2-860f-4fac-8a98-fa9c8cb940c1\": \"INFERCARE_CT_LUNG\"\n},\n\"mpc_scan\": \"\",\n\"mpc_result\": [\"lung\", \"abdomen\"],\n\"series_desc\": {\n\"1da39037-6bad-416e-959f-f6b51b47f9e8\": \"Recon 2:\",\n\"f8e56cc2-860f-4fac-8a98-fa9c8cb940c1\": \"Recon 2:\"\n}\n},\n\"abdomenCT\": {\n\"accession_number\": \"01D2020112005799\",\n\"study_iuid\": \"1.2.840.20201120.120112005799\",\n\"modality\": \"CT\",\n\"series_iuid\": \"1.2.840.113619.2.55.3.2831183620.555.1605751157.325.3\",\n\"study_date\": \"2020-11-20\",\n\"study_time\": \"162108\",\n\"product\": {\n\"1da39037-6bad-416e-959f-f6b51b47f9e8\": \"INFERCARE_CT_LYMPH\",\n\"f8e56cc2-860f-4fac-8a98-fa9c8cb940c1\": \"INFERCARE_CT_LUNG\"\n},\n\"mpc_scan\": \"\",\n\"mpc_result\": [\"lung\", \"abdomen\"],\n\"series_desc\": {\n\"1da39037-6bad-416e-959f-f6b51b47f9e8\": \"Recon 2:\",\n\"f8e56cc2-860f-4fac-8a98-fa9c8cb940c1\": \"Recon 2:\"\n}\n}\n}\n}\n（2）输出项\n若重置成功，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1745288901.1888342,\n\"data\": {\n\"event_id\": 85,\n\"baseline_id\": 151\n}\n}",
+          "img_url": ""
+        },
+        {
+          "title": "编辑事件接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的POST /treatment/event/<id>/edit请求。\n请求内容为：\n{\n\"event\": {\n\"description\": \"  \",\n\"event_date\": \"2025-04-21\",\n\"event_type\": \"surgical_operation\"\n},\n\"baseline\": {\n\"id\": 27,\n\"event_fk\": 18,\n\"index\": 0,\n\"detail\": {\n\"chestCT\": {\n\"product\": {\n\"3eff34b9-3018-4a4d-93d6-8a724e55918c\": \"INFERCARE_CT_LYMPH\",\n\"63e22fa3-90c8-473d-a7c5-b592215ee96e\": \"INFERCARE_CUSTOM\",\n\"9c7b3f92-bbc2-46ad-9bb7-baa0665f9324\": \"INFERCARE_CT_LUNG\"\n},\n\"modality\": \"CT\",\n\"mpc_scan\": \"plainScan\",\n\"mpc_result\": [\"lung\", \"abdomen\"],\n\"study_date\": \"2020-11-20\",\n\"study_iuid\": \"1.2.840.20201120.120112005799\",\n\"study_time\": \"162108\",\n\"series_desc\": {\n\"3eff34b9-3018-4a4d-93d6-8a724e55918c\": \"Recon 2:\"\n},\n\"series_iuid\": \"1.2.840.113619.2.55.3.2831183620.555.1605751157.325.3\",\n\"accession_number\": \"01D2020112005799\"\n},\n\"abdomenCT\": null\n},\n\"target_lesion\": {\n\"default\": {\n\"1.2.840.20201120.120112005799\": {}\n},\n\"infercare\": {\n\"1.2.840.20201120.120112005799\": {}\n}\n},\n\"doctor_fk\": 1,\n\"has_report\": false,\n\"report_list\": [],\n\"created_at\": \"2025-04-29 16:02:39\"\n},\n\"doctor_fk\": null,\n\"target_lesions\": {\n\"default\": {},\n\"infercare\": {}\n},\n\"has_report\": false,\n\"report_list\": [],\n\"created_at\": null\n}\n（2）输出项\n若重置成功，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1745304069.5292702,\n\"data\": {\n\"event_id\": 85,\n\"followup_id\": 155\n}\n}",
+          "img_url": ""
+        },
+        {
+          "title": "获取事件详情接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的GET /treatment/event/<id> 请求。\n（2）输出项\n若重置成功，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1745724247.4708135,\n\"data\": {\n\"id\": 138,\n\"patient_fk\": 1,\n\"event_type\": \"chemotherapy\",\n\"event_date\": \"2025-04-15\",\n\"description\": \"  \",\n\"doctor_fk\": 1,\n\"created_at\": \"2025-04-27 11:19:12\",\n\"followups\": [{\n\"id\": 235,\n\"event_fk\": 138,\n\"index\": 0,\n\"detail\": {\n\"chestCT\": {\n\"product\": {\n\"1da39037-6bad-416e-959f-f6b51b47f9e8\": \"INFERCARE_CT_LYMPH\",\n\"f8e56cc2-860f-4fac-8a98-fa9c8cb940c1\": \"INFERCARE_CT_LUNG\"\n},\n\"modality\": \"CT\",\n\"mpc_scan\": \"\",\n\"mpc_result\": [\"lung\", \"abdomen\"],\n\"study_date\": \"2020-11-20\",\n\"study_iuid\": \"1.2.840.20201120.120112005799\",\n\"study_time\": \"162108\",\n\"series_desc\": {\n\"1da39037-6bad-416e-959f-f6b51b47f9e8\": \"Recon 2:\",\n\"f8e56cc2-860f-4fac-8a98-fa9c8cb940c1\": \"Recon 2:\"\n},\n\"series_iuid\": \"1.2.840.113619.2.55.3.2831183620.555.1605751157.325.3\",\n\"accession_number\": \"01D2020112005799\"\n},\n\"abdomenCT\": {\n\"product\": {\n\"1da39037-6bad-416e-959f-f6b51b47f9e8\": \"INFERCARE_CT_LYMPH\",\n\"f8e56cc2-860f-4fac-8a98-fa9c8cb940c1\": \"INFERCARE_CT_LUNG\"\n},\n\"modality\": \"CT\",\n\"mpc_scan\": \"\",\n\"mpc_result\": [\"lung\", \"abdomen\"],\n\"study_date\": \"2020-11-20\",\n\"study_iuid\": \"1.2.840.20201120.120112005799\",\n\"study_time\": \"162108\",\n\"series_desc\": {\n\"1da39037-6bad-416e-959f-f6b51b47f9e8\": \"Recon 2:\",\n\"f8e56cc2-860f-4fac-8a98-fa9c8cb940c1\": \"Recon 2:\"\n},\n\"series_iuid\": \"1.2.840.113619.2.55.3.2831183620.555.1605751157.325.3\",\n\"accession_number\": \"01D2020112005799\"\n}\n},\n\"target_lesion\": {\n\"default\": {\n\"1.2.840.20201120.120112005799\": {}\n},\n\"infercare\": {\n\"1.2.840.20201120.120112005799\": {}\n}\n},\n\"doctor_fk\": 1,\n\"has_report\": false,\n\"report_list\": [],\n\"created_at\": \"2025-04-27 11:19:12\"\n}],\n\"solution\": \"44b03efa-5ccc-44a5-9ca0-1beba7587f5b\"\n}\n}",
+          "img_url": ""
+        },
+        {
+          "title": "删除某个事件接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的DELETE / treatment/event/<id> 请求。\n（2）输出项\n若删除成功，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1741682557.539222,\n\"data\": null\n}",
+          "img_url": ""
+        },
+        {
+          "title": "获取治疗时间线接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的GET\n/treatment/event/list/1?solution=44b03efa-5ccc-44a5-9ca0-1beba7587f5b 请求。\n（2）输出项\n若获取治疗时间线成功，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1745290806.6707854,\n\"data\": [{\n\"id\": 85,\n\"patient_fk\": 1,\n\"event_type\": \"chemotherapy\",\n\"event_date\": \"2025-04-15\",\n\"doctor_fk\": 1,\n\"created_at\": \"2025-04-22 10:28:46\",\n\"solution\": \"44b03efa-5ccc-44a5-9ca0-1beba7587f5b\",\n\"reports\": [{\n\"id\": 42,\n\"followup_fk\": 151,\n\"doctor_fk\": 1,\n\"path\": \"path/to/report/file\",\n\"created_at\": \"2025-04-22 11:11:23\"\n}, {\n\"id\": 44,\n\"followup_fk\": 154,\n\"doctor_fk\": 1,\n\"path\": \"path/to/report/file\",\n\"created_at\": \"2025-04-22 11:12:20\"\n}]\n}]\n}",
+          "img_url": ""
+        },
+        {
+          "title": "获取报告信息接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的POST  /api/report/report_info请求。\n请求参数为：\n{\n\"report\": {\n\"title\": \"\",\n\"patient_name\": \"Unknown\",\n\"patient_id\": \"CE025005-0006997324\",\n\"followups\": [\n{\n\"follow_up_type\": \"Baseline\",\n\"description\": \"\",\n\"studies\": [\n{\n\"study_iuid\": \"1.2.840.113564.345049290535.9496.637205551706060958.116932\",\n\"modality\": \"CT\",\n\"scanned_at\": \"2020-03-23T15:17:02\",\n\"body\": \"chest\",\n\"description\": \"\",\n\"series\": [\n{\n\"series_iuid\": \"1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184\",\n\"is_enhanced_scan\": false\n}\n]\n}\n],\n\"target_lesions\": [\n{\n\"id\": 4,\n\"correlation_id\": \"fb641ecfb04\",\n\"template_id\": \"b25b756e-8d52-4de8-8689-069aa1c33693\",\n\"study_iuid\": \"tudy_iuid\",\n\"series_iuid\": \" series_iuid \",\n\"dicom_path\": series_iuid \",\n\"mask_label\": 4,\n\"lesion_mask\": lesion_mask \",\n\"organ_mask\": \" organ_mask \",\n\"vtp\": \"vtp\",\n\"key_slice_id\": 55,\n\"total_slice_count\": 214,\n\"series_serial_number\": \"4\",\n\"scanned_at\": \"2020-03-23T15:17:02\",\n\"name\": \"Lesion 4\",\n\"location\": \"\",\n\"organ\": \"\",\n\"position\": [\n\"R_super_lb_apical\"\n],\n\"lesion_type\": \"Nodule\",\n\"lesion_type_display_name\": \"Lung nodule\",\n\"long_diameter\": 7.519589508857552,\n\"short_diameter\": 7.207723899095239,\n\"volume\": 197.38623046875,\n\"status\": \"\",\n\"volume_change\": \"\"\n}\n],\n\"header_non_target_lesion_select_hint\": \"\",\n\"non_target_lesion_select\": \"\",\n\"target_lesions_response\": \"\",\n\"non_target_lesions_response\": \"\",\n\"new_lesions_response\": \"\",\n\"target_lesions_conclusion\": \"\",\n\"non_target_lesions_conclusion\": \"\",\n\"new_lesions_conclusion\": \"\",\n\"new_lesions_filter_rule\": \"\",\n\"over_all_response\": \"\",\n\"non_target_lesion_select_options\": {},\n\"non_target_lesion_conclusion_options\": {},\n\"new_lesion_conclusion_options\": {}\n}\n],\n\"lesion_size_thresholds\": {\n\"Nodule\": 6\n},\n\"organ_lesion_images\": [],\n\"target_lesion_images\": [],\n\"header_scan_information\": \"\",\n\"header_target_lesion\": \"\",\n\"header_non_target_lesion\": \"\",\n\"header_new_target_lesion\": \"\",\n\"header_overall_response\": \"\",\n\"header_lesion_details\": \"\",\n\"header_organ_wise_summary\": \"\"\n}\n}\n（2）输出项\n若获取报告信息成功，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"report\": {\n\"title\": \"RECIST Report\",\n\"patient_name\": \"Unknown\",\n\"patient_id\": \"CE025005-0006997324\",\n\"followups\": [{\n\"sequence_id\": 0,\n\"follow_up_type\": \"Baseline\",\n\"description\": \"Baseline: CT chest 03/23/2020\",\n\"studies\": [{\n\"study_iuid\": \"1.2.840.113564.345049290535.9496.637205551706060958.116932\",\n\"series\": [{\n\"series_iuid\": \"1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184\",\n\"is_enhanced_scan\": false\n}],\n\"body\": \"chest\",\n\"modality\": \"CT\",\n\"scanned_at\": \"2020-03-23T15:17:02\",\n\"description\": \"CT chest 03/23/2020\"\n}],\n\"target_lesions\": [{\n\"sequence_id\": 1,\n\"id\": 4,\n\"correlation_id\": \"fb641ecfb04\",\n\"template_id\": \"b25b756e-8d52-4de8-8689-069aa1c33693\",\n\"study_iuid\": \"1.2.840.113564.345049290535.9496.637205551706060958.116932\",\n\"series_iuid\": \"1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184\",\n\"dicom_path\": \"PP_STORE/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/76957b2f4ddfe119666883976de804fd/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184.mha\",\n\"mask_label\": 4,\n\"lesion_mask\": \"RESULT/infercare_ct_lung_result/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/nodule/nodule-seg.nii.gz\",\n\"organ_mask\": \"RESULT/infercare_ct_lung_result/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/nodule/lung-lobe-seg.nii.gz\",\n\"vtp\": \"RESULT/infercare_ct_lung_result/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/vtp/nodule_4.vtp\",\n\"key_slice_id\": 55,\n\"total_slice_count\": 214,\n\"scanned_at\": \"2020-03-23T15:17:02\",\n\"name\": \"Target Lesion #1: Lung nodule\",\n\"location\": \"Location: Right Upper Lobe Apical Segment (RUL S1)\",\n\"organ\": \"Lung\",\n\"position\": [\n\"R_super_lb_apical\"\n],\n\"lesion_type\": \"Nodule\",\n\"lesion_type_display_name\": \"Lung nodule\",\n\"long_diameter\": 7.5,\n\"short_diameter\": 7.207724,\n\"volume\": 197.38623,\n\"status\": \"\",\n\"volume_change\": \"Volume: 7.0 x 6.8 mm, volume 0.19 cc (series 5, image 60), previously 7.5 x 7.2 mm, volume 0.20 cc (series 4, image 55)\",\n\"series_serial_number\": \"4\"\n}],\n\"target_lesions_conclusion\": \"\",\n\"target_lesions_response\": \"N/A\",\n\"non_target_lesions\": [{\n\"sequence_id\": 1,\n\"id\": 1,\n\"correlation_id\": \"adffb641ecf\",\n\"template_id\": \"b25b756e-8d52-4de8-8689-069aa1c33693\",\n\"study_iuid\": \"1.2.840.113564.345049290535.9496.637205551706060958.116932\",\n\"series_iuid\": \"1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184\",\n\"dicom_path\": \"PP_STORE/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/76957b2f4ddfe119666883976de804fd/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184.mha\",\n\"mask_label\": 1,\n\"lesion_mask\": \"RESULT/infercare_ct_lung_result/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/nodule/nodule-seg.nii.gz\",\n\"organ_mask\": \"RESULT/infercare_ct_lung_result/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/nodule/lung-lobe-seg.nii.gz\",\n\"vtp\": \"RESULT/infercare_ct_lung_result/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/vtp/nodule_1.vtp\",\n\"key_slice_id\": 24,\n\"total_slice_count\": 214,\n\"scanned_at\": \"2020-03-23T15:17:02\",\n\"name\": \"Non-Target Lesion #1: Lung nodule\",\n\"location\": \"Location: Right Upper Lobe Apical Segment (RUL S1)\",\n\"organ\": \"Lung\",\n\"position\": [\n\"R_super_lb_apical\"\n],\n\"lesion_type\": \"Nodule\",\n\"lesion_type_display_name\": \"Lung nodule\",\n\"long_diameter\": 3.415495,\n\"short_diameter\": 2.217544,\n\"volume\": 14.561279,\n\"status\": \"\",\n\"volume_change\": \"Volume: 3.6 x 3.2 mm, volume 0.02 cc (series 5, image 30), previously 3.4 x 2.2 mm, volume 0.01 cc (series 4, image 24).\",\n\"series_serial_number\": \"4\"\n},\n......\n],\n\"header_scan_information\": \"Scan Information\",\n\"header_target_lesion\": \"Target Lesions\",\n\"header_non_target_lesion\": \"Non-Target Lesions\",\n\"header_new_target_lesion\": \"New Lesions\",\n\"header_overall_response\": \"Overall Response\",\n\"header_lesion_details\": \"Lesion Details\",\n\"header_organ_wise_summary\": \"Organ-Wise Summary\",\n\"lesion_size_thresholds\": {\n\"Nodule\": 6,\n\"LymphNode\": 10,\n\"LiverTumor\": 6,\n\"KidneyTumor\": 6\n}\n},\n\"success\": true,\n\"message\": \"OK\"\n}",
+          "img_url": ""
+        },
+        {
+          "title": "生成报告接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的POST  /api/report/report_info请求。\n请求参数为：\n{\n\"report\": {\n\"title\": \"RECIST Report\",\n\"patient_name\": \"Unknown\",\n\"patient_id\": \"CE025005-0006997324\",\n\"followups\": [{\n\"sequence_id\": 0,\n\"follow_up_type\": \"Baseline\",\n\"description\": \"Baseline: CT chest 03/23/2020\",\n\"studies\": [{\n\"study_iuid\": \"1.2.840.113564.345049290535.9496.637205551706060958.116932\",\n\"series\": [{\n\"series_iuid\": \"1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184\",\n\"is_enhanced_scan\": false\n}],\n\"body\": \"chest\",\n\"modality\": \"CT\",\n\"scanned_at\": \"2020-03-23T15:17:02\",\n\"description\": \"CT chest 03/23/2020\"\n}],\n\"target_lesions\": [{\n\"sequence_id\": 1,\n\"id\": 4,\n\"correlation_id\": \"fb641ecfb04\",\n\"template_id\": \"b25b756e-8d52-4de8-8689-069aa1c33693\",\n\"study_iuid\": \"1.2.840.113564.345049290535.9496.637205551706060958.116932\",\n\"series_iuid\": \"1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184\",\n\"dicom_path\": \"PP_STORE/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/76957b2f4ddfe119666883976de804fd/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184.mha\",\n\"mask_label\": 4,\n\"lesion_mask\": \"RESULT/infercare_ct_lung_result/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/nodule/nodule-seg.nii.gz\",\n\"organ_mask\": \"RESULT/infercare_ct_lung_result/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/nodule/lung-lobe-seg.nii.gz\",\n\"vtp\": \"RESULT/infercare_ct_lung_result/1.3.12.2.1107.5.1.4.65895.30000020032301003445300037184/vtp/nodule_4.vtp\",\n\"key_slice_id\": 55,\n\"total_slice_count\": 214,\n\"scanned_at\": \"2020-03-23T15:17:02\",\n\"name\": \"Target Lesion #1: Lung nodule\",\n\"location\": \"Location: Right Upper Lobe Apical Segment (RUL S1)\",\n\"organ\": \"Lung\",\n\"position\": [\n\"R_super_lb_apical\"\n],\n\"lesion_type\": \"Nodule\",\n\"lesion_type_display_name\": \"Lung nodule\",\n\"long_diameter\": 7.5,\n\"short_diameter\": 7.207724,\n\"volume\": 197.38623,\n\"status\": \"\",\n\"volume_change\": \"Volume: 7.0 x 6.8 mm, volume 0.19 cc (series 5, image 60), previously 7.5 x 7.2 mm, volume 0.20 cc (series 4, image 55)\",\n\"series_serial_number\": \"4\"\n}],\n...\n],\n\"header_scan_information\": \"Scan Information\",\n\"header_target_lesion\": \"Target Lesions\",\n\"header_non_target_lesion\": \"Non-Target Lesions\",\n\"header_new_target_lesion\": \"New Lesions\",\n\"header_overall_response\": \"Overall Response\",\n\"header_lesion_details\": \"Lesion Details\",\n\"header_organ_wise_summary\": \"Organ-Wise Summary\",\n\"lesion_size_thresholds\": {\n\"Nodule\": 6,\n\"LymphNode\": 10,\n\"LiverTumor\": 6,\n\"KidneyTumor\": 6\n}\n}\n}\n（2）输出项\n若生成报告成功，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"download_url\": \"http://infercare_report/reports/infercare_reports/report-2025-07-03-16-28-53.pdf\",\n\"relative_url\": \"/reports/infercare_reports/report-2025-07-03-16-28-53.pdf\",\n\"success\": true,\n\"message\": \"OK\"\n}",
+          "img_url": ""
+        },
+        {
+          "title": "查看某个报告详情接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的GET /reports/infercare_reports/<file_name>.pdf 请求。\n（2）输出项\n成功展示pdf 文件",
+          "img_url": ""
+        },
+        {
+          "title": "删除某个报告接口",
+          "text": "（1）输入项\n接受HTTP/HTTPS协议的DELETE /treatment/event/report/<id> 请求。\n（2）输出项\n若新增机构成功，则返回HTTPS status 200；\n返回json示例如下：\n{\n\"version\": 4,\n\"code\": 0,\n\"message\": \"Success\",\n\"timestamp\": 1741683486.4163342,\n\"data\": null\n}",
+          "img_url": ""
+        }
+      ]
+    },
+    {
+      "title": "限制条件",
+      "text": "HTTPS 请求数据不大于 5MB\n不同 DICOM 图像的 SOPInstanceUID 不可重复",
+      "img_url": ""
+    },
+    {
+      "title": "尚未解决的问题",
+      "text": "无",
+      "img_url": ""
+    }
+  ],
+  "function": [
+    {
+      "title": "总体描述",
+      "text": "肿瘤CT图像随访与评估软件 主要包括 肿瘤CT图像随访与评估软件 Portal、肿瘤CT图像随访与评估软件 Timeline、肿瘤CT图像随访与评估软件 Viewer和肿瘤CT图像随访与评估软件 Report 四个模块。\n肿瘤CT图像随访与评估软件 Portal 主要包含登录、用户管理、科室管理和数据上传4个功能模块; 肿瘤CT图像随访与评估软件 Timeline 负责医学影像数据的展示与交互，集成多部位病例信息的时间线显示。用户可在时间线上查看来自不同部位的影像数据，通过时间点选择等功能快速定位和对比影像数据；肿瘤CT图像随访与评估软件 Viewer提供影像客户端界面，支持详细的病灶编辑、半自动分割、影像配准以及三维重建结果的交互展示，为临床评估提供直观支持；肿瘤CT图像随访与评估软件 Report 包含报告生成工具，支持报告编辑、保存和导出，辅助临床医生进行肿瘤疗效评估。",
+      "img_url": ""
+    },
+    {
+      "title": "功能",
+      "text": "NeoViewer 主要用于呈现从RePACS拉取的图像信息，并处理与用户的交互。",
+      "img_url": "",
+      "children": [
+        {
+          "title": "图18NeoViewer功能定位",
+          "text": "",
+          "img_url": "/data.trace/sds_node_img/import_sds/f66a48584bce-a09b-11f1-c6b7-82000764.png"
+        }
+      ]
+    },
+    {
+      "title": "性能",
+      "text": "最大并发用户数：3000",
+      "img_url": ""
+    },
+    {
+      "title": "数据结构",
+      "text": "",
+      "img_url": "",
+      "children": [
+        {
+          "title": "图19NeoViewer模型结构图Diagram",
+          "text": "",
+          "img_url": "/data.trace/sds_node_img/import_sds/f66a48584bce-a09b-11f1-c6b7-82000d9a.png"
+        }
+      ]
+    },
+    {
+      "title": "接口",
+      "text": "",
+      "img_url": "",
+      "children": [
+        {
+          "title": "图20NeoViewer功能定位",
+          "text": "",
+          "img_url": "/data.trace/sds_node_img/import_sds/f66a48584bce-a09b-11f1-c6b7-8200244c.png"
+        }
+      ]
+    },
+    {
+      "title": "限制条件",
+      "text": "对NeoViewer支持操作系统为Windows\n操作系统版本推荐Windows 10专业版",
+      "img_url": ""
+    },
+    {
+      "title": "尚未解决的问题",
+      "text": "无",
+      "img_url": ""
+    }
+  ]
+}

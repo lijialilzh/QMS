@@ -3349,6 +3349,7 @@ export default () => {
                 srs_code: item.code || "",
                 module: item.module || "",
                 location: item.location || "",
+                design_role: item.design_role || "",
                 type_code: item.type_code || "2",
             }));
 
@@ -5028,6 +5029,7 @@ export default () => {
         const codeCol = pickColumn((text) => isReqCodeHeaderText(text));
         const moduleCol = pickColumn((text) => text.includes("需求模块") || text.includes("模块"));
         const locationCol = pickColumn((text) => text.includes("章节") || text.includes("位置"));
+        const roleCol = pickColumn((text) => text.includes("设计类型"));
         if (!codeCol || !moduleCol) {
             return;
         }
@@ -5042,6 +5044,7 @@ export default () => {
                 code: compactReqCode(row?.[codeCol]),
                 module: normalizeReqText(row?.[moduleCol]),
                 location: normalizeReqText(row?.[locationCol]),
+                design_role: roleCol ? normalizeReqText(row?.[roleCol]) : "",
             }))
             .filter((row: any) => row.code);
         const currentTree = ((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) as TreeNode[];
@@ -5088,14 +5091,16 @@ export default () => {
             const isChangedAssignment = (assignment: { row: any; oldRow?: any; code: string }) => {
                 const { row, oldRow, code } = assignment;
                 if (!oldRow?.id) return true;
+                const nextRole = roleCol ? String(row.design_role || "").trim() : String(oldRow.design_role || "").trim();
                 return compactReqCode(oldRow.srs_code || oldRow.code) !== compactReqCode(code) ||
                     normalizeReqText(oldRow.module) !== row.module ||
-                    normalizeReqText(oldRow.location) !== row.location;
+                    normalizeReqText(oldRow.location) !== row.location ||
+                    String(oldRow.design_role || "").trim() !== nextRole;
             };
             const changedAssignments = assignments.filter(isChangedAssignment);
             const deletedOldRows = oldRows.filter((oldRow: any) => oldRow?.id && !usedOldIds.has(oldRow.id));
-            const persistOtherReqChapters = async (tree: TreeNode[], force = false) => {
-                if (!force && !chapterPlan.changed) return;
+            const persistOtherReqChapters = async (tree: TreeNode[]) => {
+                if (!chapterPlan.changed) return;
                 const cleanedContent = (tree || []).map((node: any) => cleanTreeNode(node, docId, 0));
                 if (!cleanedContent.length) return;
                 const saveRes: any = await Api.update_srs_doc({
@@ -5145,6 +5150,7 @@ export default () => {
                 function: "",
                 sub_function: "",
                 location: item.location || "",
+                design_role: item.design_role || "",
                 type_code: "2",
                 rcm_ids: item.rcm_ids || [],
             });
@@ -5166,6 +5172,7 @@ export default () => {
                 await updateReq(buildSaveData({
                     module: oldRow.module || "",
                     location: oldRow.location || "",
+                    design_role: oldRow.design_role || "",
                     rcm_ids: oldRow.rcm_ids || [],
                 }, tempCode, oldRow.id));
             }
@@ -5177,6 +5184,7 @@ export default () => {
                 await updateReq(buildSaveData({
                     module: oldRow.module || "",
                     location: oldRow.location || "",
+                    design_role: oldRow.design_role || "",
                     rcm_ids: oldRow.rcm_ids || [],
                 }, tempCode, oldRow.id));
             }
@@ -5191,6 +5199,7 @@ export default () => {
                     function: "",
                     sub_function: "",
                     location: row.location || oldRow?.location || "",
+                    design_role: roleCol ? (row.design_role || "") : (oldRow?.design_role || ""),
                     type_code: "2",
                     rcm_ids: oldRow?.rcm_ids || [],
                 });
@@ -6082,6 +6091,7 @@ export default () => {
                     columns={[
                         { title: ts("srs_doc.srs_code") || "需求编号", dataIndex: "srs_code", width: 180, render: (t: string) => t || "-" },
                         { title: ts("srs_doc.module") || "需求模块", dataIndex: "module", width: 320, render: (t: string) => t || "-" },
+                        { title: "设计类型", dataIndex: "design_role", width: 160, render: (t: string) => t || "-" },
                         { title: ts("srs_doc.chapter_number") || "对应的章节号", dataIndex: "location", width: 320, render: (t: string) => t || "-" },
                     ]}
                     rowKey="key"

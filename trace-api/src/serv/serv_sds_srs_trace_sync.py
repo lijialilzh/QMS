@@ -1,7 +1,9 @@
 """SDS 获取 SRS 追溯、图2 追溯表、第6章功能设计同步 — 与 SRS 独立维护。"""
 
+import os
 import re
 import difflib
+import json
 import logging
 from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple
@@ -19,7 +21,7 @@ from ..obj.vobj_sds_trace import SdsTraceObj
 from ..obj import Resp
 from ..utils.sql_ctx import db
 from ..utils.i18n import ts
-from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, FIXED_RCN300_TRACES, fixed_rcn300_sds_codes, fixed_rcn300_trace_for_code, filter_fixed_trace_to_living, design_codes_are_manual, align_rcn300_tail_locations, rcn300_tail_name_key, live_rcn300_tail_chapters
+from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, FIXED_RCN300_TRACES, fixed_rcn300_sds_codes, fixed_rcn300_trace_for_code, filter_fixed_trace_to_living, design_codes_are_manual, align_rcn300_tail_locations, rcn300_tail_name_key, live_rcn300_tail_chapters, OTHER_REQ_DESIGN_ROLES, normalize_other_req_design_role, other_req_design_role_is_explicit, other_req_role_is_changed, other_req_role_display_name
 from .serv_sds_reqd import Server as ServSdsReqd
 
 logger = logging.getLogger(__name__)
@@ -216,6 +218,176 @@ class SdsSrsTraceSyncMixin:
                 self._persist_sds_tree(row, refreshed)
         return refreshed
 
+    _MODULE_TEMPLATE_TITLES = {
+        "总体描述", "功能", "性能", "模块结构", "程序逻辑",
+        "输入项", "输出项", "数据结构", "接口", "限制条件", "尚未解决的问题",
+    }
+    _DESIGN_TEMPLATE_ROLES = {"dataprocessing", "interface", "dlserver", "function"}
+
+    def _load_design_role_templates(self) -> dict:
+        cached = getattr(self, "_design_role_templates", None)
+        if cached is not None:
+            return cached
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+            "src-res", "sds_design_role_template.json",
+        )
+        try:
+            with open(path, encoding="utf-8") as handle:
+                cached = json.load(handle)
+        except Exception:
+            cached = {}
+        self._design_role_templates = cached or {}
+        return self._design_role_templates
+
+    def _is_module_template_section(self, node: SdsNodeForm) -> bool:
+        body = self._normalize_sds_node_title(
+            self._strip_sds_heading_text(getattr(node, "title", "") or "")
+        )
+        return body in self._MODULE_TEMPLATE_TITLES
+
+    def _clone_template_section(self, raw: dict) -> SdsNodeForm:
+        children = [self._clone_template_section(child) for child in (raw.get("children") or [])]
+        return SdsNodeForm(
+            title=str(raw.get("title") or ""),
+            text=str(raw.get("text") or ""),
+            img_url=str(raw.get("img_url") or ""),
+            children=children,
+        )
+
+    def _renumber_module_children(self, parent: SdsNodeForm):
+        heading = self._parse_sds_node_heading(getattr(parent, "title", "") or "")
+        if not heading:
+            return
+        seq = 0
+        for child in getattr(parent, "children", None) or []:
+            seq += 1
+            old = self._parse_sds_node_heading(getattr(child, "title", "") or "")
+            body = self._strip_sds_heading_text(getattr(child, "title", "") or "") or getattr(child, "title", "") or ""
+            new_heading = f"{heading}.{seq}"
+            child.title = f"{new_heading} {body}".strip()
+            if old and old != new_heading:
+                self._replace_heading_prefix_in_descendants(child, old, new_heading)
+
+    def _ensure_design_role_template(self, node: SdsNodeForm, role: str):
+        """设计类型对应的模版章补回固定小节。已有同名小节保留正文，标准需求功能章留在这些小节后面。"""
+        raw_children = self._load_design_role_templates().get(role) or []
+        if not raw_children:
+            return
+        used = {}
+        others = []
+        for child in list(getattr(node, "children", None) or []):
+            body = self._normalize_sds_node_title(
+                self._strip_sds_heading_text(getattr(child, "title", "") or "")
+            )
+            if body in self._MODULE_TEMPLATE_TITLES and body not in used:
+                used[body] = child
+            else:
+                others.append(child)
+        ordered = []
+        for raw in raw_children:
+            body = self._normalize_sds_node_title(str(raw.get("title") or ""))
+            ordered.append(used.pop(body, None) or self._clone_template_section(raw))
+        ordered.extend(used.values())
+        head = [child for child in ordered if not self._is_function_stopper_title(getattr(child, "title", "") or "")]
+        stoppers = [child for child in ordered if self._is_function_stopper_title(getattr(child, "title", "") or "")]
+        node.children = head + others + stoppers
+        self._renumber_module_children(node)
+
+    def _apply_other_req_design_roles(self, doc_id: int, roots: List[SdsNodeForm]):
+        """其他需求名称或编号改了之后，只替换对应模版章的章名和设计编号。标准需求、变更需求不进这里。"""
+        warnings = []
+        rows = db.session.execute(
+            select(SrsReq).join(SdsDoc, SdsDoc.srsdoc_id == SrsReq.doc_id).where(
+                SdsDoc.id == doc_id, SrsReq.type_code == "2"
+            )
+        ).scalars().all()
+        grouped = {key: [] for key in OTHER_REQ_DESIGN_ROLES}
+        for req in rows:
+            role = normalize_other_req_design_role(
+                getattr(req, "design_role", ""), getattr(req, "module", ""), getattr(req, "code", ""),
+            )
+            if role in grouped:
+                grouped[role].append(req)
+        for role, items in list(grouped.items()):
+            explicit = [req for req in items if other_req_design_role_is_explicit(getattr(req, "design_role", ""))]
+            if explicit:
+                grouped[role] = explicit
+
+        def body_name(node: SdsNodeForm) -> str:
+            return self._normalize_sds_node_title(self._strip_sds_heading_text(getattr(node, "title", "") or ""))
+
+        def walk(nodes: List[SdsNodeForm]):
+            for node in nodes or []:
+                yield node
+                yield from walk(getattr(node, "children", None) or [])
+
+        def role_of(node: SdsNodeForm) -> str:
+            label = str(getattr(node, "label", "") or "")
+            if label.startswith("sds-role:"):
+                return label.split(":", 1)[1]
+            return ""
+
+        for role, spec in OTHER_REQ_DESIGN_ROLES.items():
+            matched = grouped.get(role) or []
+            aliases = set()
+            for name in (spec["english"], spec["preset_module"]):
+                normalized = self._normalize_sds_node_title(name)
+                if normalized:
+                    aliases.add(normalized)
+            for req in matched:
+                normalized = self._normalize_sds_node_title(getattr(req, "module", "") or "")
+                if normalized:
+                    aliases.add(normalized)
+            def matches_alias(node: SdsNodeForm) -> bool:
+                body = body_name(node)
+                if not body:
+                    return False
+                if body in aliases:
+                    return True
+                return any(alias and len(alias) >= 6 and body.startswith(alias) for alias in aliases)
+
+            found = []
+            for node in walk(roots):
+                if role_of(node) == role or matches_alias(node):
+                    found.append(node)
+            if role == "external" and not matched:
+                for node in found:
+                    self._detach_node(roots, node)
+                continue
+            if len(matched) != 1:
+                if len(matched) > 1:
+                    warnings.append(f"{spec['preset_module']}的设计类型有多行，章节名未替换")
+                continue
+            if not found:
+                warnings.append(f"{spec['preset_module']}没有对应的模版章节")
+                continue
+            found.sort(key=lambda node: (
+                0 if role_of(node) == role else 1,
+                str(getattr(node, "title", "") or "").count("."),
+            ))
+            node = found[0]
+            req = matched[0]
+            node.label = f"sds-role:{role}"
+            if other_req_role_is_changed(req.code, req.module, role):
+                display = other_req_role_display_name(req.module, role)
+                heading = self._parse_sds_node_heading(getattr(node, "title", "") or "")
+                node.title = f"{heading} {display}".strip() if heading else display
+                derived = re.sub(r"^SRS", "SDS", re.sub(r"\s+", "", str(req.code or "")), count=1, flags=re.I)
+                if derived:
+                    node.sds_code = derived
+                trace = db.session.execute(
+                    select(SdsTrace).where(SdsTrace.doc_id == doc_id, SdsTrace.req_id == req.id)
+                ).scalars().first()
+                if trace is not None:
+                    trace.sds_code = derived or trace.sds_code
+                    trace.chapter = display
+                    if heading:
+                        trace.location = heading
+            if role in self._DESIGN_TEMPLATE_ROLES:
+                self._ensure_design_role_template(node, role)
+        return roots, warnings
+
     async def sync_srs_trace(self, doc_id: int):
         """点击「获取SRS追溯」：补章节、写追溯表、同步功能设计（已存在的需求不重复生成）。"""
         row: SdsDoc = db.session.execute(select(SdsDoc).where(SdsDoc.id == doc_id)).scalars().first()
@@ -280,14 +452,18 @@ class SdsSrsTraceSyncMixin:
         location_by_code, location_by_title = self._build_sds_tree_location_indexes(roots)
         self._persist_trace_chapters_from_srs(doc_id, location_by_code, location_by_title, roots)
         roots = self._remove_stray_image_display_modules(roots)
+        roots, role_warnings = self._apply_other_req_design_roles(doc_id, roots)
         roots = await self._refresh_trace_table_nodes(doc_id, roots, mark_synced=True)
         self._persist_sds_tree(row, roots)
 
         trace_resp = await sdstrace_serv.list_sds_trace(None, doc_id=doc_id, page_size=10000, from_sync=True)
-        return Resp.resp_ok(data={
-            "trace_rows": trace_resp.data.rows if trace_resp.data else [],
-            "content": roots,
-        })
+        return Resp.resp_ok(
+            msg="；".join(role_warnings) if role_warnings else None,
+            data={
+                "trace_rows": trace_resp.data.rows if trace_resp.data else [],
+                "content": roots,
+            },
+        )
 
     async def sync_design_text_only(self, doc_id: int):
         """页面加载自动同步：仅对功能设计为空的章节，按编号从 SRS 补全内容。
@@ -2580,6 +2756,8 @@ class SdsSrsTraceSyncMixin:
         parent_map = parent_map or self._build_node_parent_map(roots)
         current = node
         while current is not None and current is not product_root:
+            if self._is_module_template_section(current):
+                return True
             minor = self._heading_section_minor(getattr(current, "title", "") or "", major)
             if minor is not None and minor <= self.FIXED_TEMPLATE_SECTION_MAX:
                 return True
@@ -4477,7 +4655,12 @@ class SdsSrsTraceSyncMixin:
             sortable_children: List[SdsNodeForm] = []
             for child in children:
                 minor = self._heading_section_minor(getattr(child, "title", "") or "", major) if fixed_product_level else None
-                if fixed_product_level and minor is not None and minor <= self.FIXED_TEMPLATE_SECTION_MAX:
+                keep_template = (
+                    fixed_product_level
+                    and self._is_module_template_section(child)
+                    and not is_stopper(child)
+                )
+                if fixed_product_level and ((minor is not None and minor <= self.FIXED_TEMPLATE_SECTION_MAX) or keep_template):
                     fixed_children.append(child)
                 else:
                     sortable_children.append(child)
@@ -4498,7 +4681,14 @@ class SdsSrsTraceSyncMixin:
             ordered = fixed_children + regular + stoppers
             parent.children = ordered
 
-            seq = self.FIXED_TEMPLATE_SECTION_MAX if fixed_product_level else 0
+            seq = 0
+            if fixed_product_level:
+                for fixed in fixed_children:
+                    minor = self._heading_section_minor(getattr(fixed, "title", "") or "", major)
+                    if minor and minor > seq:
+                        seq = minor
+                if seq < self.FIXED_TEMPLATE_SECTION_MAX:
+                    seq = self.FIXED_TEMPLATE_SECTION_MAX
             for child in ordered:
                 if fixed_product_level and child in fixed_children:
                     child_heading = self._parse_sds_node_heading(getattr(child, "title", "") or "") or parent_heading

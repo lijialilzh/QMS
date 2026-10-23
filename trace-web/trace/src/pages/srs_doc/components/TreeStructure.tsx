@@ -3585,6 +3585,7 @@ const TreeNodeItem = ({
                                   columns={[
                                       { title: ts("srs_doc.srs_code") || "需求编号", dataIndex: "srs_code", width: 180 },
                                       { title: ts("srs_doc.module") || "需求模块", dataIndex: "module", width: 320 },
+                                      { title: "设计类型", dataIndex: "design_role", width: 160, render: (value: string, row: any) => value || (row?.module === "图像接收" ? "DataProcessing" : row?.module === "图像存储" ? "接口设计" : row?.module === "图像处理" ? "DLServer" : row?.module === "图像显示" ? "功能设计" : row?.module === "外部连接" ? "外部连接" : "-") },
                                       { title: ts("srs_doc.chapter_number") || "对应的章节号", dataIndex: "location", width: 320 },
                                   ]}
                                   scroll={{ x: 820 }}
@@ -5368,19 +5369,31 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         };
     };
 
+    const presetOtherReqDesignRole = (module?: string) => {
+        const name = String(module || "").trim();
+        if (name === "图像接收") return "DataProcessing";
+        if (name === "图像存储") return "接口设计";
+        if (name === "图像处理") return "DLServer";
+        if (name === "图像显示") return "功能设计";
+        if (name === "外部连接") return "外部连接";
+        return "";
+    };
+
     const buildOtherReqTableInitialData = (rows: any[] = []): TableDataWithHeaders => {
         const headers = [
             { code: uuidv4(), name: ts("srs_doc.srs_code") || "需求编号" },
             { code: uuidv4(), name: ts("srs_doc.module") || "需求模块" },
+            { code: uuidv4(), name: "设计类型" },
             { code: uuidv4(), name: ts("srs_doc.chapter_number") || "对应的章节号" },
         ];
         const dataRows = rows.length
             ? rows.map((row) => [
                 String(row.srs_code || row.code || ""),
                 String(row.module || ""),
+                String(row.design_role || presetOtherReqDesignRole(row.module) || ""),
                 String(row.location || ""),
             ])
-            : [["", "", ""]];
+            : [["", "", "", ""]];
         return {
             tableName: ts("srs_doc.other_req_list") || "其他需求列表",
             headers,

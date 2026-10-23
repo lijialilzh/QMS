@@ -391,6 +391,26 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
             </div>
           );
         }
+        const headerName = String(customHeaders[colIndex]?.name || "").replace(/\s+/g, "");
+        if (headerName.includes("设计类型")) {
+          return (
+            <Select
+              allowClear
+              placeholder="请选择"
+              style={{ width: "100%" }}
+              value={text || undefined}
+              disabled={locked}
+              options={[
+                { value: "DataProcessing", label: "DataProcessing" },
+                { value: "接口设计", label: "接口设计" },
+                { value: "DLServer", label: "DLServer" },
+                { value: "功能设计", label: "功能设计" },
+                { value: "外部连接", label: "外部连接" },
+              ]}
+              onChange={(value) => handleCellEdit(record.key, colIndex, value || "")}
+            />
+          );
+        }
         return isRcmAssistRow(record, colIndex) ? (
           <div className="editable-table-rcm-cell">
             <Select
