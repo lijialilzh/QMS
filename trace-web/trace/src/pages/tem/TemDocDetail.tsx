@@ -58,6 +58,8 @@ const tdBase: CSSProperties = { border: "1px solid #d9d9d9", padding: "4px 6px",
 const tdValue: CSSProperties = { ...tdBase, color: "#333", whiteSpace: "pre-wrap" };
 const barCell: CSSProperties = { ...tdBase, background: "#f0f5ff", fontWeight: 600, color: "#1d39c4", textAlign: "center" };
 const thCell: CSSProperties = { ...tdBase, background: "#fafafa", color: "#555", fontWeight: 600, textAlign: "center", whiteSpace: "pre-line" };
+const sideHead: CSSProperties = { ...thCell, background: "#fff", color: "#000" };
+const innerHead: CSSProperties = { ...thCell, background: "#A6A6A6", color: "#000" };
 const seqCell: CSSProperties = { ...tdBase, textAlign: "center", color: "#666", whiteSpace: "pre-line", minWidth: 92 };
 
 export default () => {
@@ -253,7 +255,7 @@ export default () => {
                             const cols = leafCols(kind);
                             const ncols = cols.length;
                             const code = (assets.find((a: any[]) => String(a[0]).trim() === String(chk.asset).trim())?.[0]) ?? (chk.asset || "");
-                            const title = `测试共用-${kind === "server" ? "服务器" : "测试机"}检查表（${code}）`;
+                            const title = `${kind === "server" ? "服务器" : "测试机"}检查表（${code}）`;
                             const rows: any[] = Array.isArray(chk.rows) ? chk.rows : [];
                             return (
                                 <div key={ci} style={{ marginTop: 16, overflowX: "auto" }}>
@@ -261,17 +263,21 @@ export default () => {
                                         <tbody>
                                             <tr><td colSpan={ncols} style={barCell}>{title}</td></tr>
                                             <tr>
-                                                {groups.map((g: any, gi: number) => {
-                                                    const extra: any = g.label === "检查人" ? { minWidth: 120 }
-                                                        : g.label.startsWith("出现的问题") ? { width: 130, minWidth: 100, maxWidth: 140 } : {};
-                                                    return g.leaves.length
-                                                        ? <td key={gi} colSpan={g.leaves.length} style={thCell}>{g.label}</td>
-                                                        : <td key={gi} rowSpan={2} style={{ ...thCell, ...extra }}>{g.label}</td>;
-                                                })}
+                                                <td rowSpan={3} style={sideHead}>日期</td>
+                                                <td colSpan={ncols - 3} style={sideHead}>检查内容</td>
+                                                <td rowSpan={3} style={{ ...sideHead, width: 130, minWidth: 100, maxWidth: 140 }}>出现的问题及处理方式</td>
+                                                <td rowSpan={3} style={{ ...sideHead, minWidth: 120 }}>检查人</td>
                                             </tr>
                                             <tr>
-                                                {groups.flatMap((g: any, gi: number) =>
-                                                    g.leaves.map((lf: string, li: number) => <td key={`${gi}-${li}`} style={thCell}>{lf}</td>)
+                                                {groups.filter((g: any) => g.label !== "日期" && g.label !== "检查人" && !String(g.label).startsWith("出现的问题")).map((g: any, gi: number) => (
+                                                    g.leaves.length
+                                                        ? <td key={gi} colSpan={g.leaves.length} style={innerHead}>{g.label}</td>
+                                                        : <td key={gi} rowSpan={2} style={innerHead}>{g.label}</td>
+                                                ))}
+                                            </tr>
+                                            <tr>
+                                                {groups.filter((g: any) => g.leaves.length).flatMap((g: any, gi: number) =>
+                                                    g.leaves.map((lf: string, li: number) => <td key={`${gi}-${li}`} style={innerHead}>{lf}</td>)
                                                 )}
                                             </tr>
                                             {rows.length === 0 ? (

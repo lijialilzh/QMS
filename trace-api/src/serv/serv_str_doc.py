@@ -1740,21 +1740,24 @@ class Server(object):
         else:
             body = all_body
 
+        # 兼容性测试保留封面名称，不导出编审批表和文件修订记录表。
         add_blank_lines(6)
-        cover_title = "兼容性测试报告" if mode == "compat" else ((strip_num(cover.get("title")) if cover else "") or DOC_NAME)
-        write_center_title(cover_title, size=22.0, bold=True)
-        add_blank_lines(4)
-        if cover:
-            for table in (cover.get("tables") or []):
-                add_cover_grid(table)
-
-        document.add_page_break()
-        write_center_title("文件修订记录", size=14.0, bold=True)
-        add_blank_lines(2)
-        if revision:
-            for table in (revision.get("tables") or []):
-                add_grid(table)
-
+        if mode == "compat":
+            write_center_title("兼容性测试报告", size=22.0, bold=True)
+            add_blank_lines(4)
+        else:
+            cover_title = (strip_num(cover.get("title")) if cover else "") or DOC_NAME
+            write_center_title(cover_title, size=22.0, bold=True)
+            add_blank_lines(4)
+            if cover:
+                for table in (cover.get("tables") or []):
+                    add_cover_grid(table)
+            document.add_page_break()
+            write_center_title("文件修订记录", size=14.0, bold=True)
+            add_blank_lines(2)
+            if revision:
+                for table in (revision.get("tables") or []):
+                    add_grid(table)
         document.add_page_break()
         write_center_title("目录", size=16.0, bold=True)
         docx_util.insert_toc_field(document)

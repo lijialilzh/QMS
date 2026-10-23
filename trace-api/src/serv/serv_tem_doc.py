@@ -124,7 +124,9 @@ _ASSET_CHECKS = [
     ("ISER21120023", "dev"),
 ]
 
-# 检查表分组表头（组标签, [叶列标签]）；叶列为空表示该组即单列(纵向跨表头两行)。
+# 检查表分组表头（组标签, [叶列标签]）。
+# 日期、出现的问题及处理方式、检查人纵向跨三行；中间整行是「检查内容」。
+# 叶列为空的组在「检查内容」下再纵向跨两行。
 _SERVER_GROUPS = [
     ("日期", []),
     ("硬件环境", ["CPU", "GPU", "内存", "网卡"]),
@@ -335,7 +337,7 @@ class Server(object):
             content["checks"] = [
                 {
                     "asset": code,
-                    "kind": ("server" if "共用" in str(usage) else "dev"),
+                    "kind": ("server" if ("公用" in str(usage) or "共用" in str(usage)) else "dev"),
                     "rows": (old_checks.get(code, {}).get("rows") or []),
                 }
                 for code, usage in teq_assets
@@ -375,6 +377,9 @@ class Server(object):
             for wk in weeks:
                 prev = old.get(wk)
                 prev_marks = (prev.get("marks") if prev else None) or []
+                # 列数对不上说明换过检查表模板，不能按旧列位置套勾选
+                if len(prev_marks) != n:
+                    prev_marks = []
                 marks = []
                 for i in range(n):
                     m = str(prev_marks[i]) if i < len(prev_marks) else ""
@@ -713,7 +718,22 @@ class Server(object):
                 if isinstance(_a, list) and _a and str(_a[0]).strip() == str(code).strip():
                     code = _a[0]
                     break
-            title_txt = f"测试共用-{'服务器' if kind == 'server' else '测试机'}检查表（{code}）"
+            title_txt = f"{'服务器' if kind == 'server' else '测试机'}检查表（{code}）"
+
+            def shade(cell, fill):
+                tc_pr = cell._tc.get_or_add_tcPr()
+                shd = tc_pr.find(qn("w:shd"))
+                if shd is None:
+                    shd = OxmlElement("w:shd")
+                    tc_pr.append(shd)
+                shd.set(qn("w:val"), "clear")
+                shd.set(qn("w:color"), "auto")
+                shd.set(qn("w:fill"), fill)
+
+            def head_cell(cell, text, fill=""):
+                set_cell(cell, text, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER, size=9.0)
+                if fill:
+                    shade(cell, fill)
 
             tb = document.add_table(rows=0, cols=ncols)
             tb.style = "Table Grid"
@@ -724,22 +744,31 @@ class Server(object):
             for i in range(1, ncols):
                 tmerge = tmerge.merge(trow[i])
             set_cell(tmerge, title_txt, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER)
-            # 分组行 + 叶列行
+            # 三行表头：日期 / 检查内容 / 问题 / 检查人，检查内容下再分服务器或测试机的列
+            banner = tb.add_row().cells
             grow = tb.add_row().cells
             lrow = tb.add_row().cells
-            ci = 0
+            head_cell(banner[0].merge(grow[0]).merge(lrow[0]), "日期")
+            content = banner[1]
+            for k in range(2, ncols - 2):
+                content = content.merge(banner[k])
+            head_cell(content, "检查内容")
+            head_cell(banner[ncols - 2].merge(grow[ncols - 2]).merge(lrow[ncols - 2]), "出现的问题及处理方式")
+            head_cell(banner[ncols - 1].merge(grow[ncols - 1]).merge(lrow[ncols - 1]), "检查人")
+            ci = 1
             for gl, gleaves in groups:
+                if gl in _SPECIAL:
+                    continue
                 if gleaves:
                     gm = grow[ci]
                     for k in range(1, len(gleaves)):
                         gm = gm.merge(grow[ci + k])
-                    set_cell(gm, gl, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER, size=9.0)
+                    head_cell(gm, gl, "A6A6A6")
                     for k, lf in enumerate(gleaves):
-                        set_cell(lrow[ci + k], lf, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER, size=9.0)
+                        head_cell(lrow[ci + k], lf, "A6A6A6")
                     ci += len(gleaves)
                 else:
-                    vm = grow[ci].merge(lrow[ci])
-                    set_cell(vm, gl, bold=True, align=WD_ALIGN_PARAGRAPH.CENTER, size=9.0)
+                    head_cell(grow[ci].merge(lrow[ci]), gl, "A6A6A6")
                     ci += 1
             # 周记录行
             for row in (chk.get("rows") or []):
