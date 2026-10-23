@@ -252,6 +252,10 @@ const moveSibling = (nodes: any[], key: string, dir: -1 | 1): any[] => {
 const firstKey = (nodes: any[]): string => (nodes && nodes[0] ? nodes[0]._key : "");
 
 const stripNum = (title: string): string => String(title || "").replace(/^\s*\d+(?:\.\d+)*[、.\s]*/, "").trim();
+const deviceInfoRows = (title: string, cell: any): number | null => {
+    if (stripNum(title) !== "测试设备详情") return null;
+    return Math.max(1, String(cell ?? "").split("\n").length);
+};
 
 /** 「描述」章产品信息行自动获取后只读 */
 const isDescChapter = (node: any): boolean => stripNum(node?.title) === "描述";
@@ -1020,8 +1024,9 @@ export default () => {
                                                                                         </span>
                                                                                     ) : (
                                                                                         <Input.TextArea
-                                                                                            className="pdp-cell"
-                                                                                            autoSize={{ minRows: 1, maxRows: 8 }}
+                                                                                            className={deviceInfoRows(active.title, cell) ? "pdp-cell pdp-cell-fit" : "pdp-cell"}
+                                                                                            rows={deviceInfoRows(active.title, cell) || undefined}
+                                                                                            autoSize={deviceInfoRows(active.title, cell) ? false : { minRows: 1, maxRows: 8 }}
                                                                                             value={cell ?? ""}
                                                                                             disabled={readonly}
                                                                                             onChange={(e) => setCell(ti, r, ci, e.target.value)}
@@ -1194,8 +1199,9 @@ export default () => {
                                                                                 </span>
                                                                             ) : (
                                                                                 <Input.TextArea
-                                                                                    className="pdp-cell"
-                                                                                    autoSize={{ minRows: 1, maxRows: 8 }}
+                                                                                    className={deviceInfoRows(active.title, cell) ? "pdp-cell pdp-cell-fit" : "pdp-cell"}
+                                                                                    rows={deviceInfoRows(active.title, cell) || undefined}
+                                                                                    autoSize={deviceInfoRows(active.title, cell) ? false : { minRows: 1, maxRows: 8 }}
                                                                                     value={cell ?? ""}
                                                                                     disabled={readonly}
                                                                                     onChange={(e) => setCell(ti, r, ci, e.target.value)}

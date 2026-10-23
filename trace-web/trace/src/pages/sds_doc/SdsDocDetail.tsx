@@ -181,8 +181,26 @@ function rootHasModule(roots: TreeNode[], module: string) {
     );
 }
 
+function dropAbsentPresetOtherReqChapters(nodes: TreeNode[], otherRows: any[]): TreeNode[] {
+    const living = new Set<string>();
+    (otherRows || []).forEach((row) => {
+        const code = String(row?.code || row?.srs_code || "").replace(/\s+/g, "").toUpperCase();
+        const name = fixedModuleForSrsCode(code);
+        if (name) living.add(name);
+    });
+    return (nodes || []).filter((node) => {
+        if (isSdsFrontMatterTitle(node.title) || isSdsAppendixTitle(node.title, node.ref_type)) return true;
+        const presetName = Object.values(FIXED_SDS300_MODULE_NAME).find((name) => sdsTitleMatchesModule(node.title || "", name));
+        if (!presetName) return true;
+        return living.has(presetName);
+    });
+}
+
 function ensureSdsOtherReqChapterNodes(nodes: TreeNode[], otherRows: any[]): TreeNode[] {
-    let roots = dropSameTitlePlaceholderChildren(clearTemporarySdsCodes(nodes || []));
+    let roots = dropAbsentPresetOtherReqChapters(
+        dropSameTitlePlaceholderChildren(clearTemporarySdsCodes(nodes || [])),
+        otherRows,
+    );
     const seenCodes = new Set<string>();
     const rows = (otherRows || [])
         .map((row) => ({
@@ -3294,14 +3312,16 @@ export default () => {
         const buildChapterCell = (row: any) => {
             const sdsCodes = splitTraceLines(row.sds_code);
             if (row?.design_manual) {
-                return sdsCodes.map((raw) => {
+                const lines = sdsCodes.map((raw) => {
                     const sdsCode = normalizeReqCode(raw);
                     const fixedName = fixedSds300ModuleName(sdsCode);
                     const name = fixedName || (sdsCode && directoryByCodeName?.get(sdsCode)) || "";
                     const num = (sdsCode && directoryByCode?.get(sdsCode)) || "";
                     if (!name && !num) return "";
                     return num ? `${name}（章节 ${num}）` : name;
-                }).join("\n");
+                }).filter(Boolean);
+                if (lines.length) return lines.join("\n");
+                return resolveReqChapter(row) || normalizeReqNamePart(String(row?.chapter || "")) || normalizeReqNamePart(String(row?.module || ""));
             }
             const locations = splitTraceLines(row.location);
             const rawChapters = splitTraceLines(row.chapter);

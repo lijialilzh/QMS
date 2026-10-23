@@ -391,6 +391,25 @@
             }
         }
 
+        .ant-input-textarea:has(textarea.pdp-cell-fit) {
+            height: auto !important;
+            max-height: none !important;
+        }
+
+        textarea.pdp-cell.pdp-cell-fit {
+            height: auto !important;
+            max-height: none !important;
+            overflow: hidden !important;
+            field-sizing: content;
+            line-height: 22px;
+            white-space: pre-wrap;
+
+            &:hover,
+            &:focus {
+                box-shadow: none;
+            }
+        }
+
         // 封面表：均分列宽，各行统一行高
         &.pdp-cover-grid {
             table-layout: fixed;
