@@ -339,6 +339,17 @@ function structChapterName(title?: string) {
     return stripNavChapterPrefix(String(title || "")).replace(/\s+/g, "");
 }
 
+const STRUCT_FIXED_CHILDREN: Record<string, string> = {
+    "2.3.1": "图像接收",
+    "2.3.2": "图像存储",
+    "2.3.3": "图像处理",
+    "2.3.4": "图像显示",
+};
+
+function structHeading(title?: string) {
+    return String(title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
+}
+
 let sdsStructChildSeq = 0;
 function cloneSrsStructChild(node: any): TreeNode {
     sdsStructChildSeq += 1;
@@ -388,10 +399,18 @@ async function ensureSdsStructDiagramChildren(nodes: TreeNode[], srsDocId?: numb
             );
             const added = incoming
                 .filter((child) => {
-                    const name = structChapterName(child?.title);
+                    const heading = structHeading(child?.title);
+                    const fixedName = STRUCT_FIXED_CHILDREN[heading];
+                    const name = fixedName || structChapterName(child?.title);
                     return !!name && !names.has(name);
                 })
-                .map((child) => cloneSrsStructChild(child));
+                .map((child) => {
+                    const cloned = cloneSrsStructChild(child);
+                    const heading = structHeading(child?.title);
+                    const fixedName = STRUCT_FIXED_CHILDREN[heading];
+                    if (fixedName) cloned.title = `${heading} ${fixedName}`;
+                    return cloned;
+                });
             if (!added.length) return { ...node, children };
             return { ...node, children: [...children, ...added] };
         });

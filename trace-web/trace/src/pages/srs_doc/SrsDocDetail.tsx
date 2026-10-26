@@ -6095,7 +6095,7 @@ export default () => {
                     columns={[
                         { title: ts("srs_doc.srs_code") || "需求编号", dataIndex: "srs_code", width: 180, render: (t: string) => t || "-" },
                         { title: ts("srs_doc.module") || "需求模块", dataIndex: "module", width: 320, render: (t: string) => t || "-" },
-                        { title: "设计类型", dataIndex: "design_role", width: 160, render: (t: string) => t || "-" },
+                        { title: "设计类型", dataIndex: "design_role", width: 160, render: (t: string, row: any) => (row?.module === "图像接收" ? "DataProcessing" : row?.module === "图像存储" ? "RePACS" : row?.module === "图像处理" ? "DLServer" : row?.module === "图像显示" ? "NeoViewer" : t || "-") },
                         { title: ts("srs_doc.chapter_number") || "对应的章节号", dataIndex: "location", width: 320, render: (t: string) => t || "-" },
                     ]}
                     rowKey="key"

@@ -1525,7 +1525,19 @@ function otherReqRootCode(node: TreeNode, rows: ReturnType<typeof normalizeOther
     return matched?.code || "";
 }
 
-function otherReqDesignKind(row?: { design_role?: string }): "function" | "interface" | "" {
+function presetEnglishDesignRole(module?: string): string {
+    const name = String(module || "").replace(/\s+/g, "");
+    if (name === "图像接收") return "DataProcessing";
+    if (name === "图像存储") return "RePACS";
+    if (name === "图像处理") return "DLServer";
+    if (name === "图像显示") return "NeoViewer";
+    return "";
+}
+
+function otherReqDesignKind(row?: { design_role?: string; module?: string }): "function" | "interface" | "" {
+    const moduleName = String(row?.module || "").replace(/\s+/g, "");
+    if (moduleName === "图像显示") return "function";
+    if (moduleName === "图像存储") return "interface";
     const role = String(row?.design_role || "").replace(/\s+/g, "");
     if (role === "功能设计" || role === "function" || role === "NeoViewer") return "function";
     if (role === "接口设计" || role === "interface" || role === "RePACS") return "interface";
@@ -1945,15 +1957,21 @@ export function syncOtherReqCodesToChaptersFromRows(
     const sourceItems = options?.nested
         ? (items || [])
         : alignOtherReqDesignChapters(items || [], otherRows).nodes;
-    const fixedSections = options?.fixedTemplateSections || {
-        "1.4": "参考法规和标准",
-        "2.1": "软件总体描述",
-        "2.2": "物理拓扑图",
-        "2.3": "系统结构图",
-        "2.4": "运行环境",
-        "2.5": "数据库要求",
-        "2.6": "算法和数据要求",
-        "2.7": "性能要求",
+    const fixedSections = {
+        ...(options?.fixedTemplateSections || {
+            "1.4": "参考法规和标准",
+            "2.1": "软件总体描述",
+            "2.2": "物理拓扑图",
+            "2.3": "系统结构图",
+            "2.4": "运行环境",
+            "2.5": "数据库要求",
+            "2.6": "算法和数据要求",
+            "2.7": "性能要求",
+        }),
+        "2.3.1": "图像接收",
+        "2.3.2": "图像存储",
+        "2.3.3": "图像处理",
+        "2.3.4": "图像显示",
     };
     const isCodeCompatible = options?.isCodeCompatible || ((code, headingNo) => {
         const normalized = normalizeSrsCodeValue(code);
@@ -2039,6 +2057,7 @@ export function syncOtherReqCodesToChaptersFromRows(
             children,
         );
     });
+    if (options?.nested) return applyFixedProtection(synced);
     const chapterNameOf = (node: TreeNode) => normalizeReqDisplayText(
         String(node.title || "").replace(/^\d+(?:\.\d+)*\s*/, ""),
     ).replace(/\s+/g, "");
@@ -2054,10 +2073,7 @@ export function syncOtherReqCodesToChaptersFromRows(
             children: (node.children || []).map((child) => rewriteHeadingPrefix(child, fromPrefix, toPrefix)),
         };
     };
-    const functionRow = (otherRows || []).find((item) => {
-        const role = String(item?.design_role || "").replace(/\s+/g, "");
-        return role === "功能设计" || role === "function" || role === "NeoViewer";
-    });
+    const functionRow = (otherRows || []).find((item) => otherReqDesignKind(item) === "function");
     const functionModule = normalizeReqDisplayText(functionRow?.module || "").replace(/\s+/g, "");
     const livingNames = new Set(
         (otherRows || [])
@@ -4058,7 +4074,7 @@ const TreeNodeItem = ({
                                   columns={[
                                       { title: ts("srs_doc.srs_code") || "需求编号", dataIndex: "srs_code", width: 180 },
                                       { title: ts("srs_doc.module") || "需求模块", dataIndex: "module", width: 320 },
-                                      { title: "设计类型", dataIndex: "design_role", width: 160, render: (value: string, row: any) => value || (row?.module === "图像接收" ? "DataProcessing" : row?.module === "图像存储" ? "接口设计" : row?.module === "图像处理" ? "DLServer" : row?.module === "图像显示" ? "功能设计" : row?.module === "外部连接" ? "外部连接" : "-") },
+                                      { title: "设计类型", dataIndex: "design_role", width: 160, render: (value: string, row: any) => presetEnglishDesignRole(row?.module) || value || "-" },
                                       { title: ts("srs_doc.chapter_number") || "对应的章节号", dataIndex: "location", width: 320 },
                                   ]}
                                   scroll={{ x: 820 }}
@@ -4460,10 +4476,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         ));
     };
     const findReqDetailRoot = (items: TreeNode[]): TreeNode | undefined => {
-        const functionRow = (srsReqPreview?.other || []).find((row: any) => {
-            const role = String(row?.design_role || "").replace(/\s+/g, "");
-            return role === "功能设计" || role === "function" || role === "NeoViewer";
-        });
+        const functionRow = (srsReqPreview?.other || []).find((row: any) => otherReqDesignKind(row) === "function");
         const functionModule = normalizeReqDisplayText(functionRow?.module || "").replace(/\s+/g, "");
         const rootName = (node: TreeNode) => normalizeReqDisplayText(stripHeadingNumber(node.title)).replace(/\s+/g, "");
         if (functionModule) {
@@ -5946,16 +5959,6 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         };
     };
 
-    const presetOtherReqDesignRole = (module?: string) => {
-        const name = String(module || "").trim();
-        if (name === "图像接收") return "DataProcessing";
-        if (name === "图像存储") return "接口设计";
-        if (name === "图像处理") return "DLServer";
-        if (name === "图像显示") return "功能设计";
-        if (name === "外部连接") return "外部连接";
-        return "";
-    };
-
     const buildOtherReqTableInitialData = (rows: any[] = []): TableDataWithHeaders => {
         const headers = [
             { code: uuidv4(), name: ts("srs_doc.srs_code") || "需求编号" },
@@ -5967,7 +5970,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             ? rows.map((row) => [
                 String(row.srs_code || row.code || ""),
                 String(row.module || ""),
-                String(row.design_role || presetOtherReqDesignRole(row.module) || ""),
+                String(presetEnglishDesignRole(row.module) || (row.design_role === "接口设计" || row.design_role === "功能设计" ? row.design_role : "")),
                 String(row.location || ""),
             ])
             : [["", "", "", ""]];

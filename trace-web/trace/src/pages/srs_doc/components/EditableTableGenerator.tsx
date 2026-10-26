@@ -39,6 +39,14 @@ interface EditableTableGeneratorProps {
   onCancel?: () => void;
 }
 
+const PRESET_ENGLISH_DESIGN_ROLE: Record<string, string> = {
+  "图像接收": "DataProcessing",
+  "图像存储": "RePACS",
+  "图像处理": "DLServer",
+  "图像显示": "NeoViewer",
+};
+const AUTO_ENGLISH_DESIGN_ROLES = new Set(Object.values(PRESET_ENGLISH_DESIGN_ROLE));
+
 // 可编辑表格组件
 const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = false, initialData, rcmOptions = [], lockedRowLabels = [], showReqTableHint = false, onConfirm, onCancel }) => {
   const { t: ts } = useTranslation();
@@ -393,19 +401,26 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
         }
         const headerName = String(customHeaders[colIndex]?.name || "").replace(/\s+/g, "");
         if (headerName.includes("设计类型")) {
+          const moduleIndex = customHeaders.findIndex((header) => {
+            const name = String(header?.name || "").replace(/\s+/g, "");
+            return name.includes("需求模块") || (name.includes("模块") && !name.includes("设计"));
+          });
+          const moduleName = moduleIndex >= 0 ? String(record[`col_${moduleIndex}`] || "").trim() : "";
+          const presetEnglish = PRESET_ENGLISH_DESIGN_ROLE[moduleName];
+          if (presetEnglish) {
+            return <div className="editable-table-locked-cell">{presetEnglish}</div>;
+          }
+          const selected = text === "接口设计" || text === "功能设计" ? text : undefined;
           return (
             <Select
               allowClear
               placeholder="请选择"
               style={{ width: "100%" }}
-              value={text || undefined}
+              value={selected}
               disabled={locked}
               options={[
-                { value: "DataProcessing", label: "DataProcessing" },
                 { value: "接口设计", label: "接口设计" },
-                { value: "DLServer", label: "DLServer" },
                 { value: "功能设计", label: "功能设计" },
-                { value: "外部连接", label: "外部连接" },
               ]}
               onChange={(value) => handleCellEdit(record.key, colIndex, value || "")}
             />
@@ -507,6 +522,17 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
     if (targetRow) {
       // 更新对应列的字段值
       targetRow[`col_${colIndex}`] = value;
+      const headerName = String(customHeaders[colIndex]?.name || "").replace(/\s+/g, "");
+      const editingModule = headerName.includes("需求模块") || (headerName.includes("模块") && !headerName.includes("设计"));
+      if (editingModule) {
+        const roleIndex = customHeaders.findIndex((header) => String(header?.name || "").replace(/\s+/g, "").includes("设计类型"));
+        const presetEnglish = PRESET_ENGLISH_DESIGN_ROLE[String(value || "").trim()];
+        if (roleIndex >= 0 && presetEnglish) {
+          targetRow[`col_${roleIndex}`] = presetEnglish;
+        } else if (roleIndex >= 0 && AUTO_ENGLISH_DESIGN_ROLES.has(String(targetRow[`col_${roleIndex}`] || "").trim())) {
+          targetRow[`col_${roleIndex}`] = "";
+        }
+      }
       // 重新设置表格数据状态，触发组件重渲染
       tableDataRef.current = newTableData;
       setTableData(newTableData);
@@ -580,9 +606,22 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       };
     });
 
+    const moduleIndex = customHeaders.findIndex((header) => {
+      const name = String(header?.name || "").replace(/\s+/g, "");
+      return name.includes("需求模块") || (name.includes("模块") && !name.includes("设计"));
+    });
+    const roleIndex = customHeaders.findIndex((header) => String(header?.name || "").replace(/\s+/g, "").includes("设计类型"));
     // 转换为二维数组格式（表格内容）
     const data: string[][] = latestTableData.map(row => {
-      return Array.from({ length: colCount }, (_, colIndex) => row[`col_${colIndex}`] || '');
+      return Array.from({ length: colCount }, (_, colIndex) => {
+        if (colIndex === roleIndex && moduleIndex >= 0) {
+          const presetEnglish = PRESET_ENGLISH_DESIGN_ROLE[String(row[`col_${moduleIndex}`] || "").trim()];
+          if (presetEnglish) return presetEnglish;
+          const selected = String(row[`col_${colIndex}`] || "").trim();
+          return selected === "接口设计" || selected === "功能设计" ? selected : "";
+        }
+        return row[`col_${colIndex}`] || '';
+      });
     });
 
     const result: TableDataWithHeaders = {

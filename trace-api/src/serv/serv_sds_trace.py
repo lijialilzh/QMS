@@ -125,6 +125,12 @@ def other_req_design_role_is_explicit(value: str) -> bool:
 
 def normalize_other_req_design_role(value: str, module: str = "", code: str = "") -> str:
     """其他需求设计类型。没填开关时，编号末段仍是 004、005、006、007、010 就按末段认原来的模版章。"""
+    module_name = str(module or "").strip()
+    # 改回这四个预置模块名时，固定用原来的英文模版，不看下拉里选过的类型。
+    if module_name in ("图像接收", "图像存储", "图像处理", "图像显示"):
+        by_preset = _OTHER_REQ_ROLE_BY_MODULE.get(module_name)
+        if by_preset:
+            return by_preset
     label = re.sub(r"\s+", "", str(value or ""))
     if label in _OTHER_REQ_ROLE_LABELS:
         return _OTHER_REQ_ROLE_LABELS[label]
