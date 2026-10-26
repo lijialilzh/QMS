@@ -411,6 +411,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
             return <div className="editable-table-locked-cell">{presetEnglish}</div>;
           }
           const selected = text === "接口设计" || text === "功能设计" ? text : undefined;
+          const functionDesignTaken = tableData.some((row) => row.key !== record.key && rowTakesFunctionDesign(row));
           return (
             <Select
               allowClear
@@ -420,9 +421,11 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
               disabled={locked}
               options={[
                 { value: "接口设计", label: "接口设计" },
-                { value: "功能设计", label: "功能设计" },
+                { value: "功能设计", label: "功能设计", disabled: functionDesignTaken },
               ]}
-              onChange={(value) => handleCellEdit(record.key, colIndex, value || "")}
+              onChange={(value) => {
+                if (!handleCellEdit(record.key, colIndex, value || "")) return;
+              }}
             />
           );
         }
@@ -514,16 +517,45 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
   };
 
   // 5. 处理单元格编辑：更新对应位置的表格数据
+  const columnIndexBy = (match: (name: string) => boolean) => customHeaders.findIndex((header) => {
+    const name = String(header?.name || "").replace(/\s+/g, "");
+    return match(name);
+  });
+
+  const rowTakesFunctionDesign = (row: TableRowData) => {
+    const moduleIndex = columnIndexBy((name) => name.includes("需求模块") || (name.includes("模块") && !name.includes("设计")));
+    const roleIndex = columnIndexBy((name) => name.includes("设计类型"));
+    const moduleName = moduleIndex >= 0 ? String(row[`col_${moduleIndex}`] || "").replace(/\s+/g, "") : "";
+    if (moduleName === "图像显示") return true;
+    const role = roleIndex >= 0 ? String(row[`col_${roleIndex}`] || "").replace(/\s+/g, "") : "";
+    return role === "功能设计";
+  };
+
   const handleCellEdit = (rowKey: number, colIndex: number, value: string) => {
     // 深拷贝原有表格数据，避免直接修改状态（React 状态不可变）
     const newTableData = [...tableData];
     // 找到对应行（通过 rowKey 匹配）
     const targetRow = newTableData.find(item => item.key === rowKey);
     if (targetRow) {
-      // 更新对应列的字段值
-      targetRow[`col_${colIndex}`] = value;
       const headerName = String(customHeaders[colIndex]?.name || "").replace(/\s+/g, "");
       const editingModule = headerName.includes("需求模块") || (headerName.includes("模块") && !headerName.includes("设计"));
+      const nextModuleName = String(value || "").replace(/\s+/g, "");
+      const otherTakesFunction = newTableData.some((row) => row.key !== rowKey && rowTakesFunctionDesign(row));
+      if (headerName.includes("设计类型") && String(value || "").replace(/\s+/g, "") === "功能设计" && otherTakesFunction) {
+        const imageDisplayExists = newTableData.some((row) => {
+          if (row.key === rowKey) return false;
+          const moduleIndex = columnIndexBy((name) => name.includes("需求模块") || (name.includes("模块") && !name.includes("设计")));
+          return moduleIndex >= 0 && String(row[`col_${moduleIndex}`] || "").replace(/\s+/g, "") === "图像显示";
+        });
+        message.warning(imageDisplayExists ? "已有图像显示，不能再选择功能设计" : "已有模块选择了功能设计，不能再次选择");
+        return false;
+      }
+      if (editingModule && nextModuleName === "图像显示" && otherTakesFunction) {
+        message.warning("功能设计只能有一个模块");
+        return false;
+      }
+      // 更新对应列的字段值
+      targetRow[`col_${colIndex}`] = value;
       if (editingModule) {
         const roleIndex = customHeaders.findIndex((header) => String(header?.name || "").replace(/\s+/g, "").includes("设计类型"));
         const presetEnglish = PRESET_ENGLISH_DESIGN_ROLE[String(value || "").trim()];
@@ -537,7 +569,9 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       tableDataRef.current = newTableData;
       setTableData(newTableData);
       if (submitError) setSubmitError("");
+      return true;
     }
+    return false;
   };
 
   const createEmptyRow = (): TableRowData => {
@@ -594,6 +628,11 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
     }
     if (latestTableData.length === 0) {
       message.warning(ts('srs_doc.please_generate_table_first'));
+      return;
+    }
+    const hasDesignRoleColumn = customHeaders.some((header) => String(header?.name || "").replace(/\s+/g, "").includes("设计类型"));
+    if (hasDesignRoleColumn && latestTableData.filter((row) => rowTakesFunctionDesign(row)).length > 1) {
+      message.warning("功能设计只能有一个模块");
       return;
     }
 
