@@ -128,6 +128,7 @@ interface TreeNodeItemProps {
     onOpenTraceList?: () => void;  // 打开需求追溯表弹框（ref_type=sds_traces）
     onFetchSrsTrace?: () => void;  // 获取SRS追溯
     onCommitOtherReqDesignCode?: (traceId: number, sdsCode: string) => void;
+    resolveOtherReqDesignChapter?: (sdsCode: string) => string;
     traceSynced?: boolean;
     readOnlyChapterOffset?: number;
     /** 左目录单章编辑：不在右侧重复渲染子章节（子章节由目录切换） */
@@ -934,7 +935,7 @@ function normalizeOtherReqDesignCode(value?: string) {
     return String(value || "").replace(/\r/g, "").split("\n").map((line) => line.trim()).filter(Boolean).join("\n");
 }
 
-function OtherReqDesignCodeInput({ value, onCommit }: { value: string; onCommit: (next: string) => void }) {
+function OtherReqDesignCodeInput({ value, onCommit, onDraft }: { value: string; onCommit: (next: string) => void; onDraft?: (next: string) => void }) {
     const [text, setText] = useState(value);
     useEffect(() => {
         setText(value);
@@ -944,9 +945,13 @@ function OtherReqDesignCodeInput({ value, onCommit }: { value: string; onCommit:
             className="trace-design-code-input"
             autoSize={{ minRows: 1, maxRows: 8 }}
             value={text}
-            onChange={(event) => setText(event.target.value)}
-            onBlur={() => {
-                const next = normalizeOtherReqDesignCode(text);
+            onChange={(event) => {
+                const next = event.target.value;
+                setText(next);
+                onDraft?.(next);
+            }}
+            onBlur={(event) => {
+                const next = normalizeOtherReqDesignCode(event.target.value);
                 if (next !== normalizeOtherReqDesignCode(value)) onCommit(next);
             }}
         />
@@ -976,13 +981,14 @@ function ChapterBodyTextArea(props: React.ComponentProps<typeof Input.TextArea>)
     );
 }
 
-const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onTableNameChange, onSdsCodeChange, onImageChange, onAttachProgramLogicImage, onAttachExtraImage, pendingProgramLogicCaption = "", onContentChange: emitContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onEditExtraTable, onDeleteExtraTable, onExtraTableTitleChange, onNameLooseImage, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, onCommitOtherReqDesignCode, traceSynced, uploadDocFile, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [], useNavChapterEditor = false, autoNavChapterNo = "", lockScopeChapter = false, lockRuntimeEnv = false, runtimeLockedIds, sdsSyncLockedIds, splitInterfaceIO = false }: TreeNodeItemProps) => {
+const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromParent, tableCaptionFromParent, onAdd, onAddSibling, onDelete, onTitleChange, onTableNameChange, onSdsCodeChange, onImageChange, onAttachProgramLogicImage, onAttachExtraImage, pendingProgramLogicCaption = "", onContentChange: emitContentChange, onAddTable, onImportTable, onEditTable, onDeleteTable, onEditExtraTable, onDeleteExtraTable, onExtraTableTitleChange, onNameLooseImage, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, onCommitOtherReqDesignCode, resolveOtherReqDesignChapter, traceSynced, uploadDocFile, readOnlyChapterOffset = 0, renderChildren = true, disableHierarchyActions = false, hideLevelPrefix = false, navParentInlineTables = [], useNavChapterEditor = false, autoNavChapterNo = "", lockScopeChapter = false, lockRuntimeEnv = false, runtimeLockedIds, sdsSyncLockedIds, splitInterfaceIO = false }: TreeNodeItemProps) => {
     const { t: ts } = useTranslation();
     const [fileList, setFileList] = useState<UploadFile[]>([]);
     const [uploadLoading, setUploadLoading] = useState(false);
     const [openInlineTableId, setOpenInlineTableId] = useState<string | number | null>(null);
     // 文档内容仍全量加载，仅默认收起目录节点，避免进入编辑页时铺开过多内容。
     const [expanded, setExpanded] = useState(false);
+    const [designCodeDraft, setDesignCodeDraft] = useState<Record<string, string>>({});
     const normalizedNodeSdsCode = String(node.sds_code ?? "").trim();
     const sdsCodeFallbackFromText = extractSdsCodeFromNodeText(node.text);
     const resolvedSdsCode = normalizedNodeSdsCode || extractCodeAfterDesignMarker(node.text) || extractSdsCodeToken(node.text) || sdsCodeFallbackFromText.code;
@@ -1221,9 +1227,27 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         return (
                             <OtherReqDesignCodeInput
                                 value={String(val || "")}
+                                onDraft={(next) => {
+                                    const traceId = String(row.trace_id);
+                                    setDesignCodeDraft((prev) => (
+                                        prev[traceId] === next ? prev : { ...prev, [traceId]: next }
+                                    ));
+                                }}
                                 onCommit={(next) => onCommitOtherReqDesignCode(Number(row.trace_id), next)}
                             />
                         );
+                    }
+                    if (
+                        (headerName === "需求/代码" || headerName === "需求代码")
+                        && String(row?.type_code || "") === "2"
+                        && row?.trace_id
+                        && resolveOtherReqDesignChapter
+                    ) {
+                        const saved = normalizeOtherReqDesignCode(row?.sds_code);
+                        const draft = designCodeDraft[String(row.trace_id)];
+                        if (draft != null && normalizeOtherReqDesignCode(draft) !== saved) {
+                            return renderWrapped(formatTraceTableCell(header.name, resolveOtherReqDesignChapter(draft)));
+                        }
                     }
                     return renderWrapped(formatTraceTableCell(header.name, val));
                 };
@@ -3530,6 +3554,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                         onOpenTraceList={onOpenTraceList}
                         onFetchSrsTrace={onFetchSrsTrace}
                         onCommitOtherReqDesignCode={onCommitOtherReqDesignCode}
+                        resolveOtherReqDesignChapter={resolveOtherReqDesignChapter}
                         traceSynced={traceSynced}
                         uploadDocFile={uploadDocFile}
                         readOnlyChapterOffset={readOnlyChapterOffset}
@@ -3568,6 +3593,7 @@ interface TreeStructureProps {
     onOpenTraceList?: () => void;  // 打开需求追溯表弹框
     onFetchSrsTrace?: () => void;
     onCommitOtherReqDesignCode?: (traceId: number, sdsCode: string) => void;
+    resolveOtherReqDesignChapter?: (sdsCode: string) => string;
     traceSynced?: boolean;
     extraNavSections?: { key: string; title: string; content: ReactNode }[];
     onAddRoot?: () => void;
@@ -3579,7 +3605,7 @@ interface TreeStructureProps {
     splitInterfaceIO?: boolean;
 }
 
-export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = [], onNodeDelete, readOnly, readOnlyRootWrapper = true, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, onCommitOtherReqDesignCode, traceSynced, extraNavSections = [], onAddRoot, uploadDocFile, lockScopeChapter = false, lockRuntimeEnv = false, splitInterfaceIO = false }: TreeStructureProps) => {
+export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = [], onNodeDelete, readOnly, readOnlyRootWrapper = true, onOpenReqdList, onOpenTraceList, onFetchSrsTrace, onCommitOtherReqDesignCode, resolveOtherReqDesignChapter, traceSynced, extraNavSections = [], onAddRoot, uploadDocFile, lockScopeChapter = false, lockRuntimeEnv = false, splitInterfaceIO = false }: TreeStructureProps) => {
     const { t: ts } = useTranslation();
     const [nodes, setNodes] = useState<TreeNode[]>(value);
     const [tableModalVisible, setTableModalVisible] = useState(false);
@@ -4584,6 +4610,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                 onOpenTraceList,
                 onFetchSrsTrace,
                 onCommitOtherReqDesignCode,
+                resolveOtherReqDesignChapter,
                 traceSynced,
                 uploadDocFile,
                 readOnlyChapterOffset: effectiveReadOnlyChapterOffset,
@@ -4696,6 +4723,7 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
                                             onOpenTraceList={onOpenTraceList}
                                             onFetchSrsTrace={onFetchSrsTrace}
                                             onCommitOtherReqDesignCode={onCommitOtherReqDesignCode}
+                                            resolveOtherReqDesignChapter={resolveOtherReqDesignChapter}
                                             traceSynced={traceSynced}
                                             uploadDocFile={uploadDocFile}
                                             readOnlyChapterOffset={effectiveReadOnlyChapterOffset}

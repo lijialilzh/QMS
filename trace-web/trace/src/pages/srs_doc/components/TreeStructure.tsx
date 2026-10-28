@@ -1258,6 +1258,14 @@ export function findOtherReqRowForChapter(
         const regulation = rows.find((row) => row.module.replace(/\s+/g, "").includes("法规符合"));
         if (regulation) return regulation;
     }
+    if (headingNo === "2.5" || headingNo === "2.7") {
+        const base = headingNo === "2.5" ? "数据库要求" : "性能要求";
+        const matches = rows.filter((row) => {
+            const moduleName = row.module.replace(/\s+/g, "");
+            return moduleName === base || moduleName.startsWith(base);
+        });
+        if (matches.length === 1) return matches[0];
+    }
     if (headingNo) {
         const bySyncLocation = rows.find((row) => isOtherReqSyncLocationForHeading(row.location, headingNo));
         const locationModule = normalizeReqDisplayText(bySyncLocation?.module).replace(/\s+/g, "");
@@ -1293,6 +1301,13 @@ export function buildOtherReqChapterTitle(
     currentTitle?: string,
 ) {
     if (!headingNo) return currentTitle || "";
+    if (fallbackName === "数据库要求" || fallbackName === "性能要求") {
+        const moduleName = normalizeReqDisplayText(matchedRow?.module);
+        const compact = moduleName.replace(/\s+/g, "");
+        if (moduleName && (compact === fallbackName || compact.startsWith(fallbackName))) {
+            return `${headingNo} ${moduleName}`;
+        }
+    }
     if (fallbackName) return `${headingNo} ${fallbackName}`;
     const moduleName = normalizeReqDisplayText(matchedRow?.module);
     if (moduleName) return `${headingNo} ${moduleName}`;
@@ -1492,6 +1507,9 @@ export function planMissingOtherReqChapters(nodes: TreeNode[], otherRows: any[] 
         .filter((row) => {
             if (!row.code || !row.module) return false;
             if (row.module.replace(/\s+/g, "").includes("法规符合")) return false;
+            const moduleName = row.module.replace(/\s+/g, "");
+            if (moduleName === "数据库要求" || moduleName.startsWith("数据库要求")) return false;
+            if (moduleName === "性能要求" || moduleName.startsWith("性能要求")) return false;
             if (row.type_code && row.type_code !== "2") return false;
             if (seenCodes.has(row.code)) return false;
             seenCodes.add(row.code);
@@ -1609,6 +1627,8 @@ export function displayedOtherReqLocation(nodes: TreeNode[], module?: string): s
     const name = String(module || "").replace(/\s+/g, "");
     if (!name) return "";
     if (name.includes("法规符合")) return "1.4";
+    if (name === "数据库要求" || name.startsWith("数据库要求")) return "2.5、2.6";
+    if (name === "性能要求" || name.startsWith("性能要求")) return "2.7";
     const visible = displayedNavChapterNodes(nodes);
     const navNumbers = computeNavChapterNumberMap(visible);
     const root = findRootByModuleName(visible, name);
@@ -1978,13 +1998,16 @@ function followOtherReqModuleList(nodes: TreeNode[], otherRows: any[] = []): { n
     }
     const kept = list.filter((node) => {
         const name = rootChapterModuleName(node);
+        if ((name === "数据库要求" || name.startsWith("数据库要求") || name === "性能要求" || name.startsWith("性能要求")) && !isStickyOtherReqChapter(node)) {
+            changed = true;
+            return false;
+        }
         if (!name || living.has(name) || isStickyOtherReqChapter(node) || isSrsFrontMatterRoot(node) || isSrsAppendixRoot(node)) return true;
         const key = String(node.req_detail_key || "");
         const code = normalizeSrsCodeValue(node.srs_code || "");
-        const boundRow = rows.find((row) => (
-            (key && otherReqRowKey(row) === key) || (code && row.code === code)
-        ));
-        if (boundRow && isFixedPresetModuleName(boundRow.module) && name !== boundRow.module.replace(/\s+/g, "")) return true;
+        const keyOwner = key ? rows.find((row) => otherReqRowKey(row) === key) : undefined;
+        const ownerName = keyOwner?.module.replace(/\s+/g, "") || "";
+        if (keyOwner && isFixedPresetModuleName(ownerName) && name !== ownerName && !isFixedPresetModuleName(name)) return true;
         const managed = key.startsWith("other_req_")
             || /RCN300-/i.test(code)
             || ["基本要求", "性能要求", "数据库要求", "算法和数据要求", "算法与数据要求", "文档需求", "外部连接", "外部链接", "图像接收", "图像存储", "图像处理", "图像显示", "RePACS", "NeoViewer", "DataProcessing", "DLServer"].includes(name);

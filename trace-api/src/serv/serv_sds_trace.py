@@ -237,6 +237,26 @@ def design_codes_are_manual(stored: str, auto_lines, also_auto=None) -> bool:
     return True
 
 
+def other_req_fixed_trace_is_cross_map(code: str, trace) -> bool:
+    """旧对照把 001 对到 005、002 对到多条别的编号。这种跨编号对照不再用于其他需求。"""
+    own = requirement_number_key(code)
+    if not trace or not own:
+        return False
+    keys = [requirement_number_key(item[0]) for item in trace if requirement_number_key(item[0])]
+    return keys != [own]
+
+
+def other_req_stored_follows_cross_map(stored: str, code: str, trace) -> bool:
+    """库里留下的旧对照，或删掉其中已不存在的编号之后剩下的那几条，都不是手改。"""
+    if not other_req_fixed_trace_is_cross_map(code, trace):
+        return False
+    stored_keys = design_code_number_keys(stored)
+    if not stored_keys:
+        return False
+    legacy_keys = {requirement_number_key(item[0]) for item in trace if requirement_number_key(item[0])}
+    return all(key in legacy_keys for key in stored_keys)
+
+
 def filter_fixed_trace_to_living(trace, living_codes):
     """其他需求删掉后，同号设计编号不再出现在追溯表。删掉 300-004，各行里的 SDS-*-300-004 都去掉。"""
     if not trace:
@@ -913,15 +933,45 @@ class Server(object):
                     fixed_trace = fixed_rcn300_trace_for_code(code)
                     filtered_trace = filter_fixed_trace_to_living(fixed_trace, living_codes) if fixed_trace is not None else None
                     if str(type_code) == "2":
+                        derived_code = (code or "").replace("SRS", "SDS").strip()
+                        role = normalize_other_req_design_role("", module, code)
+                        legacy_lines = [item[0] for item in (fixed_trace or [])]
+                        cross_map = other_req_fixed_trace_is_cross_map(code, fixed_trace)
+                        if role and other_req_role_is_changed(code, module, role):
+                            if design_codes_are_manual(existing_codes.get(req_id), [derived_code], legacy_lines):
+                                continue
+                            values.append(
+                                dict(
+                                    doc_id=sds_doc_id,
+                                    req_id=req_id,
+                                    sds_code=derived_code,
+                                    chapter=other_req_role_display_name(module, role),
+                                )
+                            )
+                            continue
+                        if cross_map or fixed_trace is None:
+                            legacy_follow = other_req_stored_follows_cross_map(existing_codes.get(req_id), code, fixed_trace)
+                            if not legacy_follow and design_codes_are_manual(existing_codes.get(req_id), [derived_code], legacy_lines):
+                                continue
+                            fixed_values.append(
+                                dict(
+                                    doc_id=sds_doc_id,
+                                    req_id=req_id,
+                                    sds_code=derived_code,
+                                    chapter=other_req_role_display_name(module, role) if role else (module or ""),
+                                    location="",
+                                )
+                            )
+                            continue
                         if fixed_trace is not None:
                             kept = filtered_trace or []
                             if design_codes_are_manual(
                                 existing_codes.get(req_id),
                                 [item[0] for item in kept],
-                                [item[0] for item in fixed_trace],
+                                legacy_lines,
                             ):
                                 continue
-                        elif design_codes_are_manual(existing_codes.get(req_id), [(code or "").replace("SRS", "SDS")]):
+                        elif design_codes_are_manual(existing_codes.get(req_id), [derived_code]):
                             continue
                     if fixed_trace is not None:
                         kept = filtered_trace or []
@@ -1871,15 +1921,39 @@ class Server(object):
             if str(row_req.type_code) == "2":
                 if other_req_is_document_requirement(getattr(row_req, "module", ""), obj.module):
                     continue
+                stored_sds_code = str(obj.sds_code or "")
+                derived_sds_code = (row_req.code or "").replace("SRS", "SDS").strip()
                 role = normalize_other_req_design_role(
                     getattr(row_req, "design_role", ""), getattr(row_req, "module", ""), getattr(row_req, "code", ""),
                 )
-                if role and other_req_role_is_changed(row_req.code, row_req.module, role):
+                role_changed = bool(role and other_req_role_is_changed(row_req.code, row_req.module, role))
+                fixed_for_manual = fixed_rcn300_trace_for_code(row_req.code)
+                legacy_lines = [item[0] for item in (fixed_for_manual or [])]
+                cross_map = other_req_fixed_trace_is_cross_map(row_req.code, fixed_for_manual)
+                if cross_map and other_req_stored_follows_cross_map(stored_sds_code, row_req.code, fixed_for_manual):
+                    manual = False
+                elif role_changed or cross_map or fixed_for_manual is None:
+                    manual = design_codes_are_manual(stored_sds_code, [derived_sds_code], legacy_lines)
+                else:
+                    kept_for_manual = filter_fixed_trace_to_living(fixed_for_manual, living_codes) or []
+                    manual = design_codes_are_manual(
+                        stored_sds_code,
+                        [item[0] for item in kept_for_manual],
+                        legacy_lines,
+                    )
+                if manual:
+                    obj.design_manual = True
+                    obj.sds_code = stored_sds_code
+                    obj.name = obj.chapter
+                    objs.append(obj)
+                    continue
+                if role_changed:
                     display = other_req_role_display_name(row_req.module, role)
-                    derived_sds_code = (row_req.code or "").replace("SRS", "SDS").strip()
+                    tree = doc_trees.get(row_sdsdoc.id) if row_sdsdoc else None
                     obj.sds_code = derived_sds_code
                     obj.chapter = display
                     obj.name = display
+                    obj.location = live_heading_for_exact_title(tree, display) if tree is not None else ""
                     objs.append(obj)
                     continue
                 current_module = str(row_req.module or "").strip()
@@ -1899,21 +1973,13 @@ class Server(object):
                     obj.location = live_heading_for_exact_title(tree, current_module)
                     objs.append(obj)
                     continue
-                stored_sds_code = str(obj.sds_code or "")
-                fixed_for_manual = fixed_rcn300_trace_for_code(row_req.code)
-                if fixed_for_manual is not None:
-                    kept_for_manual = filter_fixed_trace_to_living(fixed_for_manual, living_codes) or []
-                    manual = design_codes_are_manual(
-                        stored_sds_code,
-                        [item[0] for item in kept_for_manual],
-                        [item[0] for item in fixed_for_manual],
-                    )
-                else:
-                    manual = design_codes_are_manual(stored_sds_code, [(row_req.code or "").replace("SRS", "SDS").strip()])
-                if manual:
-                    obj.design_manual = True
-                    obj.sds_code = stored_sds_code
-                    obj.name = obj.chapter
+                if cross_map:
+                    tree = doc_trees.get(row_sdsdoc.id) if row_sdsdoc else None
+                    display = other_req_role_display_name(row_req.module, role) if role else current_module
+                    obj.sds_code = derived_sds_code
+                    obj.chapter = display
+                    obj.name = display
+                    obj.location = live_heading_for_exact_title(tree, display) if tree is not None else ""
                     objs.append(obj)
                     continue
             fixed_full = fixed_rcn300_trace_for_code(row_req.code)

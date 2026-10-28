@@ -3363,6 +3363,70 @@ export default () => {
         return found;
     };
 
+    const isDeletedPresetDesignCode = (raw: string | undefined, livingReqKeys?: Set<string>) => {
+        const sdsCode = normalizeReqCode(raw);
+        const key = traceReqNumberKey(sdsCode);
+        const presetName = fixedSds300ModuleName(sdsCode);
+        return !!(presetName && key && livingReqKeys && !livingReqKeys.has(key));
+    };
+
+    const chapterNameOnly = (text?: string) => String(text || "").replace(/（章节\s*[^）]*）/g, "").trim();
+
+    const ownedChapterNameByDesignCode = (rows: any[]) => {
+        const found = new Map<string, string>();
+        (rows || []).forEach((row) => {
+            if (row?.design_manual) return;
+            const srsKey = traceReqNumberKey(row?.srs_code);
+            if (!srsKey) return;
+            const codes = splitTraceLines(row?.sds_code);
+            const chapters = splitTraceLines(row?.chapter);
+            codes.forEach((code, index) => {
+                const sdsCode = normalizeReqCode(code);
+                if (!sdsCode || traceReqNumberKey(sdsCode) !== srsKey) return;
+                const name = chapterNameOnly(chapters[index] || "");
+                if (name) found.set(sdsCode, name);
+            });
+        });
+        return found;
+    };
+
+    const chapterTextForManualCodes = (
+        raw: string,
+        directoryByCode?: Map<string, string>,
+        directoryByCodeName?: Map<string, string>,
+        ownedNames?: Map<string, string>,
+    ) => {
+        const lines = splitTraceLines(raw).map((line) => {
+            const sdsCode = normalizeReqCode(line);
+            const ownedName = (sdsCode && ownedNames?.get(sdsCode)) || "";
+            const directoryName = (sdsCode && directoryByCodeName?.get(sdsCode)) || "";
+            const name = ownedName || directoryName;
+            const num = (sdsCode && directoryByCode?.get(sdsCode)) || "";
+            if (!name) return "";
+            return num ? `${name}（章节 ${num}）` : name;
+        }).filter(Boolean);
+        return lines.join("\n");
+    };
+
+    const resolveManualDesignChapter = (raw: string) => {
+        const roots = (((treeStructureRef.current || []).length > 0 ? treeStructureRef.current : data.treeStructure) || []) as TreeNode[];
+        const directory = buildDirectoryChapterLookup(roots);
+        const traceRows: any[] = [];
+        const walk = (nodes: TreeNode[]) => {
+            (nodes || []).forEach((node) => {
+                const table = node.table as any;
+                if (isTraceTableNode(node) && Array.isArray(table?.rows)) {
+                    table.rows.forEach((row: any) => {
+                        traceRows.push(row);
+                    });
+                }
+                walk((node.children || []) as TreeNode[]);
+            });
+        };
+        walk(roots);
+        return chapterTextForManualCodes(raw, directory.byCode, directory.byCodeName, ownedChapterNameByDesignCode(traceRows));
+    };
+
     const buildTraceTableFromRows = (
         rows: any[],
         locationBySdsCode?: Map<string, string>,
@@ -3398,19 +3462,12 @@ export default () => {
             });
             return found;
         };
+        const ownedNames = ownedChapterNameByDesignCode(rows);
         const buildChapterCell = (row: any) => {
             const sdsCodes = splitTraceLines(row.sds_code);
             if (row?.design_manual) {
-                const lines = sdsCodes.map((raw) => {
-                    if (isDeletedPresetCode(raw)) return "";
-                    const sdsCode = normalizeReqCode(raw);
-                    const fixedName = fixedSds300ModuleName(sdsCode);
-                    const name = fixedName || (sdsCode && directoryByCodeName?.get(sdsCode)) || "";
-                    const num = (sdsCode && directoryByCode?.get(sdsCode)) || "";
-                    if (!name && !num) return "";
-                    return num ? `${name}（章节 ${num}）` : name;
-                }).filter(Boolean);
-                if (lines.length) return lines.join("\n");
+                const text = chapterTextForManualCodes(String(row.sds_code || ""), directoryByCode, directoryByCodeName, ownedNames);
+                if (text) return text;
                 return resolveReqChapter(row) || normalizeReqNamePart(String(row?.chapter || "")) || normalizeReqNamePart(String(row?.module || ""));
             }
             const locations = splitTraceLines(row.location);
@@ -4703,6 +4760,7 @@ export default () => {
                         }}
                         onFetchSrsTrace={() => fetchSrsTrace()}
                         onCommitOtherReqDesignCode={isReadOnly ? undefined : commitOtherReqDesignCode}
+                        resolveOtherReqDesignChapter={isReadOnly ? undefined : resolveManualDesignChapter}
                         traceSynced={isTraceSyncedOnTree((treeStructureRef.current || data.treeStructure || []) as TreeNode[])}
                     />
                     </Spin>
