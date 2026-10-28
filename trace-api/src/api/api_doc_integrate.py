@@ -201,16 +201,39 @@ def _can_see_md_data_groups() -> bool:
     }
 
 
+_MODULE_VIEW_PERM = {
+    "srs_doc_trace": "srs_doc_view",
+    "train_record_doc": "ftr_record_doc_view",
+}
+
+
+def _module_view_code(module_key: str) -> str:
+    return _MODULE_VIEW_PERM.get(module_key) or f"{module_key}_view"
+
+
+def _module_group(module_key: str) -> str:
+    return next((item[2] for item in _DOC_MODULES if item[0] == module_key), "")
+
+
+def _module_allowed(module_key: str, group: str = "") -> bool:
+    """整合导出、一键打印按文档查看权限逐个显示。模型人员和数据人员只保留模型和数据文件。"""
+    group = group or _module_group(module_key)
+    if _is_md_data_role():
+        return module_key in _MD_DATA_MODULE_KEYS
+    if module_key in _MD_DATA_MODULE_KEYS or group in _MD_DATA_GROUPS:
+        if not _can_see_md_data_groups():
+            return False
+    return _module_view_code(module_key) in (CtxPerm.get() or set())
+
+
 def _filter_doc_keys_for_role(doc_keys: str) -> str:
-    if not _is_md_data_role():
-        return doc_keys or ""
     kept = []
     for item in (doc_keys or "").split(","):
         item = item.strip()
         if ":" not in item:
             continue
         mk = item.split(":", 1)[0]
-        if mk in _MD_DATA_MODULE_KEYS:
+        if _module_allowed(mk):
             kept.append(item)
     return ",".join(kept)
 
@@ -302,32 +325,18 @@ async def list_integrate_docs(product_id: int):
     prod = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
     if not prod:
         return Resp.resp_err(msg="产品不存在")
-    # 按用户权限过滤可见分组
-    user_perms = CtxPerm.get()
-    group_perm_map = {
-        "product_files": "pir_doc_view",
-        "dev_files": "scm_doc_view",
-        "test_files": "stp_doc_view",
-        "cybersec_files": "cybersec_doc_view",
-        "trace_files": "srs_doc_view",
-        "model_files": "model_doc_view",
-        "data_files": "data_doc_view",
-    }
+    # 按每个文档自己的查看权限过滤。模型人员、数据人员只保留模型和数据文件。
     if _is_md_data_role():
         candidate_groups = list(_MD_DATA_GROUPS)
     else:
         candidate_groups = list(_DEFAULT_GROUPS)
         if _can_see_md_data_groups():
             candidate_groups.extend([g for g in _MD_DATA_GROUPS if g not in candidate_groups])
-    visible_groups = []
-    for g in candidate_groups:
-        need_perm = group_perm_map.get(g)
-        if not need_perm or need_perm in user_perms or (g in _MD_DATA_GROUPS and _can_see_md_data_groups()):
-            visible_groups.append(g)
-    groups = {g: [] for g in visible_groups}
+    groups = {}
     for module_key, module_name, group, model_cls in _DOC_MODULES:
-        if group not in visible_groups:
+        if group not in candidate_groups or not _module_allowed(module_key, group):
             continue
+        groups.setdefault(group, [])
         # 追溯分析：基于 SRS 文档列表，每个 SRS 文档对应一份追溯分析（排除软删占位）
         if module_key == "srs_doc_trace":
             rows = db.session.execute(
@@ -409,10 +418,10 @@ async def integrate_export(product_id: int, doc_keys: str, with_sign: bool = Tru
     prod = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
     if not prod:
         return Resp.resp_err(msg="产品不存在")
-    if _is_md_data_role():
-        doc_keys = _filter_doc_keys_for_role(doc_keys)
-        if not doc_keys:
-            return Resp.resp_err(msg="当前角色仅可导出模型文件和数据文件")
+    doc_keys = _filter_doc_keys_for_role(doc_keys)
+    if not doc_keys:
+        msg = "当前角色仅可导出模型文件和数据文件" if _is_md_data_role() else "当前角色无权导出所选文档"
+        return Resp.resp_err(msg=msg)
 
     # 设置签名模式（contextvar，仅影响本次导出请求）
     from ..serv.serv_review_util import set_export_sign_mode, restore_export_sign_mode
@@ -510,10 +519,10 @@ async def integrate_export_progress(product_id: int, doc_keys: str, with_sign: b
     prod = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
     if not prod:
         return Resp.resp_err(msg="产品不存在")
-    if _is_md_data_role():
-        doc_keys = _filter_doc_keys_for_role(doc_keys)
-        if not doc_keys:
-            return Resp.resp_err(msg="当前角色仅可导出模型文件和数据文件")
+    doc_keys = _filter_doc_keys_for_role(doc_keys)
+    if not doc_keys:
+        msg = "当前角色仅可导出模型文件和数据文件" if _is_md_data_role() else "当前角色无权导出所选文档"
+        return Resp.resp_err(msg=msg)
 
     # 设置签名模式（contextvar，仅影响本次导出请求）
     from ..serv.serv_review_util import set_export_sign_mode, restore_export_sign_mode
@@ -654,8 +663,8 @@ async def export_single_doc(module_key: str, doc_id: int, with_sign: bool = True
     if not module_key or not doc_id:
         return Resp.resp_err(msg="参数无效")
     denied = md_data_module_denied(module_key)
-    if denied:
-        return Resp.resp_err(msg=denied)
+    if denied or not _module_allowed(module_key):
+        return Resp.resp_err(msg=denied or "当前角色无权导出该文档")
     srv = _SERVERS.get(module_key)
     if not srv:
         return Resp.resp_err(msg=f"不支持的文档模块：{module_key}")
@@ -722,10 +731,10 @@ async def one_click_print_list(product_id: int, doc_keys: str):
     """返回选中文档的可打印视图URL清单，前端逐个打开新窗口打印。"""
     if not product_id or not doc_keys:
         return Resp.resp_err(msg="请选择产品并勾选文档")
-    if _is_md_data_role():
-        doc_keys = _filter_doc_keys_for_role(doc_keys)
-        if not doc_keys:
-            return Resp.resp_err(msg="当前角色仅可打印模型文件和数据文件")
+    doc_keys = _filter_doc_keys_for_role(doc_keys)
+    if not doc_keys:
+        msg = "当前角色仅可打印模型文件和数据文件" if _is_md_data_role() else "当前角色无权打印所选文档"
+        return Resp.resp_err(msg=msg)
     items = []
     for item in doc_keys.split(","):
         item = item.strip()

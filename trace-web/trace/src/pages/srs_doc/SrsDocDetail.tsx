@@ -29,6 +29,7 @@ import TreeStructure, {
     validateChangeReqDataRows,
     applyEffectiveSrsPreviewRows,
     ensureMissingOtherReqChapters,
+    displayedOtherReqLocation,
 } from "./components/TreeStructure";
 import EditableTableGenerator, { TableDataWithHeaders } from "./components/EditableTableGenerator";
 
@@ -1070,7 +1071,10 @@ export default () => {
         () => applyEffectiveSrsPreviewRows(sortSrsReqRowsByCode(data.srsTableData || [])),
         [data.srsTableData],
     );
-    const filteredSrsOtherReqData = data.srsOtherReqData as any[];
+    const filteredSrsOtherReqData = useMemo(
+        () => sortSrsReqRowsByCode(data.srsOtherReqData || []),
+        [data.srsOtherReqData],
+    );
     const isBaseChangeTypeCode = (typeCode?: string) => ["1", "2", ""].includes(String(typeCode || ""));
     const getChangeTableSortKey = (table: any) => {
         const createTime = table?.create_time ? new Date(table.create_time).getTime() : 0;
@@ -3423,7 +3427,7 @@ export default () => {
             });
         });
 
-        return { srsTableData: sortSrsReqRowsByCode(mainData), srsOtherReqData: otherData, srsChangeTables: sortSrsChangeTables(changeTablesData) };
+        return { srsTableData: sortSrsReqRowsByCode(mainData), srsOtherReqData: sortSrsReqRowsByCode(otherData), srsChangeTables: sortSrsChangeTables(changeTablesData) };
     };
 
     const fetchSrsTableState = async (docId: number) => {
@@ -4218,9 +4222,18 @@ export default () => {
         if (!docId || isReadOnly) return;
         const baseTree = (treeStructureRef.current?.length ? treeStructureRef.current : data.treeStructure) as TreeNode[];
         if (!baseTree?.length || !(data.srsOtherReqData || []).length) return;
-        const synced = syncTreeWithOtherReqState(baseTree, data.srsOtherReqData || [], otherReqSyncOptions);
+        const sourceOther = data.srsOtherReqData || [];
+        const synced = syncTreeWithOtherReqState(baseTree, sourceOther, otherReqSyncOptions);
+        const nextOther = sourceOther.map((row: any) => {
+            const location = displayedOtherReqLocation(synced, row?.module) || row?.location || "";
+            return String(location) === String(row?.location || "") ? row : { ...row, location };
+        });
+        const locationChanged = nextOther.some((row: any, index: number) => row !== sourceOther[index]);
         treeStructureRef.current = synced;
-        dispatch({ treeStructure: synced });
+        dispatch({
+            treeStructure: synced,
+            ...(locationChanged ? { srsOtherReqData: nextOther } : {}),
+        });
     }, [data.srsOtherReqData]);
 
     useEffect(() => {
@@ -5039,10 +5052,6 @@ export default () => {
         }
         const compactReqCode = (value?: string) => String(value || "").replace(/\s+/g, "");
         const normalizeReqCode = (value?: string) => compactReqCode(value).toUpperCase();
-        const parseOtherReqLocation = (location?: string) => {
-            const raw = String(location || "").trim();
-            return raw.match(/^(\d+(?:\.\d+)*)$/)?.[1] || raw.match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
-        };
         const rows = (table?.rows || [])
             .map((row: any) => ({
                 code: compactReqCode(row?.[codeCol]),
@@ -5069,23 +5078,13 @@ export default () => {
             const usedOldIds = new Set<number | string>();
             const usedReqCodes = new Set<string>();
             const assignments: Array<{ row: any; oldRow?: any; code: string }> = [];
-            rows.forEach((row: any, index: number) => {
+            rows.forEach((row: any) => {
                 const rowCode = normalizeReqCode(row.code);
                 if (!rowCode || usedReqCodes.has(rowCode)) return;
                 usedReqCodes.add(rowCode);
-                const rowLocation = parseOtherReqLocation(row.location);
-                const matchedByCode = oldRows.find((item: any) => (
+                const matchedOldRow = oldRows.find((item: any) => (
                     normalizeReqCode(item.srs_code || item.code) === rowCode && !usedOldIds.has(item.id)
                 ));
-                const matchedByLocation = rowLocation
-                    ? oldRows.find((item: any) => (
-                        parseOtherReqLocation(item.location) === rowLocation && !usedOldIds.has(item.id)
-                    ))
-                    : undefined;
-                const matchedOldRow =
-                    matchedByCode ||
-                    matchedByLocation ||
-                    (oldRows[index] && !usedOldIds.has(oldRows[index].id) ? oldRows[index] : undefined);
                 if (matchedOldRow?.id) {
                     usedOldIds.add(matchedOldRow.id);
                 }

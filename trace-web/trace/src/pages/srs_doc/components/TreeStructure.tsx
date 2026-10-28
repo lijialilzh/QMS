@@ -1478,8 +1478,14 @@ let otherReqChapterSeq = 0;
 export function planMissingOtherReqChapters(nodes: TreeNode[], otherRows: any[] = []) {
     const roots = nodes || [];
     const headings = collectHeadingNumbers(roots);
-    const codes = collectNodeSrsCodes(roots);
-    const names = collectChapterNames(roots);
+    const codes = new Set(
+        (roots || [])
+            .map((node) => normalizeSrsCodeValue(node.srs_code || extractSrsCodeFromText(node.text) || ""))
+            .filter(Boolean),
+    );
+    const names = new Set(
+        (roots || []).map((node) => rootChapterModuleName(node)).filter(Boolean),
+    );
     const seenCodes = new Set<string>();
     const pending = (otherRows || [])
         .map(normalizeOtherReqSyncRow)
@@ -1515,14 +1521,102 @@ function otherReqRowKey(row?: { id?: number | string }): string {
 }
 
 function otherReqRootCode(node: TreeNode, rows: ReturnType<typeof normalizeOtherReqSyncRow>[]): string {
+    const name = rootChapterModuleName(node);
+    const byName = rows.find((row) => row.module.replace(/\s+/g, "") === name);
+    if (byName) return byName.code;
     const key = String(node.req_detail_key || "");
     if (key) {
         const byKey = rows.find((row) => otherReqRowKey(row) === key);
         if (byKey) return byKey.code;
     }
-    const name = rootChapterModuleName(node);
-    const matched = rows.find((row) => row.module.replace(/\s+/g, "") === name);
-    return matched?.code || "";
+    return "";
+}
+
+function displayedNavChapterNodes(nodes: TreeNode[]): TreeNode[] {
+    return (nodes || []).filter((node) => !isSrsFrontMatterRoot(node));
+}
+
+function findNestedChapterByModuleName(nodes: TreeNode[], moduleName: string): TreeNode | undefined {
+    const key = String(moduleName || "").replace(/\s+/g, "");
+    if (!key) return undefined;
+    let found: TreeNode | undefined;
+    const walk = (list: TreeNode[]) => {
+        (list || []).forEach((node) => {
+            if (found) return;
+            if (rootChapterModuleName(node) === key) {
+                found = node;
+                return;
+            }
+            walk(node.children || []);
+        });
+    };
+    walk(nodes || []);
+    return found;
+}
+
+function restoreDuplicateFunctionTitle(nodes: TreeNode[], otherRows: any[] = []): { nodes: TreeNode[]; changed: boolean } {
+    const rows = (otherRows || [])
+        .map(normalizeOtherReqSyncRow)
+        .filter((row) => row.code && row.type_code === "2");
+    const functionRow = rows.find((row) => otherReqDesignKind(row) === "function");
+    const functionName = functionRow?.module.replace(/\s+/g, "") || "";
+    const docRow = rows.find((row) => row.module.replace(/\s+/g, "") === "文档需求" || row.module.replace(/\s+/g, "").includes("文档需求"));
+    if (!functionName) return { nodes, changed: false };
+    const indexes = (nodes || []).reduce<number[]>((list, node, index) => {
+        if (rootChapterModuleName(node) === functionName) list.push(index);
+        return list;
+    }, []);
+    if (indexes.length < 2) return { nodes, changed: false };
+    const hasFunctionChild = (node: TreeNode) => (node.children || []).some((child) => childBelongsToFunctionChapter(child));
+    const keepIndex = indexes.find((index) => hasFunctionChild(nodes[index])) ?? indexes[0];
+    let changed = false;
+    const list = nodes.slice();
+    indexes.forEach((index) => {
+        if (index === keepIndex) return;
+        const node = list[index];
+        if (!docRow || !chapterHasDocRequirementBody(node)) return;
+        const heading = getHeadingNumberFromTitle(node.title);
+        const nextKey = otherReqRowKey(docRow);
+        list[index] = {
+            ...node,
+            title: heading ? `${heading} 文档需求` : "文档需求",
+            srs_code: docRow.code,
+            ...(nextKey ? { req_detail_key: nextKey } : {}),
+            text: replaceOtherReqCodeInNodeText(node.text, docRow.code),
+        };
+        changed = true;
+    });
+    const cleaned = list.filter((node) => {
+        if (rootChapterModuleName(node) !== functionName) return true;
+        const empty = !(node.children || []).length && !String(node.text || "").trim();
+        if (!empty) return true;
+        const anotherKept = list.some((other) => (
+            other !== node
+            && rootChapterModuleName(other) === functionName
+            && ((other.children || []).length > 0 || !!String(other.text || "").trim())
+        ));
+        if (!anotherKept) return true;
+        changed = true;
+        return false;
+    });
+    return { nodes: cleaned, changed };
+}
+
+export function displayedOtherReqLocation(nodes: TreeNode[], module?: string): string {
+    const name = String(module || "").replace(/\s+/g, "");
+    if (!name) return "";
+    if (name.includes("法规符合")) return "1.4";
+    const visible = displayedNavChapterNodes(nodes);
+    const navNumbers = computeNavChapterNumberMap(visible);
+    const root = findRootByModuleName(visible, name);
+    if (root && rootChapterModuleName(root) !== "验收验证标准") {
+        const number = navNumbers.get(String(root.id)) || "";
+        if (number) return number;
+    }
+    const nested = findNestedChapterByModuleName(visible, name);
+    const number = nested ? (navNumbers.get(String(nested.id)) || "") : "";
+    if (name === "数据库要求" && number === "2.5") return "2.5、2.6";
+    return number;
 }
 
 function presetEnglishDesignRole(module?: string): string {
@@ -1567,17 +1661,174 @@ function isTitleLockedOtherReqChapter(node: TreeNode): boolean {
     return heading === "1" || heading.startsWith("1.") || heading === "2" || heading.startsWith("2.");
 }
 
+function childBelongsToFunctionChapter(child: TreeNode): boolean {
+    const name = rootChapterModuleName(child);
+    return name === "要求" || name === "登录" || name === "关于";
+}
+
+function chapterHasDocRequirementBody(node: TreeNode): boolean {
+    if (String(node.text || "").includes("需将以下风险控制措施形成用户文档")) return true;
+    return (node.children || []).some((child) => rootChapterModuleName(child).includes("用户说明"));
+}
+
+function restoreMisnamedFunctionChapter(nodes: TreeNode[], otherRows: any[] = []): { nodes: TreeNode[]; changed: boolean } {
+    const rows = (otherRows || [])
+        .map(normalizeOtherReqSyncRow)
+        .filter((row) => row.code && row.type_code === "2");
+    const functionRow = rows.find((row) => otherReqDesignKind(row) === "function");
+    const functionName = functionRow?.module.replace(/\s+/g, "") || "";
+    if (!functionRow || !functionName) return { nodes, changed: false };
+    if ((nodes || []).some((node) => rootChapterModuleName(node) === functionName)) return { nodes, changed: false };
+    const docMark = "需将以下风险控制措施形成用户文档";
+    const carrierIndex = (nodes || []).findIndex((node) => (
+        rootChapterModuleName(node) === "文档需求"
+        && (node.children || []).some((child) => childBelongsToFunctionChapter(child))
+    ));
+    if (carrierIndex < 0) return { nodes, changed: false };
+    const carrier = nodes[carrierIndex];
+    const heading = getHeadingNumberFromTitle(carrier.title);
+    const nextKey = otherReqRowKey(functionRow);
+    const titled = heading
+        ? `${heading} ${normalizeReqDisplayText(functionRow.module)}`
+        : normalizeReqDisplayText(functionRow.module);
+    if (!String(carrier.text || "").includes(docMark)) {
+        const list = nodes.slice();
+        list[carrierIndex] = {
+            ...carrier,
+            title: titled,
+            srs_code: functionRow.code,
+            ...(nextKey ? { req_detail_key: nextKey } : {}),
+            text: replaceOtherReqCodeInNodeText(carrier.text, functionRow.code),
+        };
+        return { nodes: list, changed: true };
+    }
+    const stayed: TreeNode[] = [];
+    const moved: TreeNode[] = [];
+    (carrier.children || []).forEach((child) => {
+        if (childBelongsToFunctionChapter(child)) moved.push(child);
+        else stayed.push(child);
+    });
+    if (!moved.length) return { nodes, changed: false };
+    otherReqChapterSeq += 1;
+    const functionNode: TreeNode = {
+        id: Date.now() * 1000 + otherReqChapterSeq,
+        n_id: 0,
+        title: titled,
+        srs_code: functionRow.code,
+        text: `需求编号：${functionRow.code}`,
+        ...(nextKey ? { req_detail_key: nextKey } : {}),
+        children: moved,
+    };
+    const list = nodes.slice();
+    list[carrierIndex] = { ...carrier, children: stayed };
+    list.splice(carrierIndex, 0, functionNode);
+    return { nodes: list, changed: true };
+}
+
+function isTypeImmuneOtherReqModule(name?: string): boolean {
+    const text = String(name || "").replace(/\s+/g, "");
+    if (!text) return false;
+    if (text.includes("法规符合")) return true;
+    return text === "文档需求"
+        || text === "外部连接"
+        || text === "外部链接"
+        || text === "基本要求"
+        || text === "性能要求"
+        || text === "数据库要求"
+        || text === "算法与数据要求"
+        || text === "算法和数据要求";
+}
+
+function isStickyOtherReqChapter(node: TreeNode): boolean {
+    const name = rootChapterModuleName(node);
+    if (name === "文档需求" || name === "外部连接" || name === "外部链接") return false;
+    if (isTypeImmuneOtherReqModule(name) || name === "验收验证标准") return true;
+    const heading = getHeadingNumberFromTitle(node.title);
+    return heading === "1" || heading.startsWith("1.") || heading === "2" || heading.startsWith("2.");
+}
+
+function followOtherReqModuleList(nodes: TreeNode[], otherRows: any[] = []): { nodes: TreeNode[]; changed: boolean } {
+    const rows = (otherRows || [])
+        .map(normalizeOtherReqSyncRow)
+        .filter((row) => row.code && row.type_code === "2");
+    const living = new Set(rows.map((row) => row.module.replace(/\s+/g, "")).filter(Boolean));
+    let list = (nodes || []).map((node) => ({ ...node }));
+    let changed = false;
+    const renameToRow = (index: number, row: ReturnType<typeof normalizeOtherReqSyncRow>) => {
+        const node = list[index];
+        const heading = getHeadingNumberFromTitle(node.title);
+        const moduleName = normalizeReqDisplayText(row.module);
+        const nextKey = otherReqRowKey(row);
+        list[index] = {
+            ...node,
+            title: heading ? `${heading} ${moduleName}` : moduleName,
+            srs_code: row.code,
+            ...(nextKey ? { req_detail_key: nextKey } : {}),
+            text: replaceOtherReqCodeInNodeText(node.text, row.code),
+        };
+        changed = true;
+    };
+    const functionRow = rows.find((row) => otherReqDesignKind(row) === "function" && !isTypeImmuneOtherReqModule(row.module));
+    if (functionRow && !list.some((node) => rootChapterModuleName(node) === functionRow.module.replace(/\s+/g, ""))) {
+        const orphan = list.findIndex((node) => {
+            const chapterName = rootChapterModuleName(node);
+            if (!chapterName || living.has(chapterName) || isStickyOtherReqChapter(node) || isTypeImmuneOtherReqModule(chapterName)) return false;
+            return (node.children || []).some((child) => childBelongsToFunctionChapter(child));
+        });
+        if (orphan >= 0) renameToRow(orphan, functionRow);
+    }
+    const interfaceRow = rows.find((row) => otherReqDesignKind(row) === "interface" && !isTypeImmuneOtherReqModule(row.module));
+    if (interfaceRow && !list.some((node) => rootChapterModuleName(node) === interfaceRow.module.replace(/\s+/g, ""))) {
+        const orphan = list.findIndex((node) => {
+            const chapterName = rootChapterModuleName(node);
+            if (!chapterName || living.has(chapterName) || isStickyOtherReqChapter(node) || isTypeImmuneOtherReqModule(chapterName)) return false;
+            return chapterName === "图像存储" || chapterName === "RePACS";
+        });
+        if (orphan >= 0) renameToRow(orphan, interfaceRow);
+    }
+    const kept = list.filter((node) => {
+        const name = rootChapterModuleName(node);
+        if (!name || living.has(name) || isStickyOtherReqChapter(node) || isSrsFrontMatterRoot(node) || isSrsAppendixRoot(node)) return true;
+        const key = String(node.req_detail_key || "");
+        const code = normalizeSrsCodeValue(node.srs_code || "");
+        const managed = key.startsWith("other_req_")
+            || /RCN300-/i.test(code)
+            || ["图像接收", "图像存储", "图像处理", "图像显示", "RePACS", "NeoViewer", "DataProcessing", "DLServer"].includes(name);
+        if (!managed) return true;
+        changed = true;
+        return false;
+    });
+    return { nodes: kept, changed };
+}
+
 function alignOtherReqDesignChapters(nodes: TreeNode[], otherRows: any[] = []): { nodes: TreeNode[]; changed: boolean } {
     const rows = (otherRows || [])
         .map(normalizeOtherReqSyncRow)
         .filter((row) => row.code && row.type_code === "2");
     let changed = false;
     let list = (nodes || []).map((node) => ({ ...node }));
+    const rowByModuleName = (name: string) => rows.find((row) => row.module.replace(/\s+/g, "") === name);
     const stamp = (node: TreeNode, row: ReturnType<typeof normalizeOtherReqSyncRow>): TreeNode => {
         const nextKey = otherReqRowKey(row);
         const nextName = row.module.replace(/\s+/g, "");
+        const currentName = rootChapterModuleName(node);
+        const nameOwner = currentName ? rowByModuleName(currentName) : undefined;
+        if (nameOwner && nameOwner.code !== row.code) {
+            const properKey = otherReqRowKey(nameOwner);
+            const codeChanged = !!nameOwner.code && normalizeSrsCodeValue(node.srs_code || "") !== nameOwner.code;
+            const keyChanged = !!properKey && node.req_detail_key !== properKey;
+            if (!codeChanged && !keyChanged) return node;
+            const nextText = nameOwner.code ? replaceOtherReqCodeInNodeText(node.text, nameOwner.code) : node.text;
+            return {
+                ...node,
+                ...(nameOwner.code ? { srs_code: nameOwner.code } : {}),
+                ...(properKey ? { req_detail_key: properKey } : {}),
+                ...(nextText !== node.text ? { text: nextText } : {}),
+            };
+        }
+        if (isTypeImmuneOtherReqModule(currentName) && nextName !== currentName) return node;
         let next = node;
-        if (nextName && rootChapterModuleName(node) !== nextName && !isTitleLockedOtherReqChapter(node)) {
+        if (nextName && currentName !== nextName && !isTitleLockedOtherReqChapter(node) && !rowByModuleName(currentName)) {
             const heading = getHeadingNumberFromTitle(node.title);
             next = { ...node, title: heading ? `${heading} ${normalizeReqDisplayText(row.module)}` : normalizeReqDisplayText(row.module) };
         }
@@ -1594,8 +1845,16 @@ function alignOtherReqDesignChapters(nodes: TreeNode[], otherRows: any[] = []): 
     };
     list = list.map((node) => {
         const key = String(node.req_detail_key || "");
-        if (!key.startsWith("other_req_")) return node;
-        const owner = rows.find((row) => otherReqRowKey(row) === key);
+        const currentName = rootChapterModuleName(node);
+        const nameOwner = currentName ? rowByModuleName(currentName) : undefined;
+        if (!key.startsWith("other_req_")) {
+            if (!nameOwner) return node;
+            const next = stamp(node, nameOwner);
+            if (next !== node) changed = true;
+            return next;
+        }
+        const keyOwner = rows.find((row) => otherReqRowKey(row) === key);
+        const owner = nameOwner && (!keyOwner || nameOwner.code !== keyOwner.code) ? nameOwner : keyOwner;
         if (!owner) return node;
         const next = stamp(node, owner);
         if (next !== node) changed = true;
@@ -1608,7 +1867,9 @@ function alignOtherReqDesignChapters(nodes: TreeNode[], otherRows: any[] = []): 
         const moduleName = row.module.replace(/\s+/g, "");
         if (list.some((node) => (key && node.req_detail_key === key) || rootChapterModuleName(node) === moduleName)) return;
         const index = list.findIndex((node) => {
-            if (!presetNames.includes(rootChapterModuleName(node))) return false;
+            const chapterName = rootChapterModuleName(node);
+            if (!presetNames.includes(chapterName)) return false;
+            if (rowByModuleName(chapterName)) return false;
             const nodeKey = String(node.req_detail_key || "");
             return !nodeKey.startsWith("other_req_") || nodeKey === key;
         });
@@ -1623,9 +1884,13 @@ function alignOtherReqDesignChapters(nodes: TreeNode[], otherRows: any[] = []): 
     if (!functionRow) return { nodes: list, changed };
     const functionKey = otherReqRowKey(functionRow);
     const functionName = functionRow.module.replace(/\s+/g, "");
-    let functionIndex = list.findIndex((node) => functionKey && node.req_detail_key === functionKey);
-    if (functionIndex < 0) functionIndex = list.findIndex((node) => rootChapterModuleName(node) === functionName);
-    if (functionIndex < 0) functionIndex = list.findIndex((node) => rootChapterModuleName(node) === "图像显示");
+    let functionIndex = list.findIndex((node) => rootChapterModuleName(node) === functionName);
+    if (functionIndex < 0 && !rowByModuleName("图像显示")) {
+        functionIndex = list.findIndex((node) => rootChapterModuleName(node) === "图像显示");
+    }
+    if (functionIndex < 0 && functionKey) {
+        functionIndex = list.findIndex((node) => node.req_detail_key === functionKey && !isTitleLockedOtherReqChapter(node));
+    }
     if (functionIndex < 0) return { nodes: list, changed };
     const stampedFunction = stamp(list[functionIndex], functionRow);
     if (stampedFunction !== list[functionIndex]) {
@@ -1693,8 +1958,9 @@ function bindOtherReqChaptersByKey(nodes: TreeNode[], otherRows: any[] = []): { 
         }
         const name = rootChapterModuleName(current);
         const key = String(current.req_detail_key || "");
-        const owner = (key ? rows.find((row) => otherReqRowKey(row) === key) : undefined)
-            || rows.find((row) => row.module.replace(/\s+/g, "") === name);
+        const nameOwner = rows.find((row) => row.module.replace(/\s+/g, "") === name);
+        const keyOwner = key ? rows.find((row) => otherReqRowKey(row) === key) : undefined;
+        const owner = nameOwner && (!keyOwner || nameOwner.code !== keyOwner.code) ? nameOwner : (keyOwner || nameOwner);
         if (!owner) return current;
         const nextKey = otherReqRowKey(owner);
         const nextCode = owner.code;
@@ -1785,27 +2051,13 @@ export function ensureMissingOtherReqChapters(nodes: TreeNode[], otherRows: any[
     filled: any[];
 } {
     const restored = restoreAcceptanceStandardChapter(nodes || []);
-    const bound = bindOtherReqChaptersByKey(restored.nodes, otherRows);
+    const followed = followOtherReqModuleList(restored.nodes, otherRows);
+    const dedupedFunction = restoreDuplicateFunctionTitle(followed.nodes, otherRows);
+    const recovered = restoreMisnamedFunctionChapter(dedupedFunction.nodes, otherRows);
+    const bound = bindOtherReqChaptersByKey(recovered.nodes, otherRows);
     const aligned = alignOtherReqDesignChapters(bound.nodes, otherRows);
     const plan = planMissingOtherReqChapters(aligned.nodes, otherRows);
     const filled: any[] = [];
-    const planByCode = new Map(plan.map((item) => [item.code, item.chapterNo]));
-    (otherRows || []).forEach((row) => {
-        const code = normalizeSrsCodeValue(row?.code || row?.srs_code || "");
-        const chapterNo = planByCode.get(code);
-        if (chapterNo) {
-            if (getOtherReqSyncLocationToken(row?.location) === chapterNo) return;
-            row.location = chapterNo;
-            filled.push(row);
-            return;
-        }
-        const existing = findRootByModuleName(aligned.nodes, row?.module || "");
-        const heading = getHeadingNumberFromTitle(existing?.title);
-        if (!heading || getOtherReqSyncLocationToken(row?.location) === heading) return;
-        if (rootChapterModuleName(existing as TreeNode) === "验收验证标准") return;
-        row.location = heading;
-        filled.push(row);
-    });
     const roots = [...aligned.nodes];
     if (plan.length) {
         let insertAt = otherReqInsertIndex(roots);
@@ -1828,22 +2080,17 @@ export function ensureMissingOtherReqChapters(nodes: TreeNode[], otherRows: any[
     }
     const ordered = orderOtherReqRootsBySrsCode(roots, otherRows);
     const regulation = attachRegulationComplianceCode(ordered.nodes, otherRows);
-    const orderedRows = (otherRows || []).map(normalizeOtherReqSyncRow);
-    orderedRows.forEach((row) => {
-        if (!row.code || row.module.replace(/\s+/g, "").includes("法规符合")) return;
-        const chapter = ordered.nodes.find((node) => otherReqRootCode(node, [row]) === row.code);
-        const heading = chapter ? getHeadingNumberFromTitle(chapter.title) : "";
-        if (!heading || getOtherReqSyncLocationToken(row.location) === heading) return;
-        const source = (otherRows || []).find((item) => normalizeSrsCodeValue(item?.code || item?.srs_code || "") === row.code);
-        if (!source) return;
-        source.location = heading;
-        if (!filled.some((item) => normalizeSrsCodeValue(item?.code || item?.srs_code || "") === row.code)) {
-            filled.push(source);
-        }
+    (otherRows || []).forEach((row) => {
+        const heading = displayedOtherReqLocation(regulation.nodes, row?.module);
+        if (!heading) return;
+        const current = String(row?.location || "").replace(/\s+/g, "");
+        if (current === heading.replace(/\s+/g, "")) return;
+        row.location = heading;
+        filled.push(row);
     });
     return {
         nodes: regulation.nodes,
-        changed: restored.changed || bound.changed || aligned.changed || plan.length > 0 || ordered.changed || regulation.changed || filled.length > 0,
+        changed: restored.changed || followed.changed || dedupedFunction.changed || recovered.changed || bound.changed || aligned.changed || plan.length > 0 || ordered.changed || regulation.changed || filled.length > 0,
         filled,
     };
 }
@@ -2032,6 +2279,7 @@ export function syncOtherReqCodesToChaptersFromRows(
         if (!headingNo || headingNo.includes(".") || fixedSections[headingNo] || claimedHeadings.has(headingNo)) return false;
         const code = normalizeSrsCodeValue(node.srs_code || extractSrsCodeFromText(node.text) || "");
         const name = normalizeReqDisplayText(String(node.title || "").replace(/^\d+(?:\.\d+)*\s*/, "")).replace(/\s+/g, "");
+        if (normalizedOtherRows.some((row) => row.module.replace(/\s+/g, "") === name)) return false;
         if (code && /RCN300-/i.test(code)) return true;
         return !!name && presetOtherReqNames.has(name);
     };
@@ -2039,8 +2287,18 @@ export function syncOtherReqCodesToChaptersFromRows(
         const headingNo = getHeadingNumberFromTitle(node.title);
         const fixedName = headingNo ? fixedSections[headingNo] : undefined;
         const nodeCode = normalizeSrsCodeValue(node.srs_code || extractSrsCodeFromText(node.text) || "");
-        const matchedRow = findOtherReqRowForChapter(otherRows, headingNo, nodeCode, node.title);
-        const matchedCode = matchedRow?.code || (headingNo ? byLocation.get(headingNo) : undefined) || "";
+        const titleName = normalizeReqDisplayText(String(node.title || "").replace(/^\d+(?:\.\d+)*\s*/, "")).replace(/\s+/g, "");
+        const nameRow = headingNo && !headingNo.includes(".")
+            ? normalizedOtherRows.find((row) => row.module.replace(/\s+/g, "") === titleName)
+            : undefined;
+        const matchedRow = nameRow || findOtherReqRowForChapter(otherRows, headingNo, nodeCode, node.title);
+        const locationCode = headingNo ? byLocation.get(headingNo) : "";
+        const locationModule = normalizeReqDisplayText(
+            normalizedOtherRows.find((row) => row.code === locationCode)?.module,
+        ).replace(/\s+/g, "");
+        const matchedCode = matchedRow?.code
+            || (locationCode && (!titleName || titleName === locationModule) ? locationCode : "")
+            || "";
         const children = syncOtherReqCodesToChaptersFromRows(node.children || [], otherRows, { ...options, nested: true });
         if (!matchedRow && !matchedCode) {
             if (getMisboundOtherReqRow(node, headingNo, normalizedOtherRows)) {
@@ -4070,7 +4328,7 @@ const TreeNodeItem = ({
                                           ? "暂无数据"
                                           : "暂无数据，请点击右上角「编辑」添加其他需求",
                                   }}
-                                  dataSource={srsReqPreview?.other || []}
+                                  dataSource={sortSrsPreviewRowsByCode(srsReqPreview?.other || [])}
                                   columns={[
                                       { title: ts("srs_doc.srs_code") || "需求编号", dataIndex: "srs_code", width: 180 },
                                       { title: ts("srs_doc.module") || "需求模块", dataIndex: "module", width: 320 },
@@ -5971,7 +6229,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                 String(row.srs_code || row.code || ""),
                 String(row.module || ""),
                 String(presetEnglishDesignRole(row.module) || (row.design_role === "接口设计" || row.design_role === "功能设计" ? row.design_role : "")),
-                String(row.location || ""),
+                String(displayedOtherReqLocation(nodes, row.module) || row.location || ""),
             ])
             : [["", "", "", ""]];
         return {
