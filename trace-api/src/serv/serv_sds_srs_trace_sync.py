@@ -95,10 +95,6 @@ class SdsSrsTraceSyncMixin:
         normal_rows = [
             row for row in rows
             if str(getattr(row, "type_code", "") or "").strip() in ["", "1", "2"]
-            and not (
-                re.search(r"300-008$", re.sub(r"\s+", "", str(getattr(row, "srs_code", "") or "")).upper())
-                and "文档需求" not in live_tail
-            )
         ]
         normal_rows.sort(key=lambda row: self._sds_code_sort_key(getattr(row, "srs_code", "") or ""))
         change_groups: List[Tuple[str, str, List[SdsTraceObj]]] = []

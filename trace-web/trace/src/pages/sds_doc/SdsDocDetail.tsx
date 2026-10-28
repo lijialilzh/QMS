@@ -339,86 +339,30 @@ function structChapterName(title?: string) {
     return stripNavChapterPrefix(String(title || "")).replace(/\s+/g, "");
 }
 
-const STRUCT_FIXED_CHILDREN: Record<string, string> = {
-    "2.3.1": "图像接收",
-    "2.3.2": "图像存储",
-    "2.3.3": "图像处理",
-    "2.3.4": "图像显示",
-};
+const STRUCT_AUTO_HEADINGS = new Set(["2.3.1", "2.3.2", "2.3.3", "2.3.4"]);
+const STRUCT_AUTO_NAMES = new Set(["图像接收", "图像存储", "图像处理", "图像显示"]);
 
 function structHeading(title?: string) {
     return String(title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
 }
 
-let sdsStructChildSeq = 0;
-function cloneSrsStructChild(node: any): TreeNode {
-    sdsStructChildSeq += 1;
-    const children = ((node?.children || []) as any[])
-        .filter((child) => structChapterName(child?.title) && !isFigureCaptionTitle(child?.title))
-        .map((child) => cloneSrsStructChild(child));
-    const table = node?.table && !Array.isArray(node.table) ? node.table : {};
-    return {
-        id: Date.now() * 1000 + sdsStructChildSeq,
-        n_id: 0,
-        title: String(node?.title || "").trim(),
-        text: String(node?.text || ""),
-        img_url: "",
-        table,
-        children,
-    };
+function isAutoFetchedStructChild(title?: string) {
+    if (isFigureCaptionTitle(title)) return false;
+    const heading = structHeading(title);
+    const name = structChapterName(title);
+    return STRUCT_AUTO_HEADINGS.has(heading) || STRUCT_AUTO_NAMES.has(name);
 }
 
-function findStructDiagramNode(nodes: any[]): any | null {
-    for (const node of nodes || []) {
-        if (isStructDiagramTitle(node?.title)) return node;
-        const found = findStructDiagramNode(node?.children || []);
-        if (found) return found;
-    }
-    return null;
-}
-
-async function ensureSdsStructDiagramChildren(nodes: TreeNode[], srsDocId?: number): Promise<TreeNode[]> {
-    const docId = Number(srsDocId || 0);
-    if (!docId) return nodes || [];
-    try {
-        const res: any = await ApiSrsDoc.get_srs_doc({ id: docId });
-        if (res?.code !== ApiSrsDoc.C_OK) return nodes || [];
-        const srsStruct = findStructDiagramNode(res.data?.content || []);
-        const incoming = ((srsStruct?.children || []) as any[]).filter((child) => {
-            const name = structChapterName(child?.title);
-            return !!name && !isFigureCaptionTitle(child?.title) && !isStructDiagramTitle(child?.title);
-        });
-        if (!incoming.length) return nodes || [];
-        const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
-            const children = walk((node.children || []) as TreeNode[]);
-            if (!isStructDiagramTitle(node.title)) return { ...node, children };
-            const names = new Set(
-                children
-                    .map((child) => structChapterName(child.title))
-                    .filter((name) => !!name && !isFigureCaptionTitle(name) && !/^图\d+/.test(name))
-            );
-            const added = incoming
-                .filter((child) => {
-                    const heading = structHeading(child?.title);
-                    const fixedName = STRUCT_FIXED_CHILDREN[heading];
-                    const name = fixedName || structChapterName(child?.title);
-                    return !!name && !names.has(name);
-                })
-                .map((child) => {
-                    const cloned = cloneSrsStructChild(child);
-                    const heading = structHeading(child?.title);
-                    const fixedName = STRUCT_FIXED_CHILDREN[heading];
-                    if (fixedName) cloned.title = `${heading} ${fixedName}`;
-                    return cloned;
-                });
-            if (!added.length) return { ...node, children };
-            return { ...node, children: [...children, ...added] };
-        });
-        return walk(nodes || []);
-    } catch (error) {
-        console.error("补详细设计系统结构图子章节失败:", error);
-        return nodes || [];
-    }
+function ensureSdsStructDiagramChildren(nodes: TreeNode[], _srsDocId?: number): Promise<TreeNode[]> {
+    const walk = (items: TreeNode[]): TreeNode[] => (items || []).map((node) => {
+        const children = walk((node.children || []) as TreeNode[]);
+        if (!isStructDiagramTitle(node.title)) return { ...node, children };
+        return {
+            ...node,
+            children: children.filter((child) => !isAutoFetchedStructChild(child.title)),
+        };
+    });
+    return Promise.resolve(walk(nodes || []));
 }
 
 async function ensureSdsOtherReqChapters(nodes: TreeNode[], srsDocId?: number): Promise<TreeNode[]> {
@@ -2928,7 +2872,8 @@ export default () => {
                 traceSyncing: false,
                 showTraceListModal: options?.openModal ? true : data.showTraceListModal,
             });
-            if (res?.msg) message.warning(res.msg);
+            const tip = String(res?.msg || "").trim();
+            if (tip && tip !== ts("msg_ok")) message.warning(tip);
             else message.success("已从SRS获取追溯数据");
         } catch (error: any) {
             console.error("获取SRS追溯失败:", error);
@@ -3496,18 +3441,13 @@ export default () => {
                 return `${chapter}${location ? `（章节 ${location}）` : ""}`;
             }).filter(Boolean).join("\n");
         };
-        const visibleRows = (rows || []).filter((row: any) => {
-            const code = String(row?.srs_code || "").replace(/\s+/g, "").toUpperCase();
-            if (!/300-008$/.test(code) || !liveTailChapterByName) return true;
-            return liveTailChapterByName.has("文档需求");
-        });
         return {
             headers: [
                 { code: "srs_code", name: "需求编号" },
                 { code: "sds_code", name: "设计编号" },
                 { code: "chapter", name: "需求/代码" },
             ],
-            rows: visibleRows.map((row: any) => {
+            rows: (rows || []).map((row: any) => {
                 return {
                     srs_code: row.srs_code || "",
                     sds_code: splitTraceLines(row.sds_code).filter((line) => !isDeletedPresetCode(line)).join("\n"),
