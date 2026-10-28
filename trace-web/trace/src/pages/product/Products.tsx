@@ -1,5 +1,5 @@
 import "./Products.less";
-import { Form, Input, Button, Table, message, Row, Col, Modal, Select, Space, Checkbox, Tag } from "antd";
+import { Form, Input, Button, Table, message, Row, Col, Modal, Select, Space, Checkbox } from "antd";
 import { SearchOutlined } from "@ant-design/icons";
 import { useEffect, useMemo } from "react";
 import { sprintf } from "sprintf-js";
@@ -383,15 +383,32 @@ export default () => {
         });
     }, [data.copyDhfRows, data.copyDhfSearch]);
 
-    const selectedCopyDhfRows = useMemo(() => {
-        const selected = new Set(data.copyDhfSelectedIds || []);
-        return (data.copyDhfRows || []).filter((item: any) => selected.has(item.id));
-    }, [data.copyDhfRows, data.copyDhfSelectedIds]);
-
     const toggleCopyDhfSelected = (id: number, checked: boolean) => {
         const next = new Set(data.copyDhfSelectedIds || []);
         if (checked) next.add(id);
         else next.delete(id);
+        dispatch({ copyDhfSelectedIds: Array.from(next) });
+    };
+
+    const copyDhfSelectAllState = useMemo(() => {
+        const visibleIds = filteredCopyDhfRows
+            .map((item: any) => item.id)
+            .filter((id: number) => id > 0);
+        const selected = new Set(data.copyDhfSelectedIds || []);
+        const selectedCount = visibleIds.filter((id: number) => selected.has(id)).length;
+        return {
+            checked: visibleIds.length > 0 && selectedCount === visibleIds.length,
+            indeterminate: selectedCount > 0 && selectedCount < visibleIds.length,
+        };
+    }, [filteredCopyDhfRows, data.copyDhfSelectedIds]);
+
+    const toggleCopyDhfSelectAll = (checked: boolean) => {
+        const next = new Set(data.copyDhfSelectedIds || []);
+        filteredCopyDhfRows.forEach((item: any) => {
+            if (!(item.id > 0)) return;
+            if (checked) next.add(item.id);
+            else next.delete(item.id);
+        });
         dispatch({ copyDhfSelectedIds: Array.from(next) });
     };
 
@@ -734,6 +751,15 @@ export default () => {
                         onChange={(e) => dispatch({ copyDhfSearch: e.target.value })}
                         style={{ marginBottom: 8 }}
                     />
+                    {filteredCopyDhfRows.length > 0 && (
+                        <Checkbox
+                            style={{ marginBottom: 8 }}
+                            checked={copyDhfSelectAllState.checked}
+                            indeterminate={copyDhfSelectAllState.indeterminate}
+                            onChange={(e) => toggleCopyDhfSelectAll(e.target.checked)}>
+                            全选
+                        </Checkbox>
+                    )}
                     <div
                         style={{
                             maxHeight: 260,
@@ -763,30 +789,6 @@ export default () => {
                             </div>
                         )}
                     </div>
-                    {selectedCopyDhfRows.length > 0 && (
-                        <div style={{ marginTop: 8 }}>
-                            <div style={{ color: "#888", marginBottom: 6 }}>已选条目（切换搜索仍保留）：</div>
-                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                                {selectedCopyDhfRows.map((item: any) => (
-                                    <Tag
-                                        key={item.id}
-                                        closable
-                                        onClose={() => toggleCopyDhfSelected(item.id, false)}>
-                                        {(item.code || "-") + " " + (item.name || "-")}
-                                    </Tag>
-                                ))}
-                            </div>
-                        </div>
-                    )}
-                    <div style={{ color: "#888", marginTop: 8 }}>
-                        已选 {(data.copyDhfSelectedIds || []).length} 条；勾选后将同步复制对应模块文档（编号 + 名称双重匹配）。
-                    </div>
-                </div>
-            </Modal>
-            <DetailDlg
-                data={data}
-                dispatch={dispatch}
-                onSaved={() => {
                     if (data.dlgType === DlgTypes.add) {
                         queryForm.resetFields();
                     }

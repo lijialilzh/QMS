@@ -271,7 +271,15 @@ class Server(object):
 
     async def list_prod_dhf(self, op_user: UserObj, export=False, prod_id: int = None, page_index: int = 0, page_size: int = 10):
         page_index = page_index if page_index >= 0 else 0
-        page_size = page_size if page_size > 0 else 10 
+        page_size = page_size if page_size > 0 else 10
+
+        from .serv_product_dhf_copy import sync_dhf_codes_to_product_code
+        prod_ids = [prod_id] if prod_id else db.session.execute(select(Product.id)).scalars().all()
+        changed = 0
+        for pid in prod_ids:
+            changed += sync_dhf_codes_to_product_code(pid)
+        if changed:
+            db.session.commit()
 
         sql = select(ProdDhf, Product).outerjoin(Product, ProdDhf.prod_id == Product.id)
         if prod_id:

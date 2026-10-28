@@ -84,6 +84,61 @@ def compact_full_version_suffix(full_version: str) -> str:
     return digits
 
 
+def replace_trailing_version_digits(value: str, full_version: str) -> str:
+    """复制出的新版本：UDI、产品代码末尾 4 位换成完整版本压出的数字。2.0.0.3 → 2003。"""
+    raw = str(value or "")
+    if not raw.strip():
+        return raw
+    suffix = compact_full_version_suffix(full_version)
+    if not suffix:
+        return raw
+    if len(raw) <= 4:
+        return suffix
+    return raw[:-4] + suffix
+
+
+def apply_product_code_token(code: str, product_code: str) -> str:
+    """TX-TF 编号第三段换成产品代码，如 TX-TF-RDV2003-SDT-005 → TX-TF-RCN3V2003-SDT-005。其它编号不动。"""
+    raw = str(code or "").strip()
+    token = str(product_code or "").strip()
+    if not raw or not token:
+        return raw
+    parts = raw.split("-")
+    if len(parts) >= 3 and parts[0].upper() == "TX" and parts[1].upper() == "TF":
+        parts[2] = token
+        return "-".join(parts)
+    return raw
+
+
+def sync_dhf_codes_to_product_code(prod_id: int, product_code: str = "") -> int:
+    """把该产品已有 DHF 里 TX-TF 的代号段改成当前产品代码。产品代码为空时不改。"""
+    if not prod_id:
+        return 0
+    token = str(product_code or "").strip()
+    if not token:
+        token = str(
+            db.session.execute(select(Product.product_code).where(Product.id == prod_id)).scalar() or ""
+        ).strip()
+    if not token:
+        return 0
+    rows = db.session.execute(select(ProdDhf).where(ProdDhf.prod_id == prod_id)).scalars().all()
+    by_code = {str(row.code or "").strip(): row for row in rows}
+    changed = 0
+    for row in rows:
+        old = str(row.code or "").strip()
+        new = apply_product_code_token(old, token)
+        if not new or new == old:
+            continue
+        other = by_code.get(new)
+        if other is not None and other.id != row.id:
+            continue
+        by_code.pop(old, None)
+        by_code[new] = row
+        row.code = new
+        changed += 1
+    return changed
+
+
 def apply_product_version_token(code: str, target_full_version: str) -> str:
     """同产品小版本复制：TX-TF 代号段追加 V+完整版本 compact，如 RUS → RUSV2001。"""
     raw = str(code or "").strip()
@@ -232,6 +287,7 @@ def _apply_target_version_a1(
     target_pid: int,
     same_name: bool = False,
     target_full_version: str = "",
+    product_code: str = "",
 ):
     model = _model_by_doc_key(doc_key)
     if not model or not doc_id:
@@ -241,7 +297,9 @@ def _apply_target_version_a1(
         return
     row.version = TARGET_DOC_VERSION
     base_no = getattr(row, "file_no", "") or ""
-    if same_name and target_full_version:
+    if product_code:
+        base_no = apply_product_code_token(base_no, product_code)
+    elif same_name and target_full_version:
         base_no = apply_product_version_token(base_no, target_full_version)
     resolved = resolve_doc_file_no(target_pid, base_no, TARGET_DOC_VERSION, doc_key)
     if resolved:
@@ -285,7 +343,13 @@ async def _call_duplicate(doc_key: str, serv_module: str, serv_class: str, metho
     return resp
 
 
-async def _duplicate_bug_doc(doc_id: int, target_pid: int, same_name: bool = False, target_full_version: str = ""):
+async def _duplicate_bug_doc(
+    doc_id: int,
+    target_pid: int,
+    same_name: bool = False,
+    target_full_version: str = "",
+    product_code: str = "",
+):
     fromdoc = db.session.execute(select(BugDoc).where(BugDoc.id == doc_id)).scalars().first()
     if not fromdoc:
         return Resp.resp_err(msg=ts("msg_obj_null"))
@@ -301,7 +365,8 @@ async def _duplicate_bug_doc(doc_id: int, target_pid: int, same_name: bool = Fal
         product_id=target_pid,
         version=version,
         file_no=sync_file_no_version(
-            apply_product_version_token(fromdoc.file_no, target_full_version) if same_name else fromdoc.file_no,
+            apply_product_code_token(fromdoc.file_no, product_code) if product_code
+            else (apply_product_version_token(fromdoc.file_no, target_full_version) if same_name else fromdoc.file_no),
             version,
         ) or resolve_doc_file_no(
             target_pid, fromdoc.file_no, version, "bug"
@@ -392,6 +457,7 @@ async def copy_dhf_linked_assets(
     dhf_rows: List[ProdDhf],
     same_name: bool = False,
     target_full_version: str = "",
+    product_code: str = "",
 ) -> dict:
     if not dhf_rows:
         return {"dhf_count": 0, "doc_count": 0, "test_set_count": 0, "doc_file_count": 0}
@@ -423,14 +489,16 @@ async def copy_dhf_linked_assets(
         model, serv_module, serv_class, method_name = registry[doc_key]
         try:
             if doc_key == "bug":
-                resp = await _duplicate_bug_doc(doc_id, target_prod_id, same_name, target_full_version)
+                resp = await _duplicate_bug_doc(
+                    doc_id, target_prod_id, same_name, target_full_version, product_code
+                )
             else:
                 resp = await _call_duplicate(doc_key, serv_module, serv_class, method_name, doc_id, target_prod_id)
                 if resp and getattr(resp, "code", None) == c_ok:
                     new_id = _extract_new_doc_id(resp)
                     if new_id:
                         _apply_target_version_a1(
-                            doc_key, new_id, target_prod_id, same_name, target_full_version
+                            doc_key, new_id, target_prod_id, same_name, target_full_version, product_code
                         )
             if resp and getattr(resp, "code", None) == c_ok:
                 doc_count += 1

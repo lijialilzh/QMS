@@ -231,6 +231,9 @@ class Server(object):
                 select(Product).where(Product.name == target_name).limit(1)
             ).scalars().first()
             ref_row = named_row or target_row
+            from .serv_product_dhf_copy import replace_trailing_version_digits, apply_product_code_token
+            new_udi = replace_trailing_version_digits(from_row.udi, next_full_version)
+            new_product_code = replace_trailing_version_digits(from_row.product_code, next_full_version)
             new_row = Product(
                 name=target_name,
                 project_id=from_row.project_id if same_name else ref_row.project_id,
@@ -238,8 +241,8 @@ class Server(object):
                 type_code=from_row.type_code,
                 full_version=next_full_version,
                 release_version=release_version,
-                udi=from_row.udi,
-                product_code=from_row.product_code,
+                udi=new_udi,
+                product_code=new_product_code,
                 registrant=from_row.registrant,
                 design_address=from_row.design_address,
                 scope=from_row.scope,
@@ -266,7 +269,7 @@ class Server(object):
 
             selected_dhf_rows = []
             if dhf_ids:
-                from .serv_product_dhf_copy import copy_dhf_linked_assets, apply_product_version_token
+                from .serv_product_dhf_copy import copy_dhf_linked_assets
                 selected_dhf_rows = db.session.execute(
                     select(ProdDhf).where(ProdDhf.id.in_(dhf_ids), ProdDhf.prod_id == from_row.id).order_by(ProdDhf.code)
                 ).scalars().all()
@@ -274,8 +277,7 @@ class Server(object):
                     code = str(src.code or "").strip()
                     if not code:
                         continue
-                    if same_name:
-                        code = apply_product_version_token(code, next_full_version)
+                    code = apply_product_code_token(code, new_product_code)
                     db.session.add(ProdDhf(prod_id=new_row.id, code=code, name=str(src.name or "").strip()))
 
             db.session.commit()
@@ -288,6 +290,7 @@ class Server(object):
                     selected_dhf_rows,
                     same_name=same_name,
                     target_full_version=next_full_version,
+                    product_code=new_product_code,
                 )
 
             data = ProductForm(id=new_row.id)
@@ -353,6 +356,8 @@ class Server(object):
                 db.session.execute(delete(UserProd).where(UserProd.product_id == row.id))
                 if user_ids:
                     db.session.add_all([UserProd(user_id=user_id, product_id=row.id) for user_id in user_ids])
+            from .serv_product_dhf_copy import sync_dhf_codes_to_product_code
+            sync_dhf_codes_to_product_code(row.id, row.product_code)
             db.session.commit()
             return Resp.resp_ok()
         except Exception:
