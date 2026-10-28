@@ -2297,7 +2297,7 @@ export default () => {
         });
         return walk(tree || []);
     };
-    const appendChangeReqDetailsToTree = (tree: TreeNode[], details: any[] = []): TreeNode[] => {
+    const appendChangeReqDetailsToTree = (tree: TreeNode[], details: any[] = [], otherRows: any[] = []): TreeNode[] => {
         if (!Array.isArray(tree)) return tree || [];
         if (!details.length) return pruneEmptyReqChapterShells(tree || []);
         const cloned: TreeNode[] = JSON.parse(JSON.stringify(tree || []));
@@ -2423,7 +2423,7 @@ export default () => {
                 })
                 .filter((node: any) => {
                     if (node.label !== "__auto_req_group") return true;
-                    return !!node.srs_code || !!node.table || !!node.text || (node.children || []).length > 0;
+                    return !!node.srs_code || isRenderableTable(node.table) || !!String(node.text || "").trim() || (node.children || []).length > 0;
                 });
         };
         const pruneEmptyGeneratedGroups = (items: TreeNode[]): TreeNode[] => (
@@ -2516,11 +2516,31 @@ export default () => {
             };
         };
         const findReqDetailRoot = (items: TreeNode[]): TreeNode | undefined => {
-            for (const node of items || []) {
-                const heading = String(node.title || "").trim().match(/^(\d+(?:\.\d+)*)(?:\s+|(?=\D|$))/)?.[1] || "";
-                if (heading === "7") return node;
+            const rootName = (node: TreeNode) => normalizeTitle(stripHeadingNo(node.title));
+            const functionRow = (otherRows.length ? otherRows : (data.srsOtherReqData || [])).find((row: any) => {
+                const moduleName = normalizeTitle(row?.module);
+                const role = normalizeTitle(row?.design_role);
+                if (moduleName === "图像显示" || role === "NeoViewer") return true;
+                return role === "功能设计" || role === "function";
+            });
+            if (!functionRow) return undefined;
+            const functionModule = normalizeTitle(functionRow?.module);
+            const functionCode = normalizeSrsCodeForSync(functionRow?.srs_code || functionRow?.code);
+            const topLevel = (items || []).filter((node) => getDepth(node.title) === 1);
+            if (functionModule) {
+                const byName = topLevel.find((node) => rootName(node) === functionModule);
+                if (byName) return byName;
             }
-            return (items || []).find((node) => getDepth(node.title) === 1 && /需求|功能/.test(stripHeadingNo(node.title)));
+            if (!functionCode) return undefined;
+            return topLevel.find((node) => {
+                const nodeCode = normalizeSrsCodeForSync(
+                    (node as any).srs_code
+                    || extractSrsCodeFromTable((node as any).table)
+                    || String(node.text || "").match(/SRS-[A-Za-z]+\d+-\d+/)?.[0]
+                    || "",
+                );
+                return nodeCode === functionCode;
+            });
         };
         const findDirectChildByTitle = (items: TreeNode[], title: string, rootPrefix: string): TreeNode | undefined => {
             const key = normalizeTitle(title);
@@ -2647,6 +2667,9 @@ export default () => {
             });
         };
         const reqRoot = findReqDetailRoot(cloned);
+        if (reqRoot) {
+            reqRoot.children = prunePreviousChangeDetails(reqRoot.children || []);
+        }
         if (!reqRoot) return cloned;
         const rootPrefix = getPrefix(reqRoot.title);
         const standardDetails = [...effectiveDetails]
@@ -2872,6 +2895,35 @@ export default () => {
         }
         return { ...node, req_detail_key: nextKey, table: nextTable };
     };
+    const findFunctionDesignRoot = (items: TreeNode[], otherRows: any[] = []): TreeNode | undefined => {
+        const stripName = (value?: string) => normalizeReqText(String(value || "").replace(/^\d+(?:\.\d+)*(?:\s+|(?=\D|$))/, "")).replace(/\s+/g, "");
+        const depthOf = (value?: string) => {
+            const matched = String(value || "").trim().match(/^(\d+(?:\.\d+)*)(?:\s+|(?=\D|$))/);
+            return matched ? matched[1].split(".").length : 0;
+        };
+        const source = otherRows.length ? otherRows : (data.srsOtherReqData || []);
+        const functionRow = source.find((row: any) => {
+            const moduleName = stripName(row?.module);
+            const role = stripName(row?.design_role);
+            if (moduleName === "图像显示" || role === "NeoViewer") return true;
+            return role === "功能设计" || role === "function";
+        });
+        if (!functionRow) return undefined;
+        const functionModule = stripName(functionRow?.module);
+        const functionCode = normalizeSrsCodeForSync(functionRow?.srs_code || functionRow?.code);
+        const topLevel = (items || []).filter((node) => depthOf(node.title) === 1);
+        if (functionModule) {
+            const byName = topLevel.find((node) => stripName(node.title) === functionModule);
+            if (byName) return byName;
+        }
+        if (!functionCode) return undefined;
+        return topLevel.find((node) => normalizeSrsCodeForSync(
+            (node as any).srs_code
+            || extractSrsCodeFromTable((node as any).table)
+            || String(node.text || "").match(/SRS-[A-Za-z]+\d+-\d+/)?.[0]
+            || "",
+        ) === functionCode);
+    };
     const pruneDeletedChangeReqChapters = (
         tree: TreeNode[],
         deletedRows: any[],
@@ -2881,6 +2933,7 @@ export default () => {
             allCodes: Set<string>;
             standardKeyByCode: Map<string, string>;
         },
+        otherRows: any[] = [],
     ): TreeNode[] => {
         const deletedCodes = new Set((deletedRows || []).map((row: any) => normalizeSrsCodeForSync(row?.srs_code || row?.code)).filter(Boolean));
         const deletedKeys = new Set((deletedRows || []).map((row: any) => row?.id ? `change_reqd_${row.id}` : "").filter(Boolean));
@@ -2888,7 +2941,6 @@ export default () => {
             const matched = String(value || "").trim().match(/^(\d+(?:\.\d+)*)\s+/);
             return matched ? matched[1].split(".").length : 0;
         };
-        const getRootNo = (value?: string) => String(value || "").trim().match(/^(\d+)/)?.[1] || "";
         const stripHeadingNo = (value?: string) => String(value || "").trim().replace(/^\d+(?:\.\d+)*\s*/, "");
         const isEmptyGeneratedHeading = (node: any) => (
             getDepth(node?.title) > 1 &&
@@ -2898,9 +2950,14 @@ export default () => {
             !isRenderableTable(node?.table) &&
             !(node?.children || []).length
         );
+        const functionRoot = findFunctionDesignRoot(tree || [], otherRows);
+        const isFunctionRootNode = (node: any) => !!functionRoot && (
+            (!!functionRoot.id && node?.id === functionRoot.id)
+            || (!!functionRoot.n_id && node?.n_id === functionRoot.n_id)
+        );
         const walk = (items: TreeNode[], insideReqRoot = false): TreeNode[] => (items || [])
             .map((node: any) => {
-                const nextInsideReqRoot = insideReqRoot || getRootNo(node?.title) === "7";
+                const nextInsideReqRoot = insideReqRoot || isFunctionRootNode(node);
                 let nextNode = {
                     ...node,
                     children: walk(node.children || [], nextInsideReqRoot),
@@ -2918,7 +2975,7 @@ export default () => {
                 return nextNode;
             })
             .filter((node: any) => {
-                const nextInsideReqRoot = insideReqRoot || getRootNo(node?.title) === "7";
+                const nextInsideReqRoot = insideReqRoot || isFunctionRootNode(node);
                 if (!nextInsideReqRoot) return true;
                 const isReqDetailNode = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
                 const code = normalizeSrsCodeForSync(node.srs_code || (isFunctionalKvTable(node.table) ? extractSrsCodeFromTable(node.table) : ""));
@@ -2934,7 +2991,7 @@ export default () => {
                     return false;
                 }
                 if (isReqDetailNode && code && deletedCodes.has(code) && !codeSets.allCodes.has(code)) return false;
-                if ((node.label === "__auto_req_group" || !node.label) && isEmptyGeneratedHeading(node)) return false;
+                if (node.label === "__auto_req_group" && isEmptyGeneratedHeading(node)) return false;
                 return true;
             });
         return walk(tree || []);
@@ -3556,7 +3613,8 @@ export default () => {
         const headingOf = (title?: string) => String(title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
         const nameOf = (title?: string) => String(title || "").trim().replace(/^\d+(?:\.\d+)*\s*/, "").trim();
         const reqRoot = (cloned || []).find((node) => headingOf(node.title) === "7");
-        if (!reqRoot) return cloned;
+        const reqRootName = reqRoot ? nameOf(reqRoot.title).replace(/\s+/g, "") : "";
+        if (!reqRoot || /^(图像接收|图像存储|图像处理)$/.test(reqRootName)) return cloned;
         const readCode = (node: any) => normalizeSrsCodeForSync(
             node?.srs_code || (isFunctionalKvTable(node?.table) ? extractSrsCodeFromTable(node?.table) : "")
         );
@@ -3693,7 +3751,7 @@ export default () => {
         const treeAfterChangeTableSync = syncChangeReqTablesToTree(normalizedTree, srsTableState.srsChangeTables);
         const detailsForSync = buildReqDetailsForTreeSync(srsTableState);
         const synced = detailsForSync.length
-            ? appendChangeReqDetailsToTree(treeAfterChangeTableSync, detailsForSync)
+            ? appendChangeReqDetailsToTree(treeAfterChangeTableSync, detailsForSync, srsTableState.srsOtherReqData || [])
             : treeAfterChangeTableSync;
         const pruned = dedupeChangeTableNodesInTree(
             flattenRedundantReqDetailLayers(pruneEmptyReqChapterShells(synced)),
@@ -4442,6 +4500,7 @@ export default () => {
                         syncTreeWithSrsTableState(treeAfterChangeTableSync, srsTableState),
                         rowsToPrune,
                         codeSets,
+                        srsTableState.srsOtherReqData || [],
                     ),
                 ),
             );
@@ -4664,6 +4723,7 @@ export default () => {
                             syncTreeWithSrsTableState(baseTreeForRefresh, latestState),
                             [],
                             codeSetsForRefresh,
+                            latestState.srsOtherReqData || [],
                         ),
                     ),
                 );
@@ -4738,6 +4798,7 @@ export default () => {
                         syncTreeWithSrsTableState(treeAfterChangeTableSync, srsTableState),
                         deletedOldRows,
                         codeSets,
+                        srsTableState.srsOtherReqData || [],
                     ),
                 ),
             );

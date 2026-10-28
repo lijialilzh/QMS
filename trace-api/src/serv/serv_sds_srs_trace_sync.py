@@ -243,7 +243,13 @@ class SdsSrsTraceSyncMixin:
         return body in self._MODULE_TEMPLATE_TITLES
 
     def _clone_template_section(self, raw: dict) -> SdsNodeForm:
-        children = [self._clone_template_section(child) for child in (raw.get("children") or [])]
+        children = []
+        for child in raw.get("children") or []:
+            title = str(child.get("title") or "").strip()
+            # 模版里的「导入表格N」没有表内容，是接口列表占位。多一个接口设计时不要把它当成章节带进来。
+            if re.match(r"^导入表格\d*$", title) and not child.get("table"):
+                continue
+            children.append(self._clone_template_section(child))
         return SdsNodeForm(
             title=str(raw.get("title") or ""),
             text=str(raw.get("text") or ""),

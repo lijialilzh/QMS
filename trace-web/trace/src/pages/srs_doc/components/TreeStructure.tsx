@@ -4947,26 +4947,27 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
     const findExistingModuleNode = (items: TreeNode[], moduleText: string): TreeNode | undefined => {
         const normalizedText = normalizeTitleText(moduleText);
         if (!normalizedText) return undefined;
-        let fallbackInReqRoot: TreeNode | undefined;
-        const walk = (nodes: TreeNode[], rootHeading = ""): TreeNode | undefined => {
+        const reqRoot = findReqDetailRoot(items);
+        const walk = (nodes: TreeNode[]): TreeNode | undefined => {
             for (const node of nodes || []) {
+                if (reqRoot && node === reqRoot) {
+                    const found = walk(node.children || []);
+                    if (found) return found;
+                    continue;
+                }
                 const title = String(node.title || "").trim();
                 const heading = title.match(/^(\d+(?:\.\d+)*)\s+/)?.[1] || "";
-                const currentRootHeading = rootHeading || heading.split(".")[0] || "";
                 const titleText = normalizeTitleText(title.replace(/^\d+(?:\.\d+)*\s*/, ""));
-                const isHeading = !!heading;
                 const isAutoReqDetail = node.label === "__auto_req_detail";
-                if (isHeading && titleText === normalizedText && !isImportedCatalogTitle(title) && !isAutoReqDetail) {
-                    if (currentRootHeading === "7") {
-                        fallbackInReqRoot = fallbackInReqRoot || node;
-                    }
+                if (heading && titleText === normalizedText && !isImportedCatalogTitle(title) && !isAutoReqDetail) {
+                    return node;
                 }
-                const found = walk(node.children || [], currentRootHeading);
+                const found = walk(node.children || []);
                 if (found) return found;
             }
             return undefined;
         };
-        return walk(items || []) || fallbackInReqRoot;
+        return walk(reqRoot ? [reqRoot] : (items || []));
     };
     const hasFunctionalDetailCodeFamily = (node: TreeNode, family: string): boolean => {
         if (isFunctionalKvTable(node.table) && getReqCodeFamily(extractSrsCodeFromTable(node.table)) === family) {
@@ -5000,25 +5001,21 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
     };
     const findReqDetailRoot = (items: TreeNode[]): TreeNode | undefined => {
         const functionRow = (srsReqPreview?.other || []).find((row: any) => otherReqDesignKind(row) === "function");
+        if (!functionRow) return undefined;
         const functionModule = normalizeReqDisplayText(functionRow?.module || "").replace(/\s+/g, "");
+        const functionCode = normalizeSrsCodeValue(functionRow?.srs_code || functionRow?.code || "");
         const rootName = (node: TreeNode) => normalizeReqDisplayText(stripHeadingNumber(node.title)).replace(/\s+/g, "");
+        const topLevel = (items || []).filter((node) => getHeadingDepth(node.title) === 1);
         if (functionModule) {
-            const byName = (items || []).find((node) => getHeadingDepth(node.title) === 1 && rootName(node) === functionModule);
+            const byName = topLevel.find((node) => rootName(node) === functionModule);
             if (byName) return byName;
         }
-        const byPreset = (items || []).find((node) => getHeadingDepth(node.title) === 1 && rootName(node) === "图像显示");
-        if (byPreset) return byPreset;
-        const functionHeading = getOtherReqSyncLocationToken(functionRow?.location).split(".")[0];
-        if (functionHeading) {
-            const matched = (items || []).find((node) => getHeadingNumberFromTitle(node.title) === functionHeading);
-            const matchedName = matched ? rootName(matched) : "";
-            if (matched && (matchedName === functionModule || matchedName === "图像显示")) return matched;
-        }
-        return (items || []).find((node) => {
-            if (getHeadingDepth(node.title) !== 1) return false;
-            const name = stripHeadingNumber(node.title).replace(/\s+/g, "");
-            if (/文档需求|法规符合|数据库要求|性能要求|基本要求|外部连接/.test(name)) return false;
-            return /需求/.test(name);
+        if (!functionCode) return undefined;
+        return topLevel.find((node) => {
+            const nodeCode = normalizeSrsCodeValue(
+                node.srs_code || extractSrsCodeFromText(node.text) || extractSrsCodeFromTable(node.table) || "",
+            );
+            return nodeCode === functionCode;
         });
     };
     const filterReqTableRows = (table: TableData | null | undefined, detailMap: Map<string, any>) => {
@@ -5591,7 +5588,6 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             }
             return { ...node, req_detail_key: nextKey, table: nextTable };
         };
-        const getRootNo = (value?: string) => String(value || "").trim().match(/^(\d+)/)?.[1] || "";
         const getDepth = (value?: string) => {
             const matched = String(value || "").trim().match(/^(\d+(?:\.\d+)*)\s+/);
             return matched ? matched[1].split(".").length : 0;
@@ -5606,9 +5602,14 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             !isFunctionalKvTable(node?.table) &&
             !(node?.children || []).length
         );
+        const functionRoot = findReqDetailRoot(nodeList || []);
+        const isFunctionRootNode = (node: TreeNode) => !!functionRoot && (
+            (!!functionRoot.id && node.id === functionRoot.id)
+            || (!!functionRoot.n_id && node.n_id === functionRoot.n_id)
+        );
         const walk = (items: TreeNode[], insideReqRoot = false): TreeNode[] => (items || [])
             .map((node) => {
-                const nextInsideReqRoot = insideReqRoot || getRootNo(node?.title) === "7";
+                const nextInsideReqRoot = insideReqRoot || isFunctionRootNode(node);
                 let nextNode: TreeNode = {
                     ...node,
                     children: walk(node.children || [], nextInsideReqRoot),
@@ -5626,7 +5627,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                 return nextNode;
             })
             .filter((node) => {
-                const nextInsideReqRoot = insideReqRoot || getRootNo(node?.title) === "7";
+                const nextInsideReqRoot = insideReqRoot || isFunctionRootNode(node);
                 if (!nextInsideReqRoot) return true;
                 const isReqDetailNode = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
                 const code = normalizeSrsCode(node.srs_code || (isFunctionalKvTable(node.table) ? extractSrsCodeFromTable(node.table) : ""));
@@ -5648,7 +5649,7 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                     }
                     return false;
                 }
-                if ((node.label === "__auto_req_group" || !node.label) && isEmptyGeneratedHeading(node)) return false;
+                if (node.label === "__auto_req_group" && isEmptyGeneratedHeading(node)) return false;
                 return true;
             });
         return walk(nodeList || []);

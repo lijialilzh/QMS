@@ -355,8 +355,13 @@ function isNavUnnumberedNode(node: TreeNode): boolean {
     return isNavTableTitleNode(node) || isNavDbFieldTableNode(node);
 }
 
+function isImportedTableChapterTitle(title?: string): boolean {
+    const name = stripNavChapterPrefix(String(title || "")).replace(/\s+/g, "");
+    return /^导入表格\d*$/.test(name);
+}
+
 function isNavChapterNode(n: TreeNode): boolean {
-    if (isEmbeddedImageNode(n) || isEmbeddedTableNode(n)) return false;
+    if (isEmbeddedImageNode(n) || isEmbeddedTableNode(n) || isImportedTableChapterTitle(n.title)) return false;
     if (n.ref_type === "sds_reqds" || n.ref_type === "sds_traces") return false;
     return true;
 }
