@@ -24,19 +24,16 @@ import {
 import "../pdp/PdpDocDetail.less";
 import FreeChapterContent from "../pdp/FreeChapterContent";
 import { chapterAllowsAboveTable, freeAddTable, freeDelTable } from "../pdp/freeChapterBlocks";
-import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
+import { syncDocVersionFields, timelineCellMatchesVersion, writeRevisionDates } from "@/pages/doc_fill/syncDocVersion";
 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
 
-const computeFileDate = (rows: any[], keywords: string[]): string => {
+const computeFileDate = (rows: any[], keywords: string[], version?: string): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
     const kws = (keywords || []).filter(Boolean);
     const matches = (rows || []).filter((r: any) =>
-        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => {
-            const s = String(v || "");
-            return kws.some((k) => s.includes(k));
-        })
+        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => timelineCellMatchesVersion(String(v || ""), kws, version))
     );
     if (!matches.length) return "";
     const key = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
@@ -796,24 +793,25 @@ export default () => {
         return (nodes || []).map(fix);
     };
 
-    const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; reviser?: string; approver?: string }, replace = false): any[] => {
+    const fillRevision = (nodes: any[], info: { fileDate?: string; revisionDate?: (version: string) => string; version?: string; reviser?: string; approver?: string }, replace = false): any[] => {
         const fix = (n: any): any => {
             const isRev = n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
             let tables = n.tables;
             if (isRev && Array.isArray(n.tables) && Array.isArray(n.tables[0])) {
-                const t = n.tables[0].map((r: any[]) => (Array.isArray(r) ? [...r] : r));
+                let t = n.tables[0].map((r: any[]) => (Array.isArray(r) ? [...r] : r));
                 const cols = (t[0] || []).length || 5;
                 while (t.length < 6) t.push(new Array(cols).fill(""));
+                if (info.revisionDate) t = writeRevisionDates(t, info.version, info.revisionDate);
                 const row = t[1];
                 const setIf = (i: number, val: any) => { if (val && !String(row[i] || "").trim()) row[i] = val; };
                 const setTo = (i: number, val: any) => { row[i] = val || ""; };
                 if (replace) {
-                    setTo(0, info.fileDate);
+                    if (!info.revisionDate) setTo(0, info.fileDate);
                     setTo(3, info.reviser);
                     setTo(4, info.approver);
                     if (!String(row[2] || "").trim()) row[2] = "首次发布";
                 } else {
-                    setIf(0, info.fileDate);
+                    if (!info.revisionDate) setIf(0, info.fileDate);
                     if (info.version && !String(row[1] || "").trim()) row[1] = info.version;
                     if (!String(row[2] || "").trim()) row[2] = "首次发布";
                     setIf(3, info.reviser);
@@ -852,9 +850,9 @@ export default () => {
                         const label = String(next[0] || "").trim();
                         if (label in signers) {
                             if (next.length >= 2) put(next, 1, signers[label]);
-                            if (next.length >= 4) put(next, 3, info.date || "");
-                        } else if (label === "生效日期" && next.length >= 2) {
-                            put(next, 1, info.date || "");
+                            if (info.date && next.length >= 4) next[3] = info.date;
+                        } else if (label === "生效日期" && info.date && next.length >= 2) {
+                            next[1] = info.date;
                         }
                         return next;
                     });
@@ -904,7 +902,8 @@ export default () => {
                 const writer = findRole("模型部负责人", "模型负责人", "模型");
                 const reviewer = findRole("算法", "研发负责人");
                 const approver = findRole("研发负责人");
-                const fileDate = computeFileDate(tlRows, meta.keywords.concat(meta.title));
+                const fileKeywords = meta.keywords.concat(meta.title);
+                const fileDate = computeFileDate(tlRows, fileKeywords, version);
                 let out = fillBasicInfo(secs, {
                     name: prod.name,
                     version: prod.full_version,
@@ -919,6 +918,7 @@ export default () => {
                 }, replaceProduct);
                 out = fillRevision(out, {
                     fileDate,
+                    revisionDate: (ver) => computeFileDate(tlRows, fileKeywords, ver),
                     version,
                     reviser: writer || findRole("算法"),
                     approver,

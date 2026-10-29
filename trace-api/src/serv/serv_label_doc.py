@@ -61,8 +61,9 @@ class Server(object):
     def __to_obj(self, row: LabelDoc, product: Product = None):
         obj = LabelDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content)
+        label_cover = serv_review_util.cover_date(row.product_id, "label", row.version) if row.product_id else ""
         serv_review_util.fill_cover_dates(
-            obj.content, serv_review_util.cover_date(row.product_id, "label") if row.product_id else ""
+            obj.content, label_cover, force=serv_review_util.cover_date_overwrite(row.version, label_cover),
         )
         serv_review_util.fill_cover_signers(
             obj.content, serv_review_util.cover_signers(row.product_id, "label") if row.product_id else {}
@@ -194,7 +195,7 @@ class Server(object):
 
         pm = find_member(lambda r: "产品经理" in r)
         approver = find_member(lambda r: "负责人" in r and "产品" in r)
-        return {"file_date": file_date, "version": doc_version, "pm": pm, "approver": approver}
+        return {"prod_id": prod_id, "file_date": file_date, "version": doc_version, "pm": pm, "approver": approver}
 
     def __fill_revision(self, node, info):
         # 文件修订记录首行：修改日期/版本号/修订说明/修订人/批准人（仅填空、不覆盖已填）
@@ -211,7 +212,10 @@ class Server(object):
                 while len(row) < 5:
                     row.append("")
 
-                row[0] = info.get("file_date") or ""
+                if not serv_review_util.fill_list_revision_dates(
+                    t, info.get("prod_id"), serv_review_util.COVER_KEYWORDS.get("label") or [], cn_date=True,
+                ):
+                    row[0] = info.get("file_date") or ""
                 # 修订记录版本号仅填空，不随文档升版覆盖
                 if info.get("version") and not str(row[1] or "").strip():
                     row[1] = info.get("version")
@@ -233,7 +237,8 @@ class Server(object):
         for node in sections:
             self.__fill_node(node, label_map)
             self.__fill_revision(node, rev_info)
-        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(obj.product_id, "label"))
+        label_cover = serv_review_util.cover_date(obj.product_id, "label", obj.version)
+        serv_review_util.fill_cover_dates(content, label_cover, force=serv_review_util.cover_date_overwrite(obj.version, label_cover))
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(obj.product_id, "label"))
         return content
 
@@ -286,6 +291,9 @@ class Server(object):
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
             db.session.add(newdoc)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, '产品标签样稿',
+            )
             db.session.commit()
             return Resp.resp_ok(data=LabelDocForm(id=newdoc.id))
         except Exception:

@@ -144,7 +144,7 @@ class Server(object):
     def __fill_revision(self, content, prod_id, version, force=False):
         """文件修订记录首行：修改日期←时间线「软件测试报告」；修订人=测试人员（日期规则）；批准人=研发负责人。
         修订人/批准人打开即覆盖；有时间线日期则覆盖修改日期。"""
-        rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
+        rev_date = serv_review_util.cover_date(prod_id, DOC_KEY, version) if prod_id else ""
         reviser = "宋月" if serv_review_util._before_202509(rev_date) else "孙家旭"
         approver = ""
         if prod_id:
@@ -159,6 +159,8 @@ class Server(object):
                 cols = len(t[0]) if isinstance(t[0], list) and t[0] else 5
                 while len(t) < 6:
                     t.append([""] * cols)
+                if serv_review_util.stamp_list_revision_date(t, version, rev_date, prod_id=prod_id, doc_key=DOC_KEY):
+                    break
                 if len(t) >= 2 and isinstance(t[1], list) and len(t[1]) >= 3:
                     row = t[1]
                     if force or rev_date:
@@ -1115,7 +1117,7 @@ class Server(object):
         self.__strip_caption_codes(content)
         self.__fill_revision(content, prod_id, version, force=force)
         # 编审批/生效/评审记录日期←时间线「软件测试报告」；有日期则覆盖模板错误旧值
-        rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
+        rev_date = serv_review_util.cover_date(prod_id, DOC_KEY, version) if prod_id else ""
         secs = content.get("sections") or []
         has_review = any(
             isinstance(s, dict) and (
@@ -1196,6 +1198,9 @@ class Server(object):
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
             db.session.add(newdoc)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, fromdoc.file_no, version, DOC_NAME,
+            )
             db.session.commit()
             if target_pid != fromdoc.product_id:
                 await self.rebind_product(newdoc.id, target_pid)

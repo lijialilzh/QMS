@@ -130,7 +130,7 @@ class Server(object):
         return (row.code or "").strip() if row and row.code else ""
 
     def __fill_revision(self, content, prod_id, version, force=False):
-        rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
+        rev_date = serv_review_util.cover_date(prod_id, DOC_KEY, version) if prod_id else ""
         reviser = approver = ""
         if prod_id:
             members = db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == prod_id)).scalars().all()
@@ -141,6 +141,8 @@ class Server(object):
                 continue
             for tbl in (s.get("tables") or []):
                 if isinstance(tbl, list) and len(tbl) >= 2 and isinstance(tbl[1], list) and len(tbl[1]) >= 3:
+                    if serv_review_util.stamp_list_revision_date(tbl, version, rev_date, prod_id=prod_id, doc_key=DOC_KEY):
+                        continue
                     row = tbl[1]
                     if force:
                         row[0] = rev_date or ""
@@ -176,12 +178,15 @@ class Server(object):
         self.__fill_revision(content, prod_id, version, force=force)
         # 两张配置项清单始终从同产品《软件配置管理计划》覆盖，切换产品也同样覆盖
         self.__pull_sci_from_scm(content, prod_id, version)
+        cover_date = serv_review_util.cover_date(prod_id, DOC_KEY, version) if prod_id else ""
+        raised = bool(serv_review_util.raised_doc_version(version) and cover_date)
         serv_review_util.ensure_review(
             content, DOC_KEY,
-            serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS[DOC_KEY]["name_keywords"]) if prod_id else "",
+            serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS[DOC_KEY]["name_keywords"], version=version) if prod_id else "",
             prod_id,
+            force_date=raised,
         )
-        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else "", force=force)
+        serv_review_util.fill_cover_dates(content, cover_date, force=force or raised or serv_review_util.cover_date_overwrite(version, cover_date))
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, DOC_KEY) if prod_id else {}, force=force)
         return content
 
@@ -326,6 +331,9 @@ class Server(object):
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
             db.session.add(newdoc)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, DOC_NAME,
+            )
             db.session.commit()
             if target_pid != fromdoc.product_id:
                 await self.rebind_product(newdoc.id, target_pid)

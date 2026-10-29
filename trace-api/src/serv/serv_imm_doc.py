@@ -374,9 +374,9 @@ class Server(object):
         修订人=测试人员（2025.09 前宋月/之后孙家旭）、批准人=研发负责人。
         修改日期有时间线则覆盖模板错误旧值；修订人/批准人打开即覆盖。
         force=True（切换产品）时整行强制用新产品数据覆盖，无时间线/人员的字段直接置空。"""
-        rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
-        if not rev_date and prod_id:
-            rev_date = serv_review_util.review_date(prod_id, DATE_KEYWORDS)
+        rev_date = serv_review_util.cover_date(prod_id, DOC_KEY, version) if prod_id else ""
+        if not rev_date and prod_id and not serv_review_util.raised_doc_version(version):
+            rev_date = serv_review_util.review_date(prod_id, DATE_KEYWORDS, version=version)
         reviser = "宋月" if serv_review_util._before_202509(rev_date) else "孙家旭"
         approver = ""
         if prod_id:
@@ -391,6 +391,8 @@ class Server(object):
                 cols = len(t[0]) if isinstance(t[0], list) and t[0] else 5
                 while len(t) < 6:
                     t.append([""] * cols)
+                if serv_review_util.stamp_list_revision_date(t, version, rev_date, prod_id=prod_id, doc_key=DOC_KEY):
+                    break
                 if len(t) >= 2 and isinstance(t[1], list) and len(t[1]) >= 3:
                     row = t[1]
                     # 修改日期←时间线；有则覆盖模板错误旧日期
@@ -559,7 +561,9 @@ class Server(object):
         package_name = self.__package_name_from_scm(prod_id, version)
         rev_date = ""
         if prod_id:
-            rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) or serv_review_util.review_date(prod_id, DATE_KEYWORDS)
+            rev_date = serv_review_util.cover_date(prod_id, DOC_KEY, version) or ""
+            if not rev_date and not serv_review_util.raised_doc_version(version):
+                rev_date = serv_review_util.review_date(prod_id, DATE_KEYWORDS, version=version)
         if product and product.name:
             for s in (content.get("sections") or []):
                 self.__replace_name(s, BASE_NAME, product.name)
@@ -576,7 +580,10 @@ class Server(object):
         self.__fill_revision(content, prod_id, version, force=force)
         self.__fill_md5_attachment(content, package_name, md5_value)
         self.__fill_md5_review(content, prod_id, product, package_name, md5_value, rev_date)
-        serv_review_util.fill_cover_dates(content, rev_date, force=force)
+        serv_review_util.fill_cover_dates(
+            content, rev_date,
+            force=force or bool(serv_review_util.raised_doc_version(version) and rev_date) or serv_review_util.cover_date_overwrite(version, rev_date),
+        )
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, DOC_KEY) if prod_id else {}, force=force)
         return content
 
@@ -634,6 +641,9 @@ class Server(object):
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
             db.session.add(newdoc)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, DOC_NAME,
+            )
             db.session.commit()
             # 跨产品复制：用新产品信息强制填充
             if target_pid != fromdoc.product_id:

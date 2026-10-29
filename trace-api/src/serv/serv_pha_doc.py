@@ -79,7 +79,7 @@ REVIEW_PERSONS = [
 ]
 
 
-def _ensure_review_once(content, prod_id):
+def _ensure_review_once(content, prod_id, version=None):
     """没有评审记录时按模板生成。已有章节保留用户改过的单元格，不再整章覆盖。"""
     sections = (content or {}).get("sections")
     if not isinstance(sections, list):
@@ -88,7 +88,7 @@ def _ensure_review_once(content, prod_id):
         return content
     return serv_review_util.ensure_review(
         content, "pha",
-        serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS["pha"]["name_keywords"]) if prod_id else "",
+        serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS["pha"]["name_keywords"], version=version) if prod_id else "",
         prod_id,
     )
 
@@ -332,7 +332,10 @@ class Server(object):
                 row = t[1]
                 while len(row) < 5:
                     row.append("")
-                row[0] = info["cover_date"] or ""
+                if not serv_review_util.fill_list_revision_dates(
+                    t, info.get("prod_id"), serv_review_util.COVER_KEYWORDS.get("pha") or [], cn_date=True,
+                ):
+                    row[0] = info["cover_date"] or ""
                 # 修订记录版本号仅填空，不随文档升版覆盖
                 if info["version"] and not str(row[1] or "").strip():
                     row[1] = info["version"]
@@ -357,7 +360,7 @@ class Server(object):
         for node in sections:
             self.__replace_name(node, BASE_NAME, info["name"])
             self.__fill_node(node, info)
-        _ensure_review_once(content, obj.product_id)
+        _ensure_review_once(content, obj.product_id, obj.version)
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(obj.product_id, "pha"))
         _keep_review_last(content)
         return content
@@ -439,7 +442,7 @@ class Server(object):
     def __to_obj(self, row: PhaDoc, product: Product = None):
         obj = PhaDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content)
-        _ensure_review_once(obj.content, row.product_id)
+        _ensure_review_once(obj.content, row.product_id, row.version)
         serv_review_util.fill_cover_signers(
             obj.content, serv_review_util.cover_signers(row.product_id, "pha") if row.product_id else {}
         )
@@ -507,6 +510,9 @@ class Server(object):
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
             db.session.add(newdoc)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, DOC_NAME,
+            )
             db.session.commit()
             return Resp.resp_ok(data=PhaDocForm(id=newdoc.id))
         except Exception:

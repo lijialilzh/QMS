@@ -29,7 +29,7 @@ import {
     removeNthPlaceholder,
 } from "../pdp/freeChapterBlocks";
 import { FreeSideActions } from "../pdp/FreeChapterContent";
-import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
+import { syncDocVersionFields, timelineCellMatchesVersion, writeRevisionDates } from "@/pages/doc_fill/syncDocVersion";
 
 // 兼容性表首列「测试模块」连续相同项合并：返回 {行号: 跨行数(0=被合并跳过)}，非兼容性表返回 null
 const compatMerge = (tb: any[]): Record<number, number> | null => {
@@ -147,10 +147,10 @@ const computeCycle = (rows: any[]): string => {
 };
 
 // 从时间线里找「用户测试报告」文件所在行的日期（取最早匹配行），格式「YYYY年M月D日」
-const computeFileDate = (rows: any[], keyword = "用户测试报告"): string => {
+const computeFileDate = (rows: any[], keyword = "用户测试报告", version?: string): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
     const matches = (rows || []).filter((r: any) =>
-        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => String(v || "").includes(keyword))
+        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => timelineCellMatchesVersion(String(v || ""), [keyword], version))
     );
     if (!matches.length) return "";
     const key = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
@@ -173,9 +173,9 @@ const computeDevEnd = (rows: any[]): string => {
 };
 
 // 按关键字匹配时间线活动，取最晚日期（YYYY年M月D日）
-const latestDateFor = (rows: any[], keys: string[]): string => {
+const latestDateFor = (rows: any[], keys: string[], version?: string): string => {
     const m = (rows || []).filter((r: any) => (r.row_type || "date") === "date"
-        && Object.values(r.cells || {}).some((v: any) => keys.some((k) => String(v || "").includes(k))));
+        && Object.values(r.cells || {}).some((v: any) => timelineCellMatchesVersion(String(v || ""), keys, version)));
     if (!m.length) return "";
     return mFmtYMD(m.reduce((a: any, b: any) => (mDateKey(b) > mDateKey(a) ? b : a)));
 };
@@ -344,17 +344,22 @@ export default () => {
     };
 
     // 文件修订记录首行默认值：日期/版本/修订说明/修订人/批准人，仅填空格不覆盖已填
-    const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; pm?: string; approver?: string }): any[] => {
+    const fillRevision = (nodes: any[], info: { fileDate?: string; revisionDate?: (version: string) => string; version?: string; pm?: string; approver?: string }): any[] => {
         const fix = (n: any): any => {
             const isRev = n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
             let tables = n.tables;
             if (isRev && Array.isArray(n.tables) && Array.isArray(n.tables[0])) {
-                const t = n.tables[0].map((r: any[]) => (Array.isArray(r) ? [...r] : r));
+                let t = n.tables[0].map((r: any[]) => (Array.isArray(r) ? [...r] : r));
                 const cols = (t[0] || []).length || 5;
                 while (t.length < 6) t.push(new Array(cols).fill(""));
-                const row = t[1];
+                let row = t[1];
                 const setIf = (i: number, val: any) => { if (val && !String(row[i] || "").trim()) row[i] = val; };
+                if (info.revisionDate) {
+                    t = writeRevisionDates(t, info.version, info.revisionDate);
+                    row = t[1];
+                } else {
                 setIf(0, info.fileDate);
+                }
                 if (info.version && !String(row[1] || "").trim()) row[1] = info.version;
                 if (!String(row[2] || "").trim()) row[2] = "首次发布";
                 setIf(3, info.pm);
@@ -464,14 +469,15 @@ export default () => {
                     cycle: computeCycle(tlRows),
                 });
                 out = fillRevision(out, {
-                    fileDate: computeFileDate(tlRows),
+                    fileDate: computeFileDate(tlRows, "用户测试报告", version),
+                    revisionDate: (ver) => computeFileDate(tlRows, "用户测试报告", ver),
                     version,
                     pm: findRole((r) => r.includes("产品经理") || r.includes("经理")),
                     approver: findRole((r) => r.includes("负责人")),
                 });
                 out = fillMilestone(out, {
                     devEnd: computeDevEnd(tlRows),
-                    planDate: latestDateFor(tlRows, ["用户测试报告"]),
+                    planDate: latestDateFor(tlRows, ["用户测试报告"], version),
                     tpm: findRole((r) => r.toUpperCase().includes("TPM")),
                     moduleMap,
                     phases: computeDevPhases(tlRows),

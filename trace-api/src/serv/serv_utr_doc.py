@@ -132,7 +132,7 @@ class Server(object):
     def __fill_revision(self, content, prod_id, version, force=False):
         """文件修订记录首行：修改日期(评审/封面日期)、版本号、首次发布、
         修订人=测试人员（2025.09 前宋月/之后孙家旭）、批准人=研发负责人。打开即覆盖修订人/批准人。"""
-        rev_date = serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else ""
+        rev_date = serv_review_util.cover_date(prod_id, DOC_KEY, version) if prod_id else ""
         reviser = "宋月" if serv_review_util._before_202509(rev_date) else "孙家旭"
         approver = ""
         if prod_id:
@@ -147,6 +147,8 @@ class Server(object):
                 cols = len(t[0]) if isinstance(t[0], list) and t[0] else 5
                 while len(t) < 6:
                     t.append([""] * cols)
+                if serv_review_util.stamp_list_revision_date(t, version, rev_date, prod_id=prod_id, doc_key=DOC_KEY):
+                    break
                 if len(t) >= 2 and isinstance(t[1], list) and len(t[1]) >= 3:
                     row = t[1]
                     if force or rev_date:
@@ -621,12 +623,15 @@ class Server(object):
         self.__fill_refs(content, prod_id)
         self.__fill_workload(content, prod_id)
         self.__fill_revision(content, prod_id, version, force=force)
+        rev_date = serv_review_util.cover_date(prod_id, DOC_KEY, version) if prod_id else ""
+        raised = bool(serv_review_util.raised_doc_version(version) and rev_date)
         serv_review_util.ensure_review(
             content, DOC_KEY,
-            serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS[DOC_KEY]["name_keywords"]) if prod_id else "",
+            serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS[DOC_KEY]["name_keywords"], version=version) if prod_id else "",
             prod_id,
+            force_date=raised,
         )
-        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, DOC_KEY) if prod_id else "", force=force)
+        serv_review_util.fill_cover_dates(content, rev_date, force=force or raised or serv_review_util.cover_date_overwrite(version, rev_date))
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, DOC_KEY) if prod_id else {}, force=force)
         self.__fill_devices_from_record(content, prod_id)
         return content
@@ -685,6 +690,9 @@ class Server(object):
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
             db.session.add(newdoc)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, DOC_NAME,
+            )
             db.session.commit()
             if target_pid != fromdoc.product_id:
                 await self.rebind_product(newdoc.id, target_pid)

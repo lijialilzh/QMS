@@ -803,7 +803,7 @@ class Server(object):
 
     def __fill_revision(self, content, prod_id, version=""):
         """文件修订记录首行修改日期与封面生效日期同一天。覆盖模板占位 2015.10.21。"""
-        rev_date = serv_review_util.cover_date(prod_id, "nsr") if prod_id else ""
+        rev_date = serv_review_util.cover_date(prod_id, "nsr", version) if prod_id else ""
         placeholders = {"2015.10.21", "2015年10月21日"}
 
         def walk(nodes):
@@ -814,6 +814,9 @@ class Server(object):
                 if node.get("ref_type") == "revision" or title == "文件修订记录":
                     tables = node.get("tables") or []
                     if tables and isinstance(tables[0], list) and len(tables[0]) >= 2 and isinstance(tables[0][1], list):
+                        if serv_review_util.stamp_list_revision_date(tables[0], version, rev_date, prod_id=prod_id, doc_key="nsr"):
+                            walk(node.get("children"))
+                            continue
                         row = tables[0][1]
                         if not row:
                             row.append("")
@@ -835,7 +838,11 @@ class Server(object):
             auto = await self.__collect_autofill(row.product_id)
             content = self.__apply_autofill(content, auto)
             if row.product_id:
-                serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(row.product_id, "nsr"))
+                nsr_cover = serv_review_util.cover_date(row.product_id, "nsr", row.version)
+                serv_review_util.fill_cover_dates(
+                    content, nsr_cover,
+                    force=bool(serv_review_util.raised_doc_version(row.version) and nsr_cover) or serv_review_util.cover_date_overwrite(row.version, nsr_cover),
+                )
                 serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(row.product_id, "nsr"), force=True)
                 self.__fill_revision(content, row.product_id, row.version or "")
         if product:
@@ -896,6 +903,9 @@ class Server(object):
                 change_log=fromdoc.change_log, content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
             db.session.add(newdoc)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, '自研软件网络安全研究报告',
+            )
             db.session.commit()
             return Resp.resp_ok(data=NsrDocForm(id=newdoc.id))
         except Exception:
@@ -960,7 +970,8 @@ class Server(object):
         content = self.__normalize_content(None)
         auto = await self.__collect_autofill(product_id)
         content = self.__apply_autofill(content, auto)
-        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(product_id, "nsr"))
+        nsr_cover = serv_review_util.cover_date(product_id, "nsr", "A0")
+        serv_review_util.fill_cover_dates(content, nsr_cover, force=serv_review_util.cover_date_overwrite("A0", nsr_cover))
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(product_id, "nsr"), force=True)
         self.__fill_revision(content, product_id, "A0")
         product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()

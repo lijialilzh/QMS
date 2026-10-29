@@ -242,7 +242,12 @@ class Server(object):
 
         file_rows = [it for it in dated if any("产品开发计划" in str(v or "") for v in cell_map.get(it[0].id, []))]
         file_date = ""
-        if file_rows:
+        if serv_review_util.revision_row_token(getattr(obj, "version", None)):
+            dotted = serv_review_util.review_date(prod_id, pdp_kws, version=obj.version)
+            matched = re.match(r"(\d{4})\.(\d{2})\.(\d{2})", dotted or "")
+            if matched:
+                file_date = "%d年%d月%d日" % (int(matched.group(1)), int(matched.group(2)), int(matched.group(3)))
+        elif file_rows:
             fr, fy = min(file_rows, key=date_key)
             file_date = f"{fy}年{to_int(fr.month)}月{to_int(fr.day) or 1}日"
 
@@ -300,25 +305,28 @@ class Server(object):
                     cols = len(t[0]) if t and t[0] else 5
                     while len(t) < 6:
                         t.append([""] * cols)
-                    row = t[1]
-                    def set_if(i, val):
-                        if val and not str(row[i] if i < len(row) else "").strip():
-                            row[i] = val
-                    set_if(0, file_date)
-                    set_if(1, obj.version)
-                    if not str(row[2] if len(row) > 2 else "").strip():
-                        row[2] = "首次发布"
-                    set_if(3, pm)
-                    set_if(4, approver)
+                    if not serv_review_util.stamp_list_revision_date(t, obj.version, file_date, prod_id=prod_id, doc_key="pdp"):
+                        row = t[1]
+                        def set_if(i, val):
+                            if val and not str(row[i] if i < len(row) else "").strip():
+                                row[i] = val
+                        set_if(0, file_date)
+                        set_if(1, obj.version)
+                        if not str(row[2] if len(row) > 2 else "").strip():
+                            row[2] = "首次发布"
+                        set_if(3, pm)
+                        set_if(4, approver)
             for child in children:
                 fill(child)
 
         for node in sections:
             fill(node)
+        pdp_rev = serv_review_util.review_date(prod_id, pdp_kws, version=obj.version)
+        raised = bool(serv_review_util.raised_doc_version(obj.version) and pdp_rev)
         serv_review_util.ensure_review(
-            content, "pdp", serv_review_util.review_date(prod_id, pdp_kws), prod_id
+            content, "pdp", pdp_rev, prod_id, force_date=raised,
         )
-        serv_review_util.fill_cover_dates(content, serv_review_util.review_date(prod_id, pdp_kws))
+        serv_review_util.fill_cover_dates(content, pdp_rev, force=raised or serv_review_util.cover_date_overwrite(obj.version, pdp_rev))
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, "pdp"))
         return content
 
@@ -326,13 +334,16 @@ class Server(object):
         obj = PdpDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content)
         pdp_kws = ["产品开发计划"]
+        pdp_rev = serv_review_util.review_date(row.product_id, pdp_kws, version=row.version) if row.product_id else ""
         serv_review_util.ensure_review(
             obj.content, "pdp",
-            serv_review_util.review_date(row.product_id, pdp_kws) if row.product_id else "",
+            pdp_rev,
             row.product_id,
+            force_date=bool(serv_review_util.raised_doc_version(row.version) and pdp_rev),
         )
         serv_review_util.fill_cover_dates(
-            obj.content, serv_review_util.review_date(row.product_id, pdp_kws) if row.product_id else ""
+            obj.content, pdp_rev,
+            force=bool(serv_review_util.raised_doc_version(row.version) and pdp_rev) or serv_review_util.cover_date_overwrite(row.version, pdp_rev),
         )
         serv_review_util.fill_cover_signers(
             obj.content, serv_review_util.cover_signers(row.product_id, "pdp") if row.product_id else {}
@@ -400,6 +411,9 @@ class Server(object):
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
             db.session.add(newdoc)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, '产品开发计划',
+            )
             db.session.commit()
             return Resp.resp_ok(data=PdpDocForm(id=newdoc.id))
         except Exception:

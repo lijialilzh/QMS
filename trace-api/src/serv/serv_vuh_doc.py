@@ -85,8 +85,9 @@ class Server(object):
     def __to_obj(self, row: VuhDoc, product: Product = None):
         obj = VuhDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content)
+        vuh_cover = serv_review_util.cover_date(row.product_id, "vuh", row.version) if row.product_id else ""
         serv_review_util.fill_cover_dates(
-            obj.content, serv_review_util.cover_date(row.product_id, "vuh") if row.product_id else ""
+            obj.content, vuh_cover, force=serv_review_util.cover_date_overwrite(row.version, vuh_cover),
         )
         serv_review_util.fill_cover_signers(
             obj.content, serv_review_util.cover_signers(row.product_id, "vuh") if row.product_id else {}
@@ -158,7 +159,8 @@ class Server(object):
         info = self.__collect_autofill(prod_id, product, obj.version)
         for node in sections:
             self.__fill_node(node, info)
-        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, "vuh"))
+        vuh_cover = serv_review_util.cover_date(prod_id, "vuh", obj.version)
+        serv_review_util.fill_cover_dates(content, vuh_cover, force=serv_review_util.cover_date_overwrite(obj.version, vuh_cover))
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, "vuh"))
         return content
 
@@ -214,6 +216,7 @@ class Server(object):
 
         return {
             "prod_name": prod_name, "type_code": type_code, "full_version": full_version, "release_version": release_version,
+            "prod_id": prod_id,
             "file_date": file_date, "release_date": release_date, "version": doc_version,
             "pm": pm, "approver": approver, "naming_body": naming_body,
         }
@@ -278,7 +281,10 @@ class Server(object):
                 def set_if(i, val):
                     if val and not str(row[i] if i < len(row) else "").strip():
                         row[i] = val
-                set_if(0, info["file_date"])
+                if not serv_review_util.fill_list_revision_dates(
+                    t, info.get("prod_id"), serv_review_util.COVER_KEYWORDS.get("vuh") or [], cn_date=True,
+                ):
+                    set_if(0, info["file_date"])
                 set_if(1, info["version"])
                 if not str(row[2] if len(row) > 2 else "").strip():
                     row[2] = "首次发布"
@@ -354,6 +360,9 @@ class Server(object):
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
             db.session.add(newdoc)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, '版本更新历史',
+            )
             db.session.commit()
             return Resp.resp_ok(data=VuhDocForm(id=newdoc.id))
         except Exception:

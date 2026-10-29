@@ -239,6 +239,7 @@ class Server(object):
             if nm and d.code:
                 dhf_map[nm] = str(d.code).strip()
         return {
+            "prod_id": prod_id,
             "name": name,
             "release_date": release_date,
             "overview": _overview_text(name, type_code, release_version, full_version, overall_desc),
@@ -333,7 +334,9 @@ class Server(object):
                 row = t[1]
                 while len(row) < 5:
                     row.append("")
-                if not str(row[0] or "").strip() and info.get("release_date"):
+                if not serv_review_util.fill_list_revision_dates(
+                    t, info.get("prod_id"), serv_review_util.COVER_KEYWORDS.get("release_note") or [], cn_date=True,
+                ) and not str(row[0] or "").strip() and info.get("release_date"):
                     row[0] = info["release_date"]
                 # 修订记录版本号仅填空，不随文档升版覆盖
                 if info.get("version") and not str(row[1] or "").strip():
@@ -355,7 +358,8 @@ class Server(object):
         info = self.__collect_autofill(obj.product_id, product, obj.version)
         for node in sections:
             self.__fill_node(node, info)
-        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(obj.product_id, "release_note"))
+        release_cover = serv_review_util.cover_date(obj.product_id, "release_note", obj.version)
+        serv_review_util.fill_cover_dates(content, release_cover, force=serv_review_util.cover_date_overwrite(obj.version, release_cover))
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(obj.product_id, "release_note"))
         return content
 
@@ -389,8 +393,9 @@ class Server(object):
         obj = ReleaseNoteObj(**row.dict())
         obj.content = self.__normalize_content(obj.content)
         self.__sync_cover_version(obj.content, obj.version)
+        release_cover = serv_review_util.cover_date(row.product_id, "release_note", row.version) if row.product_id else ""
         serv_review_util.fill_cover_dates(
-            obj.content, serv_review_util.cover_date(row.product_id, "release_note") if row.product_id else ""
+            obj.content, release_cover, force=serv_review_util.cover_date_overwrite(row.version, release_cover),
         )
         serv_review_util.fill_cover_signers(
             obj.content, serv_review_util.cover_signers(row.product_id, "release_note") if row.product_id else {}
@@ -458,6 +463,9 @@ class Server(object):
                 content=content,
             )
             db.session.add(newdoc)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, DOC_NAME,
+            )
             db.session.commit()
             return Resp.resp_ok(data=ReleaseNoteForm(id=newdoc.id))
         except Exception:

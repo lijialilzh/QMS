@@ -387,6 +387,9 @@ class Server(object):
             db.session.add(newdoc)
             db.session.flush()
             self._update_nodes(newdoc, 0, fromdoc.content or [])
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, fromdoc.file_no, version, "软件概要设计",
+            )
             db.session.commit()
             return Resp.resp_ok(data=HldDocForm(id=newdoc.id))
         except Exception:
@@ -881,7 +884,7 @@ class Server(object):
         docx = Document()
         export_rev_date = ""
         if getattr(doc_obj, "product_id", None):
-            export_rev_date = serv_review_util.cover_date(doc_obj.product_id, "hld") or ""
+            export_rev_date = serv_review_util.cover_date(doc_obj.product_id, "hld", getattr(doc_obj, "version", None)) or ""
         wrote_review = {"ok": False}
         pending_reviews: List[HldNodeForm] = []
 
@@ -1180,7 +1183,7 @@ class Server(object):
             signers = {}
             pid = getattr(doc_obj, "product_id", None)
             if pid:
-                rev_date = serv_review_util.cover_date(pid, "hld") or ""
+                rev_date = serv_review_util.cover_date(pid, "hld", getattr(doc_obj, "version", None)) or ""
                 if serv_review_util.sign_mode_enabled():
                     signers = serv_review_util.cover_signers(pid, "hld", rev_date) or {}
                 else:
@@ -1300,13 +1303,34 @@ class Server(object):
         def __fill_revision_dates(table):
             if not table:
                 return
-            rev_date = ""
-            if getattr(doc_obj, "product_id", None):
-                rev_date = serv_review_util.cover_date(doc_obj.product_id, "hld") or ""
-            if not rev_date:
-                return
             rows = list(getattr(table, "rows", None) or [])
             if not rows:
+                return
+            prod_id = getattr(doc_obj, "product_id", None)
+            if prod_id and rows and isinstance(rows[0], dict) and serv_review_util.fill_dict_revision_dates(
+                rows, prod_id, ["软件概要设计", "概要设计"],
+            ):
+                cells = getattr(table, "cells", None) or []
+                if len(cells) > 1:
+                    header = cells[0] or []
+                    date_idx = next((
+                        idx for idx, cell in enumerate(header)
+                        if re.sub(r"\s+", "", __cell_text(cell)) == "修改日期"
+                    ), -1)
+                    for row_i, data_row in enumerate(rows):
+                        if not isinstance(data_row, dict) or not serv_review_util.revision_row_token(data_row.get("version_no")):
+                            continue
+                        cell_row = cells[row_i + 1] if row_i + 1 < len(cells) else None
+                        if cell_row and date_idx >= 0 and date_idx < len(cell_row):
+                            __set_cell_text(cell_row[date_idx], data_row.get("change_date") or "")
+                return
+            rev_date = ""
+            if prod_id:
+                rev_date = serv_review_util.cover_date(prod_id, "hld", getattr(doc_obj, "version", None)) or ""
+            if not rev_date:
+                return
+            doc_version = getattr(doc_obj, "version", None)
+            if serv_review_util.stamp_dict_revision_date(rows, doc_version, rev_date):
                 return
             first = rows[0] if isinstance(rows[0], dict) else None
             if first is not None:
@@ -1326,7 +1350,7 @@ class Server(object):
             desc = str(getattr(doc_obj, "change_log", "") or "").strip() or "首次发布"
             rev_date = ""
             if getattr(doc_obj, "product_id", None):
-                rev_date = serv_review_util.cover_date(doc_obj.product_id, "hld") or ""
+                rev_date = serv_review_util.cover_date(doc_obj.product_id, "hld", version) or ""
             rows = [{
                 "change_date": rev_date,
                 "version_no": version,
@@ -1404,7 +1428,7 @@ class Server(object):
         if not wrote_review["ok"] and getattr(doc_obj, "product_id", None):
             sec = serv_review_util.build_review_section(
                 "hld",
-                serv_review_util.review_date(doc_obj.product_id, ["软件概要设计", "概要设计"]),
+                serv_review_util.review_date(doc_obj.product_id, ["软件概要设计", "概要设计"], version=getattr(doc_obj, "version", None)),
                 doc_obj.product_id,
             )
             if sec:

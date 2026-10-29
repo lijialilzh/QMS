@@ -13,7 +13,7 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
 import FreeChapterContent from "../pdp/FreeChapterContent";
 import { freeAddTable, freeDelTable } from "../pdp/freeChapterBlocks";
-import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
+import { syncDocVersionFields, timelineCellMatchesVersion, writeRevisionDates } from "@/pages/doc_fill/syncDocVersion";
 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
@@ -21,10 +21,10 @@ const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
 const stripNum = (title: string) => String(title || "").replace(/^\s*\d+(?:\.\d+)*[\.、\s]*/, "").trim();
 
 // 时间线里找含「标签」文件输出的最早日期行，作为文件修订记录的修改日期
-const computeFileDate = (rows: any[], keyword = "标签"): string => {
+const computeFileDate = (rows: any[], keyword = "标签", version?: string): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
     const matches = (rows || []).filter((r: any) =>
-        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => String(v || "").includes(keyword))
+        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => timelineCellMatchesVersion(String(v || ""), [keyword], version))
     );
     if (!matches.length) return "";
     const key = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
@@ -117,17 +117,22 @@ export default () => {
     };
 
     // 文件修订记录首行：修改日期/版本号/修订说明/修订人/批准人（仅填空、不覆盖已填）
-    const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; pm?: string; approver?: string }): any[] => {
+    const fillRevision = (nodes: any[], info: { fileDate?: string; revisionDate?: (version: string) => string; version?: string; pm?: string; approver?: string }): any[] => {
         const fix = (n: any): any => {
             const isRev = n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
             let tables = n.tables;
             if (isRev && Array.isArray(n.tables) && Array.isArray(n.tables[0])) {
-                const t = n.tables[0].map((r: any[]) => (Array.isArray(r) ? [...r] : r));
+                let t = n.tables[0].map((r: any[]) => (Array.isArray(r) ? [...r] : r));
                 const cols = (t[0] || []).length || 5;
                 while (t.length < 6) t.push(new Array(cols).fill(""));
-                const row = t[1];
+                let row = t[1];
                 while (row.length < 5) row.push("");
+                if (info.revisionDate) {
+                    t = writeRevisionDates(t, info.version, info.revisionDate);
+                    row = t[1];
+                } else {
                 row[0] = info.fileDate || "";
+                }
                 if (info.version && !String(row[1] || "").trim()) row[1] = info.version;
                 if (!String(row[2] || "").trim()) row[2] = "首次发布";
                 row[3] = info.pm || "";
@@ -177,7 +182,8 @@ export default () => {
                 };
                 let out = fillAuto(secs, labelMap);
                 out = fillRevision(out, {
-                    fileDate: computeFileDate(tlRows),
+                    fileDate: computeFileDate(tlRows, "标签", version),
+                    revisionDate: (ver) => computeFileDate(tlRows, "标签", ver),
                     version,
                     pm: findRole((r) => r.includes("产品经理")),
                     approver: findRole((r) => r.includes("负责人") && r.includes("产品")),

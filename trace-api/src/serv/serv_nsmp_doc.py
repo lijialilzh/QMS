@@ -155,6 +155,7 @@ class Server(object):
             "company": self.__company_name(product),
             "reviser": self.__member_name(product_id, ("产品经理", "项目经理")),
             "approver": self.__member_name(product_id, ("产品负责人", "研发负责人", "管理者代表")),
+            "prod_id": product_id,
             "rev_date": self.__release_date(product_id),
         }
 
@@ -183,7 +184,10 @@ class Server(object):
                     def set_if(i, val):
                         if val and not str(row[i] if i < len(row) else "").strip():
                             row[i] = val
-                    set_if(0, info.get("rev_date", ""))
+                    if not serv_review_util.fill_list_revision_dates(
+                        table, info.get("prod_id"), serv_review_util.COVER_KEYWORDS.get("nsmp") or [], cn_date=True,
+                    ):
+                        set_if(0, info.get("rev_date", ""))
                     set_if(1, version)
                     if not str(row[2] or "").strip():
                         row[2] = "首次发布"
@@ -196,7 +200,8 @@ class Server(object):
         for node in (content.get("sections") or []):
             self.__fill_node(node, info, version)
         if prod_id:
-            serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, "nsmp"))
+            nsmp_cover = serv_review_util.cover_date(prod_id, "nsmp", version)
+            serv_review_util.fill_cover_dates(content, nsmp_cover, force=serv_review_util.cover_date_overwrite(version, nsmp_cover))
             serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, "nsmp"), force=True)
         return content
 
@@ -269,6 +274,9 @@ class Server(object):
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
             db.session.add(newdoc)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, '网络安全维护计划',
+            )
             db.session.commit()
             return Resp.resp_ok(data=NsmpDocForm(id=newdoc.id))
         except Exception:

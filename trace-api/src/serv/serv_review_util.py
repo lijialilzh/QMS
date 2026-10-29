@@ -645,11 +645,61 @@ def timeline_rows_with_sibling(prod_id):
     return rows
 
 
-def review_date(prod_id, name_keywords, tl_rows=None):
+def raised_doc_version(version) -> str:
+    """A1、A2… 返回大写版本号。A0、空、无法识别时返回空，调用方保持原取日期方式。"""
+    text = str(version or "").strip().upper()
+    matched = re.fullmatch(r"A(\d+)", text)
+    if not matched or int(matched.group(1)) == 0:
+        return ""
+    return "A%d" % int(matched.group(1))
+
+
+def revision_row_token(version) -> str:
+    """修订记录行上的版本号。A0、A1、A2 都返回，空或无法识别返回空。"""
+    text = str(version or "").strip().upper()
+    matched = re.fullmatch(r"A(\d+)", text)
+    if not matched:
+        return ""
+    return "A%d" % int(matched.group(1))
+
+
+def _text_version_token(text) -> str:
+    matched = re.search(r"(?<![A-Za-z0-9])A(\d+)(?!\d)", str(text or ""), re.I)
+    if not matched:
+        return ""
+    return "A%d" % int(matched.group(1))
+
+
+def _cell_has_doc_version(text, token) -> bool:
+    return re.search(r"(?<![A-Za-z0-9])" + re.escape(token) + r"(?!\d)", str(text or ""), re.I) is not None
+
+
+def text_matches_doc_version(text, name_keywords, version=None):
+    """单元格是否属于该文档版本。A0 要有文件名，且不能带 A1、A2。A1 及以上要同时有文件名和该版本号。不传版本时只看文件名。"""
+    value = str(text or "")
+    keys = [str(k) for k in (name_keywords or []) if str(k or "").strip()]
+    if not keys or not any(k in value for k in keys):
+        return False
+    token = revision_row_token(version)
+    if not token:
+        return True
+    found = _text_version_token(value)
+    if token == "A0":
+        return found in ("", "A0")
+    return found == token
+
+
+def review_date(prod_id, name_keywords, tl_rows=None, version=None, revision_row=False):
     """从时间线取评审日期（命中「文档名关键字」且优先命中「评审」的行，取最新），格式 yyyy.MM.dd。
-    tl_rows 传入时不再查当前产品（附件评审可用同名版本时间线）。"""
+    tl_rows 传入时不再查当前产品（附件评审可用同名版本时间线）。
+    version 为 A1、A2… 时，同一单元格要同时有文档名和该版本号（中间可以没有空格）。
+    version 为 A0 时按文件名匹配，但不使用带 A1、A2 的单元格。不传版本时仍只按文件名匹配。
+    revision_row 为真时按修订行版本取值，规则与上面相同。"""
     if tl_rows is None and not prod_id:
         return ""
+    explicit = revision_row_token(version)
+    row_token = explicit if (revision_row or explicit == "A0") else ""
+    version_token = "" if row_token else raised_doc_version(version)
 
     def to_int(v):
         digits = re.sub(r"[^\d]", "", str(v or ""))
@@ -674,6 +724,26 @@ def review_date(prod_id, name_keywords, tl_rows=None):
 
     def match(r, need_review):
         vals = cell_map.get(r.id, [])
+        if row_token or version_token:
+            named = []
+            for value in vals:
+                text = str(value or "")
+                if not any(k in text for k in name_keywords):
+                    continue
+                if row_token:
+                    found = _text_version_token(text)
+                    if row_token == "A0":
+                        if found not in ("", "A0"):
+                            continue
+                    elif found != row_token:
+                        continue
+                elif not _cell_has_doc_version(text, version_token):
+                    continue
+                named.append(text)
+            if not named:
+                return False
+            hit_review = any("评审" in text for text in named)
+            return hit_review if need_review else True
         hit_name = any(any(k in str(v or "") for k in name_keywords) for v in vals)
         hit_review = any("评审" in str(v or "") for v in vals)
         return hit_name and (hit_review if need_review else True)
@@ -1016,12 +1086,181 @@ def fill_cover_dates(content, rev_date, force=False):
     return content
 
 
-def cover_date(prod_id, key):
-    """按模块 key 取封面日期（复用 review_date + COVER_KEYWORDS）。"""
+def cover_date(prod_id, key, version=None):
+    """按模块 key 取封面日期（复用 review_date + COVER_KEYWORDS）。
+    version 为 A1、A2… 时按文件名称和该版本取。version 为 A0 时按文件名取，但不使用带 A1、A2 的单元格。不传版本时只按文件名。"""
     kws = COVER_KEYWORDS.get(key)
     if not prod_id or not kws:
         return ""
-    return review_date(prod_id, kws)
+    return review_date(prod_id, kws, version=version)
+
+
+def cover_date_overwrite(version, date) -> bool:
+    """A0 取到编审批日期时覆盖封面上的旧日期，避免留下 A1、A2 那天。没取到则不改已有日期。"""
+    return bool(str(date or "").strip()) and revision_row_token(version) == "A0"
+
+
+def stamp_list_revision_date(table, version, rev_date, data_start=1, date_col=0, version_col=1, prod_id=None, doc_key=None):
+    """传入 prod_id 和 doc_key 时，修订表每一行按自己的版本号取日期，A0 不拿 A1 的日期。
+    表里还没有版本号时，A1、A2… 只写当前版本那一行（空才写）。A0 返回 False，调用方保持原逻辑。"""
+    if prod_id and doc_key and fill_list_revision_dates(
+        table, prod_id, COVER_KEYWORDS.get(doc_key) or [], data_start, date_col, version_col,
+    ):
+        return True
+    token = raised_doc_version(version)
+    if not token:
+        return False
+    if not isinstance(table, list) or not rev_date:
+        return True
+    for row in table[data_start:]:
+        if not isinstance(row, list) or len(row) <= version_col:
+            continue
+        if str(row[version_col] or "").strip().upper() == token:
+            if date_col < len(row) and not str(row[date_col] or "").strip():
+                row[date_col] = rev_date
+            return True
+    blank = None
+    for row in table[data_start:]:
+        if isinstance(row, list) and not any(str(cell or "").strip() for cell in row):
+            blank = row
+            break
+    width = max([len(row) for row in table if isinstance(row, list)] or [5])
+    width = max(width, version_col + 1, date_col + 1)
+    if blank is None:
+        blank = [""] * width
+        table.append(blank)
+    while len(blank) < width:
+        blank.append("")
+    if not str(blank[date_col] or "").strip():
+        blank[date_col] = rev_date
+    if not str(blank[version_col] or "").strip():
+        blank[version_col] = token
+    return True
+
+
+def _revision_date_text(dotted, cn_date=False):
+    text = str(dotted or "")
+    if not cn_date or not text:
+        return text
+    matched = re.match(r"(\d+)\.(\d+)\.(\d+)", text)
+    if not matched:
+        return text
+    return "%d年%d月%d日" % (int(matched.group(1)), int(matched.group(2)), int(matched.group(3)))
+
+
+def fill_list_revision_dates(table, prod_id, name_keywords, data_start=1, date_col=0, version_col=1, cn_date=False):
+    """列表修订表每一行按自己的版本号取修改日期。A0 不使用带 A1、A2 的时间线。
+    返回 True 表示已按版本行写过，调用方不要再把一个日期写到第一行。"""
+    if not isinstance(table, list) or not prod_id or not name_keywords:
+        return False
+    handled = False
+    cached = {}
+    for row in table[data_start:]:
+        if not isinstance(row, list) or len(row) <= version_col:
+            continue
+        token = revision_row_token(row[version_col])
+        if not token:
+            continue
+        handled = True
+        if token not in cached:
+            cached[token] = _revision_date_text(
+                review_date(prod_id, name_keywords, version=token, revision_row=True) or "",
+                cn_date,
+            )
+        while len(row) <= date_col:
+            row.append("")
+        row[date_col] = cached[token]
+    return handled
+
+
+def fill_dict_revision_dates(rows, prod_id, name_keywords, date_key="change_date", version_key="version_no"):
+    """文件修订记录每一行按自己的版本号取修改日期。A0 不使用带 A1、A2 的时间线。
+    有版本号的行会覆盖修改日期；没有对应时间线时清空该日期。没有版本号的行不动。
+    返回 True 表示表里已有版本行，调用方不要再把一个日期写到第一行。"""
+    if not isinstance(rows, list) or not prod_id or not name_keywords:
+        return False
+    handled = False
+    cached = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        token = revision_row_token(row.get(version_key))
+        if not token:
+            continue
+        handled = True
+        if token not in cached:
+            cached[token] = review_date(prod_id, name_keywords, version=token, revision_row=True) or ""
+        date = cached[token]
+        row[date_key] = date
+        if date_key != "change_date":
+            row["change_date"] = date
+    return handled
+
+
+def stamp_dict_revision_date(rows, version, rev_date, date_key="change_date", version_key="version_no"):
+    """字典行修订表。规则同 stamp_list_revision_date。"""
+    token = raised_doc_version(version)
+    if not token:
+        return False
+    if not isinstance(rows, list) or not rev_date:
+        return True
+    for row in rows:
+        if isinstance(row, dict) and str(row.get(version_key) or "").strip().upper() == token:
+            if not str(row.get(date_key) or "").strip():
+                row[date_key] = rev_date
+            return True
+    blank = None
+    for row in rows:
+        if isinstance(row, dict) and not any(str(value or "").strip() for value in row.values()):
+            blank = row
+            break
+    if blank is None:
+        blank = {date_key: "", version_key: "", "change_desc": "", "changer": "", "approver": ""}
+        rows.append(blank)
+    if not str(blank.get(date_key) or "").strip():
+        blank[date_key] = rev_date
+    if not str(blank.get(version_key) or "").strip():
+        blank[version_key] = token
+    return True
+
+
+def add_raised_copy_dhf(target_prod_id, source_prod_id, old_file_no, new_version, doc_name=""):
+    """文档复制后版本为 A1、A2… 时，在目标产品 DHF 增加一条。编号已存在则不加。A0 不加。"""
+    from .serv_utils import sync_file_no_version
+
+    token = raised_doc_version(new_version)
+    if not token or not target_prod_id:
+        return
+    old = str(old_file_no or "").strip()
+    code = sync_file_no_version(old, new_version) if old else ""
+    if not code or code == old:
+        if not old:
+            return
+        code = old + "-" + token
+    exists = db.session.execute(
+        select(ProdDhf).where(ProdDhf.prod_id == target_prod_id, ProdDhf.code == code)
+    ).scalars().first()
+    if exists:
+        return
+    name = ""
+    if old and source_prod_id:
+        src = db.session.execute(
+            select(ProdDhf).where(ProdDhf.prod_id == source_prod_id, ProdDhf.code == old).order_by(ProdDhf.id.asc())
+        ).scalars().first()
+        if src and str(src.name or "").strip():
+            name = str(src.name).strip()
+    if not name and doc_name and source_prod_id:
+        src = db.session.execute(
+            select(ProdDhf).where(
+                ProdDhf.prod_id == source_prod_id,
+                ProdDhf.name.like(f"%{doc_name}%"),
+            ).order_by(ProdDhf.id.asc())
+        ).scalars().first()
+        if src and str(src.name or "").strip():
+            name = str(src.name).strip()
+    if not name:
+        name = str(doc_name or "").strip()
+    db.session.add(ProdDhf(prod_id=target_prod_id, code=code, name=name))
 
 
 def _sign_by_name(name):
@@ -1569,14 +1808,15 @@ def _annex_row_untouched(row, sample):
     return True
 
 
-def fill_annex_review_grid(tb, prod_id, doc_type, prod_name="", force=False):
+def fill_annex_review_grid(tb, prod_id, doc_type, prod_name="", force=False, version=None):
     """模型/数据文件「附件 1 评审记录」五列表。
     force=False：项目名称、评审时间、参评人员、批准人、参评人签字只填空或仍是模板样例的格，已手改的保留。
     force=True：换产品时覆盖上述格子。评审内容勾选与总结两种情况都不改。
     评审时间用同名版本时间线（当前版本没有日期行时）。"""
     if not _is_annex_review_grid(tb) or not prod_id:
         return tb
-    rev = review_date(prod_id, COVER_KEYWORDS.get(doc_type) or [], timeline_rows_with_sibling(prod_id)) or ""
+    rev = review_date(prod_id, COVER_KEYWORDS.get(doc_type) or [], timeline_rows_with_sibling(prod_id), version=version) or ""
+    raised = bool(raised_doc_version(version) and rev)
     members = db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == prod_id)).scalars().all()
     dept_map = _annex_dept_people(members)
     approver = review_approver(doc_type, prod_id, rev) or ""
@@ -1597,7 +1837,7 @@ def fill_annex_review_grid(tb, prod_id, doc_type, prod_name="", force=False):
             for i, c in enumerate(row):
                 if str(c or "").strip() == "评审时间" and i + 1 < len(row) and rev:
                     samp = sample[i + 1] if i + 1 < len(sample) else ""
-                    if force or _annex_placeholder(row[i + 1], samp):
+                    if force or raised or _annex_placeholder(row[i + 1], samp):
                         row[i + 1] = rev
             continue
         if a == "参评人员":
@@ -1639,7 +1879,7 @@ def fill_annex_review_grid(tb, prod_id, doc_type, prod_name="", force=False):
     return tb
 
 
-def fill_annex_reviews(content, prod_id, doc_type, prod_name="", force=False):
+def fill_annex_reviews(content, prod_id, doc_type, prod_name="", force=False, version=None):
     if not isinstance(content, dict) or not prod_id:
         return content
 
@@ -1650,7 +1890,7 @@ def fill_annex_reviews(content, prod_id, doc_type, prod_name="", force=False):
             tables = n.get("tables") or []
             for i, tb in enumerate(tables):
                 if _is_annex_review_grid(tb):
-                    tables[i] = fill_annex_review_grid(tb, prod_id, doc_type, prod_name, force=force)
+                    tables[i] = fill_annex_review_grid(tb, prod_id, doc_type, prod_name, force=force, version=version)
             walk(n.get("children") or [])
 
     walk(content.get("sections") or [])

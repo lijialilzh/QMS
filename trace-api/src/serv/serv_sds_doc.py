@@ -1307,6 +1307,9 @@ class Server(SdsSrsTraceSyncMixin, object):
                 newtrace.id = None
                 newtrace.doc_id = newdoc.id
                 db.session.add(newtrace)
+            serv_review_util.add_raised_copy_dhf(
+                real_product_id, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, "软件详细设计",
+            )
             return Resp.resp_ok(data=SdsDocForm(id=newdoc.id))
         except Exception:
             logger.exception("")
@@ -2010,7 +2013,7 @@ class Server(SdsSrsTraceSyncMixin, object):
         """封面自动获取：编制人=TPM，审核/批准=研发负责人；日期取时间线。仅填空。"""
         if not tree:
             return tree
-        rev_date = serv_review_util.cover_date(prod_id, "sds") if prod_id else ""
+        rev_date = serv_review_util.cover_date(prod_id, "sds", version) if prod_id else ""
         if prod_id:
             signers = (
                 serv_review_util.cover_signers(prod_id, "sds", rev_date)
@@ -2059,7 +2062,7 @@ class Server(SdsSrsTraceSyncMixin, object):
                         table.rows = rows
                         table.headers = self.__approval_headers()
                         table.show_header = 0
-                elif table and rev_date:
+                elif table:
                     headers = getattr(table, "headers", None) or []
                     names = []
                     codes = []
@@ -2074,26 +2077,85 @@ class Server(SdsSrsTraceSyncMixin, object):
                         idx = names.index("修改日期")
                         code = codes[idx] or "change_date"
                         data_rows = getattr(table, "rows", None) or []
-                        if data_rows and isinstance(data_rows[0], dict):
-                            data_rows[0][code] = rev_date
+                        version_code = "version_no"
+                        if "版本号" in names:
+                            version_code = codes[names.index("版本号")] or "version_no"
+                        filled_by_version = False
+                        if isinstance(data_rows, list) and data_rows and isinstance(data_rows[0], dict):
+                            filled_by_version = serv_review_util.fill_dict_revision_dates(
+                                data_rows, prod_id, ["软件详细设计"], date_key=code, version_key=version_code,
+                            )
+                            if not filled_by_version and rev_date and not serv_review_util.stamp_dict_revision_date(
+                                data_rows, version, rev_date, date_key=code, version_key=version_code,
+                            ):
+                                data_rows[0][code] = rev_date
+                        elif rev_date and not serv_review_util.raised_doc_version(version):
+                            cells = getattr(table, "cells", None) or []
+                            if len(cells) > 1 and idx < len(cells[1]):
+                                cell = cells[1][idx]
+                                if isinstance(cell, dict):
+                                    cell["value"] = rev_date
+                                elif hasattr(cell, "value"):
+                                    cell.value = rev_date
                         cells = getattr(table, "cells", None) or []
-                        if len(cells) > 1 and idx < len(cells[1]):
-                            cell = cells[1][idx]
-                            if isinstance(cell, dict):
-                                cell["value"] = rev_date
-                            elif hasattr(cell, "value"):
-                                cell.value = rev_date
+                        if filled_by_version and isinstance(data_rows, list):
+                            ver_idx = names.index("版本号") if "版本号" in names else -1
+                            for row_i, data_row in enumerate(data_rows):
+                                if not isinstance(data_row, dict):
+                                    continue
+                                if not serv_review_util.revision_row_token(data_row.get(version_code)):
+                                    continue
+                                cell_row = cells[row_i + 1] if row_i + 1 < len(cells) else None
+                                if cell_row and idx < len(cell_row):
+                                    cell = cell_row[idx]
+                                    if isinstance(cell, dict):
+                                        cell["value"] = data_row.get(code) or ""
+                                    elif hasattr(cell, "value"):
+                                        cell.value = data_row.get(code) or ""
+                                if ver_idx >= 0 and cell_row and ver_idx < len(cell_row):
+                                    cell = cell_row[ver_idx]
+                                    if isinstance(cell, dict):
+                                        cell["value"] = data_row.get(version_code) or ""
+                                    elif hasattr(cell, "value"):
+                                        cell.value = data_row.get(version_code) or ""
+                        elif serv_review_util.raised_doc_version(version) and isinstance(data_rows, list):
+                            ver_idx = names.index("版本号") if "版本号" in names else -1
+                            for row_i, data_row in enumerate(data_rows):
+                                if not isinstance(data_row, dict):
+                                    continue
+                                if str(data_row.get(version_code) or "").strip().upper() != str(version or "").strip().upper():
+                                    continue
+                                cell_row = cells[row_i + 1] if row_i + 1 < len(cells) else None
+                                if cell_row and idx < len(cell_row):
+                                    cell = cell_row[idx]
+                                    if isinstance(cell, dict):
+                                        cell["value"] = data_row.get(code) or ""
+                                    elif hasattr(cell, "value"):
+                                        cell.value = data_row.get(code) or ""
+                                if ver_idx >= 0 and cell_row and ver_idx < len(cell_row):
+                                    cell = cell_row[ver_idx]
+                                    if isinstance(cell, dict):
+                                        cell["value"] = data_row.get(version_code) or ""
+                                    elif hasattr(cell, "value"):
+                                        cell.value = data_row.get(version_code) or ""
+                        elif rev_date and not serv_review_util.raised_doc_version(version):
+                            if len(cells) > 1 and idx < len(cells[1]):
+                                cell = cells[1][idx]
+                                if isinstance(cell, dict):
+                                    cell["value"] = rev_date
+                                elif hasattr(cell, "value"):
+                                    cell.value = rev_date
                 if getattr(node, "children", None):
                     walk(node.children)
 
         walk(tree)
         return tree
 
-    def __autofill_tree_review_persons(self, tree, prod_id):
+    def __autofill_tree_review_persons(self, tree, prod_id, version=None):
         """评审记录人员按职称（人员角色）匹配该产品参与人员，写入姓名和签名。"""
         if not tree or not prod_id:
             return tree
-        rev_date = serv_review_util.cover_date(prod_id, "sds") or ""
+        rev_date = serv_review_util.cover_date(prod_id, "sds", version) or ""
         members = db.session.execute(
             select(ProjectMember).where(ProjectMember.prod_id == prod_id)
         ).scalars().all()
@@ -2185,14 +2247,14 @@ class Server(SdsSrsTraceSyncMixin, object):
         walk(tree)
         return tree
 
-    def __write_sds_review_appendix(self, docx, prod_id):
+    def __write_sds_review_appendix(self, docx, prod_id, version=None):
         """导出末尾追加「附件一 评审结论」，表格样式与软件开发计划评审记录一致。"""
         from docx.enum.text import WD_ALIGN_PARAGRAPH
         from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
         from .serv_utils import docx_util
 
         keywords = (serv_review_util.REVIEW_DEFS.get("sds") or {}).get("name_keywords") or ["软件详细设计", "详细设计"]
-        rev_date = serv_review_util.review_date(prod_id, keywords) if prod_id else ""
+        rev_date = serv_review_util.review_date(prod_id, keywords, version=version) if prod_id else ""
         sec = serv_review_util.build_review_section("sds", rev_date, prod_id)
         if not sec:
             return
@@ -3931,7 +3993,7 @@ finally:
                 roots = await __sync_missing_reqd_nodes_for_export(sds_doc.content or [])
                 roots = await __sync_trace_table_nodes_for_export(roots)
                 self.__autofill_tree_cover_revision(roots, sds_doc.product_id, sds_doc.version)
-                self.__autofill_tree_review_persons(roots, sds_doc.product_id)
+                self.__autofill_tree_review_persons(roots, sds_doc.product_id, sds_doc.version)
                 design_root = next((n for n in roots if __is_design_cover(getattr(n, "title", ""))), None)
                 rev_root = next((n for n in roots if __is_revision_label(getattr(n, "title", ""))), None)
                 catalog_root = next((n for n in roots if __is_catalog(getattr(n, "title", ""))), None)
@@ -4004,7 +4066,7 @@ finally:
                 docx_util.fonted_txt(header_para, sds_doc.file_no)
                 await __writenodes_legacy(sds_doc.content or [], docx, level=0)
 
-            self.__write_sds_review_appendix(docx, sds_doc.product_id)
+            self.__write_sds_review_appendix(docx, sds_doc.product_id, sds_doc.version)
             docx_util.fill_toc_cache(docx)
             docx.save(output)
             output.seek(0)

@@ -234,10 +234,29 @@ const fillHldTimelineDateYears = (rows: any[]): Array<{ row: any; year: number }
     return dated;
 };
 
+const hldDocVersionToken = (version: string) => {
+    const matched = String(version || "").trim().toUpperCase().match(/^A(\d+)$/);
+    if (!matched) return "";
+    return `A${parseInt(matched[1], 10)}`;
+};
+
+const hldTimelineTextVersion = (text: string) => {
+    const matched = String(text || "").toUpperCase().match(/(?:^|[^A-Z0-9])A(\d+)(?!\d)/);
+    if (!matched) return "";
+    return `A${parseInt(matched[1], 10)}`;
+};
+
 /** 产品开发部 +「软件概要设计/概要设计」最晚一天；优先含评审行。覆盖模板错误旧日期。 */
-const computeHldCoverDate = (rows: any[]): string => {
+const computeHldCoverDate = (rows: any[], version?: string): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10) || 0;
-    const isHldOutput = (text: string) => HLD_COVER_DATE_KEYWORDS.some((k) => text.includes(k));
+    const token = hldDocVersionToken(version || "");
+    const isHldOutput = (text: string) => {
+        if (!HLD_COVER_DATE_KEYWORDS.some((k) => text.includes(k))) return false;
+        if (!token) return true;
+        const found = hldTimelineTextVersion(text);
+        if (token === "A0") return found === "" || found === "A0";
+        return found === token;
+    };
     const match = (r: any, needReview: boolean, devOnly: boolean) => {
         if (!num(r.month)) return false;
         const cells = Object.entries(r.cells || {}).filter(([dept, value]) => {
@@ -272,6 +291,7 @@ type CoverRevisionAutofillInfo = {
     resolveSigner: (label: string) => string;
     reviser: string;
     approver: string;
+    revisionDate?: (version: string) => string;
 };
 
 const syncHldCoverDateCells = (table: TreeNode["table"], date: string) => {
@@ -352,36 +372,55 @@ const applyHldCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAut
             while (rows.length < 1) rows.push({});
             const headers = nextNode.table.headers || [];
             const dateHeader = headers.find((header: any) => String(header?.name || "").replace(/\s/g, "") === "修改日期");
+            const versionHeader = headers.find((header: any) => String(header?.name || "").replace(/\s/g, "") === "版本号");
             const dateKey = String(dateHeader?.code || "change_date");
-            const row = rows.find((item: any) => String(item?.[dateKey] || item?.change_date || "").trim()) || rows[0] || {};
-            setDate(row, dateKey, info.coverDate);
-            if (dateKey !== "change_date") setDate(row, "change_date", info.coverDate);
+            const versionKey = String(versionHeader?.code || "version_no");
+            const revisionRows = ensureRevisionObjectRows(rows, info.version || "");
+            if (info.revisionDate) {
+                revisionRows.forEach((item: any) => {
+                    const ver = hldDocVersionToken(String(item?.[versionKey] || item?.version_no || ""));
+                    if (!ver) return;
+                    const date = info.revisionDate?.(ver) || "";
+                    if (String(item[dateKey] ?? "") !== date) {
+                        item[dateKey] = date;
+                        changed = true;
+                    }
+                    if (dateKey !== "change_date" && String(item.change_date ?? "") !== date) {
+                        item.change_date = date;
+                        changed = true;
+                    }
+                });
+            }
             const cells = Array.isArray(nextNode.table.cells)
                 ? nextNode.table.cells.map((line: any[]) => (line || []).map((cell: any) => ({ ...cell })))
                 : null;
-            if (cells && cells.length > 1) {
-                const colIdx = (cells[0] || []).findIndex((cell: any) => String(cell?.value || "").replace(/\s/g, "") === "修改日期");
-                if (colIdx >= 0 && cells[1]?.[colIdx] && String(cells[1][colIdx].value || "") !== info.coverDate && info.coverDate) {
-                    cells[1][colIdx].value = info.coverDate;
-                    changed = true;
-                    nextNode = { ...nextNode, table: { ...nextNode.table, cells } };
+            if (cells && cells.length > 1 && info.revisionDate) {
+                const header = cells[0] || [];
+                const dateIdx = header.findIndex((cell: any) => String(cell?.value || "").replace(/\s/g, "") === "修改日期");
+                const verIdx = header.findIndex((cell: any) => String(cell?.value || "").replace(/\s/g, "") === "版本号");
+                if (dateIdx >= 0 && verIdx >= 0) {
+                    for (let i = 1; i < cells.length; i += 1) {
+                        const ver = hldDocVersionToken(String(cells[i]?.[verIdx]?.value || ""));
+                        if (!ver) continue;
+                        const date = info.revisionDate(ver) || "";
+                        if (cells[i][dateIdx] && String(cells[i][dateIdx].value || "") !== date) {
+                            cells[i][dateIdx].value = date;
+                            changed = true;
+                        }
+                    }
                 }
             }
-            // 修订记录版本号仅填空，不随文档版本覆盖
-            if (info.version && !String(row.version_no ?? "").trim()) {
-                row.version_no = info.version;
-                changed = true;
+            const a0 = revisionRows.find((item: any) => hldDocVersionToken(String(item?.[versionKey] || item?.version_no || "")) === "A0");
+            if (a0) {
+                if (!String(a0.change_desc ?? "").trim()) {
+                    a0.change_desc = "首次发布";
+                    changed = true;
+                }
+                setIf(a0, "changer", info.reviser);
+                setIf(a0, "approver", info.approver);
             }
-            if (!String(row.change_desc ?? "").trim()) {
-                row.change_desc = "首次发布";
-                changed = true;
-            }
-            setIf(row, "changer", info.reviser);
-            setIf(row, "approver", info.approver);
-            rows[0] = row;
-            const revisionRows = ensureRevisionObjectRows(rows, info.version || "");
             if (JSON.stringify(revisionRows) !== JSON.stringify(rows)) changed = true;
-            nextNode = { ...nextNode, table: { ...nextNode.table, rows: revisionRows } };
+            nextNode = { ...nextNode, table: { ...nextNode.table, rows: revisionRows, ...(cells ? { cells } : {}) } };
         }
         return nextNode;
     });
@@ -2012,15 +2051,21 @@ export default () => {
                 }
                 return "";
             };
+            const versionNow = String(displayDocVersion || "");
+            const coverToken = hldDocVersionToken(versionNow);
+            const timelineDate = coverToken
+                ? computeHldCoverDate(tlRows, versionNow)
+                : computeHldCoverDate(tlRows);
             const cover = applyHldCoverRevisionAutofill(data.treeStructure as TreeNode[], {
-                coverDate: computeHldCoverDate(tlRows),
-                version: String(displayDocVersion || ""),
+                coverDate: timelineDate,
+                version: versionNow,
                 resolveSigner,
                 reviser: tpm,
                 approver: devLead,
+                revisionDate: (ver) => computeHldCoverDate(tlRows, ver),
             });
             const review = applyHldReviewAutofill(cover.nodes, {
-                coverDate: computeHldCoverDate(tlRows),
+                coverDate: timelineDate,
                 resolveName: resolveReviewName,
                 resolveSign: (name: string) => signMap[name] || "",
                 approverName: devLead,

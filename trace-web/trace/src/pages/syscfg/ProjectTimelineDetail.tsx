@@ -180,14 +180,17 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
         };
 
         if (edit.field.startsWith("dept:")) {
-            const dept = edit.field.slice(5);
+            const deptList = edit.field.slice(5).split("|").filter(Boolean);
             const ids: any[] = edit.groupIds && edit.groupIds.length ? edit.groupIds : [row.id];
-            Promise.all(ids.map((id: any) => Api.update_timeline_cell({ row_id: id, dept, output_result: val }))).then(
+            Promise.all(ids.flatMap((id: any) => deptList.map((dept: string) => Api.update_timeline_cell({ row_id: id, dept, output_result: val })))).then(
                 (results: any[]) => {
                     if (results.every((r: any) => r.code === Api.C_OK)) {
-                        const rows = (data.rows || []).map((r: any) =>
-                            ids.includes(r.id) ? { ...r, cells: { ...(r.cells || {}), [dept]: val } } : r
-                        );
+                        const rows = (data.rows || []).map((r: any) => {
+                            if (!ids.includes(r.id)) return r;
+                            const cells = { ...(r.cells || {}) };
+                            deptList.forEach((dept: string) => { cells[dept] = val; });
+                            return { ...r, cells };
+                        });
                         dispatch({ saving: false, edit: null, editVal: "", rows });
                         message.success("保存成功");
                     } else {
@@ -258,9 +261,9 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
         );
     };
 
-    // 部门「输出结果」单元格：合并组内编辑会写回整组（保持合并）
-    const deptCell = (rowId: any, dept: string, current: any, groupIds: any[]) => {
-        const field = `dept:${dept}`;
+    // 部门「输出结果」单元格：上下左右合并组内编辑会写回整组（保持合并）
+    const deptCell = (rowId: any, deptsInCell: string[], current: any, groupIds: any[]) => {
+        const field = `dept:${deptsInCell.join("|")}`;
         if (!isEditing(rowId, field)) {
             return (
                 <div
@@ -529,15 +532,48 @@ export default ({ prodId: prodIdProp, readOnly: readOnlyProp, embedded, onChange
                                                 {row.day ? String(row.day) : <span style={{ color: "#d9d9d9" }}>—</span>}
                                             </td>
                                         )}
-                                        {depts.map((d) => {
-                                            const dm = deptMeta[d]?.[row.id];
-                                            if (dm && !dm.show) return null;
-                                            return (
-                                                <td key={d} rowSpan={dm?.span || 1} className={dm && dm.span > 1 ? "tl-dept-merge" : ""}>
-                                                    {deptCell(row.id, d, (row.cells || {})[d], dm?.groupIds || [row.id])}
+                                        {(() => {
+                                            const blocks: { depts: string[]; span: number; groupIds: any[]; value: string }[] = [];
+                                            let di = 0;
+                                            while (di < depts.length) {
+                                                const dept = depts[di];
+                                                const dm = deptMeta[dept]?.[row.id];
+                                                if (dm && !dm.show) {
+                                                    di += 1;
+                                                    continue;
+                                                }
+                                                const value = (row.cells || {})[dept] || "";
+                                                const span = dm?.span || 1;
+                                                const groupIds = dm?.groupIds || [row.id];
+                                                const groupKey = groupIds.join(",");
+                                                const blockDepts = [dept];
+                                                let dj = di + 1;
+                                                if (value) {
+                                                    while (dj < depts.length) {
+                                                        const nextDept = depts[dj];
+                                                        const nextMeta = deptMeta[nextDept]?.[row.id];
+                                                        if (nextMeta && !nextMeta.show) break;
+                                                        const nextValue = (row.cells || {})[nextDept] || "";
+                                                        const nextSpan = nextMeta?.span || 1;
+                                                        const nextKey = (nextMeta?.groupIds || [row.id]).join(",");
+                                                        if (nextValue !== value || nextSpan !== span || nextKey !== groupKey) break;
+                                                        blockDepts.push(nextDept);
+                                                        dj += 1;
+                                                    }
+                                                }
+                                                blocks.push({ depts: blockDepts, span, groupIds, value });
+                                                di = value ? dj : di + 1;
+                                            }
+                                            return blocks.map((block) => (
+                                                <td
+                                                    key={block.depts[0]}
+                                                    rowSpan={block.span > 1 ? block.span : undefined}
+                                                    colSpan={block.depts.length > 1 ? block.depts.length : undefined}
+                                                    className={block.span > 1 || block.depts.length > 1 ? "tl-dept-merge" : ""}>
+                                                    {deptCell(row.id, block.depts, block.value, block.groupIds)}
                                                 </td>
-                                            );
-                                        })}
+                                            ));
+                                        })()}
                                         {rowOps(row)}
                                     </tr>
                                 );

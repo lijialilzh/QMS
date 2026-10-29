@@ -76,7 +76,7 @@ class Server(object):
             ).scalars().first()
         return (row.code or "").strip() if row and row.code else ""
 
-    def __autofill(self, content, prod_id, product=None, force=False):
+    def __autofill(self, content, prod_id, product=None, force=False, version=None):
         """产品信息自动获取：project/reason←产品名+版本；日期←时间线(数据申请)；
         申请人←参与人员测试人员（2025.09 前宋月 / 之后孙家旭）；签字←申请人签名章。
         force=False（默认）：仅填空，不覆盖已填。
@@ -87,7 +87,7 @@ class Server(object):
         ver = (product.full_version or "").strip() if product else ""
         project_val = f"{name}（{ver}）" if ver else name
         reason_val = f"“{name} {ver}”项目测试时应有的数据支持。" if name else ""
-        rev_date = serv_review_util.review_date(prod_id, ["数据申请单", "数据申请"]) if prod_id else ""
+        rev_date = serv_review_util.review_date(prod_id, ["数据申请单", "数据申请"], version=version) if prod_id else ""
         # 申请人：与测试文件一致，按日期取主测试人员
         applicant_auto = "宋月" if serv_review_util._before_202509(rev_date) else "孙家旭"
         if force:
@@ -114,7 +114,7 @@ class Server(object):
 
     def __to_obj(self, row: DatDoc, product: Product = None):
         obj = DatDocObj(**row.dict())
-        obj.content = self.__autofill(self.__normalize_content(obj.content), row.product_id, product)
+        obj.content = self.__autofill(self.__normalize_content(obj.content), row.product_id, product, version=row.version)
         if not (obj.file_no or "").strip():
             obj.file_no = self.__dhf_file_no(row.product_id)
         if product:
@@ -166,6 +166,9 @@ class Server(object):
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
             db.session.add(newdoc)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, DOC_NAME,
+            )
             db.session.commit()
             if target_pid != fromdoc.product_id:
                 await self.rebind_product(newdoc.id, target_pid)
@@ -207,7 +210,7 @@ class Server(object):
             db.session.execute(delete(DatDoc).where(DatDoc.product_id == product_id, DatDoc.version == row.version, DatDoc.id != id))
             row.product_id = product_id
             content = self.__normalize_content(row.content)
-            content = self.__autofill(content, product_id, product, force=True)
+            content = self.__autofill(content, product_id, product, force=True, version=row.version)
             row.content = content
             db.session.commit()
             return Resp.resp_ok(data=self.__to_obj(row, product))

@@ -129,7 +129,7 @@ class Server(object):
         ).scalars().all()
         return [r for r in tl_rows if (r.row_type or "date") == "date" and self.__to_int(r.year) and self.__to_int(r.month)]
 
-    def __release_date(self, prod_id):
+    def __release_date(self, prod_id, version=None):
         # 修订日期：从项目时间线取「输出结果含文档名」的日期行，取最早一条；取不到留空
         date_rows = self.__date_rows(prod_id)
         if not date_rows:
@@ -143,7 +143,7 @@ class Server(object):
         def date_key(r):
             return self.__to_int(r.year) * 10000 + self.__to_int(r.month) * 100 + (self.__to_int(r.day) or 0)
 
-        file_rows = [r for r in date_rows if any(k in str(v or "") for k in DATE_KEYWORDS for v in cell_map.get(r.id, []))]
+        file_rows = [r for r in date_rows if any(serv_review_util.text_matches_doc_version(v, DATE_KEYWORDS, version) for v in cell_map.get(r.id, []))]
         if not file_rows:
             return ""
         fr = min(file_rows, key=date_key)
@@ -164,7 +164,7 @@ class Server(object):
         e = f"{self.__to_int(end.year)}年{self.__to_int(end.month)}月"
         return f"{s}至{e}"
 
-    def __collect_autofill(self, product_id):
+    def __collect_autofill(self, product_id, version=None):
         product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
         if not product:
             return {}
@@ -177,7 +177,7 @@ class Server(object):
             "reviser": self.__member_name(product_id, ("产品经理", "项目经理")),
             "auditor": self.__member_name(product_id, ("QA负责人", "质量负责人", "QA")),
             "approver": self.__member_name(product_id, ("产品负责人", "研发负责人", "管理者代表")),
-            "rev_date": self.__release_date(product_id),
+            "rev_date": self.__release_date(product_id, version),
             "time_range": self.__time_range(product_id),
         }
 
@@ -270,7 +270,10 @@ class Server(object):
                     def set_if(i, val):
                         if val and not str(row[i] if i < len(row) else "").strip():
                             row[i] = val
-                    set_if(0, info.get("rev_date", ""))
+                    if not serv_review_util.fill_list_revision_dates(
+                        table, info.get("prod_id"), serv_review_util.COVER_KEYWORDS.get("rmp") or [], cn_date=True,
+                    ):
+                        set_if(0, info.get("rev_date", ""))
                     set_if(1, version)
                     if not str(row[2] or "").strip():
                         row[2] = "首次发布"
@@ -285,7 +288,7 @@ class Server(object):
         # 封面「编制/审核/批准人」按部门签名规则填充签名图（仅填空）
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(info.get("prod_id"), "rmp"))
         # 评审记录（内置于默认内容的「附：评审记录」）：自动填参评人签字、批准人签字/日期、其他参评人员合并/
-        rev = serv_review_util.review_date(info.get("prod_id"), ["风险管理计划"]) if info.get("prod_id") else ""
+        rev = serv_review_util.review_date(info.get("prod_id"), ["风险管理计划"], version=version) if info.get("prod_id") else ""
         for section in (content.get("sections") or []):
             for tbl in (section.get("tables") or []):
                 serv_review_util.autofill_review_person_table(tbl, "rmp", rev, info.get("prod_id"))
@@ -302,7 +305,7 @@ class Server(object):
         obj = RmpDocObj(**row.dict())
         content = self.__normalize_content(obj.content)
         if with_autofill and row.product_id:
-            info = self.__collect_autofill(row.product_id)
+            info = self.__collect_autofill(row.product_id, obj.version)
             content = self.__apply_autofill(content, info, obj.version)
         obj.content = content
         if product:
@@ -360,6 +363,9 @@ class Server(object):
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
             db.session.add(newdoc)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, '风险管理计划',
+            )
             db.session.commit()
             return Resp.resp_ok(data=RmpDocForm(id=newdoc.id))
         except Exception:
@@ -425,7 +431,7 @@ class Server(object):
 
     async def rmp_autofill(self, product_id: int, version: str = ""):
         content = self.__normalize_content(None)
-        info = self.__collect_autofill(product_id)
+        info = self.__collect_autofill(product_id, version)
         content = self.__apply_autofill(content, info, version or "")
         return Resp.resp_ok(data=content)
 

@@ -213,7 +213,7 @@ class Server(object):
         # 编制人/修订人 ← DQA；修订批准人与封面批准人相同（研发负责人）；日期 ← 时间逻辑线（打开覆盖）
         reviser = self.__member_name(product_id, ("DQA",)) if product_id else ""
         approver = (serv_review_util.cover_signer_names(product_id, "cybersec").get("批准人") or "") if product_id else ""
-        rev_date = serv_review_util.review_date(product_id, DATE_KEYWORDS) if product_id else ""
+        rev_date = serv_review_util.review_date(product_id, DATE_KEYWORDS, version=version) if product_id else ""
         rev_date = rev_date or ""
         ver = str(version or "")
         for section in (content.get("sections") or []):
@@ -249,7 +249,9 @@ class Server(object):
                         def set_force(i, val):
                             if val and i < len(row):
                                 row[i] = val
-                        if rev_date:
+                        if not serv_review_util.fill_list_revision_dates(
+                            table, product_id, serv_review_util.COVER_KEYWORDS.get("cybersec_plan") or [],
+                        ) and rev_date:
                             set_force(0, rev_date)
                         if ver and not str(row[1] or "").strip():
                             row[1] = ver

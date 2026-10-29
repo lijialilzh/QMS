@@ -326,7 +326,7 @@ class Server(object):
         reviser = self.__member_name(product_id, ("DQA",))
         approver = (serv_review_util.cover_signer_names(product_id, "cybersec").get("批准人") or "") if product_id else ""
         rev_date = serv_review_util.review_date(
-            product_id, ["网络安全风险管理报告"]
+            product_id, ["网络安全风险管理报告"], version=version,
         ) if product_id else ""
         rev_date = rev_date or ""
         ver = str(version or "")
@@ -363,7 +363,9 @@ class Server(object):
                         def set_force(i, val):
                             if val and i < len(row):
                                 row[i] = val
-                        if rev_date:
+                        if not serv_review_util.fill_list_revision_dates(
+                            table, product_id, serv_review_util.COVER_KEYWORDS.get("cybersec") or [],
+                        ) and rev_date:
                             set_force(0, rev_date)
                         if ver and not str(row[1] or "").strip():
                             row[1] = ver
@@ -735,6 +737,9 @@ class Server(object):
                     newitem.doc_id = newdoc.id
                     newitem.product_id = target_pid
                     db.session.add(newitem)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, '网络安全风险管理报告',
+            )
             db.session.commit()
             return Resp.resp_ok(data=CybersecDocForm(id=newdoc.id))
         except Exception:

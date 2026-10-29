@@ -3522,6 +3522,9 @@ class Server(object):
                 for reqrcm in reqrcms:
                     newreqrcm = ReqRcm(req_id=newreq.id, rcm_id=reqrcm.rcm_id)
                     db.session.add(newreqrcm)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, fromdoc.file_no, version, "需求规格说明",
+            )
             db.session.commit()
             return Resp.resp_ok(data=SrsDocForm(id=newdoc.id))
         except Exception:
@@ -3820,7 +3823,7 @@ class Server(object):
         """封面/文件修订记录自动获取：日期取自时间线，签署人取自参与人员+签名库（参考自研软件研究报告/安装维护手册）。"""
         if not tree:
             return tree
-        rev_date = serv_review_util.cover_date(prod_id, "srs") if prod_id else ""
+        rev_date = serv_review_util.cover_date(prod_id, "srs", version) if prod_id else ""
         signers = serv_review_util.cover_signers(prod_id, "srs", rev_date) if prod_id else {}
         sign_mode = serv_review_util.sign_mode_enabled()
         reviser = approver = ""
@@ -3858,23 +3861,34 @@ class Server(object):
                                     row["value1"] = sig
                         elif force:
                             row["value1"] = ""
-                        set_if(row, "value2", rev_date)
+                        if serv_review_util.raised_doc_version(version) and rev_date:
+                            row["value2"] = rev_date
+                        else:
+                            set_if(row, "value2", rev_date)
                     if len(rows) > 4:
-                        set_if(rows[4], "value1", rev_date)
+                        if serv_review_util.raised_doc_version(version) and rev_date:
+                            rows[4]["value1"] = rev_date
+                        else:
+                            set_if(rows[4], "value1", rev_date)
                     node.table = Table(headers=self.__approval_headers(), rows=rows, show_header=0)
                 elif table and self.__is_change_log_table(table):
                     rows = [dict(r or {}) for r in (getattr(table, "rows", None) or [])]
                     while len(rows) < 1:
                         rows.append({})
-                    row = rows[0]
-                    set_if(row, "change_date", rev_date)
-                    if version:
-                        set_if(row, "version_no", str(version))
-                    if force or not str(row.get("change_desc") or "").strip():
-                        row["change_desc"] = "首次发布"
-                    set_if(row, "changer", reviser)
-                    set_if(row, "approver", approver)
-                    rows[0] = row
+                    if prod_id and serv_review_util.fill_dict_revision_dates(
+                        rows, prod_id, ["需求规格说明", "需求规格"],
+                    ):
+                        pass
+                    elif not serv_review_util.stamp_dict_revision_date(rows, version, rev_date):
+                        row = rows[0]
+                        set_if(row, "change_date", rev_date)
+                        if version:
+                            set_if(row, "version_no", str(version))
+                        if force or not str(row.get("change_desc") or "").strip():
+                            row["change_desc"] = "首次发布"
+                        set_if(row, "changer", reviser)
+                        set_if(row, "approver", approver)
+                        rows[0] = row
                     empty_rev = {"change_date": "", "version_no": "", "change_desc": "", "changer": "", "approver": ""}
                     while len(rows) < 5:
                         rows.append(dict(empty_rev))
@@ -3888,7 +3902,28 @@ class Server(object):
                     walk(node.children)
 
         walk(tree)
+        if serv_review_util.raised_doc_version(version) and rev_date:
+            self.__stamp_review_time(tree, rev_date)
         return tree
+
+    def __stamp_review_time(self, nodes, rev_date):
+        text = "评审时间：%s" % rev_date
+        for node in nodes or []:
+            if self.__is_saved_review_node(node):
+                tables = [getattr(node, "table", None)]
+                main = tables[0]
+                for extra in getattr(main, "extra_tables", None) or []:
+                    tables.append(getattr(extra, "table", None))
+                for table in tables:
+                    for row in getattr(table, "rows", None) or []:
+                        if not isinstance(row, dict):
+                            continue
+                        for key, value in list(row.items()):
+                            if str(value or "").strip().startswith("评审时间"):
+                                row[key] = text
+            children = getattr(node, "children", None)
+            if children:
+                self.__stamp_review_time(children, rev_date)
 
     async def get_srs_doc(self, id:str, with_tree: bool = False):
         sql = select(SrsDoc, Product).outerjoin(Product, SrsDoc.product_id == Product.id).where(SrsDoc.id == id)
@@ -4129,7 +4164,7 @@ class Server(object):
                 grids.append(extra_grid)
         return grids
 
-    def __write_srs_review_appendix(self, docx, prod_id, roots=None):
+    def __write_srs_review_appendix(self, docx, prod_id, roots=None, version=None):
         """导出末尾追加「附件一 评审结论」，表格样式与软件开发计划/详细设计评审记录一致。
         树上已有保存过的评审表时用保存内容；没有才按模板生成。"""
         from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -4137,11 +4172,16 @@ class Server(object):
         from .serv_utils import docx_util
 
         saved_grids = self.__saved_review_grids(roots)
+        keywords = (serv_review_util.REVIEW_DEFS.get("srs") or {}).get("name_keywords") or ["需求规格说明", "需求规格"]
+        rev_date = serv_review_util.review_date(prod_id, keywords, version=version) if prod_id else ""
         if saved_grids:
             review_tables = saved_grids
+            if serv_review_util.raised_doc_version(version) and rev_date:
+                for grid in review_tables:
+                    for row in grid or []:
+                        if isinstance(row, list) and row and str(row[0] or "").startswith("评审时间"):
+                            row[0] = "评审时间：%s" % rev_date
         else:
-            keywords = (serv_review_util.REVIEW_DEFS.get("srs") or {}).get("name_keywords") or ["需求规格说明", "需求规格"]
-            rev_date = serv_review_util.review_date(prod_id, keywords) if prod_id else ""
             sec = serv_review_util.build_review_section("srs", rev_date, prod_id)
             if not sec:
                 return
@@ -5568,7 +5608,7 @@ class Server(object):
                     __add_blank_lines(docx, 5)
                 first_section = False
 
-            self.__write_srs_review_appendix(docx, srs_doc.product_id, srs_doc.content)
+            self.__write_srs_review_appendix(docx, srs_doc.product_id, srs_doc.content, srs_doc.version)
             docx_util.fill_toc_cache(docx)
             docx.save(output)
             output.seek(0)

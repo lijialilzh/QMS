@@ -318,7 +318,12 @@ class Server(object):
 
         file_rows = [r for r in date_rows if any("软件开发计划" in str(v or "") for v in cell_map.get(r.id, []))]
         file_date = ""
-        if file_rows:
+        if serv_review_util.revision_row_token(getattr(obj, "version", None)):
+            dotted = serv_review_util.cover_date(prod_id, "sd", obj.version)
+            matched = re.match(r"(\d{4})\.(\d{2})\.(\d{2})", dotted or "")
+            if matched:
+                file_date = "%d年%d月%d日" % (int(matched.group(1)), int(matched.group(2)), int(matched.group(3)))
+        elif file_rows:
             fr = min(file_rows, key=date_key)
             file_date = f"{to_int(fr.year)}年{to_int(fr.month)}月{to_int(fr.day)}日"
 
@@ -498,20 +503,23 @@ class Server(object):
                     cols = len(t[0]) if t and t[0] else 5
                     while len(t) < 6:
                         t.append([""] * cols)
-                    row = t[1]
-                    def set_if(i, val):
-                        if force:
-                            row[i if i < len(row) else (len(row) - 1)] = val or ""
-                        elif val and not str(row[i] if i < len(row) else "").strip():
-                            row[i] = val
-                    set_if(0, file_date)
-                    set_if(1, obj.version)
-                    if force or not str(row[2] if len(row) > 2 else "").strip():
-                        if len(row) > 2: row[2] = "首次发布"
-                    if dev_lead or force:
-                        if len(row) > 3:
-                            row[3] = dev_lead or ""
-                    set_if(4, approver)
+                    if serv_review_util.stamp_list_revision_date(t, obj.version, file_date, prod_id=prod_id, doc_key="sd"):
+                        pass
+                    else:
+                        row = t[1]
+                        def set_if(i, val):
+                            if force:
+                                row[i if i < len(row) else (len(row) - 1)] = val or ""
+                            elif val and not str(row[i] if i < len(row) else "").strip():
+                                row[i] = val
+                        set_if(0, file_date)
+                        set_if(1, obj.version)
+                        if force or not str(row[2] if len(row) > 2 else "").strip():
+                            if len(row) > 2: row[2] = "首次发布"
+                        if dev_lead or force:
+                            if len(row) > 3:
+                                row[3] = dev_lead or ""
+                        set_if(4, approver)
             if ref == "personnel" or title == "人员资源":
                 tables = node.get("tables") or []
                 if tables and isinstance(tables[0], list) and tables[0] and personnel_rows:
@@ -528,10 +536,13 @@ class Server(object):
 
         for node in sections:
             fill(node)
+        sd_rev = serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS["sd"]["name_keywords"], version=obj.version)
+        sd_cover = serv_review_util.cover_date(prod_id, "sd", obj.version)
+        raised = bool(serv_review_util.raised_doc_version(obj.version) and (sd_rev or sd_cover))
         serv_review_util.ensure_review(
-            content, "sd", serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS["sd"]["name_keywords"]), prod_id
+            content, "sd", sd_rev, prod_id, force_date=raised,
         )
-        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, "sd"), force=force)
+        serv_review_util.fill_cover_dates(content, sd_cover, force=force or bool(raised and sd_cover) or serv_review_util.cover_date_overwrite(obj.version, sd_cover))
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, "sd"), force=force)
         return content
 
@@ -553,11 +564,14 @@ class Server(object):
         obj.content = self.__normalize_content(obj.content)
         serv_review_util.ensure_review(
             obj.content, "sd",
-            serv_review_util.review_date(row.product_id, serv_review_util.REVIEW_DEFS["sd"]["name_keywords"]) if row.product_id else "",
+            serv_review_util.review_date(row.product_id, serv_review_util.REVIEW_DEFS["sd"]["name_keywords"], version=row.version) if row.product_id else "",
             row.product_id,
+            force_date=bool(serv_review_util.raised_doc_version(row.version)),
         )
+        sd_cover = serv_review_util.cover_date(row.product_id, "sd", row.version) if row.product_id else ""
         serv_review_util.fill_cover_dates(
-            obj.content, serv_review_util.cover_date(row.product_id, "sd") if row.product_id else ""
+            obj.content, sd_cover,
+            force=bool(serv_review_util.raised_doc_version(row.version) and sd_cover) or serv_review_util.cover_date_overwrite(row.version, sd_cover),
         )
         serv_review_util.fill_cover_signers(
             obj.content, serv_review_util.cover_signers(row.product_id, "sd") if row.product_id else {}
@@ -617,6 +631,9 @@ class Server(object):
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
             db.session.add(newdoc)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, '软件开发计划',
+            )
             db.session.commit()
             if target_pid != fromdoc.product_id:
                 await self.rebind_product(newdoc.id, target_pid)

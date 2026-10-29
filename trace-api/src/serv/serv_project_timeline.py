@@ -433,30 +433,42 @@ class Server(object):
         merge_runs(1, lambda t: t[2])            # 年
         merge_runs(2, lambda t: (t[2], t[3]))    # 月（同年同月）
 
-        # 各部门「输出结果」列：连续相同且非空的内容纵向合并、居中
+        # 部门输出：上下或左右相邻、内容相同且非空的格子合成一块。空单元格不合并。
         center_wrap = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        dept_count = len(TIMELINE_DEPTS)
+        visited = [[False] * dept_count for _ in seq]
 
-        def merge_dept(col):
-            dept = TIMELINE_DEPTS[col - 4]
-            i = 0
-            while i < len(seq):
-                if seq[i][1] != "date":
-                    i += 1
+        def dept_val(item, index):
+            return ((item[4] or {}).get(TIMELINE_DEPTS[index]) or "")
+
+        for i, item in enumerate(seq):
+            if item[1] != "date":
+                continue
+            for c in range(dept_count):
+                if visited[i][c]:
                     continue
-                val = (seq[i][4] or {}).get(dept) or ""
+                val = dept_val(item, c)
                 if not val:
-                    i += 1
                     continue
-                j = i
-                while j + 1 < len(seq) and seq[j + 1][1] == "date" and ((seq[j + 1][4] or {}).get(dept) or "") == val:
-                    j += 1
-                if seq[j][0] > seq[i][0]:
-                    ws.merge_cells(start_row=seq[i][0], start_column=col, end_row=seq[j][0], end_column=col)
-                ws.cell(row=seq[i][0], column=col).alignment = center_wrap
-                i = j + 1
-
-        for ci in range(len(TIMELINE_DEPTS)):
-            merge_dept(4 + ci)
+                width = 1
+                while c + width < dept_count and not visited[i][c + width] and dept_val(item, c + width) == val:
+                    width += 1
+                height = 1
+                while i + height < len(seq) and seq[i + height][1] == "date":
+                    nxt = seq[i + height]
+                    if any(visited[i + height][c + k] or dept_val(nxt, c + k) != val for k in range(width)):
+                        break
+                    height += 1
+                for rr in range(height):
+                    for cc in range(width):
+                        visited[i + rr][c + cc] = True
+                r1 = item[0]
+                r2 = seq[i + height - 1][0]
+                c1 = 4 + c
+                c2 = c1 + width - 1
+                if r2 > r1 or c2 > c1:
+                    ws.merge_cells(start_row=r1, start_column=c1, end_row=r2, end_column=c2)
+                ws.cell(row=r1, column=c1).alignment = center_wrap
 
         # 全表加细边框（行列线）
         thin = Side(style="thin", color="BFBFBF")

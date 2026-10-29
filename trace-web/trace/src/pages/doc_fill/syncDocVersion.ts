@@ -6,6 +6,55 @@
 
 const cell = (v: any) => String(v ?? "").trim();
 
+/** 修订行版本号。A0、A1、A2 都返回，空或不是这种写法返回空。 */
+export const revisionRowToken = (version: string): string => {
+    const matched = String(version || "").trim().toUpperCase().match(/^A(\d+)$/);
+    if (!matched) return "";
+    return `A${parseInt(matched[1], 10)}`;
+};
+
+const timelineTextVersion = (text: string): string => {
+    const matched = String(text || "").toUpperCase().match(/(?:^|[^A-Z0-9])A(\d+)(?!\d)/);
+    if (!matched) return "";
+    return `A${parseInt(matched[1], 10)}`;
+};
+
+/** 时间线单元格是否属于这一修订版本。不传版本时只看文件名。A0 不要带 A1、A2 的格子。 */
+export const timelineCellMatchesVersion = (text: string, keywords: string[], version?: string): boolean => {
+    const value = String(text || "");
+    const keys = (keywords || []).filter((item) => String(item || "").trim());
+    if (!keys.some((item) => value.includes(item))) return false;
+    const token = revisionRowToken(version || "");
+    if (!token) return true;
+    const found = timelineTextVersion(value);
+    if (token === "A0") return found === "" || found === "A0";
+    return found === token;
+};
+
+/** 修订表每一行的修改日期按该行版本号写入。没有对应时间线时清空这一格。 */
+export const applyRevisionGridDates = (table: any[], dateOf: (version: string) => string) => {
+    if (!Array.isArray(table) || !table.length || !dateOf) return;
+    const header = (table[0] || []).map(cell);
+    const dateIdx = header.indexOf("修改日期");
+    const verIdx = header.indexOf("版本号");
+    if (dateIdx < 0 || verIdx < 0) return;
+    for (let i = 1; i < table.length; i += 1) {
+        const row = table[i];
+        if (!Array.isArray(row)) continue;
+        while (row.length <= Math.max(dateIdx, verIdx)) row.push("");
+        const ver = revisionRowToken(cell(row[verIdx]));
+        if (!ver) continue;
+        row[dateIdx] = dateOf(ver) || "";
+    }
+};
+
+/** 先补齐 A0…当前版本，再按版本写入修改日期。 */
+export const writeRevisionDates = (table: any[], version: string | undefined, dateOf: (version: string) => string): any[] => {
+    const next = version && revisionVersionSeries(version) ? ensureRevisionGrid(table, version) : table;
+    applyRevisionGridDates(next, dateOf);
+    return next;
+};
+
 /** A0、A1… 补到当前版本；不是「字母+数字」则不拆。 */
 export const revisionVersionSeries = (version: string): string[] | null => {
     const text = String(version || "").trim();

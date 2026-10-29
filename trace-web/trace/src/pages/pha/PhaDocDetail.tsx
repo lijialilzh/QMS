@@ -15,7 +15,7 @@ import EditableTableGenerator from "@/pages/srs_doc/components/EditableTableGene
 import "../pdp/PdpDocDetail.less";
 import FreeChapterContent from "../pdp/FreeChapterContent";
 import { freeAddTable, freeDelTable } from "../pdp/freeChapterBlocks";
-import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
+import { syncDocVersionFields, timelineCellMatchesVersion, writeRevisionDates } from "@/pages/doc_fill/syncDocVersion";
 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
@@ -65,10 +65,11 @@ const cellText = (r: any) => Object.values(r.cells || {}).map((v: any) => String
 const hitWords = (r: any, words: string[]) => cellText(r).some((v) => words.some((k) => v.includes(k)));
 
 // 时间线里找含关键字输出的日期。优先含「评审」的行，取最新一天，格式「YYYY年M月D日」
-const computeDate = (rows: any[], keywords: string[]): string => {
+const computeDate = (rows: any[], keywords: string[], version?: string): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
-    const dates = (rows || []).filter((r: any) => (r.row_type || "date") === "date" && hitWords(r, keywords));
-    const reviewed = dates.filter((r: any) => hitWords(r, ["评审"]));
+    const matched = (r: any) => cellText(r).filter((v) => timelineCellMatchesVersion(v, keywords, version));
+    const dates = (rows || []).filter((r: any) => (r.row_type || "date") === "date" && matched(r).length);
+    const reviewed = dates.filter((r: any) => matched(r).some((v) => v.includes("评审")));
     const matches = reviewed.length ? reviewed : dates;
     if (!matches.length) return "";
     const key = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
@@ -205,7 +206,7 @@ const memberName = (rows: any[], roleKey: string) => {
     return hit ? String(hit.name).trim() : "";
 };
 
-const fillDates = (nodes: any[], date: string, version: string, reviser = "", approver = ""): any[] => {
+const fillDates = (nodes: any[], date: string, version: string, reviser = "", approver = "", dateOf?: (version: string) => string): any[] => {
     const isCover = (n: any) => n.ref_type === "cover" || stripNum(n.title) === "初步危害分析清单";
     const isRev = (n: any) => n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
     const coverTbl = (tb: any[]) =>
@@ -223,11 +224,12 @@ const fillDates = (nodes: any[], date: string, version: string, reviser = "", ap
             return next;
         });
     const revTbl = (tb: any[]) => {
-        const t = tb.map((r: any[]) => (Array.isArray(r) ? [...r] : r));
+        let t = tb.map((r: any[]) => (Array.isArray(r) ? [...r] : r));
         while (t.length < 2) t.push(["", "", "", "", ""]);
+        if (dateOf) t = writeRevisionDates(t, version, dateOf);
         const row = t[1];
         while (row.length < 5) row.push("");
-        row[0] = date || "";
+        if (!dateOf) row[0] = date || "";
         // 修订记录版本号仅填空，不随文档版本 A0→A1 覆盖
         if (version && !String(row[1] || "").trim()) row[1] = version;
         if (!String(row[2] || "").trim()) row[2] = "首次发布";
@@ -316,8 +318,8 @@ export default () => {
                 let out = replaceName(secs, BASE_NAME, newName);
                 if (oldName && oldName !== newName) out = replaceName(out, oldName, newName);
                 const members = mb && mb.code === Api.C_OK ? ((mb.data && mb.data.rows) || []) : [];
-                const date = computeDate(tlRows, DATE_KEYWORDS);
-                out = fillDates(out, date, version, memberName(members, "产品经理"), memberName(members, "产品负责人"));
+                const date = computeDate(tlRows, DATE_KEYWORDS, version);
+                out = fillDates(out, date, version, memberName(members, "产品经理"), memberName(members, "产品负责人"), (ver) => computeDate(tlRows, DATE_KEYWORDS, ver));
                 out = fillFmea(out, hazMap);
                 resolve({ sections: out, date });
             }).catch(() => resolve({ sections: secs, date: "" }));

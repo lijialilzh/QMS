@@ -948,14 +948,16 @@ class Server(object):
         elif exam_parts(row.doc_type):
             self.__apply_exam_live(obj.content, row.doc_type)
         key = base_doc_type(row.doc_type or "")
+        cover = serv_review_util.cover_date(row.product_id, key, row.version) if row.product_id else ""
         serv_review_util.fill_cover_dates(
-            obj.content, serv_review_util.cover_date(row.product_id, key) if row.product_id else ""
+            obj.content, cover,
+            force=bool(serv_review_util.raised_doc_version(row.version) and cover) or serv_review_util.cover_date_overwrite(row.version, cover),
         )
         serv_review_util.fill_cover_signers(
             obj.content, serv_review_util.cover_signers(row.product_id, key) if row.product_id else {}
         )
         serv_review_util.fill_annex_reviews(
-            obj.content, row.product_id, key, getattr(product, "name", "") or ""
+            obj.content, row.product_id, key, getattr(product, "name", "") or "", version=row.version,
         )
         if product:
             obj.product_name = product.name
@@ -1360,9 +1362,13 @@ class Server(object):
             self.__rebuild_env_checks(content, info)
         self.__fill_cover_meta(content, obj.version)
         key = obj.doc_type or ""
-        serv_review_util.fill_cover_dates(content, info.get("env_cover_date") or serv_review_util.cover_date(prod_id, key))
+        cover = info.get("env_cover_date") or serv_review_util.cover_date(prod_id, key, obj.version)
+        serv_review_util.fill_cover_dates(
+            content, cover,
+            force=bool(serv_review_util.raised_doc_version(obj.version) and cover) or serv_review_util.cover_date_overwrite(obj.version, cover),
+        )
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, key))
-        serv_review_util.fill_annex_reviews(content, prod_id, key, getattr(product, "name", "") or "")
+        serv_review_util.fill_annex_reviews(content, prod_id, key, getattr(product, "name", "") or "", version=obj.version)
         if key == "md_003":
             self.__fill_md003_chapters(content, prod_id)
             self.__apply_md003_qty(content, prod_id)
@@ -1400,7 +1406,7 @@ class Server(object):
         kws = doc_keywords(doc_type) or [doc_title(doc_type)]
         file_rows = [
             r for r in date_rows
-            if any(any(k in str(v or "") for k in kws) for v in cell_map.get(r.id, []))
+            if any(serv_review_util.text_matches_doc_version(v, kws, doc_version) for v in cell_map.get(r.id, []))
         ]
         file_date = ""
         if file_rows:
@@ -1465,6 +1471,7 @@ class Server(object):
         return {
             "prod_name": prod_name, "full_version": full_version, "product_code": product_code,
             "scope": scope, "file_date": file_date, "version": doc_version,
+            "prod_id": prod_id, "revision_keywords": kws,
             "reviser": modeler or algo, "approver": approver,
             "doc_type": doc_type, "env_weeks": env_weeks, "env_assets": env_assets,
             "env_checker": env_checker, "env_title": env_title, "env_cover_date": env_cover_date,
@@ -1488,7 +1495,10 @@ class Server(object):
                 def set_if(i, val):
                     if val and not str(row[i] if i < len(row) else "").strip():
                         row[i] = val
-                set_if(0, info["file_date"])
+                if not serv_review_util.fill_list_revision_dates(
+                    t, info.get("prod_id"), info.get("revision_keywords") or [], cn_date=True,
+                ):
+                    set_if(0, info["file_date"])
                 set_if(1, info["version"])
                 if not str(row[2] if len(row) > 2 else "").strip():
                     row[2] = "首次发布"
@@ -1923,6 +1933,9 @@ class Server(object):
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content, fromdoc.doc_type)),
             )
             db.session.add(newdoc)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, '',
+            )
             db.session.commit()
             return Resp.resp_ok(data=DataDocForm(id=newdoc.id))
         except Exception:
@@ -1951,7 +1964,8 @@ class Server(object):
                     if product_changed:
                         prod = db.session.execute(select(Product).where(Product.id == next_pid)).scalars().first()
                         value = serv_review_util.fill_annex_reviews(
-                            value, next_pid, row.doc_type, getattr(prod, "name", "") or "", force=True
+                            value, next_pid, row.doc_type, getattr(prod, "name", "") or "", force=True,
+                            version=next_ver,
                         )
                 setattr(row, key, value)
             if getattr(form, "version", None) and hasattr(row, "file_no"):

@@ -13,7 +13,7 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
 import FreeChapterContent from "../pdp/FreeChapterContent";
 import { freeAddTable, freeDelTable } from "../pdp/freeChapterBlocks";
-import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
+import { syncDocVersionFields, timelineCellMatchesVersion, writeRevisionDates } from "@/pages/doc_fill/syncDocVersion";
 
 // 由「基础数据-版本命名规则」全局配置生成「软件版本命名规则」章节正文
 const buildNamingBody = (c: any): string => {
@@ -39,10 +39,10 @@ let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
 
 // 从时间线里找「版本更新历史」文件所在行的日期（取最早匹配行）
-const findFileRow = (rows: any[], keyword = "版本更新历史"): any => {
+const findFileRow = (rows: any[], keyword = "版本更新历史", version?: string): any => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
     const matches = (rows || []).filter((r: any) =>
-        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => String(v || "").includes(keyword))
+        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => timelineCellMatchesVersion(String(v || ""), [keyword], version))
     );
     if (!matches.length) return null;
     const key = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
@@ -50,15 +50,15 @@ const findFileRow = (rows: any[], keyword = "版本更新历史"): any => {
     matches.forEach((r: any) => { if (key(r) < key(best)) best = r; });
     return best;
 };
-const computeFileDate = (rows: any[]): string => {
+const computeFileDate = (rows: any[], version?: string): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
-    const best = findFileRow(rows);
+    const best = findFileRow(rows, "版本更新历史", version);
     return best ? `${num(best.year)}年${num(best.month)}月${num(best.day)}日` : "";
 };
-const computeReleaseDate = (rows: any[]): string => {
+const computeReleaseDate = (rows: any[], version?: string): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
     const pad = (n: number) => (n < 10 ? `0${n}` : `${n}`);
-    const best = findFileRow(rows);
+    const best = findFileRow(rows, "版本更新历史", version);
     return best ? `${num(best.year)}.${pad(num(best.month))}.${pad(num(best.day) || 1)}` : "";
 };
 
@@ -246,17 +246,18 @@ export default () => {
     };
 
     // 文件修订记录首行默认值（仅填空不覆盖）
-    const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; pm?: string; approver?: string }): any[] => {
+    const fillRevision = (nodes: any[], info: { fileDate?: string; revisionDate?: (version: string) => string; version?: string; pm?: string; approver?: string }): any[] => {
         const fix = (n: any): any => {
             const isRev = n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
             let tables = n.tables;
             if (isRev && Array.isArray(n.tables) && Array.isArray(n.tables[0])) {
-                const t = n.tables[0].map((r: any[]) => (Array.isArray(r) ? [...r] : r));
+                let t = n.tables[0].map((r: any[]) => (Array.isArray(r) ? [...r] : r));
                 const cols = (t[0] || []).length || 5;
                 while (t.length < 6) t.push(new Array(cols).fill(""));
+                if (info.revisionDate) t = writeRevisionDates(t, info.version, info.revisionDate);
                 const row = t[1];
                 const setIf = (i: number, val: any) => { if (val && !String(row[i] || "").trim()) row[i] = val; };
-                setIf(0, info.fileDate);
+                if (!info.revisionDate) setIf(0, info.fileDate);
                 setIf(1, info.version);
                 if (!String(row[2] || "").trim()) row[2] = "首次发布";
                 setIf(3, info.pm);
@@ -296,10 +297,11 @@ export default () => {
                 out = fillUpdateHistory(out, {
                     fullVersion: prod.full_version,
                     releaseVersion: prod.release_version,
-                    releaseDate: computeReleaseDate(tlRows),
+                    releaseDate: computeReleaseDate(tlRows, version),
                 });
                 out = fillRevision(out, {
-                    fileDate: computeFileDate(tlRows),
+                    fileDate: computeFileDate(tlRows, version),
+                    revisionDate: (ver) => computeFileDate(tlRows, ver),
                     version,
                     pm: findRole((r) => r.includes("产品经理")),
                     approver: findRole((r) => r.includes("负责人") && r.includes("产品")),

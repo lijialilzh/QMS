@@ -30,7 +30,7 @@ import {
 } from "../pdp/freeChapterBlocks";
 import { FreeSideActions } from "../pdp/FreeChapterContent";
 import { isRuntimeLockedBody, isRuntimeLockedTable } from "../pdp/runtimeEnvLock";
-import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
+import { syncDocVersionFields, timelineCellMatchesVersion, writeRevisionDates } from "@/pages/doc_fill/syncDocVersion";
 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
@@ -55,10 +55,10 @@ const computeCycle = (rows: any[]): string => {
 };
 
 // 从时间线找「软件测试计划」日期（取最晚一天，与后端 cover_date 一致），格式 yyyy.MM.dd
-const computeFileDate = (rows: any[], keyword = "软件测试计划"): string => {
+const computeFileDate = (rows: any[], keyword = "软件测试计划", version?: string): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
     const matches = (rows || []).filter((r: any) =>
-        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => String(v || "").includes(keyword))
+        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => timelineCellMatchesVersion(String(v || ""), [keyword], version))
     );
     if (!matches.length) return "";
     const key = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
@@ -82,9 +82,9 @@ const computeDevEnd = (rows: any[]): string => {
 };
 
 // 按关键字匹配时间线活动，取最晚日期（YYYY年M月D日）
-const latestDateFor = (rows: any[], keys: string[]): string => {
+const latestDateFor = (rows: any[], keys: string[], version?: string): string => {
     const m = (rows || []).filter((r: any) => (r.row_type || "date") === "date"
-        && Object.values(r.cells || {}).some((v: any) => keys.some((k) => String(v || "").includes(k))));
+        && Object.values(r.cells || {}).some((v: any) => timelineCellMatchesVersion(String(v || ""), keys, version)));
     if (!m.length) return "";
     return mFmtYMD(m.reduce((a: any, b: any) => (mDateKey(b) > mDateKey(a) ? b : a)));
 };
@@ -229,19 +229,24 @@ export default () => {
     };
 
     // 文件修订记录：日期/版本/修订说明仅填空；修订人=测试人员(日期规则)、批准人=研发负责人始终覆盖
-    const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; reviser?: string; approver?: string }): any[] => {
+    const fillRevision = (nodes: any[], info: { fileDate?: string; revisionDate?: (version: string) => string; version?: string; reviser?: string; approver?: string }): any[] => {
         const fix = (n: any): any => {
             const isRev = n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
             let tables = n.tables;
             if (isRev && Array.isArray(n.tables) && Array.isArray(n.tables[0])) {
-                const t = n.tables[0].map((r: any[]) => (Array.isArray(r) ? [...r] : r));
+                let t = n.tables[0].map((r: any[]) => (Array.isArray(r) ? [...r] : r));
                 const cols = (t[0] || []).length || 5;
                 while (t.length < 6) t.push(new Array(cols).fill(""));
-                const row = t[1];
+                let row = t[1];
                 while (row.length < 5) row.push("");
                 const setIf = (i: number, val: any) => { if (val && !String(row[i] || "").trim()) row[i] = val; };
                 // 修改日期←时间线「软件测试计划」，有则覆盖模板错误旧值
+                if (info.revisionDate) {
+                    t = writeRevisionDates(t, info.version, info.revisionDate);
+                    row = t[1];
+                } else {
                 if (info.fileDate) row[0] = info.fileDate;
+                }
                 // 版本号仅填空：首次发布行不因文档升版被改成 A1
                 setIf(1, info.version);
                 if (!String(row[2] || "").trim()) row[2] = "首次发布";
@@ -351,11 +356,12 @@ export default () => {
                     desc: prod.overall_desc,
                     cycle: computeCycle(tlRows),
                 });
-                const fileDate = computeFileDate(tlRows);
+                const fileDate = computeFileDate(tlRows, "软件测试计划", version);
                 const m = String(fileDate || "").match(/(\d{4})\D+(\d{1,2})/);
                 const before202509 = m ? (Number(m[1]) * 100 + Number(m[2]) < 202509) : false;
                 out = fillRevision(out, {
                     fileDate,
+                    revisionDate: (ver) => computeFileDate(tlRows, "软件测试计划", ver),
                     version,
                     // 修订人=测试人员（2025.09 前宋月 / 之后孙家旭）；批准人=研发负责人
                     reviser: before202509 ? "宋月" : "孙家旭",
@@ -363,7 +369,7 @@ export default () => {
                 });
                 out = fillMilestone(out, {
                     devEnd: computeDevEnd(tlRows),
-                    planDate: latestDateFor(tlRows, ["软件测试计划"]),
+                    planDate: latestDateFor(tlRows, ["软件测试计划"], version),
                     tpm: findRole((r) => r.toUpperCase().includes("TPM")),
                     moduleMap,
                     phases: computeDevPhases(tlRows),

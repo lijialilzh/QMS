@@ -28,6 +28,7 @@ from ..utils.i18n import ts
 from ..utils.sql_ctx import db
 from . import msg_err_db
 from .serv_utils import new_version, sync_file_no_version
+from . import serv_review_util
 from .serv_utils import docx_util
 from .serv_product import product_scope_filter
 
@@ -126,6 +127,9 @@ class Server(object):
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
             db.session.add(newdoc)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, "测试设备清单",
+            )
             db.session.commit()
             return Resp.resp_ok(data=TeqDocForm(id=newdoc.id))
         except Exception:

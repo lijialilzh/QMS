@@ -88,12 +88,14 @@ class Server(object):
           - sign_urls: {坐标: data_url}（供在线预览显示签名章）
         纯 DB 读取，不做文件 IO。"""
         prod_id = row.product_id
-        rev_date = ru.cover_date(prod_id, "bug")
+        ver = str(getattr(row, "version", None) or "").strip()
+        if not ver:
+            ver = ((row.file_no or self.__dhf_file_no(prod_id) or "").rsplit("-", 1)[-1] or "A0").strip() or "A0"
+        rev_date = ru.cover_date(prod_id, "bug", ver)
         names = ru.cover_signer_names(prod_id, "bug", rev_date)
         drafter = names.get("编制人", "")
         reviewer = names.get("审核人", "")
         approver = names.get("批准人", "")
-        ver = ((row.file_no or self.__dhf_file_no(prod_id) or "").rsplit("-", 1)[-1] or "A0").strip() or "A0"
         texts = {
             "G7": rev_date, "G8": rev_date, "G9": rev_date,   # 编制/审核/批准 日期
             "E10": rev_date,                                  # 生效日期

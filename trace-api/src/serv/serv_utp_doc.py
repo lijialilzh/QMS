@@ -127,7 +127,7 @@ class Server(object):
             ).scalars().first()
         return (row.code or "").strip() if row and row.code else ""
 
-    def __plan_cover_date(self, prod_id):
+    def __plan_cover_date(self, prod_id, version=None):
         """编审批、生效日期、修订修改日期：时间线里「用户测试计划」的最晚一天。
         本版本没有时间线时，用同名产品其它版本的时间线。不用宽泛「用户测试」，避免串到用例/记录/报告。"""
         if not prod_id:
@@ -135,12 +135,12 @@ class Server(object):
         rows = serv_review_util.timeline_rows_with_sibling(prod_id)
         if not rows:
             return ""
-        return serv_review_util.review_date(prod_id, ["用户测试计划"], tl_rows=rows) or ""
+        return serv_review_util.review_date(prod_id, ["用户测试计划"], tl_rows=rows, version=version) or ""
 
     def __fill_revision(self, content, prod_id, version, force=False):
         """文件修订记录首行：修改日期(评审/封面日期)、版本号、首次发布、
         修订人=测试人员（2025.09 前宋月/之后孙家旭）、批准人=研发负责人。打开即覆盖修订人/批准人。"""
-        rev_date = self.__plan_cover_date(prod_id)
+        rev_date = self.__plan_cover_date(prod_id, version)
         reviser = "宋月" if serv_review_util._before_202509(rev_date) else "孙家旭"
         # 批准人=研发负责人。本版本没有该角色时，用同一产品名称下其它版本的参与人员。
         approver = (serv_review_util.cover_signer_names(prod_id, DOC_KEY, rev_date).get("批准人") or "") if prod_id else ""
@@ -153,6 +153,8 @@ class Server(object):
                 cols = len(t[0]) if isinstance(t[0], list) and t[0] else 5
                 while len(t) < 6:
                     t.append([""] * cols)
+                if serv_review_util.stamp_list_revision_date(t, version, rev_date, prod_id=prod_id, doc_key=DOC_KEY):
+                    break
                 if len(t) >= 2 and isinstance(t[1], list) and len(t[1]) >= 3:
                     row = t[1]
                     if force or rev_date:
@@ -437,10 +439,15 @@ class Server(object):
         self.__fill_revision(content, prod_id, version, force=force)
         serv_review_util.ensure_review(
             content, DOC_KEY,
-            serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS[DOC_KEY]["name_keywords"]) if prod_id else "",
+            serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS[DOC_KEY]["name_keywords"], version=version) if prod_id else "",
             prod_id,
+            force_date=bool(serv_review_util.raised_doc_version(version)),
         )
-        serv_review_util.fill_cover_dates(content, self.__plan_cover_date(prod_id), force=force)
+        cover_date = self.__plan_cover_date(prod_id, version)
+        serv_review_util.fill_cover_dates(
+            content, cover_date,
+            force=force or bool(serv_review_util.raised_doc_version(version) and cover_date) or serv_review_util.cover_date_overwrite(version, cover_date),
+        )
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, DOC_KEY) if prod_id else {}, force=force)
         return content
 
@@ -498,6 +505,9 @@ class Server(object):
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
             db.session.add(newdoc)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, DOC_NAME,
+            )
             db.session.commit()
             if target_pid != fromdoc.product_id:
                 await self.rebind_product(newdoc.id, target_pid)

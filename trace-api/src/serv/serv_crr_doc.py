@@ -174,7 +174,7 @@ class Server(object):
 
         return walk(content.get("sections") or [])
 
-    def __autofill(self, content, prod_id, force=False):
+    def __autofill(self, content, prod_id, force=False, version=None):
         """按产品参与人员/时间线/SCM 自动获取：
         检查日期/签字日期←时间线(代码审查)；被审核人←TPM；审核人←研发负责人；审核签字←研发负责人签名章；
         代码地址←软件配置管理计划配置项存储地址（无则兜底模板）。
@@ -192,7 +192,7 @@ class Server(object):
                     return (m.name or "").strip()
             return ""
 
-        rev_date = serv_review_util.cover_date(prod_id, "crr") if prod_id else ""
+        rev_date = serv_review_util.cover_date(prod_id, "crr", version) if prod_id else ""
         auditee_val = role_name("TPM")
         auditor_val = role_name("研发负责人")
         sign_val = (serv_review_util._sign_by_name(auditor_val) if auditor_val else "") or ""
@@ -238,7 +238,7 @@ class Server(object):
 
     def __to_obj(self, row: CrrDoc, product: Product = None):
         obj = CrrDocObj(**row.dict())
-        obj.content = self.__autofill(self.__normalize_content(obj.content), row.product_id)
+        obj.content = self.__autofill(self.__normalize_content(obj.content), row.product_id, version=row.version)
         if not (obj.file_no or "").strip():
             obj.file_no = self.__dhf_file_no(row.product_id)
         obj.file_no = sync_file_no_version(obj.file_no or "", getattr(row, "version", None) or "") or obj.file_no
@@ -264,7 +264,7 @@ class Server(object):
             if row.file_no:
                 row.file_no = sync_file_no_version(row.file_no, row.version) or row.file_no
             content = self.__normalize_content(row.content)
-            content = self.__autofill(content, row.product_id, force=False)
+            content = self.__autofill(content, row.product_id, force=False, version=row.version)
             row.content = content
             db.session.add(row)
             db.session.commit()
@@ -300,6 +300,9 @@ class Server(object):
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
             db.session.add(newdoc)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, '代码审查记录',
+            )
             db.session.commit()
             if target_pid != fromdoc.product_id:
                 await self.rebind_product(newdoc.id, target_pid)
@@ -341,7 +344,7 @@ class Server(object):
             db.session.execute(delete(CrrDoc).where(CrrDoc.product_id == product_id, CrrDoc.version == row.version, CrrDoc.id != id))
             row.product_id = product_id
             content = self.__normalize_content(row.content)
-            content = self.__autofill(content, product_id, force=True)
+            content = self.__autofill(content, product_id, force=True, version=row.version)
             row.content = content
             # 切换产品后按新产品 DHF 重取文件编号（空或强制同步版本后缀）
             dhf_no = self.__dhf_file_no(product_id)

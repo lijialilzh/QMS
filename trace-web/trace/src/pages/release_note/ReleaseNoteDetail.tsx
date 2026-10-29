@@ -13,7 +13,7 @@ import ProductVersionSelect from "@/common/ProductVersionSelect";
 import "../pdp/PdpDocDetail.less";
 import FreeChapterContent from "../pdp/FreeChapterContent";
 import { freeAddTable, freeDelTable } from "../pdp/freeChapterBlocks";
-import { syncDocVersionFields } from "@/pages/doc_fill/syncDocVersion";
+import { syncDocVersionFields, timelineCellMatchesVersion, writeRevisionDates } from "@/pages/doc_fill/syncDocVersion";
 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
@@ -52,9 +52,9 @@ const datedTimelineRows = (rows: any[]) => {
 };
 
 // 时间线输出含关键字的最晚日期，格式「YYYY年M月D日」
-const computeReleaseDate = (rows: any[], keyword = "发布说明"): string => {
+const computeReleaseDate = (rows: any[], keyword = "发布说明", version?: string): string => {
     const matches = datedTimelineRows(rows).filter((x) =>
-        Object.values(x.row.cells || {}).some((v: any) => cellText(v).includes(keyword))
+        Object.values(x.row.cells || {}).some((v: any) => timelineCellMatchesVersion(cellText(v), [keyword], version))
     );
     if (!matches.length) return "";
     const key = (x: any) => x.y * 10000 + x.m * 100 + (isNaN(x.d) ? 0 : x.d);
@@ -227,18 +227,19 @@ export default () => {
     };
 
     // 文件修订记录首行日期/说明/人仅填空。版本行由 syncDocVersionFields 保留 A0 并补 A1、A2。
-    const fillRevision = (nodes: any[], info: { fileDate?: string; version?: string; pm?: string; approver?: string }): any[] => {
+    const fillRevision = (nodes: any[], info: { fileDate?: string; revisionDate?: (version: string) => string; version?: string; pm?: string; approver?: string }): any[] => {
         const fix = (n: any): any => {
             const isRev = n.ref_type === "revision" || stripNum(n.title) === "文件修订记录";
             let tables = n.tables;
             if (isRev && Array.isArray(n.tables) && Array.isArray(n.tables[0])) {
-                const tb = n.tables[0].map((r: any[]) => (Array.isArray(r) ? [...r] : r));
+                let tb = n.tables[0].map((r: any[]) => (Array.isArray(r) ? [...r] : r));
                 const cols = (tb[0] || []).length || 5;
                 while (tb.length < 6) tb.push(new Array(cols).fill(""));
+                if (info.revisionDate) tb = writeRevisionDates(tb, info.version, info.revisionDate);
                 const row = tb[1];
                 while (row.length < 5) row.push("");
                 const setIf = (i: number, val: any) => { if (val && !String(row[i] || "").trim()) row[i] = val; };
-                setIf(0, info.fileDate);
+                if (!info.revisionDate) setIf(0, info.fileDate);
                 if (info.version && !String(row[1] || "").trim()) row[1] = info.version;
                 if (!String(row[2] || "").trim()) row[2] = "首次发布";
                 setIf(3, info.pm);
@@ -350,6 +351,7 @@ export default () => {
                 }, overwrite);
                 out = fillRevision(out, {
                     fileDate: releaseDate,
+                    revisionDate: (ver) => computeReleaseDate(tlRows, "发布说明", ver),
                     version,
                     pm: findRole((r) => r.includes("产品经理")),
                     approver: findRole((r) => r.includes("负责人") && r.includes("产品")),

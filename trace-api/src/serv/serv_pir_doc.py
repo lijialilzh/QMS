@@ -121,8 +121,9 @@ class Server(object):
     def __to_obj(self, row: PirDoc, product: Product = None):
         obj = PirDocObj(**row.dict())
         obj.content = self.__normalize_content(obj.content)
+        pir_cover = serv_review_util.cover_date(row.product_id, "pir", row.version) if row.product_id else ""
         serv_review_util.fill_cover_dates(
-            obj.content, serv_review_util.cover_date(row.product_id, "pir") if row.product_id else ""
+            obj.content, pir_cover, force=serv_review_util.cover_date_overwrite(row.version, pir_cover),
         )
         serv_review_util.fill_cover_signers(
             obj.content, serv_review_util.cover_signers(row.product_id, "pir") if row.product_id else {}
@@ -196,7 +197,8 @@ class Server(object):
         info = self.__collect_autofill(prod_id, product, obj.version)
         for node in sections:
             self.__fill_node(node, info)
-        serv_review_util.fill_cover_dates(content, serv_review_util.cover_date(prod_id, "pir"))
+        pir_cover = serv_review_util.cover_date(prod_id, "pir", obj.version)
+        serv_review_util.fill_cover_dates(content, pir_cover, force=serv_review_util.cover_date_overwrite(obj.version, pir_cover))
         serv_review_util.fill_cover_signers(content, serv_review_util.cover_signers(prod_id, "pir"))
         return content
 
@@ -259,6 +261,7 @@ class Server(object):
         return {
             "prod_name": prod_name, "full_version": full_version, "product_code": product_code,
             "scope": scope, "overall_desc": overall_desc, "period": period,
+            "prod_id": prod_id,
             "file_date": file_date, "version": doc_version, "pm": pm, "approver": approver,
             "project_field": project_field, "country": country,
         }
@@ -296,7 +299,10 @@ class Server(object):
                 def set_if(i, val):
                     if val and not str(row[i] if i < len(row) else "").strip():
                         row[i] = val
-                set_if(0, info["file_date"])
+                if not serv_review_util.fill_list_revision_dates(
+                    t, info.get("prod_id"), serv_review_util.COVER_KEYWORDS.get("pir") or [], cn_date=True,
+                ):
+                    set_if(0, info["file_date"])
                 set_if(1, info["version"])
                 if not str(row[2] if len(row) > 2 else "").strip():
                     row[2] = "首次发布"
@@ -374,6 +380,9 @@ class Server(object):
                 content=copy.deepcopy(self.__normalize_content(fromdoc.content)),
             )
             db.session.add(newdoc)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, '产品立项报告',
+            )
             db.session.commit()
             return Resp.resp_ok(data=PirDocForm(id=newdoc.id))
         except Exception:

@@ -263,15 +263,35 @@ const fillTimelineDateYears = (rows: any[]): Array<{ row: any; year: number }> =
     return dated;
 };
 
-const computeSrsCoverDate = (rows: any[]): string => {
+const srsDocVersionToken = (version: string) => {
+    const matched = String(version || "").trim().toUpperCase().match(/^A(\d+)$/);
+    if (!matched) return "";
+    return `A${parseInt(matched[1], 10)}`;
+};
+
+const srsTimelineTextVersion = (text: string) => {
+    const matched = String(text || "").toUpperCase().match(/(?:^|[^A-Z0-9])A(\d+)(?!\d)/);
+    if (!matched) return "";
+    return `A${parseInt(matched[1], 10)}`;
+};
+
+const computeSrsCoverDate = (rows: any[], version?: string): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10) || 0;
-    const cellVals = (r: any) => Object.values(r.cells || {});
+    const token = srsDocVersionToken(version || "");
+    const cellTexts = (r: any) => Object.values(r.cells || {}).map((v: any) => String(v || ""));
+    const namedTexts = (r: any) => cellTexts(r).filter((text) => {
+        if (!SRS_COVER_DATE_KEYWORDS.some((k) => text.includes(k))) return false;
+        if (!token) return true;
+        const found = srsTimelineTextVersion(text);
+        if (token === "A0") return found === "" || found === "A0";
+        return found === token;
+    });
     const matchRow = (r: any, needReview: boolean) => {
         if (!num(r.month)) return false;
-        const vals = cellVals(r);
-        const hitName = vals.some((v: any) => SRS_COVER_DATE_KEYWORDS.some((k) => String(v || "").includes(k)));
-        const hitReview = vals.some((v: any) => String(v || "").includes("评审"));
-        return hitName && (needReview ? hitReview : true);
+        const named = namedTexts(r);
+        if (!named.length) return false;
+        if (!needReview) return true;
+        return named.some((text) => text.includes("评审"));
     };
     const dated = fillTimelineDateYears(rows).filter(({ row }) => (row.row_type || "date") === "date" && num(row.month));
     const dateKey = ({ row, year }: { row: any; year: number }) => year * 10000 + num(row.month) * 100 + (num(row.day) || 0);
@@ -392,6 +412,7 @@ type CoverRevisionAutofillInfo = {
     resolveSigner: (label: string) => string;
     reviser: string;
     approver: string;
+    revisionDate?: (version: string) => string;
 };
 
 const applyCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAutofillInfo): { nodes: TreeNode[]; changed: boolean } => {
@@ -432,28 +453,33 @@ const applyCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAutofi
         } else if (nextNode.table && isSrsChangeLogTableNode(nextNode)) {
             const rows = [...(nextNode.table.rows || [])].map((r: any) => ({ ...r }));
             while (rows.length < 1) rows.push({});
-            const row = rows[0] || {};
-            setIf(row, "change_date", info.coverDate);
-            // 修订记录版本号仅填空，不随文档版本覆盖
-            if (info.version && !String(row.version_no ?? "").trim()) {
-                row.version_no = info.version;
-                changed = true;
-            }
-            if (!String(row.change_desc ?? "").trim()) {
-                row.change_desc = "首次发布";
-                changed = true;
-            }
-            // 修订记录首行人员随产品部职能覆盖；已有 A1 等后续行不改
-            if (info.reviser && String(row.changer ?? "") !== info.reviser) {
-                row.changer = info.reviser;
-                changed = true;
-            }
-            if (info.approver && String(row.approver ?? "") !== info.approver) {
-                row.approver = info.approver;
-                changed = true;
-            }
-            rows[0] = row;
             const revisionRows = ensureRevisionObjectRows(rows, info.version || "");
+            if (info.revisionDate) {
+                revisionRows.forEach((item: any) => {
+                    const ver = srsDocVersionToken(String(item?.version_no || ""));
+                    if (!ver) return;
+                    const date = info.revisionDate?.(ver) || "";
+                    if (String(item.change_date ?? "") !== date) {
+                        item.change_date = date;
+                        changed = true;
+                    }
+                });
+            }
+            const a0 = revisionRows.find((item: any) => srsDocVersionToken(String(item?.version_no || "")) === "A0") || revisionRows[0];
+            if (a0) {
+                if (!String(a0.change_desc ?? "").trim()) {
+                    a0.change_desc = "首次发布";
+                    changed = true;
+                }
+                if (info.reviser && String(a0.changer ?? "") !== info.reviser) {
+                    a0.changer = info.reviser;
+                    changed = true;
+                }
+                if (info.approver && String(a0.approver ?? "") !== info.approver) {
+                    a0.approver = info.approver;
+                    changed = true;
+                }
+            }
             if (JSON.stringify(revisionRows) !== JSON.stringify(rows)) changed = true;
             nextNode = { ...nextNode, table: { ...nextNode.table, rows: revisionRows } };
         }
@@ -3243,7 +3269,11 @@ export default () => {
                 const who = label === "编制人" ? productManager : label === "审核人" || label === "批准人" ? productOwner : "";
                 return who ? (signMap[who] || who) : "";
             };
-            const coverDate = computeSrsCoverDate(tlRows);
+            const versionNow = String(displayDocVersion || "");
+            const coverToken = srsDocVersionToken(versionNow);
+            const coverDate = coverToken
+                ? computeSrsCoverDate(tlRows, versionNow)
+                : computeSrsCoverDate(tlRows);
             const pickTestLead = () => {
                 const names: string[] = [];
                 members.forEach((m: any) => {
@@ -3270,10 +3300,11 @@ export default () => {
             };
             const result = applyCoverRevisionAutofill(data.treeStructure as TreeNode[], {
                 coverDate,
-                version: String(displayDocVersion || ""),
+                version: versionNow,
                 resolveSigner,
                 reviser: productManager,
                 approver: productOwner,
+                revisionDate: (ver) => computeSrsCoverDate(tlRows, ver),
             });
             const reviewResult = applySrsReviewPersonAutofill(result.nodes, {
                 coverDate,

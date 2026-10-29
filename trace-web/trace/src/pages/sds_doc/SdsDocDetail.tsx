@@ -426,12 +426,29 @@ const normalizeSdsApprovalRows = (node: TreeNode) => {
     ];
 };
 
-const computeSdsCoverDate = (rows: any[]): string => {
+const sdsDocVersionToken = (version: string) => {
+    const matched = String(version || "").trim().toUpperCase().match(/^A(\d+)$/);
+    if (!matched) return "";
+    return `A${parseInt(matched[1], 10)}`;
+};
+
+const timelineTextVersion = (text: string) => {
+    const matched = String(text || "").toUpperCase().match(/(?:^|[^A-Z0-9])A(\d+)(?!\d)/);
+    if (!matched) return "";
+    return `A${parseInt(matched[1], 10)}`;
+};
+
+const computeSdsCoverDate = (rows: any[], version?: string): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10) || 0;
     const dateKey = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
-    const isSdsOutput = (text: string) => (
-        SDS_COVER_DATE_KEYWORDS.some((k) => text.includes(k)) && !text.includes("算法方案")
-    );
+    const token = sdsDocVersionToken(version || "");
+    const isSdsOutput = (text: string) => {
+        if (!SDS_COVER_DATE_KEYWORDS.some((k) => text.includes(k)) || text.includes("算法方案")) return false;
+        if (!token) return true;
+        const found = timelineTextVersion(text);
+        if (token === "A0") return found === "" || found === "A0";
+        return found === token;
+    };
     const match = (r: any, needReview: boolean, devOnly: boolean) => {
         if ((r.row_type || "date") !== "date" || !num(r.year) || !num(r.month)) return false;
         const cells = Object.entries(r.cells || {}).filter(([dept, value]) => {
@@ -464,6 +481,7 @@ type CoverRevisionAutofillInfo = {
     resolveSigner: (label: string) => string;
     reviser: string;
     approver: string;
+    revisionDate?: (version: string) => string;
 };
 
 const syncSdsCoverDateCells = (table: TreeNode["table"], date: string) => {
@@ -536,35 +554,53 @@ const applySdsCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAut
             while (rows.length < 1) rows.push({});
             const headers = nextNode.table.headers || [];
             const dateHeader = headers.find((header: any) => String(header?.name || "").replace(/\s/g, "") === "修改日期");
+            const versionHeader = headers.find((header: any) => String(header?.name || "").replace(/\s/g, "") === "版本号");
             const dateKey = String(dateHeader?.code || "change_date");
-            const row = rows.find((item: any) => String(item?.[dateKey] || item?.change_date || "").trim()) || rows[0] || {};
-            setDate(row, dateKey, info.coverDate);
-            if (dateKey !== "change_date") setDate(row, "change_date", info.coverDate);
+            const versionKey = String(versionHeader?.code || "version_no");
+            const revisionRows = ensureRevisionObjectRows(rows, info.version || "");
+            if (info.revisionDate) {
+                revisionRows.forEach((item: any) => {
+                    const ver = sdsDocVersionToken(String(item?.[versionKey] || item?.version_no || ""));
+                    if (!ver) return;
+                    const date = info.revisionDate?.(ver) || "";
+                    if (String(item[dateKey] ?? "") !== date) {
+                        item[dateKey] = date;
+                        changed = true;
+                    }
+                    if (dateKey !== "change_date" && String(item.change_date ?? "") !== date) {
+                        item.change_date = date;
+                        changed = true;
+                    }
+                });
+            }
             const cells = Array.isArray(nextNode.table.cells) ? nextNode.table.cells.map((line: any[]) => (line || []).map((cell: any) => ({ ...cell }))) : null;
-            if (cells && cells.length > 1) {
-                const colIdx = (cells[0] || []).findIndex((cell: any) => String(cell?.value || "").replace(/\s/g, "") === "修改日期");
-                if (colIdx >= 0 && cells[1]?.[colIdx] && String(cells[1][colIdx].value || "") !== info.coverDate && info.coverDate) {
-                    cells[1][colIdx].value = info.coverDate;
-                    changed = true;
-                    nextNode = { ...nextNode, table: { ...nextNode.table, cells } };
+            if (cells && cells.length > 1 && info.revisionDate) {
+                const header = cells[0] || [];
+                const dateIdx = header.findIndex((cell: any) => String(cell?.value || "").replace(/\s/g, "") === "修改日期");
+                const verIdx = header.findIndex((cell: any) => String(cell?.value || "").replace(/\s/g, "") === "版本号");
+                if (dateIdx >= 0 && verIdx >= 0) {
+                    for (let i = 1; i < cells.length; i += 1) {
+                        const ver = sdsDocVersionToken(String(cells[i]?.[verIdx]?.value || ""));
+                        if (!ver) continue;
+                        const date = info.revisionDate(ver) || "";
+                        if (cells[i][dateIdx] && String(cells[i][dateIdx].value || "") !== date) {
+                            cells[i][dateIdx].value = date;
+                            changed = true;
+                        }
+                    }
                 }
             }
-            // 修订记录版本号仅填空，不随文档版本覆盖
-            if (info.version && !String(row.version_no ?? "").trim()) {
-                row.version_no = info.version;
-                changed = true;
+            const a0 = revisionRows.find((item: any) => sdsDocVersionToken(String(item?.[versionKey] || item?.version_no || "")) === "A0");
+            if (a0) {
+                if (!String(a0.change_desc ?? "").trim()) {
+                    a0.change_desc = "首次发布";
+                    changed = true;
+                }
+                setIf(a0, "changer", info.reviser);
+                setIf(a0, "approver", info.approver);
             }
-            if (!String(row.change_desc ?? "").trim()) {
-                row.change_desc = "首次发布";
-                changed = true;
-            }
-            setIf(row, "changer", info.reviser);
-            setIf(row, "approver", info.approver);
-            const rowIndex = Math.max(0, rows.indexOf(row));
-            rows[rowIndex] = row;
-            const revisionRows = ensureRevisionObjectRows(rows, info.version || "");
             if (JSON.stringify(revisionRows) !== JSON.stringify(rows)) changed = true;
-            nextNode = { ...nextNode, table: { ...nextNode.table, rows: revisionRows } };
+            nextNode = { ...nextNode, table: { ...nextNode.table, rows: revisionRows, ...(cells ? { cells } : {}) } };
         }
         return nextNode;
     });
@@ -4310,15 +4346,19 @@ export default () => {
                 }
                 return "";
             };
-            const timelineDate = computeSdsCoverDate(tlRows);
-            setTimelineCoverDate(timelineDate);
             const versionNow = String(liveDocVersionRef.current || displayDocVersion || "");
+            const coverToken = sdsDocVersionToken(versionNow);
+            const timelineDate = coverToken
+                ? computeSdsCoverDate(tlRows, versionNow)
+                : computeSdsCoverDate(tlRows);
+            setTimelineCoverDate(timelineDate);
             const coverResult = applySdsCoverRevisionAutofill(data.treeStructure as TreeNode[], {
                 coverDate: timelineDate,
                 version: versionNow,
                 resolveSigner,
                 reviser: tpm,
                 approver: devLead,
+                revisionDate: (ver) => computeSdsCoverDate(tlRows, ver),
             });
             const reviewResult = applySdsReviewPersonAutofill(coverResult.nodes, {
                 coverDate: timelineDate,
@@ -4391,21 +4431,15 @@ export default () => {
                 normalizedRows.push({});
             }
         }
-        const revisionDateCode = isChangeRecordTable
-            ? String((node.table.headers.find((header: any) => String(header?.name || "").replace(/\s/g, "") === "修改日期") || {}).code || "")
-            : "";
         const columns = node.table.headers.map((header: any, index: number) => ({
             title: header.name || `列${index + 1}`,
             dataIndex: header.code,
             key: `${keyPrefix}-col-${header.code}`,
             render: (text: string, _record: any, rowIndex: number) => {
-                const shown = isChangeRecordTable && revisionDateCode && header.code === revisionDateCode && rowIndex === 0 && timelineCoverDate
-                    ? timelineCoverDate
-                    : text;
-                if (isReadOnly) return shown || "-";
+                if (isReadOnly) return text || "-";
                 return (
                     <Input.TextArea
-                        value={shown || ""}
+                        value={text || ""}
                         onChange={(e) => updateExtractedTableCell(node.id, rowIndex, header.code, e.target.value)}
                         autoSize={{ minRows: 1, maxRows: 4 }}
                     />
@@ -4414,9 +4448,6 @@ export default () => {
         }));
         const dataSource = normalizedRows.map((row: any, index: number) => {
             const next = { ...row };
-            if (isChangeRecordTable && revisionDateCode && index === 0 && timelineCoverDate) {
-                next[revisionDateCode] = timelineCoverDate;
-            }
             return { key: `${keyPrefix}-row-${index}`, ...next };
         });
         return (

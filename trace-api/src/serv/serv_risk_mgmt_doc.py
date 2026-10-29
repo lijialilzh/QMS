@@ -254,7 +254,7 @@ class Server(object):
         # 封面、文件修订记录：时间和人员打开、导出都按当前产品重取
         if not product_id:
             return content
-        rev_date = serv_review_util.review_date(product_id, serv_review_util.COVER_KEYWORDS.get("risk") or []) or ""
+        rev_date = serv_review_util.review_date(product_id, serv_review_util.COVER_KEYWORDS.get("risk") or [], version=version) or ""
         names = serv_review_util.cover_signer_names(product_id, "risk", rev_date)
         reviser = names.get("编制人") or self.__member_name(product_id, ("产品经理", "项目经理"))
         approver = names.get("批准人") or self.__member_name(product_id, ("产品负责人", "研发负责人", "管理者代表"))
@@ -283,7 +283,9 @@ class Server(object):
                         continue
                     if len(table) >= 2 and isinstance(table[1], list) and len(table[1]) >= 5:
                         row = table[1]
-                        if rev_date:
+                        if not serv_review_util.fill_list_revision_dates(
+                            table, product_id, serv_review_util.COVER_KEYWORDS.get("risk") or [],
+                        ) and rev_date:
                             row[0] = rev_date
                         if ver and not str(row[1] or "").strip():
                             row[1] = ver
@@ -898,7 +900,7 @@ class Server(object):
         if with_autofill:
             serv_review_util.ensure_review(
                 obj.content, "risk",
-                serv_review_util.review_date(row.product_id, serv_review_util.REVIEW_DEFS["risk"]["name_keywords"]) if row.product_id else "",
+                serv_review_util.review_date(row.product_id, serv_review_util.REVIEW_DEFS["risk"]["name_keywords"], version=row.version) if row.product_id else "",
                 row.product_id,
             )
             obj.content = self.__autofill_front_matter(obj.content, row.product_id, row.version)
@@ -1144,6 +1146,9 @@ class Server(object):
                 newitem.doc_id = newdoc.id
                 newitem.product_id = target_pid
                 db.session.add(newitem)
+            serv_review_util.add_raised_copy_dhf(
+                target_pid, fromdoc.product_id, getattr(fromdoc, "file_no", None), version, '风险管理报告',
+            )
             db.session.commit()
             return Resp.resp_ok(data=RiskMgmtDocForm(id=newdoc.id))
         except Exception:
@@ -1205,7 +1210,7 @@ class Server(object):
         content = self.__normalize_content(None)
         serv_review_util.ensure_review(
             content, "risk",
-            serv_review_util.review_date(product_id, serv_review_util.REVIEW_DEFS["risk"]["name_keywords"]) if product_id else "",
+            serv_review_util.review_date(product_id, serv_review_util.REVIEW_DEFS["risk"]["name_keywords"], version=version) if product_id else "",
             product_id,
         )
         content = self.__autofill_front_matter(content, product_id, version)
@@ -2210,7 +2215,7 @@ class Server(object):
         export_content = prepare_export_content(obj.content or {})
         serv_review_util.ensure_review(
             export_content, "risk",
-            serv_review_util.review_date(obj.product_id, serv_review_util.REVIEW_DEFS["risk"]["name_keywords"]) if obj.product_id else "",
+            serv_review_util.review_date(obj.product_id, serv_review_util.REVIEW_DEFS["risk"]["name_keywords"], version=obj.version) if obj.product_id else "",
             obj.product_id,
         )
         export_sections = (export_content or {}).get("sections", [])
