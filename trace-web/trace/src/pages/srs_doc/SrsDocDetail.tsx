@@ -30,6 +30,7 @@ import TreeStructure, {
     applyEffectiveSrsPreviewRows,
     ensureMissingOtherReqChapters,
     displayedOtherReqLocation,
+    validateOtherReqTableRows,
 } from "./components/TreeStructure";
 import EditableTableGenerator, { TableDataWithHeaders } from "./components/EditableTableGenerator";
 
@@ -5141,6 +5142,10 @@ export default () => {
         const roleCol = pickColumn((text) => text.includes("设计类型"));
         if (!codeCol || !moduleCol) {
             return;
+        }
+        const duplicateMsg = validateOtherReqTableRows(headers, table?.rows || []);
+        if (duplicateMsg) {
+            throw new Error(duplicateMsg);
         }
         const compactReqCode = (value?: string) => String(value || "").replace(/\s+/g, "");
         const normalizeReqCode = (value?: string) => compactReqCode(value).toUpperCase();

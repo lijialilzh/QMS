@@ -470,6 +470,41 @@ function normalizeSrsCodeValue(value?: string): string {
     return String(value || "").replace(/\s+/g, "").toUpperCase();
 }
 
+export function validateOtherReqTableRows(
+    headers: Array<{ code: string; name: string }> = [],
+    rows: Array<Record<string, any>> = [],
+): string {
+    const headerText = (header?: { name?: string }) => normalizeCellText(header?.name);
+    const codeCol = headers.find((header) => isReqCodeHeaderText(headerText(header)))?.code || "";
+    const moduleCol = headers.find((header) => {
+        const text = headerText(header);
+        return text.includes("需求模块") || (text.includes("模块") && !text.includes("设计"));
+    })?.code || "";
+    const seenCode = new Map<string, number>();
+    const seenModule = new Map<string, number>();
+    for (let index = 0; index < (rows || []).length; index += 1) {
+        const row = rows[index] || {};
+        const code = normalizeSrsCodeValue(codeCol ? row?.[codeCol] : "");
+        const moduleName = normalizeReqDisplayText(moduleCol ? row?.[moduleCol] : "");
+        const moduleKey = moduleName.replace(/\s+/g, "").toLowerCase();
+        if (code) {
+            if (seenCode.has(code)) {
+                const firstRow = seenCode.get(code)! + 1;
+                return `其他需求列表中需求编号 ${code} 重复（第 ${firstRow} 行与第 ${index + 1} 行），请修改为不重复的编号`;
+            }
+            seenCode.set(code, index);
+        }
+        if (moduleKey) {
+            if (seenModule.has(moduleKey)) {
+                const firstRow = seenModule.get(moduleKey)! + 1;
+                return `其他需求列表中模块名称「${moduleName}」重复（第 ${firstRow} 行与第 ${index + 1} 行），请修改为不重复的模块名称`;
+            }
+            seenModule.set(moduleKey, index);
+        }
+    }
+    return "";
+}
+
 export function validateStandardSrsCodeUnique(
     rows: Array<{ srs_code?: string; code?: string; [key: string]: any }> = [],
     codeResolver?: (row: any, index: number) => string,
@@ -7192,6 +7227,12 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             return;
         }
         const isSavingOtherReqTable = !!(tableFormat && isReqOtherTable(tableFormat));
+        if (isSavingOtherReqTable) {
+            const otherReqMsg = validateOtherReqTableRows(tableData.headers, rows);
+            if (otherReqMsg) {
+                throw new Error(otherReqMsg);
+            }
+        }
         const isSavingStandardSrsTable = !!(tableFormat && isReqMainTable(tableFormat) && !/变更/.test(String(tableFormat.name || "")));
         if (isSavingStandardSrsTable) {
             tableFormat = sortReqTableRowsByCode(tableFormat) || tableFormat;

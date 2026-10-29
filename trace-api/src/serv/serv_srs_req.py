@@ -607,8 +607,32 @@ class Server(object):
                     if re.match(rf"^{re.escape(heading)}(?:\s|$)", title):
                         node.sds_code = new_sds_code
 
+    def __other_req_duplicate_msg(self, form: SrsReqForm, exclude_id: int = None) -> str:
+        """其他需求同一文档内，编号和模块名称都不能重复。标准需求、变更需求不走这里。"""
+        if str(getattr(form, "type_code", "") or "") != "2":
+            return ""
+        code_key = re.sub(r"\s+", "", str(form.code or "")).upper()
+        module_key = re.sub(r"\s+", "", str(form.module or "")).casefold()
+        if not code_key and not module_key:
+            return ""
+        sql = select(SrsReq).where(SrsReq.doc_id == form.doc_id, SrsReq.type_code == "2")
+        if exclude_id:
+            sql = sql.where(SrsReq.id != exclude_id)
+        rows = db.session.execute(sql).scalars().all()
+        for row in rows:
+            row_code = re.sub(r"\s+", "", str(row.code or "")).upper()
+            if code_key and row_code == code_key:
+                return f"其他需求编号 {str(form.code or '').strip()} 已存在，不能重复"
+            row_module = re.sub(r"\s+", "", str(row.module or "")).casefold()
+            if module_key and row_module == module_key:
+                return f"其他需求模块名称「{str(form.module or '').strip()}」已存在，不能重复"
+        return ""
+
     async def add_srs_req(self, form: SrsReqForm):
         try:
+            duplicate_msg = self.__other_req_duplicate_msg(form)
+            if duplicate_msg:
+                return Resp.resp_err(msg=duplicate_msg)
             sql = select(func.count(SrsReq.id)).where(SrsReq.doc_id == form.doc_id, SrsReq.type_code == form.type_code, SrsReq.code == form.code)
             count = db.session.execute(sql).scalar()
             if count > 0:
@@ -646,6 +670,9 @@ class Server(object):
     
     async def update_srs_req(self, form: SrsReqForm):
         try:
+            duplicate_msg = self.__other_req_duplicate_msg(form, exclude_id=form.id)
+            if duplicate_msg:
+                return Resp.resp_err(msg=duplicate_msg)
             sql = select(func.count(SrsReq.id)).where(SrsReq.doc_id == form.doc_id, SrsReq.type_code == form.type_code, SrsReq.code == form.code, SrsReq.id != form.id)
             count = db.session.execute(sql).scalar()
             if count > 0:
@@ -687,6 +714,9 @@ class Server(object):
         return Resp.resp_ok()
 
     def __apply_update_req(self, form: SrsReqForm):
+        duplicate_msg = self.__other_req_duplicate_msg(form, exclude_id=form.id)
+        if duplicate_msg:
+            raise ValueError(duplicate_msg)
         sql = select(func.count(SrsReq.id)).where(
             SrsReq.doc_id == form.doc_id,
             SrsReq.type_code == form.type_code,
@@ -717,6 +747,9 @@ class Server(object):
         return row, old_code, old_module
 
     def __apply_add_req(self, form: SrsReqForm):
+        duplicate_msg = self.__other_req_duplicate_msg(form)
+        if duplicate_msg:
+            raise ValueError(duplicate_msg)
         sql = select(func.count(SrsReq.id)).where(
             SrsReq.doc_id == form.doc_id,
             SrsReq.type_code == form.type_code,

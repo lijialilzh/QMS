@@ -187,6 +187,67 @@ const OTHER_REQ_ROLE_CHAPTER: Record<string, string> = {
     external: "外部连接",
 };
 
+const OTHER_REQ_PRESET_MODULE: Record<string, string> = {
+    dataprocessing: "图像接收",
+    interface: "图像存储",
+    dlserver: "图像处理",
+    function: "图像显示",
+    external: "外部连接",
+};
+
+const OTHER_REQ_ROLE_TAIL: Record<string, string> = {
+    dataprocessing: "004",
+    interface: "005",
+    dlserver: "006",
+    function: "007",
+    external: "010",
+};
+
+function isBasicRequirementModule(module?: string) {
+    return String(module || "").replace(/\s+/g, "") === "基本要求";
+}
+
+function topLevelModuleHeading(title?: string) {
+    const matched = String(title || "").trim().match(/^(\d{1,2})(?!\.\d)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/);
+    return matched?.[1] || "";
+}
+
+function stripTopHeading(title?: string) {
+    return String(title || "")
+        .trim()
+        .replace(/^\d{1,2}(?!\.\d)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/, "")
+        .replace(/\s+/g, "");
+}
+
+function ownsRenamedTemplate(row: { module?: string; code?: string }, role: string) {
+    const preset = OTHER_REQ_PRESET_MODULE[role] || "";
+    const module = String(row?.module || "").replace(/\s+/g, "");
+    if (!preset || !module || module === preset) return false;
+    if (module.startsWith(preset)) return true;
+    const matched = String(row?.code || "").toUpperCase().replace(/\s+/g, "").match(/300-(\d+)$/);
+    if (!matched) return false;
+    return String(parseInt(matched[1], 10)).padStart(3, "0") === (OTHER_REQ_ROLE_TAIL[role] || "");
+}
+
+function rootHasExactModule(roots: TreeNode[], module: string) {
+    const wanted = String(module || "").replace(/\s+/g, "").toLowerCase();
+    if (!wanted) return false;
+    return (roots || []).some((node) => {
+        if (isSdsFrontMatterTitle(node.title) || isSdsAppendixTitle(node.title, node.ref_type)) return false;
+        if (!topLevelModuleHeading(node.title)) return false;
+        return stripTopHeading(node.title).toLowerCase() === wanted;
+    });
+}
+
+function rootHasSdsCode(roots: TreeNode[], sdsCode: string) {
+    const wanted = String(sdsCode || "").replace(/\s+/g, "").toUpperCase();
+    if (!wanted) return false;
+    return (roots || []).some((node) => {
+        if (!topLevelModuleHeading(node.title)) return false;
+        return String((node as any).sds_code || "").replace(/\s+/g, "").toUpperCase() === wanted;
+    });
+}
+
 function otherReqDesignRole(row?: { design_role?: string; module?: string }) {
     const stored = String(row?.design_role || "").replace(/\s+/g, "");
     const byLabel: Record<string, string> = {
@@ -283,19 +344,52 @@ function ensureSdsOtherReqChapterNodes(nodes: TreeNode[], otherRows: any[]): Tre
         if (!matched) return node;
         return { ...node, sds_code: matched.code.replace(/^SRS/, "SDS") };
     });
+    const renamedOwnerCode = new Map<string, string>();
+    rows.forEach((row) => {
+        const role = otherReqDesignRole(row);
+        if (!role || !ownsRenamedTemplate(row, role)) return;
+        const prev = renamedOwnerCode.get(role);
+        if (!prev || compareOtherReqCode(row.code, prev) < 0) renamedOwnerCode.set(role, row.code);
+    });
+    roots = roots.map((node) => {
+        const heading = topLevelModuleHeading(node.title);
+        if (!heading) return node;
+        const current = stripTopHeading(node.title).toLowerCase();
+        for (const [role, code] of renamedOwnerCode) {
+            const names = [OTHER_REQ_ROLE_CHAPTER[role] || "", OTHER_REQ_PRESET_MODULE[role] || ""];
+            if (!names.some((name) => name && current === name.replace(/\s+/g, "").toLowerCase())) continue;
+            const owner = rows.find((row) => row.code === code);
+            if (!owner?.module) return node;
+            return {
+                ...node,
+                title: `${heading} ${owner.module}`,
+                sds_code: owner.code.replace(/^SRS/, "SDS"),
+            };
+        }
+        return node;
+    });
     const pending = rows
         .map((row) => {
             const fixedName = fixedModuleForSrsCode(row.code);
             const preset = isPresetRcn300OtherReq(row.code);
-            return { ...row, chapterName: preset ? fixedName : row.module, preset };
+            const role = otherReqDesignRole(row);
+            const basic = isBasicRequirementModule(row.module);
+            const renamedOwner = !!(role && renamedOwnerCode.get(role) === row.code);
+            const chapterName = basic || renamedOwner ? row.module : (preset ? fixedName : row.module);
+            return { ...row, chapterName, preset, role, basic, renamedOwner };
         })
-        .filter((row) => !otherReqDesignRole(row))
         .filter((row) => {
             if (row.module.replace(/\s+/g, "").includes("法规符合")) return false;
+            if (row.basic || row.renamedOwner) return true;
+            if (row.role) return false;
             if (row.preset && !row.chapterName) return false;
             return true;
         })
         .filter((row) => {
+            if (row.basic || row.renamedOwner) {
+                const sdsCode = row.code.replace(/^SRS/, "SDS");
+                return !rootHasExactModule(roots, row.chapterName) && !rootHasSdsCode(roots, sdsCode);
+            }
             if (row.preset) {
                 return !rootHasModule(roots, row.chapterName) && !rootHasModule(roots, row.module);
             }
@@ -319,6 +413,7 @@ function ensureSdsOtherReqChapterNodes(nodes: TreeNode[], otherRows: any[]): Tre
             n_id: 0,
             title: `${chapterNo} ${row.chapterName}`,
             sds_code: row.code.replace(/^SRS/, "SDS"),
+            label: row.renamedOwner && row.role ? `sds-role:${row.role}` : "",
             text: "",
             children: [],
         });

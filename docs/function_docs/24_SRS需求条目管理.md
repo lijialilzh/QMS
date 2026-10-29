@@ -61,6 +61,7 @@
 ### 6.3 分类规则（前后端一致）
 - `code + module + function` → `type_code=1`。
 - `code + module + location`（无功能/子功能）→ `type_code=2`。
+- 其他需求保存时，同一文档内需求编号去掉空白、忽略大小写后不能重复，模块名称去掉空白后也不能重复。空模块不参与比较。重复时提示第几行，不写入。标准需求、变更需求不按这条拦截模块名称。
 
 ### 6.4 保存后回写
 - `__sync_req_to_node_tables` / `__sync_req_to_node_titles` 回写 `srs_node`。

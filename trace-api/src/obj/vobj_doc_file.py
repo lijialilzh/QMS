@@ -6,6 +6,7 @@ from ..obj.tobj_doc_file import DocFileForm
 
 class DocFileObj(DocFileForm):
     create_time: Optional[datetime] = Field(title="创建时间")
+    update_time: Optional[datetime] = Field(title="更新时间", default=None)
     product_id: Optional[int] = Field(title="产品ID")
     product_name: Optional[str] = Field(title="产品名称")
     product_version: Optional[str] = Field(title="产品版本")

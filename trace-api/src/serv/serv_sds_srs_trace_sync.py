@@ -22,6 +22,21 @@ from ..obj import Resp
 from ..utils.sql_ctx import db
 from ..utils.i18n import ts
 from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, FIXED_RCN300_TRACES, fixed_rcn300_sds_codes, fixed_rcn300_trace_for_code, filter_fixed_trace_to_living, design_codes_are_manual, align_rcn300_tail_locations, rcn300_tail_name_key, live_rcn300_tail_chapters, OTHER_REQ_DESIGN_ROLES, normalize_other_req_design_role, other_req_design_role_is_explicit, other_req_role_is_changed, other_req_role_display_name
+
+
+def owns_renamed_template(module: str, code: str, role: str) -> bool:
+    """预置模块改了名、或编号仍占着该模版末段时，这一行仍对应原来的英文模版章。"""
+    spec = OTHER_REQ_DESIGN_ROLES.get(role or "") or {}
+    preset = str(spec.get("preset_module") or "")
+    name = str(module or "").strip()
+    if not preset or not name or name == preset:
+        return False
+    if name.startswith(preset):
+        return True
+    matched = re.search(r"300-(\d+)$", re.sub(r"\s+", "", str(code or "")).upper())
+    if not matched:
+        return False
+    return f"{int(matched.group(1)):03d}" == str(spec.get("tail") or "")
 from .serv_sds_reqd import Server as ServSdsReqd
 
 logger = logging.getLogger(__name__)
@@ -314,7 +329,20 @@ class SdsSrsTraceSyncMixin:
         for role, items in list(grouped.items()):
             explicit = [req for req in items if other_req_design_role_is_explicit(getattr(req, "design_role", ""))]
             if explicit:
-                grouped[role] = explicit
+                # 手选了设计类型的行单独占自己的章。改过名、仍占着模版编号的那一行留下，避免被挤出后补不出章节。
+                owners = [
+                    req for req in items
+                    if owns_renamed_template(getattr(req, "module", ""), getattr(req, "code", ""), role)
+                ]
+                merged = []
+                seen = set()
+                for req in owners + explicit:
+                    if id(req) in seen:
+                        continue
+                    seen.add(id(req))
+                    merged.append(req)
+                grouped[role] = merged
+        renamed_later = []
 
         def body_name(node: SdsNodeForm) -> str:
             return self._normalize_sds_node_title(self._strip_sds_heading_text(getattr(node, "title", "") or ""))
@@ -461,6 +489,15 @@ class SdsSrsTraceSyncMixin:
                 warnings.append(f"{other_req_role_display_name(pending[0].module, role)}没有对应的模版章节")
                 pending = []
 
+            # 模版章已经不在时，改名行放到排序之后再补，避免把已有章节按编号重排。
+            still_pending = []
+            for req in pending:
+                if owns_renamed_template(getattr(req, "module", ""), getattr(req, "code", ""), role):
+                    renamed_later.append(req)
+                else:
+                    still_pending.append(req)
+            pending = still_pending
+
             next_no = 0
             for node in roots or []:
                 heading = self._parse_sds_node_heading(getattr(node, "title", "") or "")
@@ -488,7 +525,103 @@ class SdsSrsTraceSyncMixin:
                 insert_at += 1
                 bind_chapter(node, req, fill_template=True)
         self._order_other_req_roots_by_code(roots, rows)
+        self._append_basic_requirement_chapter(doc_id, roots, rows)
+        self._append_renamed_template_chapters(doc_id, roots, renamed_later)
         return roots, warnings
+
+    def _top_level_named(self, roots: List[SdsNodeForm], name: str) -> bool:
+        wanted = self._normalize_sds_node_title(name)
+        if not wanted:
+            return False
+        for node in roots or []:
+            heading = self._parse_sds_node_heading(getattr(node, "title", "") or "")
+            if not heading or "." in heading:
+                continue
+            body = self._normalize_sds_node_title(self._strip_sds_heading_text(getattr(node, "title", "") or ""))
+            if body == wanted:
+                return True
+        return False
+
+    def _top_level_has_code(self, roots: List[SdsNodeForm], code: str) -> bool:
+        wanted = re.sub(r"\s+", "", str(code or "")).upper()
+        if not wanted:
+            return False
+        for node in roots or []:
+            heading = self._parse_sds_node_heading(getattr(node, "title", "") or "")
+            if not heading or "." in heading:
+                continue
+            current = re.sub(r"\s+", "", str(getattr(node, "sds_code", "") or "")).upper()
+            if current == wanted:
+                return True
+        return False
+
+    def _insert_other_req_root(self, doc_id: int, roots: List[SdsNodeForm], req, display: str, label: str, fill_role: str):
+        """在附件前补一级章节。只加新章，不改已有章节的编号。"""
+        if not display:
+            return
+        code = re.sub(r"^SRS", "SDS", re.sub(r"\s+", "", str(getattr(req, "code", "") or "")), count=1, flags=re.I)
+        if self._top_level_named(roots, display) or self._top_level_has_code(roots, code):
+            return
+        next_no = 0
+        for node in roots or []:
+            heading = self._parse_sds_node_heading(getattr(node, "title", "") or "")
+            if heading and "." not in heading and heading.isdigit():
+                next_no = max(next_no, int(heading))
+        next_no += 1
+        insert_at = len(roots or [])
+        for index, node in enumerate(roots or []):
+            compact = re.sub(r"\s+", "", str(getattr(node, "title", "") or ""))
+            if compact.startswith("附件") or "评审" in compact:
+                insert_at = index
+                break
+        node = SdsNodeForm(
+            title=f"{next_no} {display}",
+            label=label or "",
+            sds_code=code,
+            text="",
+            children=[],
+        )
+        roots.insert(insert_at, node)
+        if fill_role and fill_role in self._DESIGN_TEMPLATE_ROLES:
+            self._ensure_design_role_template(node, fill_role)
+        trace = db.session.execute(
+            select(SdsTrace).where(SdsTrace.doc_id == doc_id, SdsTrace.req_id == req.id)
+        ).scalars().first()
+        if trace is not None:
+            trace.sds_code = code or trace.sds_code
+            trace.chapter = display
+            trace.location = str(next_no)
+
+    def _append_basic_requirement_chapter(self, doc_id: int, roots: List[SdsNodeForm], rows):
+        """基本要求删掉后再加回来时补一级章节。数据库要求、性能要求不建章。"""
+        basics = [
+            req for req in rows or []
+            if re.sub(r"\s+", "", str(getattr(req, "module", "") or "")) == "基本要求"
+        ]
+        if not basics:
+            return
+        basics.sort(key=lambda req: self._sds_code_sort_key(getattr(req, "code", "") or ""))
+        self._insert_other_req_root(doc_id, roots, basics[0], "基本要求", "", "")
+
+    def _append_renamed_template_chapters(self, doc_id: int, roots: List[SdsNodeForm], reqs):
+        """图像存储等预置模块改名后，原来的英文模版章已经不在时，按现在的模块名补一级章节。"""
+        ordered = sorted(reqs or [], key=lambda req: self._sds_code_sort_key(getattr(req, "code", "") or ""))
+        seen = set()
+        for req in ordered:
+            if id(req) in seen:
+                continue
+            seen.add(id(req))
+            role = normalize_other_req_design_role(
+                getattr(req, "design_role", ""), getattr(req, "module", ""), getattr(req, "code", ""),
+            )
+            if not role or not owns_renamed_template(getattr(req, "module", ""), getattr(req, "code", ""), role):
+                continue
+            spec = OTHER_REQ_DESIGN_ROLES.get(role) or {}
+            if self._top_level_named(roots, spec.get("english") or "") or self._top_level_named(roots, spec.get("preset_module") or ""):
+                continue
+            display = other_req_role_display_name(getattr(req, "module", ""), role) or str(getattr(req, "module", "") or "").strip()
+            fill_role = role if role in self._DESIGN_TEMPLATE_ROLES else ""
+            self._insert_other_req_root(doc_id, roots, req, display, f"sds-role:{role}", fill_role)
 
     def _order_other_req_roots_by_code(self, roots: List[SdsNodeForm], rows):
         """其他需求一级章节按需求编号排列。只改这些章自己的号，标准需求章节留在原父章下。"""

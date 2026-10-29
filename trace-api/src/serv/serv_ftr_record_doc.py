@@ -505,7 +505,8 @@ class Server(object):
                     group_start = 7
                     for r_idx in range(8, rows_total):
                         cur_module = grid[r_idx][0] if len(grid[r_idx]) > 0 else ""
-                        if cur_module != prev_module:
+                        # 模块名为空的手增行单独占一行，不与上一组或另一条空行纵向合并。
+                        if not str(cur_module or "").strip() or cur_module != prev_module:
                             if r_idx - 1 > group_start:
                                 # 先清空被合并行的列0文字，避免 merge() 拼接
                                 for rr in range(group_start + 1, r_idx):
@@ -513,7 +514,7 @@ class Server(object):
                                 table.cell(group_start, 0).merge(table.cell(r_idx - 1, 0))
                             group_start = r_idx
                             prev_module = cur_module
-                    if rows_total - 1 > group_start:
+                    if rows_total - 1 > group_start and str(prev_module or "").strip():
                         for rr in range(group_start + 1, rows_total):
                             table.cell(rr, 0).text = ""
                         table.cell(group_start, 0).merge(table.cell(rows_total - 1, 0))

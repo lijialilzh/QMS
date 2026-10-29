@@ -148,10 +148,15 @@ export default () => {
             if (field === "func") next[ri][1] = val;
             if (field === "module") {
                 const old = next[ri][0];
-                let i = ri;
-                while (i < next.length && next[i] && next[i][0] === old) {
-                    next[i][0] = val;
-                    i += 1;
+                // 空模块是手增的独立行，只改这一行，避免连着的空行被写成同一个模块。
+                if (!String(old || "").trim()) {
+                    next[ri][0] = val;
+                } else {
+                    let i = ri;
+                    while (i < next.length && next[i] && next[i][0] === old) {
+                        next[i][0] = val;
+                        i += 1;
+                    }
                 }
             }
         }
@@ -167,8 +172,7 @@ export default () => {
             return;
         }
         const ri = DATA_START + idx;
-        const mod = (next[ri] && next[ri][0]) || "";
-        const blank = [mod, "", blankResult, blankResult, ""];
+        const blank = ["", "", blankResult, blankResult, ""];
         if (ri + 1 >= next.length) next.push(blank);
         else next.splice(ri + 1, 0, blank);
         dispatch({ rows: next });
@@ -212,9 +216,11 @@ export default () => {
         const spans: Record<number, number> = {};
         let prev = ""; let start = -1;
         records.forEach((r, i) => {
-            if (r.module !== prev) {
+            const module = String(r.module || "");
+            // 模块名为空的手增行各自占一行，不与上一组或另一条空行合并。
+            if (!module.trim() || module !== prev) {
                 if (start >= 0) spans[start] = i - start;
-                start = i; prev = r.module;
+                start = i; prev = module;
             }
         });
         if (start >= 0) spans[start] = records.length - start;
@@ -264,7 +270,8 @@ export default () => {
             render: (text: string, _r: any, idx: number) => editCell(text, (v) => setRecord(idx, "remark", v)),
         },
         ...(!readonly ? [{
-            title: "操作", width: 64, align: "center" as const,
+            title: "操作", width: 88, align: "center" as const, className: "ftr-record-ops",
+            onCell: () => ({ className: "ftr-record-ops" }),
             render: (_t: string, _r: any, idx: number) => (
                 <Space size={10}>
                     <PlusOutlined title="增加" style={{ color: "#1677ff", cursor: "pointer" }} onClick={() => addRecord(idx)} />

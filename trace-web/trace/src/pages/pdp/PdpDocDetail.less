@@ -47,6 +47,22 @@
                 table-layout: fixed;
                 width: 100%;
             }
+
+            // 操作列只放加号和删除。全站单元格省略号会把这两个图标截成「...」。
+            .ant-table-tbody > tr > td.ftr-record-ops.ant-table-cell,
+            .ant-table-thead > tr > th.ftr-record-ops.ant-table-cell {
+                overflow: visible;
+                text-overflow: clip;
+                white-space: nowrap;
+            }
+
+            .ant-table-tbody > tr > td.ftr-record-ops .ant-space .ant-space-item {
+                margin-inline-end: 8px !important;
+            }
+
+            .ant-table-tbody > tr > td.ftr-record-ops .ant-space .ant-space-item:last-child {
+                margin-inline-end: 0 !important;
+            }
         }
 
         .ant-spin-nested-loading {
