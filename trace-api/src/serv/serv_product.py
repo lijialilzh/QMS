@@ -344,6 +344,7 @@ class Server(object):
                 return Resp.resp_err(msg=ts("msg_obj_null"))
             if op_user.role_code == Roles.product_manager.value.code and row.create_user_id != op_user.id:
                 return Resp.resp_err(msg=ts("msg_no_perm"))
+            old_product_code = str(row.product_code or "")
             user_ids = form.user_ids
             form.user_ids = None
             if op_user.role_code == Roles.product_manager.value.code:
@@ -356,8 +357,9 @@ class Server(object):
                 db.session.execute(delete(UserProd).where(UserProd.product_id == row.id))
                 if user_ids:
                     db.session.add_all([UserProd(user_id=user_id, product_id=row.id) for user_id in user_ids])
-            from .serv_product_dhf_copy import sync_dhf_codes_to_product_code
+            from .serv_product_dhf_copy import sync_dhf_codes_to_product_code, sync_srs_codes_to_product_stem
             sync_dhf_codes_to_product_code(row.id, row.product_code)
+            sync_srs_codes_to_product_stem(row.id, old_product_code, row.product_code)
             db.session.commit()
             return Resp.resp_ok()
         except Exception:

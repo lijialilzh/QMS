@@ -5187,6 +5187,18 @@ export default () => {
                 }
                 assignments.push({ row, oldRow: matchedOldRow, code: row.code });
             });
+            const otherReqModuleKey = (value?: string) => String(normalizeReqText(value) || "").replace(/\s+/g, "").toLowerCase();
+            assignments.forEach((assignment) => {
+                if (assignment.oldRow?.id) return;
+                const key = otherReqModuleKey(assignment.row?.module);
+                if (!key) return;
+                const candidates = oldRows.filter((item: any) => (
+                    !usedOldIds.has(item.id) && otherReqModuleKey(item.module) === key
+                ));
+                if (candidates.length !== 1) return;
+                assignment.oldRow = candidates[0];
+                usedOldIds.add(candidates[0].id);
+            });
 
             const isChangedAssignment = (assignment: { row: any; oldRow?: any; code: string }) => {
                 const { row, oldRow, code } = assignment;

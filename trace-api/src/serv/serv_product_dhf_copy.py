@@ -42,7 +42,9 @@ from ..model.scm_doc import ScmDoc
 from ..model.scs_doc import ScsDoc
 from ..model.sd_doc import SdDoc
 from ..model.sds_doc import SdsDoc
-from ..model.srs_doc import SrsDoc
+from ..model.srs_doc import SrsDoc, SrsNode
+from ..model.srs_req import SrsReq
+from sqlalchemy.orm.attributes import flag_modified
 from ..model.str_doc import StrDoc
 from ..model.stp_doc import StpDoc
 from ..model.tem_doc import TemDoc
@@ -136,6 +138,119 @@ def sync_dhf_codes_to_product_code(prod_id: int, product_code: str = "") -> int:
         by_code[new] = row
         row.code = new
         changed += 1
+    return changed
+
+
+def product_code_stem(product_code: str) -> str:
+    """产品代码里版本号前面的一段。RCN3V2000 → RCN3。没有 V 加数字时用整段。"""
+    token = str(product_code or "").strip()
+    if not token:
+        return ""
+    return re.sub(r"V\d+$", "", token, flags=re.I)
+
+
+_SRS_CODE_RE = re.compile(r"SRS-\s*[A-Za-z0-9]+\s*-\s*\d+", re.I)
+
+
+def rewrite_srs_code_stem(code: str, old_stem: str, new_stem: str) -> str:
+    """SRS-RCN301-001 只换版本号前的 RCN3，留下 01 和 -001。对不上旧代号的编号不动。"""
+    raw = str(code or "")
+    old = str(old_stem or "").strip()
+    new = str(new_stem or "").strip()
+    if not raw or not old or not new:
+        return raw
+    compact = re.sub(r"\s+", "", raw)
+    matched = re.fullmatch(r"(SRS-)([A-Za-z0-9]+)(-\d+)", compact, flags=re.I)
+    if not matched:
+        return raw
+    token = matched.group(2)
+    if len(token) < len(old) or token[:len(old)].upper() != old.upper():
+        return raw
+    return f"{matched.group(1)}{new}{token[len(old):]}{matched.group(3)}"
+
+
+def rewrite_srs_text_stem(value: str, old_stem: str, new_stem: str) -> str:
+    if not isinstance(value, str) or "SRS-" not in value.upper():
+        return value
+
+    def repl(matched):
+        return rewrite_srs_code_stem(matched.group(0), old_stem, new_stem)
+
+    return _SRS_CODE_RE.sub(repl, value)
+
+
+def _rewrite_srs_json(value, old_stem: str, new_stem: str):
+    if isinstance(value, str):
+        return rewrite_srs_text_stem(value, old_stem, new_stem)
+    if isinstance(value, list):
+        return [_rewrite_srs_json(item, old_stem, new_stem) for item in value]
+    if isinstance(value, dict):
+        return {key: _rewrite_srs_json(item, old_stem, new_stem) for key, item in value.items()}
+    return value
+
+
+def sync_srs_codes_to_product_stem(prod_id: int, old_product_code: str, new_product_code: str) -> int:
+    """版本管理改产品代码后，该版本需求规格说明里的标准需求、其他需求、变更需求只换版本号前面的代号。"""
+    if not prod_id:
+        return 0
+    old_stem = product_code_stem(old_product_code)
+    new_stem = product_code_stem(new_product_code)
+    if not old_stem or not new_stem or old_stem == new_stem:
+        return 0
+    docs = db.session.execute(
+        select(SrsDoc).where(
+            SrsDoc.product_id == prod_id,
+            ~SrsDoc.version.like(f"{DELETED_SRS_VERSION_PREFIX}%"),
+        )
+    ).scalars().all()
+    changed = 0
+    for doc in docs:
+        reqs = db.session.execute(select(SrsReq).where(SrsReq.doc_id == doc.id)).scalars().all()
+        plans = []
+        for req in reqs:
+            new_code = rewrite_srs_code_stem(req.code, old_stem, new_stem)
+            if new_code and new_code != req.code:
+                plans.append((req, new_code))
+        moving_ids = {req.id for req, _new in plans}
+        held = {(req.type_code, req.code): req.id for req in reqs}
+        kept = []
+        seen = set()
+        for req, new_code in plans:
+            key = (req.type_code, re.sub(r"\s+", "", new_code).upper())
+            if key in seen:
+                continue
+            holder = held.get((req.type_code, new_code))
+            if holder and holder != req.id and holder not in moving_ids:
+                continue
+            seen.add(key)
+            kept.append((req, new_code))
+        if kept:
+            for req, _new in kept:
+                req.code = f"TMP-SRS-{doc.id}-{req.id}"
+            db.session.flush()
+            for req, new_code in kept:
+                req.code = new_code
+            changed += len(kept)
+        nodes = db.session.execute(select(SrsNode).where(SrsNode.doc_id == doc.id)).scalars().all()
+        for node in nodes:
+            next_code = rewrite_srs_text_stem(node.srs_code or "", old_stem, new_stem)
+            if next_code != (node.srs_code or ""):
+                node.srs_code = next_code
+                changed += 1
+            next_title = rewrite_srs_text_stem(node.title or "", old_stem, new_stem)
+            if next_title != (node.title or ""):
+                node.title = next_title
+                changed += 1
+            next_text = rewrite_srs_text_stem(node.text or "", old_stem, new_stem)
+            if next_text != (node.text or ""):
+                node.text = next_text
+                changed += 1
+            if node.table:
+                next_table = _rewrite_srs_json(node.table, old_stem, new_stem)
+                if next_table != node.table:
+                    node.table = next_table
+                    flag_modified(node, "table")
+                    changed += 1
     return changed
 
 
