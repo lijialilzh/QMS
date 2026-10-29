@@ -134,11 +134,10 @@ REVIEW_DEFS = {
             "评审部门、完成时间以及交付物，每个阶段时间划分合理。"
         ),
         "persons": [
-            ["研发总监", "沈宏", "", "产品部经理", "夏晨", ""],
-            ["产品开发部经理", "沈宏", "", "开发负责人", "宁随军", ""],
-            ["产品经理", "杨静", "", "测试负责人", "王小敏", ""],
-            ["QA", "林金贵", "", "临床人员", "齐济", ""],
-            ["RA", "张淑芳", "", "", "", ""],
+            ["产品部经理", "夏晨", "", "产品开发部经理", "沈宏", ""],
+            ["开发负责人", "宁随军", "", "产品经理", "杨静", ""],
+            ["测试负责人", "王小敏", "", "QA", "林金贵", ""],
+            ["临床人员", "齐济", "", "RA", "张淑芳", ""],
             ["其他参会人员", "", "", "", "", ""],
             ["批准人员签字/日期", "", "", "", "", ""],
         ],
@@ -674,11 +673,25 @@ def _cell_has_doc_version(text, token) -> bool:
     return re.search(r"(?<![A-Za-z0-9])" + re.escape(token) + r"(?!\d)", str(text or ""), re.I) is not None
 
 
+def _keywords_hit_text(text, name_keywords):
+    """单元格是否写了这些文档名。「风险管理计划」不算「网络安全风险管理计划」。"""
+    value = str(text or "")
+    for key in name_keywords or []:
+        name = str(key or "").strip()
+        if not name or name not in value:
+            continue
+        if name == "风险管理计划" and "网络安全风险管理计划" in value:
+            if "风险管理计划" not in value.replace("网络安全风险管理计划", ""):
+                continue
+        return True
+    return False
+
+
 def text_matches_doc_version(text, name_keywords, version=None):
     """单元格是否属于该文档版本。A0 要有文件名，且不能带 A1、A2。A1 及以上要同时有文件名和该版本号。不传版本时只看文件名。"""
     value = str(text or "")
     keys = [str(k) for k in (name_keywords or []) if str(k or "").strip()]
-    if not keys or not any(k in value for k in keys):
+    if not keys or not _keywords_hit_text(value, keys):
         return False
     token = revision_row_token(version)
     if not token:
@@ -728,7 +741,7 @@ def review_date(prod_id, name_keywords, tl_rows=None, version=None, revision_row
             named = []
             for value in vals:
                 text = str(value or "")
-                if not any(k in text for k in name_keywords):
+                if not _keywords_hit_text(text, name_keywords):
                     continue
                 if row_token:
                     found = _text_version_token(text)
@@ -744,7 +757,7 @@ def review_date(prod_id, name_keywords, tl_rows=None, version=None, revision_row
                 return False
             hit_review = any("评审" in text for text in named)
             return hit_review if need_review else True
-        hit_name = any(any(k in str(v or "") for k in name_keywords) for v in vals)
+        hit_name = any(_keywords_hit_text(str(v or ""), name_keywords) for v in vals)
         hit_review = any("评审" in str(v or "") for v in vals)
         return hit_name and (hit_review if need_review else True)
 
@@ -1571,6 +1584,80 @@ def build_review_section(key, rev_date="", prod_id=None):
     }
 
 
+def _drop_review_role(tbl, role_label):
+    """去掉参评表某一侧的人员角色。右边还有角色时挪到左边，避免空出半行。"""
+    label = str(role_label or "").strip()
+    if not label or not isinstance(tbl, list):
+        return
+    for row in tbl:
+        if not isinstance(row, list) or not row:
+            continue
+        if str(row[0] or "").strip() == label:
+            right = [row[i] if i < len(row) else "" for i in (3, 4, 5)]
+            if any(str(item or "").strip() for item in right):
+                while len(row) < 6:
+                    row.append("")
+                row[0], row[1], row[2] = right
+                row[3] = row[4] = row[5] = ""
+            else:
+                row[0] = ""
+                if len(row) > 1:
+                    row[1] = ""
+                if len(row) > 2:
+                    row[2] = ""
+        if len(row) > 3 and str(row[3] or "").strip() == label:
+            while len(row) < 6:
+                row.append("")
+            row[3] = row[4] = row[5] = ""
+
+
+def _pack_review_person_slots(tbl):
+    """参评人员左右两列往前排。空出的角色位由后面的人补上，姓名和签字一起前移。"""
+    if not isinstance(tbl, list):
+        return
+    slots = []
+    row_indexes = []
+    for index, row in enumerate(tbl):
+        if not isinstance(row, list) or not row:
+            continue
+        lab = str(row[0] or "").strip()
+        if _is_banner(lab) or lab == "人员角色" or _is_other_row(lab):
+            continue
+        right = str(row[3] or "").strip() if len(row) > 3 else ""
+        if lab:
+            slots.append([
+                row[0],
+                row[1] if len(row) > 1 else "",
+                row[2] if len(row) > 2 else "",
+            ])
+        if right:
+            slots.append([
+                row[3],
+                row[4] if len(row) > 4 else "",
+                row[5] if len(row) > 5 else "",
+            ])
+        if lab or right:
+            row_indexes.append(index)
+    if len(slots) < 2 or not row_indexes:
+        return
+    need = (len(slots) + 1) // 2
+    for nth, index in enumerate(row_indexes):
+        row = tbl[index]
+        while len(row) < 6:
+            row.append("")
+        if nth >= need:
+            row[0] = row[1] = row[2] = row[3] = row[4] = row[5] = ""
+            continue
+        left = slots[nth * 2]
+        right = slots[nth * 2 + 1] if nth * 2 + 1 < len(slots) else ["", "", ""]
+        row[0], row[1], row[2] = left
+        row[3], row[4], row[5] = right
+    for index in reversed(row_indexes):
+        row = tbl[index]
+        if isinstance(row, list) and not any(str(cell or "").strip() for cell in row[:6]):
+            tbl.pop(index)
+
+
 def autofill_review_person_table(tbl, key="", rev_date="", prod_id=None, force_date=False):
     """对「已存在的参评人员签字表」就地自动填充（用于评审记录内置于默认内容、不经 build_review_section 的模块，如 rmp）：
       - 参评人员按角色从该产品参与人员覆盖姓名和签字。测试负责人多人时有宋月用宋月，否则用孙家旭；
@@ -1582,6 +1669,9 @@ def autofill_review_person_table(tbl, key="", rev_date="", prod_id=None, force_d
         return tbl
     if not any(isinstance(r, list) and r and str(r[0] or "").startswith("参评人员签字") for r in tbl):
         return tbl
+    # 产品开发计划：研发总监和产品开发部经理会取到同一个人，只留产品开发部经理
+    if key == "pdp":
+        _drop_review_role(tbl, "研发总监")
     # 评审日期缺省时，取表内「评审时间」行已有的日期
     if not rev_date:
         for row in tbl:
@@ -1682,6 +1772,8 @@ def autofill_review_person_table(tbl, key="", rev_date="", prod_id=None, force_d
             row[2] = _sign_by_name(str(row[1]).strip()) if sign_mode_enabled() else ""
         if len(row) >= 6 and str(row[4] or "").strip() and not str(row[5] or "").strip():
             row[5] = _sign_by_name(str(row[4]).strip()) if sign_mode_enabled() else ""
+    if key == "pdp":
+        _pack_review_person_slots(tbl)
     return tbl
 
 

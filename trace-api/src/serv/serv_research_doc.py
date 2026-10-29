@@ -466,7 +466,7 @@ class Server(object):
         return f"{y}年{m}月{d}日"
 
     def __dev_days(self, product_id):
-        # 开发时间：时间线中标注「产品开发」阶段的日期行首末跨度（含首尾天数）；未标注则回退全部日期行
+        # 开发时间：时间线中标注「产品开发」阶段的日期行首末跨度内的工作日（含首尾；周末和法定假日不计，调休上班日计入）；未标注则回退全部日期行
         rows = db.session.execute(
             select(ProjectTimelineRow).where(
                 ProjectTimelineRow.prod_id == product_id,
@@ -501,11 +501,18 @@ class Server(object):
 
         target_rows = [row_map[i] for i in dev_row_ids] if dev_row_ids else rows
         dates = [d for d in (parse_date(r) for r in target_rows) if d]
-        if len(dates) >= 2:
-            return (max(dates) - min(dates)).days + 1
-        if len(dates) == 1:
-            return 1
-        return 0
+        if not dates:
+            return 0
+        # 首尾跨度里去掉周末和法定假日，调休上班日仍计入
+        from .serv_sd_doc import _is_workday
+        start, end = min(dates), max(dates)
+        days = 0
+        cursor = start
+        while cursor <= end:
+            if _is_workday(cursor):
+                days += 1
+            cursor += datetime.timedelta(days=1)
+        return days
 
     def __dev_headcount(self, product_id):
         # 开发人员数量：参与人员中角色含「开发」且姓名非空的人数（按姓名去重）
@@ -1090,6 +1097,9 @@ class Server(object):
                 # 物理拓扑图横向较宽，导出时收到约页面可用宽度的一半
                 if img_category == "img_topo":
                     docx_util.save_img2docx(raw, document, width_ratio=0.46, height_ratio=0.22)
+                elif img_category == "img_ui":
+                    # 功能模块基本信息的用户关系图往往很高，缩进一页正文区完整显示
+                    docx_util.save_img2docx(raw, document, mw=1600, mh=1600, width_ratio=0.92, height_ratio=0.90)
                 else:
                     docx_util.save_img2docx(raw, document)
             except Exception:

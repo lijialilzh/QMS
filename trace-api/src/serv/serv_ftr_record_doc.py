@@ -7,6 +7,7 @@
 import copy
 import io
 import json
+from collections import Counter
 import logging
 import os
 import re
@@ -195,6 +196,23 @@ class Server(object):
             parts.append(("■" if checked else "□") + name)
         return "   ".join(parts)
 
+    @staticmethod
+    def __is_template_case_rows(rows):
+        """测试项目仍是模板样例（含重复行）时才允许按规程重建。"""
+        keys = []
+        for row in rows or []:
+            if not isinstance(row, list):
+                continue
+            module = str(row[0] if row else "").strip()
+            func = str(row[1] if len(row) > 1 else "").strip()
+            if not module and not func:
+                continue
+            keys.append((module, func))
+        default_keys = _default_case_keys()
+        if not keys or not default_keys:
+            return False
+        return Counter(keys) == Counter(default_keys)
+
     def __sync_cases(self, content, prod_id, version=""):
         """有现场测试规程时，按规程重建功能行；对得上的测试结果和备注保留。没有规程则不改行。"""
         section, grid = self.__record_grid(content)
@@ -210,6 +228,9 @@ class Server(object):
             return
         start = self.__data_start(grid)
         old = [r for r in grid[start:] if isinstance(r, list)]
+        # 用户已经增删改过的列表按保存顺序保留，不再按规程把改过的行挪到表尾
+        if not self.__is_template_case_rows(old):
+            return
         buckets = {}
         by_func = {}
         for row in old:

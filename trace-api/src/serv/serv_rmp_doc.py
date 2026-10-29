@@ -6,6 +6,7 @@
 # 导出：封面「风险管理计划」→ 封面信息表 → 文件修订记录 → 目录(TOC) → 正文章节（带章节号，含正文表格与正文图片）。
 
 import base64
+import builtins
 import copy
 import io
 import json
@@ -291,7 +292,9 @@ class Server(object):
         rev = serv_review_util.review_date(info.get("prod_id"), ["风险管理计划"], version=version) if info.get("prod_id") else ""
         for section in (content.get("sections") or []):
             for tbl in (section.get("tables") or []):
-                serv_review_util.autofill_review_person_table(tbl, "rmp", rev, info.get("prod_id"))
+                serv_review_util.autofill_review_person_table(
+                    tbl, "rmp", rev, info.get("prod_id"), force_date=bool(rev),
+                )
         return content
 
     # ---------------- 文件编号（未手填时从产品 DHF 匹配） ----------------
@@ -544,10 +547,10 @@ class Server(object):
                 seen = set()
                 while i < len(row.cells) and i < len(widths):
                     cell = row.cells[i]
-                    if id(cell._tc) in seen:
+                    if builtins.id(cell._tc) in seen:
                         i += 1
                         continue
-                    seen.add(id(cell._tc))
+                    seen.add(builtins.id(cell._tc))
                     span_el = cell._tc.tcPr.gridSpan if cell._tc.tcPr is not None else None
                     span = int(span_el.val) if span_el is not None else 1
                     tc_pr = cell._tc.get_or_add_tcPr()

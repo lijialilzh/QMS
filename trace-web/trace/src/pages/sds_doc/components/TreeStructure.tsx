@@ -1175,6 +1175,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                 key: `col_${index}`,
             };
             const ifaceWrapCol = isUrlCol || headerName === "接口参数" || headerName === "参数" || headerName === "备注" || headerName === "功能";
+            const nameValueOnly = headerNames.length === 2;
             if (isIfaceList) {
                 col.width = `${((ifaceColWeight(headerName) / ifaceWeightSum) * 100).toFixed(2)}%`;
                 const cellClass = isIfaceCodeCol ? "iface-code-cell" : (ifaceWrapCol ? "iface-url-cell" : undefined);
@@ -1182,10 +1183,14 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                     col.onCell = () => ({ className: cellClass });
                     col.onHeaderCell = () => ({ className: cellClass });
                 }
-            } else if (headerName === "Name" || headerName === "名称" || headerName === "参数名") {
+            } else if (nameValueOnly && (headerName === "Name" || headerName === "名称" || headerName === "参数名")) {
                 col.width = "28%";
-            } else if (headerName === "Value" || headerName === "值" || headerName === "参数值") {
+            } else if (nameValueOnly && (headerName === "Value" || headerName === "值" || headerName === "参数值")) {
                 col.width = "72%";
+                col.onCell = () => ({ className: "iface-url-cell" });
+            } else if (!isIfaceList && headerNames.length > 2) {
+                // 参数名/参数值/是否必填/参数类型这类多列表，列宽均分，四列都留在页面里
+                col.width = `${(100 / headerNames.length).toFixed(2)}%`;
                 col.onCell = () => ({ className: "iface-url-cell" });
             }
             if (wrapCell) {

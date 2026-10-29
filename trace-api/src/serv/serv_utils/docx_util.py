@@ -5,6 +5,7 @@ import re
 import io
 import base64
 import shutil
+import struct
 import subprocess
 import tempfile
 from urllib.parse import unquote, urlparse
@@ -384,6 +385,51 @@ def save_tab2docx(tab: Table,  docx: Document):
     empty.paragraph_format.space_after = Pt(20)
 
 
+def _image_pixel_size(source):
+    """从 PNG、JPEG、GIF 文件头读取像素宽高。"""
+    try:
+        if isinstance(source, io.BytesIO):
+            pos = source.tell()
+            source.seek(0)
+            data = source.read(65536)
+            source.seek(0 if pos < 0 else pos)
+        else:
+            with open(source, "rb") as handle:
+                data = handle.read(65536)
+    except Exception:
+        return None
+    if len(data) >= 24 and data[:8] == b"\x89PNG\r\n\x1a\n":
+        width, height = struct.unpack(">II", data[16:24])
+        if width > 0 and height > 0:
+            return width, height
+    if len(data) >= 10 and data[:6] in (b"GIF87a", b"GIF89a"):
+        width, height = struct.unpack("<HH", data[6:10])
+        if width > 0 and height > 0:
+            return width, height
+    if len(data) >= 4 and data[:2] == b"\xff\xd8":
+        index = 2
+        while index + 9 < len(data):
+            if data[index] != 0xFF:
+                index += 1
+                continue
+            marker = data[index + 1]
+            if marker in (0xC0, 0xC1, 0xC2):
+                height, width = struct.unpack(">HH", data[index + 5:index + 9])
+                if width > 0 and height > 0:
+                    return width, height
+                return None
+            if marker in (0xD8, 0xD9):
+                index += 2
+                continue
+            if index + 4 > len(data):
+                break
+            seg_len = struct.unpack(">H", data[index + 2:index + 4])[0]
+            if seg_len < 2:
+                break
+            index += 2 + seg_len
+    return None
+
+
 def save_img2docx(
     path: str,
     docx: Document,
@@ -463,8 +509,22 @@ def save_img2docx(
     if page_fit:
         node_para.paragraph_format.keep_together = True
     if Image is None:
-        # 本地环境未安装 Pillow 时，按最大宽度插入，避免导出失败
-        node_para.add_run().add_picture(image_source, width=Inches(mw / PIXELS_PER_INCH))
+        # 未安装 Pillow 时仍按宽高上限等比缩小，避免竖图高出一页
+        size = _image_pixel_size(image_source)
+        if not size:
+            node_para.add_run().add_picture(image_source, width=Inches(mw / PIXELS_PER_INCH))
+            return
+        ow, oh = size
+        max_scale = min(mw / float(ow), mh / float(oh))
+        if page_fit:
+            max_scale = min(max_scale, 1.0)
+        if isinstance(image_source, io.BytesIO):
+            image_source.seek(0)
+        node_para.add_run().add_picture(
+            image_source,
+            width=Inches((ow * max_scale) / PIXELS_PER_INCH),
+            height=Inches((oh * max_scale) / PIXELS_PER_INCH),
+        )
         return
 
     try:

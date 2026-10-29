@@ -6053,8 +6053,23 @@ class Server(object):
         def __is_document_requirement(req_row) -> bool:
             return "文档需求" in __req_text_blob(req_row)
 
+        def __is_algorithm_data_requirement(req_row) -> bool:
+            parts = [
+                str(getattr(req_row, name, "") or "").replace(" ", "")
+                for name in ("module", "function", "sub_function")
+            ]
+            return any(
+                part in ("算法和数据要求", "算法与数据要求", "算法要求")
+                or "算法和数据要求" in part
+                or "算法与数据要求" in part
+                for part in parts
+                if part
+            )
+
         results = []
         for row_trace, _, row in rows:
+            if __is_algorithm_data_requirement(row):
+                continue
             rcms: List[Rcm] = req_rcms.get(row.id) or []
             relation_rcm_codes = [rcm.code for rcm in rcms]
             text_rcm_codes = reqd_text_rcm_codes.get(int(row.id)) or []

@@ -57,7 +57,7 @@ from ..utils.i18n import ts
 from ..utils import get_uuid
 from .serv_utils.tree_util import find_parent
 from .serv_utils import new_version
-from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, fixed_rcn300_sds_codes, rcn300_tail_name_key, live_rcn300_tail_chapters, align_rcn300_tail_node_codes
+from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, fixed_rcn300_sds_codes, rcn300_tail_name_key, live_rcn300_tail_chapters, align_rcn300_tail_node_codes, nav_directory_chapters, requirement_number_key
 from .serv_sds_reqd import Server as ServSdsReqd
 from .serv_doc_file import is_srs_a0_image_version
 from .serv_srs_doc import Server as ServSrsDoc
@@ -2545,13 +2545,108 @@ class Server(SdsSrsTraceSyncMixin, object):
 
         def __build_trace_table_from_rows(rows: List[SdsTraceObj], location_by_sds_code: Dict[str, str], trace_roots: List[SdsNodeForm] = None):
             live_tail = live_rcn300_tail_chapters(trace_roots or [])
+            directory = nav_directory_chapters(trace_roots or [])
             headers = [
                 TabHeader(code="srs_code", name="需求编号"),
                 TabHeader(code="sds_code", name="设计编号"),
                 TabHeader(code="chapter", name="需求/代码"),
             ]
 
+            def __is_fixed_rcn300_row(srs_code: str) -> bool:
+                txt = re.sub(r"\s+", "", str(srs_code or ""))
+                return re.match(r"^SRS-[A-Z]+?300-0(0[1-9]|10)$", txt, re.I) is not None
+
+            def __directory_number(sds_code: str, chapter: str) -> str:
+                hit = directory["by_code"].get(sds_code) if sds_code else ""
+                if hit:
+                    return hit
+                plain = re.sub(r"\s+", "", chapter or "")
+                hit = directory["by_name"].get(plain) if plain else ""
+                if hit:
+                    return hit
+                tail_key = rcn300_tail_name_key(chapter)
+                if not tail_key:
+                    return ""
+                found = ""
+                for name, num in directory["by_name"].items():
+                    if tail_key not in name:
+                        continue
+                    if not found or str(num).count(".") < str(found).count("."):
+                        found = num
+                return found
+
+            def __owned_chapter_names(table_rows: List[SdsTraceObj]) -> Dict[str, str]:
+                found = {}
+                for item in table_rows or []:
+                    if getattr(item, "design_manual", False):
+                        continue
+                    srs_key = requirement_number_key(getattr(item, "srs_code", "") or "")
+                    if not srs_key:
+                        continue
+                    codes = __split_trace_lines(getattr(item, "sds_code", "") or "")
+                    chapters = sdstrace_serv.trace_chapter_lines(
+                        getattr(item, "chapter", "") or "",
+                        srs_code=getattr(item, "srs_code", None),
+                        sub_function=getattr(item, "sub_function", None),
+                        function=getattr(item, "function", None),
+                        module=getattr(item, "module", None),
+                    )
+                    for index, code in enumerate(codes):
+                        sds_code = __normalize_req_code(code)
+                        if not sds_code or requirement_number_key(sds_code) != srs_key:
+                            continue
+                        name = re.sub(r"（章节\s*[^）]*）", "", chapters[index] if index < len(chapters) else "").strip()
+                        if name:
+                            found[sds_code] = name
+                return found
+
+            owned_names = __owned_chapter_names(rows)
+
+            def __manual_chapter_text(raw: str) -> str:
+                lines = []
+                for line in __split_trace_lines(raw):
+                    sds_code = __normalize_req_code(line)
+                    name = (sds_code and owned_names.get(sds_code)) or (sds_code and directory["by_code_name"].get(sds_code)) or ""
+                    num = (sds_code and directory["by_code"].get(sds_code)) or ""
+                    if not name:
+                        continue
+                    lines.append(f"{name}（章节 {num}）" if num else name)
+                return "\n".join(lines)
+
+            def build_other_req_chapter_cell(row: SdsTraceObj) -> str:
+                """其他需求的「需求/代码」跟编辑页：章号用左侧目录，不用标题里留下的旧号。"""
+                if getattr(row, "design_manual", False):
+                    text = __manual_chapter_text(getattr(row, "sds_code", "") or "")
+                    if text:
+                        return text
+                sds_codes = __split_trace_lines(getattr(row, "sds_code", "") or "")
+                # 与编辑页相同：用追溯行上已经写好的模块名，不用 300 固定英文对照再展开
+                chapters = __split_trace_lines(getattr(row, "chapter", "") or "")
+                locations = __split_trace_lines(getattr(row, "location", "") or "")
+                is_fixed = __is_fixed_rcn300_row(getattr(row, "srs_code", "") or "")
+                count = max(1, len(sds_codes), len(chapters), len(locations))
+                values = []
+                for idx in range(count):
+                    sds_code = __normalize_req_code(sds_codes[idx] if idx < len(sds_codes) else "")
+                    if not is_fixed and sds_code:
+                        linked = directory["by_code_deep"].get(sds_code)
+                        if linked and linked.get("name") and linked.get("num"):
+                            values.append(f"{linked['name']}（章节 {linked['num']}）")
+                            continue
+                    chapter = chapters[idx].strip() if idx < len(chapters) else (chapters[0].strip() if chapters else "")
+                    num = __directory_number(sds_code, chapter)
+                    if num:
+                        values.append(f"{chapter}（章节 {num}）" if chapter else f"（章节 {num}）")
+                        continue
+                    location = locations[idx].strip() if idx < len(locations) else ""
+                    if not location and sds_code:
+                        location = location_by_sds_code.get(sds_code, "")
+                    values.append(f"{chapter}{f'（章节 {location}）' if location else ''}")
+                return "\n".join(value for value in values if value)
+
             def build_chapter_cell(row: SdsTraceObj):
+                if str(getattr(row, "type_code", "") or "").strip() == "2":
+                    return build_other_req_chapter_cell(row)
                 sds_codes = __split_trace_lines(getattr(row, "sds_code", "") or "")
                 chapters = sdstrace_serv.trace_chapter_lines(
                     getattr(row, "chapter", "") or "",
@@ -3625,7 +3720,8 @@ finally:
                 if is_catalog_root:
                     # 目录页由TOC域生成，不再输出旧目录节点文本和子节点
                     continue
-                if node.sds_code:
+                # 一级章节标题旁已有设计编号，正文不再另写一行「设计编号：SDS-…」
+                if node.sds_code and level != 0:
                     __save_line_txt(docx, "设计编号：" + node.sds_code, font_def, False)
                 if node.label:
                     norm_label = __norm_title(node.label)
@@ -3952,7 +4048,7 @@ finally:
             for node in nodes or []:
                 if node.title:
                     docx_util.save_title2docx(__norm_title(node.title), docx, level + 1, font_size)
-                if node.sds_code:
+                if node.sds_code and level != 0:
                     docx_util.save_txt2docx("设计编号：" + node.sds_code, docx, font_def)
                 if node.label:
                     docx_util.save_txt2docx(__norm_title(node.label), docx, font_def)

@@ -349,21 +349,21 @@ class Server(object):
         lowest = min(vers, key=lambda v: tuple(int(p) for p in v.split(".")))
         return f"Chrome {lowest}"
 
-    def __lowest_client_browser(self, prod_id) -> str:
-        """软件测试报告用户端最低配的浏览器版本。本产品没有报告时用同名其它版本，再没有用报告模版。"""
+    def __str_docs_device_rows(self, prod_id, use_template=False):
+        """已保存的《软件测试报告》「测试设备详情」。本产品没有时用同名其它版本。"""
         from ..model.str_doc import StrDoc
 
-        def from_product(pid):
+        def rows_of(pid):
             row = db.session.execute(
                 select(StrDoc).where(StrDoc.product_id == pid).order_by(StrDoc.id.desc())
             ).scalars().first()
             if not row or not isinstance(row.content, dict):
-                return ""
-            return self.__browser_from_device_rows(self.__device_detail_rows(row.content))
+                return []
+            return self.__device_detail_rows(row.content)
 
-        browser = from_product(prod_id) if prod_id else ""
-        if browser:
-            return browser
+        rows = rows_of(prod_id) if prod_id else []
+        if rows:
+            return rows
         product = db.session.get(Product, prod_id) if prod_id else None
         name = (getattr(product, "name", None) or "").strip()
         if name:
@@ -371,11 +371,40 @@ class Server(object):
                 select(Product.id).where(Product.name == name, Product.id != prod_id).order_by(Product.id.desc())
             ).scalars().all()
             for pid in ids:
-                browser = from_product(pid)
-                if browser:
-                    return browser
-        from .serv_str_doc import DEFAULT_STR_CONTENT
-        return self.__browser_from_device_rows(self.__device_detail_rows(DEFAULT_STR_CONTENT))
+                rows = rows_of(pid)
+                if rows:
+                    return rows
+        if use_template:
+            from .serv_str_doc import DEFAULT_STR_CONTENT
+            return self.__device_detail_rows(DEFAULT_STR_CONTENT)
+        return []
+
+    def __saved_str_device_text(self, prod_id) -> dict:
+        """报告里已保存的用户端最低配、服务端整段设备信息。没有报告则空。"""
+        rows = self.__str_docs_device_rows(prod_id, use_template=False)
+        if not rows or not isinstance(rows[0], list):
+            return {}
+        header = [str(c or "") for c in rows[0]]
+        info_i = next((i for i, h in enumerate(header) if "设备信息" in h), 1)
+        found = {}
+        clients = [r for r in rows[1:] if isinstance(r, list) and str(r[0] or "").strip() == "用户端"]
+        client = self.__pick_lowest_client(clients)
+        if client and info_i < len(client) and str(client[info_i] or "").strip():
+            found["用户端"] = str(client[info_i]).strip()
+        for row in rows[1:]:
+            if not isinstance(row, list) or str(row[0] or "").strip() != "服务端":
+                continue
+            if info_i < len(row) and str(row[info_i] or "").strip():
+                found["服务端"] = str(row[info_i]).strip()
+            break
+        return found
+
+    def __lowest_client_browser(self, prod_id) -> str:
+        """软件测试报告用户端最低配的浏览器版本。本产品没有报告时用同名其它版本，再没有用报告模版。"""
+        browser = self.__browser_from_device_rows(self.__str_docs_device_rows(prod_id, use_template=False))
+        if browser:
+            return browser
+        return self.__browser_from_device_rows(self.__str_docs_device_rows(prod_id, use_template=True))
 
     @staticmethod
     def __replace_browser_block(info: str, browser: str) -> str:
@@ -405,8 +434,9 @@ class Server(object):
         return re.sub(r"[ \t]*及以上", "", str(text or ""))
 
     def __apply_str_browser(self, content, prod_id):
-        """用户端设备里只保留最低配的一个浏览器版本。测试工具写谷歌浏览器。数量旁不再写浏览器。"""
+        """用户端、服务端配置从软件测试报告已保存的测试设备带出。用户端浏览器只留最低的一个版本。"""
         browser = self.__lowest_client_browser(prod_id)
+        saved = self.__saved_str_device_text(prod_id)
         for s in (content.get("sections") or []):
             for tbl in (s.get("tables") or []):
                 if not tbl or not isinstance(tbl[0], list) or "产品名称" not in str(tbl[0][0] or ""):
@@ -415,7 +445,7 @@ class Server(object):
                     tbl[1][6] = tbl[1][7] = "谷歌浏览器"
                 if len(tbl) > 4 and isinstance(tbl[4], list):
                     for i in range(3, min(6, len(tbl[4]))):
-                        cell = tbl[4][i]
+                        cell = saved.get("用户端") or tbl[4][i]
                         if isinstance(cell, str) and cell.strip():
                             text = self.__dedupe_os_blocks(cell)
                             if browser:
@@ -425,7 +455,7 @@ class Server(object):
                         tbl[4][7] = ""
                 if len(tbl) > 5 and isinstance(tbl[5], list):
                     for i in range(3, min(6, len(tbl[5]))):
-                        cell = tbl[5][i]
+                        cell = saved.get("服务端") or tbl[5][i]
                         if isinstance(cell, str) and cell.strip():
                             tbl[5][i] = self.__drop_and_above(cell)
 

@@ -584,6 +584,8 @@ class Server(object):
                         info, qty = found[label]
                         while len(r) <= info_i:
                             r.append("")
+                        if str(r[info_i] or "").strip():
+                            continue
                         r[info_i] = info
                         if qty_i is not None:
                             while len(r) <= qty_i:

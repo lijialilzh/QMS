@@ -481,6 +481,9 @@ export const applySdsSyncToTree = (tree: TreeNode[], payload?: HldSdsSyncPayload
     }
     nextTree = applySdsFieldTablesToTree(nextTree, payload.field_tables);
     nextTree = applyGlossaryTable(nextTree, payload.glossary_table);
+    if (interfaceDetails.length) {
+        return replaceInternalInterfacesFromSds(nextTree, interfaceDetails);
+    }
     nextTree = splitHldInternalInterfaces(nextTree).nodes;
     return mergeInterfaceDetails(nextTree, interfaceDetails);
 };
@@ -560,6 +563,53 @@ const interfaceNamesMatch = (left?: string, right?: string) => {
 
 const isImportedTableChild = (node?: TreeNode | null) =>
     /^导入表格\d*$/.test(String(node?.title || "").trim()) && !!(node?.table?.headers || []).length;
+
+const detailTableChildren = (node: TreeNode, tables: Array<{ title?: string; table: HldTableData }>): TreeNode[] =>
+    (tables || []).filter((item) => item?.table?.headers?.length).map((item, index) => {
+        const rawTitle = String(item.title || "").trim();
+        return {
+            id: nextTempNodeId(),
+            doc_id: node.doc_id || 0,
+            n_id: 0,
+            p_id: node.n_id || 0,
+            title: /^导入表格\d*$/.test(rawTitle) ? rawTitle : `导入表格${index + 1}`,
+            text: "",
+            ref_type: HLD_SDS_LOCK_REF,
+            table: item.table,
+            children: [],
+        } as TreeNode;
+    });
+
+/** 3.3 按详细设计接口目录重排：新增的补上，删掉的去掉，一章下的多张表都挂上。 */
+const replaceInternalInterfacesFromSds = (
+    tree: TreeNode[],
+    details: HldSdsSyncPayload["interface_details"],
+): TreeNode[] => {
+    if (!details?.length) return tree;
+    return walkTree(tree, (node) => {
+        if (!isInternalInterfaceTitle(node.title)) return node;
+        const previous = ((node.children || []) as TreeNode[]).filter((child) => /^3\.3\.\d+/.test(normalizeTitle(child.title)));
+        const others = ((node.children || []) as TreeNode[]).filter((child) => !/^3\.3\.\d+/.test(normalizeTitle(child.title)));
+        const pool = [...previous];
+        const chapters = details.map((detail, index) => {
+            const matchedIndex = pool.findIndex((child) => interfaceNamesMatch(child.title, detail.name) || interfaceNamesMatch(child.title, detail.source_title));
+            const matched = matchedIndex >= 0 ? pool.splice(matchedIndex, 1)[0] : undefined;
+            const kept = ((matched?.children || []) as TreeNode[]).filter((child) => !isImportedTableChild(child));
+            return {
+                id: matched?.id || nextTempNodeId(),
+                doc_id: node.doc_id || matched?.doc_id || 0,
+                n_id: matched?.n_id || 0,
+                p_id: node.n_id || 0,
+                title: `3.3.${index + 1} ${detail.name}`,
+                text: detail.text || "",
+                ref_type: HLD_SDS_LOCK_REF,
+                table: {},
+                children: [...kept, ...detailTableChildren(node, detail.tables || [])],
+            } as TreeNode;
+        });
+        return { ...node, children: [...chapters, ...others] };
+    });
+};
 
 const mergeInterfaceDetails = (tree: TreeNode[], details: HldSdsSyncPayload["interface_details"]): TreeNode[] => {
     if (!details?.length) return tree;

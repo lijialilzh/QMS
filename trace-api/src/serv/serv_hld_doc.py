@@ -1908,7 +1908,7 @@ class Server(object):
             return Resp.resp_err(msg="读取详细设计失败")
         interface_table = None
         field_tables = []
-        interface_details = []
+        catalogs = []
 
         def walk(nodes, parent_titles: List[str] = None):
             nonlocal interface_table
@@ -1927,32 +1927,14 @@ class Server(object):
                             "library": self.__detect_field_library(parent_titles),
                             "table": self._serialize_table(tbl),
                         })
-                detail_name = self.__parse_interface_detail_title(title)
-                detail_text = str(getattr(node, "text", "") or "").strip()
-                child_tables = []
-                if detail_name:
-                    for child in getattr(node, "children", None) or []:
-                        child_table = self._parse_table(getattr(child, "table", None))
-                        if not child_table or not getattr(child_table, "headers", None):
-                            continue
-                        h0 = self.__table_header_name(child_table, 0)
-                        if h0 in ("字段ID", "Field ID", "接口设计编号"):
-                            continue
-                        child_tables.append({
-                            "title": str(getattr(child, "title", "") or "").strip() or "导入表格",
-                            "table": self._serialize_table(child_table),
-                        })
-                    if detail_text or child_tables:
-                        interface_details.append({
-                            "name": detail_name,
-                            "source_title": title,
-                            "text": detail_text,
-                            "tables": child_tables,
-                        })
+                if self.__is_interface_catalog(node):
+                    catalogs.append(node)
                 walk(getattr(node, "children", None) or [], chain)
 
         sds_nodes = sds_resp.data.content or []
         walk(sds_nodes)
+        catalog = self.__pick_interface_catalog(catalogs)
+        interface_details = self.__interface_details_from_catalog(catalog) if catalog is not None else []
         glossary_pairs = self._glossary_pairs_from_nodes(sds_nodes)
         return Resp.resp_ok(data={
             "sds_doc_id": sds_row.id,
@@ -1961,6 +1943,92 @@ class Server(object):
             "field_tables": field_tables,
             "glossary_table": self._serialize_table(self._glossary_table(glossary_pairs)) if glossary_pairs else None,
         })
+
+    @staticmethod
+    def __strip_heading_name(title: str) -> str:
+        return re.sub(r"^\s*\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))", "", str(title or "")).strip()
+
+    def __is_interface_catalog(self, node) -> bool:
+        """详细设计里挂着各接口分章的那一节，标题去掉章号后是「接口」。"""
+        if self.__strip_heading_name(getattr(node, "title", "") or "") != "接口":
+            return False
+        children = getattr(node, "children", None) or []
+        detail_count = 0
+        has_summary = self.__table_header_name(getattr(node, "table", None), 0) == "接口设计编号"
+        for child in children:
+            title = str(getattr(child, "title", "") or "").strip()
+            if self.__interface_child_name(title):
+                detail_count += 1
+            if self.__table_header_name(getattr(child, "table", None), 0) == "接口设计编号":
+                has_summary = True
+        return has_summary or detail_count >= 3
+
+    @staticmethod
+    def __pick_interface_catalog(catalogs):
+        if not catalogs:
+            return None
+        return catalogs[-1] if len(catalogs) == 1 else max(catalogs, key=lambda node: sum(
+            1 for child in (getattr(node, "children", None) or [])
+            if Server.__interface_child_name(getattr(child, "title", "") or "")
+        ))
+
+    @staticmethod
+    def __interface_child_name(title: str) -> Optional[str]:
+        name = Server.__strip_heading_name(title)
+        if not name or name == "接口":
+            return None
+        if re.match(r"^导入表格\d*$", name) or re.match(r"^导入图片\d*$", name) or re.match(r"^图\s*\d+", name):
+            return None
+        return name
+
+    def __usable_detail_table(self, table):
+        tbl = self._parse_table(table)
+        if not tbl or not getattr(tbl, "headers", None):
+            return None
+        h0 = re.sub(r"\s+", "", self.__table_header_name(tbl, 0))
+        if h0 in ("字段ID", "FieldID", "接口设计编号"):
+            return None
+        serialized = self._serialize_table(tbl)
+        if isinstance(serialized, dict):
+            serialized = {key: value for key, value in serialized.items() if key != "extra_tables"}
+        return serialized
+
+    def __append_table_bundle(self, tables: list, table, title: str):
+        usable = self.__usable_detail_table(table)
+        if usable:
+            tables.append({"title": title or "导入表格", "table": usable})
+        parsed = self._parse_table(table)
+        for extra in getattr(parsed, "extra_tables", None) or []:
+            extra_table = extra.get("table") if isinstance(extra, dict) else getattr(extra, "table", None)
+            extra_title = extra.get("title") if isinstance(extra, dict) else getattr(extra, "title", None)
+            extra_usable = self.__usable_detail_table(extra_table)
+            if extra_usable:
+                tables.append({"title": str(extra_title or "").strip() or "导入表格", "table": extra_usable})
+
+    def __collect_interface_tables(self, node) -> list:
+        tables = []
+        self.__append_table_bundle(tables, getattr(node, "table", None), "导入表格")
+        for child in getattr(node, "children", None) or []:
+            title = str(getattr(child, "title", "") or "").strip()
+            if re.match(r"^\s*图\s*\d+", title) or re.match(r"^\s*导入图片\d*$", title):
+                continue
+            self.__append_table_bundle(tables, getattr(child, "table", None), title or "导入表格")
+        return tables
+
+    def __interface_details_from_catalog(self, catalog) -> list:
+        details = []
+        for child in getattr(catalog, "children", None) or []:
+            title = str(getattr(child, "title", "") or "").strip()
+            name = self.__interface_child_name(title)
+            if not name:
+                continue
+            details.append({
+                "name": name,
+                "source_title": title,
+                "text": str(getattr(child, "text", "") or "").strip(),
+                "tables": self.__collect_interface_tables(child),
+            })
+        return details
 
     @staticmethod
     def __parse_interface_detail_title(title: str) -> Optional[str]:

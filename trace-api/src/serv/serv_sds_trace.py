@@ -341,6 +341,77 @@ def live_rcn300_tail_chapters(nodes) -> dict:
     return found
 
 
+def nav_directory_chapters(nodes) -> dict:
+    """与编辑页左侧目录同一套章号。by_code / by_name 取较浅的章，by_code_deep 取较深的章。"""
+    by_code = {}
+    by_name = {}
+    by_code_name = {}
+    by_code_deep = {}
+
+    def shallower(prev, num):
+        return (not prev) or str(num).count(".") < str(prev).count(".")
+
+    def skipped(node) -> bool:
+        ref = str(getattr(node, "ref_type", "") or "")
+        title = str(getattr(node, "title", "") or getattr(node, "label", "") or "").strip()
+        compact = re.sub(r"\s+", "", title)
+        if ref in ("sds_reqds", "sds_traces", "img_flow"):
+            return True
+        if compact == "目录" or "软件详细设计" in compact or "文件修订记录" in compact:
+            return True
+        if re.match(r"^\s*图\s*\d+", title) or re.match(r"^\s*导入表格\d*$", title) or re.match(r"^\s*导入图片\d*$", title):
+            return True
+        return False
+
+    def unnumbered(node) -> bool:
+        ref = str(getattr(node, "ref_type", "") or "")
+        compact = re.sub(r"\s+", "", str(getattr(node, "title", "") or ""))
+        raw = str(getattr(node, "title", "") or "")
+        if ref == "review" or compact in ("评审记录", "附件一评审结论") or compact.startswith("附件一"):
+            return True
+        return bool(re.match(r"^\s*表\d+([、.\s　]|$)", raw))
+
+    def strip_name(title: str) -> str:
+        return re.sub(
+            r"^\s*\d+(?:\.\d+)*(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))",
+            "",
+            str(title or ""),
+        ).strip()
+
+    def walk(items, prefix: str):
+        idx = 0
+        for node in items or []:
+            if skipped(node):
+                continue
+            children = getattr(node, "children", None) or []
+            if unnumbered(node):
+                walk(children, prefix)
+                continue
+            idx += 1
+            num = f"{prefix}.{idx}" if prefix else str(idx)
+            name = strip_name(getattr(node, "title", "") or "")
+            compact = re.sub(r"\s+", "", name)
+            if compact and shallower(by_name.get(compact), num):
+                by_name[compact] = num
+            code = re.sub(r"\s+", "", str(getattr(node, "sds_code", "") or "")).upper()
+            if code:
+                if shallower(by_code.get(code), num):
+                    by_code[code] = num
+                    by_code_name[code] = name
+                prev = by_code_deep.get(code)
+                if not prev or str(num).count(".") >= str(prev.get("num") or "").count("."):
+                    by_code_deep[code] = {"name": name, "num": num}
+            walk(children, num)
+
+    walk(nodes or [], "")
+    return {
+        "by_code": by_code,
+        "by_name": by_name,
+        "by_code_name": by_code_name,
+        "by_code_deep": by_code_deep,
+    }
+
+
 def live_heading_for_exact_title(nodes, module: str) -> str:
     """目录里还有同名章节时返回它的章号。没有这章就空着，不再套模板里的旧章号。"""
     target = re.sub(r"\s+", "", str(module or ""))
