@@ -789,6 +789,15 @@ export default () => {
                             </div>
                         )}
                     </div>
+                    <div style={{ color: "#888", marginTop: 8 }}>
+                        已选 {(data.copyDhfSelectedIds || []).length} 条；勾选后将同步复制对应模块文档（编号 + 名称双重匹配）。
+                    </div>
+                </div>
+            </Modal>
+            <DetailDlg
+                data={data}
+                dispatch={dispatch}
+                onSaved={() => {
                     if (data.dlgType === DlgTypes.add) {
                         queryForm.resetFields();
                     }

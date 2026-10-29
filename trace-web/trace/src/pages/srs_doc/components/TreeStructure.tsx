@@ -2232,7 +2232,7 @@ function orderOtherReqRootsBySrsCode(nodes: TreeNode[], otherRows: any[] = []): 
     const roots = [...(nodes || [])];
     const movable = roots.flatMap((node, index) => {
         const name = rootChapterModuleName(node);
-        if (!name || name === "验收验证标准" || name === "基本要求" || (name.startsWith("基本要求") && (node.children || []).length > 0) || name === "介绍" || name.includes("软件整体")) return [];
+        if (!name || name === "验收验证标准" || (name.startsWith("基本要求") && (node.children || []).length > 0) || name === "介绍" || name.includes("软件整体")) return [];
         const code = otherReqRootCode(node, rows);
         if (!code) return [];
         return [{ index, node, code }];
