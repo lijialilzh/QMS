@@ -343,6 +343,7 @@ class SdsSrsTraceSyncMixin:
                     merged.append(req)
                 grouped[role] = merged
         renamed_later = []
+        external_later = []
 
         def body_name(node: SdsNodeForm) -> str:
             return self._normalize_sds_node_title(self._strip_sds_heading_text(getattr(node, "title", "") or ""))
@@ -485,6 +486,9 @@ class SdsSrsTraceSyncMixin:
             if template is not None and pending:
                 bind_chapter(template, pending.pop(0))
                 claimed_nodes.add(id(template))
+            elif template is None and pending and role == "external":
+                external_later.extend(pending)
+                pending = []
             elif template is None and pending and role not in self._DESIGN_TEMPLATE_ROLES:
                 warnings.append(f"{other_req_role_display_name(pending[0].module, role)}没有对应的模版章节")
                 pending = []
@@ -527,6 +531,8 @@ class SdsSrsTraceSyncMixin:
         self._order_other_req_roots_by_code(roots, rows)
         self._append_basic_requirement_chapter(doc_id, roots, rows)
         self._append_renamed_template_chapters(doc_id, roots, renamed_later)
+        self._append_external_chapters(doc_id, roots, external_later)
+        self._append_regulation_chapters(doc_id, roots, rows)
         return roots, warnings
 
     def _top_level_named(self, roots: List[SdsNodeForm], name: str) -> bool:
@@ -602,6 +608,36 @@ class SdsSrsTraceSyncMixin:
             return
         basics.sort(key=lambda req: self._sds_code_sort_key(getattr(req, "code", "") or ""))
         self._insert_other_req_root(doc_id, roots, basics[0], "基本要求", "", "")
+
+    def _append_regulation_chapters(self, doc_id: int, roots: List[SdsNodeForm], rows):
+        """追溯表里还有法规符合、目录里没有这一章时，补一级章节。不改已有章节编号，不套固定小节。"""
+        matched = [
+            req for req in rows or []
+            if "法规符合" in re.sub(r"\s+", "", str(getattr(req, "module", "") or ""))
+        ]
+        if not matched:
+            return
+        for node in roots or []:
+            heading = self._parse_sds_node_heading(getattr(node, "title", "") or "")
+            if not heading or "." in heading:
+                continue
+            body = self._normalize_sds_node_title(self._strip_sds_heading_text(getattr(node, "title", "") or ""))
+            if "法规符合" in body:
+                return
+        matched.sort(key=lambda req: self._sds_code_sort_key(getattr(req, "code", "") or ""))
+        display = str(getattr(matched[0], "module", "") or "").strip() or "法规符合需求"
+        self._insert_other_req_root(doc_id, roots, matched[0], display, "", "")
+
+    def _append_external_chapters(self, doc_id: int, roots: List[SdsNodeForm], reqs):
+        """追溯表里还有外部连接、目录里没有这一章时，补一级章节。不改已有章节编号。"""
+        ordered = sorted(reqs or [], key=lambda req: self._sds_code_sort_key(getattr(req, "code", "") or ""))
+        seen = set()
+        for req in ordered:
+            if id(req) in seen:
+                continue
+            seen.add(id(req))
+            display = str(getattr(req, "module", "") or "").strip() or "外部连接"
+            self._insert_other_req_root(doc_id, roots, req, display, "sds-role:external", "")
 
     def _append_renamed_template_chapters(self, doc_id: int, roots: List[SdsNodeForm], reqs):
         """图像存储等预置模块改名后，原来的英文模版章已经不在时，按现在的模块名补一级章节。"""

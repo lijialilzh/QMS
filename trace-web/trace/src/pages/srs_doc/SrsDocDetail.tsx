@@ -2783,9 +2783,12 @@ export default () => {
             codeSet.add(code);
         });
         collectExistingReqDetails(cloned);
+        const standardReqCodes = new Set(
+            standardDetails.map((detail: any) => normalizeSrsCodeForSync(detail?.code)).filter(Boolean),
+        );
         changeDetails.forEach((detail) => {
             const code = normalizeSrsCodeForSync(detail?.code);
-            if (!code) return;
+            if (!code || standardReqCodes.has(code)) return;
             const detailKey = normalizeReqDetailKey(detail?.req_detail_key);
             const moduleText = normalizeReqText(detail?.module || detail?.name || detail?.function || detail?.code) || code;
             const functionText = normalizeReqText(detail?.function);

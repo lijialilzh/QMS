@@ -218,17 +218,92 @@ def _design_code_keys(lines) -> list:
     return keys
 
 
+def _series_shifted_only_by_stem(left: str, right: str) -> bool:
+    """300-001 与 400-001：末段序号相同，系列号只差产品代号前面那几位。"""
+    left_matched = re.fullmatch(r"(\d+)-(\d+)", left or "")
+    right_matched = re.fullmatch(r"(\d+)-(\d+)", right or "")
+    if not left_matched or not right_matched or left_matched.group(2) != right_matched.group(2):
+        return False
+    left_series, right_series = left_matched.group(1), right_matched.group(1)
+    shared = 0
+    while shared < len(left_series) and shared < len(right_series) and left_series[-1 - shared] == right_series[-1 - shared]:
+        shared += 1
+    return shared >= 2 and left_series[-shared:].isdigit()
+
+
+def _number_keys_same_slot(stored_keys, auto_keys) -> bool:
+    if stored_keys == auto_keys:
+        return True
+    if len(stored_keys) != len(auto_keys):
+        return False
+    for left, right in zip(stored_keys, auto_keys):
+        if left == right or _series_shifted_only_by_stem(left, right):
+            continue
+        return False
+    return True
+
+
 def design_codes_are_manual(stored: str, auto_lines, also_auto=None) -> bool:
-    """其他需求的设计编号若和自动结果不是同一组数字，就视为手改。字母不同不算手改。"""
+    """其他需求的设计编号若和自动结果不是同一组数字，就视为手改。字母不同不算手改。产品代号只换版本号前面一段、末段序号不变时也不算手改。"""
     stored_keys = design_code_number_keys(stored)
     if not stored_keys:
         return False
     for lines in (auto_lines, also_auto):
         if lines is None:
             continue
-        if stored_keys == _design_code_keys(lines):
+        if _number_keys_same_slot(stored_keys, _design_code_keys(lines)):
             return False
     return True
+
+
+_MODULE_PRESET_TAIL = (
+    ("文档需求", "008"),
+    ("法规符合", "009"),
+    ("外部连接", "010"),
+)
+
+
+def stored_is_module_preset_tail(stored: str, module: str) -> bool:
+    """库里还是文档需求 008、法规符合 009、外部连接 010 时，这是原来的自动编号，不是手改。"""
+    text = re.sub(r"\s+", "", str(module or ""))
+    tail = ""
+    for key, value in _MODULE_PRESET_TAIL:
+        if key in text:
+            tail = value
+            break
+    if not tail:
+        return False
+    keys = design_code_number_keys(stored)
+    if len(keys) != 1:
+        return False
+    return keys[0].rsplit("-", 1)[-1] == tail
+
+
+def other_req_keeps_design_code(stored: str, module: str, auto_lines, also_auto=None) -> bool:
+    if stored_is_module_preset_tail(stored, module):
+        return False
+    return design_codes_are_manual(stored, auto_lines, also_auto)
+
+
+def align_sds_node_code(doc_id: int, stored: str, derived: str, module: str = ""):
+    """设计编号只是产品代号变了时，章节上的同一编号一起换。手改成别的序号不动。"""
+    stored_text = str(stored or "")
+    derived_text = str(derived or "").strip()
+    stored_norm = re.sub(r"\s+", "", stored_text).upper()
+    derived_norm = re.sub(r"\s+", "", derived_text).upper()
+    if not doc_id or not stored_norm or not derived_norm or stored_norm == derived_norm:
+        return
+    if "\n" in stored_text or "," in stored_text or "，" in stored_text:
+        return
+    if other_req_keeps_design_code(stored_norm, module, [derived_norm]):
+        return
+    nodes = db.session.execute(
+        select(SdsNode).where(SdsNode.doc_id == doc_id, SdsNode.sds_code.isnot(None))
+    ).scalars().all()
+    for node in nodes:
+        node_code = re.sub(r"\s+", "", str(node.sds_code or "")).upper()
+        if node_code == stored_norm:
+            node.sds_code = derived_norm
 
 
 def other_req_fixed_trace_is_cross_map(code: str, trace) -> bool:
@@ -1003,8 +1078,9 @@ class Server(object):
                         legacy_lines = [item[0] for item in (fixed_trace or [])]
                         cross_map = other_req_fixed_trace_is_cross_map(code, fixed_trace)
                         if role and other_req_role_is_changed(code, module, role):
-                            if design_codes_are_manual(existing_codes.get(req_id), [derived_code], legacy_lines):
+                            if other_req_keeps_design_code(existing_codes.get(req_id), module, [derived_code], legacy_lines):
                                 continue
+                            align_sds_node_code(sds_doc_id, existing_codes.get(req_id), derived_code, module)
                             values.append(
                                 dict(
                                     doc_id=sds_doc_id,
@@ -1016,8 +1092,9 @@ class Server(object):
                             continue
                         if cross_map or fixed_trace is None:
                             legacy_follow = other_req_stored_follows_cross_map(existing_codes.get(req_id), code, fixed_trace)
-                            if not legacy_follow and design_codes_are_manual(existing_codes.get(req_id), [derived_code], legacy_lines):
+                            if not legacy_follow and other_req_keeps_design_code(existing_codes.get(req_id), module, [derived_code], legacy_lines):
                                 continue
+                            align_sds_node_code(sds_doc_id, existing_codes.get(req_id), derived_code, module)
                             fixed_values.append(
                                 dict(
                                     doc_id=sds_doc_id,
@@ -1030,13 +1107,14 @@ class Server(object):
                             continue
                         if fixed_trace is not None:
                             kept = filtered_trace or []
-                            if design_codes_are_manual(
+                            if other_req_keeps_design_code(
                                 existing_codes.get(req_id),
+                                module,
                                 [item[0] for item in kept],
                                 legacy_lines,
                             ):
                                 continue
-                        elif design_codes_are_manual(existing_codes.get(req_id), [derived_code]):
+                        elif other_req_keeps_design_code(existing_codes.get(req_id), module, [derived_code]):
                             continue
                     if fixed_trace is not None:
                         kept = filtered_trace or []
@@ -1996,11 +2074,12 @@ class Server(object):
                 if cross_map and other_req_stored_follows_cross_map(stored_sds_code, row_req.code, fixed_for_manual):
                     manual = False
                 elif role_changed or cross_map or fixed_for_manual is None:
-                    manual = design_codes_are_manual(stored_sds_code, [derived_sds_code], legacy_lines)
+                    manual = other_req_keeps_design_code(stored_sds_code, row_req.module, [derived_sds_code], legacy_lines)
                 else:
                     kept_for_manual = filter_fixed_trace_to_living(fixed_for_manual, living_codes) or []
-                    manual = design_codes_are_manual(
+                    manual = other_req_keeps_design_code(
                         stored_sds_code,
+                        row_req.module,
                         [item[0] for item in kept_for_manual],
                         legacy_lines,
                     )

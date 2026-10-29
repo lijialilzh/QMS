@@ -5518,10 +5518,13 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             });
         };
         walkCodes(cloned);
+        const standardCodes = new Set(
+            buildPreviewStandardDetails().map((item) => normalizeSrsCode(item?.code)).filter(Boolean),
+        );
         const appendChangeDetail = (detail: any) => {
             const code = normalizeSrsCode(detail?.code);
             const typeCode = String(detail?.type_code || "");
-            if (!code || existingCodes.has(code) || typeCode === "1" || typeCode === "2") return;
+            if (!code || existingCodes.has(code) || standardCodes.has(code) || typeCode === "1" || typeCode === "2") return;
             const moduleText = String(detail?.module || detail?.name || detail?.function || code || "").trim() || code;
             const functionText = String(detail?.function || "").trim();
             const subFunctionText = String(detail?.sub_function || "").trim();
@@ -5585,7 +5588,44 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         };
         changeDetails.forEach(appendChangeDetail);
         const reqRoot = findReqDetailRoot(cloned);
-        if (reqRoot) sortTreeChildrenBySrsCode([reqRoot]);
+        if (reqRoot) {
+            const titleKey = (value?: string) => normalizeTitleText(String(value || "").replace(/^\d+(?:\.\d+)*\s*/, ""));
+            const codesIn = (node: TreeNode): string[] => {
+                const own = normalizeSrsCode(node.srs_code || "") || (isFunctionalKvTable(node.table) ? normalizeSrsCode(extractSrsCodeFromTable(node.table)) : "");
+                return [own, ...(node.children || []).flatMap(codesIn)].filter(Boolean);
+            };
+            const isStandardOnlyGroup = (node: TreeNode) => {
+                const codes = codesIn(node);
+                return !!codes.length && codes.every((code) => standardCodes.has(code));
+            };
+            reqRoot.children = (reqRoot.children || []).filter((child, index, list) => {
+                if (child.label !== "__auto_req_group" || !isStandardOnlyGroup(child)) return true;
+                const name = titleKey(child.title);
+                const realSibling = list.some((item, itemIndex) => (
+                    itemIndex !== index && titleKey(item.title) === name && item.label !== "__auto_req_group"
+                ));
+                const earlierCopy = list.slice(0, index).some((item) => (
+                    item.label === "__auto_req_group" && titleKey(item.title) === name && isStandardOnlyGroup(item)
+                ));
+                const realElsewhere = (() => {
+                    let found = false;
+                    const walk = (items: TreeNode[]) => {
+                        (items || []).forEach((node) => {
+                            if (found || node === reqRoot || node === child) return;
+                            if (titleKey(node.title) === name) {
+                                found = true;
+                                return;
+                            }
+                            walk(node.children || []);
+                        });
+                    };
+                    walk(cloned);
+                    return found;
+                })();
+                return !realSibling && !earlierCopy && !realElsewhere;
+            });
+            sortTreeChildrenBySrsCode([reqRoot]);
+        }
         return cloned;
     };
     const pruneStaleChangeReqPreviewFromTree = (nodeList: TreeNode[]): TreeNode[] => {
@@ -5990,11 +6030,12 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                 });
             }
         });
+        const standardReqCodes = new Set(buildPreviewStandardDetails().map((item) => normalizeSrsCode(item?.code)).filter(Boolean));
         Array.from(changeCandidateMap.values())
             .filter((detail: any) => {
                 const code = normalizeSrsCode(detail?.code);
                 const typeCode = String(detail?.type_code || "");
-                return code && !existingCodes.has(code) && typeCode !== "1" && typeCode !== "2" && detail?.__fromChangeTable;
+                return code && !existingCodes.has(code) && !standardReqCodes.has(code) && typeCode !== "1" && typeCode !== "2" && detail?.__fromChangeTable;
             })
             .forEach((detail: any) => createReqHierarchy(detail, "change"));
         if (shouldSyncStandardReqDetails || changeCandidateMap.size > 0) {

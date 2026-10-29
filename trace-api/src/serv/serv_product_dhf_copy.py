@@ -41,7 +41,7 @@ from ..model.rmp_doc import RmpDoc
 from ..model.scm_doc import ScmDoc
 from ..model.scs_doc import ScsDoc
 from ..model.sd_doc import SdDoc
-from ..model.sds_doc import SdsDoc
+from ..model.sds_doc import SdsDoc, SdsNode
 from ..model.srs_doc import SrsDoc, SrsNode
 from ..model.srs_req import SrsReq
 from sqlalchemy.orm.attributes import flag_modified
@@ -150,17 +150,18 @@ def product_code_stem(product_code: str) -> str:
 
 
 _SRS_CODE_RE = re.compile(r"SRS-\s*[A-Za-z0-9]+\s*-\s*\d+", re.I)
+_DESIGN_CODE_RE = re.compile(r"(?:SRS|SDS)-\s*[A-Za-z0-9]+\s*-\s*\d+", re.I)
 
 
 def rewrite_srs_code_stem(code: str, old_stem: str, new_stem: str) -> str:
-    """SRS-RCN301-001 只换版本号前的 RCN3，留下 01 和 -001。对不上旧代号的编号不动。"""
+    """SRS-RCN301-001 只换版本号前的 RCN3，留下 01 和 -001。SDS 编号同样。对不上旧代号的编号不动。"""
     raw = str(code or "")
     old = str(old_stem or "").strip()
     new = str(new_stem or "").strip()
     if not raw or not old or not new:
         return raw
     compact = re.sub(r"\s+", "", raw)
-    matched = re.fullmatch(r"(SRS-)([A-Za-z0-9]+)(-\d+)", compact, flags=re.I)
+    matched = re.fullmatch(r"((?:SRS|SDS)-)([A-Za-z0-9]+)(-\d+)", compact, flags=re.I)
     if not matched:
         return raw
     token = matched.group(2)
@@ -177,6 +178,29 @@ def rewrite_srs_text_stem(value: str, old_stem: str, new_stem: str) -> str:
         return rewrite_srs_code_stem(matched.group(0), old_stem, new_stem)
 
     return _SRS_CODE_RE.sub(repl, value)
+
+
+def rewrite_design_text_stem(value: str, old_stem: str, new_stem: str) -> str:
+    if not isinstance(value, str):
+        return value
+    upper = value.upper()
+    if "SRS-" not in upper and "SDS-" not in upper:
+        return value
+
+    def repl(matched):
+        return rewrite_srs_code_stem(matched.group(0), old_stem, new_stem)
+
+    return _DESIGN_CODE_RE.sub(repl, value)
+
+
+def _rewrite_design_json(value, old_stem: str, new_stem: str):
+    if isinstance(value, str):
+        return rewrite_design_text_stem(value, old_stem, new_stem)
+    if isinstance(value, list):
+        return [_rewrite_design_json(item, old_stem, new_stem) for item in value]
+    if isinstance(value, dict):
+        return {key: _rewrite_design_json(item, old_stem, new_stem) for key, item in value.items()}
+    return value
 
 
 def _rewrite_srs_json(value, old_stem: str, new_stem: str):
@@ -251,6 +275,38 @@ def sync_srs_codes_to_product_stem(prod_id: int, old_product_code: str, new_prod
                     node.table = next_table
                     flag_modified(node, "table")
                     changed += 1
+    if docs:
+        from ..model.sds_trace import SdsTrace
+        sds_docs = db.session.execute(
+            select(SdsDoc).where(SdsDoc.srsdoc_id.in_([doc.id for doc in docs]))
+        ).scalars().all()
+        for sds_doc in sds_docs:
+            traces = db.session.execute(select(SdsTrace).where(SdsTrace.doc_id == sds_doc.id)).scalars().all()
+            for trace in traces:
+                next_code = rewrite_design_text_stem(trace.sds_code or "", old_stem, new_stem)
+                if next_code != (trace.sds_code or ""):
+                    trace.sds_code = next_code
+                    changed += 1
+            nodes = db.session.execute(select(SdsNode).where(SdsNode.doc_id == sds_doc.id)).scalars().all()
+            for node in nodes:
+                next_code = rewrite_design_text_stem(node.sds_code or "", old_stem, new_stem)
+                if next_code != (node.sds_code or ""):
+                    node.sds_code = next_code
+                    changed += 1
+                next_title = rewrite_design_text_stem(node.title or "", old_stem, new_stem)
+                if next_title != (node.title or ""):
+                    node.title = next_title
+                    changed += 1
+                next_text = rewrite_design_text_stem(node.text or "", old_stem, new_stem)
+                if next_text != (node.text or ""):
+                    node.text = next_text
+                    changed += 1
+                if node.table:
+                    next_table = _rewrite_design_json(node.table, old_stem, new_stem)
+                    if next_table != node.table:
+                        node.table = next_table
+                        flag_modified(node, "table")
+                        changed += 1
     return changed
 
 

@@ -297,6 +297,7 @@ function rootHasModule(roots: TreeNode[], module: string) {
 function dropAbsentPresetOtherReqChapters(nodes: TreeNode[], otherRows: any[]): TreeNode[] {
     const living = new Set<string>();
     const livingRoles = new Set<string>();
+    const keepRegulation = (otherRows || []).some((row) => String(row?.module || "").replace(/\s+/g, "").includes("法规符合"));
     (otherRows || []).forEach((row) => {
         const code = String(row?.code || row?.srs_code || "").replace(/\s+/g, "").toUpperCase();
         const name = fixedModuleForSrsCode(code);
@@ -311,6 +312,7 @@ function dropAbsentPresetOtherReqChapters(nodes: TreeNode[], otherRows: any[]): 
         if (isSdsFrontMatterTitle(node.title) || isSdsAppendixTitle(node.title, node.ref_type)) return true;
         const presetName = Object.values(FIXED_SDS300_MODULE_NAME).find((name) => sdsTitleMatchesModule(node.title || "", name));
         if (!presetName) return true;
+        if (presetName === "法规符合性需求" && keepRegulation) return true;
         const role = roleByChapter[presetName];
         if (role) return livingRoles.has(role);
         return living.has(presetName);
@@ -379,8 +381,8 @@ function ensureSdsOtherReqChapterNodes(nodes: TreeNode[], otherRows: any[]): Tre
             return { ...row, chapterName, preset, role, basic, renamedOwner };
         })
         .filter((row) => {
-            if (row.module.replace(/\s+/g, "").includes("法规符合")) return false;
             if (row.basic || row.renamedOwner) return true;
+            if (row.role === "external") return true;
             if (row.role) return false;
             if (row.preset && !row.chapterName) return false;
             return true;
@@ -660,8 +662,8 @@ const applySdsCoverRevisionAutofill = (nodes: TreeNode[], info: CoverRevisionAut
                     const date = info.revisionDate?.(ver) || "";
                     if (String(item[dateKey] ?? "") !== date) {
                         item[dateKey] = date;
-                        changed = true;
-                    }
+                changed = true;
+            }
                     if (dateKey !== "change_date" && String(item.change_date ?? "") !== date) {
                         item.change_date = date;
                         changed = true;
@@ -3466,18 +3468,51 @@ export default () => {
         return found;
     };
 
+    const requirementNameByNumberKey = (rows: any[]) => {
+        const found = new Map<string, string>();
+        (rows || []).forEach((row) => {
+            const key = traceReqNumberKey(row?.srs_code);
+            if (!key || found.has(key)) return;
+            const moduleName = String(row?.module || "").trim();
+            if (moduleName) {
+                found.set(key, moduleName);
+                return;
+            }
+            if (row?.design_manual) return;
+            const name = chapterNameOnly(splitTraceLines(row?.chapter)[0] || "");
+            if (name) found.set(key, name);
+        });
+        return found;
+    };
+
+    const chapterNumberByName = (name: string, directoryByName?: Map<string, string>) => {
+        if (!name || !directoryByName) return "";
+        const compact = name.replace(/\s+/g, "");
+        const exact = directoryByName.get(compact) || "";
+        if (exact) return exact;
+        let found = "";
+        directoryByName.forEach((num, key) => {
+            if (found || !sdsTitleMatchesModule(key, name)) return;
+            found = num;
+        });
+        return found;
+    };
+
     const chapterTextForManualCodes = (
         raw: string,
         directoryByCode?: Map<string, string>,
         directoryByCodeName?: Map<string, string>,
         ownedNames?: Map<string, string>,
+        namesByNumberKey?: Map<string, string>,
+        directoryByName?: Map<string, string>,
     ) => {
         const lines = splitTraceLines(raw).map((line) => {
             const sdsCode = normalizeReqCode(line);
             const ownedName = (sdsCode && ownedNames?.get(sdsCode)) || "";
             const directoryName = (sdsCode && directoryByCodeName?.get(sdsCode)) || "";
-            const name = ownedName || directoryName;
-            const num = (sdsCode && directoryByCode?.get(sdsCode)) || "";
+            const keyName = namesByNumberKey?.get(traceReqNumberKey(sdsCode)) || "";
+            const name = ownedName || directoryName || keyName;
+            const num = (sdsCode && directoryByCode?.get(sdsCode)) || chapterNumberByName(name, directoryByName);
             if (!name) return "";
             return num ? `${name}（章节 ${num}）` : name;
         }).filter(Boolean);
@@ -3500,7 +3535,14 @@ export default () => {
             });
         };
         walk(roots);
-        return chapterTextForManualCodes(raw, directory.byCode, directory.byCodeName, ownedChapterNameByDesignCode(traceRows));
+        return chapterTextForManualCodes(
+            raw,
+            directory.byCode,
+            directory.byCodeName,
+            ownedChapterNameByDesignCode(traceRows),
+            requirementNameByNumberKey(traceRows),
+            directory.byName,
+        );
     };
 
     const buildTraceTableFromRows = (
@@ -3539,10 +3581,18 @@ export default () => {
             return found;
         };
         const ownedNames = ownedChapterNameByDesignCode(rows);
+        const namesByNumberKey = requirementNameByNumberKey(rows);
         const buildChapterCell = (row: any) => {
             const sdsCodes = splitTraceLines(row.sds_code);
             if (row?.design_manual) {
-                const text = chapterTextForManualCodes(String(row.sds_code || ""), directoryByCode, directoryByCodeName, ownedNames);
+                const text = chapterTextForManualCodes(
+                    String(row.sds_code || ""),
+                    directoryByCode,
+                    directoryByCodeName,
+                    ownedNames,
+                    namesByNumberKey,
+                    directoryByName,
+                );
                 if (text) return text;
                 return resolveReqChapter(row) || normalizeReqNamePart(String(row?.chapter || "")) || normalizeReqNamePart(String(row?.module || ""));
             }
@@ -3583,6 +3633,7 @@ export default () => {
                     srs_code: row.srs_code || "",
                     sds_code: splitTraceLines(row.sds_code).filter((line) => !isDeletedPresetCode(line)).join("\n"),
                     chapter: buildChapterCell(row),
+                    module: row.module || "",
                     trace_id: row.id || "",
                     type_code: row.type_code || "",
                     design_manual: !!row.design_manual,

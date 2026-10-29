@@ -536,7 +536,9 @@ class Server(object):
         return compact in ("目录", "软件详细设计", "文件修订记录") or "软件详细设计" in compact
 
     def __sync_sds_codes_from_req_code(self, req_row: SrsReq, old_code: str = None):
-        from .serv_sds_trace import design_codes_are_manual, filter_fixed_trace_to_living, fixed_rcn300_trace_for_code
+        from .serv_sds_trace import filter_fixed_trace_to_living, fixed_rcn300_trace_for_code, other_req_keeps_design_code
+        if str(req_row.code or "").upper().startswith("TMP-"):
+            return
         new_sds_code = self.__to_sds_code(req_row.code)
         old_sds_code = self.__to_sds_code(old_code)
         if not new_sds_code or new_sds_code == old_sds_code:
