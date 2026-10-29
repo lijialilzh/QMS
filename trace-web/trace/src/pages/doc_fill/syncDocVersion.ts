@@ -1,7 +1,7 @@
 /**
  * 文档版本同步规则（全模块统一）：
  * - 封面「文件版本」：随文档版本始终更新（A0→A1）
- * - 文件修订记录：版本形如 A0、A1 时，保留已有版本行，并补齐从 A0 到当前版本的每一行（A0 修订说明空则写「首次发布」）。已有行的日期、说明、人员不改。
+ * - 文件修订记录：版本形如 A0、A1 时，每个版本只留一行，并补齐从 A0 到当前版本还没有的行（A0 修订说明空则写「首次发布」）。文档版本改低时去掉更高版本的行，不留两行 A0。留下的行，日期、说明、人员不改。
  */
 
 const cell = (v: any) => String(v ?? "").trim();
@@ -98,19 +98,34 @@ export const ensureRevisionGrid = (tb: any[], version: string): any[] => {
         const rest = [dateIdx, descIdx, changerIdx, approverIdx].filter((i) => i >= 0);
         if (rest.every((i) => !cell(row[i]))) row[verIdx] = "";
     });
-    const hasVer = (ver: string) => nextTb.slice(1).some((row) => Array.isArray(row) && verOf(pad(row)) === ver);
+    const sameVer = (rowVer: string, ver: string) => {
+        const left = revisionRowToken(rowVer);
+        const right = revisionRowToken(ver);
+        if (left && right) return left === right;
+        return rowVer === ver;
+    };
+    const hasVer = (ver: string) => nextTb.slice(1).some((row) => Array.isArray(row) && sameVer(verOf(pad(row)), ver));
     const zero = series[0];
     const current = series[series.length - 1];
     if (zero !== current && !hasVer(zero)) {
         const firstRelease = nextTb.findIndex((row, index) => (
             index >= 1 && Array.isArray(row) && cell(pad(row)[descIdx]) === "首次发布"
-            && (verOf(row) === current || verOf(row) === "")
+            && (sameVer(verOf(row), current) || verOf(row) === "")
         ));
         if (firstRelease >= 0) nextTb[firstRelease][verIdx] = zero;
     }
     series.forEach((ver) => {
         if (hasVer(ver)) return;
-        let target = nextTb.findIndex((row, index) => index >= 1 && Array.isArray(row) && !verOf(pad(row)) && !cell(row[descIdx]));
+        let target = -1;
+        // A0 写在已有「首次发布」、版本还空着的那一行，避免再占一个空白行
+        if (sameVer(ver, zero)) {
+            target = nextTb.findIndex((row, index) => (
+                index >= 1 && Array.isArray(row) && !verOf(pad(row)) && cell(row[descIdx]) === "首次发布"
+            ));
+        }
+        if (target < 0) {
+            target = nextTb.findIndex((row, index) => index >= 1 && Array.isArray(row) && !verOf(pad(row)) && !cell(row[descIdx]));
+        }
         if (target < 0) {
             target = nextTb.findIndex((row, index) => index >= 1 && Array.isArray(row) && !verOf(pad(row)));
         }
@@ -120,8 +135,24 @@ export const ensureRevisionGrid = (tb: any[], version: string): any[] => {
         }
         pad(nextTb[target]);
         nextTb[target][verIdx] = ver;
-        if (ver === zero && !cell(nextTb[target][descIdx])) nextTb[target][descIdx] = "首次发布";
+        if (sameVer(ver, zero) && !cell(nextTb[target][descIdx])) nextTb[target][descIdx] = "首次发布";
     });
+    const limit = revisionRowToken(current);
+    const limitRank = limit ? parseInt(limit.slice(1), 10) : -1;
+    if (limit && limitRank >= 0) {
+        const seen = new Set<string>();
+        nextTb.forEach((row, index) => {
+            if (index < 1 || !Array.isArray(row)) return;
+            const token = revisionRowToken(verOf(row));
+            if (!token) return;
+            const rank = parseInt(token.slice(1), 10);
+            if (rank > limitRank || seen.has(token)) {
+                for (let i = 0; i < row.length; i += 1) row[i] = "";
+                return;
+            }
+            seen.add(token);
+        });
+    }
     return nextTb;
 };
 
@@ -139,24 +170,52 @@ export const ensureRevisionObjectRows = (rows: any[], version: string): any[] =>
             row.version_no = "";
         }
     });
-    const hasVer = (ver: string) => next.some((row) => verOf(row) === ver);
+    const sameVer = (rowVer: string, ver: string) => {
+        const left = revisionRowToken(rowVer);
+        const right = revisionRowToken(ver);
+        if (left && right) return left === right;
+        return rowVer === ver;
+    };
+    const hasVer = (ver: string) => next.some((row) => sameVer(verOf(row), ver));
     const zero = series[0];
     const current = series[series.length - 1];
     if (zero !== current && !hasVer(zero)) {
-        const firstRelease = next.find((row) => cell(row?.change_desc) === "首次发布" && (verOf(row) === current || verOf(row) === ""));
+        const firstRelease = next.find((row) => cell(row?.change_desc) === "首次发布" && (sameVer(verOf(row), current) || verOf(row) === ""));
         if (firstRelease) firstRelease.version_no = zero;
     }
     series.forEach((ver) => {
         if (hasVer(ver)) return;
-        let target = next.find((row) => !verOf(row) && !cell(row?.change_desc) && !cell(row?.change_date) && !cell(row?.changer) && !cell(row?.approver));
+        let target = sameVer(ver, zero)
+            ? next.find((row) => !verOf(row) && cell(row?.change_desc) === "首次发布")
+            : undefined;
+        if (!target) target = next.find((row) => !verOf(row) && !cell(row?.change_desc) && !cell(row?.change_date) && !cell(row?.changer) && !cell(row?.approver));
         if (!target) target = next.find((row) => !verOf(row));
         if (!target) {
             target = { change_date: "", version_no: "", change_desc: "", changer: "", approver: "" };
             next.push(target);
         }
         target.version_no = ver;
-        if (ver === zero && !cell(target.change_desc)) target.change_desc = "首次发布";
+        if (sameVer(ver, zero) && !cell(target.change_desc)) target.change_desc = "首次发布";
     });
+    const limit = revisionRowToken(current);
+    const limitRank = limit ? parseInt(limit.slice(1), 10) : -1;
+    if (limit && limitRank >= 0) {
+        const seen = new Set<string>();
+        next.forEach((row) => {
+            const token = revisionRowToken(verOf(row));
+            if (!token) return;
+            const rank = parseInt(token.slice(1), 10);
+            if (rank > limitRank || seen.has(token)) {
+                row.change_date = "";
+                row.version_no = "";
+                row.change_desc = "";
+                row.changer = "";
+                row.approver = "";
+                return;
+            }
+            seen.add(token);
+        });
+    }
     return next;
 };
 
