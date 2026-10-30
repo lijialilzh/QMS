@@ -22,6 +22,7 @@
 | `handleSaveSrsReqTableInCurrentPage` | 标准需求表保存 |
 | `handleSaveOtherReqTableInCurrentPage` | 其他需求表保存（逐行 add/update，删除走 delete_srs_req） |
 | `syncOtherReqCodesToChaptersFromRows` | 其他需求编号同步到对应章节标题 |
+| `handleCopyRowAfter`（`EditableTableGenerator.tsx`） | 需求表格「复制行」：整行（含需求编号）原样复制并插在源行下方，仅对标准需求/其他需求/变更需求表显示 |
 
 ---
 
@@ -81,6 +82,12 @@
 
 ### 6.6 其他需求差异
 - `list_srs_reqd` **排除** `type_code=2`（功能描述列表不含其他需求）。
+
+### 6.7 表格行操作（新增/复制/删除）
+- 表格编辑弹框每行操作列依次为：加号（在下方插入空行）、复制（在下方插入本行副本）、删除。
+- 复制列内容全部原样保留，**包括需求编号**；复制后行 `key` 与新行的 `req_detail_key` 重新生成，并清空副本的 `req_id`，避免变更需求保存时把副本当成源行的更新。
+- 仅当表格首列是「需求编号」且列数 ≥ 3（标准需求、其他需求、变更需求表）时显示复制按钮；需求明细两列表、评审表等不显示。
+- 编号重复由保存时校验拦截（标准需求编号唯一；其他需求编号与模块名称均不可重复），复制后需按提示改号。
 
 ---
 

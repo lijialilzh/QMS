@@ -4,7 +4,7 @@ import { Form, InputNumber, Button, Table, Input, Space, message, Modal, Select,
 import type { ColumnsType } from 'antd/es/table';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuidv4 } from 'uuid';
-import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
+import { DeleteOutlined, PlusOutlined, CopyOutlined } from '@ant-design/icons';
 
 // 表格行数据类型
 interface TableRowData {
@@ -138,6 +138,11 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
     const label = normalizeLockLabel(record?.col_0);
     return lockedLabelSet.has(label) || (isReqDetailTwoColumnTable && (rowIndex === 0 || rowIndex === 1));
   };
+
+  // 复制行仅用于需求规格说明的三类需求表（标准需求/其他需求/变更需求），
+  // 它们都以“需求编号”为首列、且是多列列表；评审表、需求明细两列表等不受影响。
+  const isReqTableWithCode = colCount >= 3
+    && normalizeLockLabel(customHeaders[0]?.name) === normalizeLockLabel("需求编号");
 
   const CHANGE_REQ_TABLE_HEADERS = "需求编号,模块,功能,子功能";
   const isChangeReqTableName = (value?: string) => /变更/.test(String(value || "").trim());
@@ -492,7 +497,7 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
       {
         title: "操作",
         key: "operation",
-        width: 96,
+        width: 128,
         className: "editable-table-op-col",
         render: (_: unknown, record: TableRowData) => (
           <Space size={4} className="editable-table-row-actions">
@@ -502,6 +507,15 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
               icon={<PlusOutlined />}
               onClick={() => handleAddRowAfter(record.key)}
             />
+            {isReqTableWithCode && (
+              <Button
+                type="text"
+                size="small"
+                icon={<CopyOutlined />}
+                disabled={isLockedRow(record)}
+                onClick={() => handleCopyRowAfter(record.key)}
+              />
+            )}
             <Button
               type="text"
               size="small"
@@ -597,6 +611,28 @@ const EditableTableGenerator: React.FC<EditableTableGeneratorProps> = ({ open = 
     const insertIndex = currentIndex >= 0 ? currentIndex + 1 : tableData.length;
     const nextData = [...tableData];
     nextData.splice(insertIndex, 0, createEmptyRow());
+    syncRowCount(nextData);
+  };
+
+  // 复制整行：列内容原样复制（含需求编号），插在源行下方。
+  // 行 key、明细 req_detail_key 重新生成，并清掉源行的 req_id，避免副本在保存时被当成源行的更新。
+  const handleCopyRowAfter = (rowKey: number) => {
+    const currentIndex = tableData.findIndex((item) => item.key === rowKey);
+    if (currentIndex < 0) return;
+    const source = tableData[currentIndex];
+    const copiedRow: TableRowData = {
+      key: Date.now() + Math.floor(Math.random() * 1000),
+      __rowMeta: { ...(source.__rowMeta || {}) },
+    };
+    delete copiedRow.__rowMeta.req_id;
+    if (copiedRow.__rowMeta.req_detail_key) {
+      copiedRow.__rowMeta.req_detail_key = `reqd_${uuidv4()}`;
+    }
+    for (let colIndex = 0; colIndex < colCount; colIndex++) {
+      copiedRow[`col_${colIndex}`] = source[`col_${colIndex}`] ?? '';
+    }
+    const nextData = [...tableData];
+    nextData.splice(currentIndex + 1, 0, copiedRow);
     syncRowCount(nextData);
   };
 

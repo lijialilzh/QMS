@@ -1087,6 +1087,8 @@ class Server(object):
                 cells = table.add_row().cells
                 for idx in range(col_count):
                     set_cell_text(cells[idx], row[idx] if idx < len(row or []) else "", bold=(len(table.rows) == 1))
+            # 封面「生效日期」行：日期后面的空格并成一格，跨满本行
+            docx_util.merge_effective_date_row(table)
             document.add_paragraph()
 
         def add_image(url, img_category=None):
