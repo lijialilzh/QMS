@@ -940,6 +940,19 @@ function normalizeOtherReqDesignCode(value?: string) {
     return String(value || "").replace(/\r/g, "").split("\n").map((line) => line.trim()).filter(Boolean).join("\n");
 }
 
+// 设计编号存 sds_trace.sds_code，字段长度 256，多行编号共用这一个上限（约 17 行）。
+const OTHER_REQ_DESIGN_CODE_MAX_LENGTH = 256;
+
+function validateOtherReqDesignCode(next: string) {
+    if (next.length > OTHER_REQ_DESIGN_CODE_MAX_LENGTH) {
+        return `设计编号最多 ${OTHER_REQ_DESIGN_CODE_MAX_LENGTH} 个字符（约 17 行），当前 ${next.length} 个字符，请删减后再保存`;
+    }
+    if (/[，,；;、]/.test(next) || /SDS-[A-Za-z0-9-]+[ \t]+(?=SDS-)/i.test(next)) {
+        return "多个设计编号请用回车换行分隔，不要用逗号或空格分隔";
+    }
+    return "";
+}
+
 function OtherReqDesignCodeInput({ value, onCommit, onDraft }: { value: string; onCommit: (next: string) => void; onDraft?: (next: string) => void }) {
     const [text, setText] = useState(value);
     useEffect(() => {
@@ -957,6 +970,14 @@ function OtherReqDesignCodeInput({ value, onCommit, onDraft }: { value: string; 
             }}
             onBlur={(event) => {
                 const next = normalizeOtherReqDesignCode(event.target.value);
+                const invalid = validateOtherReqDesignCode(next);
+                if (invalid) {
+                    // 存不进去的值不提交，回到库里已有的编号，避免第三列跟着显示脏数据
+                    message.warning(invalid);
+                    setText(value);
+                    onDraft?.(value);
+                    return;
+                }
                 if (next !== normalizeOtherReqDesignCode(value)) onCommit(next);
             }}
         />

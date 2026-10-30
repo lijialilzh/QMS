@@ -475,8 +475,13 @@ class SdsSrsTraceSyncMixin:
                 trace = db.session.execute(
                     select(SdsTrace).where(SdsTrace.doc_id == doc_id, SdsTrace.req_id == req.id)
                 ).scalars().first()
-                if trace is not None:
+                if trace is not None and not bool(getattr(trace, "design_manual", False)):
                     trace.sds_code = code or trace.sds_code
+                    trace.chapter = display
+                    if heading:
+                        trace.location = heading
+                elif trace is not None:
+                    # 手改过设计编号的行：编号保留，只补章节与位置
                     trace.chapter = display
                     if heading:
                         trace.location = heading
@@ -958,7 +963,7 @@ class SdsSrsTraceSyncMixin:
                 if parent:
                     parent.children.append(obj)
 
-        _trace_ensure_sds_traces(doc_id=doc_id)
+        _trace_ensure_sds_traces(doc_id=doc_id, force=True)
         if self._is_word_imported_doc(roots):
             self._normalize_word_imported_chapter_numbers(roots)
             self._bind_word_leaf_codes_from_srs(roots, doc_id)

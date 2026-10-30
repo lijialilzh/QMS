@@ -1,4 +1,4 @@
-import { Form, Input, Button, Table, message, Row, Col, Modal, Upload, Space, Select, AutoComplete } from "antd";
+import { Form, Input, Button, Table, message, Row, Col, Modal, Upload, Space, Select } from "antd";
 import { SearchOutlined, UploadOutlined } from "@ant-design/icons";
 import { useEffect } from "react";
 import { sprintf } from "sprintf-js";
@@ -13,16 +13,18 @@ import { sanitizeListQuery } from "../doc_shared/sanitizeListQuery";
 
 const pageSizeOptions = [20, 50, 100];
 
+// 产品图示文档版本固定 A0：新增/编辑均不提供输入，同产品同类型同版本只允许一条
+const DOC_IMAGE_VERSION = "A0";
+
 enum DlgTypes {
     add = "add",
     edit = "edit",
     delete = "delete",
 }
 
-const DetailDlg = ({ fileType, data, dispatch, onSaved, fetchDocVersions, getDocVersionPlaceholder }: any) => {
+const DetailDlg = ({ fileType, data, dispatch, onSaved }: any) => {
     const { t: ts } = useTranslation();
     const [editForm] = Form.useForm();
-    const dlgProductId = Form.useWatch("product_id", editForm);
 
     const doEdit = () => {
         editForm.validateFields().then((values) => {
@@ -37,7 +39,7 @@ const DetailDlg = ({ fileType, data, dispatch, onSaved, fetchDocVersions, getDoc
             const payload: Record<string, any> = {
                 id: values.id,
                 product_id: values.product_id,
-                doc_version: String(values.doc_version || "").trim(),
+                doc_version: DOC_IMAGE_VERSION,
             };
             if (file) payload.file = file;
             fn_request(fileType, payload).then((res: any) => {
@@ -56,7 +58,7 @@ const DetailDlg = ({ fileType, data, dispatch, onSaved, fetchDocVersions, getDoc
     useEffect(() => {
         if (data.dlgType === DlgTypes.add || data.dlgType === DlgTypes.edit) {
             editForm.resetFields();
-            dispatch({ files: [], dlgDocVersionOptions: [] });
+            dispatch({ files: [] });
             doSearchProducts(data, dispatch);
             if (data.dlgType === DlgTypes.edit) {
                 dispatch({ loading: true });
@@ -73,25 +75,6 @@ const DetailDlg = ({ fileType, data, dispatch, onSaved, fetchDocVersions, getDoc
             }
         }
     }, [data.dlgType, data.targetRow.id]);
-
-    useEffect(() => {
-        if (data.dlgType !== DlgTypes.add && data.dlgType !== DlgTypes.edit) return;
-        const pid = Number(dlgProductId || 0);
-        if (!pid) {
-            dispatch({ dlgDocVersionOptions: [] });
-            return;
-        }
-        let cancelled = false;
-        fetchDocVersions(pid).then((versions: string[]) => {
-            if (cancelled) return;
-            dispatch({ dlgDocVersionOptions: versions.map((v: string) => ({ label: v, value: v })) });
-            const current = String(editForm.getFieldValue("doc_version") || "").trim();
-            if (!current && versions.length) {
-                editForm.setFieldValue("doc_version", versions[0]);
-            }
-        });
-        return () => { cancelled = true; };
-    }, [dlgProductId, data.dlgType, fileType]);
 
     return (
         <Modal
@@ -120,21 +103,6 @@ const DetailDlg = ({ fileType, data, dispatch, onSaved, fetchDocVersions, getDoc
                                     namePlaceholder={ts("product.name")}
                                     versionPlaceholder={ts("product.full_version")}
                                     onChange={(value) => editForm.setFieldValue("product_id", value)}
-                                />
-                            </Form.Item>
-                        </Col>
-                        <Col span={12}>
-                            <Form.Item
-                                label="文档版本"
-                                name="doc_version"
-                                rules={[{ required: true, message: "请选择或输入文档版本" }]}>
-                                <AutoComplete
-                                    allowClear
-                                    options={data.dlgDocVersionOptions || []}
-                                    placeholder={getDocVersionPlaceholder()}
-                                    filterOption={(input, option) =>
-                                        String(option?.value || "").toLowerCase().includes(String(input || "").toLowerCase())
-                                    }
                                 />
                             </Form.Item>
                         </Col>
@@ -204,7 +172,6 @@ export default ({ fileType }: any) => {
         files: [],
         docs: [],
         docVersionOptions: [] as Array<{ label: string; value: string }>,
-        dlgDocVersionOptions: [] as Array<{ label: string; value: string }>,
         loadingDocVersions: false,
         selectedRowKeys: [],
         previewOpen: false,
@@ -513,22 +480,30 @@ export default ({ fileType }: any) => {
             </Modal>
             <Modal
                 centered
-                width={"60%"}
+                width={"70%"}
                 title={data.previewName || ts("view")}
                 open={!!data.previewOpen}
                 footer={null}
                 maskClosable
                 onCancel={() => dispatch({ previewOpen: false })}>
                 {data.previewUrl ? (
-                    <img src={data.previewUrl} alt={data.previewName} style={{ width: "100%", objectFit: "contain" }} />
+                    <img
+                        src={data.previewUrl}
+                        alt={data.previewName}
+                        style={{
+                            display: "block",
+                            margin: "0 auto",
+                            maxWidth: "100%",
+                            maxHeight: "calc(100vh - 200px)",
+                            objectFit: "contain",
+                        }}
+                    />
                 ) : null}
             </Modal>
             <DetailDlg
                 fileType={fileType}
                 data={data}
                 dispatch={dispatch}
-                fetchDocVersions={fetchDocVersions}
-                getDocVersionPlaceholder={getDocVersionPlaceholder}
                 onSaved={() => {
                     queryForm.resetFields();
                     doSearch({}, 1, data.pageSize);

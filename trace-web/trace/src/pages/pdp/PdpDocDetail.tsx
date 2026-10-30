@@ -207,6 +207,68 @@ const walkChildren = (nodes: any[], prefix: string, map: Record<string, string>)
     });
 };
 
+// 封面表：对齐「需求规格说明」封面观感——虚线框容器 + 左上角文档名 + 4 列表格，
+// 标签格（第 0/2 列、「生效日期」行第 0 格）不加粗、左对齐，与正文表格同色边框。
+// 不显示表名输入框、表格工具条与行操作。
+const COVER_LABEL_COLS = new Set([0, 2]);
+const CoverTable = ({ rows = [], readonly = false, onChange }: any) => {
+    const setCell = (r: number, ci: number, val: string) => {
+        const next = (rows || []).map((row: any[], ri: number) =>
+            ri !== r ? row : row.map((cell: any, cc: number) => (cc === ci ? val : cell))
+        );
+        onChange(next);
+    };
+    return (
+        <table className="pdp-grid pdp-cover-grid">
+            <tbody>
+                {(rows || []).map((row: any[], r: number) => {
+                    const isEff = String(row?.[0] ?? "").trim() === "生效日期";
+                    const cellNode = (cell: any, ci: number, label: boolean, colSpan?: number) => {
+                        const isSign = typeof cell === "string" && cell.startsWith("data:image");
+                        return (
+                            <td key={ci} className={label ? "cover-label" : ""} colSpan={colSpan}>
+                                {isSign ? (
+                                    <div className="pdp-sign-cell">
+                                        <img src={cell} className="pdp-sign-img" alt="签名" />
+                                        {!readonly && (
+                                            <DeleteOutlined
+                                                className="pdp-sign-del"
+                                                title="清除签名"
+                                                onClick={() => setCell(r, ci, "")}
+                                            />
+                                        )}
+                                    </div>
+                                ) : label || readonly ? (
+                                    <div className="pdp-cover-static">{cell ?? ""}</div>
+                                ) : (
+                                    <Input.TextArea
+                                        className="pdp-cell"
+                                        autoSize={{ minRows: 1, maxRows: 8 }}
+                                        value={cell ?? ""}
+                                        onChange={(e) => setCell(r, ci, e.target.value)}
+                                    />
+                                )}
+                            </td>
+                        );
+                    };
+                    return (
+                        <tr key={r}>
+                            {isEff
+                                ? [
+                                    cellNode(row[0], 0, true),
+                                    cellNode(row[1], 1, false, Math.max(1, row.length - 1)),
+                                ]
+                                : (row || []).map((cell: any, ci: number) =>
+                                    cellNode(cell, ci, COVER_LABEL_COLS.has(ci))
+                                )}
+                        </tr>
+                    );
+                })}
+            </tbody>
+        </table>
+    );
+};
+
 export default () => {
     const { t: ts } = useTranslation();
     const navigate = useNavigate();
@@ -737,7 +799,40 @@ export default () => {
                                         onChange={(e) => patchNode(active._key, { title: e.target.value })}
                                     />
                                 </div>
-                                {active.ref_type === "review" ? (
+                                {active.ref_type === "cover" ? (
+                                    <div className="pdp-cover-section">
+                                        {(active.tables || []).length ? (active.tables || []).map((tb: any[], ti: number) => (
+                                            <CoverTable
+                                                key={ti}
+                                                rows={tb || []}
+                                                readonly={readonly}
+                                                onChange={(nextRows: any[]) =>
+                                                    patchNode(active._key, {
+                                                        tables: (active.tables || []).map((t: any[], i: number) => (i === ti ? nextRows : t)),
+                                                    })
+                                                }
+                                            />
+                                        )) : (
+                                            <CoverTable
+                                                rows={[]}
+                                                readonly={readonly}
+                                                onChange={(nextRows: any[]) => patchNode(active._key, { tables: [nextRows] })}
+                                            />
+                                        )}
+                                        {String(active.body || "").trim() ? (
+                                            <div className="pdp-field">
+                                                <div className="pdp-label">正文</div>
+                                                <Input.TextArea
+                                                    autoSize={{ minRows: 2, maxRows: 12 }}
+                                                    value={active.body ?? ""}
+                                                    disabled={readonly}
+                                                    placeholder="本章节正文内容，可多行"
+                                                    onChange={(e) => patchNode(active._key, { body: e.target.value })}
+                                                />
+                                            </div>
+                                        ) : null}
+                                    </div>
+                                ) : active.ref_type === "review" ? (
                                     <>
                                         <div className="pdp-field">
                                             <div className="pdp-label">正文</div>

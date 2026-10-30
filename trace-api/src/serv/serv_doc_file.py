@@ -50,6 +50,15 @@ SRS_TOPO_STRUCT_LOCK_MSG = "需求已更新到 A1 及以后，物理拓扑图和
 SRS_FLOW_LOCK_MSG = "已更新到 A1 及以后，网络安全流程图不能修改"
 LOCKED_CHART_CATEGORIES = {"img_topo", "img_struct", "img_flow"}
 
+# 产品图示文档版本统一固定 A0，同产品同图表类型只允许一条
+DOC_IMAGE_DEFAULT_VERSION = "A0"
+DOC_IMAGE_DUPLICATE_MSG = "该产品此图表类型已有图示（文档版本固定 A0），请编辑或删除后再添加"
+DOC_IMAGE_VERSION_ONLY_MSG = "产品图示的文档版本固定为 A0，不允许填写其它版本"
+
+
+def doc_image_duplicate_message() -> str:
+    return DOC_IMAGE_DUPLICATE_MSG
+
 
 def chart_image_lock_message(category: str) -> str:
     if category == "img_flow":
@@ -93,9 +102,8 @@ def pick_doc_image_file_row(
         ).scalars().first()
         if row:
             return row
-    # 指定了文档版本则只取该版本，不回退到产品下其它版本的图
-    if doc_token:
-        return None
+    # 产品图示每类只保留一条（文档版本固定 A0）。指定版本（A0/A1/A2…）找不到时，
+    # 回退到本产品该类型的当前图，保证 A1/A2/A3 等版本文档也能拿到产品图示。
     return db.session.execute(base_sql.order_by(desc(DocFile.id)).limit(1)).scalars().first()
 
 
@@ -487,25 +495,19 @@ class Server(object):
         db.session.commit()
 
     def __sync_sds_nodes_from_doc_file(self, row: DocFile, doc_version: str = None):
-        """图表文件页更新后，反向同步到同产品/同版本 SDS 图片节点。"""
+        """图表文件页更新后，反向同步到该产品所有版本 SDS 的图片节点。
+
+        产品图示每类只有一张（版本固定 A0），换图后 A0/A1/A2/A3 等所有版本文档都要一起换，
+        否则 A1 及以后的文档仍显示旧图。doc_version 保留参数位以兼容调用方。
+        """
         if not row or row.category not in self.DOC_IMG_KEYWORDS or not row.product_id or not row.file_url:
-            return
-        normalized_doc_version = self.__normalize_doc_version(
-            doc_version or self.__extract_doc_version_from_file_name(row.file_name, row.category)
-        )
-        if row.category in LOCKED_CHART_CATEGORIES and is_srs_topo_struct_locked(normalized_doc_version):
             return
         sql_docs = (
             select(SdsDoc)
             .join(SrsDoc, SdsDoc.srsdoc_id == SrsDoc.id)
             .where(SrsDoc.product_id == row.product_id)
         )
-        if normalized_doc_version:
-            sql_docs = sql_docs.where(SdsDoc.version == normalized_doc_version)
-        doc_ids = [
-            doc.id for doc in db.session.execute(sql_docs).scalars().all()
-            if not (row.category in LOCKED_CHART_CATEGORIES and is_srs_topo_struct_locked(getattr(doc, "version", "")))
-        ]
+        doc_ids = [doc.id for doc in db.session.execute(sql_docs).scalars().all()]
         if not doc_ids:
             return
         img_url = str(row.file_url or "").strip()
@@ -520,21 +522,15 @@ class Server(object):
             node.img_url = img_url
 
     def __sync_srs_nodes_from_doc_file(self, row: DocFile, doc_version: str = None):
-        """图表文件页更新后，反向同步到同产品/同版本 SRS 图片节点。"""
+        """图表文件页更新后，反向同步到该产品所有版本 SRS 的 2.2/2.3 图片节点。
+
+        产品图示每类只有一张（版本固定 A0），换图后 A0/A1/A2/A3 等所有版本文档都要一起换。
+        doc_version 保留参数位以兼容调用方。
+        """
         if not row or row.category not in {"img_topo", "img_struct"} or not row.product_id or not row.file_url:
             return
-        normalized_doc_version = self.__normalize_doc_version(
-            doc_version or self.__extract_doc_version_from_file_name(row.file_name, row.category)
-        )
-        if is_srs_topo_struct_locked(normalized_doc_version):
-            return
         sql_docs = select(SrsDoc).where(SrsDoc.product_id == row.product_id)
-        if normalized_doc_version:
-            sql_docs = sql_docs.where(SrsDoc.version == normalized_doc_version)
-        doc_ids = [
-            doc.id for doc in db.session.execute(sql_docs).scalars().all()
-            if not is_srs_topo_struct_locked(getattr(doc, "version", ""))
-        ]
+        doc_ids = [doc.id for doc in db.session.execute(sql_docs).scalars().all()]
         if not doc_ids:
             return
         img_url = str(row.file_url or "").strip()
@@ -613,11 +609,35 @@ class Server(object):
             .limit(1)
         ).scalar() or ""
 
+    @staticmethod
+    def __normalize_version_token(value: str) -> str:
+        return re.sub(r"[\s/]+", "", str(value or "")).upper()
+
+    def __find_same_version_doc_file(self, product_id: int, category: str, exclude_id=None):
+        """文档版本固定 A0，因此同产品 + 同图表类型只允许一条图示。
+
+        历史行的文件名里可能没有 A0（或解析不出文档版本），同样视为已占用，
+        避免在旧数据之上再叠加出截图里那种同版本重复。
+        """
+        if not product_id or not category:
+            return None
+        sql = select(DocFile).where(DocFile.product_id == product_id, DocFile.category == category)
+        if exclude_id:
+            sql = sql.where(DocFile.id != exclude_id)
+        return db.session.execute(sql.order_by(desc(DocFile.id)).limit(1)).scalars().first()
+
     async def add_doc_file(self, form: DocFileForm, file):
         try:
-            explicit_doc_version = self.__normalize_doc_version(getattr(form, "doc_version", None) or "")
+            if not self.__has_upload_file(file):
+                return Resp.resp_err(msg="请选择文件")
+            submitted_doc_version = self.__normalize_doc_version(getattr(form, "doc_version", None) or "")
+            if submitted_doc_version and self.__normalize_version_token(submitted_doc_version) != DOC_IMAGE_DEFAULT_VERSION:
+                return Resp.resp_err(msg=DOC_IMAGE_VERSION_ONLY_MSG)
+            explicit_doc_version = DOC_IMAGE_DEFAULT_VERSION
             if form.category in LOCKED_CHART_CATEGORIES and is_srs_topo_struct_locked(explicit_doc_version):
                 return Resp.resp_err(msg=chart_image_lock_message(form.category))
+            if self.__find_same_version_doc_file(form.product_id, form.category):
+                return Resp.resp_err(msg=doc_image_duplicate_message())
             row = DocFile(**self.__row_kwargs_from_form(form))
             row.id = None
             db.session.add(row)
@@ -655,8 +675,17 @@ class Server(object):
             category = form.category or row.category
             product_version = self.__product_version_of(row.product_id or 0)
             old_doc_version = self.__extract_doc_version_from_file_name(row.file_name, category, product_version)
-            explicit_doc_version = self.__normalize_doc_version(getattr(form, "doc_version", None) or "")
-            next_doc_version = explicit_doc_version or old_doc_version
+            submitted_doc_version = self.__normalize_doc_version(getattr(form, "doc_version", None) or "")
+            if submitted_doc_version and self.__normalize_version_token(submitted_doc_version) != DOC_IMAGE_DEFAULT_VERSION:
+                return Resp.resp_err(msg=DOC_IMAGE_VERSION_ONLY_MSG)
+            # 产品图示文档版本统一固定 A0，编辑仅允许换图，不允许改版本
+            next_doc_version = DOC_IMAGE_DEFAULT_VERSION
+            # 编辑时若把图示挪到另一个产品，目标产品下同类型已有图示则拒绝，避免换产品后出现重复
+            next_product_id = form.product_id or row.product_id
+            if next_product_id != row.product_id and self.__find_same_version_doc_file(
+                next_product_id, category, exclude_id=row.id
+            ):
+                return Resp.resp_err(msg=doc_image_duplicate_message())
             if category in LOCKED_CHART_CATEGORIES and (
                 is_srs_topo_struct_locked(next_doc_version) or is_srs_topo_struct_locked(old_doc_version)
             ):

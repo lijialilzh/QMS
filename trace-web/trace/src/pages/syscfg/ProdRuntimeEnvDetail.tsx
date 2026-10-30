@@ -255,7 +255,17 @@ export default ({ prodId, readOnly, onChanged }: { prodId: number; readOnly?: bo
                                                 {readOnly ? null : (
                                                 <td className={r === 0 ? "lbl env-row-op" : "env-row-op"}>
                                                     {r === 0 ? (
-                                                        "操作"
+                                                        <span className="risk-part-row-actions env-row-op-head">
+                                                            <span>操作</span>
+                                                            <Button
+                                                                type="text"
+                                                                size="small"
+                                                                className="risk-part-action-btn"
+                                                                icon={<PlusOutlined />}
+                                                                title="在下方插入行"
+                                                                onClick={() => insertRowAfter(ti, r)}
+                                                            />
+                                                        </span>
                                                     ) : (
                                                         <span className="risk-part-row-actions">
                                                             <Button

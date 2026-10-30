@@ -606,7 +606,20 @@ class Server(object):
                     merged.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
                 r = r2 + 1
 
-        def add_grid(grid, merge_col0=False, has_header=True):
+        def merge_blank_col_runs(table, col, start_row=1):
+            # 整列（从 start_row 到末行）全为空白时，纵向合并成一格，供手工签字
+            rows = table.rows
+            if start_row >= len(rows):
+                return
+            for r in range(start_row, len(rows)):
+                if rows[r].cells[col].text.strip():
+                    return
+            merged = rows[start_row].cells[col]
+            for r in range(start_row + 1, len(rows)):
+                merged = merged.merge(rows[r].cells[col])
+            merged.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+
+        def add_grid(grid, merge_col0=False, has_header=True, merge_blank_cols=None):
             grid = [row for row in (grid or []) if isinstance(row, list)]
             cols = max((len(row) for row in grid), default=0)
             if cols <= 0:
@@ -621,6 +634,10 @@ class Server(object):
                     set_cell(cells[c_idx], row[c_idx] if c_idx < len(row) else "", bold=(has_header and r_idx == 0))
             if merge_col0:
                 merge_col_runs(table, 0)
+            # 文件移交记录：交付人/日期、接收人/日期 整列空白时纵向合并成一格
+            for col in (merge_blank_cols or []):
+                if col < cols:
+                    merge_blank_col_runs(table, col, start_row=1 if has_header else 0)
             document.add_paragraph()
 
         def add_cover_grid(grid):
@@ -663,17 +680,20 @@ class Server(object):
             tables = node.get("tables") or []
             images = [x for x in (node.get("images") or []) if isinstance(x, str) and str(x).strip()]
             is_prod_rec = node.get("ref_type") == "rn_transfer_product" or self.__strip_num(node.get("title")) == "产品移交记录"
+            # 文件移交记录：交付人/日期(第2列)、接收人/日期(第3列) 整列空白时纵向合并成一格
+            is_file_rec = node.get("ref_type") == "rn_transfer_files" or self.__strip_num(node.get("title")) == "文件移交记录"
+            blank_merge_cols = [2, 3] if is_file_rec else None
             if has_free_body_markers(body_text) or images:
                 emit_free_body(
                     body_text, tables, images, add_text,
-                    lambda grid: add_grid(grid, merge_col0=is_prod_rec, has_header=not is_prod_rec),
+                    lambda grid: add_grid(grid, merge_col0=is_prod_rec, has_header=not is_prod_rec, merge_blank_cols=blank_merge_cols),
                     lambda url, caption="": write_body_image(document, url, caption, add_text),
                 )
             else:
                 if body_text.strip():
                     add_text(body_text)
                 for table in tables:
-                    add_grid(table, merge_col0=is_prod_rec, has_header=not is_prod_rec)
+                    add_grid(table, merge_col0=is_prod_rec, has_header=not is_prod_rec, merge_blank_cols=blank_merge_cols)
             idx = 0
             for child in (node.get("children") or []):
                 idx += 1

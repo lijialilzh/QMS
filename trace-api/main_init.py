@@ -40,6 +40,8 @@ def create_tables():
                 sql_ctx.db.session.execute(expression.text("ALTER TABLE IF EXISTS prod_hospital ADD COLUMN IF NOT EXISTS city VARCHAR(128)"))
                 sql_ctx.db.session.execute(expression.text("ALTER TABLE IF EXISTS project_member ADD COLUMN IF NOT EXISTS dept VARCHAR(64)"))
                 sql_ctx.db.session.execute(expression.text("ALTER TABLE IF EXISTS test_case ADD COLUMN IF NOT EXISTS sheet_name VARCHAR(128)"))
+                # SDS 追溯：设计编号手改标记。手改后刷新/打开/导出都保留，只有「获取SRS追溯」才清掉重取。
+                sql_ctx.db.session.execute(expression.text("ALTER TABLE IF EXISTS sds_trace ADD COLUMN IF NOT EXISTS design_manual BOOLEAN DEFAULT FALSE"))
                 sql_ctx.db.session.commit()
             Base.metadata.create_all(bind=engine)
 

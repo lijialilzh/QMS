@@ -3533,16 +3533,19 @@ export default () => {
         namesByNumberKey?: Map<string, string>,
         directoryByName?: Map<string, string>,
     ) => {
+        // 逐条编号各占一行，解析不到章节的编号留占位，和设计编号列保持同样行数。
+        if (!String(raw || "").trim()) return "";
         const lines = splitTraceLines(raw).map((line) => {
             const sdsCode = normalizeReqCode(line);
+            if (!sdsCode) return "—";
             const ownedName = (sdsCode && ownedNames?.get(sdsCode)) || "";
             const directoryName = (sdsCode && directoryByCodeName?.get(sdsCode)) || "";
             const keyName = namesByNumberKey?.get(traceReqNumberKey(sdsCode)) || "";
             const name = ownedName || directoryName || keyName;
             const num = (sdsCode && directoryByCode?.get(sdsCode)) || chapterNumberByName(name, directoryByName);
-            if (!name) return "";
+            if (!name) return "—";
             return num ? `${name}（章节 ${num}）` : name;
-        }).filter(Boolean);
+        });
         return lines.join("\n");
     };
 

@@ -132,6 +132,21 @@ const moveSibling = (nodes: any[], key: string, dir: -1 | 1): any[] => {
 
 const firstKey = (nodes: any[]): string => (nodes && nodes[0] ? nodes[0]._key : "");
 
+// 文件移交记录：「交付人/日期」「接收人/日期」两列（第 2、3 列）数据区全为空时纵向合并成一格。
+// 返回列号 -> 合并行数（rowSpan），渲染时在表头下方首行作为锚点。
+const FILE_REC_MERGE_COLS = [2, 3];
+const blankColSpan = (tb: any[]) => {
+    const rows = Array.isArray(tb) ? tb : [];
+    const anchors: Record<number, number> = {};
+    if (rows.length < 3) return anchors;
+    FILE_REC_MERGE_COLS.forEach((col) => {
+        const cells = rows.slice(1).map((row: any[]) => String(row?.[col] ?? "").trim());
+        if (!cells.length || cells.some((v: string) => !!v)) return;
+        anchors[col] = rows.length - 1;
+    });
+    return anchors;
+};
+
 // 找「发布时间」章节节点
 const findReleaseNode = (nodes: any[]): any => {
     for (const n of nodes || []) {
@@ -621,9 +636,30 @@ export default () => {
                                         </div>
                                         <table className="pdp-grid">
                                             <tbody>
-                                                {tb.map((row: any[], r: number) => (
+                                                {(() => {
+                                                    // 文件移交记录：交付人/日期、接收人/日期 整列空白时纵向合并成一格
+                                                    const isFileRec = active.ref_type === "rn_transfer_files" || stripNum(active.title) === "文件移交记录";
+                                                    const merge = isFileRec ? blankColSpan(tb) : {};
+                                                    return tb.map((row: any[], r: number) => (
                                                     <tr key={r}>
-                                                        {row.map((cell: any, ci: number) => (
+                                                        {row.map((cell: any, ci: number) => {
+                                                            const span = merge[ci];
+                                                            if (span && r === 1) {
+                                                                const mergedCell = row[ci];
+                                                                return (
+                                                                    <td key={ci} rowSpan={span} className="pdp-merged-cell">
+                                                                        <Input.TextArea
+                                                                            className="pdp-cell"
+                                                                            autoSize={{ minRows: 1, maxRows: 8 }}
+                                                                            value={mergedCell ?? ""}
+                                                                            disabled={readonly}
+                                                                            onChange={(e) => setCell(ti, r, ci, e.target.value)}
+                                                                        />
+                                                                    </td>
+                                                                );
+                                                            }
+                                                            if (span && r > 1) return null;
+                                                            return (
                                                             <td key={ci} className={r === 0 ? "head" : ""}>
                                                                 {typeof cell === "string" && cell.startsWith("data:image") ? (
                                                                     <span style={{ position: "relative", display: "inline-block" }}>
@@ -642,7 +678,8 @@ export default () => {
                                                                     />
                                                                 )}
                                                             </td>
-                                                        ))}
+                                                            );
+                                                        })}
                                                         {!readonly && (
                                                             <td className="pdp-row-op">
                                                                 <PlusOutlined title="在下方插入行" onClick={() => insertRowAfter(ti, r)} />
@@ -652,7 +689,8 @@ export default () => {
                                                             </td>
                                                         )}
                                                     </tr>
-                                                ))}
+                                                    ));
+                                                })()}
                                             </tbody>
                                         </table>
                                     </div>

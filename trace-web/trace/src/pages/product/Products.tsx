@@ -19,6 +19,7 @@ enum DlgTypes {
     edit = "edit",
     delete = "delete",
     copy = "copy",
+    view = "view",
 }
 
 const versionSeq = (value?: string) => {
@@ -98,11 +99,11 @@ const DetailDlg = ({ data, dispatch, onSaved }: any) => {
     };
 
     useEffect(() => {
-        if (data.dlgType === DlgTypes.add || data.dlgType === DlgTypes.edit) {
+        if (data.dlgType === DlgTypes.add || data.dlgType === DlgTypes.edit || data.dlgType === DlgTypes.view) {
             editForm.resetFields();
             doSearchProjects(data, dispatch);
             loadCompanies(data, dispatch);
-            if (data.dlgType === DlgTypes.edit) {
+            if (data.dlgType === DlgTypes.edit || data.dlgType === DlgTypes.view) {
                 dispatch({ loading: true });
                 Api.get_product({ id: data.targetRow.id }).then((res: any) => {
                     if (res.code === Api.C_OK) {
@@ -118,18 +119,23 @@ const DetailDlg = ({ data, dispatch, onSaved }: any) => {
         }
     }, [data.dlgType, data.targetRow.id]);
 
+    const isView = data.dlgType === DlgTypes.view;
+
     return (
         <Modal
             width={"50%"}
             centered
-            title={data.dlgType === DlgTypes.add ? ts("add") : ts("edit")}
-            open={data.dlgType === DlgTypes.add || data.dlgType === DlgTypes.edit}
+            title={data.dlgType === DlgTypes.add ? ts("add") : (isView ? ts("view") : ts("edit"))}
+            open={data.dlgType === DlgTypes.add || data.dlgType === DlgTypes.edit || isView}
             maskClosable={false}
             confirmLoading={data.loading}
             onOk={doEdit}
+            footer={isView ? (
+                <Button onClick={() => dispatch({ dlgType: null })}>{ts("cancel")}</Button>
+            ) : undefined}
             onCancel={() => dispatch({ dlgType: null })}>
             <div className="div-v">
-                <Form form={editForm} className="expand" autoComplete="off">
+                <Form form={editForm} className="expand" autoComplete="off" disabled={isView}>
                     <Form.Item hidden name="id">
                         <Input allowClear value={data.targetRow.id} />
                     </Form.Item>
@@ -600,7 +606,13 @@ export default () => {
             ellipsis: false,
             render: (_value: any, row: any) => {
                 if (!canEdit) {
-                    return null;
+                    return (
+                        <Space>
+                            <Button type="link" size="small" onClick={() => dispatch({ dlgType: DlgTypes.view, targetRow: row })}>
+                                {ts("view")}
+                            </Button>
+                        </Space>
+                    );
                 }
                 return (
                     <Space>

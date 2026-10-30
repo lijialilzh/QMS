@@ -14,4 +14,5 @@ class SdsTraceForm(BaseModel):
     sds_code: Optional[str] = Field(title="设计编号")
     chapter: Optional[str] = Field(title="章节")
     location: Optional[str] = Field(title="位置")
+    design_manual: Optional[bool] = Field(title="设计编号已手改")
     

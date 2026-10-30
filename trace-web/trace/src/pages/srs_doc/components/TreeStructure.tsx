@@ -1080,7 +1080,12 @@ async function findProductBoundDocFileRow(
     productVersion?: string,
 ): Promise<any | undefined> {
     const rows = await listProductBoundDocFileRows(fileType, productId, docVersion, productVersion);
-    return pickProductBoundDocFileRow(rows, docVersion, productVersion, fileType);
+    const picked = pickProductBoundDocFileRow(rows, docVersion, productVersion, fileType);
+    if (picked) return picked;
+    // 产品图示每类只有一条（文档版本固定 A0）。按版本匹配不到时回退到本产品该类型的当前图，
+    // 保证 A1/A2/A3 等版本文档打开时也能显示同一张产品图示。
+    const allRows = await listProductBoundDocFileRows(fileType, productId);
+    return sortDocFileRowsByLatest(allRows)[0];
 }
 
 function buildProductBoundDocFileUrl(row?: any): string {

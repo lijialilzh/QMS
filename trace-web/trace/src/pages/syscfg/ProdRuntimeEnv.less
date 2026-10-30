@@ -223,6 +223,11 @@
                 align-items: center;
                 justify-content: center;
                 gap: 0;
+
+                // 表头行操作列：「操作」文字 + 插入行按钮同排，数据行全删后仍能加回
+                &.env-row-op-head {
+                    gap: 4px;
+                }
             }
 
             .risk-part-action-btn {

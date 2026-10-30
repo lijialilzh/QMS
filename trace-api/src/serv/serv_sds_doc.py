@@ -2616,6 +2616,8 @@ class Server(SdsSrsTraceSyncMixin, object):
                     name = (sds_code and owned_names.get(sds_code)) or (sds_code and directory["by_code_name"].get(sds_code)) or ""
                     num = (sds_code and directory["by_code"].get(sds_code)) or ""
                     if not name:
+                        # 与编辑页一致：认不出章节的那一条留占位，编号列和需求/代码列行数保持相同
+                        lines.append("—")
                         continue
                     lines.append(f"{name}（章节 {num}）" if num else name)
                 return "\n".join(lines)

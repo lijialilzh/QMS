@@ -4,7 +4,7 @@ import sys
 import json
 import hashlib
 from typing import Dict, List, Optional, Tuple, Union
-from sqlalchemy import select, or_, and_, case
+from sqlalchemy import select, or_, and_, case, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import desc
 from ..obj.vobj_user import UserObj
@@ -1121,7 +1121,12 @@ class Server(object):
             return [composed]
         return stored_lines or [""]
 
-    def __ensure_sds_traces(self, prod_id: int = None, doc_id: int = None):
+    def __ensure_sds_traces(self, prod_id: int = None, doc_id: int = None, force: bool = False):
+        """补齐追溯行。
+
+        force=False（列表/刷新/打开/导出）：design_manual=True 的行一律跳过，库里手改的设计编号原样保留。
+        force=True（点「获取SRS追溯」）：清掉手改标记，按当前 SRS 重新取。
+        """
         if not prod_id and not doc_id:
             return
         try:
@@ -1132,6 +1137,14 @@ class Server(object):
                 sql_docs = sql_docs.where(SrsDoc.product_id == prod_id)
             docs = db.session.execute(sql_docs).all()
             for sds_doc_id, srs_doc_id in docs:
+                # 获取SRS追溯：先清掉手改标记，让下面的逻辑按 SRS 重算
+                if force:
+                    db.session.execute(
+                        update(SdsTrace)
+                        .where(SdsTrace.doc_id == sds_doc_id)
+                        .where(SdsTrace.design_manual.is_(True))
+                        .values(design_manual=False)
+                    )
                 hierarchy_map = self.__load_srs_req_hierarchy_map(srs_doc_id)
                 self.__ensure_reqs_from_imported_srs_tables(srs_doc_id)
                 reqs = db.session.execute(
@@ -1146,9 +1159,16 @@ class Server(object):
                 values = []
                 fixed_values = []
                 living_codes = [code for _req_id, code, _module, _function, _sub_function, _type_code in reqs]
-                existing_codes = dict(db.session.execute(
-                    select(SdsTrace.req_id, SdsTrace.sds_code).where(SdsTrace.doc_id == sds_doc_id)
-                ).all())
+                existing_rows = {
+                    req_id: (sds_code, bool(design_manual))
+                    for req_id, sds_code, design_manual in db.session.execute(
+                        select(SdsTrace.req_id, SdsTrace.sds_code, SdsTrace.design_manual)
+                        .where(SdsTrace.doc_id == sds_doc_id)
+                    ).all()
+                }
+                existing_codes = {req_id: code for req_id, (code, _manual) in existing_rows.items()}
+                # 手改过的追溯行：库里设计编号原样保留，本次补齐一律跳过（force 已在上方清掉标记）
+                manual_req_ids = {req_id for req_id, (_code, manual) in existing_rows.items() if manual}
 
                 def persist_own_design_code(req_id, stored, derived_code, module_name):
                     rewritten = rewrite_own_design_code(stored, derived_code, living_codes)
@@ -1166,6 +1186,9 @@ class Server(object):
                         align_sds_node_code(sds_doc_id, old, derived_code, module_name)
 
                 for req_id, code, module, function, sub_function, type_code in reqs:
+                    # 手改过设计编号的行一律不参与自动补算，库里这一条原样保留
+                    if req_id in manual_req_ids:
+                        continue
                     fields = self.hierarchy_for_req(None, hierarchy_map, code=code)
                     if not fields.get("module") and not fields.get("function") and not fields.get("sub_function"):
                         fields = {"module": module, "function": function, "sub_function": sub_function}
@@ -1312,11 +1335,19 @@ class Server(object):
                 if not row:
                     return Resp.resp_err(msg=ts("msg_obj_null"))
                 logger.info("location: %s", form.location)
+                # 设计编号被改动时打上手改标记：此后刷新/打开/导出都保留库里这一条，
+                # 只有「获取SRS追溯」才会清除标记重新取。
+                code_changed = (
+                    form.sds_code is not None
+                    and str(form.sds_code or "").strip() != str(row.sds_code or "").strip()
+                )
                 for key, value in form.dict().items():
                     logger.info("update: %s: %s", key, value)
                     if key == "id" or value is None:
                         continue
                     setattr(row, key, value)
+                if code_changed:
+                    row.design_manual = True
             db.session.commit()
             return Resp.resp_ok()
         except Exception:
@@ -2167,6 +2198,14 @@ class Server(object):
             if str(row_req.type_code) == "2":
                 stored_sds_code = str(obj.sds_code or "")
                 derived_sds_code = (row_req.code or "").replace("SRS", "SDS").strip()
+                # 手改标记以库里为准：update_sds_trace 改动设计编号时置位，
+                # 只有「获取SRS追溯」清掉。标记为真就原样使用库里这一条，不再靠值比对推断。
+                if bool(getattr(row_reqd, "design_manual", False)):
+                    obj.design_manual = True
+                    obj.sds_code = stored_sds_code
+                    obj.name = obj.chapter
+                    objs.append(obj)
+                    continue
                 role = normalize_other_req_design_role(
                     getattr(row_req, "design_role", ""), getattr(row_req, "module", ""), getattr(row_req, "code", ""),
                 )
