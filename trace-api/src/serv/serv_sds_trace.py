@@ -83,6 +83,14 @@ FIXED_RCN300_TRACES = {
 
 _REQ_CODE_RE = re.compile(r"^SRS-([A-Z]+?)(\d+)-(\d+)$", re.I)
 
+# SDS 内列表和章节均不读取的模块：基本要求、数据库要求、文档需求。
+# 这三类需求不返回 2.4 列表行，也不再解析成章节名、不再自动补一级章节。
+SDS_EXCLUDED_MODULES = ("基本要求", "数据库要求", "文档需求")
+
+
+def is_sds_excluded_module(module: str) -> bool:
+    return str(module or "").strip() in SDS_EXCLUDED_MODULES
+
 # 其他需求设计类型。名称和编号都还是预置值时，详细设计仍用原来的英文章节名。
 OTHER_REQ_DESIGN_ROLES = {
     "dataprocessing": {"preset_module": "图像接收", "english": "DataProcessing", "tail": "004"},
@@ -1109,7 +1117,11 @@ class Server(object):
         hierarchy_map: Dict[str, dict] = None,
         **fields,
     ) -> List[str]:
-        """追溯表「需求/代码」列：单行需求用层级字段，固定多行映射保留各行原文。"""
+        """追溯表「需求/代码」列：单行需求用层级字段，固定多行映射保留各行原文。
+
+        基本要求、数据库要求、文档需求这三类章节在 SDS 内不读取：其他行手填的编号即使
+        指向这三章，也不解析成它们的章节名，留空占位，不影响同一编号在其他章节下的行。
+        """
         req_code = srs_code or (getattr(row_req, "code", None) if row_req is not None else None)
         code = (req_code or "").strip().upper()
         fixed = fixed_rcn300_trace_for_code(code)
@@ -1117,9 +1129,11 @@ class Server(object):
             return [item[1] for item in fixed]
         composed = cls.compose_srs_req_chapter(row_req, hierarchy_map=hierarchy_map, code=req_code, **fields)
         stored_lines = [ln.strip() for ln in re.split(r"[\r\n]+", (stored_chapter or "")) if ln and ln.strip()]
-        if composed:
-            return [composed]
-        return stored_lines or [""]
+        lines = [composed] if composed else (stored_lines or [""])
+        return [
+            "" if is_sds_excluded_module(line) else line
+            for line in lines
+        ]
 
     def __ensure_sds_traces(self, prod_id: int = None, doc_id: int = None, force: bool = False):
         """补齐追溯行。
@@ -2159,6 +2173,18 @@ class Server(object):
 
         sql = sql.order_by(desc(Product.id), desc(SdsDoc.id), SrsReq.code)
         rows: List[Tuple[SdsTrace, SrsReq, SrsType, SdsDoc, SrsDoc, Product]] = db.session.execute(sql).all()
+        # SDS 内列表不读取基本要求、数据库要求、文档需求：这三类需求自身不出行。
+        # 判定在 __resort_rows 和分页之前，total 按过滤后的行数算。
+        all_srs_doc_ids = list({row_srsdoc.id for _row_reqd, _row_req, _row_type, _row_sdsdoc, row_srsdoc, _row_product in rows if row_srsdoc})
+        hierarchy_by_srs_doc = {sid: self.__load_srs_req_hierarchy_map(sid) for sid in all_srs_doc_ids}
+        rows = [
+            row for row in rows
+            if not is_sds_excluded_module(
+                self.hierarchy_for_req(
+                    row[1], hierarchy_by_srs_doc.get(row[4].id if row[4] else 0) or {},
+                ).get("module")
+            )
+        ]
         rows = self.__resort_rows(rows)
         total = len(rows)
         rows = rows[page_size * page_index: page_size * (page_index + 1)]
@@ -2176,7 +2202,6 @@ class Server(object):
         doc_sds_locations = {d_id: self.__build_sds_location_map(tree) for d_id, tree in doc_trees.items()}
         virtual_sds_locations = {} if from_sync else self.__build_virtual_location_map(rows, doc_trees, doc_sds_locations)
         srs_doc_ids = list(set([row_srsdoc.id for row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product in rows if row_srsdoc]))
-        hierarchy_by_srs_doc = {sid: self.__load_srs_req_hierarchy_map(sid) for sid in srs_doc_ids}
         objs = []
         for row_reqd, row_req, row_type, row_sdsdoc, row_srsdoc, row_product in rows:
             obj = SdsTraceObj(**row_reqd.dict())

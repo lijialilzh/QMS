@@ -215,6 +215,10 @@ function isBasicRequirementModule(module?: string) {
     return String(module || "").replace(/\s+/g, "") === "基本要求";
 }
 
+// SDS 内列表和章节均不读取的模块：基本要求、数据库要求、文档需求。
+// 顶层章节命中这里时，整棵子树在页面上隐藏（数据保留在库里，不改不删）。
+const SDS_EXCLUDED_MODULE_NAMES = ["基本要求", "数据库要求", "文档需求"];
+
 function topLevelModuleHeading(title?: string) {
     const matched = String(title || "").trim().match(/^(\d{1,2})(?!\.\d)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))/);
     return matched?.[1] || "";
@@ -395,6 +399,10 @@ function ensureSdsOtherReqChapterNodes(nodes: TreeNode[], otherRows: any[]): Tre
             return { ...row, chapterName, preset, role, basic, renamedOwner };
         })
         .filter((row) => {
+            // 基本要求、数据库要求、文档需求在 SDS 内不读取章节，不参与补章
+            if (SDS_EXCLUDED_MODULE_NAMES.some((name) => name.replace(/\s+/g, "") === String(row.module || "").replace(/\s+/g, ""))) {
+                return false;
+            }
             if (row.basic || row.renamedOwner) return true;
             if (row.role === "external") return true;
             if (row.role) return false;
@@ -4311,9 +4319,20 @@ export default () => {
     const changeLogRoot = treeRoots.find((node) => normalizeText(node.title).includes("文件修订记录"));
     const coverRoots = coverRoot ? [coverRoot] : treeRoots.filter((node) => subtreeMatches(node, isCoverNode));
     const changeLogRoots = changeLogRoot ? [changeLogRoot] : treeRoots.filter((node) => subtreeMatches(node, isChangeLogNode));
-    const hiddenNodeIds = treeRoots
-        .filter((node) => isCatalogNode(node) || subtreeMatches(node, isCoverNode) || subtreeMatches(node, isChangeLogNode))
+    // SDS 内列表和章节均不读取基本要求、数据库要求、文档需求：
+    // 这三类顶层章节连同其子章节一并隐藏。只用 hiddenNodeIds 做渲染过滤，不改数据、不参与保存。
+    const excludedModuleChapterIds = treeRoots
+        .filter((node) => {
+            const body = stripTopHeading(node.title || "").toLowerCase();
+            return SDS_EXCLUDED_MODULE_NAMES.some((name) => name.replace(/\s+/g, "").toLowerCase() === body);
+        })
         .flatMap((node) => collectSubtreeIds(node));
+    const hiddenNodeIds = [
+        ...treeRoots
+            .filter((node) => isCatalogNode(node) || subtreeMatches(node, isCoverNode) || subtreeMatches(node, isChangeLogNode))
+            .flatMap((node) => collectSubtreeIds(node)),
+        ...excludedModuleChapterIds,
+    ];
 
     const updateExtractedTableCell = (targetNodeId: number, rowIndex: number, colCode: string, value: string) => {
         const updateNode = (nodes: TreeNode[]): TreeNode[] => {

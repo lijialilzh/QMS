@@ -21,7 +21,7 @@ from ..obj.vobj_sds_trace import SdsTraceObj
 from ..obj import Resp
 from ..utils.sql_ctx import db
 from ..utils.i18n import ts
-from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, FIXED_RCN300_TRACES, fixed_rcn300_sds_codes, fixed_rcn300_trace_for_code, filter_fixed_trace_to_living, design_codes_are_manual, align_rcn300_tail_locations, rcn300_tail_name_key, live_rcn300_tail_chapters, OTHER_REQ_DESIGN_ROLES, normalize_other_req_design_role, other_req_design_role_is_explicit, other_req_role_is_changed, other_req_role_display_name
+from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, FIXED_RCN300_TRACES, fixed_rcn300_sds_codes, fixed_rcn300_trace_for_code, filter_fixed_trace_to_living, design_codes_are_manual, align_rcn300_tail_locations, rcn300_tail_name_key, live_rcn300_tail_chapters, OTHER_REQ_DESIGN_ROLES, normalize_other_req_design_role, other_req_design_role_is_explicit, other_req_role_is_changed, other_req_role_display_name, is_sds_excluded_module
 
 
 _EMPTY_DESIGN_TEMPLATE_RE = re.compile(
@@ -352,6 +352,9 @@ class SdsSrsTraceSyncMixin:
         ).scalars().all()
         grouped = {key: [] for key in OTHER_REQ_DESIGN_ROLES}
         for req in rows:
+            # 基本要求、数据库要求、文档需求这三类在 SDS 内不读取，不参与模版章补章与绑章。
+            if is_sds_excluded_module(getattr(req, "module", "")):
+                continue
             role = normalize_other_req_design_role(
                 getattr(req, "design_role", ""), getattr(req, "module", ""), getattr(req, "code", ""),
             )
@@ -738,15 +741,11 @@ class SdsSrsTraceSyncMixin:
             trace.location = str(next_no)
 
     def _append_basic_requirement_chapter(self, doc_id: int, roots: List[SdsNodeForm], rows):
-        """基本要求删掉后再加回来时补一级章节。数据库要求、性能要求不建章。"""
-        basics = [
-            req for req in rows or []
-            if re.sub(r"\s+", "", str(getattr(req, "module", "") or "")) == "基本要求"
-        ]
-        if not basics:
-            return
-        basics.sort(key=lambda req: self._sds_code_sort_key(getattr(req, "code", "") or ""))
-        self._insert_other_req_root(doc_id, roots, basics[0], "基本要求", "", "")
+        """基本要求删掉后再加回来时补一级章节。数据库要求、性能要求不建章。
+
+        SDS 内列表和章节均不读取基本要求，因此不再补这一章。
+        """
+        return
 
     def _append_regulation_chapters(self, doc_id: int, roots: List[SdsNodeForm], rows):
         """追溯表里还有法规符合、目录里没有这一章时，补一级章节。不改已有章节编号，不套固定小节。"""
