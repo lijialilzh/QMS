@@ -304,12 +304,17 @@ function rootHasModule(roots: TreeNode[], module: string) {
 
 function dropAbsentPresetOtherReqChapters(nodes: TreeNode[], otherRows: any[]): TreeNode[] {
     const living = new Set<string>();
+    const livingNames: string[] = [];
     const livingRoles = new Set<string>();
     const keepRegulation = (otherRows || []).some((row) => String(row?.module || "").replace(/\s+/g, "").includes("法规符合"));
     (otherRows || []).forEach((row) => {
         const code = String(row?.code || row?.srs_code || "").replace(/\s+/g, "").toUpperCase();
         const name = fixedModuleForSrsCode(code);
         if (name) living.add(name);
+        // 产品代号换段后编号是 400 段，固定表只认 300 段，这里再按需求模块名登记，
+        // 避免把已存在的其他需求章节误判为缺失而删掉重插（重插会按模版顺序错位）。
+        const moduleName = String(row?.module || "").replace(/\s+/g, "");
+        if (moduleName) livingNames.push(moduleName);
         const role = otherReqDesignRole(row);
         if (role) livingRoles.add(role);
     });
@@ -323,7 +328,8 @@ function dropAbsentPresetOtherReqChapters(nodes: TreeNode[], otherRows: any[]): 
         if (presetName === "法规符合性需求" && keepRegulation) return true;
         const role = roleByChapter[presetName];
         if (role) return livingRoles.has(role);
-        return living.has(presetName);
+        if (living.has(presetName)) return true;
+        return livingNames.some((name) => sdsTitleMatchesModule(node.title || "", name));
     });
 }
 
@@ -409,20 +415,30 @@ function ensureSdsOtherReqChapterNodes(nodes: TreeNode[], otherRows: any[]): Tre
     if (!pending.length) return roots;
     const nextRoots = [...roots];
     pending.forEach((row) => {
+        const newCode = row.code.replace(/^SRS/, "SDS");
+        // 先按设计编号定位：其他需求一级章节按编号升序排列，补章插到第一个编号比它大的章前面，
+        // 避免产品换段（300→400）后模版顺序与编号顺序不一致导致插错位置。
+        const byCodeAt = nextRoots.findIndex((node) => {
+            if (!isNumberedSdsRoot(node)) return false;
+            const code = String((node as any).sds_code || "").replace(/\s+/g, "").toUpperCase();
+            if (!/^SDS-[A-Z]+?\d+-\d+$/.test(code)) return false;
+            return compareOtherReqCode(code.replace(/^SDS/, "SRS"), row.code) > 0;
+        });
         const orderIndex = moduleOrder.indexOf(row.chapterName);
         const laterNames = orderIndex >= 0 ? moduleOrder.slice(orderIndex + 1) : [];
         const moduleAt = laterNames.length
             ? nextRoots.findIndex((node) => laterNames.some((name) => sdsTitleMatchesModule(node.title || "", name)))
             : -1;
         const appendixAt = nextRoots.findIndex((node) => isSdsAppendixTitle(node.title, node.ref_type));
-        const insertAt = moduleAt >= 0 ? moduleAt : (appendixAt >= 0 ? appendixAt : nextRoots.length);
+        const fallbackAt = moduleAt >= 0 ? moduleAt : (appendixAt >= 0 ? appendixAt : nextRoots.length);
+        const insertAt = byCodeAt >= 0 ? byCodeAt : fallbackAt;
         sdsOtherReqChapterSeq += 1;
         const chapterNo = String(nextRoots.slice(0, insertAt).filter(isNumberedSdsRoot).length + 1);
         nextRoots.splice(insertAt, 0, {
             id: Date.now() * 1000 + sdsOtherReqChapterSeq,
             n_id: 0,
             title: `${chapterNo} ${row.chapterName}`,
-            sds_code: row.code.replace(/^SRS/, "SDS"),
+            sds_code: newCode,
             label: row.renamedOwner && row.role ? `sds-role:${row.role}` : "",
             text: "",
             children: [],

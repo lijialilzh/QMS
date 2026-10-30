@@ -559,11 +559,12 @@ class SdsSrsTraceSyncMixin:
                 roots.insert(insert_at, node)
                 insert_at += 1
                 bind_chapter(node, req, fill_template=True)
-        self._order_other_req_roots_by_code(roots, rows)
         self._append_basic_requirement_chapter(doc_id, roots, rows)
         self._append_renamed_template_chapters(doc_id, roots, renamed_later)
         self._append_external_chapters(doc_id, roots, external_later)
         self._append_regulation_chapters(doc_id, roots, rows)
+        # 补章之后再按设计编号排一次并重编章号，避免新补的章落在末尾。
+        self._order_other_req_roots_by_code(roots, rows)
         self._rehome_design_templates(roots, rows)
         return roots, warnings
 
@@ -656,15 +657,24 @@ class SdsSrsTraceSyncMixin:
             target.label = f"sds-role:{role}"
             self._ensure_design_role_template(target, role)
 
+    @staticmethod
+    def _is_appendix_title(title: str) -> bool:
+        compact = re.sub(r"\s+", "", str(title or ""))
+        return compact.startswith("附件") or "评审" in compact
+
     def _top_level_named(self, roots: List[SdsNodeForm], name: str) -> bool:
         wanted = self._normalize_sds_node_title(name)
         if not wanted:
             return False
         for node in roots or []:
-            heading = self._parse_sds_node_heading(getattr(node, "title", "") or "")
+            title = str(getattr(node, "title", "") or "")
+            # 附件一评审结论不当作其他需求章，避免误挂的编号挡住补章
+            if self._is_appendix_title(title):
+                continue
+            heading = self._parse_sds_node_heading(title)
             if not heading or "." in heading:
                 continue
-            body = self._normalize_sds_node_title(self._strip_sds_heading_text(getattr(node, "title", "") or ""))
+            body = self._normalize_sds_node_title(self._strip_sds_heading_text(title))
             if body == wanted:
                 return True
         return False
@@ -674,7 +684,10 @@ class SdsSrsTraceSyncMixin:
         if not wanted:
             return False
         for node in roots or []:
-            heading = self._parse_sds_node_heading(getattr(node, "title", "") or "")
+            title = str(getattr(node, "title", "") or "")
+            if self._is_appendix_title(title):
+                continue
+            heading = self._parse_sds_node_heading(title)
             if not heading or "." in heading:
                 continue
             current = re.sub(r"\s+", "", str(getattr(node, "sds_code", "") or "")).upper()
@@ -791,10 +804,25 @@ class SdsSrsTraceSyncMixin:
                 return True
             return "法规符合" in body and "法规符合" in name
 
-        def root_code(node: SdsNodeForm) -> str:
-            code = re.sub(r"\s+", "", str(getattr(node, "sds_code", "") or ""))
-            if re.search(r"300-\d+$", code, re.I):
-                return code
+        def is_other_req_code(value: str) -> bool:
+            # 认编号末段的序号，不限定 300 段：产品代号换成 RCN400 等其他段时同样参与排序。
+            text = re.sub(r"\s+", "", str(value or "")).upper()
+            if not text or "IF" in text:
+                return False
+            matched = re.search(r"[A-Z]+(\d+)-(\d+)$", text)
+            return bool(matched)
+
+        def order_key(value: str):
+            """段号去掉产品代号那一位再比（RCN300 与 RCN400 同段），再比末位序号；
+            同一份文档里残留旧段号的章节不会整组掉到后面。"""
+            matched = re.search(r"[A-Z]+(\d+)-(\d+)$", re.sub(r"\s+", "", str(value or "")).upper())
+            if not matched:
+                return (9999, 9999)
+            series = matched.group(1)
+            remainder = int(series[1:]) if len(series) > 1 else 0
+            return (remainder, int(matched.group(2)))
+
+        def derived_code_of(node: SdsNodeForm) -> str:
             for req in rows or []:
                 if not module_matches(node, getattr(req, "module", "") or ""):
                     continue
@@ -803,13 +831,32 @@ class SdsSrsTraceSyncMixin:
                     re.sub(r"\s+", "", str(getattr(req, "code", "") or "")),
                     count=1, flags=re.I,
                 )
-                if re.search(r"300-\d+$", derived, re.I):
+                if is_other_req_code(derived):
                     return derived
             return ""
+
+        def root_code(node: SdsNodeForm) -> str:
+            # 当前需求编号为准：节点上留着旧段号（如 300）时，按其他需求行里的编号排。
+            derived = derived_code_of(node)
+            if derived:
+                return derived
+            code = re.sub(r"\s+", "", str(getattr(node, "sds_code", "") or ""))
+            if is_other_req_code(code):
+                return code
+            return ""
+
+        def is_appendix_root(node: SdsNodeForm) -> bool:
+            compact = re.sub(r"\s+", "", str(getattr(node, "title", "") or ""))
+            return compact.startswith("附件") or "评审" in compact
 
         indexed = []
         for index, node in enumerate(roots or []):
             if self._is_front_matter_root(getattr(node, "title", "") or ""):
+                continue
+            # 附件、评审结论不参与其他需求章节编号；顺带清掉误挂的设计编号，避免挡住同名需求补章。
+            if is_appendix_root(node):
+                if re.sub(r"\s+", "", str(getattr(node, "sds_code", "") or "")):
+                    node.sds_code = ""
                 continue
             code = root_code(node)
             if not code:
@@ -817,16 +864,30 @@ class SdsSrsTraceSyncMixin:
             indexed.append((index, node, code))
         if len(indexed) < 2:
             return
-        ordered = sorted(indexed, key=lambda item: self._sds_code_sort_key(item[2]))
-        if all(left[1] is right[1] for left, right in zip(indexed, ordered)):
+        ordered = sorted(indexed, key=lambda item: order_key(item[2]))
+        slots = [item[0] for item in indexed]
+        start = slots[0]
+        # 起始章号接在这批章节前面已有的编号章后面，重排后连续往下编，不留断号和重号
+        last_before = 0
+        for node in roots[:start]:
+            heading = self._parse_sds_node_heading(getattr(node, "title", "") or "")
+            if heading.isdigit() and "." not in heading:
+                last_before = max(last_before, int(heading))
+        start_no = last_before + 1
+        # 顺序和章号都对才跳过：章号重复（如两个 9）时即使顺序没变也要重编
+        in_place = all(roots[slot] is node for slot, (_index, node, _code) in zip(slots, ordered))
+        numbered = all(
+            self._parse_sds_node_heading(getattr(node, "title", "") or "") == str(start_no + offset)
+            for offset, (_index, node, _code) in enumerate(ordered)
+        )
+        if in_place and numbered:
             return
-        start = indexed[0][0]
-        start_heading = self._parse_sds_node_heading(getattr(indexed[0][1], "title", "") or "")
-        start_no = int(start_heading) if start_heading.isdigit() and "." not in start_heading else start + 1
-        for index, _node, _code in reversed(indexed):
-            roots.pop(index)
+        if not in_place:
+            for slot in reversed(slots):
+                roots.pop(slot)
+            for offset, (_index, node, _code) in enumerate(ordered):
+                roots.insert(start + offset, node)
         for offset, (_index, node, _code) in enumerate(ordered):
-            roots.insert(start + offset, node)
             new_major = str(start_no + offset)
             title = str(getattr(node, "title", "") or "")
             old = self._parse_sds_node_heading(title)
