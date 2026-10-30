@@ -361,11 +361,49 @@ class Server(object):
             sync_dhf_codes_to_product_code(row.id, row.product_code)
             sync_srs_codes_to_product_stem(row.id, old_product_code, row.product_code)
             db.session.commit()
+            # 产品代码变了：该版本各文档文件编号同段替换，并让详细设计完整跟随一次
+            # （等同点「获取SRS追溯」，但章节正文只换编号、不重写）。
+            if old_product_code and row.product_code and old_product_code != row.product_code:
+                await self.__follow_product_code_change(row.id, row.product_code)
             return Resp.resp_ok()
         except Exception:
             logger.exception("")
             db.session.rollback()
         return Resp.resp_err(msg=ts(msg_err_db))
+
+    async def __follow_product_code_change(self, prod_id: int, product_code: str):
+        from .serv_product_dhf_copy import DELETED_SRS_VERSION_PREFIX, apply_product_code_token
+        from .serv_sds_doc import Server as SdsDocServer
+        sds_docs = []
+        try:
+            sds_docs = db.session.execute(
+                select(SdsDoc).where(SdsDoc.product_id == prod_id)
+            ).scalars().all()
+            srs_docs = db.session.execute(
+                select(SrsDoc).where(
+                    SrsDoc.product_id == prod_id,
+                    ~SrsDoc.version.like(f"{DELETED_SRS_VERSION_PREFIX}%"),
+                )
+            ).scalars().all()
+            file_no_changed = 0
+            for doc in list(sds_docs) + list(srs_docs):
+                old_no = str(getattr(doc, "file_no", "") or "")
+                new_no = apply_product_code_token(old_no, product_code)
+                if new_no and new_no != old_no:
+                    doc.file_no = new_no
+                    file_no_changed += 1
+            if file_no_changed:
+                db.session.commit()
+        except Exception:
+            logger.exception("follow product code: sync file_no failed prod=%s", prod_id)
+            db.session.rollback()
+        sds_server = SdsDocServer()
+        for sds_doc in sds_docs:
+            try:
+                await sds_server.sync_follow_product_code(sds_doc.id)
+            except Exception:
+                logger.exception("follow product code: sync sds doc failed doc=%s", sds_doc.id)
+                db.session.rollback()
    
     async def get_product(self, id:str, with_trace: int = 0):
         sql = select(Product).where(Product.id == id)

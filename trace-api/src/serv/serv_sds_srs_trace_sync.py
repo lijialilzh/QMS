@@ -983,6 +983,47 @@ class SdsSrsTraceSyncMixin:
             },
         )
 
+    async def sync_follow_product_code(self, doc_id: int):
+        """版本管理保存产品代码后自动跟随：跑一次完整「获取SRS追溯」，但章节正文只换编号、不重写。
+        同步前按「设计编号 + 章名」快照正文（同一编号可能同时挂在父章和子章），同步后原样写回；
+        只还原同步前已存在的章节，新补的章节不填。"""
+        def norm_code(value) -> str:
+            return re.sub(r"\s+", "", str(value or "")).upper()
+
+        def title_body(value) -> str:
+            text = re.sub(r"\s+", "", str(value or ""))
+            return re.sub(r"^\d{1,2}(?!\.\d)(?:[、.．]*)", "", text)
+
+        def node_key(code, title) -> str:
+            return f"{norm_code(code)}|{title_body(title)}"
+
+        before_texts: Dict[str, str] = {}
+        if doc_id:
+            rows = db.session.execute(
+                select(SdsNode.sds_code, SdsNode.title, SdsNode.text).where(SdsNode.doc_id == doc_id)
+            ).all()
+            for sds_code, title, text in rows:
+                before_texts.setdefault(node_key(sds_code, title), str(text or ""))
+
+        resp = await self.sync_srs_trace(doc_id=doc_id)
+        if getattr(resp, "code", 0) != 1:
+            return resp
+
+        restored = 0
+        if before_texts:
+            rows = db.session.execute(
+                select(SdsNode).where(SdsNode.doc_id == doc_id)
+            ).scalars().all()
+            for row in rows:
+                expected = before_texts.get(node_key(row.sds_code, row.title))
+                if expected is None or str(row.text or "") == expected:
+                    continue
+                row.text = expected
+                restored += 1
+            if restored:
+                db.session.commit()
+        return Resp.resp_ok(data={"restored_text_nodes": restored})
+
     async def sync_design_text_only(self, doc_id: int):
         """页面加载自动同步：仅对功能设计为空的章节，按编号从 SRS 补全内容。
         已有内容一律不动（以详细设计为准、只补空），不重排结构/编号/标题。"""
