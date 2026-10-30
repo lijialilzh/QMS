@@ -38,6 +38,7 @@ from ..utils.i18n import ts
 from ..utils.sql_ctx import db
 from . import msg_err_db
 from .serv_cybersec_doc import replace_product_identity
+from .serv_product import product_scope_filter
 from . import serv_review_util
 from .serv_utils import new_version, sync_file_no_version, docx_util
 from .serv_prod_runtime_env import apply_runtime_to_pdp_content
@@ -719,13 +720,26 @@ class Server(object):
 
     def list_cybersec_plan_doc(self, op_user=None, product_id: int = 0, version: str = None,
                                 page_index: int = 0, page_size: int = 10):
-        q = select(CybersecPlanDoc)
+        wheres = []
         if product_id:
-            q = q.where(CybersecPlanDoc.product_id == product_id)
+            wheres.append(CybersecPlanDoc.product_id == product_id)
         if version:
-            q = q.where(CybersecPlanDoc.version.like(f"%{version}%"))
-        total = db.session.execute(select(func.count()).select_from(q.subquery())).scalar()
-        rows = db.session.execute(q.order_by(CybersecPlanDoc.id.desc()).offset(page_index * page_size).limit(page_size)).scalars().all()
+            wheres.append(CybersecPlanDoc.version.like(f"%{version}%"))
+        # 数据可见范围（与产品列表口径一致）：除超级管理员、DQA 外只看产品可见范围勾选的产品
+        scope = product_scope_filter(op_user)
+        if scope is not None:
+            wheres.append(scope)
+        sql_total = select(func.count(CybersecPlanDoc.id)).join(Product, CybersecPlanDoc.product_id == Product.id).where(*wheres)
+        total = db.session.execute(sql_total).scalar() or 0
+        sql = (
+            select(CybersecPlanDoc)
+            .join(Product, CybersecPlanDoc.product_id == Product.id)
+            .where(*wheres)
+            .order_by(CybersecPlanDoc.id.desc())
+            .offset(page_index * page_size)
+            .limit(page_size)
+        )
+        rows = db.session.execute(sql).scalars().all()
         prod_ids = list(set(r.product_id for r in rows))
         prod_map = {}
         if prod_ids:

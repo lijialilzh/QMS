@@ -280,10 +280,8 @@ def stored_is_module_preset_tail(stored: str, module: str) -> bool:
 
 
 def other_req_keeps_design_code(stored: str, module: str, auto_lines, also_auto=None) -> bool:
-    """一行里手写了多条、且不是自动结果时才保留。只有一条时跟当前需求编号走，不留下上一次的编号。"""
+    """手改过的设计编号保留。自动编号（含产品代号换段的同一序号）不算手改，跟当前需求编号走。"""
     if stored_is_module_preset_tail(stored, module):
-        return False
-    if len(design_code_number_keys(stored)) <= 1:
         return False
     return design_codes_are_manual(stored, auto_lines, also_auto)
 
@@ -326,7 +324,8 @@ def rewrite_own_design_code(stored: str, derived: str, living_req_codes) -> str:
             continue
         new_lines.append(line)
     if not replaced:
-        new_lines.insert(0, derived_norm)
+        # 这一格指向的都是仍在的需求编号（用户手改成别的行），原样保留，不把本条编号插回来
+        return _dedupe_design_lines(lines)
     return _dedupe_design_lines(new_lines)
 
 
