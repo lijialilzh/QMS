@@ -280,9 +280,54 @@ def stored_is_module_preset_tail(stored: str, module: str) -> bool:
 
 
 def other_req_keeps_design_code(stored: str, module: str, auto_lines, also_auto=None) -> bool:
+    """一行里手写了多条、且不是自动结果时才保留。只有一条时跟当前需求编号走，不留下上一次的编号。"""
     if stored_is_module_preset_tail(stored, module):
         return False
+    if len(design_code_number_keys(stored)) <= 1:
+        return False
     return design_codes_are_manual(stored, auto_lines, also_auto)
+
+
+def _dedupe_design_lines(lines) -> str:
+    seen = set()
+    kept = []
+    for line in lines or []:
+        code = re.sub(r"\s+", "", str(line or "")).upper()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        kept.append(code)
+    return "\n".join(kept)
+
+
+def rewrite_own_design_code(stored: str, derived: str, living_req_codes) -> str:
+    """多行设计编号里，和本条需求对应、但已经对不上当前编号的那一条换成当前编号。指向其他仍存在需求的编号保留。"""
+    derived_norm = re.sub(r"\s+", "", str(derived or "")).upper()
+    derived_key = requirement_number_key(derived_norm)
+    if not derived_norm or not derived_key:
+        return str(stored or "")
+    living_keys = {requirement_number_key(code) for code in (living_req_codes or [])}
+    living_keys.discard("")
+    lines = split_design_code_lines(stored)
+    if not lines:
+        return derived_norm
+    if any(requirement_number_key(line) == derived_key for line in lines):
+        return _dedupe_design_lines([
+            derived_norm if requirement_number_key(line) == derived_key else line
+            for line in lines
+        ])
+    new_lines = []
+    replaced = False
+    for line in lines:
+        key = requirement_number_key(line)
+        if not replaced and key and key not in living_keys:
+            new_lines.append(derived_norm)
+            replaced = True
+            continue
+        new_lines.append(line)
+    if not replaced:
+        new_lines.insert(0, derived_norm)
+    return _dedupe_design_lines(new_lines)
 
 
 def align_sds_node_code(doc_id: int, stored: str, derived: str, module: str = ""):
@@ -558,10 +603,48 @@ def tail_sds_code(name_key: str, letter: str) -> str:
     return f"SDS-{letter or 'RCN'}300-{suffix}"
 
 
-def align_rcn300_tail_node_codes(nodes) -> bool:
+def displayed_tail_design_code(stored: str, module: str, req_code: str) -> str:
+    """章节编号框用追溯表这一行正在显示的设计编号。手改过的保留，原来的 009/008/010 跟着当前需求编号。"""
+    derived = re.sub(r"^SRS", "SDS", re.sub(r"\s+", "", str(req_code or "")), count=1, flags=re.I)
+    if not other_req_keeps_design_code(stored, module, [derived]):
+        return derived
+    lines = [
+        re.sub(r"\s+", "", line).upper()
+        for line in re.split(r"[\r\n,，]+", str(stored or ""))
+        if line.strip()
+    ]
+    derived_key = requirement_number_key(derived)
+    for line in lines:
+        if requirement_number_key(line) == derived_key:
+            return line
+    return lines[0] if lines else derived
+
+
+def living_tail_chapter_codes(doc_id: int) -> dict:
+    """文档需求 / 法规符合 / 外部连接这一章，编号框跟当前追溯表。"""
+    if not doc_id:
+        return {}
+    rows = db.session.execute(
+        select(SdsTrace, SrsReq)
+        .join(SrsReq, SrsReq.id == SdsTrace.req_id)
+        .where(SdsTrace.doc_id == doc_id, SrsReq.type_code == "2")
+    ).all()
+    found = {}
+    for trace, req in rows:
+        key = rcn300_tail_name_key(getattr(req, "module", "") or "")
+        if not key or key in found:
+            continue
+        code = displayed_tail_design_code(getattr(trace, "sds_code", "") or "", getattr(req, "module", "") or "", getattr(req, "code", "") or "")
+        if code:
+            found[key] = code
+    return found
+
+
+def align_rcn300_tail_node_codes(nodes, code_by_name=None) -> bool:
     """法规符合 / 外部连接 / 文档需求的设计编号与追溯表一致，字母跟着同套 300 编号，正文不再重复写编号。"""
     changed = False
     letter = design_letter_for_tail(nodes)
+    code_by_name = code_by_name or {}
 
     def strip_code_lines(text: str) -> str:
         lines = str(text or "").replace("\r", "").split("\n")
@@ -577,7 +660,8 @@ def align_rcn300_tail_node_codes(nodes) -> bool:
                 "",
                 title,
             ).strip()
-            code = tail_sds_code(rcn300_tail_name_key(name), letter)
+            name_key = rcn300_tail_name_key(name)
+            code = code_by_name.get(name_key) or tail_sds_code(name_key, letter)
             if code:
                 current = re.sub(r"\s+", "", str(getattr(node, "sds_code", "") or "")).upper()
                 if current != code:
@@ -1066,6 +1150,22 @@ class Server(object):
                 existing_codes = dict(db.session.execute(
                     select(SdsTrace.req_id, SdsTrace.sds_code).where(SdsTrace.doc_id == sds_doc_id)
                 ).all())
+
+                def persist_own_design_code(req_id, stored, derived_code, module_name):
+                    rewritten = rewrite_own_design_code(stored, derived_code, living_codes)
+                    stored_norm = _dedupe_design_lines(split_design_code_lines(stored))
+                    if not rewritten or rewritten == stored_norm:
+                        return
+                    trace = db.session.execute(
+                        select(SdsTrace).where(SdsTrace.doc_id == sds_doc_id, SdsTrace.req_id == req_id)
+                    ).scalars().first()
+                    if trace is not None:
+                        trace.sds_code = rewritten
+                    old_lines = set(split_design_code_lines(stored))
+                    new_lines = set(split_design_code_lines(rewritten))
+                    for old in old_lines - new_lines:
+                        align_sds_node_code(sds_doc_id, old, derived_code, module_name)
+
                 for req_id, code, module, function, sub_function, type_code in reqs:
                     fields = self.hierarchy_for_req(None, hierarchy_map, code=code)
                     if not fields.get("module") and not fields.get("function") and not fields.get("sub_function"):
@@ -1079,6 +1179,7 @@ class Server(object):
                         cross_map = other_req_fixed_trace_is_cross_map(code, fixed_trace)
                         if role and other_req_role_is_changed(code, module, role):
                             if other_req_keeps_design_code(existing_codes.get(req_id), module, [derived_code], legacy_lines):
+                                persist_own_design_code(req_id, existing_codes.get(req_id), derived_code, module)
                                 continue
                             align_sds_node_code(sds_doc_id, existing_codes.get(req_id), derived_code, module)
                             values.append(
@@ -1093,6 +1194,7 @@ class Server(object):
                         if cross_map or fixed_trace is None:
                             legacy_follow = other_req_stored_follows_cross_map(existing_codes.get(req_id), code, fixed_trace)
                             if not legacy_follow and other_req_keeps_design_code(existing_codes.get(req_id), module, [derived_code], legacy_lines):
+                                persist_own_design_code(req_id, existing_codes.get(req_id), derived_code, module)
                                 continue
                             align_sds_node_code(sds_doc_id, existing_codes.get(req_id), derived_code, module)
                             fixed_values.append(
@@ -1113,8 +1215,10 @@ class Server(object):
                                 [item[0] for item in kept],
                                 legacy_lines,
                             ):
+                                persist_own_design_code(req_id, existing_codes.get(req_id), derived_code, module)
                                 continue
                         elif other_req_keeps_design_code(existing_codes.get(req_id), module, [derived_code]):
+                            persist_own_design_code(req_id, existing_codes.get(req_id), derived_code, module)
                             continue
                     if fixed_trace is not None:
                         kept = filtered_trace or []

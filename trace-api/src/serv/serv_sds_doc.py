@@ -14,7 +14,7 @@ import time
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple, Union
-from sqlalchemy import select, delete, func
+from sqlalchemy import select, delete, func, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.sql import desc
 try:
@@ -57,7 +57,7 @@ from ..utils.i18n import ts
 from ..utils import get_uuid
 from .serv_utils.tree_util import find_parent
 from .serv_utils import new_version
-from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, fixed_rcn300_sds_codes, rcn300_tail_name_key, live_rcn300_tail_chapters, align_rcn300_tail_node_codes, nav_directory_chapters, requirement_number_key
+from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, fixed_rcn300_sds_codes, rcn300_tail_name_key, live_rcn300_tail_chapters, align_rcn300_tail_node_codes, living_tail_chapter_codes, nav_directory_chapters, requirement_number_key
 from .serv_sds_reqd import Server as ServSdsReqd
 from .serv_doc_file import is_srs_a0_image_version
 from .serv_srs_doc import Server as ServSrsDoc
@@ -1856,7 +1856,14 @@ class Server(SdsSrsTraceSyncMixin, object):
         tree = []
         if with_tree:
             tree = self._load_sds_tree(row.id)
-            align_rcn300_tail_node_codes(tree)
+            from .serv_sds_srs_trace_sync import clear_basic_requirement_placeholder
+            cleared_basic = clear_basic_requirement_placeholder(tree)
+            if cleared_basic:
+                db.session.execute(
+                    update(SdsNode).where(SdsNode.doc_id == row.id, SdsNode.n_id.in_(cleared_basic)).values(text="")
+                )
+                db.session.commit()
+            align_rcn300_tail_node_codes(tree, living_tail_chapter_codes(row.id))
             self._assign_external_interface_codes(tree)
             prod_imgs = self.__query_imgs(row.product_id) if row.product_id else (self.__query_imgs(row_srs.product_id) if row_srs else {})
             def hydrate_imgs(nodes: List[SdsNodeForm]):

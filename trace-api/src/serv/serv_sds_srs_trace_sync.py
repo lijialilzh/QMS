@@ -24,6 +24,37 @@ from ..utils.i18n import ts
 from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, FIXED_RCN300_TRACES, fixed_rcn300_sds_codes, fixed_rcn300_trace_for_code, filter_fixed_trace_to_living, design_codes_are_manual, align_rcn300_tail_locations, rcn300_tail_name_key, live_rcn300_tail_chapters, OTHER_REQ_DESIGN_ROLES, normalize_other_req_design_role, other_req_design_role_is_explicit, other_req_role_is_changed, other_req_role_display_name
 
 
+_EMPTY_DESIGN_TEMPLATE_RE = re.compile(
+    r"^(?:[（(][1-6][)）](?:总体描述|功能|程序逻辑|输入项|输出项|接口)无){5,6}$"
+)
+
+
+def is_basic_requirement_title(title: str) -> bool:
+    body = re.sub(r"^\d{1,2}(?!\.\d)", "", re.sub(r"\s+", "", str(title or "")))
+    return body == "基本要求"
+
+
+def is_empty_design_template(text: str) -> bool:
+    return bool(_EMPTY_DESIGN_TEMPLATE_RE.fullmatch(re.sub(r"\s+", "", str(text or ""))))
+
+
+def clear_basic_requirement_placeholder(nodes) -> List[int]:
+    """基本要求不套功能设计空模版。正文仍全是「无」时清空，并返回已改节点的 n_id。"""
+    cleared: List[int] = []
+
+    def walk(items):
+        for node in items or []:
+            if is_basic_requirement_title(getattr(node, "title", "") or "") and is_empty_design_template(getattr(node, "text", "") or ""):
+                node.text = ""
+                n_id = getattr(node, "n_id", None)
+                if n_id:
+                    cleared.append(int(n_id))
+            walk(getattr(node, "children", None) or [])
+
+    walk(nodes)
+    return cleared
+
+
 def owns_renamed_template(module: str, code: str, role: str) -> bool:
     """预置模块改了名、或编号仍占着该模版末段时，这一行仍对应原来的英文模版章。"""
     spec = OTHER_REQ_DESIGN_ROLES.get(role or "") or {}
@@ -1396,6 +1427,8 @@ class SdsSrsTraceSyncMixin:
         path = [str(t or "").strip() for t in (path_titles or []) if str(t or "").strip()]
         if not path or product_root is None:
             return None
+        if is_basic_requirement_title(path[-1]):
+            design_text = ""
         parent = product_root
         for segment in path[:-1]:
             parent = self._ensure_child_node_by_title(parent, segment)
@@ -2309,7 +2342,13 @@ class SdsSrsTraceSyncMixin:
         trace_rows=None,
     ):
         """追溯同步：同一功能重写总体描述和功能；程序逻辑及之后的段落保留。"""
-        if node is None or not expected_text:
+        if node is None:
+            return
+        if is_basic_requirement_title(module_name) or is_basic_requirement_title(getattr(node, "title", "") or ""):
+            if is_empty_design_template(getattr(node, "text", "") or ""):
+                node.text = ""
+            return
+        if not expected_text:
             return
         if not self._design_text_is_substantive(expected_text) and self._node_has_substantive_design_body(node):
             return

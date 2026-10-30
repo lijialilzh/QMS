@@ -161,6 +161,14 @@ function isPlaceholderReqText(text?: string) {
     return labels.every((label) => lines.includes(label)) && lines.every((line) => line === "无" || labels.includes(line));
 }
 
+function clearBasicRequirementPlaceholder(nodes: TreeNode[]): TreeNode[] {
+    return (nodes || []).map((node) => ({
+        ...node,
+        text: isBasicRequirementModule(stripTopHeading(node.title)) && isPlaceholderReqText(node.text) ? "" : node.text,
+        children: clearBasicRequirementPlaceholder((node.children || []) as TreeNode[]),
+    }));
+}
+
 function dropSameTitlePlaceholderChildren(nodes: TreeNode[]): TreeNode[] {
     return (nodes || []).map((node) => {
         const parentName = stripNavChapterPrefix(node.title || "");
@@ -2529,7 +2537,9 @@ export default () => {
                         if (hasReqChild && rawCode) {
                             delete (nextNode as any).sds_code;
                         }
-                        if (matchedCode && matchedRow && !isInFixedTemplateZone(node)) {
+                        const keepPlainBasic = isBasicRequirementModule(stripTopHeading(node.title))
+                            || isBasicRequirementModule(matchedRow?.module);
+                        if (matchedCode && matchedRow && !isInFixedTemplateZone(node) && !keepPlainBasic) {
                             const cleanedText = stripRedundantSdsCodeFromText(node.text, matchedCode);
                             nextNode.text = cleanedText || composeReqDescription(matchedRow);
                             nextNode.sds_code = matchedCode;
@@ -2920,10 +2930,11 @@ export default () => {
             const children = walk((node.children || []) as TreeNode[]);
             const code = codeOf(node.title);
             if (!code) return { ...node, children };
+            const current = String((node as any).sds_code || "").replace(/\s+/g, "").toUpperCase();
             return {
                 ...node,
                 children,
-                sds_code: code,
+                sds_code: current && current !== code ? current : code,
                 text: stripCodeLines(node.text),
             };
         });
@@ -2956,7 +2967,7 @@ export default () => {
         const traced = !isTraceSyncedOnTree(alignedTail)
             ? alignedTail
             : await syncTraceTableNodes(alignedTail, docIdForSync) as TreeNode[];
-        return await ensureSdsStructDiagramChildren(traced, targetRow.srsdoc_id);
+        return clearBasicRequirementPlaceholder(await ensureSdsStructDiagramChildren(traced, targetRow.srsdoc_id));
     };
 
     const refreshSdsDocTree = async (docId: number) => {
@@ -3202,10 +3213,10 @@ export default () => {
                             latestRow.id || docId
                         )
                         : ensuredReqdContent as TreeNode[];
-                    const ensuredContent = await ensureSdsStructDiagramChildren(
+                    const ensuredContent = clearBasicRequirementPlaceholder(await ensureSdsStructDiagramChildren(
                         tracedContent,
                         latestRow.srsdoc_id,
-                    );
+                    ));
                     currentTree = ensuredContent as TreeNode[];
                     treeStructureRef.current = ensuredContent;
                     dispatch({ treeStructure: ensuredContent });

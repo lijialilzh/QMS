@@ -5178,29 +5178,30 @@ export default () => {
             const usedOldIds = new Set<number | string>();
             const usedReqCodes = new Set<string>();
             const assignments: Array<{ row: any; oldRow?: any; code: string }> = [];
+            const otherReqModuleKey = (value?: string) => String(normalizeReqText(value) || "").replace(/\s+/g, "").toLowerCase();
             rows.forEach((row: any) => {
                 const rowCode = normalizeReqCode(row.code);
                 if (!rowCode || usedReqCodes.has(rowCode)) return;
                 usedReqCodes.add(rowCode);
+                const moduleKey = otherReqModuleKey(row.module);
+                const moduleCandidates = moduleKey
+                    ? oldRows.filter((item: any) => !usedOldIds.has(item.id) && otherReqModuleKey(item.module) === moduleKey)
+                    : [];
+                const matchedByModule = moduleCandidates.length === 1 ? moduleCandidates[0] : undefined;
+                if (matchedByModule?.id) {
+                    usedOldIds.add(matchedByModule.id);
+                }
+                assignments.push({ row, oldRow: matchedByModule, code: row.code });
+            });
+            assignments.forEach((assignment) => {
+                if (assignment.oldRow?.id) return;
+                const rowCode = normalizeReqCode(assignment.code);
                 const matchedOldRow = oldRows.find((item: any) => (
                     normalizeReqCode(item.srs_code || item.code) === rowCode && !usedOldIds.has(item.id)
                 ));
-                if (matchedOldRow?.id) {
-                    usedOldIds.add(matchedOldRow.id);
-                }
-                assignments.push({ row, oldRow: matchedOldRow, code: row.code });
-            });
-            const otherReqModuleKey = (value?: string) => String(normalizeReqText(value) || "").replace(/\s+/g, "").toLowerCase();
-            assignments.forEach((assignment) => {
-                if (assignment.oldRow?.id) return;
-                const key = otherReqModuleKey(assignment.row?.module);
-                if (!key) return;
-                const candidates = oldRows.filter((item: any) => (
-                    !usedOldIds.has(item.id) && otherReqModuleKey(item.module) === key
-                ));
-                if (candidates.length !== 1) return;
-                assignment.oldRow = candidates[0];
-                usedOldIds.add(candidates[0].id);
+                if (!matchedOldRow?.id) return;
+                assignment.oldRow = matchedOldRow;
+                usedOldIds.add(matchedOldRow.id);
             });
 
             const isChangedAssignment = (assignment: { row: any; oldRow?: any; code: string }) => {

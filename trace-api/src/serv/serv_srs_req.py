@@ -536,7 +536,10 @@ class Server(object):
         return compact in ("目录", "软件详细设计", "文件修订记录") or "软件详细设计" in compact
 
     def __sync_sds_codes_from_req_code(self, req_row: SrsReq, old_code: str = None):
-        from .serv_sds_trace import filter_fixed_trace_to_living, fixed_rcn300_trace_for_code, other_req_keeps_design_code
+        from .serv_sds_trace import (
+            filter_fixed_trace_to_living, fixed_rcn300_trace_for_code, other_req_keeps_design_code,
+            requirement_number_key, split_design_code_lines, _dedupe_design_lines, align_sds_node_code,
+        )
         if str(req_row.code or "").upper().startswith("TMP-"):
             return
         new_sds_code = self.__to_sds_code(req_row.code)
@@ -556,7 +559,7 @@ class Server(object):
             auto_lines = [item[0] for item in fixed_trace]
             full_lines = [item[0] for item in (fixed_rcn300_trace_for_code(req_row.code) or [])]
             if str(req_row.type_code or "") == "2" and any(
-                design_codes_are_manual(trace.sds_code, auto_lines, full_lines) for trace in traces
+                other_req_keeps_design_code(trace.sds_code, req_row.module, auto_lines, full_lines) for trace in traces
             ):
                 return
             sds_code = "\n".join(item[0] for item in fixed_trace)
@@ -573,7 +576,21 @@ class Server(object):
         ).scalars().all()
         for trace in traces:
             previous_code = str(trace.sds_code or "").strip()
-            if str(req_row.type_code or "") == "2" and design_codes_are_manual(previous_code, [old_sds_code or previous_code]):
+            if str(req_row.type_code or "") == "2" and other_req_keeps_design_code(previous_code, req_row.module, [old_sds_code or previous_code]):
+                old_key = requirement_number_key(old_sds_code or "")
+                new_norm = re.sub(r"\s+", "", str(new_sds_code or "")).upper()
+                if old_key and new_norm and old_key != requirement_number_key(new_norm):
+                    new_lines = []
+                    hit = False
+                    for line in split_design_code_lines(previous_code):
+                        if not hit and requirement_number_key(line) == old_key:
+                            new_lines.append(new_norm)
+                            hit = True
+                        else:
+                            new_lines.append(line)
+                    if hit:
+                        trace.sds_code = _dedupe_design_lines(new_lines)
+                        align_sds_node_code(trace.doc_id, old_sds_code, new_norm, req_row.module)
                 continue
             previous_norm = self.__to_sds_code(previous_code)
             if not previous_code:

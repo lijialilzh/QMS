@@ -3657,9 +3657,10 @@ export default ({ value = [], onChange, onNodesSnapshot, docId, hiddenNodeIds = 
             let nextNode: TreeNode = { ...node, children: nextChildren };
             const tailCode = tailChapterSdsCode(nextNode.title, letter);
             if (tailCode) {
+                const currentCode = String(nextNode.sds_code || "").replace(/\s+/g, "").toUpperCase();
                 nextNode = {
                     ...nextNode,
-                    sds_code: tailCode,
+                    sds_code: currentCode && currentCode !== tailCode ? currentCode : tailCode,
                     text: stripStandaloneSdsCodeLines(nextNode.text),
                 };
             } else if ("sds_code" in nextNode) {
