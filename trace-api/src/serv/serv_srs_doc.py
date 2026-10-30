@@ -4015,6 +4015,16 @@ class Server(object):
         rows: List[SrsDoc] = db.session.execute(sql).all()
 
         objs = []
+        doc_ids = [row.id for row, _row_prd in rows]
+        sds_versions_by_srs_id = {}
+        if doc_ids:
+            bound_rows = db.session.execute(
+                select(SdsDoc.srsdoc_id, SdsDoc.version).where(SdsDoc.srsdoc_id.in_(doc_ids))
+            ).all()
+            for srsdoc_id, sds_version in bound_rows:
+                if not srsdoc_id or not sds_version:
+                    continue
+                sds_versions_by_srs_id.setdefault(srsdoc_id, []).append(sds_version)
         for row, row_prd in rows:
             obj = SrsDocObj(**row.dict())
             if row_prd:
@@ -4022,6 +4032,8 @@ class Server(object):
                 obj.product_version = row_prd.full_version
             if not (obj.file_no or "").strip():
                 obj.file_no = serv_review_util.resolve_doc_file_no(row.product_id, row.file_no, row.version, "srs")
+            versions = sds_versions_by_srs_id.get(row.id) or []
+            obj.sds_versions = sorted({str(item) for item in versions if item and not str(item).startswith("__deleted")})
             objs.append(obj)
         return Resp.resp_ok(data=Page(total=total, page_size=page_size, rows=objs, page_index=page_index))
 

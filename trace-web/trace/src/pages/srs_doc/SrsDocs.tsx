@@ -150,7 +150,7 @@ export default () => {
         });
     };
 
-    const doBatchDelete = createDocBatchDelete({
+    const batchDelete = createDocBatchDelete({
         ts,
         dispatch,
         data,
@@ -158,6 +158,48 @@ export default () => {
         cOk: Api.C_OK,
         onRefresh: () => doSearch(queryForm.getFieldsValue(), data.pageIndex, data.pageSize),
     });
+
+    const boundSdsVersionsOf = (row: any): string[] => (
+        Array.isArray(row?.sds_versions) ? row.sds_versions.filter(Boolean) : []
+    );
+
+    const doBatchDelete = () => {
+        const keys = data.selectedRowKeys || [];
+        if (keys.length === 0) {
+            message.warning(ts("please_select_items"));
+            return;
+        }
+        const boundRows = (data.rows || []).filter((row: any) => (
+            keys.map(String).includes(String(row.id)) && boundSdsVersionsOf(row).length > 0
+        ));
+        Modal.confirm({
+            title: ts("action"),
+            content: sprintf(ts("batch_delete_confirm"), { count: keys.length }),
+            onOk: () => {
+                if (!boundRows.length) {
+                    batchDelete();
+                    return;
+                }
+                Modal.confirm({
+                    title: "已绑定详细设计",
+                    content: (
+                        <div style={{ lineHeight: 1.8 }}>
+                            {boundRows.map((row: any) => (
+                                <div key={row.id}>
+                                    {`需求规格说明 ${row.version || ""} 已绑定详细设计 ${boundSdsVersionsOf(row).join("、")}`}
+                                </div>
+                            ))}
+                            <div style={{ marginTop: 8 }}>删除后详细设计会解除绑定。确认后才删除。</div>
+                        </div>
+                    ),
+                    okText: "确认删除",
+                    okButtonProps: { danger: true },
+                    cancelText: ts("cancel"),
+                    onOk: () => batchDelete(),
+                });
+            },
+        });
+    };
 
     const doImportWord = () => {
         importForm.validateFields().then((values) => {
@@ -493,6 +535,11 @@ export default () => {
                 onCancel={() => dispatch({ dlgType: null })}>
                 <div style={{ lineHeight: 1.8 }}>
                     <div style={{ marginBottom: 8 }}>确认要删除吗？</div>
+                    {boundSdsVersionsOf(data.targetRow).length > 0 ? (
+                        <div style={{ color: "#d4380d", marginBottom: 8 }}>
+                            {`警告：该需求规格说明已绑定详细设计（版本：${boundSdsVersionsOf(data.targetRow).join("、")}），删除后将清空需求内容并解除绑定，确认后才允许删除。`}
+                        </div>
+                    ) : null}
                     <div style={{ color: "#d4380d" }}>
                         提醒：删除后对应SRS管理及需求列表一起清空，并且已绑定的详细设计文档解除绑定，
                         如需操作设计管理需重新上传或新增需求。

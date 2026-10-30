@@ -564,7 +564,97 @@ class SdsSrsTraceSyncMixin:
         self._append_renamed_template_chapters(doc_id, roots, renamed_later)
         self._append_external_chapters(doc_id, roots, external_later)
         self._append_regulation_chapters(doc_id, roots, rows)
+        self._rehome_design_templates(roots, rows)
         return roots, warnings
+
+    _PLAIN_OTHER_MODULE_MARKS = ("数据库要求", "性能要求", "基本要求", "文档需求", "法规符合", "外部连接", "外部链接")
+
+    def _rehome_design_templates(self, roots: List[SdsNodeForm], rows):
+        """功能设计、接口设计的固定小节只留在自己的章。文档需求等章节上挂反的小节挪回去。"""
+        def body(node: SdsNodeForm) -> str:
+            return self._normalize_sds_node_title(self._strip_sds_heading_text(getattr(node, "title", "") or ""))
+
+        def is_top(node: SdsNodeForm) -> bool:
+            heading = self._parse_sds_node_heading(getattr(node, "title", "") or "")
+            return bool(heading) and "." not in heading
+
+        def is_plain(node: SdsNodeForm) -> bool:
+            name = body(node)
+            return any(mark in name for mark in self._PLAIN_OTHER_MODULE_MARKS)
+
+        def role_name(node: SdsNodeForm) -> str:
+            label = str(getattr(node, "label", "") or "")
+            if label.startswith("sds-role:"):
+                return label.split(":", 1)[1]
+            return ""
+
+        owners = {}
+        for req in rows or []:
+            role = normalize_other_req_design_role(
+                getattr(req, "design_role", ""), getattr(req, "module", ""), getattr(req, "code", ""),
+            )
+            if role not in self._DESIGN_TEMPLATE_ROLES:
+                continue
+            current = owners.get(role)
+            if current is None or self._sds_code_sort_key(getattr(req, "code", "") or "") < self._sds_code_sort_key(getattr(current, "code", "") or ""):
+                owners[role] = req
+
+        def find_owner_node(role: str):
+            req = owners.get(role)
+            if req is None:
+                return None
+            wanted = self._normalize_sds_node_title(getattr(req, "module", "") or "")
+            if not wanted:
+                return None
+            for node in roots or []:
+                if is_top(node) and body(node) == wanted:
+                    return node
+            return None
+
+        def merge_child(parent: SdsNodeForm, incoming: SdsNodeForm):
+            if parent.children is None:
+                parent.children = []
+            same = next((child for child in parent.children if body(child) == body(incoming)), None)
+            if same is None:
+                parent.children.append(incoming)
+                return
+            for grand in list(getattr(incoming, "children", None) or []):
+                merge_child(same, grand)
+
+        filled_roles = set()
+        for node in list(roots or []):
+            if not is_top(node) or not is_plain(node):
+                continue
+            role = role_name(node)
+            children = list(getattr(node, "children", None) or [])
+            has_template = any(self._is_module_template_section(child) for child in children)
+            if role not in self._DESIGN_TEMPLATE_ROLES and not has_template:
+                continue
+            target_role = role if role in self._DESIGN_TEMPLATE_ROLES else ""
+            if not target_role and has_template and len(owners) == 1:
+                target_role = next(iter(owners))
+            target = find_owner_node(target_role) if target_role else None
+            if target is not None and target is not node and (role in self._DESIGN_TEMPLATE_ROLES or has_template):
+                moving = children if role in self._DESIGN_TEMPLATE_ROLES else [
+                    child for child in children if self._is_module_template_section(child)
+                ]
+                for child in moving:
+                    merge_child(target, child)
+                filled_roles.add(target_role)
+                if role in self._DESIGN_TEMPLATE_ROLES:
+                    node.children = []
+                else:
+                    node.children = [child for child in children if child not in moving]
+            if role in self._DESIGN_TEMPLATE_ROLES:
+                node.label = ""
+        for role, target in ((role, find_owner_node(role)) for role in owners):
+            if target is None:
+                continue
+            missing_template = not any(self._is_module_template_section(child) for child in (getattr(target, "children", None) or []))
+            if role not in filled_roles and not (role == "function" and missing_template):
+                continue
+            target.label = f"sds-role:{role}"
+            self._ensure_design_role_template(target, role)
 
     def _top_level_named(self, roots: List[SdsNodeForm], name: str) -> bool:
         wanted = self._normalize_sds_node_title(name)

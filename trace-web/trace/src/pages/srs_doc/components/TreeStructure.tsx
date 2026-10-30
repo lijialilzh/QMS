@@ -6056,8 +6056,11 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         const existing = new Set<string>();
         const walkCodes = (nodes: TreeNode[]) => {
             (nodes || []).forEach((node) => {
-                const code = normalizeSrsCode(node.srs_code || "") || normalizeSrsCode(extractSrsCodeFromTable(node.table));
-                if (code) existing.add(code);
+                const functional = node.label === "__auto_req_detail" || isFunctionalKvTable(node.table);
+                if (functional) {
+                    const code = normalizeSrsCode(node.srs_code || "") || normalizeSrsCode(extractSrsCodeFromTable(node.table));
+                    if (code) existing.add(code);
+                }
                 walkCodes(node.children || []);
             });
         };

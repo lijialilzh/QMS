@@ -3634,7 +3634,7 @@ export default () => {
 
     // 第 7 章固定层级：模块=二级、功能=三级、子功能=四级。
     // 与 TreeStructure 里保存需求表时的归位保持一致，否则顶栏保存会用这里的结果覆盖掉正确层级。
-    const normalizeReqChapterHierarchyByTable = (tree: TreeNode[], mainRows: any[] = []): TreeNode[] => {
+    const normalizeReqChapterHierarchyByTable = (tree: TreeNode[], mainRows: any[] = [], otherRows: any[] = []): TreeNode[] => {
         const rows = (mainRows || [])
             .map((row: any) => ({
                 code: normalizeSrsCodeForSync(row?.srs_code || row?.code),
@@ -3642,13 +3642,23 @@ export default () => {
                 function: normalizeReqText(row?.function),
                 sub_function: normalizeReqText(row?.sub_function),
             }))
-            .filter((row: any) => row.code && (row.module || row.function || row.sub_function));
+            .filter((row: any) => row.code && (row.module || row.function || row.sub_function) && !/算法/.test(row.module));
         if (!rows.length) return tree || [];
         const cloned: TreeNode[] = JSON.parse(JSON.stringify(tree || []));
         const headingOf = (title?: string) => String(title || "").trim().match(/^(\d+(?:\.\d+)*)/)?.[1] || "";
         const nameOf = (title?: string) => String(title || "").trim().replace(/^\d+(?:\.\d+)*\s*/, "").trim();
-        const reqRoot = (cloned || []).find((node) => headingOf(node.title) === "7");
-        const reqRootName = reqRoot ? nameOf(reqRoot.title).replace(/\s+/g, "") : "";
+        const compactName = (value?: string) => nameOf(value).replace(/\s+/g, "");
+        const functionRow = (otherRows || []).find((row: any) => {
+            const moduleName = compactName(row?.module);
+            const role = compactName(row?.design_role);
+            if (moduleName === "图像显示") return true;
+            return role === "功能设计" || role === "function" || role === "NeoViewer";
+        });
+        const functionName = compactName(functionRow?.module);
+        const reqRoot = functionName
+            ? (cloned || []).find((node) => headingOf(node.title) && !headingOf(node.title).includes(".") && compactName(node.title) === functionName)
+            : undefined;
+        const reqRootName = reqRoot ? compactName(reqRoot.title) : "";
         if (!reqRoot || /^(图像接收|图像存储|图像处理)$/.test(reqRootName)) return cloned;
         const readCode = (node: any) => normalizeSrsCodeForSync(
             node?.srs_code || (isFunctionalKvTable(node?.table) ? extractSrsCodeFromTable(node?.table) : "")
@@ -3702,9 +3712,42 @@ export default () => {
             detailNode.title = `${prefix}.${nextNo(parent.children, prefix)} ${name}`;
             parent.children = [...parent.children, detailNode];
         };
+        const functionalCodes = new Set<string>(detailByCode.keys());
+        const walkFunctionalCodes = (list: any[]) => {
+            (list || []).forEach((node: any) => {
+                const code = readCode(node);
+                const isLeaf = node?.label === "__auto_req_detail" || isFunctionalKvTable(node?.table);
+                if (code && isLeaf) functionalCodes.add(code);
+                walkFunctionalCodes(node.children || []);
+            });
+        };
+        walkFunctionalCodes(cloned);
+        const buildMissingDetailNode = (row: any) => ({
+            id: Date.now() + Math.floor(Math.random() * 100000),
+            doc_id: params.id ? parseInt(params.id) : 0,
+            n_id: 0,
+            p_id: 0,
+            title: "",
+            text: "",
+            srs_code: row.code,
+            label: "__auto_req_detail",
+            table: {
+                show_header: 0,
+                headers: [
+                    { code: "field", name: "字段" },
+                    { code: "value", name: "内容" },
+                ],
+                rows: ["需求编号", "需求名称", "需求概述", "主参加者", "前置条件", "触发器", "事件流", "后置条件", "异常情况", "约束"].map((label) => ({
+                    field: label,
+                    value: label === "需求编号" ? row.code : (label === "需求名称" ? (row.sub_function || row.function || row.module || "") : ""),
+                })),
+            },
+            children: [],
+        });
         rows.forEach((row) => {
-            const detailNode = detailByCode.get(row.code);
+            const detailNode = detailByCode.get(row.code) || (!functionalCodes.has(row.code) ? buildMissingDetailNode(row) : undefined);
             if (!detailNode) return;
+            functionalCodes.add(row.code);
             if (!row.function && !row.sub_function) {
                 placeDetail(reqRoot, row.module, detailNode);
                 return;
@@ -3799,7 +3842,11 @@ export default () => {
             srsTableState.srsOtherReqData || [],
             otherReqSyncOptions,
         );
-        return normalizeReqChapterHierarchyByTable(syncedWithOther, srsTableState.srsTableData || []);
+        return normalizeReqChapterHierarchyByTable(
+            syncedWithOther,
+            srsTableState.srsTableData || [],
+            srsTableState.srsOtherReqData || [],
+        );
     };
     const syncTreeWithSrsTableStateForDisplay = (
         tree: TreeNode[],
@@ -3885,7 +3932,10 @@ export default () => {
                         syncTreeWithSrsTableStateForDisplay(otherChapterEnsured.nodes, srsTableState),
                     );
                     const topChapterTitles = (nodes: TreeNode[]) => (nodes || [])
-                        .map((node) => String(node.title || "").trim())
+                        .map((node) => [
+                            String(node.title || "").trim(),
+                            ...((node.children || []).map((child) => String(child.title || "").trim())),
+                        ].join("/"))
                         .join("\n");
                     const functionChaptersMoved = topChapterTitles(otherChapterEnsured.nodes) !== topChapterTitles(parsedContent);
                     const derivedCoverTitle = extractCoverTitleFromTree(parsedContent);
@@ -4316,7 +4366,11 @@ export default () => {
         const baseTree = (treeStructureRef.current?.length ? treeStructureRef.current : data.treeStructure) as TreeNode[];
         if (!baseTree?.length || !(data.srsOtherReqData || []).length) return;
         const sourceOther = data.srsOtherReqData || [];
-        const synced = syncTreeWithOtherReqState(baseTree, sourceOther, otherReqSyncOptions);
+        const synced = normalizeReqChapterHierarchyByTable(
+            syncTreeWithOtherReqState(baseTree, sourceOther, otherReqSyncOptions),
+            data.srsTableData || [],
+            sourceOther,
+        );
         const nextOther = sourceOther.map((row: any) => {
             const location = displayedOtherReqLocation(synced, row?.module) || row?.location || "";
             return String(location) === String(row?.location || "") ? row : { ...row, location };
