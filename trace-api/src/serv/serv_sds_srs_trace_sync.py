@@ -21,7 +21,7 @@ from ..obj.vobj_sds_trace import SdsTraceObj
 from ..obj import Resp
 from ..utils.sql_ctx import db
 from ..utils.i18n import ts
-from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, FIXED_RCN300_TRACES, fixed_rcn300_sds_codes, fixed_rcn300_trace_for_code, filter_fixed_trace_to_living, design_codes_are_manual, align_rcn300_tail_locations, rcn300_tail_name_key, live_rcn300_tail_chapters, OTHER_REQ_DESIGN_ROLES, normalize_other_req_design_role, other_req_design_role_is_explicit, other_req_role_is_changed, other_req_role_display_name, is_sds_excluded_module
+from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, FIXED_RCN300_TRACES, fixed_rcn300_sds_codes, fixed_rcn300_trace_for_code, filter_fixed_trace_to_living, design_codes_are_manual, align_rcn300_tail_locations, rcn300_tail_name_key, live_rcn300_tail_chapters, OTHER_REQ_DESIGN_ROLES, normalize_other_req_design_role, other_req_design_role_is_explicit, other_req_role_is_changed, other_req_role_display_name, is_sds_excluded_module, is_sds_list_only_module
 
 
 _EMPTY_DESIGN_TEMPLATE_RE = re.compile(
@@ -352,8 +352,9 @@ class SdsSrsTraceSyncMixin:
         ).scalars().all()
         grouped = {key: [] for key in OTHER_REQ_DESIGN_ROLES}
         for req in rows:
-            # 基本要求、数据库要求、文档需求这三类在 SDS 内不读取，不参与模版章补章与绑章。
-            if is_sds_excluded_module(getattr(req, "module", "")):
+            # 文档需求在 SDS 内不读取；数据库要求、基本要求只做 2.4 追溯（SDS_LIST_ONLY_MODULES），
+            # 不参与模版章补章与绑章。
+            if is_sds_excluded_module(getattr(req, "module", "")) or is_sds_list_only_module(getattr(req, "module", "")):
                 continue
             role = normalize_other_req_design_role(
                 getattr(req, "design_role", ""), getattr(req, "module", ""), getattr(req, "code", ""),
@@ -741,9 +742,10 @@ class SdsSrsTraceSyncMixin:
             trace.location = str(next_no)
 
     def _append_basic_requirement_chapter(self, doc_id: int, roots: List[SdsNodeForm], rows):
-        """基本要求删掉后再加回来时补一级章节。数据库要求、性能要求不建章。
+        """基本要求不补章。数据库要求、性能要求同样不建章。
 
-        SDS 内列表和章节均不读取基本要求，因此不再补这一章。
+        基本要求、数据库要求只在 2.4 追溯表出行（见 SDS_LIST_ONLY_MODULES），
+        SDS 目录里不生成对应章节，因此这里不再补这一章。
         """
         return
 
@@ -4504,6 +4506,9 @@ class SdsSrsTraceSyncMixin:
                     ordered_codes.append(code)
                 fields = sdstrace_serv.hierarchy_for_req(req, hierarchy_map)
                 if is_algorithm_requirement(req, fields):
+                    continue
+                # 数据库要求、基本要求只在 2.4 追溯表出行，不在目录生成章节。
+                if is_sds_list_only_module(fields.get("module")):
                     continue
                 raw_module = str(fields.get("module") or "").strip()
                 module_name = self._sync_module_name_from_fields(fields)

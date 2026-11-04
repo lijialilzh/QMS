@@ -83,13 +83,31 @@ FIXED_RCN300_TRACES = {
 
 _REQ_CODE_RE = re.compile(r"^SRS-([A-Z]+?)(\d+)-(\d+)$", re.I)
 
-# SDS 内列表和章节均不读取的模块：基本要求、数据库要求、文档需求。
-# 这三类需求不返回 2.4 列表行，也不再解析成章节名、不再自动补一级章节。
-SDS_EXCLUDED_MODULES = ("基本要求", "数据库要求", "文档需求")
+# SDS 内只做追溯、不生成章节的模块：数据库要求、基本要求。
+# 这两类需求在 2.4 追溯表里照常出行（需求编号/设计编号/需求/代码），但不在左侧目录生成章节。
+SDS_LIST_ONLY_MODULES = ("数据库要求", "基本要求")
+
+# SDS 内列表和章节均不读取的模块：文档需求。
+# 这一类需求不返回 2.4 列表行，也不再解析成章节名、不再自动补一级章节。
+SDS_EXCLUDED_MODULES = ("文档需求",)
 
 
 def is_sds_excluded_module(module: str) -> bool:
     return str(module or "").strip() in SDS_EXCLUDED_MODULES
+
+
+def is_sds_list_only_module(module: str) -> bool:
+    """只进 2.4 追溯表、不生成 SDS 章节的模块。"""
+    return str(module or "").strip() in SDS_LIST_ONLY_MODULES
+
+# SDS 2.4 追溯表不列出「算法和数据要求」这一行（模块/功能/子功能命中三种写法都算）。
+# 与 27_需求追溯.md 的排除口径一致；SDS 章节生成仍由 _is_algorithm_requirement 单独处理。
+SDS_ALGORITHM_EXCLUDED_TITLES = ("算法和数据要求", "算法与数据要求", "算法要求")
+
+
+def is_sds_algorithm_excluded_req(*names) -> bool:
+    keys = {re.sub(r"\s+", "", str(item or "")) for item in names}
+    return any(item in keys for item in SDS_ALGORITHM_EXCLUDED_TITLES)
 
 # 其他需求设计类型。名称和编号都还是预置值时，详细设计仍用原来的英文章节名。
 OTHER_REQ_DESIGN_ROLES = {
@@ -2183,6 +2201,11 @@ class Server(object):
                 self.hierarchy_for_req(
                     row[1], hierarchy_by_srs_doc.get(row[4].id if row[4] else 0) or {},
                 ).get("module")
+            )
+            and not is_sds_algorithm_excluded_req(
+                *self.hierarchy_for_req(
+                    row[1], hierarchy_by_srs_doc.get(row[4].id if row[4] else 0) or {},
+                ).values()
             )
         ]
         rows = self.__resort_rows(rows)
