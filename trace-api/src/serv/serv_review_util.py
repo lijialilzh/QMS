@@ -702,12 +702,13 @@ def text_matches_doc_version(text, name_keywords, version=None):
     return found == token
 
 
-def review_date(prod_id, name_keywords, tl_rows=None, version=None, revision_row=False):
+def review_date(prod_id, name_keywords, tl_rows=None, version=None, revision_row=False, dept_prefix=None):
     """从时间线取评审日期（命中「文档名关键字」且优先命中「评审」的行，取最新），格式 yyyy.MM.dd。
     tl_rows 传入时不再查当前产品（附件评审可用同名版本时间线）。
     version 为 A1、A2… 时，同一单元格要同时有文档名和该版本号（中间可以没有空格）。
     version 为 A0 时按文件名匹配，但不使用带 A1、A2 的单元格。不传版本时仍只按文件名匹配。
-    revision_row 为真时按修订行版本取值，规则与上面相同。"""
+    revision_row 为真时按修订行版本取值，规则与上面相同。
+    dept_prefix 传入时只取该部门（前缀）的时间线单元格，避免命中其它部门的同名文档。"""
     if tl_rows is None and not prod_id:
         return ""
     explicit = revision_row_token(version)
@@ -725,10 +726,12 @@ def review_date(prod_id, name_keywords, tl_rows=None, version=None, revision_row
     if not tl_rows:
         return ""
     cell_map = {}
+    cell_depts = {}
     for c in db.session.execute(
         select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_([r.id for r in tl_rows]))
     ).scalars().all():
         cell_map.setdefault(c.row_id, []).append(c.output_result or "")
+        cell_depts.setdefault(c.row_id, []).append(str(c.dept or "") or "")
     date_rows = [(r, y) for r, y in _timeline_date_rows_with_year(tl_rows) if to_int(r.month)]
 
     def date_key(item):
@@ -737,6 +740,12 @@ def review_date(prod_id, name_keywords, tl_rows=None, version=None, revision_row
 
     def match(r, need_review):
         vals = cell_map.get(r.id, [])
+        # 限定部门时，只保留该部门（前缀）的单元格，其余规则不变
+        if dept_prefix:
+            depts = cell_depts.get(r.id, [])
+            vals = [v for i, v in enumerate(vals) if i < len(depts) and depts[i].startswith(dept_prefix)]
+            if not vals:
+                return False
         if row_token or version_token:
             named = []
             for value in vals:
@@ -1099,13 +1108,14 @@ def fill_cover_dates(content, rev_date, force=False):
     return content
 
 
-def cover_date(prod_id, key, version=None):
+def cover_date(prod_id, key, version=None, dept_prefix=None):
     """按模块 key 取封面日期（复用 review_date + COVER_KEYWORDS）。
-    version 为 A1、A2… 时按文件名称和该版本取。version 为 A0 时按文件名取，但不使用带 A1、A2 的单元格。不传版本时只按文件名。"""
+    version 为 A1、A2… 时按文件名称和该版本取。version 为 A0 时按文件名取，但不使用带 A1、A2 的单元格。不传版本时只按文件名。
+    dept_prefix 传入时只取该部门（前缀）的时间线。"""
     kws = COVER_KEYWORDS.get(key)
     if not prod_id or not kws:
         return ""
-    return review_date(prod_id, kws, version=version)
+    return review_date(prod_id, kws, version=version, dept_prefix=dept_prefix)
 
 
 def cover_date_overwrite(version, date) -> bool:
@@ -1113,11 +1123,12 @@ def cover_date_overwrite(version, date) -> bool:
     return bool(str(date or "").strip()) and revision_row_token(version) == "A0"
 
 
-def stamp_list_revision_date(table, version, rev_date, data_start=1, date_col=0, version_col=1, prod_id=None, doc_key=None):
+def stamp_list_revision_date(table, version, rev_date, data_start=1, date_col=0, version_col=1, prod_id=None, doc_key=None, dept_prefix=None):
     """传入 prod_id 和 doc_key 时，修订表每一行按自己的版本号取日期，A0 不拿 A1 的日期。
-    表里还没有版本号时，A1、A2… 只写当前版本那一行（空才写）。A0 返回 False，调用方保持原逻辑。"""
+    表里还没有版本号时，A1、A2… 只写当前版本那一行（空才写）。A0 返回 False，调用方保持原逻辑。
+    dept_prefix 传入时只取该部门（前缀）的时间线。"""
     if prod_id and doc_key and fill_list_revision_dates(
-        table, prod_id, COVER_KEYWORDS.get(doc_key) or [], data_start, date_col, version_col,
+        table, prod_id, COVER_KEYWORDS.get(doc_key) or [], data_start, date_col, version_col, dept_prefix=dept_prefix,
     ):
         return True
     token = raised_doc_version(version)
@@ -1161,7 +1172,7 @@ def _revision_date_text(dotted, cn_date=False):
     return "%d年%d月%d日" % (int(matched.group(1)), int(matched.group(2)), int(matched.group(3)))
 
 
-def fill_list_revision_dates(table, prod_id, name_keywords, data_start=1, date_col=0, version_col=1, cn_date=False):
+def fill_list_revision_dates(table, prod_id, name_keywords, data_start=1, date_col=0, version_col=1, cn_date=False, dept_prefix=None):
     """列表修订表每一行按自己的版本号取修改日期。A0 不使用带 A1、A2 的时间线。
     返回 True 表示已按版本行写过，调用方不要再把一个日期写到第一行。"""
     if not isinstance(table, list) or not prod_id or not name_keywords:
@@ -1177,7 +1188,7 @@ def fill_list_revision_dates(table, prod_id, name_keywords, data_start=1, date_c
         handled = True
         if token not in cached:
             cached[token] = _revision_date_text(
-                review_date(prod_id, name_keywords, version=token, revision_row=True) or "",
+                review_date(prod_id, name_keywords, version=token, revision_row=True, dept_prefix=dept_prefix) or "",
                 cn_date,
             )
         while len(row) <= date_col:

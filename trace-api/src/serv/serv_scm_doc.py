@@ -212,18 +212,26 @@ class Server(object):
     def __fill_revision(self, content, prod_id, version, force=False):
         """文件修订记录首行：修改日期(评审/封面日期)、版本号、首次发布、修订人(TPM)、批准人(研发负责人)。
         force=True（切换产品）时强制覆盖，无数据则置空。"""
-        rev_date = serv_review_util.cover_date(prod_id, DOC_KEY, version) if prod_id else ""
+        rev_date = serv_review_util.cover_date(prod_id, DOC_KEY, version, dept_prefix="产品开发部") if prod_id else ""
         reviser = approver = ""
+        allowed_approvers = set()
         if prod_id:
+            # 开发文件修订记录：修订人 ← TPM，批准人 ← 研发负责人；无对应角色则留空（不跨版本回退）
             members = db.session.execute(select(ProjectMember).where(ProjectMember.prod_id == prod_id)).scalars().all()
             reviser = next((m.name for m in members if "TPM" in str(m.role or "")), "")
             approver = next((m.name for m in members if "研发负责人" in str(m.role or "")), "")
+            allowed_approvers = {str(m.name or "").strip() for m in members if "研发负责人" in str(m.role or "")}
+            allowed_approvers.discard("")
         for s in (content.get("sections") or []):
             if s.get("ref_type") != "revision":
                 continue
             for tbl in (s.get("tables") or []):
                 if isinstance(tbl, list) and len(tbl) >= 2 and isinstance(tbl[1], list) and len(tbl[1]) >= 3:
-                    if serv_review_util.stamp_list_revision_date(tbl, version, rev_date, prod_id=prod_id, doc_key=DOC_KEY):
+                    # 批准人只接受「研发负责人」；旧规则误填的其它角色（如模型部负责人）按当前产品覆盖，无对应角色则清空
+                    first_row = tbl[1]
+                    if len(first_row) >= 5 and str(first_row[4] or "").strip() not in allowed_approvers:
+                        first_row[4] = approver
+                    if serv_review_util.stamp_list_revision_date(tbl, version, rev_date, prod_id=prod_id, doc_key=DOC_KEY, dept_prefix="产品开发部"):
                         continue
                     row = tbl[1]
                     if force:
@@ -245,8 +253,6 @@ class Server(object):
                             row[2] = "首次发布"
                         if len(row) >= 4 and reviser and not str(row[3] or "").strip():
                             row[3] = reviser
-                        if len(row) >= 5 and approver and not str(row[4] or "").strip():
-                            row[4] = approver
             break
         return content
 
@@ -269,11 +275,11 @@ class Server(object):
                 for s in (content.get("sections") or []):
                     _update_version(s)
         self.__fill_revision(content, prod_id, version, force=force)
-        cover_date = serv_review_util.cover_date(prod_id, DOC_KEY, version) if prod_id else ""
+        cover_date = serv_review_util.cover_date(prod_id, DOC_KEY, version, dept_prefix="产品开发部") if prod_id else ""
         raised = bool(serv_review_util.raised_doc_version(version) and cover_date)
         serv_review_util.ensure_review(
             content, DOC_KEY,
-            serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS[DOC_KEY]["name_keywords"], version=version) if prod_id else "",
+            serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS[DOC_KEY]["name_keywords"], version=version, dept_prefix="产品开发部") if prod_id else "",
             prod_id,
             force_date=raised,
         )

@@ -51,15 +51,18 @@ const computeCycle = (rows: any[]): string => {
 };
 
 // 从时间线里找「软件配置状态报告」文件所在行的日期（取最早匹配行），格式「YYYY年M月D日」
-const computeFileDate = (rows: any[], keyword = "软件配置状态报告", version?: string): string => {
+const computeFileDate = (rows: any[], keyword: string | string[] = "软件配置状态报告", version?: string): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
+    const keywords = Array.isArray(keyword) ? keyword : [keyword];
+    // 只取产品开发部的时间线，避免命中模型部的「模型配置管理报告」
     const matches = (rows || []).filter((r: any) =>
-        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => timelineCellMatchesVersion(String(v || ""), [keyword], version))
+        (r.row_type || "date") === "date" && Object.entries(r.cells || {}).some(([dept, v]: any) =>
+            String(dept || "").startsWith("产品开发部") && timelineCellMatchesVersion(String(v || ""), keywords, version))
     );
     if (!matches.length) return "";
     const key = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
     let best = matches[0];
-    matches.forEach((r: any) => { if (key(r) < key(best)) best = r; });
+    matches.forEach((r: any) => { if (key(r) > key(best)) best = r; });
     return `${num(best.year)}年${num(best.month)}月${num(best.day)}日`;
 };
 
@@ -349,11 +352,12 @@ export default () => {
                     cycle: computeCycle(tlRows),
                 });
                 out = fillRevision(out, {
-                    fileDate: computeFileDate(tlRows, "软件配置状态报告", version),
-                    revisionDate: (ver) => computeFileDate(tlRows, "软件配置状态报告", ver),
+                    fileDate: computeFileDate(tlRows, ["软件配置状态报告", "配置管理状态报告", "配置状态报告"], version),
+                    revisionDate: (ver) => computeFileDate(tlRows, ["软件配置状态报告", "配置管理状态报告", "配置状态报告"], ver),
                     version,
-                    pm: findRole((r) => r.includes("产品经理") || r.includes("经理")),
-                    approver: findRole((r) => r.includes("负责人")),
+                    // 开发文件修订记录：修订人 ← TPM，批准人 ← 研发负责人（与后端 DEPT_SIGNERS["dev"] 一致）；无对应角色则留空
+                    pm: findRole((r) => r.toUpperCase().includes("TPM")),
+                    approver: findRole((r) => r.includes("研发负责人")),
                 });
                 out = fillMilestone(out, {
                     devEnd: computeDevEnd(tlRows),
