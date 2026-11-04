@@ -432,38 +432,51 @@ class Server(object):
         return []
 
     def __release_date(self, product_id):
-        rows = db.session.execute(
-            select(ProjectTimelineRow).where(ProjectTimelineRow.prod_id == product_id)
-        ).scalars().all()
-        if not rows:
-            return ""
-        cells = db.session.execute(
-            select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_([r.id for r in rows]))
-        ).scalars().all()
-        cell_map = {}
-        for c in cells:
-            cell_map.setdefault(c.row_id, []).append(str(c.output_result or ""))
+        # 2.8.2 更新历史的发布日期：时间线命中「自研软件研究报告/软件研究报告/软件发布/发布」的最晚日期（yyyy.MM.dd）。
+        # 时间线的年/月/日存的是「2025年」「7月」这类带单位的字符串，必须先取数字再转 int，
+        # 否则整行被跳过，发布日期恒为空。当前产品没有命中时，回退同一产品名称下其它版本的日期行。
+        def load_rows(pid):
+            return db.session.execute(
+                select(ProjectTimelineRow).where(ProjectTimelineRow.prod_id == pid)
+            ).scalars().all()
 
         def to_int(v):
-            try:
-                return int(str(v).strip())
-            except Exception:
-                return None
+            digits = re.sub(r"[^\d]", "", str(v or ""))
+            return int(digits) if digits else None
 
-        hits = []
-        for r in rows:
-            if str(getattr(r, "row_type", "")) != "date":
-                continue
-            y, m, d = to_int(r.year), to_int(r.month), to_int(r.day)
-            if y is None or m is None:
-                continue
-            texts = cell_map.get(r.id, [])
-            if any(k in t for k in DATE_KEYWORDS for t in texts):
-                hits.append((y, m, d or 1, r))
+        def collect(rows):
+            if not rows:
+                return []
+            cells = db.session.execute(
+                select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_([r.id for r in rows]))
+            ).scalars().all()
+            cell_map = {}
+            for c in cells:
+                cell_map.setdefault(c.row_id, []).append(str(c.output_result or ""))
+            hits = []
+            for r in rows:
+                if str(getattr(r, "row_type", "")) != "date":
+                    continue
+                y, m, d = to_int(r.year), to_int(r.month), to_int(r.day)
+                if y is None or m is None:
+                    continue
+                texts = cell_map.get(r.id, [])
+                if any(k in t for k in DATE_KEYWORDS for t in texts):
+                    hits.append((y, m, d or 1))
+            return hits
+
+        hits = collect(load_rows(product_id))
+        if not hits:
+            for pid in self.__same_name_product_ids(product_id):
+                if pid == product_id:
+                    continue
+                hits = collect(load_rows(pid))
+                if hits:
+                    break
         if not hits:
             return ""
-        y, m, d, _ = max(hits, key=lambda x: x[0] * 10000 + x[1] * 100 + x[2])
-        return f"{y}年{m}月{d}日"
+        y, m, d = max(hits, key=lambda x: x[0] * 10000 + x[1] * 100 + x[2])
+        return f"{y}.{m:02d}.{d:02d}"
 
     def __dev_days(self, product_id):
         # 开发时间：时间线中标注「产品开发」阶段的日期行首末跨度内的工作日（含首尾；周末和法定假日不计，调休上班日计入）；未标注则回退全部日期行
@@ -638,6 +651,11 @@ class Server(object):
                 blocks.append({"type": "table", "table": tbls[j], "title": titles[j] if j < len(titles) else ""})
             return blocks
 
+        def append_tables(from_idx):
+            # 无 {{TBL}} 占位符时，表格排在图文之后（与编辑页一致：正文 → 图 → 图题及后续正文 → 表格）
+            for j in range(from_idx, len(tbls)):
+                blocks.append({"type": "table", "table": tbls[j], "title": titles[j] if j < len(titles) else ""})
+
         cap_i = next((i for i, ln in enumerate(lines) if re.match(r"^图\s*\d", ln.strip())), None)
         imgs = [{"type": "image", "url": u, "img_category": img_category} for u in urls]
         if cap_i is not None:
@@ -651,10 +669,12 @@ class Server(object):
                 blocks.append({"type": "caption", "text": caption})
             if after:
                 blocks.append({"text": after})
+            append_tables(0)
         else:
             if str(text or "").strip():
                 blocks.append({"text": str(text)})
             blocks.extend(imgs)
+            append_tables(0)
         return blocks
 
     def __apply_autofill(self, content, auto):
@@ -953,6 +973,17 @@ class Server(object):
             row: ResearchDoc = db.session.execute(select(ResearchDoc).where(ResearchDoc.id == form.id)).scalars().first()
             if not row:
                 return Resp.resp_err(msg=ts("msg_obj_null"))
+            # 切换产品/改文档版本后保存：同产品同版本只允许一份文档，先预检给出明确提示，避免唯一约束抛数据库异常
+            next_product_id = form.product_id or row.product_id
+            next_version = form.version if form.version is not None else row.version
+            sql = select(func.count(ResearchDoc.id)).where(
+                ResearchDoc.product_id == next_product_id,
+                ResearchDoc.version == next_version,
+                ResearchDoc.id != form.id,
+            )
+            if (db.session.execute(sql).scalar() or 0) > 0:
+                version = (next_version or "").strip()
+                return Resp.resp_err(msg=f"该产品下已经有{version}版本文档存在" if version else ts("msg_obj_exist"))
             for key, value in form.dict(exclude_none=True).items():
                 if key == "id":
                     continue
