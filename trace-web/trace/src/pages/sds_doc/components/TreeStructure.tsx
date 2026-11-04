@@ -2846,7 +2846,7 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                           />
                               )}
                           </div>
-                          {!readOnly && !isTraceSectionTitle && !runtimeContentLocked && (
+                          {!readOnly && !isTraceSectionTitle && !runtimeContentLocked && !parentGlossaryReady && (
                           <Space className="node-table-actions" size={8}>
                               <Button
                                   size="small"

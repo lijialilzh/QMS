@@ -1793,6 +1793,18 @@ function restoreMisnamedFunctionChapter(nodes: TreeNode[], otherRows: any[] = []
     return { nodes: list, changed: true };
 }
 
+// 算法和数据要求固定写在 2.6，不参与第 7 章功能描述模块/功能章节的生成。
+function isAlgorithmDataReqDetail(detail?: { module?: string; name?: string; function?: string; sub_function?: string }): boolean {
+    const text = normalizeReqDisplayText([
+        detail?.module,
+        detail?.name,
+        detail?.function,
+        detail?.sub_function,
+    ].filter(Boolean).join("")).replace(/\s+/g, "");
+    if (!text) return false;
+    return text.includes("算法和数据要求") || text.includes("算法与数据要求") || text.includes("算法需求");
+}
+
 function isTypeImmuneOtherReqModule(name?: string): boolean {
     const text = String(name || "").replace(/\s+/g, "");
     if (!text) return false;
@@ -3577,7 +3589,12 @@ const TreeNodeItem = ({
                 })),
         ].map((item, index) => ({ ...item, index }))
         : []);
-    const suppressEmbeddedReqTablesForInlineRef = inlineSrsReqRefTypes.includes("srs_reqs") || inlineSrsReqRefTypes.includes("srs_reqs_2");
+    // 内联需求区节点自身（2.1 同级的 srs_reqs / srs_reqs_2）：这条屏蔽规则只用于压制父节点 2.1
+    // 上重复的内嵌需求表；本节点自己的预览表必须照常显示，否则查看页需求列表整块不渲染，只剩 label。
+    // 重复与否仍由 hasNormalMainReqTable / hasNormalOtherReqTable 判断，不会出两张表。
+    const isInlineReqRefSelf = isSrsReqRefNode && inlineSrsReqRefTypes.includes(String(node.ref_type || ""));
+    const suppressEmbeddedReqTablesForInlineRef = !isInlineReqRefSelf
+        && (inlineSrsReqRefTypes.includes("srs_reqs") || inlineSrsReqRefTypes.includes("srs_reqs_2"));
     const suppressEmbeddedOtherTable = (() => {
         if (inlineSrsReqRefTypes.includes("srs_reqs_2")) return true;
         if (inlineSrsReqRefTypes.includes("srs_reqs") && !inlineSrsReqRefTypes.includes("srs_reqs_2")) {
@@ -5926,6 +5943,8 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
         const createReqHierarchy = (detail: any, mode: "standard" | "change") => {
             const code = normalizeSrsCode(detail?.code);
             if (mode === "change" && existingCodes.has(code)) return;
+            // 算法和数据要求只在 2.6，不在功能描述根章下建模块章节。
+            if (mode === "standard" && isAlgorithmDataReqDetail(detail)) return;
             const moduleText = String(detail?.module || detail?.name || detail?.function || code || "").trim() || code;
             const functionText = String(detail?.function || "").trim();
             const subFunctionText = String(detail?.sub_function || "").trim();
@@ -6052,6 +6071,8 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
     const restoreMissingStandardFunctionChapters = (items: TreeNode[], details: any[]): TreeNode[] => {
         const standard = (details || []).filter((detail) => {
             const typeCode = String(detail?.type_code || "1");
+            // 算法和数据要求属于 2.6 固定章节，不在功能描述根章下补章节。
+            if (isAlgorithmDataReqDetail(detail)) return false;
             return typeCode === "1" && normalizeSrsCode(detail?.code);
         });
         if (!standard.length) return items;
@@ -7822,6 +7843,8 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             };
             const createMissingReqHierarchy = (detail: any, detailIndex: number) => {
                 const code = normalizeSrsCode(detail?.code);
+                // 算法和数据要求只在 2.6，保存时不再往功能描述根章补模块章节。
+                if (isAlgorithmDataReqDetail(detail)) return;
                 const detailKey = getReqDetailKey(detail);
                 const stableKey = getReqStableKey(detail);
                 if (!code || !detailKey.replace(/\|/g, "")) return;
@@ -8014,6 +8037,8 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                 const stableKey = getReqStableKey(detail);
                 const leafName = String(detail?.sub_function || detail?.function || detail?.name || detail?.module || "").trim();
                 if (!code || !leafName) return;
+                // 算法和数据要求固定写在 2.6，不在功能描述根章下补叶子章节。
+                if (isAlgorithmDataReqDetail(detail)) return;
                 if (stableKey) {
                     const existing = findNodeByStableKey([reqRoot], stableKey);
                     if (existing) {
@@ -8584,6 +8609,8 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
             // 只归位标准需求表里的编号；变更需求等其它编号的章节保持原位，否则会被摘走后无处放回而丢失。
             const standardCodes = new Set(
                 allStandardDetailsForIdentitySync
+                    // 算法和数据要求固定在 2.6：不参与第 7 章归位，历史残留节点保持原位。
+                    .filter((detail: any) => !isAlgorithmDataReqDetail(detail))
                     .map((detail: any) => normalizeSrsCode(detail?.code || detail?.srs_code))
                     .filter(Boolean)
             );
@@ -8618,6 +8645,8 @@ export default ({ value = [], onChange, docId, productId, docVersion, productVer
                 const code = normalizeSrsCode(detail?.code || detail?.srs_code);
                 const detailNode = code ? detailByCode.get(code) : undefined;
                 if (!code || !detailNode) return;
+                // 算法和数据要求只在 2.6；即使历史树上残留同编号节点，也不往功能描述根章归位。
+                if (isAlgorithmDataReqDetail(detail)) return;
                 const moduleText = normalizeReqDisplayText(detail?.module);
                 const functionText = normalizeReqDisplayText(detail?.function);
                 const subText = normalizeReqDisplayText(detail?.sub_function);

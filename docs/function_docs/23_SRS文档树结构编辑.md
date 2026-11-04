@@ -56,6 +56,7 @@ SRS 编辑页主体是文档树（`TreeStructure`）：展开/折叠章节、编
 
 ### 6.4 第 7 章功能描述
 - `syncSrsReqDetailsByKey` 按 module → function → sub_function 层级重建，保留已有 KV 表内容（按 stableKey/code 匹配）。
+- **算法和数据要求固定在 2.6**：模块/功能/子功能是「算法和数据要求」「算法与数据要求」「算法需求」的标准需求，只写在 `2.6 算法和数据要求`，不参与第 7 章（图像显示）功能描述章节生成。补章节的 `restoreMissingStandardFunctionChapters`、`appendMissingStandardReqDetails`（`createMissingReqHierarchy`）、`ensureMissingStandardReqLeaves` 和保存时归位的 `normalizeReqChapterHierarchy` 都跳过这一条，Word 导入后也不会在功能章下出现「算法和数据要求」模块。
 
 ### 6.5 工具库
 - 后端 `tree_util.iter_tree / find_parent / fix_chapter`，`tab_util.find_node`。

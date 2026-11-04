@@ -4337,6 +4337,84 @@ class Server(object):
         def __strip_heading_no(value: str):
             return re.sub(r"^\s*\d+(?:\.\d+)*\s*", "", value or "").strip()
 
+        # 导出章号与编辑页左目录（TreeStructure.tsx 的 computeNavChapterNumberMap）同一套规则：
+        # 正文一级章从 1 连续编号，封面/修订记录/目录/导入正文/附件一评审/表N 不编号，
+        # 「导入表格N」「导入图片N」和需求区节点不占号。只改导出用的树副本，不回写库。
+        __EXPORT_HEADING_PATTERN = re.compile(
+            r"^\s*(\d+(?:\.\d+)*)(?:[\s、.．]+|(?=[\u4e00-\u9fffA-Za-z]))"
+        )
+
+        def __export_chapter_name(title: str):
+            raw = str(title or "").strip()
+            matched = __EXPORT_HEADING_PATTERN.match(raw)
+            return (raw[matched.end():].strip() if matched else raw)
+
+        def __is_export_front_matter(node):
+            compact = __norm_title(getattr(node, "title", "") or "")
+            if not compact:
+                return True
+            if compact == "目录" or compact == "导入正文":
+                return True
+            if "需求规格说明" in compact or "文件修订记录" in compact:
+                return True
+            return False
+
+        def __is_export_review_node(node):
+            ref_type = str(getattr(node, "ref_type", "") or "")
+            compact = __norm_title(getattr(node, "title", "") or "")
+            if ref_type == "review":
+                return True
+            if compact in ["评审记录", "附件一评审结论"] or compact.startswith("附件一"):
+                return True
+            return "评审记录" in compact
+
+        def __is_export_table_title_node(node):
+            raw = str(getattr(node, "title", "") or "").strip()
+            return re.match(r"^\s*表\d+([、.\s　]|$)", raw) is not None
+
+        def __is_export_unnumbered_node(node):
+            return (
+                __is_export_front_matter(node)
+                or __is_export_review_node(node)
+                or __is_export_table_title_node(node)
+            )
+
+        def __is_export_skip_node(node):
+            # 目录里不显示、也不占章的承载节点
+            raw = str(getattr(node, "title", "") or "").strip()
+            if re.match(r"^导入(表格|图片)\d*$", raw):
+                return True
+            # 与左目录一致：只带图、没正文、没表、没子节点的「图N」图题节点不算章
+            table = getattr(node, "table", None)
+            if (
+                getattr(node, "img_url", None)
+                and re.match(r"^\s*图\s*\d+", raw)
+                and not str(getattr(node, "text", "") or "").strip()
+                and not (getattr(table, "headers", None) or [])
+                and not (getattr(node, "children", None) or [])
+            ):
+                return True
+            return str(getattr(node, "ref_type", "") or "") in [
+                "srs_reqs", "srs_reqs_1", "srs_reqs_2", "srs_reqds",
+            ]
+
+        def __normalize_export_chapter_numbers(nodes):
+            def walk(items, prefix: str = "") -> None:
+                idx = 0
+                for node in items or []:
+                    if __is_export_skip_node(node):
+                        continue
+                    if __is_export_unnumbered_node(node):
+                        walk(getattr(node, "children", None) or [], prefix)
+                        continue
+                    idx += 1
+                    num = f"{prefix}.{idx}" if prefix else str(idx)
+                    name = __export_chapter_name(getattr(node, "title", "") or "")
+                    node.title = f"{num} {name}" if name else num
+                    walk(getattr(node, "children", None) or [], num)
+            walk(nodes or [], "")
+            return nodes
+
         def __insert_toc_field(docx: Document):
             docx_util.insert_toc_field(docx, outline_levels="1-4")
 
@@ -5597,6 +5675,10 @@ class Server(object):
                 and "附件一评审结论" not in re.sub(r"\s+", "", str(getattr(n, "title", "") or ""))
             ]
             imported_catalog_text = __extract_imported_catalog_text(*(roots or []))
+
+            # 正文章号按左目录同一套规则重算：库里标题可能残留旧章号（删章后不回写），
+            # 不重算会出现 3 直接跳到 5、缺第 4 章、两个「10」等问题。
+            remaining_roots = __normalize_export_chapter_numbers(remaining_roots)
 
             export_sections = [
                 ("spec", spec_section_nodes),
