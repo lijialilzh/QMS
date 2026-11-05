@@ -163,16 +163,30 @@ class Server(object):
             select(TestCase).where(TestCase.set_id == ts_row.id).order_by(TestCase.id.asc())
         ).scalars().all())
 
+    @staticmethod
+    def __is_model_sheet_name(sheet_name: str) -> bool:
+        """sheet 名里写的是「用户测试用例」「单元测试用例」这类阶段名的，不是型号。
+
+        用户测试 Excel 只有按型号分 sheet 时，sheet 名才等于型号；只分阶段时不能拿它当型号，
+        否则导出会把「用户测试用例」写进产品型号（页面用的是产品 type_code，两边就对不上）。
+        """
+        sn = str(sheet_name or "").strip()
+        if not sn:
+            return False
+        if "用例" in sn or "测试" in sn:
+            return False
+        return True
+
     def __model_names(self, prod_id, product: Product = None) -> List[str]:
         cases = self.__user_test_cases(prod_id)
         models = []
         for c in cases:
             sn = (getattr(c, "sheet_name", None) or "").strip()
-            if sn and sn not in models:
+            if self.__is_model_sheet_name(sn) and sn not in models:
                 models.append(sn)
         if models:
             return models
-        # 无 sheet 名：单一型号，优先产品 type_code
+        # 无型号 sheet：单一型号，优先产品 type_code（与编辑页、导出产品型号同一口径）
         tip = (getattr(product, "type_code", None) or "").strip() if product else ""
         return [tip] if tip else ["默认"]
 
@@ -254,7 +268,7 @@ class Server(object):
         return content
 
     def __fill_runtime_fields(self, content, prod_id):
-        """测试工具←谷歌浏览器；网络环境只取带宽更低的一项。"""
+        """测试工具←谷歌浏览器；网络环境同时写局域网、广域网，只去掉「及以上」。"""
         from .serv_prod_runtime_env import get_runtime_payload
         payload = get_runtime_payload(prod_id) or {}
         tool = "谷歌浏览器"
@@ -268,21 +282,13 @@ class Server(object):
                 return raw if "局域" in raw else f"局域网{raw}"
             return raw if "广域" in raw else f"广域网{raw}"
 
-        def mbps(raw):
-            matched = re.search(r"(\d+(?:\.\d+)?)\s*[MG]bps", raw or "", re.I)
-            if not matched:
-                return None
-            value = float(matched.group(1))
-            if re.search(r"Gbps", raw or "", re.I):
-                value *= 1000
-            return value
-
+        # 局域网、广域网都写；网络要求里两项是并列的最低配置，删掉广域网会丢掉一项
         options = []
         for raw, kind in ((lan, "lan"), (wan, "wan")):
             text = label_of(raw, kind)
-            if text:
-                options.append((mbps(raw) if mbps(raw) is not None else 10 ** 9, text))
-        net = min(options, key=lambda item: item[0])[1] if options else ""
+            if text and text not in options:
+                options.append(text)
+        net = "，".join(options)
         for s in (content.get("sections") or []):
             for tbl in (s.get("tables") or []):
                 if not tbl or not isinstance(tbl, list):
