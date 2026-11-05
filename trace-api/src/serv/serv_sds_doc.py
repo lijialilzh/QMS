@@ -57,7 +57,7 @@ from ..utils.i18n import ts
 from ..utils import get_uuid
 from .serv_utils.tree_util import find_parent
 from .serv_utils import new_version
-from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, fixed_rcn300_sds_codes, rcn300_tail_name_key, live_rcn300_tail_chapters, align_rcn300_tail_node_codes, living_tail_chapter_codes, nav_directory_chapters, requirement_number_key
+from .serv_sds_trace import Server as ServSdsTrace, NAME_DICT, fixed_rcn300_sds_codes, rcn300_tail_name_key, live_rcn300_tail_chapters, align_rcn300_tail_node_codes, living_tail_chapter_codes, nav_directory_chapters, requirement_number_key, is_sds_excluded_module
 from .serv_sds_reqd import Server as ServSdsReqd
 from .serv_doc_file import is_srs_a0_image_version
 from .serv_srs_doc import Server as ServSrsDoc
@@ -2351,6 +2351,11 @@ class Server(SdsSrsTraceSyncMixin, object):
         def __is_revision_label(value: str):
             return __biz_title(value) == "文件修订记录"
 
+        def __is_internal_role_label(value: str) -> bool:
+            """sds-role:* 是 SDS 与 SRS 追溯同步用的内部标记（标记模版章归属），
+            不是给人看的正文，导出时不写到 Word 里。"""
+            return str(value or "").strip().lower().startswith("sds-role:")
+
         def __is_catalog(value: str):
             return __biz_title(value) == "目录"
 
@@ -3732,7 +3737,7 @@ finally:
                 # 一级章节标题旁已有设计编号，正文不再另写一行「设计编号：SDS-…」
                 if node.sds_code and level != 0:
                     __save_line_txt(docx, "设计编号：" + node.sds_code, font_def, False)
-                if node.label:
+                if node.label and not __is_internal_role_label(node.label):
                     norm_label = __norm_title(node.label)
                     if not norm_label or __is_pure_punct_line(norm_label):
                         pass
@@ -4059,7 +4064,7 @@ finally:
                     docx_util.save_title2docx(__norm_title(node.title), docx, level + 1, font_size)
                 if node.sds_code and level != 0:
                     docx_util.save_txt2docx("设计编号：" + node.sds_code, docx, font_def)
-                if node.label:
+                if node.label and not __is_internal_role_label(node.label):
                     docx_util.save_txt2docx(__norm_title(node.label), docx, font_def)
                 if node.text:
                     docx_util.save_txt2docx(node.text, docx, font_def)
@@ -4140,6 +4145,12 @@ finally:
                     n for n in remaining_roots
                     if "评审记录" not in re.sub(r"\s+", "", str(getattr(n, "title", "") or ""))
                     and "附件一评审结论" not in re.sub(r"\s+", "", str(getattr(n, "title", "") or ""))
+                ]
+                # SDS 内列表和章节均不读取的模块（文档需求）导出时同样不输出，
+                # 与页面渲染的隐藏口径一致；只过滤导出结果，不改文档树数据。
+                remaining_roots = [
+                    n for n in remaining_roots
+                    if not is_sds_excluded_module(__strip_heading_text(getattr(n, "title", "") or ""))
                 ]
                 first_major = __first_major(remaining_roots)
                 body_major_offset = (first_major - 1) if (first_major and first_major > 1) else 0

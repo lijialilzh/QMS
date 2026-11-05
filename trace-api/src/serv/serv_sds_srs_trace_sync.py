@@ -345,6 +345,8 @@ class SdsSrsTraceSyncMixin:
     def _apply_other_req_design_roles(self, doc_id: int, roots: List[SdsNodeForm]):
         """其他需求名称或编号改了之后，只替换对应模版章的章名和设计编号。标准需求、变更需求不进这里。"""
         warnings = []
+        # 本轮被当前需求文档绑定的一级章，用于清掉上一版遗留的同类章。
+        bound_nodes: set = set()
         rows = db.session.execute(
             select(SrsReq).join(SdsDoc, SdsDoc.srsdoc_id == SrsReq.doc_id).where(
                 SdsDoc.id == doc_id, SrsReq.type_code == "2"
@@ -469,9 +471,13 @@ class SdsSrsTraceSyncMixin:
 
             def bind_chapter(node: SdsNodeForm, req, fill_template: bool = False):
                 node.label = f"sds-role:{role}"
+                bound_nodes.add(id(node))
                 display = other_req_role_display_name(req.module, role)
                 heading = self._parse_sds_node_heading(getattr(node, "title", "") or "")
-                if other_req_role_is_changed(req.code, req.module, role):
+                # 章名既不是本 role 的英文模版名、也不是预置模块名时，一律改用当前需求应有的显示名。
+                # 切换需求文档后，上一版遗留的「接口测试1」这类章名会带着同一 sds-role 标签被复用，
+                # 只按「模块名是否改过」判断会留下旧章名（预置模块名如「图像存储」判为未改，因而不改名）。
+                if other_req_role_is_changed(req.code, req.module, role) or body_name(node) not in preset_names:
                     node.title = f"{heading} {display}".strip() if heading else display
                 code = derived_code(req)
                 if code:
@@ -517,9 +523,13 @@ class SdsSrsTraceSyncMixin:
                 )
             ]
             english_name = self._normalize_sds_node_title(spec["english"])
+            # 模版章优先取标题仍是英文模版名/预置名的那一章（导入或初始化模版带入的一级章），
+            # 不优先取 label 恰好等于本 role 的旧章：切换需求文档后，上一版遗留的
+            # 「接口测试1」等章也可能带着同一个 sds-role 标签，不能让它顶替本版模版章。
             template_candidates.sort(key=lambda node: (
                 0 if body_name(node) == english_name else 1,
                 0 if body_name(node) in preset_names else 1,
+                0 if role_of(node) == role else 1,
             ))
             template = template_candidates[0] if template_candidates else None
             pending = [req for req in matched if id(req) not in claimed_reqs]
@@ -572,10 +582,32 @@ class SdsSrsTraceSyncMixin:
         self._append_renamed_template_chapters(doc_id, roots, renamed_later)
         self._append_external_chapters(doc_id, roots, external_later)
         self._append_regulation_chapters(doc_id, roots, rows)
+        # 清掉上一版需求文档遗留、本轮已无需求绑定的其他需求一级章（如 A1 的「接口测试1」）。
+        roots = self._drop_unbound_other_req_roots(roots, bound_nodes)
         # 补章之后再按设计编号排一次并重编章号，避免新补的章落在末尾。
         self._order_other_req_roots_by_code(roots, rows)
         self._rehome_design_templates(roots, rows)
         return roots, warnings
+
+    def _drop_unbound_other_req_roots(self, roots: List[SdsNodeForm], bound_ids: set) -> List[SdsNodeForm]:
+        """删除带 sds-role 标签却没有被当前需求文档绑定的一级章。
+
+        切换或重新导入需求文档后，上一版的「接口测试1」这类章仍带同一个 sds-role 标签，
+        且 sds_code 在新版里依旧存在，_prune_design_nodes_not_in_trace 剪不掉，需要在这里清。
+        只处理一级章；标准需求、变更需求、模版固定小节不带 sds-role 标签，不受影响。
+        """
+
+        def is_basic_or_excluded(node: SdsNodeForm) -> bool:
+            name = self._normalize_sds_node_title(self._strip_sds_heading_text(getattr(node, "title", "") or ""))
+            return is_sds_excluded_module(name) or is_sds_list_only_module(name)
+
+        kept: List[SdsNodeForm] = []
+        for node in roots or []:
+            label = str(getattr(node, "label", "") or "")
+            if label.startswith("sds-role:") and id(node) not in bound_ids and not is_basic_or_excluded(node):
+                continue
+            kept.append(node)
+        return kept
 
     _PLAIN_OTHER_MODULE_MARKS = ("数据库要求", "性能要求", "基本要求", "文档需求", "法规符合", "外部连接", "外部链接")
 
