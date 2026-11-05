@@ -313,6 +313,23 @@
         border-collapse: collapse;
         table-layout: auto;
 
+        // 兼容性表：首列「测试模块」定宽且不换行，避免「用户登录」被挤成逐字竖排；
+        // 结果列等宽，避免「通过」两字占掉大截宽度。其余列允许换行，防止窄屏横向溢出。
+        // 用 data-compat-front 标记，避开 rowSpan/colSpan 导致的 nth-child 错位。
+        &.pdp-compat-grid {
+            td[data-compat-front="1"] {
+                white-space: nowrap;
+
+                .pdp-cell,
+                textarea.pdp-cell,
+                textarea.ant-input {
+                    white-space: nowrap;
+                    overflow-wrap: normal;
+                    word-break: keep-all;
+                }
+            }
+        }
+
         td {
             border: 1px solid #e8edf2;
             padding: 0;

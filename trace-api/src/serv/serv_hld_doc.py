@@ -1040,6 +1040,10 @@ class Server(object):
             p.paragraph_format.first_line_indent = Pt(0)
             docx_util.fonted_txt(p, text, font_size=10.5)
 
+        # 接口详情章的「输入项 / 输出项」段标题（全角或半角括号都算）
+        __INPUT_HEADING_RE = re.compile(r"[（(]\s*1\s*[）)]\s*输入")
+        __OUTPUT_HEADING_RE = re.compile(r"[（(]\s*2\s*[）)]\s*输出")
+
         def __is_data_table_caption(line: str) -> bool:
             txt = str(line or "").strip()
             if not txt or self._is_image_caption_line(txt):
@@ -1087,6 +1091,22 @@ class Server(object):
         def __has_table(node) -> bool:
             table = getattr(node, "table", None)
             return bool(table and getattr(table, "headers", None))
+
+        def __is_interface_detail_node(node, table_children) -> bool:
+            """接口详情章（3.3.x）：从详细设计同步带出，正文含「（1）输入项」，
+            章下挂着 Name/Value 这类参数表。只有这种章把表内联到输入项下面。"""
+            if not table_children:
+                return False
+            return bool(__INPUT_HEADING_RE.search(str(getattr(node, "text", "") or "")))
+
+        def __is_input_section_end(lines: List[str], idx: int) -> bool:
+            """当前行是否是「（1）输入项」段的最后一行：下一非空行是「（2）输出项」或段结束。"""
+            for raw in lines[idx + 1:]:
+                nxt = str(raw or "").strip()
+                if not nxt or nxt in ("{{TXT}}", "{{EMPTY}}", "{{BELOW}}"):
+                    continue
+                return bool(__OUTPUT_HEADING_RE.search(nxt))
+            return True
 
         def __write_nodes(nodes: List[HldNodeForm], default_level: int = 1):
             for node in nodes or []:
@@ -1143,11 +1163,24 @@ class Server(object):
                         other_children.append(child)
                 pending_reviews.extend(review_children)
                 consumed = 0
+                # 接口详情章的表（Name/Value 参数表）紧跟「（1）输入项」段的最后一行之后，
+                # 不再统一推到整章末尾；只对含「（1）输入项」的接口详情章生效。
+                inline_iface_tables = __is_interface_detail_node(node, table_children)
                 _body_lines = __strip_review_tail(getattr(node, "text", "") or "").replace("\r", "").split("\n")
+                # JSON 块按 4 空格缩进重排后写入；解析不了的块保持原样，普通正文不受影响。
+                _json_spans = docx_util.json_block_spans(_body_lines)
+                _json_skip = set()
+                for _span_start, (_span_end, _) in _json_spans.items():
+                    _json_skip.update(range(_span_start + 1, _span_end + 1))
                 _below_at = next((i for i, raw in enumerate(_body_lines) if str(raw or "").strip() == "{{BELOW}}"), -1)
                 _head_lines = _body_lines if _below_at < 0 else _body_lines[:_below_at]
                 _tail_lines = [] if _below_at < 0 else _body_lines[_below_at + 1:]
-                for raw_line in _head_lines:
+                for _line_idx, raw_line in enumerate(_head_lines):
+                    if _line_idx in _json_spans:
+                        docx_util.save_json_lines2docx(docx, _json_spans[_line_idx][1])
+                        continue
+                    if _line_idx in _json_skip:
+                        continue
                     line = str(raw_line or "").strip()
                     if not line or line in ("{{TXT}}", "{{EMPTY}}", "{{BELOW}}") or re.sub(r"\s+", "", line) in ("附件一评审结论", "评审记录"):
                         continue
@@ -1156,6 +1189,10 @@ class Server(object):
                         consumed += 1
                         continue
                     docx_util.save_txt2docx(line, docx)
+                    if inline_iface_tables and __is_input_section_end(_head_lines, _line_idx):
+                        while consumed < len(table_children):
+                            __write_imported_table(table_children[consumed])
+                            consumed += 1
                 while consumed < len(table_children):
                     __write_imported_table(table_children[consumed])
                     consumed += 1
@@ -1163,7 +1200,16 @@ class Server(object):
                     __write_imported_table(node)
                 elif __has_table(node) and __is_misplaced_review_table(node.table):
                     pending_reviews.append(node)
-                for raw_line in _tail_lines:
+                _tail_json_spans = docx_util.json_block_spans(_tail_lines)
+                _tail_json_skip = set()
+                for _span_start, (_span_end, _) in _tail_json_spans.items():
+                    _tail_json_skip.update(range(_span_start + 1, _span_end + 1))
+                for _tail_idx, raw_line in enumerate(_tail_lines):
+                    if _tail_idx in _tail_json_spans:
+                        docx_util.save_json_lines2docx(docx, _tail_json_spans[_tail_idx][1])
+                        continue
+                    if _tail_idx in _tail_json_skip:
+                        continue
                     line = str(raw_line or "").strip()
                     if not line or line in ("{{TXT}}", "{{EMPTY}}", "{{BELOW}}"):
                         continue

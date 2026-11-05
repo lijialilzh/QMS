@@ -188,6 +188,66 @@ function isJsonLikeKeyValueLine(text?: string): boolean {
     return /^['"]\s*[^'"]+\s*['"]\s*:\s*.+$/.test(value);
 }
 
+const JSON_INDENT = 4;
+
+/** 找到从 start 行起第一个完整 JSON 值的结束下标；括号按字符串状态配平，找不准返回 -1。 */
+function jsonValueEnd(text: string): number {
+    let depth = 0;
+    let inStr = false;
+    let escaped = false;
+    for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+        if (inStr) {
+            if (escaped) escaped = false;
+            else if (ch === "\\") escaped = true;
+            else if (ch === '"') inStr = false;
+            continue;
+        }
+        if (ch === '"') inStr = true;
+        else if (ch === "{" || ch === "[") depth += 1;
+        else if (ch === "}" || ch === "]") {
+            depth -= 1;
+            if (depth === 0) return i + 1;
+        }
+    }
+    return -1;
+}
+
+/** 从 start 行起试解析一个 JSON 值，返回结束行号与缩进后的行；解析不了返回 null。 */
+function parseJsonBlock(lines: string[], start: number): { end: number; rendered: string[] } | null {
+    const joined = lines.slice(start).map((line) => String(line || "").trim()).join("\n");
+    if (joined[0] !== "{" && joined[0] !== "[") return null;
+    const valueEnd = jsonValueEnd(joined);
+    if (valueEnd <= 0) return null;
+    // 同一行 JSON 后面若还留着别的内容（如残留的 `},`），宁可不动，避免吞掉原文
+    const tailLine = joined.slice(valueEnd).split("\n")[0].replace(/[\s,;，；]/g, "");
+    if (tailLine) return null;
+    let parsed: any;
+    try {
+        parsed = JSON.parse(joined.slice(0, valueEnd));
+    } catch {
+        return null;
+    }
+    if (!parsed || typeof parsed !== "object") return null;
+    const end = start + (joined.slice(0, valueEnd).match(/\n/g) || []).length;
+    return { end, rendered: JSON.stringify(parsed, null, JSON_INDENT).split("\n") };
+}
+
+/** 正文里能解析成 JSON 的块：{ 起始行号: { end, rendered } }。 */
+function jsonBlockSpans(lines: string[]): Record<number, { end: number; rendered: string[] }> {
+    const spans: Record<number, { end: number; rendered: string[] }> = {};
+    for (let i = 0; i < lines.length; i += 1) {
+        const head = String(lines[i] || "").trim();
+        if (head !== "{" && head !== "[") continue;
+        const block = parseJsonBlock(lines, i);
+        if (block && block.end > i) {
+            spans[i] = block;
+            i = block.end;
+        }
+    }
+    return spans;
+}
+
 function shouldAssignChapterNo(node: TreeNode): boolean {
     const title = String(node.title || "").trim();
     const label = String(node.label || "").trim();
@@ -2144,7 +2204,23 @@ const TreeNodeItem = ({ node, level, chapterNo, docId, readOnly, captionFromPare
                 )}
             </div>
         );
+        // JSON 块按 4 空格缩进重排后显示；解析不了的块按原文渲染，普通正文不受影响。
+        const jsonSpans = jsonBlockSpans(lines);
+        const jsonSkip: Record<number, boolean> = {};
+        Object.keys(jsonSpans).forEach((key) => {
+            const span = jsonSpans[Number(key)];
+            for (let i = Number(key) + 1; i <= span.end; i += 1) jsonSkip[i] = true;
+        });
         lines.forEach((line, idx) => {
+            if (jsonSpans[idx]) {
+                chunks.push(
+                    <div key={`json-${idx}`} className="node-inline-json">
+                        {jsonSpans[idx].rendered.join("\n")}
+                    </div>
+                );
+                return;
+            }
+            if (jsonSkip[idx]) return;
             const headingType = getInlineHeadingType(line);
             const trimmed = String(line || "").trim();
             const isImageCaptionLine = /^图\s*\d+/.test(trimmed);

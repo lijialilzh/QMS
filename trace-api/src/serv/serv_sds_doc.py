@@ -2961,10 +2961,24 @@ class Server(SdsSrsTraceSyncMixin, object):
                 return []
             if not any(__is_json_export_line(line) for line in raw_lines):
                 return raw_lines
+            # 能整块解析的优先按真实 JSON 结构重排（层级最准）；
+            # 解析不了的段落走下面的逐行推算，保持原有导出观感不变。
+            spans = docx_util.json_block_spans(raw_lines)
+            skip = set()
+            for span_start, (span_end, _) in spans.items():
+                skip.update(range(span_start + 1, span_end + 1))
             out: List[str] = []
             indent = 0
             in_json_context = False
-            for raw in raw_lines:
+            for idx, raw in enumerate(raw_lines):
+                if idx in spans:
+                    for pretty_text, level in spans[idx][1]:
+                        out.append((" " * (4 * level)) + pretty_text)
+                    indent = 0
+                    in_json_context = False
+                    continue
+                if idx in skip:
+                    continue
                 line = raw
                 if __is_json_kv_line(line):
                     line = __strip_chapter_prefix(line) or line

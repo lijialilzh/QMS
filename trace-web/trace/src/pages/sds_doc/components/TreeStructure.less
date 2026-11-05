@@ -791,6 +791,15 @@
                 overflow-wrap: anywhere;
             }
 
+            // JSON 块按原样保留缩进与换行，等宽字体保证层级对齐
+            .node-inline-json {
+                white-space: pre;
+                font-family: "SFMono-Regular", "Consolas", "Menlo", "Monaco", monospace !important;
+                font-size: 12.5px !important;
+                line-height: 1.5;
+                overflow-x: auto;
+            }
+
             .node-file-ref {
                 min-width: 200px;
                 min-height: 32px;

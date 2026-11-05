@@ -67,6 +67,29 @@ const compatHdrCount = (tb: any[]): number => {
     return hdr;
 };
 
+// 兼容性表列宽：首列（测试模块）按内容撑开且不换行，其余列按内容给宽，
+// 结果列固定等宽。返回 { ci: cssWidth }；不是兼容性表时返回 null，沿用原来的均分。
+const COMPAT_RESULT_COL_W = 96;
+const compatColWidths = (tb: any[]): Record<number, number> | null => {
+    const hdr = compatHdrCount(tb);
+    if (!hdr) return null;
+    const cols = (tb[0] || []).length;
+    const widths: Record<number, number> = {};
+    // 首列（测试模块）：按表头与数据里最长的内容估算所需宽度，配合 nowrap 不换行
+    const moduleMax = tb.reduce(
+        (mx: number, row: any[]) => Math.max(mx, String((row || [])[0] ?? "").length),
+        0,
+    );
+    widths[0] = Math.min(180, Math.max(72, moduleMax * 14 + 16));
+    // 其余前置列（测试点）：给最小宽度，内容过长仍允许换行，避免窄屏横向溢出
+    for (let ci = 1; ci < Math.min(2, cols); ci += 1) {
+        widths[ci] = 160;
+    }
+    // 结果列：一致等宽，避免「通过」两个字占掉一大截
+    for (let ci = 2; ci < cols; ci += 1) widths[ci] = COMPAT_RESULT_COL_W;
+    return widths;
+};
+
 // 兼容性表单元格合并计划：表头(测试模块/测试点跨行、版本组跨列) + 数据区首列跨行
 const compatSpan = (tb: any[], mg: Record<number, number> | null, r: number, ci: number): { skip?: boolean; rowSpan?: number; colSpan?: number } => {
     if (!mg) return {};
@@ -1203,6 +1226,7 @@ export default () => {
                                                     if (!tb) return null;
                                                     const mg = compatMerge(tb);
                                                     const us = unitItemSpans(tb);
+                                                    const compatW = compatColWidths(tb);
                                                     return (
                                                         <div className="pdp-table-block" key={si}>
                                                     {si === segments.findIndex((s: any) => s.type === "table") ? aboveBar : null}
@@ -1224,12 +1248,13 @@ export default () => {
                                                                 style={{ marginBottom: 6, fontSize: 13 }}
                                                                 onChange={(e) => setCaption(ti, e.target.value)}
                                                             />
-                                                            <table className="pdp-grid" style={{ tableLayout: isEquipInfoTable(tb) ? "auto" : "fixed", width: "100%" }}>
+                                                            <table className={`pdp-grid${compatW ? " pdp-compat-grid" : ""}`} style={{ tableLayout: isEquipInfoTable(tb) ? "auto" : "fixed", width: "100%" }}>
                                                                 {tb[0] && (
                                                                     <colgroup>
-                                                                        {tb[0].map((h: any, ci: number) => (
-                                                                            <col key={ci} style={String(h || "").includes("设备信息") ? { width: "62%" } : undefined} />
-                                                                        ))}
+                                                                        {tb[0].map((h: any, ci: number) => {
+                                                                            if (compatW && compatW[ci]) return <col key={ci} style={{ width: compatW[ci] }} />;
+                                                                            return <col key={ci} style={String(h || "").includes("设备信息") ? { width: "62%" } : undefined} />;
+                                                                        })}
                                                                         {!readonly && <col style={{ width: 72 }} />}
                                                                     </colgroup>
                                                                 )}
@@ -1240,7 +1265,7 @@ export default () => {
                                                                                 const sp = tableCellSpan(tb, mg, us, r, ci);
                                                                                 if (sp.skip) return null;
                                                                                 return (
-                                                                                <td key={ci} rowSpan={sp.rowSpan} colSpan={sp.colSpan} className={r === 0 ? "head" : ""} style={(sp.rowSpan && sp.rowSpan > 1) || (sp.colSpan && sp.colSpan > 1) ? { verticalAlign: "middle", textAlign: sp.colSpan && sp.colSpan > 1 ? "center" : undefined } : undefined}>
+                                                                                <td key={ci} rowSpan={sp.rowSpan} colSpan={sp.colSpan} className={r === 0 ? "head" : ""} data-compat-front={compatW && ci === 0 ? "1" : undefined} style={(sp.rowSpan && sp.rowSpan > 1) || (sp.colSpan && sp.colSpan > 1) ? { verticalAlign: "middle", textAlign: sp.colSpan && sp.colSpan > 1 ? "center" : undefined } : undefined}>
                                                                                     {typeof cell === "string" && cell.startsWith("data:image") ? (
                                                                                         <span style={{ position: "relative", display: "inline-block" }}>
                                                                                             <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
@@ -1373,6 +1398,7 @@ export default () => {
                                                 : (active.tables || []).map((tb: any[], ti: number) => {
                                                 const mg = compatMerge(tb);
                                                 const us = unitItemSpans(tb);
+                                                const compatW = compatColWidths(tb);
                                                 return (
                                                 <div className="pdp-table-block" key={ti}>
                                                     <div className="pdp-table-bar">
@@ -1393,12 +1419,13 @@ export default () => {
                                                         style={{ marginBottom: 6, fontSize: 13 }}
                                                         onChange={(e) => setCaption(ti, e.target.value)}
                                                     />
-                                                    <table className="pdp-grid" style={{ tableLayout: isEquipInfoTable(tb) ? "auto" : "fixed", width: "100%" }}>
+                                                    <table className={`pdp-grid${compatW ? " pdp-compat-grid" : ""}`} style={{ tableLayout: isEquipInfoTable(tb) ? "auto" : "fixed", width: "100%" }}>
                                                         {tb[0] && (
                                                             <colgroup>
-                                                                {tb[0].map((h: any, ci: number) => (
-                                                                    <col key={ci} style={String(h || "").includes("设备信息") ? { width: "62%" } : undefined} />
-                                                                ))}
+                                                                {tb[0].map((h: any, ci: number) => {
+                                                                    if (compatW && compatW[ci]) return <col key={ci} style={{ width: compatW[ci] }} />;
+                                                                    return <col key={ci} style={String(h || "").includes("设备信息") ? { width: "62%" } : undefined} />;
+                                                                })}
                                                                 {!readonly && <col style={{ width: 72 }} />}
                                                             </colgroup>
                                                         )}
@@ -1409,7 +1436,7 @@ export default () => {
                                                                         const sp = tableCellSpan(tb, mg, us, r, ci);
                                                                         if (sp.skip) return null;
                                                                         return (
-                                                                        <td key={ci} rowSpan={sp.rowSpan} colSpan={sp.colSpan} className={r === 0 ? "head" : ""} style={(sp.rowSpan && sp.rowSpan > 1) || (sp.colSpan && sp.colSpan > 1) ? { verticalAlign: "middle", textAlign: sp.colSpan && sp.colSpan > 1 ? "center" : undefined } : undefined}>
+                                                                        <td key={ci} rowSpan={sp.rowSpan} colSpan={sp.colSpan} className={r === 0 ? "head" : ""} data-compat-front={compatW && ci === 0 ? "1" : undefined} style={(sp.rowSpan && sp.rowSpan > 1) || (sp.colSpan && sp.colSpan > 1) ? { verticalAlign: "middle", textAlign: sp.colSpan && sp.colSpan > 1 ? "center" : undefined } : undefined}>
                                                                             {typeof cell === "string" && cell.startsWith("data:image") ? (
                                                                                 <span style={{ position: "relative", display: "inline-block" }}>
                                                                                     <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />

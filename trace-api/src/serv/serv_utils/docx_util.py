@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import io
+import json
 import base64
 import shutil
 import struct
@@ -579,6 +580,125 @@ def save_title2docx(title: str, docx: Document, level: int = 1, font_size=10.5):
     node_para.paragraph_format.space_before = Pt(0)
     node_para.paragraph_format.space_after = Pt(0)
     fonted_txt(node_para, title, font_size=size, bold=is_bold)
+
+JSON_INDENT_WIDTH = 4
+JSON_LEVEL_PT = 10
+
+
+def _json_block_bounds(lines, start):
+    """从 start（`{`/`[` 行）起找到配平的 JSON 块结束下标；找不准返回 -1。"""
+    depth = 0
+    in_str = False
+    escape = False
+    for idx in range(start, len(lines)):
+        for ch in lines[idx]:
+            if in_str:
+                if escape:
+                    escape = False
+                elif ch == "\\":
+                    escape = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch in "{[":
+                depth += 1
+            elif ch in "}]":
+                depth -= 1
+        if depth <= 0 and idx > start:
+            return idx
+    return -1
+
+
+def _parse_json_block(items, start):
+    """从 start 行起尝试解析一个 JSON 值。
+
+    返回 (结束行号, [(text, level)]) 或 None。
+    只取 raw_decode 解析出的那一个值：正文里 JSON 后面常跟着 `},` 这类残留符号，
+    整块 json.loads 会失败，不能因为这点残渣就把整段 JSON 放弃格式化。
+    """
+    joined = "\n".join(str(item or "").strip() for item in items[start:])
+    try:
+        parsed, consumed = json.JSONDecoder().raw_decode(joined)
+    except Exception:
+        return None
+    if not isinstance(parsed, (dict, list)):
+        return None
+    # JSON 值后面同一行若还留着别的内容，宁可不动，避免吞掉原文
+    tail_line = joined[consumed:].split("\n", 1)[0].strip()
+    if tail_line.strip(" \t,;，；"):
+        return None
+    end = start + joined[:consumed].count("\n")
+    pretty = json.dumps(parsed, indent=JSON_INDENT_WIDTH, ensure_ascii=False).split("\n")
+    rendered = []
+    for line in pretty:
+        if not line.strip():
+            continue
+        lead = len(line) - len(line.lstrip(" "))
+        rendered.append((line.strip(), max(0, lead // JSON_INDENT_WIDTH)))
+    return end, rendered
+
+
+def json_block_spans(lines):
+    """找出正文里能解析成 JSON 的块。
+
+    返回 {起始行号: (结束行号, [(text, level)])}；level 为块内层级。
+    解析不了的块不返回，调用方按原文输出，避免动到普通正文。
+    """
+    items = [str(line or "") for line in (lines or [])]
+    spans = {}
+    idx = 0
+    total = len(items)
+    while idx < total:
+        if items[idx].strip() in ("{", "["):
+            parsed_block = _parse_json_block(items, idx)
+            if parsed_block is not None and parsed_block[0] > idx:
+                spans[idx] = parsed_block
+                idx = parsed_block[0] + 1
+                continue
+        idx += 1
+    return spans
+
+
+def format_json_like_lines(lines):
+    """把正文里可解析的 JSON 块按 JSON_INDENT_WIDTH 缩进重排。
+
+    返回 [(text, level)]：level 是块内层级（块外文本恒为 0）。
+    只有整块能被 JSON 解析时才重排，解析不了的块按原样返回，避免动到普通正文。
+    """
+    items = [str(line or "") for line in (lines or [])]
+    spans = json_block_spans(items)
+    out = []
+    idx = 0
+    total = len(items)
+    while idx < total:
+        if idx in spans:
+            end, rendered = spans[idx]
+            out.extend(rendered)
+            idx = end + 1
+            continue
+        out.append((items[idx], 0))
+        idx += 1
+    return out
+
+
+def save_json_lines2docx(docx: Document, items, font_size=10.5):
+    """按 (text, level) 写 JSON 段落：用悬挂缩进表达层级，首行不缩进、不加项目符号。"""
+    for text, level in items or []:
+        txt = str(text or "").strip()
+        if not txt:
+            continue
+        node_para = docx.add_paragraph()
+        node_para.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.LEFT
+        node_para.paragraph_format.first_line_indent = Pt(0)
+        node_para.paragraph_format.left_indent = Pt(max(0, int(level)) * JSON_LEVEL_PT)
+        node_para.paragraph_format.right_indent = Pt(0)
+        node_para.paragraph_format.line_spacing = 1.5
+        node_para.paragraph_format.space_before = Pt(0)
+        node_para.paragraph_format.space_after = Pt(0)
+        fonted_txt(node_para, txt, font_size)
+
 
 def save_txt2docx(text: str, docx: Document, font_size=10.5):
     texts = (text or "").splitlines()
