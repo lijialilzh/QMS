@@ -4,14 +4,13 @@
 # 产品立项报告接口层，详见 docs/function_docs/53_产品立项报告.md。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.tobj_pir_doc import PirDocForm
 from ..obj.vobj_pir_doc import PirDocObj
 from ..serv.serv_pir_doc import Server
@@ -63,8 +62,8 @@ async def get_pir_doc(id: int):
 async def export_pir_doc(id: int = 0):
     output = io.BytesIO()
     await server.export_pir_doc(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"产品立项报告-{timestamp}.docx")
+    doc = await server.get_pir_doc(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "产品立项报告", "docx")
     return StreamingResponse(
         content=output,
         media_type="application/octet-stream",

@@ -4,12 +4,11 @@
 
 
 import io
-import urllib.parse
 from typing import Any
-from datetime import datetime
 from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import StreamingResponse
 from ..obj.vobj_rcm import RcmObj
+from ..utils import download_name
 from ..obj.tobj_rcm import RcmForm
 from ..obj.tobj_role import Perms
 from ..obj import Resp, Page
@@ -56,8 +55,7 @@ async def get_rcm(id: int):
 async def export_rcms(fuzzy: str = None, page_index: int = 0, page_size: int = 10):
     output = io.BytesIO()
     await server.export_rcms(output, fuzzy=fuzzy, page_index=page_index, page_size=page_size)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"{ts('file_rcm')}-{timestamp}.xlsx")
+    filename = download_name.quoted("", ts('file_rcm'), "xlsx")
     return StreamingResponse(content=output, 
         media_type="application/octet-stream",
         headers={"Content-Disposition": f"attachment; filename={filename}"}

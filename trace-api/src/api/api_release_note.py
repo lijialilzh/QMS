@@ -4,14 +4,13 @@
 # 产品发布说明接口层。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.tobj_release_note import ReleaseNoteForm
 from ..obj.vobj_release_note import ReleaseNoteObj
 from ..serv.serv_release_note import Server
@@ -63,8 +62,8 @@ async def get_release_note(id: int):
 async def export_release_note(id: int = 0):
     output = io.BytesIO()
     await server.export_release_note(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"产品发布说明-{timestamp}.docx")
+    doc = await server.get_release_note(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "产品发布说明", "docx")
     return StreamingResponse(
         content=output,
         media_type="application/octet-stream",

@@ -4,8 +4,6 @@
 # 用户测试报告接口层（开发文件）。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -15,6 +13,7 @@ from ..obj.tobj_role import Perms
 from ..obj.tobj_utr_doc import UtrDocForm
 from ..obj.vobj_utr_doc import UtrDocObj
 from ..serv.serv_utr_doc import Server
+from ..utils import download_name
 from . import CtxUser, try_log
 
 router = APIRouter()
@@ -69,7 +68,8 @@ async def get_utr_doc(id: int):
 async def export_utr_doc(id: int = 0):
     output = io.BytesIO()
     await server.export_utr_doc(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"用户测试报告-{timestamp}.docx")
+    doc = await server.get_utr_doc(id)
+    obj = getattr(doc, "data", None)
+    filename = download_name.quoted(getattr(obj, "file_no", None), "用户测试报告", "docx", fallback="用户测试报告")
     return StreamingResponse(content=output, media_type="application/octet-stream",
                              headers={"Content-Disposition": f"attachment; filename={filename}"})

@@ -4,14 +4,13 @@
 # 测试环境维护记录接口层（测试文件）。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.tobj_tem_doc import TemDocForm
 from ..obj.vobj_tem_doc import TemDocObj
 from ..serv.serv_tem_doc import Server
@@ -73,8 +72,8 @@ async def get_tem_doc(id: int):
 async def export_tem_doc(id: int = 0):
     output = io.BytesIO()
     await server.export_tem_doc(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"测试环境维护记录-{timestamp}.docx")
+    doc = await server.get_tem_doc(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "测试环境维护记录", "docx")
     return StreamingResponse(
         content=output,
         media_type="application/octet-stream",

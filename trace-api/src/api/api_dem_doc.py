@@ -4,14 +4,13 @@
 # 开发环境维护说明接口层（开发文件）。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.tobj_dem_doc import DemDocForm
 from ..obj.vobj_dem_doc import DemDocObj
 from ..serv.serv_dem_doc import Server
@@ -69,8 +68,8 @@ async def get_dem_doc(id: int):
 async def export_dem_doc(id: int = 0):
     output = io.BytesIO()
     await server.export_dem_doc(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"开发环境维护说明-{timestamp}.docx")
+    doc = await server.get_dem_doc(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "开发环境维护说明", "docx")
     return StreamingResponse(
         content=output,
         media_type="application/octet-stream",

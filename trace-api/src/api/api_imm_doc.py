@@ -4,14 +4,13 @@
 # 安装维护手册接口层（测试文件 VV-005）。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.tobj_imm_doc import ImmDocForm
 from ..obj.vobj_imm_doc import ImmDocObj
 from ..serv.serv_imm_doc import Server
@@ -69,8 +68,8 @@ async def get_imm_doc(id: int):
 async def export_imm_doc(id: int = 0):
     output = io.BytesIO()
     await server.export_imm_doc(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"安装维护手册-{timestamp}.docx")
+    doc = await server.get_imm_doc(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "安装维护手册", "docx")
     return StreamingResponse(content=output, media_type="application/octet-stream",
                              headers={"Content-Disposition": f"attachment; filename={filename}"})
 
@@ -80,8 +79,8 @@ async def export_imm_doc(id: int = 0):
 async def export_imm_md5_attachment(id: int = 0):
     output = io.BytesIO()
     await server.export_imm_md5_attachment(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"MD5值附件-{timestamp}.docx")
+    doc = await server.get_imm_doc(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "MD5值附件", "docx")
     return StreamingResponse(content=output, media_type="application/octet-stream",
                              headers={"Content-Disposition": f"attachment; filename={filename}"})
 
@@ -91,7 +90,7 @@ async def export_imm_md5_attachment(id: int = 0):
 async def export_imm_md5_review(id: int = 0):
     output = io.BytesIO()
     await server.export_imm_md5_review(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"MD5值评审记录-{timestamp}.docx")
+    doc = await server.get_imm_doc(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "MD5值评审记录", "docx")
     return StreamingResponse(content=output, media_type="application/octet-stream",
                              headers={"Content-Disposition": f"attachment; filename={filename}"})

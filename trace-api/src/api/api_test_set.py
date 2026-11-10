@@ -4,13 +4,13 @@
 
 
 import io
-import urllib.parse
 from typing import Any
 from fastapi import APIRouter, Form, File, UploadFile
 from fastapi.responses import StreamingResponse
 from ..obj.vobj_test_set import TestSetObj
 from ..obj.tobj_test_set import TestSetForm
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj import Resp, Page
 from ..serv.serv_test_set import Server
 from . import CtxUser, try_log
@@ -53,13 +53,35 @@ async def get_test_set(id: int):
     return await server.get_test_set(id)
 
 
+def _test_case_review_file_no(product_id: int, kind: str) -> str:
+    """测试用例评审记录的文件编号取该产品 DHF（软件测试/用户测试用例）。"""
+    from sqlalchemy import select
+    from ..model.prod_dhf import ProdDhf
+    from ..utils.sql_ctx import db
+    kw = "用户测试用例" if kind == "用户测试" else "测试用例"
+    rows = db.session.execute(
+        select(ProdDhf).where(ProdDhf.product_id == product_id)
+    ).scalars().all()
+    for row in rows:
+        name = str(getattr(row, "name", "") or "")
+        if kw not in name:
+            continue
+        if kw == "测试用例" and "用户" in name:
+            continue
+        no = (getattr(row, "code", "") or "").strip()
+        if no:
+            return no
+    return ""
+
+
 @router.get("/export_test_case_review", summary="导出测试用例评审记录")
 @try_log(perm=Perms.test_set_view)
 async def export_test_case_review(product_id: int, kind: str):
     """kind=软件测试|用户测试；导出 Word，版本暂 A0。"""
     output = io.BytesIO()
     title = server.export_test_case_review(output, product_id=product_id, kind=kind)
-    filename = urllib.parse.quote(f"{title}.docx")
+    file_no = _test_case_review_file_no(product_id, kind)
+    filename = download_name.quoted(file_no, title, "docx", fallback=title)
     return StreamingResponse(
         content=output,
         media_type="application/octet-stream",

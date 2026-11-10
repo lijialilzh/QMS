@@ -4,13 +4,13 @@
 # 网络安全风险管理计划接口层，与网络安全风险管理报告（api_cybersec_doc）独立并行。
 
 import io
-import urllib.parse
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.tobj_cybersec_plan_doc import CybersecPlanDocForm
 from ..obj.vobj_cybersec_plan_doc import CybersecPlanDocObj
 from ..serv.serv_cybersec_plan_doc import Server
@@ -69,8 +69,10 @@ async def export_cybersec_plan_doc(id: int):
     output = io.BytesIO()
     server.export_cybersec_plan_doc(output, id)
     output.seek(0)
+    doc = await server.get_cybersec_plan_doc(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "网络安全风险管理计划", "docx")
     return StreamingResponse(
         output,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f"attachment; filename={urllib.parse.quote('网络安全风险管理计划.docx')}"},
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
     )

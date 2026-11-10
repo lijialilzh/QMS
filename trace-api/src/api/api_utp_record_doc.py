@@ -4,14 +4,13 @@
 # 用户测试记录接口层（测试文件 PD-010-QR-02）。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.tobj_utp_record_doc import UtpRecordDocForm
 from ..obj.vobj_utp_record_doc import UtpRecordDocObj
 from ..serv.serv_utp_record_doc import Server
@@ -76,8 +75,7 @@ async def export_utp_record_doc(id: int = 0):
         return Resp.resp_err(msg="未配置用户测试人员，请先在项目人员中添加角色含「用户测试」的成员")
     output = io.BytesIO()
     await server.export_utp_record_doc(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"用户测试记录-{timestamp}.zip")
+    filename = download_name.for_obj(getattr(detail, "data", None), "用户测试记录", "zip")
     return StreamingResponse(
         content=output,
         media_type="application/octet-stream",

@@ -5,11 +5,9 @@
 
 import io
 import re
-import urllib.parse
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
-from datetime import datetime
 from ..obj.tobj_prod_haz import ProdHazForm, ProdHazsForm
 from ..obj.vobj_prod_haz import ProdHazObj
 from ..obj.tobj_role import Perms
@@ -18,6 +16,7 @@ from ..serv.serv_prod_haz import Server
 from ..serv.serv_product import Server as ProductServer
 from . import CtxUser, try_log, ROLES_RISK_WRITE
 from ..utils.i18n import ts
+from ..utils import download_name
 
 router = APIRouter()
 server = Server()
@@ -72,13 +71,11 @@ async def export_prod_hazs(prod_id: int = None, page_index: int = 0, page_size: 
     op_user = CtxUser.get()
     output = io.BytesIO()
     await server.export_prod_hazs(op_user, output, prod_id=prod_id, page_index=page_index, page_size=page_size)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
     # 按产品版本导出时文件名带上产品名称与完整版本，多版本下载后便于区分
     parts = [ts('file_prod_haz')]
     if prod_id:
         parts.extend(await _prod_name_version(prod_id))
-    parts.append(timestamp)
-    filename = urllib.parse.quote(f"{'-'.join(parts)}.xlsx")
+    filename = download_name.quoted("", "-".join(parts), "xlsx")
     return StreamingResponse(content=output, 
         media_type="application/octet-stream",
         headers={"Content-Disposition": f"attachment; filename={filename}"}

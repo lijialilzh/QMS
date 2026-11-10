@@ -4,14 +4,13 @@
 # 风险管理计划接口层。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.tobj_rmp_doc import RmpDocForm
 from ..obj.vobj_rmp_doc import RmpDocObj
 from ..serv.serv_rmp_doc import Server
@@ -69,8 +68,8 @@ async def rmp_autofill(product_id: int, version: str = ""):
 async def export_rmp_doc(id: int = 0):
     output = io.BytesIO()
     await server.export_rmp_doc(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"风险管理计划-{timestamp}.docx")
+    doc = await server.get_rmp_doc(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "风险管理计划", "docx")
     return StreamingResponse(
         content=output,
         media_type="application/octet-stream",

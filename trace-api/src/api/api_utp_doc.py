@@ -4,14 +4,13 @@
 # 用户测试计划接口层（开发文件）。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.tobj_utp_doc import UtpDocForm
 from ..obj.vobj_utp_doc import UtpDocObj
 from ..serv.serv_utp_doc import Server
@@ -69,7 +68,7 @@ async def get_utp_doc(id: int):
 async def export_utp_doc(id: int = 0):
     output = io.BytesIO()
     await server.export_utp_doc(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"用户测试计划-{timestamp}.docx")
+    doc = await server.get_utp_doc(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "用户测试计划", "docx")
     return StreamingResponse(content=output, media_type="application/octet-stream",
                              headers={"Content-Disposition": f"attachment; filename={filename}"})

@@ -6,7 +6,6 @@
 import io
 import urllib.parse
 from typing import Any
-from datetime import datetime
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from ..obj.vobj_test_case import TestCaseObj
@@ -16,6 +15,7 @@ from ..obj import Resp, Page
 from ..serv.serv_test_case import Server
 from . import try_log
 from ..utils.i18n import ts
+from ..utils import download_name
 
 router = APIRouter()
 server = Server()
@@ -74,15 +74,12 @@ async def export_test_cases(set_id: int):
         ).scalars().first()
         file_no = (getattr(rec, "file_no", None) or "").strip() if rec else ""
         title = (STAGE_META.get(stage) or {}).get("title") or f"{stage}记录"
-        raw = f"{file_no} {title}".strip() if file_no else title
+        name_part = title
     else:
         file_no = (getattr(ts_row, "file_no", None) or "").strip() if ts_row else ""
         file_name = (getattr(ts_row, "file_name", None) or "").strip() if ts_row else ""
-        if file_no:
-            raw = f"{file_no} {file_name}".strip() if file_name else file_no
-        else:
-            raw = f"{ts('file_test_case')}-{datetime.now().strftime('%y%m%d.%H%M')}"
-    filename = urllib.parse.quote(f"{raw}.xlsx")
+        name_part = file_name or ts("file_test_case")
+    filename = urllib.parse.quote(download_name.build(file_no, name_part, "xlsx", fallback=ts("file_test_case")))
     return StreamingResponse(content=output, 
         media_type="application/octet-stream",
         headers={"Content-Disposition": f"attachment; filename={filename}"}

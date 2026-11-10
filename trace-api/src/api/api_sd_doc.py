@@ -4,14 +4,13 @@
 # 软件开发计划接口层，模板参考产品开发计划(api_pdp_doc)。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.tobj_sd_doc import SdDocForm
 from ..obj.vobj_sd_doc import SdDocObj
 from ..serv.serv_sd_doc import Server
@@ -69,8 +68,8 @@ async def get_sd_doc(id: int):
 async def export_sd_doc(id: int = 0):
     output = io.BytesIO()
     await server.export_sd_doc(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"软件开发计划-{timestamp}.docx")
+    doc = await server.get_sd_doc(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "软件开发计划", "docx")
     return StreamingResponse(
         content=output,
         media_type="application/octet-stream",

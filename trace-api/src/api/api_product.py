@@ -4,8 +4,6 @@
 
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -17,6 +15,7 @@ from ..obj import Resp, Page
 from ..serv.serv_product import Server
 from . import CtxUser, try_log, ROLES_VERSION_WRITE
 from ..utils.i18n import ts
+from ..utils import download_name
 
 router = APIRouter()
 server = Server()
@@ -87,8 +86,7 @@ async def get_product(id: int):
 async def export_product_trace(id: int):
     output = io.BytesIO()
     await server.export_product_trace(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"{ts('file_product_trace')}-{timestamp}.xlsx")
+    filename = download_name.quoted("", ts('file_product_trace'), "xlsx")
     return StreamingResponse(content=output, 
         media_type="application/octet-stream",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
@@ -101,8 +99,7 @@ async def export_products(fuzzy: str = None, page_index: int = 0, page_size: int
     op_user: UserObj = CtxUser.get()
     output = io.BytesIO()
     await server.export_products(output, op_user, fuzzy=fuzzy, page_index=page_index, page_size=page_size)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"{ts('file_product')}-{timestamp}.xlsx")
+    filename = download_name.quoted("", ts('file_product'), "xlsx")
     return StreamingResponse(content=output, 
         media_type="application/octet-stream",
         headers={"Content-Disposition": f"attachment; filename={filename}"}

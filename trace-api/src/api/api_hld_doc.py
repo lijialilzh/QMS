@@ -12,6 +12,7 @@ from ..obj import Page, Resp
 from ..obj.tobj_hld_doc import HldDocForm, HldNodeForm
 from ..obj.tobj_role import Perms
 from ..obj.vobj_hld_doc import HldDocObj
+from ..utils import download_name
 from ..serv.serv_hld_doc import Server
 from . import CtxUser, try_log
 
@@ -20,11 +21,8 @@ server = Server()
 
 
 def _hld_export_filename(file_no: str) -> str:
-    # 与详细设计互逆：{文件编号}软件概要设计.docx，中间不加分隔符
-    name = f"{(file_no or '').strip()}软件概要设计.docx"
-    for ch in '/\\:*?"<>|':
-        name = name.replace(ch, "_")
-    return name or "软件概要设计.docx"
+    # 统一命名：{文件编号} {文件名称}.docx，编号为空时只写文件名称
+    return download_name.build(file_no, "软件概要设计", "docx", fallback="软件概要设计")
 
 
 @router.post("/add_hld_doc", summary="添加HLD_DOC", response_model=Resp[HldDocForm])

@@ -2,8 +2,6 @@
 # encoding: utf-8
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
@@ -11,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from ..obj import Page, Resp
 from ..obj.tobj_risk_mgmt_doc import RiskAnalysisForm, RiskControlForm, RiskMgmtDocForm, RiskParticipantForm
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.vobj_risk_mgmt_doc import RiskAnalysisObj, RiskControlObj, RiskMgmtDocObj, RiskParticipantObj
 from ..serv.serv_risk_mgmt_doc import Server
 from . import CtxUser, try_log
@@ -169,8 +168,8 @@ async def list_risk_control(product_id: int = 0, doc_id: int = 0, keyword: str =
 async def export_risk_mgmt_doc(id: int = 0):
     output = io.BytesIO()
     await server.export_risk_mgmt_doc(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"风险管理报告-{timestamp}.docx")
+    doc = await server.get_risk_mgmt_doc(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "风险管理报告", "docx")
     return StreamingResponse(
         content=output,
         media_type="application/octet-stream",

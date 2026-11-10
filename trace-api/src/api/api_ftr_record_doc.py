@@ -4,14 +4,13 @@
 # 现场测试记录接口层（测试文件 VV-006）。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.tobj_ftr_record_doc import FtrRecordDocForm
 from ..obj.vobj_ftr_record_doc import FtrRecordDocObj
 from ..serv.serv_ftr_record_doc import Server
@@ -69,7 +68,7 @@ async def get_ftr_record_doc(id: int):
 async def export_ftr_record_doc(id: int = 0):
     output = io.BytesIO()
     await server.export_ftr_record_doc(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"现场测试记录-{timestamp}.docx")
+    doc = await server.get_ftr_record_doc(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "现场测试记录", "docx")
     return StreamingResponse(content=output, media_type="application/octet-stream",
                              headers={"Content-Disposition": f"attachment; filename={filename}"})

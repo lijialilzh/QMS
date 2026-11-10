@@ -4,14 +4,13 @@
 # 自研软件网络安全研究报告接口层。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.tobj_nsr_doc import NsrDocForm
 from ..obj.vobj_nsr_doc import NsrDocObj
 from ..serv.serv_nsr_doc import Server
@@ -69,8 +68,8 @@ async def nsr_autofill(product_id: int):
 async def export_nsr_doc(id: int = 0):
     output = io.BytesIO()
     await server.export_nsr_doc(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"自研软件网络安全研究报告-{timestamp}.docx")
+    doc = await server.get_nsr_doc(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "自研软件网络安全研究报告", "docx")
     return StreamingResponse(
         content=output,
         media_type="application/octet-stream",

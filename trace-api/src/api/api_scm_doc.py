@@ -4,14 +4,13 @@
 # 软件配置管理计划接口层（开发文件）。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.tobj_scm_doc import ScmDocForm
 from ..obj.vobj_scm_doc import ScmDocObj
 from ..serv.serv_scm_doc import Server
@@ -69,7 +68,7 @@ async def get_scm_doc(id: int):
 async def export_scm_doc(id: int = 0):
     output = io.BytesIO()
     await server.export_scm_doc(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"软件配置管理计划-{timestamp}.docx")
+    doc = await server.get_scm_doc(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "软件配置管理计划", "docx")
     return StreamingResponse(content=output, media_type="application/octet-stream",
                              headers={"Content-Disposition": f"attachment; filename={filename}"})

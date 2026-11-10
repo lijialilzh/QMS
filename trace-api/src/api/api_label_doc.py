@@ -4,14 +4,13 @@
 # 产品标签样稿接口层，详见 docs/function_docs/58_产品标签样稿.md。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.tobj_label_doc import LabelDocForm
 from ..obj.vobj_label_doc import LabelDocObj
 from ..serv.serv_label_doc import Server
@@ -63,8 +62,8 @@ async def get_label_doc(id: int):
 async def export_label_doc(id: int = 0):
     output = io.BytesIO()
     await server.export_label_doc(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"产品标签样稿-{timestamp}.docx")
+    doc = await server.get_label_doc(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "产品标签样稿", "docx")
     return StreamingResponse(
         content=output,
         media_type="application/octet-stream",

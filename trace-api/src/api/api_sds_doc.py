@@ -12,6 +12,7 @@ from ..obj.vobj_sds_doc import CompareObj, SdsDocObj
 from ..obj.tobj_sds_doc import SdsDocForm, SdsNodeForm
 from ..obj.tobj_role import Perms
 from ..obj import Resp, Page
+from ..utils import download_name
 from ..serv.serv_sds_doc import Server
 from . import CtxUser, try_log
 
@@ -20,11 +21,8 @@ server = Server()
 
 
 def _sds_export_filename(file_no: str) -> str:
-    # 与导入解析互逆：{文件编号}软件详细设计.docx，中间不加分隔符
-    name = f"{(file_no or '').strip()}软件详细设计.docx"
-    for ch in '/\\:*?"<>|':
-        name = name.replace(ch, "_")
-    return name
+    # 统一命名：{文件编号} {文件名称}.docx，编号为空时只写文件名称
+    return download_name.build(file_no, "软件详细设计", "docx", fallback="软件详细设计")
 
 
 @router.post("/add_sds_doc", summary="添加SDS_DOC", response_model=Resp[SdsDocForm])

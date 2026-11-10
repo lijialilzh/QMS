@@ -4,14 +4,13 @@
 # 数据申请单接口层（开发文件）。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.tobj_dat_doc import DatDocForm
 from ..obj.vobj_dat_doc import DatDocObj
 from ..serv.serv_dat_doc import Server
@@ -69,8 +68,8 @@ async def get_dat_doc(id: int):
 async def export_dat_doc(id: int = 0):
     output = io.BytesIO()
     await server.export_dat_doc(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"数据申请单-{timestamp}.docx")
+    doc = await server.get_dat_doc(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "数据申请单", "docx")
     return StreamingResponse(
         content=output,
         media_type="application/octet-stream",

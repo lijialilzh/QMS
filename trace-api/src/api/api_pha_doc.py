@@ -4,14 +4,13 @@
 # 初步危害分析清单接口层。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.tobj_pha_doc import PhaDocForm
 from ..obj.vobj_pha_doc import PhaDocObj
 from ..serv.serv_pha_doc import Server
@@ -63,8 +62,8 @@ async def get_pha_doc(id: int):
 async def export_pha_doc(id: int = 0):
     output = io.BytesIO()
     await server.export_pha_doc(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"初步危害分析清单-{timestamp}.docx")
+    doc = await server.get_pha_doc(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "初步危害分析清单", "docx")
     return StreamingResponse(
         content=output,
         media_type="application/octet-stream",

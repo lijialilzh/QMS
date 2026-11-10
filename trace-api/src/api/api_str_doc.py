@@ -4,8 +4,6 @@
 # 软件测试报告接口层（开发文件）。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -15,6 +13,7 @@ from ..obj.tobj_role import Perms
 from ..obj.tobj_str_doc import StrDocForm
 from ..obj.vobj_str_doc import StrDocObj
 from ..serv.serv_str_doc import Server
+from ..utils import download_name
 from . import CtxUser, try_log
 
 router = APIRouter()
@@ -81,8 +80,9 @@ async def refill_str_compat_items(product_id: int, kind: str = "win"):
 async def export_str_doc(id: int = 0, mode: str = "full"):
     output = io.BytesIO()
     await server.export_str_doc(output, id, mode=mode)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    suffix = "-兼容性测试" if mode == "compat" else ""
-    filename = urllib.parse.quote(f"软件测试报告{suffix}-{timestamp}.docx")
+    doc = await server.get_str_doc(id)
+    obj = getattr(doc, "data", None)
+    title = "兼容性测试报告" if mode == "compat" else "软件测试报告"
+    filename = download_name.quoted(getattr(obj, "file_no", None), title, "docx", fallback=title)
     return StreamingResponse(content=output, media_type="application/octet-stream",
                              headers={"Content-Disposition": f"attachment; filename={filename}"})

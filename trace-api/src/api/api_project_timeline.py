@@ -4,12 +4,11 @@
 
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
 from ..obj.tobj_project_timeline import TimelineRowForm, TimelineCellForm
+from ..utils import download_name
 from ..obj.tobj_role import Perms
 from ..obj import Resp
 from ..serv.serv_project_timeline import Server
@@ -62,8 +61,7 @@ async def import_timeline(prod_id: int = Form(...), replace: bool = Form(True), 
 async def export_timeline(prod_id: int = None):
     output = io.BytesIO()
     await server.export_timeline(prod_id, output)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"{ts('file_project_timeline')}-{timestamp}.xlsx")
+    filename = download_name.quoted("", ts('file_project_timeline'), "xlsx")
     return StreamingResponse(content=output,
         media_type="application/octet-stream",
         headers={"Content-Disposition": f"attachment; filename={filename}"}

@@ -3,13 +3,12 @@
 # @author: ZengLei
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
 from ..utils.i18n import ts
 from ..obj.tobj_prod_dhf import ProdDhfForm, ProdDhfBatchDeleteForm, ProdDhfCopyForm, ProdDhfProdDeleteForm
+from ..utils import download_name
 from ..obj.vobj_prod_dhf import ProdDhfObj
 from ..obj.tobj_role import Perms
 from ..obj import Resp, Page
@@ -75,8 +74,7 @@ async def export_prod_dhfs(prod_id: int = None, page_index: int = 0, page_size: 
     op_user = CtxUser.get()
     output = io.BytesIO()
     await server.export_prod_dhfs(op_user, output, prod_id=prod_id, page_index=page_index, page_size=page_size)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"{ts('file_prod_dhf')}-{timestamp}.xlsx")
+    filename = download_name.quoted("", ts('file_prod_dhf'), "xlsx")
     return StreamingResponse(content=output, 
         media_type="application/octet-stream",
         headers={"Content-Disposition": f"attachment; filename={filename}"}

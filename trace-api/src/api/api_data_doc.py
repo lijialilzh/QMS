@@ -4,8 +4,6 @@
 # 数据文件接口层，详见 docs/function_docs/100_数据文件管理.md。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter, File, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -14,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.tobj_data_doc import DataDocForm
 from ..obj.vobj_data_doc import DataDocObj
 from ..serv.serv_data_doc import Server
@@ -83,8 +82,9 @@ async def export_data_doc(id: int = 0):
         title, ext = result[0] or "数据文件", result[1] or "docx"
     else:
         title, ext = result, "docx"
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"{title}-{timestamp}.{ext}")
+    doc = await server.get_data_doc(id)
+    obj = getattr(doc, "data", None)
+    filename = download_name.for_obj(obj, title, ext, fallback="数据文件")
     return StreamingResponse(
         content=output,
         media_type="application/octet-stream",

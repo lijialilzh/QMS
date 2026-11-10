@@ -6,7 +6,6 @@
 import io
 import urllib.parse
 from typing import Any, List
-from datetime import datetime
 from fastapi import APIRouter, Form, File, UploadFile
 from fastapi.responses import StreamingResponse
 from ..obj.vobj_srs_doc import SrsDocObj
@@ -17,17 +16,15 @@ from ..obj import Resp, Page
 from ..serv.serv_srs_doc import Server
 from . import CtxUser, try_log
 from ..utils.i18n import ts
+from ..utils import download_name
 
 router = APIRouter()
 server = Server()
 
 
 def _srs_export_filename(file_no: str, folder_name: str) -> str:
-    # 与导入解析互逆：{文件编号}{文档名称}.docx，中间不加分隔符
-    name = f"{(file_no or '').strip()}{(folder_name or '').strip() or '需求规格说明'}.docx"
-    for ch in '/\\:*?"<>|':
-        name = name.replace(ch, "_")
-    return name
+    # 统一命名：{文件编号} {文件名称}.docx，编号为空时只写文件名称
+    return download_name.build(file_no, folder_name, "docx", fallback="需求规格说明")
 
 
 @router.post("/add_srs_doc", summary="添加SRS_DOC", response_model=Resp[SrsDocForm])
@@ -161,8 +158,7 @@ async def export_doc_trace(id: int = 0):
 
     output = io.BytesIO()
     await server.export_doc_trace(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"{ts('file_doc_trace')}-{name}-{timestamp}.xlsx")
+    filename = download_name.quoted(doc.file_no, f"{ts('file_doc_trace')}-{name}", "xlsx")
     return StreamingResponse(content=output, 
         media_type="application/octet-stream",
         headers={"Content-Disposition": f"attachment; filename={filename}"}
@@ -178,8 +174,7 @@ async def export_doc_trace_word(id: int = 0):
 
     output = io.BytesIO()
     await server.export_doc_trace_word(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"{ts('file_doc_trace')}-{name}-{timestamp}.docx")
+    filename = download_name.quoted(doc.file_no, f"{ts('file_doc_trace')}-{name}", "docx")
     return StreamingResponse(content=output,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f"attachment; filename={filename}"}

@@ -5,14 +5,13 @@
 # 与风险管理报告（api_risk_mgmt_doc）零耦合。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import StreamingResponse
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.tobj_cybersec_doc import (
     CybersecDocForm,
     CybersecThreatForm,
@@ -101,8 +100,8 @@ async def preview_cybersec_content(product_id: int = 0, version: str = ""):
 async def export_cybersec_doc(id: int = 0):
     output = io.BytesIO()
     await server.export_cybersec_doc(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"网络安全风险管理报告-{timestamp}.docx")
+    doc = await server.get_cybersec_doc(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "网络安全风险管理报告", "docx")
     return StreamingResponse(
         content=output,
         media_type="application/octet-stream",

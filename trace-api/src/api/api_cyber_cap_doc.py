@@ -4,14 +4,13 @@
 # 网络安全能力分析（MDS2）接口层。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
+from ..utils import download_name
 from ..obj.tobj_cyber_cap_doc import CyberCapDocForm
 from ..obj.vobj_cyber_cap_doc import CyberCapDocObj
 from ..serv.serv_cyber_cap_doc import Server
@@ -75,8 +74,8 @@ async def get_cyber_cap_doc(id: int):
 async def export_cyber_cap_doc(id: int = 0):
     output = io.BytesIO()
     await server.export_cyber_cap_doc(output, id)
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"网络安全能力分析-{timestamp}.xlsx")
+    doc = await server.get_cyber_cap_doc(id)
+    filename = download_name.for_obj(getattr(doc, "data", None), "网络安全能力分析", "xlsx")
     return StreamingResponse(
         content=output,
         media_type="application/octet-stream",

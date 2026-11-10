@@ -4,8 +4,6 @@
 # 模型文件接口层，详见 docs/function_docs/99_模型文件管理.md。
 
 import io
-import urllib.parse
-from datetime import datetime
 from typing import Any
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -15,6 +13,7 @@ from ..obj.tobj_role import Perms
 from ..obj.tobj_model_doc import ModelDocForm
 from ..obj.vobj_model_doc import ModelDocObj
 from ..serv.serv_model_doc import Server
+from ..utils import download_name
 from . import CtxUser, try_log
 
 router = APIRouter()
@@ -71,8 +70,9 @@ async def export_model_doc(id: int = 0):
         title, ext = result[0] or "模型文件", result[1] or "docx"
     else:
         title, ext = result, "docx"
-    timestamp = datetime.now().strftime("%y%m%d.%H%M")
-    filename = urllib.parse.quote(f"{title}-{timestamp}.{ext}")
+    doc = await server.get_model_doc(id)
+    obj = getattr(doc, "data", None)
+    filename = download_name.for_obj(obj, title, ext, fallback="模型文件")
     return StreamingResponse(
         content=output,
         media_type="application/octet-stream",
