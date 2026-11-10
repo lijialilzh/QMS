@@ -1767,11 +1767,17 @@ class Server(object):
 
         document.add_page_break()
         seq = 0
+        printed = 0
         for node in body:
             if node.get("ref_type") in ("review", "attachment"):
+                # 评审记录、兼容性测试报告附件各自单独成页：前面已有内容时先分页
+                if printed > 0:
+                    document.add_page_break()
                 render_body_section(node, 1, "")
+                printed += 1
             else:
                 seq += 1
+                printed += 1
                 render_body_section(node, 1, str(seq))
 
         docx_util.fill_toc_cache(document)

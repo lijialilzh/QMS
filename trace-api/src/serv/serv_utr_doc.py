@@ -1080,6 +1080,9 @@ class Server(object):
         seq = 0
         for node in body:
             if node.get("ref_type") in ("review", "attachment"):
+                # 评审记录单独成页：前面已有正文章节时先分页（附件不额外插页）
+                if node.get("ref_type") == "review" and seq > 0:
+                    document.add_page_break()
                 render_body_section(node, 1, "")
             else:
                 seq += 1
