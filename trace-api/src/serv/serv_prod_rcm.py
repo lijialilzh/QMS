@@ -692,19 +692,33 @@ class Server(object):
     async def export_prod_rcms(self, op_user: UserObj, output, *args, **kwargs):
         resp = await self.list_prod_rcm(op_user, *args, **kwargs)
         rows = resp.data.rows or []
+        # 列表导出：产品已删除的孤儿记录不在页面上显示，导出同样排除，口径与列表一致
+        if not kwargs.get("prod_id"):
+            rows = [r for r in rows if (getattr(r, "product_name", None) or "").strip()]
 
         temp_path = os.path.join(os.path.dirname(__file__), "temp_prod_rcm.xlsx")
         wb = load_workbook(temp_path)
         ws = wb[wb.sheetnames[0]]
+        # 列表页导出多个产品时，行里必须能看出属于哪个产品：
+        # 在最前面插入「产品名称 / 完整版本」两列，模板本身不带这两列。
+        with_product = not kwargs.get("prod_id")
+        if with_product:
+            ws.insert_cols(1, 2)
+            ws.cell(row=1, column=1, value="产品名称")
+            ws.cell(row=1, column=2, value="完整版本")
+        offset = 2 if with_product else 0
         for ridx, row in enumerate(rows, 2):
             obj = row.dict()
+            if with_product:
+                ws.cell(row=ridx, column=1, value=obj.get("product_name"))
+                ws.cell(row=ridx, column=2, value=obj.get("product_version"))
             for cidx, key in enumerate(self.export_columns, 1):
                 value = obj.get(key)
                 if key == "srs_codes" or key == "test_codes":
                     value = "，\n".join(value)
                 if key == "srs_flag":
                     value = ts("yes") if value else ts("no")
-                ws.cell(row=ridx, column=cidx, value=value)
+                ws.cell(row=ridx, column=cidx + offset, value=value)
 
         align = Alignment(vertical='center', wrap_text=True)
         for row in ws.iter_rows():

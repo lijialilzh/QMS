@@ -533,6 +533,9 @@ class Server(object):
         "release_version",
         "udi",
         "product_code",
+        # 与页面列表列序一致：注册人、设计开发地址紧跟产品代码
+        "registrant",
+        "design_address",
         "scope",
         "component",
         "note",

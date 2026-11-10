@@ -31,6 +31,7 @@ const buildCountMap = (rows: any[] = []) => {
 export default ({
     listApi,
     deleteApi,
+    exportApi,
     basePath,
     addTitle,
     hint,
@@ -45,6 +46,7 @@ export default ({
 }: {
     listApi: (params: any) => Promise<any>;
     deleteApi: (params: any) => Promise<any>;
+    exportApi?: (params: any) => Promise<any>;
     basePath: string;
     addTitle: string;
     hint: string;
@@ -79,6 +81,7 @@ export default ({
         dlgType: null as string | null,
         expandedKeys: [] as number[],
         expandReadOnly: false,
+        exportingId: null as number | null,
     });
 
     const loadCounts = () => {
@@ -228,25 +231,44 @@ export default ({
         loadCounts();
     }, []);
 
+    // 按产品版本导出：操作列每行一个导出，只导当前行的产品
+    const doExportRow = (row: any) => {
+        if (!exportApi || !row?.id) return;
+        dispatch({ exportingId: row.id });
+        exportApi({
+            prod_id: row.id,
+            page_index: 0,
+            page_size: 100000,
+        }).then((res: any) => {
+            dispatch({ exportingId: null });
+            if (res && res.code !== C_OK) {
+                message.error(res.msg);
+            }
+        }).catch(() => {
+            dispatch({ exportingId: null });
+            message.error("导出失败");
+        });
+    };
+
     const columns = [
         {
             title: ts("product.name"),
             dataIndex: "name",
-            width: "22%",
+            width: "21%",
             ellipsis: true,
             render: (value: any) => renderOneLineWithTooltip(value),
         },
         {
             title: ts("product.full_version"),
             dataIndex: "full_version",
-            width: "14%",
+            width: "13%",
             ellipsis: true,
             render: (value: any) => renderOneLineWithTooltip(value),
         },
         {
             title: ts("product.release_version"),
             dataIndex: "release_version",
-            width: "12%",
+            width: "10%",
             ellipsis: true,
             render: (value: any) => renderOneLineWithTooltip(value),
         },
@@ -265,7 +287,7 @@ export default ({
         },
         {
             title: ts("action"),
-            width: "28%",
+            width: "32%",
             className: "prod-dhfs-list-action-col",
             onCell: () => ({ className: "prod-dhfs-list-action-col" }),
             render: (_: any, row: any) => {
@@ -287,6 +309,15 @@ export default ({
                         danger
                         onClick={() => dispatch({ dlgType: DlgTypes.delete, targetRow: row })}>
                         {ts("delete")}
+                    </Button>
+                    ) : null}
+                    {exportApi ? (
+                    <Button
+                        type="link"
+                        size="small"
+                        loading={data.exportingId === row.id}
+                        onClick={() => doExportRow(row)}>
+                        {ts("export")}
                     </Button>
                     ) : null}
                 </Space>

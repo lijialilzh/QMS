@@ -1428,7 +1428,8 @@ class Server(object):
                     for field in fields
                 ])
             if not value_rows:
-                value_rows = [["当前产品暂无对应 THREAT"] + [""] * (len(headers) - 1)]
+                # 无数据不画表：占位行带进 Word 只会剩一张空表
+                return
             add_header_table(headers, value_rows)
 
         def is_sbom_cst(cst):
@@ -1457,8 +1458,10 @@ class Server(object):
                     cell(pc.cur_score), cell(pc.cur_severity), cell(pc.cur_level), pc.cur_accept or "",
                     "\n".join(dict.fromkeys(re.findall(r"RCM\d+", str(pc.rcm_codes or "")))),
                 ])
+            # 无数据时不画表：页面上的「当前产品暂无对应 THREAT 数据。」只是编辑提示，
+            # 带进 Word 会变成一张只有表头的空表，按「空表不画」的口径直接跳过。
             if not value_rows:
-                value_rows = [["当前产品暂无对应 THREAT 数据。"] + [""] * (len(headers) - 1)]
+                return
             add_header_table(headers, value_rows)
 
         def add_stride_threats():
@@ -1477,6 +1480,9 @@ class Server(object):
 
         def add_control_table(model):
             rows = db.session.execute(select(model).where(model.doc_id == id).order_by(model.id)).scalars().all()
+            if not rows:
+                # 无 RCM 时不画空表（与 THREAT 参考表同一口径）
+                return
             headers = ["RCM编号", "控制措施描述", "关联威胁编号", "验证证据", "是否引入新风险", "备注"]
             value_rows = [[
                 r.rcm_code or "", r.description or "", r.threat_codes or "", r.verification_evidence or "",

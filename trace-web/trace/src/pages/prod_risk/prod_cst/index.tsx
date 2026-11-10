@@ -7,6 +7,7 @@ export default () => (
     <ProdRiskProductList
         listApi={Api.list_prod_cst}
         deleteApi={Api.delete_prod_csts}
+        exportApi={Api.export_prod_csts}
         addItemsApi={Api.add_prod_csts}
         idsParam="cst_ids"
         selectEmptyMsg="请选择HAZ!"

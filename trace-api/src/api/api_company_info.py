@@ -33,7 +33,7 @@ async def update_company_info(form: CompanyInfoForm):
 
 
 @router.get("/list_company_info", summary="查询公司基本信息列表", response_model=Resp[Page[CompanyInfoObj]])
-@try_log(perm=Perms.company_info_view)
+@try_log(perm=[Perms.company_info_view, Perms.product_view])
 async def list_company_info(fuzzy: str = None, page_index: int = 0, page_size: int = 10):
     return await server.list_company_info(fuzzy=fuzzy, page_index=page_index, page_size=page_size)
 

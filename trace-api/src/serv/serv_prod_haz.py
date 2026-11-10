@@ -138,15 +138,50 @@ class Server(object):
     async def export_prod_hazs(self, op_user: UserObj, output, *args, **kwargs):
         resp = await self.list_prod_haz(op_user, *args, export=True, **kwargs)
         rows = resp.data.rows or []
+        # 列表导出：产品已删除的孤儿记录不在页面上显示，导出同样排除，口径与列表一致
+        if not kwargs.get("prod_id"):
+            rows = [r for r in rows if (getattr(r, "product_name", None) or "").strip()]
 
         temp_path = os.path.join(os.path.dirname(__file__), "temp_haz.xlsx")
         wb = load_workbook(temp_path)
         ws = wb[wb.sheetnames[0]]
+        # 列表页导出多个产品时，行里必须能看出属于哪个产品：
+        # 在最前面插入「产品名称 / 完整版本」两列，模板本身不带这两列。
+        # haz 模板是两行合并表头（初始风险 F1:H1、剩余风险 L1:N1），
+        # openpyxl 的 insert_cols 不会搬合并区域，这里手动整表右移并同步合并区域。
+        with_product = not kwargs.get("prod_id")
+        offset = 0
+        if with_product:
+            from copy import copy
+            last_col = ws.max_column
+            merges = [str(r) for r in ws.merged_cells.ranges]
+            for rng in merges:
+                ws.unmerge_cells(rng)
+            snap = {}
+            for r in range(1, max(ws.max_row, 2) + 1):
+                for c in range(1, last_col + 1):
+                    cell = ws.cell(row=r, column=c)
+                    snap[(r, c)] = (cell.value, copy(cell._style))
+                    cell.value = None
+            for (r, c), (val, style) in snap.items():
+                dst = ws.cell(row=r, column=c + 2)
+                dst.value = val
+                dst._style = style
+            for rng in merges:
+                start, end = rng.split(":")
+                s, e = ws[start], ws[end]
+                ws.merge_cells(start_row=s.row, start_column=s.column + 2, end_row=e.row, end_column=e.column + 2)
+            ws.cell(row=1, column=1, value="产品名称")
+            ws.cell(row=1, column=2, value="完整版本")
+            offset = 2
         for ridx, row in enumerate(rows, 3):
             obj = row.dict()
+            if with_product:
+                ws.cell(row=ridx, column=1, value=obj.get("product_name"))
+                ws.cell(row=ridx, column=2, value=obj.get("product_version"))
             for cidx, key in enumerate(export_columns, 1):
                 value = obj.get(key)
-                ws.cell(row=ridx, column=cidx, value=value)
+                ws.cell(row=ridx, column=cidx + offset, value=value)
         wb.save(output)
         output.seek(0)
         

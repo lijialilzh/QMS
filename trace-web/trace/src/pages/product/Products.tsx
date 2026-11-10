@@ -53,6 +53,8 @@ const suggestFullVersion = (products: any[], targetName: string, sourceRow: any)
     return String(sourceRow?.full_version || "").trim();
 };
 
+// 仅用于回显项目/注册人名称的下拉数据：加载失败静默降级，不弹无权限提示
+// （查看入口对所有角色开放，低权限角色没有 project_view / company_info_view 也不该报错）
 const doSearchProjects = (data: any, dispatch: any) => {
     if (data.projects.length === 0) {
         dispatch({ loadingProjects: true });
@@ -60,10 +62,9 @@ const doSearchProjects = (data: any, dispatch: any) => {
             if (res.code === ApiProject.C_OK) {
                 dispatch({ loadingProjects: false, projects: res.data.rows || [] });
             } else {
-                message.error(res.msg);
                 dispatch({ loadingProjects: false });
             }
-        });
+        }).catch(() => dispatch({ loadingProjects: false }));
     }
 };
 
@@ -73,7 +74,7 @@ const loadCompanies = (data: any, dispatch: any) => {
         if (res.code === ApiCompanyInfo.C_OK) {
             dispatch({ companies: res.data?.rows || [] });
         }
-    });
+    }).catch(() => {});
 };
 
 
