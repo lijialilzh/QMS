@@ -4102,13 +4102,7 @@ finally:
         if sds_doc:
             docx = Document()
             try:
-                if OxmlElement is not None and qn is not None:
-                    try:
-                        update_fields = OxmlElement("w:updateFields")
-                        update_fields.set(qn("w:val"), "true")
-                        docx.settings.element.append(update_fields)
-                    except Exception:
-                        logger.exception("enable sds docx updateFields failed")
+                docx_util.enable_update_fields_on_open(docx)
 
                 header_para = docx.sections[0].header.add_paragraph()
                 header_para.alignment = dox_enum.text.WD_ALIGN_PARAGRAPH.RIGHT

@@ -468,9 +468,7 @@ class Server(object):
         section.bottom_margin = Inches(0.8)
         section.left_margin = Inches(0.7)
         section.right_margin = Inches(0.7)
-        update_fields = OxmlElement("w:updateFields")
-        update_fields.set(qn("w:val"), "true")
-        document.settings.element.append(update_fields)
+        docx_util.enable_update_fields_on_open(document)
         header_para = section.header.add_paragraph()
         header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         docx_util.fonted_txt(header_para, obj.file_no or "")

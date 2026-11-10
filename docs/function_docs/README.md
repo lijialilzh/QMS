@@ -8,6 +8,8 @@
 > 3. 改 Bug 只允许**分步、局部**修改文档中明确指定的范围，不影响其它已实现功能。
 > 4. 每份功能文档底部均有「修改注意事项 / 不可破坏的核心逻辑」，修改前必须先读。
 
+> **Word 导出目录页码（所有导出模块共性）**：目录域用 `docx_util.insert_toc_field`，页码刷新靠 `docx_util.enable_update_fields_on_open` 设置 `w:updateFields=true`，Word/WPS 打开文档时自动更新标题与页码。该标记必须按 OOXML schema 顺序写在 `compat` 之前，**禁止**直接 `docx.settings.element.append(...)`（末尾属于非法位置，Word 会忽略，表现为目录页码全是 1）。目录缓存区页码只留零宽占位，不写死 `1`。新增导出模块一律调用这两个公共函数，不要各自复制 OOXML 片段。
+
 ---
 
 ## 文档结构

@@ -751,9 +751,24 @@ def add_page_number_footer(section, file_no: str = "", skip_first: bool = True):
             hp.alignment = align_right
             fonted_txt(hp, str(file_no or ""))
 
+        # w:pgNumType 在 CT_SectPr 中必须排在 pgSz/pgMar/paperSrc 之后、pgBorders 之前；
+        # 直接 append 到 sectPr 末尾（docGrid 之后）属于非法位置，页码起始值可能不生效。
         pg_num_type = OxmlElement("w:pgNumType")
         pg_num_type.set(qn("w:start"), "1")
-        section._sectPr.append(pg_num_type)
+        sect_pr = section._sectPr
+        for old in sect_pr.findall(qn("w:pgNumType")):
+            sect_pr.remove(old)
+        after_tags = {qn(f"w:{name}") for name in (
+            "pgBorders", "lnNumType", "pgNumType", "cols", "formProt",
+            "vAlign", "noEndnote", "titlePg", "textDirection", "bidi",
+            "rtlGutter", "docGrid", "printerSettings", "sectPrChange",
+        )}
+        for child in list(sect_pr):
+            if child.tag in after_tags:
+                child.addprevious(pg_num_type)
+                break
+        else:
+            sect_pr.append(pg_num_type)
 
     footer = section.footer
     fp = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
@@ -783,14 +798,14 @@ def insert_toc_field(docx: Document, outline_levels: str = "1-4"):
     """插入 Word 目录域，打开文档后自动更新标题与页码。"""
     if OxmlElement is None or qn is None:
         return
-    # 设置 updateFields=true，Word 打开时弹"更新域"对话框
-    update_fields = OxmlElement("w:updateFields")
-    update_fields.set(qn("w:val"), "true")
-    docx.settings.element.append(update_fields)
+    # updateFields=true：Word 打开文档时自动刷新目录标题与页码（位置由函数内部按 schema 处理）
+    enable_update_fields_on_open(docx)
     p = docx.add_paragraph()
     run_begin = p.add_run()
     fld_begin = OxmlElement("w:fldChar")
     fld_begin.set(qn("w:fldCharType"), "begin")
+    # dirty=true：标记该域需要重算，Word 打开时即使未设置「自动更新域」也会重算本域
+    fld_begin.set(qn("w:dirty"), "true")
     run_begin._r.append(fld_begin)
     instr = OxmlElement("w:instrText")
     instr.set(qn("xml:space"), "preserve")
@@ -806,12 +821,33 @@ def insert_toc_field(docx: Document, outline_levels: str = "1-4"):
     run_end._r.append(fld_end)
 
 
+_UPDATE_FIELDS_AFTER_TAGS = (
+    "docVars", "rsids", "mathPr", "themeFontLang", "clrSchemeMapping",
+    "doNotIncludeSubdocsInStats", "doNotAutoCompressPictures", "shapeDefaults",
+    "decimalSymbol", "listSeparator", "compat", "footnotePr", "endnotePr",
+)
+
+
 def enable_update_fields_on_open(docx: Document):
+    """设置 w:updateFields=true，使 Word 打开文档时自动刷新域（目录页码）。
+
+    w:updateFields 在 CT_Settings 中有严格顺序要求：要排在 compat 等元素之前。
+    直接 append 到 settings 末尾属于非法位置，Word 会忽略，目录页码就停在
+    导出时写入的缓存值。这里按顺序插到第一个「应排在其后」的元素之前，并去重。
+    """
     if OxmlElement is None or qn is None:
         return
+    settings = docx.settings.element
+    for old in settings.findall(qn("w:updateFields")):
+        settings.remove(old)
     update_fields = OxmlElement("w:updateFields")
     update_fields.set(qn("w:val"), "true")
-    docx.settings.element.append(update_fields)
+    after_tags = {qn(f"w:{name}") for name in _UPDATE_FIELDS_AFTER_TAGS}
+    for child in list(settings):
+        if child.tag in after_tags:
+            child.addprevious(update_fields)
+            return
+    settings.append(update_fields)
 
 
 def fill_toc_cache(docx: Document):
@@ -891,11 +927,13 @@ def fill_toc_cache(docx: Document):
             tab_run.append(tab)
             p_elem.insert(insert_idx, tab_run)
             insert_idx += 1
-            # 页码占位 run
+            # 页码占位 run：不写死 1。
+            # 写死 1 会在 Word 尚未刷新域时显示成整列 1，容易被误认为真实页码；
+            # 这里只留一个零宽占位，Word 打开时按 updateFields 自动填真实页码。
             page_run = OxmlElement("w:r")
             page_t = OxmlElement("w:t")
             page_t.set(qn("xml:space"), "preserve")
-            page_t.text = "1"
+            page_t.text = "\u200b"
             page_run.append(page_t)
             p_elem.insert(insert_idx, page_run)
             insert_idx += 1
