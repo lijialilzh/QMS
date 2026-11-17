@@ -393,9 +393,11 @@ class Server(object):
         # 封面编制人按测试人员日期规则强制覆盖（2025.09 前宋月 / 之后孙家旭）
         author_name = "宋月" if serv_review_util._before_202509(rev_date) else "孙家旭"
         signers = dict(signers or {})
-        signers["编制人"] = serv_review_util._sign_by_name(author_name) or author_name
+        # 不带签名导出：不取签名图，也不回写封面签署格（留空白供手签）
+        if serv_review_util.sign_mode_enabled():
+            signers["编制人"] = serv_review_util._sign_by_name(author_name) or author_name
         serv_review_util.fill_cover_signers(content, signers, force=force)
-        if prod_id and signers.get("编制人"):
+        if prod_id and signers.get("编制人") and serv_review_util.sign_mode_enabled():
             for section in (content.get("sections") or []):
                 if not isinstance(section, dict):
                     continue

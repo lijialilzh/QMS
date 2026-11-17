@@ -1083,3 +1083,111 @@ finally:
         logger.exception("refresh docx TOC with LibreOffice failed")
         output_stream.seek(0)
         return False
+
+
+def strip_signature_images(output_stream, sign_images=None, blank_cover_names=True):
+    """从已生成的 docx 中剥离签名图（封面编审批、评审记录参评/批准人签字等）。
+
+    各模块封面结构与填充逻辑各不相同，逐个修补容易漏；在导出出口统一处理最稳妥。
+    只处理与「人员签名管理」登记内容完全一致的图片，正文截图/图表不受影响。
+    做法：直接删掉引用这些图片的 drawing 并移除对应关系——不留任何占位块或底色。
+    blank_cover_names=True 时，顺带清空封面「编制人/审核人/批准人」格里的姓名文字，留空白供手签。
+    output_stream: BytesIO，原地改写。
+    """
+    try:
+        import hashlib as _hash
+
+        if output_stream is None or not hasattr(output_stream, "getvalue"):
+            return False
+        raw = output_stream.getvalue()
+        if not raw or raw[:2] != b"PK":
+            return False
+        # 只有 Word 文档才需要剥离签名（xlsx 等表格导出直接跳过）
+        try:
+            import zipfile as _zipchk
+            with _zipchk.ZipFile(io.BytesIO(raw)) as _z:
+                if "word/document.xml" not in _z.namelist():
+                    return False
+        except Exception:
+            return False
+        if sign_images is None:
+            from ..serv_review_util import _sign_lib_images
+            sign_images = _sign_lib_images()
+        wanted = set()
+        for url in (sign_images or []):
+            try:
+                b64 = url.split(",", 1)[1] if "," in url else ""
+                wanted.add(_hash.md5(base64.b64decode(b64)).hexdigest())
+            except Exception:
+                continue
+
+        doc = Document(io.BytesIO(raw))
+        changed = False
+
+        # 1) 找出命中签名库的图片关系
+        drop_rids = set()
+        for rid, rel in list(doc.part.rels.items()):
+            try:
+                if not str(getattr(rel, "reltype", "")).endswith("/image"):
+                    continue
+                blob = rel.target_part.blob
+            except Exception:
+                continue
+            if _hash.md5(blob).hexdigest() in wanted:
+                drop_rids.add(rid)
+
+        # 2) 删除引用这些图片的 drawing（不留占位块）
+        if drop_rids:
+            for blip in doc.element.body.iter(qn("a:blip")):
+                if blip.get(qn("r:embed")) not in drop_rids:
+                    continue
+                node = blip
+                while node is not None and node.tag != qn("w:drawing"):
+                    node = node.getparent()
+                if node is not None:
+                    node.getparent().remove(node)
+                    changed = True
+            # 3) 移除关系，保存时对应 media 不再写出
+            for rid in drop_rids:
+                try:
+                    doc.part.drop_rel(rid)
+                    changed = True
+                except Exception:
+                    pass
+
+        # 4) 封面「编制人/审核人/批准人」留空白供手签：清掉格里的姓名文字
+        if blank_cover_names:
+            labels = ("编制人", "审核人", "批准人")
+            for table in doc.tables[:12]:
+                for row in table.rows:
+                    cells = row.cells
+                    if len(cells) < 2:
+                        continue
+                    if str(cells[0].text or "").strip() not in labels:
+                        continue
+                    target = cells[1]
+                    drawings = target._tc.xpath(".//w:drawing")
+                    if str(target.text or "").strip() or drawings:
+                        for d in drawings:
+                            d.getparent().remove(d)
+                        for para in target.paragraphs:
+                            for r in list(para.runs):
+                                r._r.getparent().remove(r._r)
+                        changed = True
+
+        if not changed:
+            return False
+        out = io.BytesIO()
+        doc.save(out)
+        output_stream.seek(0)
+        output_stream.truncate(0)
+        output_stream.write(out.getvalue())
+        output_stream.seek(0)
+        return True
+    except Exception:
+        logger.exception("strip signature images failed")
+        try:
+            output_stream.seek(0)
+        except Exception:
+            pass
+        return False

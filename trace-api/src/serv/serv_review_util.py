@@ -45,6 +45,22 @@ def sign_mode_enabled() -> bool:
     return _sign_mode_var.get()
 
 
+# 不带签名的导出：签名图/签署文字要连「编辑页已保存到内容里的」一起清掉，
+# 否则这些图会原样写进 docx（开关只拦新填入的签名）。
+def _sign_lib_images() -> set:
+    """人员签名管理里登记的所有签名/印鉴图（data URL），用于精确识别签名图。"""
+    try:
+        rows = db.session.execute(select(PersonSign)).scalars().all()
+    except Exception:
+        return set()
+    return {
+        str(getattr(r, f, "") or "").strip()
+        for r in rows
+        for f in ("sign_img", "seal_img")
+        if str(getattr(r, f, "") or "").strip()
+    }
+
+
 # 选中用 Wingdings 方框对号，未选空框。不用 ☑ 字符，Word 会把它画成灰色表情。
 # 框与文字之间留一格，两项之间留四格。
 CHECK = "\u2611\ufe0e 通过    \u25a1 存在问题"
@@ -1415,18 +1431,37 @@ def fill_cover_signers(content, signers, force=False):
         return content
     # 不带签名模式：清空封面签署人单元格
     if not sign_mode_enabled():
-        for section in (content.get("sections") or []):
-            if not isinstance(section, dict):
-                continue
-            for table in (section.get("tables") or []):
+        signs = _sign_lib_images()
+
+        def _clear_node(node):
+            # 该节点自身表格：封面编审批整格置空；其余表格只清落到签名库里的签名图
+            for table in (node.get("tables") or []):
                 if not isinstance(table, list):
                     continue
                 for row in table:
                     if not isinstance(row, list) or not row:
                         continue
                     label = str(row[0] or "").strip()
-                    if label in ("编制人", "审核人", "批准人") and len(row) >= 2:
-                        row[1] = ""
+                    if label in ("编制人", "审核人", "批准人"):
+                        if len(row) >= 2:
+                            row[1] = ""
+                        continue
+                    for i, val in enumerate(row):
+                        if str(val or "").strip() in signs:
+                            row[i] = ""
+            table = node.get("table")
+            if isinstance(table, dict):
+                for row in table.get("cells") or []:
+                    for cell in row or []:
+                        if str(getattr(cell, "value", "") or "").strip() in signs:
+                            cell.value = ""
+            for child in (node.get("children") or []):
+                if isinstance(child, dict):
+                    _clear_node(child)
+
+        for section in (content.get("sections") or []):
+            if isinstance(section, dict):
+                _clear_node(section)
         return content
     signers = signers or {}
     for section in (content.get("sections") or []):

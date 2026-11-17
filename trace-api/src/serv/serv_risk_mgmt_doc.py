@@ -299,6 +299,9 @@ class Server(object):
                     while len(table) < 6:
                         table.append(["" for _ in range(col)])
         signers = serv_review_util.cover_signers(product_id, "risk", rev_date)
+        # 不带签名导出：封面签署格留空，不写入签名图
+        if not serv_review_util.sign_mode_enabled():
+            signers = {}
         for section in (content.get("sections") or []):
             if not self.__is_cover_section(section):
                 continue

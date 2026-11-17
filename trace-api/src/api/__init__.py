@@ -6,6 +6,7 @@
 import logging
 import math
 import time
+import io
 from typing import List, Union
 from fastapi import Request
 from contextvars import ContextVar
@@ -19,6 +20,66 @@ from ..utils.i18n import ts
 logger = logging.getLogger(__name__)
 
 SESSION_KEY = "user"
+
+
+# 各文档模块的单文档导出接口（列表页/编辑页「导出」按钮）。这些接口默认不带签名：
+# 单独导出不要签名；一键导出/打印走各自接口与开关，不受影响。
+# 需要带签名时可显式传 with_sign=1。
+_SINGLE_DOC_SUFFIXES = ("_doc", "_doc_snapshot")
+_SINGLE_DOC_NAMES = ("export_release_note",)
+# 整合导出页自己的接口：带 with_sign 参数由前端开关决定，不参与这里的默认规则
+_SIGN_SWITCH_EXPORTS = ("export_single_doc", "export_srs_doc_trace", "export_doc_trace")
+
+
+def _export_sign_requested(func_name: str, request: Request):
+    """单文档导出接口是否要求带签名。非单文档导出返回 None（不处理）。"""
+    if func_name in _SIGN_SWITCH_EXPORTS:
+        return None
+    if not (func_name in _SINGLE_DOC_NAMES or func_name.endswith(_SINGLE_DOC_SUFFIXES)):
+        return None
+    raw = request.query_params.get("with_sign") if request else None
+    if raw is None or str(raw).strip() == "":
+        return False  # 单独导出默认不带签名
+    return str(raw).strip().lower() not in ("0", "false", "no", "off")
+
+
+async def _strip_sign_from_response(resp):
+    """导出出口剥离签名图（各模块自定义封面结构不一，逐模块修补会漏）。
+    流式响应需读完后重建，返回新的响应对象。"""
+    try:
+        from ..serv.serv_utils.docx_util import strip_signature_images
+
+        body = getattr(resp, "body", None)
+        if isinstance(body, (bytes, bytearray)):
+            if bytes(body)[:2] == b"PK":
+                buf = io.BytesIO(bytes(body))
+                if strip_signature_images(buf):
+                    resp.body = buf.getvalue()
+            return resp
+        it = getattr(resp, "body_iterator", None)
+        if it is None:
+            return resp
+        chunks = []
+        async for chunk in it:
+            chunks.append(chunk.encode("utf-8") if isinstance(chunk, str) else chunk)
+        raw = b"".join(chunks)
+        if raw[:2] != b"PK":
+            return _rebuild(resp, raw)
+        buf = io.BytesIO(raw)
+        if strip_signature_images(buf):
+            raw = buf.getvalue()
+        return _rebuild(resp, raw)
+    except Exception:
+        logger.exception("strip sign from export response failed")
+        return resp
+
+
+def _rebuild(resp, raw: bytes):
+    from starlette.responses import Response
+    headers = {k: v for k, v in dict(getattr(resp, "headers", {}) or {}).items()
+               if k.lower() != "content-length"}
+    return Response(content=raw, status_code=getattr(resp, "status_code", 200),
+                    headers=headers, media_type=getattr(resp, "media_type", None))
 
 
 # 写操作角色。root 与用户 id=1 在校验里始终放行。
@@ -35,6 +96,12 @@ def try_log(error_resp=Resp.resp_fatal(), perm: Union[Perms, List[Perms]] = None
         async def wrapper(*args, **kwargs):
             timer = time.time()
             request: Request = CtxRequest.get()
+            # 单文档导出默认不带签名；一键导出/打印由各自接口显式设置
+            with_sign = _export_sign_requested(func.__name__, request)
+            sign_token = None
+            if with_sign is not None:
+                from ..serv.serv_review_util import set_export_sign_mode
+                sign_token = set_export_sign_mode(with_sign)
             try:
                 user = CtxUser.get()
                 role = str(getattr(user, "role_code", "") or "")
@@ -47,6 +114,9 @@ def try_log(error_resp=Resp.resp_fatal(), perm: Union[Perms, List[Perms]] = None
                     resp = Resp.resp_err(msg=f"{ts('msg_no_perm')}")
                 else:
                     resp = await func(*args, **kwargs)
+                    # 不带签名导出：在出口统一剥离签名图，覆盖各模块自定义封面
+                    if with_sign is False:
+                        resp = await _strip_sign_from_response(resp)
             except Exception:
                 resp = error_resp
                 logger.exception("")
@@ -55,6 +125,12 @@ def try_log(error_resp=Resp.resp_fatal(), perm: Union[Perms, List[Perms]] = None
                 except Exception:
                     pass
             finally:
+                if sign_token is not None:
+                    try:
+                        from ..serv.serv_review_util import restore_export_sign_mode
+                        restore_export_sign_mode(sign_token)
+                    except Exception:
+                        pass
                 is_resp = isinstance(resp, Resp)
                 code = resp.code if is_resp else None
                 msg = resp.msg if is_resp else None
