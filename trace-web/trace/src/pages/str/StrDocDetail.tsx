@@ -938,6 +938,18 @@ export default () => {
             });
     };
 
+    const clearManualImages = () => {
+        let state = {
+            body: String(active.body || ""),
+            tables: active.tables || [],
+            images: Array.isArray(active.images) ? active.images.slice() : [],
+        };
+        while (state.images.length) {
+            state = freeDelImage(state, state.images.length - 1);
+        }
+        return { images: [] as string[], body: state.body };
+    };
+
     const generateCharts = () => {
         if (stripNum(active.title).includes("缺陷统计")) {
             const grid = (active.tables || [])[0] || [];
@@ -961,7 +973,8 @@ export default () => {
             dispatch({ charting: true });
             try {
                 const url = buildBarChartUrl(caseTotal ? `用例总数：${caseTotal}` : "缺陷统计分析", cats, series);
-                patchNode(active._key, { charts: [url] });
+                const cleared = clearManualImages();
+                patchNode(active._key, { charts: [url], images: cleared.images, body: cleared.body });
                 message.success("已生成缺陷统计图");
             } catch (_e) { message.error("生成失败"); } finally { dispatch({ charting: false }); }
             return;
@@ -987,7 +1000,8 @@ export default () => {
                 });
                 charts.push(buildChartUrl(`${stripNum(stage.title)}记录`, funcs, counts, flags));
             });
-            patchNode(active._key, { charts });
+            const cleared = clearManualImages();
+            patchNode(active._key, { charts, images: cleared.images, body: cleared.body });
             message.success(`已生成 ${charts.length} 张分布图`);
         } catch (_e) {
             message.error("生成失败");

@@ -493,6 +493,8 @@ class Server(object):
         "功能是否正常使用",
     ]
     COMPAT_CLIENT_TEST_POINTS = ["功能是否正常"]
+    # 与需求追溯、详细设计一致：算法要求是 2.6 固定章节，不是界面功能，不进兼容性测试模块。
+    COMPAT_EXCLUDED_LEAVES = ("算法和数据要求", "算法与数据要求", "算法要求", "算法需求")
 
     def __compat_kind_of_title(self, title):
         t = re.sub(r"^\s*\d+(?:\.\d+)*[\.、\s]*", "", str(title or "")).strip()
@@ -744,23 +746,35 @@ class Server(object):
         return content
 
     def __srs_leaves(self, prod_id):
-        """该产品 SRS 标准需求(type_code=1)的叶子名(子功能优先，其次功能、模块)，按需求顺序。"""
+        """该产品未删除需求规格里的标准需求(type_code=1)叶子名。
+        子功能优先，其次功能、模块。同一叶子名只保留一组，避免多份需求规格把测试点重复写进 Win10/Win11。"""
         if not prod_id:
             return []
+        docs = db.session.execute(
+            select(SrsDoc.id, SrsDoc.version).where(SrsDoc.product_id == prod_id)
+        ).all()
+        doc_ids = [i for i, ver in docs if not str(ver or "").startswith("__deleted")]
+        if not doc_ids:
+            return []
         rows = db.session.execute(
-            select(SrsReq).join(SrsDoc, SrsReq.doc_id == SrsDoc.id)
-            .where(SrsDoc.product_id == prod_id, SrsReq.type_code == "1").order_by(SrsReq.id)
+            select(SrsReq).where(SrsReq.doc_id.in_(doc_ids), SrsReq.type_code == "1").order_by(SrsReq.id)
         ).scalars().all()
         placeholders = {"", "/", "\\", "-", "--", "—", "N/A", "n/a", "无", "暂无"}
         leaves = []
+        seen = set()
         for r in rows:
+            names = (getattr(r, "sub_function", ""), getattr(r, "function", ""), getattr(r, "module", ""))
+            keys = {re.sub(r"\s+", "", str(item or "")) for item in names}
+            if any(item in keys for item in self.COMPAT_EXCLUDED_LEAVES):
+                continue
             leaf = ""
-            for val in (getattr(r, "sub_function", ""), getattr(r, "function", ""), getattr(r, "module", "")):
+            for val in names:
                 t = str(val or "").strip()
                 if t and t not in placeholders:
                     leaf = t
                     break
-            if leaf:
+            if leaf and leaf not in seen:
+                seen.add(leaf)
                 leaves.append(leaf)
         return leaves
 
