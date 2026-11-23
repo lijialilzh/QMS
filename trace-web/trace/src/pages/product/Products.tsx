@@ -14,6 +14,22 @@ import * as ApiCompanyInfo from "@/api/ApiCompanyInfo";
 
 const pageSizeOptions = [20, 50, 100];
 
+const splitProductModels = (raw: any): string[] => {
+    const seen: string[] = [];
+    String(raw || "")
+        .split(/[、,，;；\n]+/)
+        .forEach((item) => {
+            const name = String(item || "").trim();
+            if (name && !seen.includes(name)) seen.push(name);
+        });
+    return seen;
+};
+
+const joinProductModels = (raw: any): string => {
+    const list = Array.isArray(raw) ? raw : splitProductModels(raw);
+    return splitProductModels(list.join("、")).join("、");
+};
+
 enum DlgTypes {
     add = "add",
     edit = "edit",
@@ -85,6 +101,7 @@ const DetailDlg = ({ data, dispatch, onSaved }: any) => {
     const doEdit = () => {
         editForm.validateFields().then((values) => {
             dispatch({ loading: true });
+            values.type_code = joinProductModels(values.type_code);
             const fn_request = data.dlgType === DlgTypes.edit ? Api.update_product : Api.add_product;
             fn_request(values).then((res: any) => {
                 if (res.code === Api.C_OK) {
@@ -108,7 +125,7 @@ const DetailDlg = ({ data, dispatch, onSaved }: any) => {
                 dispatch({ loading: true });
                 Api.get_product({ id: data.targetRow.id }).then((res: any) => {
                     if (res.code === Api.C_OK) {
-                        const targetRow = res.data;
+                        const targetRow = { ...res.data, type_code: splitProductModels(res.data?.type_code).join("\n") };
                         editForm.setFieldsValue(targetRow);
                         dispatch({ loading: false, targetRow });
                     } else {
@@ -174,8 +191,24 @@ const DetailDlg = ({ data, dispatch, onSaved }: any) => {
                             </Form.Item>
                         </Col>
                         <Col span={12}>
-                            <Form.Item label={ts("product.type_code")} name="type_code">
-                                <Input allowClear />
+                            <Form.Item
+                                label={ts("product.type_code")}
+                                name="type_code"
+                                rules={[{ validator: (_, value) => {
+                                    const names = String(value || "").split(/[、,，;；\n]+/).map((item) => item.trim()).filter(Boolean);
+                                    const seen: string[] = [];
+                                    const dups: string[] = [];
+                                    names.forEach((name) => {
+                                        if (seen.includes(name)) {
+                                            if (!dups.includes(name)) dups.push(name);
+                                        } else {
+                                            seen.push(name);
+                                        }
+                                    });
+                                    if (dups.length) return Promise.reject(new Error(`产品型号不能重复：${dups.join("、")}`));
+                                    return Promise.resolve();
+                                } }]}>
+                                <Input.TextArea autoSize={{ minRows: 1, maxRows: 4 }} placeholder="直接修改。多个型号请回车，一行一个" />
                             </Form.Item>
                         </Col>
                     </Row>

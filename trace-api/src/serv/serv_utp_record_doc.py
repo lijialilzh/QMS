@@ -164,31 +164,19 @@ class Server(object):
         ).scalars().all())
 
     @staticmethod
-    def __is_model_sheet_name(sheet_name: str) -> bool:
-        """sheet 名里写的是「用户测试用例」「单元测试用例」这类阶段名的，不是型号。
-
-        用户测试 Excel 只有按型号分 sheet 时，sheet 名才等于型号；只分阶段时不能拿它当型号，
-        否则导出会把「用户测试用例」写进产品型号（页面用的是产品 type_code，两边就对不上）。
-        """
-        sn = str(sheet_name or "").strip()
-        if not sn:
-            return False
-        if "用例" in sn or "测试" in sn:
-            return False
-        return True
+    def split_product_models(type_code) -> List[str]:
+        """版本管理产品型号：顿号或逗号分隔。一个就一项，多个就多项。"""
+        out = []
+        for part in re.split(r"[、,，;；\n]+", str(type_code or "")):
+            name = part.strip()
+            if name and name not in out:
+                out.append(name)
+        return out
 
     def __model_names(self, prod_id, product: Product = None) -> List[str]:
-        cases = self.__user_test_cases(prod_id)
-        models = []
-        for c in cases:
-            sn = (getattr(c, "sheet_name", None) or "").strip()
-            if self.__is_model_sheet_name(sn) and sn not in models:
-                models.append(sn)
-        if models:
-            return models
-        # 无型号 sheet：单一型号，优先产品 type_code（与编辑页、导出产品型号同一口径）
-        tip = (getattr(product, "type_code", None) or "").strip() if product else ""
-        return [tip] if tip else ["默认"]
+        """型号只取版本管理产品型号，不用用例 sheet 名。"""
+        models = self.split_product_models(getattr(product, "type_code", None) if product else "")
+        return models or ["默认"]
 
     @staticmethod
     def __case_item_rows(cases: List[TestCase]) -> List[list]:

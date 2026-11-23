@@ -161,6 +161,24 @@ def _build_prod_srsdoc_block_msg(product_id: int) -> str:
     return f"{ts('msg_prod_x_srsdoc')} 剩余：{detail}。"
 
 
+def duplicate_product_models(type_code) -> str:
+    """同一产品里型号去空白后不能重复。有重复时返回提示，否则空串。"""
+    seen = []
+    dups = []
+    for part in re.split(r"[、,，;；\n]+", str(type_code or "")):
+        name = part.strip()
+        if not name:
+            continue
+        if name in seen:
+            if name not in dups:
+                dups.append(name)
+        else:
+            seen.append(name)
+    if not dups:
+        return ""
+    return "产品型号不能重复：" + "、".join(dups)
+
+
 class Server(object):
 
     async def add_product(self, op_user: UserObj, form: ProductForm):
@@ -169,6 +187,9 @@ class Server(object):
             count = db.session.execute(sql).scalar()
             if count > 0:
                 return Resp.resp_err(msg=ts("msg_obj_exist"))
+            dup = duplicate_product_models(form.type_code)
+            if dup:
+                return Resp.resp_err(msg=dup)
             user_ids = form.user_ids or []
             form.user_ids = None
             row = Product(**form.dict(exclude_none=True))
@@ -338,6 +359,9 @@ class Server(object):
             count = db.session.execute(sql).scalar()
             if count > 0:
                 return Resp.resp_err(msg=ts("msg_obj_exist"))
+            dup = duplicate_product_models(form.type_code)
+            if dup:
+                return Resp.resp_err(msg=dup)
             sql = select(Product).where(Product.id == form.id)
             row:Product = db.session.execute(sql).scalars().first()
             if not row:
