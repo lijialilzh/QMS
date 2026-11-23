@@ -119,15 +119,20 @@ const computeCycle = (rows: any[]): string => {
     return `${min.y} 年 ${min.m} 月~${max.y} 年 ${max.m} 月`;
 };
 
-// 从时间线里找「产品开发计划」文件所在行的日期（取最早匹配行），格式「YYYY年M月D日」
+// 从时间线里找该版本对应的日期。优先含「评审」的行，再取最晚一天，与封面生效日期同一天。格式「YYYY年M月D日」
 const computeFileDate = (rows: any[], keyword = "产品开发计划", version?: string): string => {
-    const matches = datedTimelineRows(rows).filter((x) =>
-        Object.values(x.row.cells || {}).some((v: any) => timelineCellMatchesVersion(cellText(v), [keyword], version))
-    );
+    const hit = (x: any, needReview: boolean) =>
+        Object.values(x.row.cells || {}).some((v: any) => {
+            const text = cellText(v);
+            return timelineCellMatchesVersion(text, [keyword], version) && (!needReview || text.includes("评审"));
+        });
+    const matches = datedTimelineRows(rows).filter((x) => hit(x, false));
     if (!matches.length) return "";
+    const reviewed = matches.filter((x) => hit(x, true));
+    const pool = reviewed.length ? reviewed : matches;
     const key = (x: any) => x.y * 10000 + x.m * 100 + (isNaN(x.d) ? 0 : x.d);
-    let best = matches[0];
-    matches.forEach((x: any) => { if (key(x) < key(best)) best = x; });
+    let best = pool[0];
+    pool.forEach((x: any) => { if (key(x) > key(best)) best = x; });
     return `${best.y}年${best.m}月${isNaN(best.d) ? 1 : best.d}日`;
 };
 

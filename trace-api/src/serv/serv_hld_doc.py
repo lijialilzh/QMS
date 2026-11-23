@@ -39,6 +39,25 @@ from .serv_utils import new_version, sync_file_no_version
 from .serv_product import product_scope_filter
 
 logger = logging.getLogger(__name__)
+
+_HLD_DATE_KEYWORDS = ["软件概要设计", "概要设计"]
+
+
+def hld_timeline_date(prod_id, version=None, revision_row=False) -> str:
+    """与编辑页同一天：先取产品开发部里「软件概要设计/概要设计」的最晚一天。
+    该部门没有时，再用其他部门。产品开发部已有输出时，不用模型部「算法方案概要设计」。"""
+    if not prod_id:
+        return ""
+    hit = serv_review_util.review_date(
+        prod_id, _HLD_DATE_KEYWORDS, version=version, revision_row=revision_row, dept_prefix="产品开发部",
+    )
+    if hit:
+        return hit
+    return serv_review_util.review_date(
+        prod_id, _HLD_DATE_KEYWORDS, version=version, revision_row=revision_row,
+    ) or ""
+
+
 srsdoc_serv = ServSrsDoc()
 
 
@@ -884,7 +903,7 @@ class Server(object):
         docx = Document()
         export_rev_date = ""
         if getattr(doc_obj, "product_id", None):
-            export_rev_date = serv_review_util.cover_date(doc_obj.product_id, "hld", getattr(doc_obj, "version", None)) or ""
+            export_rev_date = hld_timeline_date(doc_obj.product_id, getattr(doc_obj, "version", None))
         wrote_review = {"ok": False}
         pending_reviews: List[HldNodeForm] = []
 
@@ -1229,7 +1248,7 @@ class Server(object):
             signers = {}
             pid = getattr(doc_obj, "product_id", None)
             if pid:
-                rev_date = serv_review_util.cover_date(pid, "hld", getattr(doc_obj, "version", None)) or ""
+                rev_date = hld_timeline_date(pid, getattr(doc_obj, "version", None))
                 if serv_review_util.sign_mode_enabled():
                     signers = serv_review_util.cover_signers(pid, "hld", rev_date) or {}
                 else:
@@ -1353,9 +1372,16 @@ class Server(object):
             if not rows:
                 return
             prod_id = getattr(doc_obj, "product_id", None)
-            if prod_id and rows and isinstance(rows[0], dict) and serv_review_util.fill_dict_revision_dates(
-                rows, prod_id, ["软件概要设计", "概要设计"],
+            if prod_id and rows and isinstance(rows[0], dict) and any(
+                isinstance(row, dict) and serv_review_util.revision_row_token(row.get("version_no")) for row in rows
             ):
+                for data_row in rows:
+                    if not isinstance(data_row, dict):
+                        continue
+                    token = serv_review_util.revision_row_token(data_row.get("version_no"))
+                    if not token:
+                        continue
+                    data_row["change_date"] = hld_timeline_date(prod_id, token, revision_row=True)
                 cells = getattr(table, "cells", None) or []
                 if len(cells) > 1:
                     header = cells[0] or []
@@ -1372,7 +1398,7 @@ class Server(object):
                 return
             rev_date = ""
             if prod_id:
-                rev_date = serv_review_util.cover_date(prod_id, "hld", getattr(doc_obj, "version", None)) or ""
+                rev_date = hld_timeline_date(prod_id, getattr(doc_obj, "version", None))
             if not rev_date:
                 return
             doc_version = getattr(doc_obj, "version", None)
@@ -1396,7 +1422,7 @@ class Server(object):
             desc = str(getattr(doc_obj, "change_log", "") or "").strip() or "首次发布"
             rev_date = ""
             if getattr(doc_obj, "product_id", None):
-                rev_date = serv_review_util.cover_date(doc_obj.product_id, "hld", version) or ""
+                rev_date = hld_timeline_date(doc_obj.product_id, version)
             rows = [{
                 "change_date": rev_date,
                 "version_no": version,
@@ -1474,7 +1500,7 @@ class Server(object):
         if not wrote_review["ok"] and getattr(doc_obj, "product_id", None):
             sec = serv_review_util.build_review_section(
                 "hld",
-                serv_review_util.review_date(doc_obj.product_id, ["软件概要设计", "概要设计"], version=getattr(doc_obj, "version", None)),
+                hld_timeline_date(doc_obj.product_id, getattr(doc_obj, "version", None)),
                 doc_obj.product_id,
             )
             if sec:
