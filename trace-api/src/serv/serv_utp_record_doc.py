@@ -1053,9 +1053,11 @@ class Server(object):
                     grid = self.__build_export_grid(base_grid, product, model, tester, all_cases)
                     buf = io.BytesIO()
                     self.__write_docx(buf, obj.file_no or "", grid)
-                    safe_model = re.sub(r'[\\/:*?"<>|]+', "_", model or "型号")
-                    safe_tester = re.sub(r'[\\/:*?"<>|]+', "_", tester or "测试人员")
-                    fname = f"{DOC_NAME}_{safe_model}_{safe_tester}.docx"
+                    safe = lambda s: re.sub(r'[\\/:*?"<>|]+', "_", str(s or "").strip())
+                    parts = [p for p in (safe(obj.file_no), DOC_NAME, safe(tester) or "测试人员") if p]
+                    if len(models) > 1:
+                        parts.append(safe(model) or "型号")
+                    fname = " ".join(parts) + ".docx"
                     zf.writestr(fname, buf.getvalue())
         output.seek(0)
         # 供集成导出识别扩展名为 zip（嵌套进总 zip）

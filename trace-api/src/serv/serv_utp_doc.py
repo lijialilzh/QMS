@@ -437,13 +437,11 @@ class Server(object):
         self.__fill_roles(content, prod_id, force=force)
         self.__fill_runtime_env(content, prod_id, force=force)
         self.__fill_revision(content, prod_id, version, force=force)
-        serv_review_util.ensure_review(
-            content, DOC_KEY,
-            serv_review_util.review_date(prod_id, serv_review_util.REVIEW_DEFS[DOC_KEY]["name_keywords"], version=version) if prod_id else "",
-            prod_id,
-            force_date=bool(serv_review_util.raised_doc_version(version)),
-        )
         cover_date = self.__plan_cover_date(prod_id, version)
+        serv_review_util.ensure_review(
+            content, DOC_KEY, cover_date, prod_id,
+            force_date=bool(cover_date) or bool(serv_review_util.raised_doc_version(version)),
+        )
         serv_review_util.fill_cover_dates(
             content, cover_date,
             force=force or bool(serv_review_util.raised_doc_version(version) and cover_date) or serv_review_util.cover_date_overwrite(version, cover_date),

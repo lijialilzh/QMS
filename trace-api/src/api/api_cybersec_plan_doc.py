@@ -69,7 +69,7 @@ async def export_cybersec_plan_doc(id: int):
     output = io.BytesIO()
     server.export_cybersec_plan_doc(output, id)
     output.seek(0)
-    doc = await server.get_cybersec_plan_doc(id)
+    doc = server.get_cybersec_plan_doc(id)
     filename = download_name.for_obj(getattr(doc, "data", None), "网络安全风险管理计划", "docx")
     return StreamingResponse(
         output,
