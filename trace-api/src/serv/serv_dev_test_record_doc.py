@@ -349,8 +349,19 @@ class Server(object):
             for col, val in enumerate(vals, 1):
                 ws.cell(ridx, col, value=val)
 
+    @staticmethod
+    def __product_models(product) -> list:
+        """版本管理产品型号。顿号或逗号分隔，一个就一项，多个就多项。"""
+        out = []
+        raw = getattr(product, "type_code", None) if product else ""
+        for part in re.split(r"[、,，;；\n]+", str(raw or "")):
+            name = part.strip()
+            if name and name not in out:
+                out.append(name)
+        return out
+
     def export_record_xlsx(self, output, product_id: int, stage: str):
-        """导出测试记录：表头自动获取；按 sheet_name 分 sheet。"""
+        """导出测试记录：表头自动获取。型号取版本管理，一个型号一个 sheet，多个型号多个 sheet。"""
         meta = STAGE_META.get(stage)
         if not meta:
             raise ValueError(f"unsupported stage: {stage}")
@@ -373,12 +384,18 @@ class Server(object):
         self.__persist_header(record, header)
 
         cases = self.__cases(product_id, stage)
+        models = self.__product_models(product)
         groups = OrderedDict()
-        for c in cases:
-            sn = (getattr(c, "sheet_name", None) or "").strip() or meta["title"]
-            groups.setdefault(sn, []).append(c)
-        if not groups:
-            groups[meta["title"]] = []
+        if models:
+            for model in models:
+                matched = [c for c in cases if (getattr(c, "sheet_name", None) or "").strip() == model]
+                groups[model] = matched if matched else list(cases)
+        else:
+            for c in cases:
+                sn = (getattr(c, "sheet_name", None) or "").strip() or meta["title"]
+                groups.setdefault(sn, []).append(c)
+            if not groups:
+                groups[meta["title"]] = []
 
         wb = load_workbook(path)
         template = wb[wb.sheetnames[0]]
