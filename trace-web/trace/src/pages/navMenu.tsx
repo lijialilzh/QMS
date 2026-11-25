@@ -108,6 +108,12 @@ export function buildAppMenus(ts: (key: string) => string, ctx: MenuCtx = {}): N
                     hidden: !seeBaseMasters,
                 },
                 {
+                    key: "/ecrs",
+                    label: ts("menu.ecrs"),
+                    perm: "ecr_view",
+                    hidden: !seeBaseMasters,
+                },
+                {
                     key: "/prod_hospitals",
                     label: ts("menu.prod_hospitals"),
                     perm: "prod_hospital_view",
@@ -498,6 +504,17 @@ export function buildAppMenus(ts: (key: string) => string, ctx: MenuCtx = {}): N
                     perm: "data_doc_view",
                 })),
             })),
+        },
+        {
+            key: "/qa_files",
+            label: ts("menu.qa_files"),
+            icon: <img src="assets/icon/menu-create.svg" />,
+            children: [
+                { key: "/qa_docs/output_review", label: ts("menu.qa_output_review"), perm: "qa_file_view" },
+                { key: "/qa_docs/inspect_spec", label: ts("menu.qa_inspect_spec"), perm: "qa_file_view" },
+                { key: "/qa_docs/inspect_record", label: ts("menu.qa_inspect_record"), perm: "qa_file_view" },
+                { key: "/qa_docs/change_close", label: ts("menu.qa_change_close"), perm: "qa_file_view" },
+            ],
         },
         {
             key: "/data_qc",

@@ -2,7 +2,7 @@ import "./Home.less";
 import { Outlet } from "react-router-dom";
 import { Drawer, Menu, message } from "antd";
 import { CaretDownOutlined, CaretRightOutlined } from "@ant-design/icons";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { useData } from "@/common";
@@ -14,6 +14,13 @@ import Loading from "@/views/Loading";
 import { MODEL_DOC_TYPES, getModelDocNavTitle, getModelDocMenuKey } from "./model_doc/ModelDocTypes";
 import { DATA_DOC_TYPES, getDataDocNavTitle, getDataDocMenuKey } from "./model_doc/DataDocTypes";
 import { buildAppMenus } from "./navMenu";
+
+const QA_DOC_MENU_KEY: Record<string, string> = {
+    output_review: "qa_output_review",
+    inspect_spec: "qa_inspect_spec",
+    inspect_record: "qa_inspect_record",
+    change_close: "qa_change_close",
+};
 
 enum DlgTypes {
     menu = "menu",
@@ -65,6 +72,7 @@ const findAncestorKeys = (menus: any, targetKey: string, ancestors: string[] = [
 
 const HomeMenu = ({ className, items, openKeys, selectedKeys, onClick, dispatchFn }: any) => {
     const { i18n } = useTranslation();
+    const skipClose = useRef(false);
 
     return (
         <div className={`home-menu ${className}`}>
@@ -79,9 +87,19 @@ const HomeMenu = ({ className, items, openKeys, selectedKeys, onClick, dispatchF
                     return props.isOpen ? <CaretDownOutlined /> : <CaretRightOutlined />;
                 }}
                 items={items}
-                onClick={onClick}
-                onOpenChange={(openKeys) => {
-                    dispatchFn({ openKeys });
+                onClick={(e) => {
+                    skipClose.current = true;
+                    onClick?.(e);
+                }}
+                onOpenChange={(nextKeys) => {
+                    if (skipClose.current) {
+                        skipClose.current = false;
+                        const selected = selectedKeys?.[0];
+                        const ancestors = selected ? findAncestorKeys(items, selected) || [] : [];
+                        dispatchFn({ openKeys: Array.from(new Set([...(openKeys || []), ...ancestors, ...nextKeys])) });
+                        return;
+                    }
+                    dispatchFn({ openKeys: nextKeys });
                 }}
                 selectedKeys={selectedKeys}
             />
@@ -111,7 +129,8 @@ export default () => {
         const pathParts = path.split("/").filter(Boolean);
         const isModelDoc = pathParts[0] === "model_docs";
         const isDataDoc = pathParts[0] === "data_docs";
-        const isTypedDoc = isModelDoc || isDataDoc;
+        const isQaDoc = pathParts[0] === "qa_docs";
+        const isTypedDoc = isModelDoc || isDataDoc || isQaDoc;
         const isDetailPage = isTypedDoc ? pathParts.length > 2 : pathParts.length > 1;
         // 模型/数据文件子类型（如 md_008_01、dd_005_01）归一到分组入口高亮
         const rawTypeKey = isTypedDoc && pathParts.length >= 2 ? pathParts[1] : "";
@@ -137,6 +156,8 @@ export default () => {
             ? (MODEL_DOC_TYPES[pathParts[1]] ? MODEL_DOC_TYPES[pathParts[1]].title : getModelDocNavTitle(pathParts[1]))
             : isDataDoc && pathParts[1]
             ? (DATA_DOC_TYPES[pathParts[1]] ? DATA_DOC_TYPES[pathParts[1]].title : getDataDocNavTitle(pathParts[1]))
+            : isQaDoc && pathParts[1]
+            ? ts(`menu.${QA_DOC_MENU_KEY[pathParts[1]] || "qa_files"}`)
             : ts(`menu.${pageKey}`);
         dispatch({ path: location.pathname, pageName, isDetailPage, menuSelectedKey });
     }, [location, i18n.language]);
@@ -161,15 +182,10 @@ export default () => {
             const role_perms = new Set(user.role_perms || []);
             const menus = transformMenus(MENUS, role_perms);
             const selectedKey = data.menuSelectedKey ?? data.path;
-            const ancestorKeys = selectedKey ? findAncestorKeys(menus, selectedKey) : undefined;
-            // 初始化时展开当前菜单的全部祖先层级，若为一级菜单则全部收起
-            dispatch({ menus, openKeys: ancestorKeys && ancestorKeys.length ? ancestorKeys : [] });
-            if (menus.length > 0) {
-                const leaf = findFirstLeaf(menus) as any;
-                if ((!data.path || data.path === "/") && leaf) {
-                    navigate(leaf.key);
-                }
-            }
+            const ancestorKeys = selectedKey ? findAncestorKeys(menus, selectedKey) || [] : [];
+            // 进入子菜单后保留已经展开的下拉，只补上当前页的父级
+            const openKeys = Array.from(new Set([...(data.openKeys || []), ...ancestorKeys]));
+            dispatch({ menus, openKeys });
         }
     }, [user, i18n.language, data.menuSelectedKey, data.path]);
 

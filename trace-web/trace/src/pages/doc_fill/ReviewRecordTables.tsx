@@ -1,6 +1,6 @@
 import { Button, Popconfirm, Space } from "antd";
 import { DeleteOutlined, EditOutlined } from "@ant-design/icons";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import ReviewTable from "@/common/ReviewTable";
 import EditableTableGenerator from "@/pages/srs_doc/components/EditableTableGenerator";
 
@@ -36,10 +36,11 @@ const isReviewHeaderRow = (tb: any[]) => {
 };
 
 /** 评审记录：只读合并表，点「编辑」弹出与需求规格说明相同的表格编辑。 */
-const ReviewRecordTables = ({ tables, readonly, onChange }: {
+const ReviewRecordTables = ({ tables, readonly, onChange, renderCell }: {
     tables: any[][];
     readonly?: boolean;
     onChange: (tables: any[][]) => void;
+    renderCell?: (tableIndex: number, rowIndex: number, colIndex: number, value: string) => ReactNode | null | undefined;
 }) => {
     const [reviewEdit, setReviewEdit] = useState<any>(null);
     const openReviewEdit = (ti: number, tb: any[]) => {
@@ -78,7 +79,11 @@ const ReviewRecordTables = ({ tables, readonly, onChange }: {
                 <div className="pdp-table-block" key={ti}>
                     <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
                         <div style={{ flex: 1, minWidth: 0, overflowX: "auto" }}>
-                            <ReviewTable grid={reviewDisplayGrid(tb)} headerRows={isReviewHeaderRow(tb) ? 1 : 0} />
+                            <ReviewTable
+                                grid={reviewDisplayGrid(tb)}
+                                headerRows={isReviewHeaderRow(tb) ? 1 : 0}
+                                renderCell={renderCell ? (value, rowIndex, colIndex) => renderCell(ti, rowIndex, colIndex, value) : undefined}
+                            />
                         </div>
                         {!readonly && (
                             <Space size={8} style={{ flexShrink: 0, marginTop: 8 }}>

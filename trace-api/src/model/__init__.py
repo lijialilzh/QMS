@@ -82,6 +82,9 @@ from .pdp_doc import PdpDoc  # noqa: E402,F401
 # 产品立项报告（独立文档模块）。详见 docs/function_docs/53_产品立项报告.md。
 from .pir_doc import PirDoc  # noqa: E402,F401
 
+# 质量文件（独立导航：设计开发输出评审、成品检验规程、成品检验记录、变更评估及关闭表）。
+from .qa_doc import QaDoc  # noqa: E402,F401
+
 # 模型文件（独立文档模块）。详见 docs/function_docs/99_模型文件管理.md。
 from .model_doc import ModelDoc  # noqa: E402,F401
 
@@ -169,6 +172,9 @@ from .hld_doc import HldDoc, HldNode  # noqa: E402,F401
 
 # 人员签名管理（基础数据）：人名章记录。
 from .person_sign import PersonSign  # noqa: E402,F401
+
+# ECR 登记（基础数据，全局台账）。详见 docs/function_docs/106_ECR管理.md。
+from .ecr import Ecr  # noqa: E402,F401
 
 # 打印服务配置（基础配置）：IPP打印机连接配置。
 from .print_service_cfg import PrintServiceCfg  # noqa: E402,F401

@@ -10,7 +10,12 @@ const isOther = (t: any) => {
     return s.startsWith("其他参会人员") || s.startsWith("其他参评人员");
 };
 
-export const ReviewTable: React.FC<{ grid: any[]; headerRows?: number; approverKeepLabel?: boolean }> = ({ grid, headerRows = 1, approverKeepLabel = false }) => {
+export const ReviewTable: React.FC<{
+    grid: any[];
+    headerRows?: number;
+    approverKeepLabel?: boolean;
+    renderCell?: (value: string, rowIndex: number, colIndex: number) => React.ReactNode | null | undefined;
+}> = ({ grid, headerRows = 1, approverKeepLabel = false, renderCell }) => {
     const rows: string[][] = (Array.isArray(grid) ? grid : []).map((r) =>
         Array.isArray(r) ? r.map((c) => String(c ?? "")) : [],
     );
@@ -20,6 +25,26 @@ export const ReviewTable: React.FC<{ grid: any[]; headerRows?: number; approverK
     // 计算首列纵向合并：非空且非标记的单元格向下合并其后的空单元格
     const rowspan0 = new Array(rows.length).fill(1);
     const skip0 = new Array(rows.length).fill(false);
+    // 表头相邻相同文字横向合并（如「评审结论」横跨后两列），与导出一致
+    const colSpan = rows.map(() => new Array(cols).fill(1));
+    const skipC = rows.map(() => new Array(cols).fill(false));
+    for (let r = 0; r < Math.min(headerRows, rows.length); r++) {
+        let c = 0;
+        while (c < cols) {
+            const val = (rows[r][c] || "").trim();
+            if (!val) {
+                c += 1;
+                continue;
+            }
+            let c2 = c;
+            while (c2 + 1 < cols && (rows[r][c2 + 1] || "").trim() === val) {
+                c2 += 1;
+                skipC[r][c2] = true;
+            }
+            colSpan[r][c] = c2 - c + 1;
+            c = c2 + 1;
+        }
+    }
     for (let r = 0; r < rows.length; r++) {
         const t = rows[r][0] || "";
         if (t.trim() && !isBanner(t)) {
@@ -102,21 +127,23 @@ export const ReviewTable: React.FC<{ grid: any[]; headerRows?: number; approverK
                     return (
                         <tr key={r}>
                             {Array.from({ length: cols }).map((_, ci) => {
+                                if (skipC[r][ci]) return null;
                                 if (ci === 0) {
                                     if (skip0[r]) return null;
                                     return (
-                                        <td key={ci} rowSpan={rowspan0[r]} className={head ? "head" : ""}
+                                        <td key={ci} rowSpan={rowspan0[r]} colSpan={colSpan[r][ci] > 1 ? colSpan[r][ci] : undefined} className={head ? "head" : ""}
                                             style={{ whiteSpace: "pre-wrap", verticalAlign: "middle", textAlign: "center", padding: "6px 8px" }}>
                                             {row[0] || ""}
                                         </td>
                                     );
                                 }
                                 const val = row[ci] ?? "";
+                                const custom = renderCell ? renderCell(val, r, ci) : null;
                                 const isSign = typeof val === "string" && val.startsWith("data:image");
                                 return (
-                                    <td key={ci} className={head ? "head" : ""}
+                                    <td key={ci} colSpan={colSpan[r][ci] > 1 ? colSpan[r][ci] : undefined} className={head ? "head" : ""}
                                         style={{ whiteSpace: "pre-wrap", padding: "6px 8px", textAlign: isSign ? "center" : undefined, verticalAlign: "middle" }}>
-                                        {isSign
+                                        {custom != null ? custom : isSign
                                             ? <img src={val} alt="签字" style={{ height: 36, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block" }} />
                                             : val}
                                     </td>

@@ -30,6 +30,7 @@ import ProdDeviceRes from "./pages/syscfg/ProdDeviceRes";
 import ProdHospitals from "./pages/syscfg/ProdHospitals";
 import ProdAlgoChapters from "./pages/syscfg/ProdAlgoChapters";
 import Hazs from "./pages/basedata/Hazs";
+import Ecrs from "./pages/basedata/Ecrs";
 import Rcms from "./pages/basedata/Rcms";
 import Csts from "./pages/basedata/Csts";
 import Products from "./pages/product/Products";
@@ -104,6 +105,8 @@ import StrDocDetail from "./pages/str/StrDocDetail";
 import BugDocs from "./pages/bug/BugDocs";
 import PirDocs from "./pages/pir/PirDocs";
 import PirDocDetail from "./pages/pir/PirDocDetail";
+import QaDocs from "./pages/qa/QaDocs";
+import QaDocDetail from "./pages/qa/QaDocDetail";
 import ModelDocs from "./pages/model_doc/ModelDocs";
 import ModelDocPage from "./pages/model_doc/ModelDocPage";
 import DataDocs from "./pages/model_doc/DataDocs";
@@ -175,6 +178,7 @@ const router = createRouter([
             { path: "/prod_algo_chapters", element: <ProdAlgoChapters /> },
 
             { path: "/hazs", element: <Hazs /> },
+            { path: "/ecrs", element: <Ecrs /> },
             { path: "/rcms", element: <Rcms /> },
             { path: "/csts", element: <Csts /> },
             { path: "/version_rule", element: <VersionRule /> },
@@ -296,6 +300,9 @@ const router = createRouter([
             { path: "/pir_docs", element: <PirDocs /> },
             { path: "/pir_docs/edit/:id", element: <PirDocDetail /> },
             { path: "/pir_docs/view/:id", element: <PirDocDetail /> },
+            { path: "/qa_docs/:kind", element: <QaDocs /> },
+            { path: "/qa_docs/:kind/edit/:id", element: <QaDocDetail /> },
+            { path: "/qa_docs/:kind/view/:id", element: <QaDocDetail /> },
             { path: "/model_docs/:type", element: <ModelDocs /> },
             { path: "/model_docs/:type/edit/:id", element: <ModelDocPage /> },
             { path: "/model_docs/:type/view/:id", element: <ModelDocPage /> },

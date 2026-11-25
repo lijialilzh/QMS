@@ -93,6 +93,8 @@ def init_data():
                 "AND perm_code IN ('utp_record_doc', 'utp_record_doc_view', 'utp_record_doc_edit')"
             ))
             sql_ctx.db.session.commit()
+            from src.serv.serv_ecr import seed_ecr_if_empty
+            seed_ecr_if_empty()
 
 if __name__ == "__main__":
     create_tables()

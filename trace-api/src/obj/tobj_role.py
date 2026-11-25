@@ -70,6 +70,10 @@ class Perms(Enum):
     cst_view = PermForm(code="cst_view", name="查看", p_code=cst.code)
     cst_edit = PermForm(code="cst_edit", name="编辑", p_code=cst.code)
 
+    ecr = PermForm(code="ecr", name="基础数据/ECR管理")
+    ecr_view = PermForm(code="ecr_view", name="查看", p_code=ecr.code)
+    ecr_edit = PermForm(code="ecr_edit", name="编辑", p_code=ecr.code)
+
     version_rule = PermForm(code="version_rule", name="通用配置/版本命名规则")
     version_rule_view = PermForm(code="version_rule_view", name="查看", p_code=version_rule.code)
     version_rule_edit = PermForm(code="version_rule_edit", name="编辑", p_code=version_rule.code)
@@ -290,6 +294,10 @@ class Perms(Enum):
     rmp_doc_view = PermForm(code="rmp_doc_view", name="查看", p_code=rmp_doc.code)
     rmp_doc_edit = PermForm(code="rmp_doc_edit", name="编辑", p_code=rmp_doc.code)
 
+    qa_file = PermForm(code="qa_file", name="质量文件")
+    qa_file_view = PermForm(code="qa_file_view", name="查看", p_code=qa_file.code)
+    qa_file_edit = PermForm(code="qa_file_edit", name="编辑", p_code=qa_file.code)
+
 
 class RoleForm(BaseModel):
     id: Optional[int] = Field(title="角色ID")
@@ -337,6 +345,7 @@ def get_default_role_perm_codes():
         "prod_dhf", "prod_dhf_view", "prod_dhf_edit",
         "model_doc", "model_doc_view", "model_doc_edit",
         "data_doc", "data_doc_view", "data_doc_edit",
+        "qa_file", "qa_file_view", "qa_file_edit",
     }
 
     # 开发测试文件管理权限

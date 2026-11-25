@@ -43,9 +43,10 @@ def _export_sign_requested(func_name: str, request: Request):
     return str(raw).strip().lower() not in ("0", "false", "no", "off")
 
 
-async def _strip_sign_from_response(resp):
+async def _strip_sign_from_response(resp, blank_cover_names=True):
     """导出出口剥离签名图（各模块自定义封面结构不一，逐模块修补会漏）。
-    流式响应需读完后重建，返回新的响应对象。"""
+    流式响应需读完后重建，返回新的响应对象。
+    成品检验规程封面编审批要保留姓名，不留白。"""
     try:
         from ..serv.serv_utils.docx_util import strip_signature_images
 
@@ -53,7 +54,7 @@ async def _strip_sign_from_response(resp):
         if isinstance(body, (bytes, bytearray)):
             if bytes(body)[:2] == b"PK":
                 buf = io.BytesIO(bytes(body))
-                if strip_signature_images(buf):
+                if strip_signature_images(buf, blank_cover_names=blank_cover_names):
                     resp.body = buf.getvalue()
             return resp
         it = getattr(resp, "body_iterator", None)
@@ -66,7 +67,7 @@ async def _strip_sign_from_response(resp):
         if raw[:2] != b"PK":
             return _rebuild(resp, raw)
         buf = io.BytesIO(raw)
-        if strip_signature_images(buf):
+        if strip_signature_images(buf, blank_cover_names=blank_cover_names):
             raw = buf.getvalue()
         return _rebuild(resp, raw)
     except Exception:
@@ -114,9 +115,12 @@ def try_log(error_resp=Resp.resp_fatal(), perm: Union[Perms, List[Perms]] = None
                     resp = Resp.resp_err(msg=f"{ts('msg_no_perm')}")
                 else:
                     resp = await func(*args, **kwargs)
-                    # 不带签名导出：在出口统一剥离签名图，覆盖各模块自定义封面
+                    # 不带签名导出：在出口统一剥离签名图，覆盖各模块自定义封面。
+                    # 质量文件封面编审批姓名要导出，不能清成空白。
                     if with_sign is False:
-                        resp = await _strip_sign_from_response(resp)
+                        resp = await _strip_sign_from_response(
+                            resp, blank_cover_names=func.__name__ != "export_qa_doc",
+                        )
             except Exception:
                 resp = error_resp
                 logger.exception("")

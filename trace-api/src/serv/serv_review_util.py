@@ -65,15 +65,32 @@ def _sign_lib_images() -> set:
 # 框与文字之间留一格，两项之间留四格。
 CHECK = "\u2611\ufe0e 通过    \u25a1 存在问题"
 # 兼容原 Word「通过 □存在问题」与导出模板「☑ 通过    □ 存在问题」
-_REVIEW_CHECK_LINE = re.compile(r"^(?:[☑✓✔■]\ufe0e?\s*)?通过\s*[□☐]\ufe0e?\s*存在问题\s*$")
+_REVIEW_CHECK_LINE = re.compile(
+    r"^(?:[☑✓✔■□☐\u2611]\ufe0e?\s*)?通过\s*[☑✓✔■□☐\u2611]\ufe0e?\s*存在问题\s*$"
+)
+_CHECK_MARKS = ("☑", "✓", "✔", "■", "\u2611", "\u00fe")
 
 
 def is_review_check_line(text: str) -> bool:
     return bool(_REVIEW_CHECK_LINE.match(str(text or "").strip()))
 
 
-def write_review_check_paragraph(para):
-    """评审结论勾选写成「☑ 通过    □ 存在问题」：单色框，框与字之间一格，两项之间四格。"""
+def review_check_pass_selected(text: str) -> bool:
+    """勾在「通过」上。两边都没勾时按默认通过。勾在「存在问题」上则为否。"""
+    value = str(text or "")
+    if "通过" not in value or "存在问题" not in value:
+        return True
+    before_pass, after_pass = value.split("通过", 1)
+    if any(mark in before_pass for mark in _CHECK_MARKS):
+        return True
+    before_issue = after_pass.split("存在问题", 1)[0]
+    if any(mark in before_issue for mark in _CHECK_MARKS):
+        return False
+    return True
+
+
+def write_review_check_paragraph(para, text=""):
+    """评审结论勾选写成单色框。默认勾「通过」；格子里勾的是「存在问题」时勾后面一项。"""
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
 
@@ -92,9 +109,10 @@ def write_review_check_paragraph(para):
             rfonts.set(qn(attr), font_name)
 
     # Wingdings: 0xFE 方框对号，0xA8 空框。与正文同一字号，避免表情符号撑高行。
-    add("\u00fe", "Wingdings")
+    pass_on = review_check_pass_selected(text) if text else True
+    add("\u00fe" if pass_on else "\u00a8", "Wingdings")
     add(" 通过    ", "宋体")
-    add("\u00a8", "Wingdings")
+    add("\u00a8" if pass_on else "\u00fe", "Wingdings")
     add(" 存在问题", "宋体")
 
 # 各模块的评审记录模板：items 为 [类别, 评审项] 列表，persons 为参评人员 6 列行
@@ -488,6 +506,34 @@ REVIEW_DEFS = {
             ["RA", "张淑芳", "", "QA", "林金贵", ""],
             ["临床人员", "齐济", "", "产品经理", "杨静", ""],
             ["其他参评人员", "/", "/", "/", "/", "/"],
+            ["批准人员签字/日期", "", "", "", "", ""],
+        ],
+    },
+    # 质量文件「设计开发输出评审」，结构同《评审记录（设计开发输出）》
+    "qa_output": {
+        "name_keywords": ["设计开发输出评审", "设计开发输出"],
+        "items": [
+            ["输出满足输入", "产品实现是否满足输入要求"],
+            ["输出满足输入", "输出文档是否满足输入要求"],
+            ["法规标准", "产品是否法规要求"],
+            ["法规标准", "设计开发过程是否符合法规标准要求"],
+            ["法规标准", "文档是否符合法规要求"],
+            ["风险管理控制措施", "产品实现是否包含风险管理控制措施"],
+            ["文档", "是否包含采购信息"],
+            ["文档", "是否包含生产所需信息"],
+            ["文档", "是否包含服务所需信息"],
+            ["文档", "是否包含产品技术要求"],
+            ["文档", "是否包含产品使用说明书"],
+            ["文档", "是否包含包装和标签要求"],
+            ["文档", "是否包含标识和可追溯性要求"],
+        ],
+        "conclusion": "评审结论：\n通过。设计开发输出文件完整。",
+        "persons": [
+            ["研发总监", "", "", "产品部经理", "", ""],
+            ["开发负责人", "", "", "测试负责人", "", ""],
+            ["QA", "", "", "RA", "", ""],
+            ["临床人员", "", "", "产品经理", "", ""],
+            ["其他参会人员", "", "", "", "", ""],
             ["批准人员签字/日期", "", "", "", "", ""],
         ],
     },
@@ -2121,7 +2167,7 @@ def render_review_grid(document, grid, set_cell, header_rows=1, approver_keep_la
                 para.alignment = WD_ALIGN_PARAGRAPH.LEFT
                 para.paragraph_format.space_before = Pt(0)
                 para.paragraph_format.space_after = Pt(0)
-                write_review_check_paragraph(para)
+                write_review_check_paragraph(para, s)
                 cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
                 continue
             if s.startswith("data:image"):
