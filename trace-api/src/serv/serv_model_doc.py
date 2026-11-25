@@ -280,6 +280,75 @@ def cover_keywords(doc_type):
     return list(serv_review_util.COVER_KEYWORDS.get(doc_type) or [])
 
 
+def _module_dhf_keywords(doc_type):
+    """按模块建的文件编号：用「模块名 + 记录名」和原模板里的模块名对 DHF。不带模块名的通称不用，避免串到别的文件。"""
+    parts = module_doc_parts(doc_type)
+    if not parts:
+        return []
+    name = str(getattr(module_doc_chapter(doc_type), "name", "") or "").strip()
+    old = _base_module_name(parts[0])
+    raw = list((DOC_META.get(parts[0]) or {}).get("keywords") or [])
+    specific = [k for k in raw if old and old in k]
+    renamed = [k.replace(old, name) for k in specific] if name and old else []
+    title = f"{name}{MODULE_GROUP_SUFFIX[parts[1]]}" if name else ""
+    out = []
+    for kw in renamed + ([title] if title else []) + specific:
+        kw = str(kw or "").strip()
+        if kw and kw not in out:
+            out.append(kw)
+    return out
+
+
+def _dhf_code_for_keywords(prod_id, keywords):
+    """名称里带上关键字即可。同一关键字有多条时，取名称最接近的那条，避免「模型训练」碰到「训练集构建」。"""
+    from ..model.prod_dhf import ProdDhf
+    words = sorted([str(k or "").strip() for k in (keywords or []) if str(k or "").strip()], key=len, reverse=True)
+    if not prod_id or not words:
+        return ""
+    rows = db.session.execute(select(ProdDhf).where(ProdDhf.prod_id == prod_id)).scalars().all()
+    for kw in words:
+        found = []
+        for item in rows:
+            name = str(item.name or "").strip()
+            code = serv_review_util._normalize_dhf_code(item.code)
+            if not name or not code or kw not in name:
+                continue
+            found.append((0 if name == kw else 1, len(name) - len(kw), item.id or 0, code))
+        if found:
+            found.sort()
+            return found[0][3]
+    return ""
+
+
+def _sibling_dhf_file_no(prod_id, keywords):
+    """本版本 DHF 没有该文件时，用同一产品名称下其它版本的 DHF。"""
+    if not prod_id or not keywords:
+        return ""
+    product = db.session.get(Product, prod_id)
+    name = str(getattr(product, "name", "") or "").strip() if product else ""
+    if not name:
+        return ""
+    ids = db.session.execute(
+        select(Product.id).where(Product.name == name, Product.id != prod_id).order_by(Product.id.desc())
+    ).scalars().all()
+    for sid in ids:
+        hit = _dhf_code_for_keywords(sid, keywords)
+        if hit:
+            return hit
+    return ""
+
+
+def resolve_model_file_no(prod_id, file_no="", version="", doc_type=""):
+    """模型文件编号。已填写的只同步版本段。按模块建的、空编号按模块名匹配 DHF。"""
+    if module_doc_parts(doc_type) and not str(file_no or "").strip():
+        keywords = _module_dhf_keywords(doc_type)
+        base = _dhf_code_for_keywords(prod_id, keywords) or _sibling_dhf_file_no(prod_id, keywords)
+        if not base:
+            return None
+        return serv_review_util.resolve_doc_file_no(prod_id, base, version, doc_type)
+    return serv_review_util.resolve_doc_file_no(prod_id, file_no, version, doc_type)
+
+
 def doc_format(doc_type):
     return (DOC_META.get(base_doc_type(doc_type)) or {}).get("format") or "docx"
 
@@ -760,7 +829,7 @@ class Server(object):
             obj.product_full_version = product.full_version
             obj.product_type_code = product.type_code
             if not (obj.file_no or "").strip():
-                resolved = serv_review_util.resolve_doc_file_no(product.id, obj.file_no, obj.version, key)
+                resolved = resolve_model_file_no(product.id, obj.file_no, obj.version, key)
                 if resolved:
                     obj.file_no = resolved
         obj.file_no = sync_file_no_version(obj.file_no or "", getattr(row, "version", None) or "") or obj.file_no
@@ -3836,7 +3905,7 @@ class Server(object):
     def __fill_scope_body(body, prod_name):
         name = str(prod_name or "").strip()
         s = str(body or "")
-        if re.search(r"产品名称[：:]\s*\S", s):
+        if re.search(r"产品名称[：:][ \t]*\S", s):
             return s
         if re.search(r"产品名称[：:]", s):
             return re.sub(r"产品名称[：:]\s*", ("产品名称：" + name) if name else "产品名称：", s, count=1)
@@ -4502,7 +4571,7 @@ class Server(object):
             payload["doc_type"] = doc_type
             row = ModelDoc(**payload)
             row.id = None
-            row.file_no = serv_review_util.resolve_doc_file_no(form.product_id, form.file_no, form.version, doc_type) or None
+            row.file_no = resolve_model_file_no(form.product_id, form.file_no, form.version, doc_type) or None
             if module_doc_parts(doc_type) and not row.content:
                 row.content = self.new_module_content(doc_type, form.product_id)
             else:
@@ -4544,7 +4613,7 @@ class Server(object):
                 version=version,
                 file_no=sync_file_no_version(
                     (fromdoc.file_no or "").strip()
-                    or serv_review_util.resolve_doc_file_no(target_pid, "", version, fromdoc.doc_type)
+                    or resolve_model_file_no(target_pid, "", version, fromdoc.doc_type)
                     or "",
                     version,
                 ) or None,

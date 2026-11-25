@@ -608,7 +608,7 @@ const fillScopeBody = (body: string, name: string, replace = false): string => {
     const n = String(name || "").trim();
     const s = String(body || "");
     if (/产品名称[：:]/.test(s)) {
-        if (!replace && /产品名称[：:]\s*\S/.test(s)) return s;
+        if (!replace && /产品名称[：:][ \t]*\S/.test(s)) return s;
         return s.replace(/产品名称[：:][^\n]*/, n ? `产品名称：${n}` : "产品名称：");
     }
     const line = n ? `产品名称：${n}` : "产品名称：";
