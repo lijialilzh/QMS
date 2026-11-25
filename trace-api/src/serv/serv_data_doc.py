@@ -2731,6 +2731,16 @@ class Server(object):
 
         def set_cell(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT):
             s = str(text or "")
+            if "data:image" in s:
+                cell.text = ""
+                para = cell.paragraphs[0]
+                para.alignment = align
+                para.paragraph_format.space_before = Pt(0)
+                para.paragraph_format.space_after = Pt(0)
+                para.paragraph_format.line_spacing = 1
+                if serv_review_util.write_mixed_sign_paragraph(para, s, docx_util.fonted_txt, 33):
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    return
             if s.startswith("data:image"):
                 try:
                     b64 = s.split(",", 1)[1] if "," in s else ""

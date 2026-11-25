@@ -15,7 +15,7 @@ import * as ApiSrsDoc from "@/api/ApiSrsDoc";
 import * as ApiSrsReq from "@/api/ApiSrsReq";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import { getModelDocMeta } from "./ModelDocTypes";
-import { computeGridSpans, computeCodeReviewSpans, isReviewRecordGrid, isCodeReviewChecklistGrid, annexReviewDate, overwriteAnnexReview } from "./gridSpans";
+import { computeGridSpans, computeCodeReviewSpans, isReviewRecordGrid, isCodeReviewChecklistGrid, annexReviewDate, overwriteAnnexReview, signCellParts } from "./gridSpans";
 import {
     buildEnvCheckTable, collectAssetCodes, computeModelEnvWeeks, envCheckGroups, envCheckLeafCols,
     loadEnvTimelineRows,
@@ -956,6 +956,7 @@ export default () => {
                         rev: annexReviewDate(tlRows, meta.keywords.concat(meta.title)),
                         members,
                         approver,
+                        signMap,
                     });
                 }
                 if (type === "md_017") {
@@ -1385,7 +1386,8 @@ export default () => {
                                                             const cs = sp?.colSpan || 1;
                                                             const rs = sp?.rowSpan || 1;
                                                             const left = String(row[0] ?? "");
-                                                            const hasImg = typeof cell === "string" && cell.startsWith("data:image");
+                                                            const signParts = signCellParts(cell);
+                                                            const hasImg = typeof cell === "string" && cell.startsWith("data:image") && !(signParts && signParts.length > 1);
                                                             const isFlowSlot = left.includes("算法流程图") && ci > 0;
                                                             const figureSlot = isFlowSlot || (cols === 1 && (hasImg || !String(cell ?? "").trim()));
                                                             const figureLike = hasImg && figureSlot;
@@ -1397,7 +1399,15 @@ export default () => {
                                                                 rowSpan={rs > 1 ? rs : undefined}
                                                                 style={cs > 1 || rs > 1 ? { verticalAlign: "middle" } : undefined}
                                                             >
-                                                                {hasImg ? (
+                                                                {signParts && signParts.length > 1 ? (
+                                                                    <span style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 8, maxWidth: "100%" }}>
+                                                                        {signParts.map((part, pi) => part.img ? (
+                                                                            <img key={pi} src={part.value} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain" }} />
+                                                                        ) : (
+                                                                            <span key={pi}>{part.value}</span>
+                                                                        ))}
+                                                                    </span>
+                                                                ) : hasImg ? (
                                                                     <span style={{ position: "relative", display: "inline-block", maxWidth: "100%" }}>
                                                                         <img
                                                                             src={cell}

@@ -11,7 +11,7 @@ import * as ApiTimeline from "@/api/ApiProjectTimeline";
 import * as ApiPersonSign from "@/api/ApiPersonSign";
 import ProductVersionSelect from "@/common/ProductVersionSelect";
 import { getDataDocMeta, DATA_STATS_IMPORT_TYPES, getDataDocListType } from "./DataDocTypes";
-import { computeGridSpans, isReviewRecordGrid, annexReviewDate, overwriteAnnexReview } from "./gridSpans";
+import { computeGridSpans, isReviewRecordGrid, annexReviewDate, overwriteAnnexReview, signCellParts } from "./gridSpans";
 import { loadEnvTimelineRows } from "./envMaintCheck";
 import "../pdp/PdpDocDetail.less";
 import FreeChapterContent from "../pdp/FreeChapterContent";
@@ -402,6 +402,7 @@ export default () => {
                         rev: annexReviewDate(tlRows, meta.keywords.concat(meta.title)),
                         members,
                         approver,
+                        signMap,
                     });
                 }
                 resolve(syncDocVersionFields(out, version));
@@ -715,6 +716,7 @@ export default () => {
                                                             const sp = spans?.[r]?.[ci];
                                                             if (sp?.skip) return null;
                                                             const cell = row[ci] ?? "";
+                                                            const signParts = signCellParts(cell);
                                                             const cs = sp?.colSpan || 1;
                                                             const rs = sp?.rowSpan || 1;
                                                             return (
@@ -725,7 +727,15 @@ export default () => {
                                                                 rowSpan={rs > 1 ? rs : undefined}
                                                                 style={cs > 1 || rs > 1 ? { verticalAlign: "middle" } : undefined}
                                                             >
-                                                                {typeof cell === "string" && cell.startsWith("data:image") ? (
+                                                                {signParts && signParts.length > 1 ? (
+                                                                    <span style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 8, maxWidth: "100%" }}>
+                                                                        {signParts.map((part, pi) => part.img ? (
+                                                                            <img key={pi} src={part.value} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain" }} />
+                                                                        ) : (
+                                                                            <span key={pi}>{part.value}</span>
+                                                                        ))}
+                                                                    </span>
+                                                                ) : typeof cell === "string" && cell.startsWith("data:image") ? (
                                                                     <span style={{ position: "relative", display: "inline-block" }}>
                                                                         <img src={cell} alt="签名" style={{ height: 44, width: "auto", maxWidth: "100%", objectFit: "contain", display: "inline-block", verticalAlign: "middle" }} />
                                                                         {!readonly && (

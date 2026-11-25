@@ -274,19 +274,48 @@ export const annexReviewDate = (rows: any[], keywords: string[]): string => {
     return `${num(best.year)}.${mm}.${dd}`;
 };
 
+/** 格子里有签名图时拆成文字和图，供评审记录并排显示。没有图返回 null。 */
+export const signCellParts = (cell: any): { img: boolean; value: string }[] | null => {
+    const tokens = String(cell ?? "").split(/\s+/).filter((t) => t);
+    if (!tokens.some((t) => t.startsWith("data:image"))) return null;
+    return tokens.map((t) => ({ img: t.startsWith("data:image"), value: t }));
+};
+
+const annexSignerLine = (tb: any[], deptMap: Record<string, string>, signMap: Record<string, string>) => {
+    const names: string[] = [];
+    const seen = new Set<string>();
+    (tb || []).forEach((row) => {
+        if (!Array.isArray(row) || String(row[0] || "").trim() !== "参评人员") return;
+        [1, 3].forEach((di) => {
+            const dept = String(row[di] || "").trim();
+            if (!isAnnexDeptLabel(dept)) return;
+            String(deptMap[dept] || "").split(/\s+/).filter((t) => t && t !== "无").forEach((name) => {
+                if (!seen.has(name)) {
+                    seen.add(name);
+                    names.push(name);
+                }
+            });
+        });
+    });
+    const signs = names.map((name) => signMap[name] || name);
+    return ["参评人签字：", ...signs].join("\n");
+};
+
 /** 换产品时覆盖附件评审记录的项目名称、评审时间、参评人员、批准人；参评人签字只留标签。勾选和总结不动。 */
 export const overwriteAnnexReview = (
     nodes: any[],
-    info: { prodName?: string; rev?: string; members?: any[]; approver?: string }
+    info: { prodName?: string; rev?: string; members?: any[]; approver?: string; signMap?: Record<string, string> }
 ): any[] => {
     const deptMap = annexDeptNames(info.members || []);
+    const signMap = info.signMap || {};
     const prodName = String(info.prodName || "").trim();
     const rev = String(info.rev || "").trim();
     const approver = String(info.approver || "").trim();
-    const tail = [approver, rev].filter(Boolean).join(" ");
-    const approverText = `批准人（签字/日期）：${tail}`;
+    const approverSign = approver ? (signMap[approver] || approver) : "";
+    const approverText = ["批准人（签字/日期）：", approverSign, rev].filter(Boolean).join("\n");
     const fixTable = (tb: any[]) => {
         if (!isReviewRecordGrid(tb)) return tb;
+        const signerText = annexSignerLine(tb, deptMap, signMap);
         return tb.map((row: any[]) => {
             if (!Array.isArray(row) || !row.length) return row;
             const next = [...row];
@@ -316,7 +345,7 @@ export const overwriteAnnexReview = (
                 return next;
             }
             if (a.startsWith("批准人")) return next.map(() => approverText);
-            if (a.startsWith("参评人签字")) return next.map(() => "参评人签字：");
+            if (a.startsWith("参评人签字")) return next.map(() => signerText);
             return row;
         });
     };

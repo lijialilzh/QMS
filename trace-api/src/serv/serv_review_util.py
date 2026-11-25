@@ -1992,6 +1992,49 @@ def _annex_row_untouched(row, sample):
     return True
 
 
+def _people_sign_cell(text):
+    """空格分隔的姓名换成签名图，多张用换行隔开。没有图的仍写姓名。不是姓名的原文保留。"""
+    raw = str(text or "").strip()
+    if not raw or raw == "无":
+        return raw or "无"
+    parts = [p for p in re.split(r"\s+", raw) if p]
+    if not parts:
+        return raw
+    if all(p.startswith("data:image") for p in parts):
+        return "\n".join(parts)
+    for p in parts:
+        if p.startswith("data:image"):
+            continue
+        if not re.fullmatch(r"[\u4e00-\u9fff]{2,4}", p):
+            return raw
+    out = []
+    for p in parts:
+        if p.startswith("data:image"):
+            out.append(p)
+        else:
+            out.append(_sign_by_name(p) or p)
+    return "\n".join(out)
+
+
+def _put_annex_people(row, idx, sample, names, force):
+    """参评人员姓名格只写姓名。签名图放在下面的「参评人签字」。"""
+    cur = row[idx] if idx < len(row) else ""
+    text = str(names or "").strip() or "无"
+    if "data:image" in str(cur or ""):
+        row[idx] = text
+        return
+    if force or _annex_placeholder(cur, sample) or not str(cur or "").strip():
+        row[idx] = text
+
+
+def _collect_annex_names(text, bucket):
+    for part in re.split(r"\s+", str(text or "").strip()):
+        if not part or part == "无" or part.startswith("data:image"):
+            continue
+        if re.fullmatch(r"[\u4e00-\u9fff]{2,4}", part) and part not in bucket:
+            bucket.append(part)
+
+
 def fill_annex_review_grid(tb, prod_id, doc_type, prod_name="", force=False, version=None):
     """模型/数据文件「附件 1 评审记录」五列表。
     force=False：项目名称、评审时间、参评人员、批准人、参评人签字只填空或仍是模板样例的格，已手改的保留。
@@ -2005,6 +2048,7 @@ def fill_annex_review_grid(tb, prod_id, doc_type, prod_name="", force=False, ver
     dept_map = _annex_dept_people(members)
     approver = review_approver(doc_type, prod_id, rev) or ""
     seen = {}
+    signer_names = []
     for row in tb:
         if not isinstance(row, list) or not row:
             continue
@@ -2029,28 +2073,31 @@ def fill_annex_review_grid(tb, prod_id, doc_type, prod_name="", force=False, ver
             sample = _annex_sample_row(doc_type, "参评人员", seen["参评人员"])
             dept1 = str(row[1] or "").strip()
             if _is_annex_dept(dept1):
-                names = dept_map.get(dept1) or "无"
-                if force or _annex_placeholder(row[2], sample[2] if len(sample) > 2 else ""):
-                    row[2] = names
+                names = dept_map.get(dept1) or ""
+                _put_annex_people(row, 2, sample[2] if len(sample) > 2 else "", names, force)
+                _collect_annex_names(row[2], signer_names)
                 if not _is_annex_dept(row[3]):
                     for i in range(3, len(row)):
                         samp = sample[i] if i < len(sample) else ""
-                        if force or _annex_placeholder(row[i], samp):
-                            row[i] = names
+                        _put_annex_people(row, i, samp, names, force)
             dept2 = str(row[3] or "").strip()
             if _is_annex_dept(dept2) and len(row) > 4:
                 samp = sample[4] if len(sample) > 4 else ""
-                if force or _annex_placeholder(row[4], samp):
-                    row[4] = dept_map.get(dept2) or "无"
+                _put_annex_people(row, 4, samp, dept_map.get(dept2) or "", force)
+                _collect_annex_names(row[4], signer_names)
             continue
         if a.startswith("批准人"):
             seen["批准人"] = seen.get("批准人", 0) + 1
             sample = _annex_sample_row(doc_type, "批准人", seen["批准人"], startswith=True)
-            if force or _annex_row_untouched(row, sample):
-                text = "批准人（签字/日期）："
-                tail = " ".join(x for x in (approver, rev) if x).strip()
-                if tail:
-                    text = text + tail
+            joined = "\n".join(str(c or "") for c in row)
+            if force or _annex_row_untouched(row, sample) or "data:image" not in joined:
+                sign = (_sign_by_name(approver) or approver) if approver else ""
+                lines = ["批准人（签字/日期）："]
+                if sign:
+                    lines.append(sign)
+                if rev:
+                    lines.append(rev)
+                text = "\n".join(lines)
                 for i in range(len(row)):
                     row[i] = text
             continue
@@ -2058,8 +2105,13 @@ def fill_annex_review_grid(tb, prod_id, doc_type, prod_name="", force=False, ver
             seen["参评人签字"] = seen.get("参评人签字", 0) + 1
             sample = _annex_sample_row(doc_type, "参评人签字", seen["参评人签字"], startswith=True)
             if force or _annex_row_untouched(row, sample):
+                signed = _people_sign_cell(" ".join(signer_names)) if signer_names else ""
+                lines = ["参评人签字："]
+                if signed and signed != "无":
+                    lines.append(signed)
+                text = "\n".join(lines)
                 for i in range(len(row)):
-                    row[i] = "参评人签字："
+                    row[i] = text
     return tb
 
 
@@ -2116,6 +2168,25 @@ def ensure_review(content, key, rev_date="", prod_id=None, force=False, force_da
     ]
     sections.append(sec)
     return content
+
+
+def write_mixed_sign_paragraph(para, text, fonted, height_pt=28):
+    """一段里混排文字和签名图。没有签名图时返回 False，调用方按普通文字写。"""
+    tokens = [t for t in re.split(r"\s+", str(text or "")) if t]
+    if not any(t.startswith("data:image") for t in tokens):
+        return False
+    for i, token in enumerate(tokens):
+        if i:
+            para.add_run(" ")
+        if token.startswith("data:image"):
+            try:
+                b64 = token.split(",", 1)[1] if "," in token else ""
+                para.add_run().add_picture(BytesIO(base64.b64decode(b64)), height=Pt(height_pt))
+            except Exception:
+                pass
+        else:
+            fonted(para, token, font_size=10.5)
+    return True
 
 
 def write_approver_sign_date(cell, sign, date, set_cell):

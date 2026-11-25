@@ -5525,6 +5525,13 @@ class Server(object):
 
         def set_cell(cell, text, bold=False, align=WD_ALIGN_PARAGRAPH.LEFT, figure=False):
             s = str(text or "")
+            if "data:image" in s and not figure:
+                cell.text = ""
+                para = cell.paragraphs[0]
+                para.alignment = align
+                if serv_review_util.write_mixed_sign_paragraph(para, s, docx_util.fonted_txt, 33):
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                    return
             if s.startswith("data:image"):
                 try:
                     raw = base64.b64decode(s.split(",", 1)[1] if "," in s else "")
