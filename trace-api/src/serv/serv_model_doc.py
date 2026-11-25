@@ -3878,7 +3878,7 @@ class Server(object):
                 last = max(ends)
                 file_date = f"{last.year}年{last.month}月{last.day}日"
                 env_cover_date = f"{last.year}.{last.month:02d}.{last.day:02d}"
-            eq_type = "md_deq" if doc_type == "md_019" else "md_eq"
+            eq_type = "md_deq" if doc_type == "md_019" else "md_teq"
             eq_doc = db.session.execute(
                 select(ModelDoc).where(ModelDoc.product_id == prod_id, ModelDoc.doc_type == eq_type).order_by(ModelDoc.id.desc())
             ).scalars().first()
@@ -3908,7 +3908,7 @@ class Server(object):
         if re.search(r"产品名称[：:][ \t]*\S", s):
             return s
         if re.search(r"产品名称[：:]", s):
-            return re.sub(r"产品名称[：:]\s*", ("产品名称：" + name) if name else "产品名称：", s, count=1)
+            return re.sub(r"产品名称[：:][ \t]*", ("产品名称：" + name) if name else "产品名称：", s, count=1)
         line = f"产品名称：{name}" if name else "产品名称："
         return f"{line}\n{s}" if s else line
 

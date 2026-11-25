@@ -148,7 +148,7 @@ export default () => {
                 ApiProduct.get_product({ id: productId }).catch(() => null),
                 ApiMember.list_project_member({ prod_id: productId, page_index: 0, page_size: 1000 }).catch(() => null),
                 ApiPersonSign.list_person_sign({ page_index: 0, page_size: 1000 }).catch(() => null),
-                Api.list_model_doc({ product_id: productId, doc_type: docType === "md_019" ? "md_deq" : "md_eq", page_index: 0, page_size: 1 }).catch(() => null),
+                Api.list_model_doc({ product_id: productId, doc_type: docType === "md_019" ? "md_deq" : "md_teq", page_index: 0, page_size: 1 }).catch(() => null),
             ]).then(async ([pr, mb, ps, eqList]: any[]) => {
                 const prod = pr && pr.code === Api.C_OK ? (pr.data || {}) : {};
                 const tlRows = await loadEnvTimelineRows(productId, String(prod.name || ""));

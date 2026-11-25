@@ -68,12 +68,11 @@ def fill_chapter_images(content, doc_type):
                 continue
             title = _strip_num(n.get("title"))
             files = _files_for(doc_type, title, parents)
-            if files:
-                existing = n.get("images") if isinstance(n.get("images"), list) else []
-                if not any(str(x or "").strip() for x in existing):
-                    urls = [u for u in (_data_url(f) for f in files) if u]
-                    if urls:
-                        n["images"] = urls
+            # 章上已有 images（含空列表）表示保存过，用户删掉的图不再补回。
+            if files and "images" not in n:
+                urls = [u for u in (_data_url(f) for f in files) if u]
+                if urls:
+                    n["images"] = urls
             walk(n.get("children") or [], parents + [title])
 
     walk(content.get("sections") or [], [])
