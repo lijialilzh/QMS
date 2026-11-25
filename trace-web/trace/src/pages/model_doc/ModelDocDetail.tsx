@@ -29,7 +29,9 @@ import { syncDocVersionFields, timelineCellMatchesVersion, writeRevisionDates } 
 let _seq = 0;
 const genKey = () => `n${Date.now().toString(36)}_${(_seq++).toString(36)}`;
 
-const computeFileDate = (rows: any[], keywords: string[], version?: string): string => {
+const LATEST_COVER_TYPES = new Set(["pd_003", "md_004", "md_007", "md_014", "md_021"]);
+
+const computeFileDate = (rows: any[], keywords: string[], version?: string, latest = false): string => {
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
     const kws = (keywords || []).filter(Boolean);
     const matches = (rows || []).filter((r: any) =>
@@ -38,7 +40,9 @@ const computeFileDate = (rows: any[], keywords: string[], version?: string): str
     if (!matches.length) return "";
     const key = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
     let best = matches[0];
-    matches.forEach((r: any) => { if (key(r) < key(best)) best = r; });
+    matches.forEach((r: any) => {
+        if (latest ? key(r) > key(best) : key(r) < key(best)) best = r;
+    });
     return `${num(best.year)}年${num(best.month)}月${num(best.day)}日`;
 };
 
@@ -835,8 +839,10 @@ export default () => {
             "批准人": info.批准人 || "",
         };
         const put = (row: any[], idx: number, val: string) => {
+            const cur = String(row[idx] || "");
             if (replace) row[idx] = val || "";
-            else if (val && !String(row[idx] || "").trim()) row[idx] = val;
+            // 打开时：空格直接填；格子里还是姓名、签名库有章，则换成签名章。已经是签名图的保留。
+            else if (val && (!cur.trim() || (val.startsWith("data:image") && !cur.startsWith("data:image")))) row[idx] = val;
         };
         const fix = (n: any): any => {
             const isCover = n.ref_type === "cover";
@@ -904,6 +910,9 @@ export default () => {
                 const approver = findRole("研发负责人");
                 const fileKeywords = meta.keywords.concat(meta.title);
                 const fileDate = computeFileDate(tlRows, fileKeywords, version);
+                const coverDate = LATEST_COVER_TYPES.has(type)
+                    ? computeFileDate(tlRows, fileKeywords, version, true)
+                    : fileDate;
                 let out = fillBasicInfo(secs, {
                     name: prod.name,
                     version: prod.full_version,
@@ -911,7 +920,7 @@ export default () => {
                     scope: prod.scope,
                 }, replaceProduct);
                 out = fillCover(out, {
-                    date: fileDate,
+                    date: coverDate,
                     编制人: signOr(writer),
                     审核人: signOr(reviewer),
                     批准人: signOr(approver),

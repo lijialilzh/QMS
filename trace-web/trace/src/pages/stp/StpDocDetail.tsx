@@ -54,11 +54,13 @@ const computeCycle = (rows: any[]): string => {
     return min.y === max.y ? `${min.y}年${min.m}月~${max.m}月` : `${min.y}年${min.m}月~${max.y}年${max.m}月`;
 };
 
-// 从时间线找「软件测试计划」日期（取最晚一天，与后端 cover_date 一致），格式 yyyy.MM.dd
-const computeFileDate = (rows: any[], keyword = "软件测试计划", version?: string): string => {
+// 从时间线找「软件测试计划 / 软开测试计划」日期（取最晚一天，与后端 cover_date 一致），格式 yyyy.MM.dd
+const STP_DATE_KEYS = ["软件测试计划", "软开测试计划"];
+const computeFileDate = (rows: any[], keyword: string | string[] = STP_DATE_KEYS, version?: string): string => {
+    const keys = Array.isArray(keyword) ? keyword : [keyword];
     const num = (v: any) => parseInt(String(v ?? "").replace(/[^\d]/g, ""), 10);
     const matches = (rows || []).filter((r: any) =>
-        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => timelineCellMatchesVersion(String(v || ""), [keyword], version))
+        (r.row_type || "date") === "date" && Object.values(r.cells || {}).some((v: any) => timelineCellMatchesVersion(String(v || ""), keys, version))
     );
     if (!matches.length) return "";
     const key = (r: any) => num(r.year) * 10000 + num(r.month) * 100 + (num(r.day) || 0);
@@ -369,7 +371,7 @@ export default () => {
                 });
                 out = fillMilestone(out, {
                     devEnd: computeDevEnd(tlRows),
-                    planDate: latestDateFor(tlRows, ["软件测试计划"], version),
+                    planDate: latestDateFor(tlRows, STP_DATE_KEYS, version),
                     tpm: findRole((r) => r.toUpperCase().includes("TPM")),
                     moduleMap,
                     phases: computeDevPhases(tlRows),

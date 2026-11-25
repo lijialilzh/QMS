@@ -32,10 +32,14 @@ _SIGN_SWITCH_EXPORTS = ("export_single_doc", "export_srs_doc_trace", "export_doc
 
 
 def _export_sign_requested(func_name: str, request: Request):
-    """单文档导出接口是否要求带签名。非单文档导出返回 None（不处理）。"""
+    """单文档导出接口是否要求带签名。打开、保存、列表不处理，避免把封面签名章清掉。"""
     if func_name in _SIGN_SWITCH_EXPORTS:
         return None
-    if not (func_name in _SINGLE_DOC_NAMES or func_name.endswith(_SINGLE_DOC_SUFFIXES)):
+    # 只认导出接口。get/list/update 也以 _doc 结尾，不能算导出。
+    is_single_export = func_name in _SINGLE_DOC_NAMES or (
+        func_name.startswith("export_") and func_name.endswith(_SINGLE_DOC_SUFFIXES)
+    )
+    if not is_single_export:
         return None
     raw = request.query_params.get("with_sign") if request else None
     if raw is None or str(raw).strip() == "":

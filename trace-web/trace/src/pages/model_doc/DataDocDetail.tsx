@@ -298,8 +298,9 @@ export default () => {
             "批准人": info.批准人 || "",
         };
         const put = (row: any[], idx: number, val: string) => {
+            const cur = String(row[idx] || "");
             if (replace) row[idx] = val || "";
-            else if (val && !String(row[idx] || "").trim()) row[idx] = val;
+            else if (val && (!cur.trim() || (val.startsWith("data:image") && !cur.startsWith("data:image")))) row[idx] = val;
         };
         const fix = (n: any): any => {
             const isCover = isCoverNode(n);

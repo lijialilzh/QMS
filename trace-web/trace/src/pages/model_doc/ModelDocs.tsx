@@ -354,7 +354,7 @@ export default () => {
         {
             title: "文件编号",
             dataIndex: "file_no",
-            width: "20%",
+            width: "13%",
             render: (value: string, row: any) => {
                 const isEditing = data.editingFileNoId === row.id;
                 const isSaving = data.savingFileNoId === row.id;
@@ -475,7 +475,7 @@ export default () => {
             </div>
             <Table
                 rowSelection={getDocTableRowSelection(data, dispatch)}
-                className="expand risk-doc-table"
+                className="expand risk-doc-table model-doc-list-table"
                 rowKey="id"
                 loading={data.loading}
                 columns={columns}

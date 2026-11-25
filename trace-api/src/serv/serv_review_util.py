@@ -937,7 +937,7 @@ COVER_KEYWORDS = {
     "release_note": ["产品发布说明", "发布说明"],
     "nsr": ["自研软件网络安全研究报告", "网络安全研究报告"],
     "research": ["自研软件研究报告", "软件研究报告"],
-    "stp": ["软件测试计划"],  # 不用宽泛「软件测试」，避免编审批日期与时间线串台
+    "stp": ["软件测试计划", "软开测试计划"],  # 时间线 A0 常写作「软开测试计划」；不用宽泛「软件测试」，避免和测试报告串台
     "utp": ["用户测试计划", "用户测试"],
     "utr": ["用户测试报告", "用户测试"],
     "str": ["软件测试报告"],
@@ -1171,7 +1171,7 @@ def fill_cover_dates(content, rev_date, force=False):
 
 
 def cover_date(prod_id, key, version=None, dept_prefix=None):
-    """按模块 key 取封面日期（复用 review_date + COVER_KEYWORDS）。
+    """按模块 key 取封面日期（复用 review_date + COVER_KEYWORDS，取最后一天）。
     version 为 A1、A2… 时按文件名称和该版本取。version 为 A0 时按文件名取，但不使用带 A1、A2 的单元格。不传版本时只按文件名。
     dept_prefix 传入时只取该部门（前缀）的时间线。"""
     kws = COVER_KEYWORDS.get(key)
