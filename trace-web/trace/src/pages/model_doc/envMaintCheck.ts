@@ -203,14 +203,14 @@ const spanWeeks = (starts: number[], ends: number[]): string[] => {
     return weekRanges(start, end);
 };
 
-/** 模型开发：模型配置管理计划 → 追溯。模型测试：模型测试（不含方案）→ 追溯。都看「模型部」。 */
+/** 模型开发：模型开发 → 可追溯性。模型测试：模型测试（不含方案）→ 可追溯性。都看「模型部」。 */
 export const computeModelEnvWeeks = (rows: any[], docType: string): string[] => {
     const starts = deptDates(rows, "模型部", (text) => (
         docType === "md_020"
             ? /模型测试(?!方案)/.test(text)
-            : text.includes("模型配置管理计划") || text.includes("模型配置计划")
+            : text.includes("模型开发") && !text.includes("模型开发计划")
     ));
-    const ends = deptDates(rows, "模型部", (text) => text.includes("追溯"));
+    const ends = deptDates(rows, "模型部", (text) => text.includes("可追溯性"));
     return spanWeeks(starts, ends);
 };
 

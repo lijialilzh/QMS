@@ -881,6 +881,8 @@ class Server(object):
         return re.sub(pat, f"{label}：{n}例左右", body, count=1)
 
     def __apply_md003_qty(self, content, product_id):
+        """各模块「数据」里的训练/测试/调优数据量要求是可编辑的需求数，打开和导出不按病例总数改写。"""
+        return
         if not product_id or not isinstance(content, dict):
             return
         actual = self.__md003_actual_qty(product_id)

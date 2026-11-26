@@ -84,6 +84,12 @@ export default () => {
     const delRow = (r: number) => {
         const next = clone();
         next.rows.splice(r, 1);
+        const head = String((next.rows[0] || [])[0] || "").trim();
+        if (head === "序号") {
+            next.rows.forEach((row: any[], i: number) => {
+                if (i > 0 && Array.isArray(row)) row[0] = String(i);
+            });
+        }
         dispatch({ content: next });
     };
 

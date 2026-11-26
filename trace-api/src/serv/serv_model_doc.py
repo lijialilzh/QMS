@@ -54,6 +54,11 @@ from .serv_product import product_scope_filter
 DOC_META = {**WORD_META, **XLSX_META}
 DEFAULT_CONTENTS = {**WORD_CONTENTS, **XLSX_CONTENTS}
 REVIEW_TABLES = WORD_REVIEW_TABLES
+if "md_007" not in REVIEW_TABLES and REVIEW_TABLES.get("md_004"):
+    _md007_review = copy.deepcopy(REVIEW_TABLES["md_004"])
+    if _md007_review and isinstance(_md007_review[0], list):
+        _md007_review[0] = ["评审记录（算法方案详细设计）"] * len(_md007_review[0])
+    REVIEW_TABLES["md_007"] = _md007_review
 EQ_DOC_TYPES = ("md_deq", "md_teq", "md_eq")
 CRR_DOC_TYPES = ("md_008_01", "md_008_02")
 BUILD_DATASET_NAME = {
@@ -532,6 +537,11 @@ class Server(object):
         """
         if not isinstance(content, dict):
             return
+        if doc_type == "pd_003":
+            self.__ensure_pd003_req_no(content, product_id)
+        if doc_type == "md_005":
+            self.__fill_md005_chapters(content, product_id)
+            return
         if doc_type in ("md_007", "md_014"):
             self.__fill_md007_chapters(content, product_id, doc_type)
             return
@@ -677,6 +687,141 @@ class Server(object):
         if filled:
             logger.info("md_018 model func row filled from prod_algo_chapter: %s", func_value)
 
+    def __ensure_pd003_req_no(self, content, product_id=None):
+        """需求概述前补「算法需求编号」，编号取该产品 SRS 算法需求那一条。已手改的不覆盖。"""
+        sections = content.get("sections") if isinstance(content, dict) else None
+        if not isinstance(sections, list):
+            return
+        code = self.__md022_algo_srs_code(product_id) if product_id else ""
+        line = ("需求编号：" + code) if code else "需求编号："
+
+        def ensure_desc(node):
+            """需求概述下的子章与模板一致：正文在「算法描述」，不写在父章上。"""
+            children = node.get("children") if isinstance(node.get("children"), list) else []
+            desc = next((c for c in children if isinstance(c, dict) and self.__strip_num(c.get("title")) == "算法描述"), None)
+            body = str(node.get("body") or "").strip()
+            if desc is None:
+                children.insert(0, {"title": "算法描述", "body": body, "tables": [], "children": []})
+                node["children"] = children
+                node["body"] = ""
+            elif body and not str(desc.get("body") or "").strip():
+                desc["body"] = body
+                node["body"] = ""
+
+        def walk(ns):
+            for i, n in enumerate(ns or []):
+                if not isinstance(n, dict):
+                    continue
+                title = self.__strip_num(n.get("title"))
+                if title == "算法需求编号":
+                    body = str(n.get("body") or "")
+                    if not re.search(r"需求编号[：:]\s*\S", body):
+                        n["body"] = line
+                    continue
+                if title == "需求概述":
+                    if not any(isinstance(s, dict) and self.__strip_num(s.get("title")) == "算法需求编号" for s in ns):
+                        ns.insert(i, {"title": "算法需求编号", "body": line, "tables": [], "children": []})
+                    ensure_desc(n)
+                    return True
+                if walk(n.get("children") or []):
+                    return True
+            return False
+
+        walk(sections)
+
+    def __fill_md005_chapters(self, content, product_id=None):
+        """模型测试方案：带「金标准制定」的章节按算法模块管理重建。分诊用分诊样例，其余用分割样例。"""
+        sections = content.get("sections") if isinstance(content, dict) else None
+        if not isinstance(sections, list) or not product_id:
+            return
+        rows = db.session.execute(
+            select(ProdAlgoChapter)
+            .where(ProdAlgoChapter.prod_id == product_id)
+            .order_by(ProdAlgoChapter.sort_order.asc(), ProdAlgoChapter.id.asc())
+        ).scalars().all()
+        modules = [r.name for r in rows if r.name]
+        if not modules:
+            return
+        fixed = {
+            "模型测试方案设计", "文件修订记录", "产品信息", "参考文件", "引言", "模型测试原则",
+            "测试结果分析", "附件 1 评审记录", "附件1 评审记录",
+        }
+        indexes = []
+        for i, s in enumerate(sections):
+            if not isinstance(s, dict):
+                continue
+            title = self.__strip_num(s.get("title"))
+            if not title or title in fixed or s.get("ref_type") in ("cover", "revision", "basic_info"):
+                continue
+            child_titles = [self.__strip_num(c.get("title")) for c in (s.get("children") or []) if isinstance(c, dict)]
+            if "金标准制定" in child_titles or title.endswith("测试方案"):
+                indexes.append(i)
+        if not indexes:
+            return
+        old = [sections[i] for i in indexes]
+        seg_tpl = next((s for s in old if "分诊" not in self.__strip_num(s.get("title")) and "阴阳性" not in self.__strip_num(s.get("title"))), old[0])
+        cls_tpl = next((s for s in old if "分诊" in self.__strip_num(s.get("title")) or "阴阳性" in self.__strip_num(s.get("title"))), old[-1])
+
+        def core_of(title):
+            """样例模块名：去掉「模型/模块测试方案」，再去掉末尾的模型/模块。
+            「肺叶分割模型测试方案」得到「肺叶分割」，才能换掉子章「肺叶分割客观测试算法设计」。"""
+            t = self.__strip_num(title)
+            t = re.sub(r"(模型测试方案|模块测试方案|测试方案)$", "", t).strip()
+            t = re.sub(r"(模型|模块)$", "", t).strip()
+            return t
+
+        def apply_name(node, new_name):
+            child = copy.deepcopy(node)
+            old_core = core_of(child.get("title"))
+            shown = new_name if str(new_name).endswith("测试方案") else (new_name + "测试方案")
+
+            def swap(text):
+                if old_core and old_core != new_name and isinstance(text, str):
+                    return text.replace(old_core, new_name)
+                return text
+
+            def walk(n):
+                if not isinstance(n, dict):
+                    return
+                n["title"] = swap(n.get("title"))
+                n["body"] = swap(n.get("body"))
+                for table in n.get("tables") or []:
+                    if not isinstance(table, list):
+                        continue
+                    for row in table:
+                        if not isinstance(row, list):
+                            continue
+                        for i, cell in enumerate(row):
+                            row[i] = swap(cell)
+                for c in n.get("children") or []:
+                    walk(c)
+
+            walk(child)
+            child["title"] = shown
+            return child
+
+        used = set()
+        new_sections = []
+        for name in modules:
+            hit = None
+            for j, s in enumerate(old):
+                if j in used:
+                    continue
+                t = self.__strip_num(s.get("title"))
+                if name and (name in t or core_of(t) in name):
+                    hit = j
+                    break
+            if hit is not None:
+                used.add(hit)
+                node = copy.deepcopy(old[hit])
+                node["title"] = name if str(name).endswith("测试方案") else (name + "测试方案")
+                new_sections.append(node)
+            else:
+                tpl = cls_tpl if ("分诊" in name or "阴阳性" in name) else seg_tpl
+                new_sections.append(apply_name(tpl, name))
+        first, last = indexes[0], indexes[-1]
+        content["sections"] = sections[:first] + new_sections + sections[last + 1:]
+
     def __fill_md007_chapters(self, content, product_id=None, doc_type=None):
         """md_007/md_014：顶级模块章节按章节模块管理重建，保留匹配模块的内容。
         md_007: xxx模块（算法介绍/模块设计描述）
@@ -687,7 +832,7 @@ class Server(object):
         fixed_titles = {
             "算法方案详细设计", "文件修订记录", "产品信息", "概述", "算法基本信息", "参考文献", "算法介绍",
             "模型测试报告", "参考文件", "引言", "测试环境", "硬件环境", "软件环境", "附件1 评审记录",
-            "测试目的", "测试背景", "测试范围", "术语及缩略语",
+            "附件 1 评审记录", "测试目的", "测试背景", "测试范围", "术语及缩略语",
         }
         # md_014 模块章节特征：子章节含"测试指标"，或标题以"测试"/"模型测试"结尾
         sub_markers = ["算法介绍", "测试指标"]
@@ -795,12 +940,13 @@ class Server(object):
         obj.doc_keywords = doc_keywords(row.doc_type)
         key = row.doc_type or ""
         # pd_003/md_004/md_007/md_014/md_016/md_018：查看时从章节模块管理自动获取（不修改数据库，只影响返回内容）
-        if key in ("pd_003", "md_004", "md_007", "md_014", "md_016", "md_018"):
+        if key in ("pd_003", "md_004", "md_005", "md_007", "md_014", "md_016", "md_018"):
             self.__fill_algo_chapters(obj.content, row.product_id, key)
         fill_chapter_images(obj.content, key)
         if key == "md_022" and row.product_id:
             info = {
                 "doc_type": key,
+                "prod_id": row.product_id,
                 "md022_file_nos": {t: self.__md022_file_no(row.product_id, obj.version, t) for t in MD022_FILE_TYPES},
                 "md022_srs": self.__md022_srs_by_module(row.product_id),
             }
@@ -3058,6 +3204,34 @@ class Server(object):
             if misplaced and not any(pred(tb) for tb in (target.get("tables") or [])):
                 target["tables"] = misplaced + (target.get("tables") or [])
 
+    def __split_ident_pkg_table(self, node):
+        """现成软件表后半是 python 包。拆开后「如下表」才能落在包表前面。"""
+        tables = node.get("tables") or []
+        out = []
+        changed = False
+        for tb in tables:
+            if not isinstance(tb, list) or len(tb) < 3 or not isinstance(tb[0], list):
+                out.append(tb)
+                continue
+            if str(tb[0][0] or "").strip() != "SCI名称":
+                out.append(tb)
+                continue
+            cut = None
+            for i, row in enumerate(tb):
+                if i == 0 or not isinstance(row, list) or not row:
+                    continue
+                if str(row[0] or "").strip().lower() in ("scipy", "numpy", "opencv-python", "pandas"):
+                    cut = i
+                    break
+            if cut and cut > 1:
+                out.append(tb[:cut])
+                out.append([list(tb[0])] + tb[cut:])
+                changed = True
+            else:
+                out.append(tb)
+        if changed:
+            node["tables"] = out
+
     def __relocate_md001_tables(self, content):
         """按原 Word 把误挂章节的表挪回：评审表→附件；SCI 表→标识配置；工具表→版本更新原则。"""
         sections = (content or {}).get("sections") or []
@@ -3097,6 +3271,8 @@ class Server(object):
             moved = pull("目的", is_sci5) + pull("范围", is_sci4) + pull("目的", is_sci4) + pull("范围", is_sci5)
             if moved:
                 ident["tables"] = moved
+        if ident is not None:
+            self.__split_ident_pkg_table(ident)
 
         verp = nodes.get("版本更新原则")
         if verp is not None and not (verp.get("tables") or []):
@@ -3243,7 +3419,12 @@ class Server(object):
         def ensure_tables(node, src_node, flow_key=None, fig_keys=None):
             if not isinstance(node, dict):
                 return
-            tables = node.get("tables") if isinstance(node.get("tables"), list) else []
+            saved = isinstance(node.get("tables"), list)
+            tables = list(node.get("tables") or []) if saved else []
+            # 删表保存后 tables 为空，或章节带 skip_refill：不再把流程图补回来。
+            if node.get("skip_refill") or (saved and not tables):
+                node["tables"] = tables
+                return
             if not self.__tables_have_text(tables) and not self.__has_figure_table(tables):
                 src_tables = copy.deepcopy((src_node or {}).get("tables") or []) if src_node else []
                 if src_tables:
@@ -3251,7 +3432,7 @@ class Server(object):
             if flow_key:
                 for tb in tables:
                     self.__fill_flow_cell(tb, imgs.get(flow_key) or "")
-            if fig_keys and not self.__has_figure_table(tables):
+            if fig_keys and not node.get("drop_figs") and not self.__has_figure_table(tables):
                 extra = [[[imgs[k]]] for k in fig_keys if imgs.get(k)]
                 tables = list(tables) + extra
             node["tables"] = tables
@@ -3312,6 +3493,8 @@ class Server(object):
                     src_n
                     and src_n.get("ref_type") not in skip
                     and n.get("ref_type") not in skip
+                    and not n.get("skip_refill")
+                    and not (doc_type == "md_007" and isinstance(n.get("tables"), list) and not n.get("tables"))
                 ):
                     src_tables = copy.deepcopy(src_n.get("tables") or [])
                     if src_tables and not self.__tables_have_text(n.get("tables")) and not self.__has_figure_table(n.get("tables")):
@@ -3869,9 +4052,9 @@ class Server(object):
                 if doc_type == "md_020":
                     if re.search(r"模型测试(?!方案)", text or ""):
                         starts.append(dt)
-                elif "模型配置管理计划" in text or "模型配置计划" in text:
+                elif re.search(r"模型开发(?!计划)", text or ""):
                     starts.append(dt)
-                if "追溯" in (text or ""):
+                if "可追溯性" in (text or ""):
                     ends.append(dt)
             if starts and ends and min(starts) <= max(ends):
                 env_weeks = self.__week_ranges_from_dates([min(starts), max(ends)])
@@ -4202,38 +4385,72 @@ class Server(object):
                     return code
         return ""
 
+    def __md022_dhf(self, prod_id, keywords):
+        if not prod_id or not keywords:
+            return ""
+        return _dhf_code_for_keywords(prod_id, keywords) or _sibling_dhf_file_no(prod_id, keywords) or ""
+
+    @staticmethod
+    def __md022_name_forms(name):
+        base = str(name or "").replace("模块", "").strip()
+        forms = []
+        for n in (base, base.replace("分诊", "分割") if "分诊" in base else "", base.replace("阴阳性", "") if "阴阳性" in base else ""):
+            n = str(n or "").strip()
+            if n and n not in forms:
+                forms.append(n)
+        return forms
+
+    def __md022_module_code(self, prod_id, name, suffixes):
+        keywords = []
+        for form in self.__md022_name_forms(name):
+            for suf in suffixes:
+                keywords.append(form + suf)
+        return self.__md022_dhf(prod_id, keywords)
+
     def __fill_md022_trace_node(self, node, info):
+        """表列对齐第 1 章追溯流程，模块行取当前产品算法模块。编号按模块名对 DHF。"""
         if self.__strip_num(node.get("title")) != "模型可追溯性分析表":
             return
-        file_nos = info.get("md022_file_nos") or {}
+        prod_id = info.get("prod_id")
+        if not prod_id:
+            return
         srs_map = info.get("md022_srs") or {}
-        tables = node.get("tables") or []
-        for ti, tb in enumerate(tables):
-            if not isinstance(tb, list) or not tb or not isinstance(tb[0], list):
-                continue
-            hdr = [str(h or "").strip() for h in tb[0]]
-            if "算法需求" not in hdr or "模块" not in hdr:
-                continue
-            req_i = hdr.index("算法需求")
-            mod_i = hdr.index("模块")
-            col_i = {name: hdr.index(name) for name in MD022_ID_COLS if name in hdr}
-            new_tb = [tb[0]]
-            for row in tb[1:]:
-                if not isinstance(row, list):
-                    new_tb.append(row)
-                    continue
-                next_row = list(row)
-                while len(next_row) < len(hdr):
-                    next_row.append("")
-                module = str(next_row[mod_i] if mod_i < len(next_row) else "").strip()
-                mapping = MD022_MODULE_DOC_TYPES.get(module) or {}
-                next_row[req_i] = srs_map.get(module) or ""
-                for name, idx in col_i.items():
-                    dt = mapping.get(name)
-                    next_row[idx] = (file_nos.get(dt) or "") if dt else ""
-                new_tb.append(next_row)
-            tables[ti] = new_tb
-        node["tables"] = tables
+        srs = next((v for v in srs_map.values() if v), "") or self.__md022_algo_srs_code(prod_id)
+        rows = db.session.execute(
+            select(ProdAlgoChapter)
+            .where(ProdAlgoChapter.prod_id == prod_id)
+            .order_by(ProdAlgoChapter.sort_order.asc(), ProdAlgoChapter.id.asc())
+        ).scalars().all()
+        modules = [r.name for r in rows if r.name]
+        if not modules:
+            tables = node.get("tables") or []
+            for tb in tables:
+                if isinstance(tb, list) and len(tb) > 1 and isinstance(tb[0], list) and "模块" in [str(h or "") for h in tb[0]]:
+                    idx = [str(h or "") for h in tb[0]].index("模块")
+                    modules = [str(r[idx] if isinstance(r, list) and idx < len(r) else "").strip() for r in tb[1:]]
+                    modules = [m for m in modules if m]
+                    break
+        if not modules:
+            return
+        design = self.__md022_dhf(prod_id, ["算法方案概要设计"])
+        detail = self.__md022_dhf(prod_id, ["算法方案详细设计"])
+        plan = self.__md022_dhf(prod_id, ["模型测试方案设计", "测试方案设计"])
+        report = self.__md022_dhf(prod_id, ["模型测试报告"])
+        hdr = ["算法需求", "模块", "算法方案概要设计", "算法方案详细设计", "训练集构建记录", "模型训练记录", "测试方案设计", "测试记录", "模型测试报告"]
+        body = []
+        for name in modules:
+            body.append([
+                srs,
+                name,
+                design,
+                detail,
+                self.__md022_module_code(prod_id, name, ("模型训练集构建记录", "训练集构建记录")),
+                self.__md022_module_code(prod_id, name, ("模型训练记录",)),
+                plan,
+                self.__md022_module_code(prod_id, name, ("模型测试记录",)),
+                report,
+            ])
+        node["tables"] = [[hdr] + body]
 
     @staticmethod
     def __to_dotted_date(s):
@@ -5492,6 +5709,23 @@ class Server(object):
         wb.save(output)
         output.seek(0)
 
+    def __stamp_page_size(self, document, landscape):
+        """把纸张方向写进 w:orient。只改宽高时 Mac 版 Word 会按横向打开。"""
+        for section in document.sections:
+            pgSz = section._sectPr.find(qn("w:pgSz"))
+            if pgSz is None:
+                pgSz = OxmlElement("w:pgSz")
+                section._sectPr.insert(0, pgSz)
+            if landscape:
+                pgSz.set(qn("w:w"), "16838")
+                pgSz.set(qn("w:h"), "11906")
+                pgSz.set(qn("w:orient"), "landscape")
+            else:
+                pgSz.set(qn("w:w"), "11906")
+                pgSz.set(qn("w:h"), "16838")
+                pgSz.set(qn("w:orient"), "portrait")
+            pgSz.set(qn("w:code"), "9")
+
     async def export_model_doc(self, output, id: int):
         resp = await self.get_model_doc(id)
         obj: ModelDocObj = resp.data
@@ -5500,7 +5734,7 @@ class Server(object):
             output.seek(0)
             return "模型文件", "docx"
         c = self.__autofill_for_export(self.__normalize_content(obj.content, obj.doc_type, product_id=obj.product_id), obj)
-        if obj.doc_type in ("pd_003", "md_004", "md_007", "md_014", "md_016", "md_018"):
+        if obj.doc_type in ("pd_003", "md_004", "md_005", "md_007", "md_014", "md_016", "md_018"):
             self.__fill_algo_chapters(c, obj.product_id, obj.doc_type)
         if obj.doc_type == "md_014":
             self.__apply_md014_autofill(c, obj.product_id)
@@ -5531,6 +5765,18 @@ class Server(object):
         section.left_margin = Inches(0.7)
         section.right_margin = Inches(0.7)
         docx_util.enable_update_fields_on_open(document)
+        from docx.enum.section import WD_ORIENT
+        if obj.doc_type in ("md_019", "md_020"):
+            section.orientation = WD_ORIENT.LANDSCAPE
+            section.page_width = Inches(11.69)
+            section.page_height = Inches(8.27)
+            section.left_margin = Inches(0.5)
+            section.right_margin = Inches(0.5)
+        else:
+            section.orientation = WD_ORIENT.PORTRAIT
+            section.page_width = Inches(8.27)
+            section.page_height = Inches(11.69)
+        self.__stamp_page_size(document, obj.doc_type in ("md_019", "md_020"))
         header_para = section.header.add_paragraph()
         header_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         docx_util.fonted_txt(header_para, obj.file_no or "")
@@ -5816,21 +6062,22 @@ class Server(object):
         body = [s for s in sections if s.get("ref_type") not in ("cover", "revision")]
         title = (self.__strip_num(cover.get("title")) if cover else "") or doc_title(obj.doc_type)
 
-        add_blank_lines(6)
-        write_center_title(title, size=22.0, bold=True)
-        add_blank_lines(4)
-        if cover:
-            for table in (cover.get("tables") or []):
-                add_cover_grid(table)
+        if obj.doc_type != "md_019":
+            add_blank_lines(6)
+            write_center_title(title, size=22.0, bold=True)
+            add_blank_lines(4)
+            if cover:
+                for table in (cover.get("tables") or []):
+                    add_cover_grid(table)
 
-        document.add_page_break()
-        write_center_title("文件修订记录", size=14.0, bold=True)
-        add_blank_lines(2)
-        if revision:
-            for table in (revision.get("tables") or []):
-                add_grid(table)
+            document.add_page_break()
+            write_center_title("文件修订记录", size=14.0, bold=True)
+            add_blank_lines(2)
+            if revision:
+                for table in (revision.get("tables") or []):
+                    add_grid(table)
 
-        document.add_page_break()
+            document.add_page_break()
         write_center_title("目录", size=16.0, bold=True)
         docx_util.insert_toc_field(document)
 
@@ -5852,6 +6099,7 @@ class Server(object):
                 render_body_section(node, 1, str(i + 1))
 
         docx_util.fill_toc_cache(document)
+        self.__stamp_page_size(document, obj.doc_type in ("md_019", "md_020"))
         document.save(output)
         output.seek(0)
         return title, "docx"

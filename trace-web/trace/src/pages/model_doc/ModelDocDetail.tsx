@@ -473,6 +473,7 @@ const fillMd022Trace = (nodes: any[], fileNos: Record<string, string>, srsMap: R
         const reqI = hdr.indexOf("算法需求");
         const modI = hdr.indexOf("模块");
         if (reqI < 0 || modI < 0) return tb;
+        if (!MD022_ID_COLS.some((name) => hdr.indexOf(name) >= 0)) return tb;
         const colI: Record<string, number> = {};
         MD022_ID_COLS.forEach((name) => {
             const i = hdr.indexOf(name);
@@ -1142,8 +1143,10 @@ export default () => {
     };
     const delTable = (ti: number) => {
         if (!active) return;
+        const tb = (active.tables || [])[ti];
+        const onlyImg = Array.isArray(tb) && tb.length > 0 && tb.every((row: any[]) => Array.isArray(row) && row.length <= 1 && String(row[0] || "").startsWith("data:image"));
         const next = freeDelTable(chapterState(), ti);
-        patchNode(data.activeKey, { tables: next.tables, body: next.body, images: next.images });
+        patchNode(data.activeKey, { tables: next.tables, body: next.body, images: next.images, skip_refill: true, drop_figs: onlyImg || !!active.drop_figs });
     };
     const doSave = () => {
         if (!id) return;

@@ -725,10 +725,12 @@ const datesFromTimeline = (tlRows: any[], key: string) => {
 /** 按模块建的考核记录沿用它选定的那套模板的日期规则。 */
 const examRuleType = (docType: string) => String(docType || "").replace(/^(dd_013_0[1-7])_m\d+$/, "$1");
 
-const examDatesFromTimeline = (tlRows: any[], rawType: string) => {
+const examDatesFromTimeline = (tlRows: any[], rawType: string, moduleName = "") => {
     const docType = examRuleType(rawType);
     if (!/^dd_013_0[1-4]$/.test(docType)) return [];
     const kind = /dd_013_0[24]/.test(docType) ? "肺叶" : "肺栓塞";
+    const phrase = /^dd_013_0[12]$/.test(docType) ? "初次考核" : "定期考核";
+    const mod = String(moduleName || "").replace(/模块$/, "").trim();
     const pick = (pred: (t: string) => boolean) => {
         const seen: Record<string, true> = {};
         const out: Array<{ k: number; s: string }> = [];
@@ -749,8 +751,11 @@ const examDatesFromTimeline = (tlRows: any[], rawType: string) => {
         });
         return out.sort((a, b) => a.k - b.k).map((x) => x.s);
     };
-    let dates = pick((t) => t.includes("考核") && t.includes(kind));
-    if (!dates.length) dates = pick((t) => (t.includes("人员培训") || t.includes("培训记录")) && t.includes(kind));
+    let dates: string[] = [];
+    if (mod) dates = pick((t) => t.includes("考核") && t.includes(mod));
+    if (!dates.length) dates = pick((t) => t.includes(phrase));
+    if (!dates.length) dates = pick((t) => t.includes("考核") && t.includes(kind));
+    if (!dates.length) dates = pick((t) => (t.includes("人员培训") || t.includes("培训记录")) && t.includes(mod || kind));
     return dates;
 };
 
@@ -2662,6 +2667,7 @@ const applyDd005Lists = (nodes: any[], annotators: string[], reviewers: string[]
                 row[iScore] = String(lo + Math.floor(Math.random() * (hi - lo + 1)));
             }
         };
+        const keptExtra: any[][] = [];
         const newData = annotators.map((name, idx) => {
             const hit = pick(name);
             const next = hit ? [...hit] : new Array(cols).fill("");
@@ -2683,7 +2689,10 @@ const applyDd005Lists = (nodes: any[], annotators: string[], reviewers: string[]
             fillScores(next);
             return next;
         });
-        return [...tb.slice(0, headerIdx + 1), ...newData, ...tb.slice(footerStart)];
+        unused.forEach((row) => {
+            if (String(row[iName] ?? "").trim()) keptExtra.push(row);
+        });
+        return [...tb.slice(0, headerIdx + 1), ...newData, ...keptExtra, ...tb.slice(footerStart)];
     };
     const ensureExamResult = (tb: any[], names: string[]) => {
         if (!Array.isArray(tb) || !tb.some((row) => /^本次考核细则$/.test(txt(row?.[0])))) return tb;
@@ -2779,6 +2788,25 @@ const applyDd005Lists = (nodes: any[], annotators: string[], reviewers: string[]
     return (nodes || []).map(fix);
 };
 
+const examProjectName = (nodes: any[]): string => {
+    let name = "";
+    const walk = (list: any[]) => {
+        (list || []).forEach((n) => {
+            if (name) return;
+            (n.tables || []).forEach((tb: any[]) => {
+                (tb || []).forEach((row: any[]) => {
+                    if (!Array.isArray(row) || name) return;
+                    const i = row.findIndex((c) => String(c ?? "").trim() === "考核项目");
+                    if (i >= 0) name = String(row[i + 1] ?? "").trim();
+                });
+            });
+            if (!name) walk(n.children || []);
+        });
+    };
+    walk(nodes);
+    return name;
+};
+
 const fillDd005FromMembers = (productId: number, secs: any[], docType = ""): Promise<any[]> => {
     if (!productId) return Promise.resolve(secs);
     return Promise.all([
@@ -2790,7 +2818,7 @@ const fillDd005FromMembers = (productId: number, secs: any[], docType = ""): Pro
         if (!res || res.code !== Api.C_OK) return secs;
         const members = (res.data && res.data.rows) || [];
         const tlRows = tl && tl.code === Api.C_OK ? ((tl.data && tl.data.rows) || []) : [];
-        const examTime = examTimeText(docType, examDatesFromTimeline(tlRows, docType));
+        const examTime = examTimeText(docType, examDatesFromTimeline(tlRows, docType, examProjectName(secs)));
         const dailyDates = dailyDatesFromTimeline(tlRows, docType);
         return applyDd005Lists(secs, namesByRole(members, "标注人员"), namesByRole(members, "审核医生"), examTime, dailyDates);
     }).catch(() => secs);
@@ -3472,7 +3500,6 @@ export default () => {
                             if (banner && r <= 1 && !(isUpload && /数据库上传记录/.test(bannerText))) return null;
                             const emptyRow = rowAllEmpty(row, cols);
                             if (emptyRow) return null;
-                            if (isDailyFootRow(row)) return null;
                             const allSkip = Array.from({ length: cols }, (_, ci) => !!spans?.[r]?.[ci]?.skip).every(Boolean);
                             if (allSkip) return <tr key={r} />;
                             const subHead = docType === "dd_003" && firstBody >= 0 && r === firstBody + 1

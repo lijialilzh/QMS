@@ -4,6 +4,8 @@
  */
 /** 正文末行已有「见下图/如下图/下图」时，后面的 {{IMG}} 是同一次插图，不再多占一张。 */
 const lineAnchorsImage = (line: string) => /见下图|如下图|下图/.test(String(line || ""));
+/** 「现成软件配置项清单见下表：」这类整句是表说明，表要紧挨在这句下面。 */
+const lineAnchorsTable = (line: string) => /见下表|如下表|下表/.test(String(line || ""));
 
 const splitFreeBody = (body: string, tables: any[], images?: any[]): any[] => {
     const text = String(body || "");
@@ -39,6 +41,14 @@ const splitFreeBody = (body: string, tables: any[], images?: any[]): any[] => {
             continue;
         }
         if ((s === "{{TBL}}" || /^(见下表|如下表|下表)$/.test(s)) && tableIdx < tablesArr.length) {
+            flushText();
+            lastImageFromAnchor = false;
+            segments.push({ type: "table", tableIndex: tableIdx });
+            tableIdx++;
+            continue;
+        }
+        if (lineAnchorsTable(s) && tableIdx < tablesArr.length) {
+            buf.push(ln);
             flushText();
             lastImageFromAnchor = false;
             segments.push({ type: "table", tableIndex: tableIdx });
@@ -120,7 +130,7 @@ const countMediaSlots = (body: string) => {
     let img = 0;
     for (const ln of String(body || "").split("\n")) {
         const s = ln.trim();
-        if (s === "{{TBL}}" || /^(见下表|如下表|下表)$/.test(s) || /^表\s*\d/.test(s) || /见表\s*\d/.test(s)) tbl += 1;
+        if (s === "{{TBL}}" || lineAnchorsTable(s) || /^表\s*\d/.test(s) || /见表\s*\d/.test(s)) tbl += 1;
         else if (s === "{{IMG}}" || /^(见下图|如下图|下图)$/.test(s) || /^图\s*\d/.test(s) || /见下图|如下图|下图/.test(s)) img += 1;
     }
     return { tbl, img };
@@ -229,6 +239,9 @@ export const reassembleFreeBody = (segments: any[], editedIndex?: number, newTex
             prevWasText = true;
         } else if (seg.type === "table") {
             prevWasText = false;
+            const prev = parts.length ? String(parts[parts.length - 1] || "") : "";
+            const lastLine = prev.split("\n").filter((ln) => ln.trim()).pop() || "";
+            if (!seg.caption && lineAnchorsTable(lastLine)) continue;
             parts.push(seg.caption || "{{TBL}}");
         } else if (seg.type === "image") {
             prevWasText = false;
