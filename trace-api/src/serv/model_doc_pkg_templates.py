@@ -5,23 +5,53 @@ PKG_REC_TYPES = ("md_016",)
 PKG_SUBMIT_TYPES = ("md_018",)
 PKG_DOC_TYPES = PKG_REQ_TYPES + PKG_REC_TYPES + PKG_SUBMIT_TYPES
 
-PKG_DEFAULTS = {
+# 旧版封装需求只有一行代码地址。内容仍是这两份样例时，打开改成下面的代码表。
+PKG_REQ_OLD_SAMPLES = {
     "md_015_01": {
         "model_func": "肺栓塞分割",
         "param_url": "http://172.16.6.3:8089/apps/files/?dir=/Model_name/PECN3/%E8%82%BA%E6%A0%93%E5%A1%9E%E5%88%86%E5%89%B2/model&fileid=171578",
         "consistency_url": "http://172.16.6.3:8089/apps/files/?dir=/Model_name/PECN3/%E8%82%BA%E6%A0%93%E5%A1%9E%E5%88%86%E5%89%B2/%E4%B8%80%E8%87%B4%E6%80%A7%E6%B5%8B%E8%AF%95%E7%BB%93%E6%9E%9C&fileid=171580",
         "code_url": "http://172.16.6.3:8081/model/pe/pe-segmetation",
-        "submitter_sign": "",
-        "auditor_sign": "",
     },
     "md_015_02": {
         "model_func": "肺叶分割",
         "param_url": "http://172.16.6.3:8089/apps/files/?dir=/Model_name/PECN3/%E8%82%BA%E5%8F%B6%E5%88%86%E5%89%B2/model&fileid=171570",
         "consistency_url": "http://172.16.6.3:8089/apps/files/?dir=/Model_name/PECN3/%E8%82%BA%E5%8F%B6%E5%88%86%E5%89%B2/%E4%B8%80%E8%87%B4%E6%80%A7%E6%B5%8B%E8%AF%95%E7%BB%93%E6%9E%9C&fileid=171572",
         "code_url": "http://172.16.6.3:8081/model/pe/lobe_segmentation",
+    },
+}
+
+_PKG_CODE = "http://172.16.6.3:8081/model/infearce/"
+PKG_REQ_CODE_ROWS = [
+    ["1", "图像配准", "imageregistration", _PKG_CODE + "imageregistration"],
+    ["2", "肺结节检测", "nodule_detection", _PKG_CODE + "nodule_detection"],
+    ["3", "肺结节分割", "nodule_segmentation", _PKG_CODE + "nodule_segmentation"],
+    ["4", "结节肺叶肺段定位", "nodule_lobe_train", _PKG_CODE + "nodule_lobe_train"],
+    ["5", "肝脏病灶分割", "liverlesion_segmentation", _PKG_CODE + "liverlesion_segmentation"],
+    ["6", "肾脏病灶分割", "kidneylesion_segmentation", _PKG_CODE + "kidneylesion_segmentation"],
+    ["7", "淋巴结分割", "lymphnode_segmentation", _PKG_CODE + "lymphnode_segmentation"],
+]
+PKG_REQ_FUNC = "、".join(row[1] for row in PKG_REQ_CODE_ROWS)
+PKG_REQ_CONSISTENCY = (
+    "http://172.16.6.3:8089/apps/files/?dir=/Model_name/RCN3/"
+    "%E4%B8%80%E8%87%B4%E6%80%A7%E6%B5%8B%E8%AF%95%E6%95%B0%E6%8D%AE&fileid=176258"
+)
+
+def _pkg_req_default():
+    return {
+        "model_func": PKG_REQ_FUNC,
+        "param_url": "",
+        "consistency_url": "",
+        "consistency_data_url": PKG_REQ_CONSISTENCY,
+        "code_url": "",
+        "code_rows": [list(row) for row in PKG_REQ_CODE_ROWS],
         "submitter_sign": "",
         "auditor_sign": "",
-    },
+    }
+
+PKG_DEFAULTS = {
+    "md_015_01": _pkg_req_default(),
+    "md_015_02": _pkg_req_default(),
     "md_016": {
         "model_func": "肺栓塞分割，肺叶分割，气管分割，血管分割",
         "pack_code_url": "http://172.16.6.3:8081/model/pe/pe_engine",

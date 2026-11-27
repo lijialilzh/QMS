@@ -956,6 +956,8 @@ export type StatsCacheItem = {
     dataType: string;
     disease: string;
     source: string;
+    /** 用户在本页清空后的空表。有此标记时不再从数据文件把旧病例读回来。 */
+    cleared?: boolean;
 };
 
 type StatsStore = {
@@ -978,11 +980,13 @@ export const loadStatsStore = (): StatsStore => {
 
 export const readStatsCache = (productId: number, kind: StatsKind): StatsCacheItem | null => {
     const hit = loadStatsStore().caches?.[slotKey(productId, kind)];
-    if (!hit || !Array.isArray(hit.rows) || !hit.rows.length) return null;
+    if (!hit || !Array.isArray(hit.rows)) return null;
+    if (!hit.rows.length && !hit.cleared) return null;
     return {
         ...hit,
-        rows: normalizeStatsRows(hit.rows),
+        rows: hit.rows.length ? normalizeStatsRows(hit.rows) : [],
         source: String(hit.source || ""),
+        cleared: !!hit.cleared,
     };
 };
 
@@ -1264,6 +1268,7 @@ export const saveStatsCache = (productId: number, kind: StatsKind, item: StatsCa
             dataType: item.dataType || "",
             disease: item.disease || "",
             source: item.source || "",
+            ...(item.cleared ? { cleared: true } : {}),
         };
         localStorage.setItem(STATS_STORE_KEY, JSON.stringify({
             last: { productId: productId || 0, kind },

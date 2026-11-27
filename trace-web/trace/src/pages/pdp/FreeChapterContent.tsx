@@ -3,7 +3,7 @@
  */
 import { Button, Input, Space, Upload } from "antd";
 import { TableOutlined, UploadOutlined } from "@ant-design/icons";
-import type { ReactNode } from "react";
+import { cloneElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import {
     buildFreeSegments,
     freeAddBodyBlock,
@@ -36,6 +36,14 @@ type Props = {
     allowAboveTable?: boolean;
 };
 
+/** 外部传入的「添加表格」常带整行宽和上边距，放进同一行时改成和小按钮一致 */
+const asToolbarButton = (node: ReactNode) => {
+    if (!isValidElement(node)) return node;
+    const el = node as ReactElement<{ className?: string }>;
+    const className = String(el.props.className || "").replace(/\bpdp-add-table\b/g, "").trim();
+    return cloneElement(el, { size: "small", type: "default", className: className || undefined });
+};
+
 export function FreeSideActions(props: {
     label: string;
     onBody: () => void;
@@ -43,7 +51,7 @@ export function FreeSideActions(props: {
     onTable: () => void;
 }) {
     return (
-        <Space wrap style={{ margin: "16px 0" }}>
+        <Space wrap align="center" className="pdp-free-actions" style={{ margin: "16px 0" }}>
             <Button size="small" onClick={props.onBody}>{props.label}</Button>
             <Upload
                 accept="image/*"
@@ -121,7 +129,7 @@ export default function FreeChapterContent(props: Props) {
     };
 
     const actionBar = (where: "above" | "below") => !props.readonly && (where === "below" || props.allowAboveTable !== false) ? (
-        <Space wrap style={{ margin: "16px 0" }}>
+        <Space wrap align="center" className="pdp-free-actions" style={{ margin: "16px 0" }}>
             <Button
                 size="small"
                 onClick={() => {
@@ -143,7 +151,7 @@ export default function FreeChapterContent(props: Props) {
                     }}>
                     添加表格
                 </Button>
-            ) : props.showAddTableSlot}
+            ) : asToolbarButton(props.showAddTableSlot)}
         </Space>
     ) : null;
 

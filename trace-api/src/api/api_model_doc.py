@@ -6,7 +6,7 @@
 import io
 from typing import Any
 from fastapi import APIRouter
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from ..obj import Page, Resp
 from ..obj.tobj_role import Perms
@@ -63,7 +63,17 @@ async def get_model_doc(id: int):
 
 @router.get("/export_model_doc", summary="导出模型文件")
 @try_log(perm=Perms.model_doc_view)
-async def export_model_doc(id: int = 0):
+async def export_model_doc(id: int = 0, product_id: int = 0, merge_pkg: int = 0, version: str = None):
+    if merge_pkg:
+        output = io.BytesIO()
+        merged = await server.export_pkg_req_merge(output, CtxUser.get(), product_id, version)
+        if not isinstance(merged, tuple):
+            return JSONResponse({"code": 0, "msg": merged or "没有可合并的封装需求", "data": None})
+        return StreamingResponse(
+            content=output,
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f"attachment; filename={merged[1]}"},
+        )
     output = io.BytesIO()
     result = await server.export_model_doc(output, id) or ("模型文件", "docx")
     if isinstance(result, tuple):

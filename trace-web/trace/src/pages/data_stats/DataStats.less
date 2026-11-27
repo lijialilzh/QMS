@@ -7,8 +7,27 @@
 .data-stats-toolbar {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 12px;
+    flex-wrap: nowrap;
+    gap: 8px;
+}
+
+.data-stats-actions {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    margin-left: auto;
+}
+
+.data-stats-toolbar .ant-radio-group {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.data-stats-actions .ant-btn {
+    height: 32px;
+    padding: 0 12px;
+    line-height: 30px;
+    white-space: nowrap;
 }
 
 .data-stats-title {

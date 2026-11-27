@@ -33,6 +33,19 @@ const DEV_DEV: Group[] = [
     { label: "出现的问题及处理方式", leaves: [] },
     { label: "检查人", leaves: [] },
 ];
+/** 模型开发环境维护记录里的开发机表，对齐原「开发环境维护记录」表头。 */
+const MD019_DEV: Group[] = [
+    { label: "日期", leaves: [] },
+    { label: "硬件环境", leaves: ["CPU", "GPU", "内存", "网卡"] },
+    { label: "软件环境", leaves: ["操作系统\n运行是否正常", "数据库\n运行是否正常", "应用服务器\n运行是否正常", "网络环境\n是否正常"] },
+    { label: "开发工具", leaves: ["是否正常运行", "是否更新升级"] },
+    { label: "服务器\n是否杀毒", leaves: [] },
+    { label: "服务器\n是否备份", leaves: [] },
+    { label: "日志是否错误", leaves: [] },
+    { label: "是否报警", leaves: [] },
+    { label: "出现的问题及处理方式", leaves: [] },
+    { label: "检查人", leaves: [] },
+];
 const SERVER_TEST: Group[] = [
     { label: "日期", leaves: [] },
     { label: "硬件环境", leaves: ["CPU", "GPU", "内存", "网卡"] },
@@ -85,6 +98,7 @@ const DEV_ANNO: Group[] = [
 export const envCheckGroups = (docType: string, kind: EnvCheckKind): Group[] => {
     if (docType === "md_020") return kind === "server" ? SERVER_TEST : DEV_TEST;
     if (docType === "dd_017") return kind === "server" ? SERVER_ANNO : DEV_ANNO;
+    if (docType === "md_019" && kind !== "server") return MD019_DEV;
     return kind === "server" ? SERVER_DEV : DEV_DEV;
 };
 
@@ -119,7 +133,10 @@ export const envCheckLeafCols = (docType: string, kind: EnvCheckKind): LeafCol[]
 export const envCheckDefaults = (docType: string, kind: EnvCheckKind): string[] =>
     envCheckLeafCols(docType, kind)
         .filter((c) => c.type === "check")
-        .map((c) => ((c.label.includes("更新升级") || c.label.includes("日志是否错误")) ? "否" : "是"));
+        .map((c) => {
+            const lb = c.label.replace(/\n/g, "");
+            return (lb.includes("更新升级") || lb.includes("日志是否错误") || lb.includes("是否报警")) ? "否" : "是";
+        });
 
 export const isEnvCheckGrid = (tb: any[]): boolean =>
     Array.isArray(tb) && Array.isArray(tb[0]) && String(tb[0][0] || "").trim() === "env_check";
@@ -369,11 +386,14 @@ export const buildEnvCheckTable = (
     const rows: any[][] = [["env_check", kind, asset.code]];
     weeks.forEach((w) => {
         const old = prev[w] || [];
+        const oldChecks = old.length > 2 ? old.slice(1, old.length - 2) : [];
+        const same = oldChecks.length === defaults.length;
         const marks = defaults.map((d, i) => {
-            const v = String(old[i + 1] || "").trim();
+            if (!same) return d;
+            const v = String(oldChecks[i] || "").trim();
             return v === "是" || v === "否" ? v : d;
         });
-        const problem = String(old[defaults.length + 1] || "").trim() || "无";
+        const problem = same ? (String(old[defaults.length + 1] || "").trim() || "无") : "无";
         rows.push([w, ...marks, problem, checker]);
     });
     return rows;

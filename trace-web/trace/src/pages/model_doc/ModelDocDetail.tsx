@@ -1452,6 +1452,7 @@ export default () => {
                                                                         autoSize={{ minRows: 1, maxRows: 8 }}
                                                                         value={cell ?? ""}
                                                                         disabled={readonly}
+                                                                        style={String(cell ?? "").includes("\n") ? { whiteSpace: "pre-line" } : undefined}
                                                                         onChange={(e) => setCell(ti, r, ci, e.target.value, cs, rs)}
                                                                     />
                                                                 )}

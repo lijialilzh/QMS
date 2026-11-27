@@ -23,6 +23,7 @@ enum DlgTypes {
     add = "add",
     delete = "delete",
     copy = "copy",
+    merge = "merge",
 }
 
 const loadProducts = (data: any, dispatch: any) => {
@@ -92,6 +93,9 @@ export default () => {
         chaptersByProduct: {} as Record<string, { id: number; name: string }[]>,
         versionOptions: [] as { value: string; label: string }[],
         exportingId: 0,
+        mergingExport: false,
+        mergeProductId: undefined as number | undefined,
+        mergePickKey: 0,
         editingFileNoId: 0,
         editingFileNoValue: "",
         savingFileNoId: 0,
@@ -285,6 +289,31 @@ export default () => {
         });
     };
 
+    const openMergeExport = () => {
+        dispatch({ dlgType: DlgTypes.merge, mergeProductId: undefined, mergePickKey: Date.now() });
+        loadProducts(data, dispatch);
+    };
+
+    const doMergeExport = () => {
+        if (data.mergingExport) return;
+        if (isAllProductId(data.mergeProductId)) {
+            message.warning("请选择产品和产品版本");
+            return;
+        }
+        dispatch({ mergingExport: true });
+        Api.export_model_doc({ merge_pkg: 1, product_id: Number(data.mergeProductId) }).then((res: any) => {
+            dispatch({ mergingExport: false });
+            if (res.code === Api.C_OK) {
+                dispatch({ dlgType: null, mergeProductId: undefined });
+            } else {
+                message.error(res.msg || "合并导出失败");
+            }
+        }).catch(() => {
+            dispatch({ mergingExport: false });
+            message.error("合并导出失败");
+        });
+    };
+
     const doExport = async (row: any) => {
         if (data.exportingId === row.id) return;
         dispatch({ exportingId: row.id });
@@ -468,6 +497,11 @@ export default () => {
                     }}>
                         {ts("add")}
                     </Button>
+                    {type === "md_015" && (
+                        <Button onClick={openMergeExport}>
+                            合并导出
+                        </Button>
+                    )}
                     <Button disabled={!(data.selectedRowKeys || []).length} danger onClick={doBatchDelete}>
                         {ts("batch_delete")}
                     </Button>
@@ -545,6 +579,32 @@ export default () => {
                         <Input.TextArea rows={3} allowClear />
                     </Form.Item>
                 </Form>
+            </Modal>
+            <Modal
+                width={620}
+                centered
+                title="合并导出"
+                open={data.dlgType === DlgTypes.merge}
+                confirmLoading={data.mergingExport}
+                okText="导出"
+                okButtonProps={{ disabled: isAllProductId(data.mergeProductId) }}
+                onOk={doMergeExport}
+                maskClosable={false}
+                destroyOnClose
+                onCancel={() => {
+                    if (data.mergingExport) return;
+                    dispatch({ dlgType: null, mergeProductId: undefined });
+                }}>
+                <div style={{ marginBottom: 8 }}>选择产品</div>
+                <ProductVersionSelect
+                    key={data.mergePickKey}
+                    products={data.products}
+                    deferChangeUntilVersionSelect
+                    namePlaceholder={ts("product.name")}
+                    versionPlaceholder={ts("product.full_version")}
+                    onNameChange={() => dispatch({ mergeProductId: undefined })}
+                    onChange={(value) => dispatch({ mergeProductId: value })}
+                />
             </Modal>
             <Modal
                 centered

@@ -141,7 +141,23 @@ def split_body_blocks(body, tables=None, images=None):
             segs.append({"type": "text", "text": t})
         buf.clear()
 
-    for ln in lines:
+    def line_takes_table(s):
+        if re.search(r"见下表|如下表|下表", s):
+            return True
+        if re.search(r"见表\s*\d", s):
+            return True
+        return bool(re.match(r"^表\s*\d", s))
+
+    def next_takes_table(start):
+        """紧挨在「见下表/表N」前面的 {{TBL}} 与这句是同一张表，不要先把表写到句子上面。"""
+        for j in range(start, len(lines)):
+            t = lines[j].strip()
+            if not t or t in _SILENT_LINES:
+                continue
+            return line_takes_table(t)
+        return False
+
+    for i, ln in enumerate(lines):
         s = ln.strip()
         if s in ("{{TXT}}", "{{EMPTY}}"):
             flush()
@@ -154,6 +170,8 @@ def split_body_blocks(body, tables=None, images=None):
         if s == "{{IMG}}":
             continue
         if s == "{{TBL}}" and table_idx < len(tables_arr):
+            if next_takes_table(i + 1):
+                continue
             flush()
             segs.append({"type": "table", "tableIndex": table_idx, "table": tables_arr[table_idx]})
             table_idx += 1

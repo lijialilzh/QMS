@@ -27,7 +27,16 @@ const splitFreeBody = (body: string, tables: any[], images?: any[]): any[] => {
     };
 
     const hasTblPh = text.includes("{{TBL}}");
-    for (const ln of lines) {
+    const nextLineTakesTable = (start: number) => {
+        for (let j = start; j < lines.length; j++) {
+            const t = lines[j].trim();
+            if (!t || t === "{{TXT}}" || t === "{{EMPTY}}" || t === "{{TBL}}" || t === "{{IMG}}") continue;
+            return lineAnchorsTable(t) || /见表\s*\d/.test(t) || /^表\s*\d/.test(t);
+        }
+        return false;
+    };
+    for (let i = 0; i < lines.length; i++) {
+        const ln = lines[i];
         const s = ln.trim();
         if (s === "{{IMG}}" && imgIdx < imagesArr.length) {
             if (lastImageFromAnchor) {
@@ -41,6 +50,8 @@ const splitFreeBody = (body: string, tables: any[], images?: any[]): any[] => {
             continue;
         }
         if ((s === "{{TBL}}" || /^(见下表|如下表|下表)$/.test(s)) && tableIdx < tablesArr.length) {
+            // {{TBL}} 紧挨在「见下表」前面时与这句是同一张表，表写在这句话下面
+            if (s === "{{TBL}}" && nextLineTakesTable(i + 1)) continue;
             flushText();
             lastImageFromAnchor = false;
             segments.push({ type: "table", tableIndex: tableIdx });

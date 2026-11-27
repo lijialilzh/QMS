@@ -1784,7 +1784,7 @@ const parseDd015ModuleQty = (content: any): Record<string, string> => {
         if (!saved || typeof saved !== "object") return;
         Object.keys(saved).forEach((m) => {
             const rows = saved[m] && saved[m].rows;
-            if (Array.isArray(rows) && rows.length) out[m] = String(rows.length);
+            if (Array.isArray(rows)) out[m] = String(rows.length);
         });
     });
     return out;

@@ -48,7 +48,10 @@ from .model_doc_xlsx_templates import XLSX_META, XLSX_CONTENTS
 from .model_doc_build_templates import BUILD_DOC_TYPES, BUILD_DEFAULTS
 from .model_doc_train_templates import TRAIN_DOC_TYPES, TRAIN_DEFAULTS
 from .model_doc_test_templates import TEST_DOC_TYPES, TEST_DEFAULTS
-from .model_doc_pkg_templates import PKG_DOC_TYPES, PKG_REQ_TYPES, PKG_REC_TYPES, PKG_SUBMIT_TYPES, PKG_DEFAULTS
+from .model_doc_pkg_templates import (
+    PKG_DOC_TYPES, PKG_REQ_TYPES, PKG_REC_TYPES, PKG_SUBMIT_TYPES, PKG_DEFAULTS, PKG_REQ_OLD_SAMPLES,
+    PKG_REQ_CODE_ROWS,
+)
 from .serv_product import product_scope_filter
 
 DOC_META = {**WORD_META, **XLSX_META}
@@ -147,11 +150,12 @@ ENV_CHECK_GROUPS = {
     ("md_019", "dev"): [
         ("日期", []),
         ("硬件环境", ["CPU", "GPU", "内存", "网卡"]),
-        ("软件环境", ["操作系统\n运行是否正常", "浏览器\n运行是否正常"]),
-        ("开发环境\n是否更新升级", []),
-        ("开发机\n是否杀毒", []),
-        ("网络环境\n是否正常", []),
+        ("软件环境", ["操作系统\n运行是否正常", "数据库\n运行是否正常", "应用服务器\n运行是否正常", "网络环境\n是否正常"]),
         ("开发工具", ["是否正常运行", "是否更新升级"]),
+        ("服务器\n是否杀毒", []),
+        ("服务器\n是否备份", []),
+        ("日志是否错误", []),
+        ("是否报警", []),
         ("出现的问题及处理方式", []),
         ("检查人", []),
     ],
@@ -301,6 +305,11 @@ def _module_dhf_keywords(doc_type):
         kw = str(kw or "").strip()
         if kw and kw not in out:
             out.append(kw)
+    # 封装需求在 DHF 里是整份「模型工程封装需求」，不按模块拆编号。模块名对不上时用这一条。
+    if parts[1] == "md_015":
+        for kw in ("模型工程封装需求", "封装需求"):
+            if kw not in out:
+                out.append(kw)
     return out
 
 
@@ -1880,8 +1889,11 @@ class Server(object):
             return None
         out = self.__pkg_default_content(doc_type)
         found = False
+        collecting = False
+        took_code_rows = False
         is_rec = doc_type in PKG_REC_TYPES
         is_submit = doc_type in PKG_SUBMIT_TYPES
+        is_req = doc_type in PKG_REQ_TYPES
         for row in tb:
             if not isinstance(row, list):
                 continue
@@ -1889,6 +1901,23 @@ class Server(object):
             while len(cells) < 6:
                 cells.append("")
             a = cells[0].replace(" ", "")
+            if collecting and is_req:
+                if a in ("一致性测试数据地址",) or a.startswith("提交人") or a.startswith("审核人"):
+                    collecting = False
+                else:
+                    # 左侧标签合并后，续行第一列是空的，序号从第二列开始
+                    tail = a in ("", "待封装代码地址")
+                    seq, module, model_name, code = (cells[1:5] if tail else cells[0:4])
+                    if seq in ("序号", "模块") or module == "模块":
+                        continue
+                    if not any((seq, module, model_name, code)):
+                        continue
+                    if not took_code_rows:
+                        out["code_rows"] = []
+                        took_code_rows = True
+                    out["code_rows"].append([seq, module, model_name, code])
+                    found = True
+                    continue
             if "签字" in a and "编写人" in a:
                 out["author_sign"] = cells[1]
             elif "签字" in a and "审核人" in a:
@@ -1920,7 +1949,20 @@ class Server(object):
             elif a == "一致性测试结果":
                 out["consistency_url"] = cells[1]
             elif a == "待封装代码地址":
-                out["code_url"] = cells[1]
+                found = True
+                if is_req and ("序号" in cells or "模块" in cells):
+                    collecting = True
+                    if not took_code_rows:
+                        out["code_rows"] = []
+                        took_code_rows = True
+                else:
+                    out["code_url"] = cells[1]
+            elif a == "序号" and is_req and "模块" in cells and "代码地址" in "".join(cells):
+                found = True
+                collecting = True
+                if not took_code_rows:
+                    out["code_rows"] = []
+                    took_code_rows = True
             elif a == "封装代码地址":
                 out["pack_code_url"] = cells[1]
             elif a == "一致性测试数据地址":
@@ -1947,21 +1989,96 @@ class Server(object):
             out.pop("submitter_sign", None)
         elif found and not is_submit:
             out.pop("pack_code_url", None)
-            out.pop("consistency_data_url", None)
             out.pop("consistency_result_url", None)
             out.pop("conclusion", None)
             out.pop("packer_sign", None)
+            if not is_req:
+                out.pop("consistency_data_url", None)
+                out.pop("code_rows", None)
         return out if found else None
+
+    def __pkg_req_still_sample(self, content, doc_type):
+        sample = PKG_REQ_OLD_SAMPLES.get(base_doc_type(doc_type))
+        if not sample or not isinstance(content, dict) or content.get("code_rows"):
+            return False
+        for key, val in sample.items():
+            cur = str(content.get(key) or "")
+            if cur and cur != val:
+                return False
+        return not str(content.get("consistency_data_url") or "")
+
+    def __pkg_code_rows(self, content, base):
+        rows = content.get("code_rows") if isinstance(content, dict) else None
+        out = []
+        if isinstance(rows, list):
+            for i, row in enumerate(rows):
+                if isinstance(row, dict):
+                    cells = [row.get("no") or str(i + 1), row.get("module"), row.get("model_name"), row.get("code_url")]
+                elif isinstance(row, list):
+                    cells = list(row[:4])
+                else:
+                    continue
+                cells = [str(c or "") for c in cells]
+                while len(cells) < 4:
+                    cells.append("")
+                if not cells[0]:
+                    cells[0] = str(len(out) + 1)
+                if any(cells):
+                    out.append(cells)
+        if out:
+            return out
+        url = str((content or {}).get("code_url") or "").strip()
+        if url:
+            return [["1", str((content or {}).get("model_func") or ""), "", url]]
+        return [list(row) for row in (base.get("code_rows") or [["1", "", "", ""]])]
+
+    def __apply_pkg_entry_module(self, content, doc_type):
+        """封装需求按进入的模块只留一行。模块名取该章节模块，不把模板里的全部模块列出来。"""
+        if doc_type not in PKG_REQ_TYPES or not isinstance(content, dict):
+            return content
+        name = str(getattr(module_doc_chapter(doc_type), "name", "") or "").strip()
+        if not name:
+            return content
+        hit = None
+        for row in content.get("code_rows") or []:
+            if isinstance(row, list) and len(row) > 1 and str(row[1] or "").strip() == name:
+                hit = [str(c or "") for c in list(row)[:4]]
+                break
+        if hit is None:
+            for row in PKG_REQ_CODE_ROWS:
+                if row[1] == name:
+                    hit = list(row)
+                    break
+        if hit is None:
+            hit = ["1", name, "", ""]
+        while len(hit) < 4:
+            hit.append("")
+        hit[0] = "1"
+        hit[1] = name
+        content["code_rows"] = [hit]
+        content["model_func"] = name
+        return content
 
     def __normalize_pkg_content(self, content, doc_type):
         base = self.__pkg_default_content(doc_type)
         if not isinstance(content, dict):
-            return base
+            return self.__apply_pkg_entry_module(base, doc_type)
+        if doc_type in PKG_REQ_TYPES and self.__pkg_req_still_sample(content, doc_type):
+            fresh = self.__pkg_default_content(doc_type)
+            fresh["submitter_sign"] = content.get("submitter_sign") or ""
+            fresh["auditor_sign"] = content.get("auditor_sign") or ""
+            return self.__apply_pkg_entry_module(fresh, doc_type)
         if self.__pkg_is_flat(content) and not content.get("sections"):
             for key in base:
+                if key == "code_rows":
+                    continue
                 if content.get(key) is not None:
                     base[key] = content.get(key)
-            return base
+            if doc_type in PKG_REQ_TYPES:
+                base["code_rows"] = self.__pkg_code_rows(content, base)
+                if not base.get("consistency_data_url"):
+                    base["consistency_data_url"] = content.get("consistency_url") or ""
+            return self.__apply_pkg_entry_module(base, doc_type)
         extracted = None
 
         def walk(ns):
@@ -1978,9 +2095,20 @@ class Server(object):
         walk(content.get("sections") or [])
         if extracted:
             for k in base:
+                if k == "code_rows":
+                    continue
                 extracted[k] = extracted.get(k) or base[k]
-            return extracted
-        return base
+            if doc_type in PKG_REQ_TYPES:
+                if self.__pkg_req_still_sample(extracted, doc_type):
+                    fresh = self.__pkg_default_content(doc_type)
+                    fresh["submitter_sign"] = extracted.get("submitter_sign") or ""
+                    fresh["auditor_sign"] = extracted.get("auditor_sign") or ""
+                    return self.__apply_pkg_entry_module(fresh, doc_type)
+                extracted["code_rows"] = self.__pkg_code_rows(extracted, base)
+                if not extracted.get("consistency_data_url"):
+                    extracted["consistency_data_url"] = extracted.get("consistency_url") or ""
+            return self.__apply_pkg_entry_module(extracted, doc_type)
+        return self.__apply_pkg_entry_module(base, doc_type)
 
     def __latest_data_content(self, product_id, doc_type):
         if not product_id:
@@ -2170,6 +2298,75 @@ class Server(object):
         if not names:
             names = self.__member_names(members, lambda r: r == "模型部负责人")
         return names[0] if names else ""
+
+    def __submit_header_sample(self, val, sample):
+        """空或仍是提交记录模板里的人名/日期。"""
+        cur = re.sub(r"\s+", "", str(val or ""))
+        if not cur:
+            return True
+        base = re.sub(r"\s+", "", str(sample or ""))
+        if cur == base:
+            return True
+
+        def norm_date(text):
+            m = re.match(r"^(\d{4})\.(\d{1,2})\.(\d{1,2})$", text)
+            if not m:
+                return text
+            return "%d.%d.%d" % (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+
+        return norm_date(cur) == norm_date(base)
+
+    def __submit_write_date(self, product_id):
+        """编写日期取时间线「模型服务提交」的最晚一天。本版本没有时间线时用同名其它版本。"""
+        kws = ["模型服务提交记录", "模型服务提交"]
+        if not product_id:
+            return ""
+        lo, hi = serv_review_util.date_range(product_id, kws)
+        if not (lo or hi):
+            product = db.session.execute(select(Product).where(Product.id == product_id)).scalars().first()
+            name = str(getattr(product, "name", "") or "").strip() if product else ""
+            if name:
+                ids = db.session.execute(
+                    select(Product.id).where(Product.name == name, Product.id != product_id).order_by(Product.id.desc())
+                ).scalars().all()
+                for sid in ids:
+                    lo, hi = serv_review_util.date_range(sid, kws)
+                    if lo or hi:
+                        break
+        return self.__fmt_short_date(hi or lo)
+
+    def __apply_submit_header(self, content, product_id, force=False):
+        """编写人、审核人按模型文件封面规则取参与人员；编写日期取时间线。空或模板样例才写入，手改保留。换产品覆盖。"""
+        if not isinstance(content, dict) or not product_id:
+            return content
+        names = serv_review_util.cover_signer_names(product_id, "md_018")
+        author = str(names.get("编制人") or "").strip()
+        auditor = str(names.get("审核人") or "").strip()
+        if author and (force or self.__submit_header_sample(content.get("author"), "刘恩佑")):
+            content["author"] = author
+        if auditor and (force or self.__submit_header_sample(content.get("auditor"), "张欢")):
+            content["auditor"] = auditor
+        day = self.__submit_write_date(product_id)
+        if day and (force or self.__submit_header_sample(content.get("write_date"), "2023.03.23")):
+            content["write_date"] = day
+        sign_day = str(content.get("write_date") or day or "").strip()
+        approver = str(names.get("批准人") or "").strip()
+        signs = (
+            ("author_sign", str(content.get("author") or author or "").strip()),
+            ("auditor_sign", str(content.get("auditor") or auditor or "").strip()),
+            ("approver_sign", approver),
+        )
+        for key, person in signs:
+            if not person and not sign_day:
+                continue
+            if not (force or not str(content.get(key) or "").strip()):
+                continue
+            img = serv_review_util._sign_by_name(person) if person else ""
+            if img:
+                content[key] = img + (("\n" + sign_day) if sign_day else "")
+            else:
+                content[key] = " ".join(p for p in (person, sign_day) if p)
+        return content
 
     @staticmethod
     def __one_line_env(s):
@@ -2484,6 +2681,90 @@ class Server(object):
                 "均满足" if both else "不满足",
             )
         )
+
+    def __train_timeline_range(self, product_id):
+        """时间线里「模型训练」且不是「训练集」的最早、最晚一天。"""
+        if not product_id:
+            return ("", "")
+        tl_rows = db.session.execute(
+            select(ProjectTimelineRow).where(ProjectTimelineRow.prod_id == product_id)
+        ).scalars().all()
+        if not tl_rows:
+            return ("", "")
+        cell_map = {}
+        for c in db.session.execute(
+            select(ProjectTimelineCell).where(ProjectTimelineCell.row_id.in_([r.id for r in tl_rows]))
+        ).scalars().all():
+            cell_map.setdefault(c.row_id, []).append(c.output_result or "")
+        pat = re.compile(r"模型训练(?!集)")
+
+        def to_int(v):
+            digits = re.sub(r"[^\d]", "", str(v or ""))
+            return int(digits) if digits else None
+
+        def date_key(item):
+            r, year = item
+            return year * 10000 + (to_int(r.month) or 0) * 100 + (to_int(r.day) or 0)
+
+        matched = []
+        for r, year in serv_review_util._timeline_date_rows_with_year(tl_rows):
+            if not to_int(r.month):
+                continue
+            if any(pat.search(str(v or "")) for v in cell_map.get(r.id, [])):
+                matched.append((r, year))
+        if not matched:
+            return ("", "")
+        lo = min(matched, key=date_key)
+        hi = max(matched, key=date_key)
+
+        def fmt(item):
+            r, year = item
+            return "%s.%02d.%02d" % (year, to_int(r.month), to_int(r.day) or 1)
+
+        return (fmt(lo), fmt(hi))
+
+    def __fill_train_dates(self, content, product_id):
+        """编写日期取训练结束日，训练时间取开始到结束。没有「模型训练」则不改。"""
+        lo, hi = self.__train_timeline_range(product_id)
+        if not (lo or hi):
+            return
+        a = self.__fmt_short_date(lo)
+        b = self.__fmt_short_date(hi)
+        if b:
+            content["write_date"] = b
+        if a and b:
+            content["train_time"] = a if a == b else "%s-%s" % (a, b)
+        elif a or b:
+            content["train_time"] = a or b
+
+    def __fill_train_people(self, content, product_id):
+        """编写人取算法工程师，多人取参与人员里的第一个；审核人取高级算法工程师。没有则不改。"""
+        if not product_id:
+            return
+        members = db.session.execute(
+            select(ProjectMember)
+            .where(ProjectMember.prod_id == product_id)
+            .order_by(ProjectMember.sort_order.asc(), ProjectMember.id.asc())
+        ).scalars().all()
+        authors = self.__member_names(members, lambda r: r == "算法工程师")
+        auditors = self.__member_names(members, lambda r: r == "高级算法工程师")
+        if authors:
+            content["author"] = authors[0]
+        if auditors:
+            content["auditor"] = auditors[0]
+
+    def __fill_train_env(self, content, product_id, force=False):
+        """硬件取运行环境服务器 GPU，软件取操作系统并带上 CUDA。
+        空格子或仍是模板样例才写入；已经手改并保存的保留。换产品时覆盖。"""
+        hw, sw = self.__test_runtime_env(product_id)
+        samples_hw = {str((v or {}).get("hw_env") or "").strip() for v in TRAIN_DEFAULTS.values()}
+        samples_sw = {str((v or {}).get("sw_env") or "").strip() for v in TRAIN_DEFAULTS.values()}
+        cur_hw = str(content.get("hw_env") or "").strip()
+        cur_sw = str(content.get("sw_env") or "").strip()
+        if hw and (force or not cur_hw or cur_hw in samples_hw):
+            content["hw_env"] = hw
+        if sw and (force or not cur_sw or cur_sw in samples_sw):
+            content["sw_env"] = sw
 
     def __apply_test_autofill(self, content, doc_type, product_id):
         if not isinstance(content, dict) or not product_id:
@@ -2855,8 +3136,26 @@ class Server(object):
             )
         return hw, sw
 
-    def __md014_fill_env(self, content, product_id):
+    def __md014_env_is_sample(self, text, sample):
+        def norm(s):
+            return re.sub(r"\s+", "", str(s or ""))
+        cur = norm(text)
+        if not cur:
+            return True
+        return cur == norm(sample)
+
+    def __md014_fill_env(self, content, product_id, force=False):
+        """硬件/软件按运行环境写成原段落。空或仍是模板样例才写入；手改（含另加的正文）保存后保留。换产品时覆盖。"""
         hw, sw = self.__md014_env_bodies(product_id)
+        hw_sample = (
+            "GPU型号为GTX1080， PCIe 3.0的带宽为16GB/s。主板支持X99架构，PCIe "
+            "3.0通道为44条，支持多路英伟达SLI技术，支持4通道DDR4内存架构。内存32G，选取最新DDR4架构。"
+            "电源功率为1600W。硬盘平均读取速度在155Mb/s，平均写入速度在152Mb/s。"
+        )
+        sw_sample = (
+            "Ubuntu 18.04作为操作系统，安装英伟达GPU驱动程序，CUDA驱动程序，cuDNN，numpy，scipy"
+            "深度学习工具库以及PyTorch深度学习框架。开发语言选择Python3.7。"
+        )
         for s in (content or {}).get("sections") or []:
             if not isinstance(s, dict):
                 continue
@@ -2866,9 +3165,9 @@ class Server(object):
                 if not isinstance(c, dict):
                     continue
                 k = self.__strip_num(c.get("title"))
-                if k == "硬件环境" and hw:
+                if k == "硬件环境" and hw and (force or self.__md014_env_is_sample(c.get("body"), hw_sample)):
                     c["body"] = hw
-                elif k == "软件环境" and sw:
+                elif k == "软件环境" and sw and (force or self.__md014_env_is_sample(c.get("body"), sw_sample)):
                     c["body"] = sw
 
     def __apply_md014_autofill(self, content, product_id):
@@ -2982,6 +3281,9 @@ class Server(object):
                 content["author"] = author
             return content
         if doc_type in TRAIN_DOC_TYPES:
+            self.__fill_train_dates(content, product_id)
+            self.__fill_train_people(content, product_id)
+            self.__fill_train_env(content, product_id)
             module_cases = self.__module_ann_cases(product_id, doc_type)
             if module_cases is not None:
                 if module_cases:
@@ -3041,7 +3343,10 @@ class Server(object):
         if doc_type in TEST_DOC_TYPES:
             return self.__normalize_test_content(content, doc_type)
         if doc_type in PKG_DOC_TYPES:
-            return self.__normalize_pkg_content(content, doc_type)
+            content = self.__normalize_pkg_content(content, doc_type)
+            if doc_type in PKG_SUBMIT_TYPES:
+                content = self.__apply_submit_header(content, product_id, force=False)
+            return content
         if not isinstance(content, dict) or not isinstance(content.get("sections"), list):
             return self.__default_content(doc_type, product_id=product_id)
         out = {"sections": [self.__normalize_node(s) for s in content["sections"]]}
@@ -3611,7 +3916,14 @@ class Server(object):
                         break
                     r2 += 1
                 if r2 > r:
-                    table.cell(r, col).merge(table.cell(r2, col))
+                    cell = table.cell(r, col)
+                    cell.merge(table.cell(r2, col))
+                    cell.text = ""
+                    para = cell.paragraphs[0]
+                    para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                    para.paragraph_format.line_spacing = 1.3
+                    docx_util.fonted_txt(para, val, font_size=10.5)
+                    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.TOP
                 r = r2 + 1
 
     @staticmethod
@@ -3639,8 +3951,8 @@ class Server(object):
         for c in cls.__env_check_leaves(doc_type, kind):
             if c["type"] != "check":
                 continue
-            lb = c["label"]
-            out.append("否" if ("更新升级" in lb or "日志是否错误" in lb) else "是")
+            lb = str(c["label"] or "").replace("\n", "")
+            out.append("否" if ("更新升级" in lb or "日志是否错误" in lb or "是否报警" in lb) else "是")
         return out
 
     def __complete_env_maint_chapter(self, content, doc_type):
@@ -3898,7 +4210,10 @@ class Server(object):
             c = self.__normalize_test_content(content, obj.doc_type)
             return self.__apply_dataset_counts(c, obj.doc_type, obj.product_id)
         if obj.doc_type in PKG_DOC_TYPES:
-            return self.__normalize_pkg_content(content, obj.doc_type)
+            content = self.__normalize_pkg_content(content, obj.doc_type)
+            if obj.doc_type in PKG_SUBMIT_TYPES:
+                content = self.__apply_submit_header(content, obj.product_id, force=False)
+            return content
         sections = (content or {}).get("sections") or []
         prod_id = obj.product_id
         if not prod_id:
@@ -4436,14 +4751,23 @@ class Server(object):
         detail = self.__md022_dhf(prod_id, ["算法方案详细设计"])
         plan = self.__md022_dhf(prod_id, ["模型测试方案设计", "测试方案设计"])
         report = self.__md022_dhf(prod_id, ["模型测试报告"])
-        hdr = ["算法需求", "模块", "算法方案概要设计", "算法方案详细设计", "训练集构建记录", "模型训练记录", "测试方案设计", "测试记录", "模型测试报告"]
+        design_cell = "\n".join([c for c in (design, detail) if c])
+        hdr = [
+            "算法需求编号",
+            "模块",
+            "算法设计ID\n《算法方案概要设计》\n《算法方案详细设计》",
+            "训练集构建ID\n《模型训练集构建记录》",
+            "算法训练ID\n《模型训练记录》",
+            "测试方案设计ID\n《模型测试方案设计》",
+            "测试记录ID\n《模型测试记录》",
+            "测试报告ID\n《模型测试报告》",
+        ]
         body = []
         for name in modules:
             body.append([
                 srs,
                 name,
-                design,
-                detail,
+                design_cell,
                 self.__md022_module_code(prod_id, name, ("模型训练集构建记录", "训练集构建记录")),
                 self.__md022_module_code(prod_id, name, ("模型训练记录",)),
                 plan,
@@ -4695,11 +5019,13 @@ class Server(object):
             rows = [["env_check", kind, code]]
             for w in weeks:
                 p = prev.get(w) or []
+                old_checks = p[1:-2] if len(p) > 2 else []
+                same = len(old_checks) == len(defaults)
                 marks = []
                 for i, d in enumerate(defaults):
-                    v = str(p[i + 1] if i + 1 < len(p) else "").strip()
-                    marks.append(v if v in ("是", "否") else d)
-                problem = str(p[len(defaults) + 1] if len(p) > len(defaults) + 1 else "").strip() or "无"
+                    v = str(old_checks[i] if same and i < len(old_checks) else "").strip()
+                    marks.append(v if same and v in ("是", "否") else d)
+                problem = str(p[len(defaults) + 1] if same and len(p) > len(defaults) + 1 else "").strip() or "无"
                 rows.append([w] + marks + [problem, checker])
             tables.append(rows)
         node["tables"] = tables
@@ -4873,6 +5199,12 @@ class Server(object):
                     value = self.__normalize_content(value, row.doc_type, product_id=next_pid)
                     value = self.__apply_dataset_counts(value, row.doc_type, next_pid)
                     if product_changed:
+                        if row.doc_type in TRAIN_DOC_TYPES and isinstance(value, dict):
+                            self.__fill_train_env(value, next_pid, force=True)
+                        if row.doc_type == "md_014" and isinstance(value, dict):
+                            self.__md014_fill_env(value, next_pid, force=True)
+                        if row.doc_type in PKG_SUBMIT_TYPES and isinstance(value, dict):
+                            self.__apply_submit_header(value, next_pid, force=True)
                         prod = db.session.execute(select(Product).where(Product.id == next_pid)).scalars().first()
                         value = serv_review_util.fill_annex_reviews(
                             value, next_pid, row.doc_type, getattr(prod, "name", "") or "", force=True,
@@ -5586,7 +5918,8 @@ class Server(object):
         c = content if isinstance(content, dict) else {}
         is_rec = obj.doc_type in PKG_REC_TYPES
         is_submit = obj.doc_type in PKG_SUBMIT_TYPES
-        cols = 8 if is_rec else 6
+        is_req = not is_rec and not is_submit
+        cols = 8 if is_rec else (5 if is_req else 6)
         wb = Workbook()
         ws = wb.active
         ws.title = "工作表1"
@@ -5596,10 +5929,14 @@ class Server(object):
         )
         center = Alignment(wrap_text=True, vertical="center", horizontal="center")
         left = Alignment(wrap_text=True, vertical="center", horizontal="left")
+        right = Alignment(wrap_text=True, vertical="center", horizontal="right")
 
         def cell_text(val):
             s = str(val or "")
-            return "[签名]" if s.startswith("data:image") else s
+            if s.startswith("data:image"):
+                rest = s.split("\n", 1)[1].strip() if "\n" in s else ""
+                return "[签名]" + ((" " + rest) if rest else "")
+            return s
 
         def put(r, col, val, bold=False, size=10.5, align=center):
             cell = ws.cell(r, col, cell_text(val))
@@ -5629,14 +5966,24 @@ class Server(object):
             title = "模型工程封装记录"
         else:
             title = "模型工程封装需求"
-        put(1, 1, (obj.file_no or "").replace("\t", "").strip(), bold=True, size=12)
-        merge(1, 1, 1, cols)
-        ws.row_dimensions[1].height = 22
-        put(2, 1, title, bold=True, size=16)
-        merge(2, 1, 2, cols)
-        ws.row_dimensions[2].height = 36
-
-        r = 3
+        file_no = (obj.file_no or "").replace("\t", "").strip()
+        if is_req:
+            put(1, 1, title, bold=True, size=16)
+            if file_no:
+                merge(1, 1, 1, cols - 1)
+                put(1, cols, file_no, bold=True, size=12, align=right)
+            else:
+                merge(1, 1, 1, cols)
+            ws.row_dimensions[1].height = 28
+            r = 2
+        else:
+            put(1, 1, file_no, bold=True, size=12)
+            merge(1, 1, 1, cols)
+            ws.row_dimensions[1].height = 22
+            put(2, 1, title, bold=True, size=16)
+            merge(2, 1, 2, cols)
+            ws.row_dimensions[2].height = 36
+            r = 3
 
         def span_val(label, value, value_center=False):
             nonlocal r
@@ -5672,42 +6019,276 @@ class Server(object):
                 merge(r, 2, r, 6)
                 ws.row_dimensions[r].height = 32
                 r += 1
+        elif is_rec:
+            span_val("模型功能", c.get("model_func") or "")
+            span_val("封装代码地址", c.get("pack_code_url") or "")
+            span_val("模型参数地址", c.get("param_url") or "")
+            span_val("一致性测试数据地址", c.get("consistency_data_url") or "")
+            span_val("一致性结果地址", c.get("consistency_result_url") or "")
+            span_val("验收结论", c.get("conclusion") or "", value_center=True)
+            put(r, 1, "封装人/日期", bold=True)
+            put(r, 2, c.get("packer_sign") or "")
+            merge(r, 2, r, 4)
+            put(r, 5, "审核人/日期", bold=True)
+            put(r, 6, c.get("auditor_sign") or "")
+            merge(r, 6, r, 8)
+            ws.row_dimensions[r].height = 32
         else:
             span_val("模型功能", c.get("model_func") or "")
-            if is_rec:
-                span_val("封装代码地址", c.get("pack_code_url") or "")
-            span_val("模型参数地址", c.get("param_url") or "")
-            if is_rec:
-                span_val("一致性测试数据地址", c.get("consistency_data_url") or "")
-                span_val("一致性结果地址", c.get("consistency_result_url") or "")
-                span_val("验收结论", c.get("conclusion") or "", value_center=True)
-            else:
-                span_val("一致性测试结果", c.get("consistency_url") or "")
-                span_val("待封装代码地址", c.get("code_url") or "")
-
-            put(r, 1, "封装人/日期" if is_rec else "提交人/日期", bold=True)
-            if is_rec:
-                put(r, 2, c.get("packer_sign") or "")
-                merge(r, 2, r, 4)
-                put(r, 5, "审核人/日期", bold=True)
-                put(r, 6, c.get("auditor_sign") or "")
-                merge(r, 6, r, 8)
-            else:
-                put(r, 2, c.get("submitter_sign") or "")
-                merge(r, 2, r, 3)
-                put(r, 4, "审核人/日期", bold=True)
-                put(r, 5, c.get("auditor_sign") or "")
-                merge(r, 5, r, 6)
+            rows = self.__pkg_code_rows(c, self.__pkg_default_content(obj.doc_type))
+            start = r
+            put(r, 1, "待封装代码地址", bold=True)
+            for i, head in enumerate(("序号", "模块", "模型名称", "代码地址")):
+                put(r, i + 2, head, bold=True)
+            ws.row_dimensions[r].height = 22
+            r += 1
+            for row in rows:
+                for i in range(4):
+                    put(r, i + 2, row[i] if i < len(row) else "", align=left if i == 3 else center)
+                ws.row_dimensions[r].height = 22
+                r += 1
+            merge(start, 1, r - 1, 1)
+            span_val("一致性测试数据地址", c.get("consistency_data_url") or c.get("consistency_url") or "")
+            put(r, 1, "提交人/日期", bold=True)
+            put(r, 2, c.get("submitter_sign") or "")
+            put(r, 3, "审核人/日期", bold=True)
+            put(r, 4, c.get("auditor_sign") or "")
+            merge(r, 4, r, 5)
             ws.row_dimensions[r].height = 32
 
         if is_rec:
             widths = (18.0, 12.0, 13.0, 13.0, 13.0, 13.0, 13.0, 13.0)
+        elif is_req:
+            widths = (18.0, 8.0, 18.0, 28.0, 62.0)
         else:
             widths = (16.0, 12.0, 12.0, 12.0, 14.0, 18.0)
         for i, w in enumerate(widths, 1):
             ws.column_dimensions[get_column_letter(i)].width = w
         wb.save(output)
         output.seek(0)
+
+    def __write_pkg_req_sheet(self, ws, content, file_no=""):
+        """一张封装需求原表。content 已是合并后的模型功能与代码行，不再按单个模块收窄。"""
+        from openpyxl.styles import Font, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        c = content if isinstance(content, dict) else {}
+        cols = 5
+        file_no = str(file_no or "").replace("\t", "").strip()
+        thin = Border(
+            left=Side(style="thin"), right=Side(style="thin"),
+            top=Side(style="thin"), bottom=Side(style="thin"),
+        )
+        center = Alignment(wrap_text=True, vertical="center", horizontal="center")
+        left = Alignment(wrap_text=True, vertical="center", horizontal="left")
+        right = Alignment(wrap_text=True, vertical="center", horizontal="right")
+
+        def cell_text(val):
+            s = str(val or "")
+            return "[签名]" if s.startswith("data:image") else s
+
+        def put(r, col, val, bold=False, size=10.5, align=center):
+            cell = ws.cell(r, col, cell_text(val))
+            cell.font = Font(name="宋体", size=size, bold=bold)
+            cell.alignment = align
+            cell.border = thin
+            return cell
+
+        def border_range(r1, c1, r2, c2):
+            for rr in range(r1, r2 + 1):
+                for cc in range(c1, c2 + 1):
+                    cell = ws.cell(rr, cc)
+                    cell.border = thin
+                    if not cell.font or not cell.font.name:
+                        cell.font = Font(name="宋体", size=10.5)
+                    if not cell.alignment or not cell.alignment.vertical:
+                        cell.alignment = center
+
+        def merge(r1, c1, r2, c2):
+            if r1 != r2 or c1 != c2:
+                ws.merge_cells(start_row=r1, start_column=c1, end_row=r2, end_column=c2)
+            border_range(r1, c1, r2, c2)
+
+        put(1, 1, "模型工程封装需求", bold=True, size=16)
+        if file_no:
+            merge(1, 1, 1, cols - 1)
+            put(1, cols, file_no, bold=True, size=12, align=right)
+        else:
+            merge(1, 1, 1, cols)
+        ws.row_dimensions[1].height = 28
+        r = 2
+
+        def span_val(label, value):
+            nonlocal r
+            put(r, 1, label, bold=True)
+            put(r, 2, value or "", align=left)
+            merge(r, 2, r, cols)
+            ws.row_dimensions[r].height = 28 if len(str(value or "")) > 60 else 22
+            r += 1
+
+        span_val("模型功能", c.get("model_func") or "")
+        rows = c.get("code_rows") or [["1", "", "", ""]]
+        start = r
+        put(r, 1, "待封装代码地址", bold=True)
+        for i, head in enumerate(("序号", "模块", "模型名称", "代码地址")):
+            put(r, i + 2, head, bold=True)
+        ws.row_dimensions[r].height = 22
+        r += 1
+        for row in rows:
+            cells = list(row) if isinstance(row, list) else []
+            while len(cells) < 4:
+                cells.append("")
+            for i in range(4):
+                put(r, i + 2, cells[i], align=left if i == 3 else center)
+            ws.row_dimensions[r].height = 22
+            r += 1
+        merge(start, 1, r - 1, 1)
+        span_val("一致性测试数据地址", c.get("consistency_data_url") or "")
+        put(r, 1, "提交人/日期", bold=True)
+        put(r, 2, c.get("submitter_sign") or "")
+        put(r, 3, "审核人/日期", bold=True)
+        put(r, 4, c.get("auditor_sign") or "")
+        merge(r, 4, r, 5)
+        ws.row_dimensions[r].height = 32
+        for i, w in enumerate((18.0, 8.0, 18.0, 28.0, 62.0), 1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+
+    def __merge_pkg_req_content(self, docs):
+        """把同一产品各模块的封装需求收成一张表：模型功能用顿号连起来，代码表每个模块一行。"""
+        funcs = []
+        rows = []
+        urls = []
+        submitters = []
+        auditors = []
+        for doc in docs:
+            c = self.__normalize_pkg_content(doc.content, doc.doc_type)
+            if not isinstance(c, dict):
+                continue
+            name = str(c.get("model_func") or "").strip()
+            code = None
+            for row in c.get("code_rows") or []:
+                if isinstance(row, list) and any(str(x or "").strip() for x in row):
+                    code = [str(x or "") for x in list(row)[:4]]
+                    break
+            if not name and code and len(code) > 1:
+                name = str(code[1] or "").strip()
+            if not name:
+                continue
+            funcs.append(name)
+            while not code or len(code) < 4:
+                code = (code or []) + [""]
+            code[1] = name
+            rows.append(code)
+            urls.append(c.get("consistency_data_url") or c.get("consistency_url") or "")
+            submitters.append(c.get("submitter_sign") or "")
+            auditors.append(c.get("auditor_sign") or "")
+
+        def uniq(vals):
+            out = []
+            for val in vals:
+                s = str(val or "").strip()
+                if s and s not in out:
+                    out.append(s)
+            return "\n".join(out)
+
+        for i, row in enumerate(rows, 1):
+            row[0] = str(i)
+        return {
+            "model_func": "、".join(funcs),
+            "code_rows": rows,
+            "consistency_data_url": uniq(urls),
+            "submitter_sign": uniq(submitters),
+            "auditor_sign": uniq(auditors),
+        }
+
+    async def export_pkg_req_merge(self, output, op_user: UserObj = None, product_id: int = 0, version: str = None):
+        """按选定的产品名称 + 完整版本出一张表，表内是该产品全部算法模块的封装需求。"""
+        from openpyxl import Workbook
+        from ..utils import download_name
+
+        if not product_id:
+            return "请选择产品和产品版本"
+        wheres = [ModelDoc.doc_type.like("md\\_015%")]
+        if product_id:
+            wheres.append(ModelDoc.product_id == product_id)
+        ver = str(version or "").strip()
+        if ver:
+            wheres.append(ModelDoc.version == ver)
+        scope = product_scope_filter(op_user)
+        if scope is not None:
+            wheres.append(scope)
+        pairs = db.session.execute(
+            select(ModelDoc, Product).join(Product, ModelDoc.product_id == Product.id).where(*wheres)
+        ).all()
+        by_prod = {}
+        products = {}
+        for doc, product in pairs:
+            parts = module_doc_parts(doc.doc_type)
+            if not parts or parts[1] != "md_015":
+                continue
+            products[product.id] = product
+            bucket = by_prod.setdefault(product.id, {})
+            prev = bucket.get(parts[2])
+            if prev is None or (doc.id or 0) > (prev.id or 0):
+                bucket[parts[2]] = doc
+        if not by_prod:
+            return "没有可合并的封装需求"
+
+        def sheet_title(name, full_version, used):
+            raw = re.sub(r'[:\\/\?\*\[\]]', "_", f"{name} {full_version}".strip())[:31] or "封装需求"
+            base = raw
+            n = 2
+            while raw.lower() in used:
+                suffix = str(n)
+                raw = base[: 31 - len(suffix)] + suffix
+                n += 1
+            used.add(raw.lower())
+            return raw
+
+        wb = Workbook()
+        used = set()
+        first = True
+        named = []
+        for pid, chapters in by_prod.items():
+            product = products[pid]
+            ch_rows = db.session.execute(
+                select(ProdAlgoChapter).where(ProdAlgoChapter.prod_id == pid)
+            ).scalars().all()
+            order = {c.id: (c.sort_order or 0, c.id or 0) for c in ch_rows}
+            docs = [chapters[cid] for cid in sorted(chapters, key=lambda cid: order.get(cid, (10 ** 9, cid)))]
+            content = self.__merge_pkg_req_content(docs)
+            if not content.get("code_rows"):
+                continue
+            ws = wb.active if first else wb.create_sheet()
+            first = False
+            name = str(product.name or "").strip()
+            full_version = str(product.full_version or "").strip()
+            ws.title = sheet_title(name, full_version, used)
+            ver = ver if ver else ""
+            if not ver:
+                vers = {str(getattr(d, "version", "") or "").strip() for d in docs}
+                ver_one = vers.pop() if len(vers) == 1 else ""
+            else:
+                ver_one = ver
+            file_no = _dhf_code_for_keywords(pid, ["模型工程封装需求", "封装需求"]) or _sibling_dhf_file_no(pid, ["模型工程封装需求", "封装需求"])
+            if file_no and ver_one:
+                file_no = sync_file_no_version(file_no, ver_one) or file_no
+            if not file_no:
+                nums = []
+                for d in docs:
+                    s = str(getattr(d, "file_no", "") or "").strip()
+                    if s and s not in nums:
+                        nums.append(s)
+                file_no = nums[0] if len(nums) == 1 else ""
+            self.__write_pkg_req_sheet(ws, content, file_no)
+            named.append((f"{name} {full_version}".strip(), file_no))
+        if first:
+            return "没有可合并的封装需求"
+        wb.save(output)
+        output.seek(0)
+        title = named[0][0] + " 模型工程封装需求" if len(named) == 1 else "模型工程封装需求"
+        head_no = named[0][1] if len(named) == 1 else ""
+        return ("ok", download_name.quoted(head_no, title, "xlsx"))
 
     def __stamp_page_size(self, document, landscape):
         """把纸张方向写进 w:orient。只改宽高时 Mac 版 Word 会按横向打开。"""
@@ -6062,27 +6643,52 @@ class Server(object):
         body = [s for s in sections if s.get("ref_type") not in ("cover", "revision")]
         title = (self.__strip_num(cover.get("title")) if cover else "") or doc_title(obj.doc_type)
 
-        if obj.doc_type != "md_019":
-            add_blank_lines(6)
-            write_center_title(title, size=22.0, bold=True)
-            add_blank_lines(4)
-            if cover:
-                for table in (cover.get("tables") or []):
-                    add_cover_grid(table)
+        add_blank_lines(6)
+        write_center_title(title, size=22.0, bold=True)
+        add_blank_lines(4)
+        if cover:
+            for table in (cover.get("tables") or []):
+                add_cover_grid(table)
 
-            document.add_page_break()
-            write_center_title("文件修订记录", size=14.0, bold=True)
-            add_blank_lines(2)
-            if revision:
-                for table in (revision.get("tables") or []):
-                    add_grid(table)
+        document.add_page_break()
+        write_center_title("文件修订记录", size=14.0, bold=True)
+        add_blank_lines(2)
+        if revision:
+            for table in (revision.get("tables") or []):
+                add_grid(table)
 
-            document.add_page_break()
+        document.add_page_break()
         write_center_title("目录", size=16.0, bold=True)
         docx_util.insert_toc_field(document)
 
+        def render_env_body(node, level, number=""):
+            """环境维护说明：先设备表，再定期检查说明，周检表仍跟在维护记录章。"""
+            name = self.__strip_num(node.get("title"))
+            if name not in ("开发环境定期检查", "测试环境定期检查"):
+                render_body_section(node, level, number)
+                return
+            tables = [tb for tb in (node.get("tables") or []) if isinstance(tb, list)]
+            for tb in tables:
+                if self.__is_asset_grid(tb):
+                    add_grid(tb)
+            heading = f"{number} {name}".strip() if number else name
+            add_body_heading(heading, level=max(1, min(level, 9)))
+            if (node.get("body") or "").strip():
+                add_text(node.get("body"))
+            for tb in tables:
+                if not self.__is_asset_grid(tb):
+                    add_grid(tb)
+            idx = 0
+            for child in (node.get("children") or []):
+                idx += 1
+                child_num = f"{number}.{idx}" if number else str(idx)
+                render_env_body(child, level + 1, child_num)
+
         document.add_page_break()
-        if obj.doc_type in SKIP_ANNEX_NUM:
+        if obj.doc_type in ("md_019", "md_020"):
+            for i, node in enumerate(body):
+                render_env_body(node, 1, str(i + 1))
+        elif obj.doc_type in SKIP_ANNEX_NUM:
             idx = 0
             for node in body:
                 t = self.__strip_num(node.get("title"))

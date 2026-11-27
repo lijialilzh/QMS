@@ -357,6 +357,7 @@ export default () => {
         annRows: {} as Record<string, CaseRow[]>,
         annSources: {} as Record<string, string>,
         annPaths: {} as Record<string, string>,
+        emptyKept: false,
     });
     const ctxRef = useRef(data);
     ctxRef.current = data;
@@ -364,7 +365,7 @@ export default () => {
 
     const persistRows = (
         rows: CaseRow[],
-        extra?: { person?: string; dataType?: string; disease?: string; source?: string },
+        extra?: { person?: string; dataType?: string; disease?: string; source?: string; cleared?: boolean },
         slot?: { productId: number; kind: StatsKind },
     ) => {
         const cur = ctxRef.current;
@@ -374,6 +375,7 @@ export default () => {
             dataType: extra?.dataType ?? cur.dataType ?? "",
             disease: extra?.disease ?? cur.disease ?? "",
             source: extra?.source ?? cur.source ?? "",
+            cleared: !!extra?.cleared,
         };
         const productId = slot ? slot.productId : (cur.productId || 0);
         const kind = slot ? slot.kind : (cur.kind as StatsKind);
@@ -414,6 +416,7 @@ export default () => {
             dataType: last.item.dataType || "",
             disease: last.item.disease || "",
             source: last.item.source || "",
+            emptyKept: !!last.item.cleared,
         });
     }, []);
 
@@ -428,7 +431,7 @@ export default () => {
                 if (got.code !== Api.C_OK) return;
                 const item = caseRowsFromContent(got.data && got.data.content);
                 const cur = ctxRef.current;
-                if (!item || cur.productId !== productId || cur.kind !== kind || (cur.rows || []).length) return;
+                if (!item || cur.productId !== productId || cur.kind !== kind || (cur.rows || []).length || cur.emptyKept) return;
                 if (kind === "ann" && (cur.annModule || (cur.annModules || []).length)) return;
                 dispatch({
                     rows: item.rows,
@@ -559,7 +562,7 @@ export default () => {
 
     const switchSlot = (productId: number, kind: StatsKind) => {
         if (kind === "ann" && productId) {
-            dispatch({ productId, kind, rows: [], source: "", annModule: "", writeHint: "" });
+            dispatch({ productId, kind, rows: [], source: "", annModule: "", writeHint: "", emptyKept: false });
             loadAnn(productId);
             return;
         }
@@ -568,10 +571,11 @@ export default () => {
             dispatch({
                 productId, kind, rows: hit.rows, person: hit.person, dataType: hit.dataType,
                 disease: hit.disease, source: hit.source, annModule: "", writeHint: "",
+                emptyKept: !!hit.cleared,
             });
             return;
         }
-        dispatch({ productId, kind, rows: [], person: data.person, dataType: data.dataType, disease: data.disease, source: "", annModule: "", writeHint: "" });
+        dispatch({ productId, kind, rows: [], person: data.person, dataType: data.dataType, disease: data.disease, source: "", annModule: "", writeHint: "", emptyKept: false });
         loadFromDoc(productId, kind);
     };
 
@@ -618,9 +622,8 @@ export default () => {
                     if (annPack) {
                         const byModule: Record<string, { rows: CaseRow[]; source: string }> = {};
                         annPack.modules.forEach((m) => {
-                            if ((annPack.rows[m] || []).length) {
-                                byModule[m] = { rows: annPack.rows[m], source: annPack.sources[m] || "" };
-                            }
+                            if (!Object.prototype.hasOwnProperty.call(annPack.rows, m)) return;
+                            byModule[m] = { rows: annPack.rows[m] || [], source: annPack.sources[m] || "" };
                         });
                         section.case_modules = byModule;
                     } else if (rec && rec.case_modules) {
@@ -696,16 +699,18 @@ export default () => {
     /** 记录名含某个模块名的，只写该模块的 PID（该模块还没读则不动）；对不上任何模块的写合并 PID。传了 module 时，其它模块的记录不动。 */
     const writeAnnotPids = async (productId: number, rows: CaseRow[], annPack?: AnnPack | null, module = "") => {
         const pids = pidsFromRows(rows);
-        if (!pids.length) {
+        const knownModule = (name: string) => !!(annPack && Object.prototype.hasOwnProperty.call(annPack.rows, name));
+        const hasKnown = !!(annPack && annPack.modules.some((m) => knownModule(m)));
+        if (!pids.length && !hasKnown) {
             return { ok: [] as string[], missing: 0, errors: [] as string[], warn: "病例明细没有可用 PID，未写入试标注/标注记录" };
         }
         const pidsFor = (title: string): string[] | null => {
             if (!annPack) return pids;
             const hit = matchModule(title, annPack.modules);
-            if (!hit) return pids;
+            if (!hit) return pids.length ? pids : null;
+            if (!knownModule(hit)) return null;
             if (module && hit !== module) return null;
-            const own = pidsFromRows(annPack.rows[hit] || []);
-            return own.length ? own : null;
+            return pidsFromRows(annPack.rows[hit] || []);
         };
         const [tl, mb] = await Promise.all([
             ApiTimeline.list_timeline({ prod_id: productId }).catch(() => null),
@@ -756,19 +761,26 @@ export default () => {
         });
         const docs: { type: string; title: string; module: string }[] = [];
         const errors: string[] = [];
-        const targets = annPack.modules.filter((m) => (!module || m === module) && (annPack.rows[m] || []).length && idOf[m]);
+        const targets = annPack.modules.filter((m) => (!module || m === module) && Object.prototype.hasOwnProperty.call(annPack.rows, m) && idOf[m]);
         for (let i = 0; i < targets.length; i++) {
             const m = targets[i];
+            const hasRows = (annPack.rows[m] || []).length > 0;
             const groups: ModuleRecordGroup[] = ["dd_008", "dd_009"];
             for (let j = 0; j < groups.length; j++) {
                 const g = groups[j];
                 const type = moduleRecordType(g, idOf[m]);
-                const made = await ensureOneDoc("data", productId, type);
-                if (made.status === "error") {
-                    errors.push(made.msg || `新建「${moduleRecordTitle(g, m)}」失败`);
+                if (hasRows) {
+                    const made = await ensureOneDoc("data", productId, type);
+                    if (made.status === "error") {
+                        errors.push(made.msg || `新建「${moduleRecordTitle(g, m)}」失败`);
+                        continue;
+                    }
+                    docs.push({ type, title: moduleRecordTitle(g, m), module: m });
                     continue;
                 }
-                docs.push({ type, title: moduleRecordTitle(g, m), module: m });
+                const list: any = await Api.list_data_doc({ product_id: productId, doc_type: type, page_index: 0, page_size: 1 }).catch(() => null);
+                const hit = list && list.code === Api.C_OK ? ((list.data && list.data.rows) || [])[0] : null;
+                if (hit) docs.push({ type, title: moduleRecordTitle(g, m), module: m });
             }
         }
         return { docs, errors };
@@ -802,8 +814,8 @@ export default () => {
         });
 
     /** 原始库：回传→整理→上传（只改原始段）。标注库：上传（只改标注段；按模块写时只改该模块的数据集行）→查重→标注需求反馈。基础库不写下游。 */
-    const writeCollectDocs = async (productId: number, kind: StatsKind, rows: CaseRow[], module = "") => {
-        if (!productId || !(rows || []).length || kind === "base") {
+    const writeCollectDocs = async (productId: number, kind: StatsKind, rows: CaseRow[], module = "", allowEmpty = false) => {
+        if (!productId || kind === "base" || (!(rows || []).length && !allowEmpty)) {
             return { ok: [] as string[], missing: [] as string[], errors: [] as string[], warn: "" };
         }
         const wrote: { title: string; status: string; msg?: string }[] = [];
@@ -918,8 +930,10 @@ export default () => {
                 ? { modules: cur.annModules, rows: cur.annRows, sources: cur.annSources }
                 : null);
             const merged = annPack ? mergeAnnRows(annPack.modules, annPack.rows) : [];
+            const known = !!(annPack && annPack.modules.some((m) => Object.prototype.hasOwnProperty.call(annPack!.rows, m)));
             // 标注统计表始终写各模块合并；在模块页签上点写入也不会只剩这一个模块。
-            if (merged.length) {
+            // 清空后的空表也要写入：模块键还在、行是空的，不能当成没读过而跳过。
+            if (merged.length || known) {
                 rows = merged;
                 source = joinAnnSources(annPack!.modules, annPack!.sources);
                 module = slot ? slot.module || "" : cur.annModule || "";
@@ -965,7 +979,7 @@ export default () => {
             })
             .then(({ stats, ann }: any) => {
                 if (statsOnly) return { stats, ann, col: null as any };
-                return writeCollectDocs(productId, kind, rows, module).then((col: any) => ({ stats, ann, col }));
+                return writeCollectDocs(productId, kind, rows, module, !(rows || []).length).then((col: any) => ({ stats, ann, col }));
             })
             .then(({ stats, ann, col }: any) => {
                 const moduleRows = annPack && module ? (annPack.rows[module] || []) : [];
@@ -1052,6 +1066,12 @@ export default () => {
     const annByModule = data.kind === "ann" && (data.annModules || []).length > 0;
     const annOnSummary = annByModule && data.annModule === ANN_SUMMARY;
     const annMergedCount = annByModule ? mergeAnnRows(data.annModules, data.annRows).length : 0;
+    const summaryKnown = annByModule && Object.keys(data.annRows || {}).length > 0;
+    const moduleEmptyKept = annByModule && !annOnSummary && !!data.annModule
+        && Object.prototype.hasOwnProperty.call(data.annRows || {}, data.annModule)
+        && !(data.annRows[data.annModule] || []).length;
+    const summaryEmptyKept = annOnSummary && summaryKnown && !annMergedCount;
+    const canWrite = total > 0 || moduleEmptyKept || summaryEmptyKept || (!annByModule && !!data.emptyKept);
     const detailRows = useMemo(
         () => (data.rows || []).map((r: CaseRow, i: number) => ({ key: i, ...r })),
         [data.rows],
@@ -1163,10 +1183,15 @@ export default () => {
                 srcBy[m] = source;
                 return;
             }
-            const hit = sameProduct ? cur.annRows[m] : readStatsCache(slot.productId, annSlot(m))?.rows;
-            if (hit && hit.length) rowsBy[m] = hit;
-            const src = sameProduct ? cur.annSources[m] : readStatsCache(slot.productId, annSlot(m))?.source;
-            if (src) srcBy[m] = src;
+            if (sameProduct && Object.prototype.hasOwnProperty.call(cur.annRows, m)) {
+                rowsBy[m] = cur.annRows[m] || [];
+                if (cur.annSources[m]) srcBy[m] = cur.annSources[m];
+                return;
+            }
+            const cached = readStatsCache(slot.productId, annSlot(m));
+            if (!cached) return;
+            rowsBy[m] = cached.rows;
+            if (cached.source) srcBy[m] = cached.source;
         });
         const merged = mergeAnnRows(slot.modules, rowsBy);
         const mergedSrc = joinAnnSources(slot.modules, srcBy);
@@ -1204,7 +1229,7 @@ export default () => {
             return;
         }
         const same = cur.productId === slot.productId && cur.kind === slot.kind;
-        dispatch(same ? { loading: false, progress: "", rows, source } : { loading: false, progress: "" });
+        dispatch(same ? { loading: false, progress: "", rows, source, emptyKept: false } : { loading: false, progress: "" });
         persistRows(rows, { source }, slot);
         promptWrite(rows.length);
     };
@@ -1356,6 +1381,74 @@ export default () => {
         });
     };
 
+    /** 只清空当前页签的表格和本机缓存，不调用写入接口。 */
+    const clearCurrentTable = () => {
+        const cur = ctxRef.current;
+        const productId = cur.productId || 0;
+        const kind = cur.kind as StatsKind;
+        const byModule = kind === "ann" && (cur.annModules || []).length > 0;
+        if (byModule && cur.annModule === ANN_SUMMARY) {
+            const known = Object.keys(cur.annRows || {});
+            if (!known.length) {
+                message.info("汇总表格已是空的");
+                return;
+            }
+            const rowsBy: Record<string, CaseRow[]> = {};
+            known.forEach((m) => {
+                rowsBy[m] = [];
+                if (productId) {
+                    persistRows([], { source: cur.annSources[m] || "", cleared: true }, { productId, kind: annSlot(m) });
+                }
+            });
+            if (productId) persistRows([], { source: "", cleared: true }, { productId, kind: "ann" });
+            dispatch({
+                annRows: rowsBy,
+                rows: [],
+                source: "",
+                writeHint: "已清空汇总表格（各模块本页表格一并清空），未改文件。点「写入数据」后才会写入文件",
+            });
+            message.success("已清空汇总表格，文件未改");
+            return;
+        }
+        if (byModule && cur.annModule) {
+            const module = cur.annModule;
+            if (!Object.prototype.hasOwnProperty.call(cur.annRows, module)) {
+                message.info(`「${module}」还没有表格数据`);
+                return;
+            }
+            const rowsBy = { ...cur.annRows, [module]: [] as CaseRow[] };
+            const srcBy = cur.annSources || {};
+            if (productId) {
+                persistRows([], { source: srcBy[module] || "", cleared: true }, { productId, kind: annSlot(module) });
+            }
+            const merged = mergeAnnRows(cur.annModules, rowsBy);
+            const mergedSrc = joinAnnSources(cur.annModules, srcBy);
+            if (productId) {
+                persistRows(merged, { source: mergedSrc, cleared: !merged.length }, { productId, kind: "ann" });
+            }
+            dispatch({
+                annRows: rowsBy,
+                rows: [],
+                source: srcBy[module] || "",
+                writeHint: `已清空「${module}」表格，未改文件。点「写入「${module}」」后才会写入文件`,
+            });
+            message.success(`已清空「${module}」表格，文件未改`);
+            return;
+        }
+        if (!(cur.rows || []).length && !cur.emptyKept) {
+            message.info("当前表格已是空的");
+            return;
+        }
+        if (productId) persistRows([], { source: "", cleared: true }, { productId, kind });
+        dispatch({
+            rows: [],
+            source: "",
+            emptyKept: true,
+            writeHint: "已清空当前表格，未改文件。点「写入数据」后才会写入文件",
+        });
+        message.success("已清空当前表格，文件未改");
+    };
+
     const downloadXlsx = () => {
         if (!total) {
             message.warning("请先选择病例文件夹");
@@ -1407,14 +1500,17 @@ export default () => {
                     <Radio.Button value="base">基础数据库</Radio.Button>
                     <Radio.Button value="ann">标注数据库</Radio.Button>
                 </Radio.Group>
-                <Space>
-                    <Button icon={<UploadOutlined />} disabled={!total || annOnSummary} loading={data.loading || data.writing} onClick={pickGpdExcel}>
+                <Space className="data-stats-actions" size={8}>
+                    <Button size="middle" icon={<UploadOutlined />} disabled={!total || annOnSummary} loading={data.loading || data.writing} onClick={pickGpdExcel}>
                         导入 gt/pred/dice
                     </Button>
-                    <Button disabled={!total} loading={data.writing} onClick={() => writeDataFiles(data.rows)}>
+                    <Button size="middle" disabled={data.writing || data.loading} onClick={clearCurrentTable}>
+                        清空表格
+                    </Button>
+                    <Button size="middle" disabled={!canWrite} loading={data.writing} onClick={() => writeDataFiles(data.rows)}>
                         {annByModule && data.annModule && !annOnSummary ? `写入「${data.annModule}」` : "写入数据"}
                     </Button>
-                    <Button loading={data.templating} disabled={data.writing} onClick={generateTemplates}>
+                    <Button size="middle" loading={data.templating} disabled={data.writing} onClick={generateTemplates}>
                         生成文件模版
                     </Button>
                 </Space>
@@ -1435,21 +1531,22 @@ export default () => {
                             label: (
                                 <span>
                                     汇总
-                                    <span className={annMergedCount ? "data-stats-module-count" : "data-stats-module-unread"}>
-                                        {annMergedCount ? annMergedCount : "未读"}
+                                    <span className={summaryKnown ? "data-stats-module-count" : "data-stats-module-unread"}>
+                                        {summaryKnown ? annMergedCount : "未读"}
                                     </span>
                                 </span>
                             ),
                         },
                         ...data.annModules.map((m: string) => {
+                            const known = Object.prototype.hasOwnProperty.call(data.annRows || {}, m);
                             const n = (data.annRows[m] || []).length;
                             return {
                                 key: m,
                                 label: (
                                     <span>
                                         {m}
-                                        <span className={n ? "data-stats-module-count" : "data-stats-module-unread"}>
-                                            {n ? n : "未读"}
+                                        <span className={known ? "data-stats-module-count" : "data-stats-module-unread"}>
+                                            {known ? n : "未读"}
                                         </span>
                                     </span>
                                 ),
